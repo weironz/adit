@@ -1,11 +1,25 @@
 use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus};
 use adit_ssh::{
-    AuthOptions, LiveShellCommand, LiveShellEvent, LiveShellHandle, LiveShellRequest,
-    PasswordShellProbe, SshError,
+    AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
+    LiveShellRequest, PasswordShellProbe, SshError,
 };
+
+pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
 use adit_terminal::{TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal};
 use std::collections::HashMap;
+use std::fs;
+use std::io::{BufWriter, Write};
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 use thiserror::Error;
+
+/// Give up auto-reconnect after this many consecutive failed attempts.
+const MAX_RECONNECT_ATTEMPTS: u32 = 10;
+
+/// Exponential backoff (1,2,4,8,16,30,30,…s) between reconnect attempts.
+fn reconnect_delay(attempts: u32) -> Duration {
+    Duration::from_secs((1u64 << attempts.min(5)).min(30))
+}
 
 #[derive(Debug, Error)]
 pub enum SessionError {
@@ -23,6 +37,8 @@ pub enum SessionError {
     InvalidProfilePort,
     #[error("ssh probe failed: {0}")]
     Ssh(#[from] SshError),
+    #[error("session log failed: {0}")]
+    Logging(String),
 }
 
 #[derive(Debug, Clone)]
@@ -46,12 +62,50 @@ struct SessionRecord {
     summary: SessionSummary,
     terminal: VtTerminal,
     live: Option<LiveShellHandle>,
+    log: Option<SessionLog>,
+    pending_host_key: Option<HostKeyPrompt>,
+    reconnect: Option<ReconnectState>,
+}
+
+/// An open transcript log for a session: raw PTY output is appended here while
+/// logging is enabled.
+struct SessionLog {
+    path: PathBuf,
+    writer: BufWriter<fs::File>,
+}
+
+/// Auto-reconnect bookkeeping for a live SSH session.
+struct ReconnectState {
+    /// Credential to reuse when respawning (empty for key/agent auth).
+    password: String,
+    /// Consecutive failed attempts since the last successful connect.
+    attempts: u32,
+    /// When the next attempt is due (set after an unexpected drop).
+    retry_at: Option<Instant>,
+    /// The user disconnected or the shell exited; do not reconnect.
+    manual: bool,
+    /// Whether the session ever reached "connected" — only established sessions
+    /// auto-reconnect, so a bad password / unreachable host does not loop.
+    ever_connected: bool,
+}
+
+impl ReconnectState {
+    fn new(password: String) -> Self {
+        Self {
+            password,
+            attempts: 0,
+            retry_at: None,
+            manual: false,
+            ever_connected: false,
+        }
+    }
 }
 
 pub struct SessionManager {
     profiles: Vec<ConnectionProfile>,
     sessions: HashMap<SessionId, SessionRecord>,
     active_session: Option<SessionId>,
+    auto_reconnect: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,7 +145,17 @@ impl SessionManager {
             profiles,
             sessions: HashMap::new(),
             active_session: None,
+            auto_reconnect: true,
         }
+    }
+
+    #[must_use]
+    pub fn auto_reconnect(&self) -> bool {
+        self.auto_reconnect
+    }
+
+    pub fn set_auto_reconnect(&mut self, enabled: bool) {
+        self.auto_reconnect = enabled;
     }
 
     #[must_use]
@@ -106,6 +170,7 @@ impl SessionManager {
             .find(|profile| profile.id == profile_id)
     }
 
+    #[allow(clippy::too_many_arguments)] // mirrors the profile editor's field set
     pub fn create_profile(
         &mut self,
         group: impl Into<String>,
@@ -131,6 +196,7 @@ impl SessionManager {
         Ok(profile_id)
     }
 
+    #[allow(clippy::too_many_arguments)] // mirrors the profile editor's field set
     pub fn update_profile(
         &mut self,
         profile_id: ProfileId,
@@ -396,6 +462,9 @@ impl SessionManager {
                 summary,
                 terminal,
                 live: None,
+                log: None,
+                pending_host_key: None,
+                reconnect: None,
             },
         );
         self.active_session = Some(session_id);
@@ -412,19 +481,10 @@ impl SessionManager {
             .profiles
             .iter()
             .find(|profile| profile.id == profile_id)
-            .ok_or(SessionError::ProfileNotFound)?;
+            .ok_or(SessionError::ProfileNotFound)?
+            .clone();
 
-        let mut request = LiveShellRequest::new(
-            profile.host.clone(),
-            profile.port,
-            profile.username.clone(),
-            password,
-        );
-        request.auth = auth_options_for_profile(profile, &request.password);
-        request.cols = 96;
-        request.rows = 28;
-
-        let live = adit_ssh::spawn_password_shell(request)?;
+        let live = spawn_live_shell(&profile, &password)?;
         let session_id = SessionId::new();
         let endpoint = profile.endpoint();
         let mut terminal = live_shell_terminal(&profile.name, &endpoint);
@@ -443,6 +503,9 @@ impl SessionManager {
                 summary,
                 terminal,
                 live: Some(live),
+                log: None,
+                pending_host_key: None,
+                reconnect: Some(ReconnectState::new(password)),
             },
         );
         self.active_session = Some(session_id);
@@ -493,6 +556,9 @@ impl SessionManager {
                 summary,
                 terminal,
                 live: None,
+                log: None,
+                pending_host_key: None,
+                reconnect: None,
             },
         );
         self.active_session = Some(session_id);
@@ -529,10 +595,20 @@ impl SessionManager {
             .get_mut(&session_id)
             .ok_or(SessionError::SessionNotFound)?;
 
+        // Stop any auto-reconnect: this is a deliberate disconnect.
+        if let Some(reconnect) = &mut record.reconnect {
+            reconnect.manual = true;
+            reconnect.retry_at = None;
+        }
+
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::Disconnect)?;
             record.summary.status = SessionStatus::Disconnected;
             record.terminal.append_status("disconnect requested");
+        } else {
+            // Already dropped and possibly waiting to reconnect — cancel it.
+            record.summary.status = SessionStatus::Disconnected;
+            record.terminal.append_status("auto-reconnect cancelled");
         }
 
         Ok(())
@@ -607,8 +683,112 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Begin appending the active session's raw PTY output to a log file under
+    /// `dir`. Returns the log path. No-op (returns the existing path) if the
+    /// session is already logging.
+    pub fn start_active_logging(&mut self, dir: &Path) -> Result<PathBuf, SessionError> {
+        let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+
+        if let Some(log) = &record.log {
+            return Ok(log.path.clone());
+        }
+
+        fs::create_dir_all(dir).map_err(|error| SessionError::Logging(error.to_string()))?;
+        let path = dir.join(log_file_name(&record.summary.title, session_id));
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .map_err(|error| SessionError::Logging(error.to_string()))?;
+
+        let mut writer = BufWriter::new(file);
+        let header = format!(
+            "\n# adit session log\n# endpoint: {}\n\n",
+            record.summary.endpoint
+        );
+        writer
+            .write_all(header.as_bytes())
+            .and_then(|()| writer.flush())
+            .map_err(|error| SessionError::Logging(error.to_string()))?;
+
+        record.log = Some(SessionLog {
+            path: path.clone(),
+            writer,
+        });
+        record
+            .terminal
+            .append_status(format!("logging to {}", path.display()));
+
+        Ok(path)
+    }
+
+    /// Stop logging the active session, flushing the file. Returns its path.
+    pub fn stop_active_logging(&mut self) -> Option<PathBuf> {
+        let session_id = self.active_session?;
+        let record = self.sessions.get_mut(&session_id)?;
+        let mut log = record.log.take()?;
+        let _ = log.writer.flush();
+        record
+            .terminal
+            .append_status(format!("logging stopped: {}", log.path.display()));
+        Some(log.path)
+    }
+
+    #[must_use]
+    pub fn active_is_logging(&self) -> bool {
+        self.active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+            .is_some_and(|record| record.log.is_some())
+    }
+
+    #[must_use]
+    pub fn active_log_path(&self) -> Option<PathBuf> {
+        let session_id = self.active_session?;
+        self.sessions
+            .get(&session_id)?
+            .log
+            .as_ref()
+            .map(|log| log.path.clone())
+    }
+
+    /// The first session whose connect is paused awaiting a host-key decision.
+    #[must_use]
+    pub fn pending_host_key(&self) -> Option<(SessionId, HostKeyPrompt)> {
+        self.sessions
+            .iter()
+            .find_map(|(id, record)| record.pending_host_key.clone().map(|prompt| (*id, prompt)))
+    }
+
+    /// Answer a pending host-key prompt: accept records/replaces the key and lets
+    /// the handshake continue; reject aborts the connection.
+    pub fn respond_host_key(
+        &mut self,
+        session_id: SessionId,
+        accept: bool,
+    ) -> Result<(), SessionError> {
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+        record.pending_host_key = None;
+        if let Some(live) = &record.live {
+            live.send(LiveShellCommand::HostKeyDecision(accept))?;
+        }
+        record.terminal.append_status(if accept {
+            "host key trusted"
+        } else {
+            "host key rejected"
+        });
+        Ok(())
+    }
+
     pub fn poll_events(&mut self) -> usize {
         let mut handled = 0;
+        let auto_reconnect = self.auto_reconnect;
 
         for record in self.sessions.values_mut() {
             let mut closed = false;
@@ -619,15 +799,34 @@ impl SessionManager {
                 match event {
                     LiveShellEvent::Status(status) => {
                         record.terminal.append_status(&status);
-                        record.summary.status = match status.as_str() {
-                            "connected" => SessionStatus::Connected,
-                            "exit status 0" => SessionStatus::Disconnected,
-                            _ => SessionStatus::Connecting,
-                        };
+                        if status == "connected" {
+                            record.summary.status = SessionStatus::Connected;
+                            if let Some(reconnect) = &mut record.reconnect {
+                                reconnect.ever_connected = true;
+                                reconnect.attempts = 0;
+                                reconnect.retry_at = None;
+                            }
+                        } else if status.starts_with("exit status") {
+                            // Remote shell ended on purpose; do not reconnect.
+                            record.summary.status = SessionStatus::Disconnected;
+                            if let Some(reconnect) = &mut record.reconnect {
+                                reconnect.manual = true;
+                            }
+                        } else {
+                            record.summary.status = SessionStatus::Connecting;
+                        }
                     }
                     LiveShellEvent::Output(bytes) => {
                         record.terminal.feed(&bytes);
                         record.summary.status = SessionStatus::Connected;
+                        let mut log_failed = false;
+                        if let Some(log) = &mut record.log {
+                            log_failed = log.writer.write_all(&bytes).is_err();
+                        }
+                        if log_failed {
+                            record.log = None;
+                            record.terminal.append_status("session log write failed; logging off");
+                        }
                     }
                     LiveShellEvent::Error(error) => {
                         record.terminal.append_status(format!(
@@ -637,9 +836,43 @@ impl SessionManager {
                         record.summary.status = SessionStatus::Error;
                     }
                     LiveShellEvent::Closed => {
-                        record.terminal.append_status("disconnected");
-                        record.summary.status = status_after_closed(record.summary.status);
                         closed = true;
+                        let can_retry = auto_reconnect
+                            && record
+                                .reconnect
+                                .as_ref()
+                                .is_some_and(|rc| rc.ever_connected && !rc.manual);
+                        let attempts = record.reconnect.as_ref().map_or(0, |rc| rc.attempts);
+
+                        if can_retry && attempts < MAX_RECONNECT_ATTEMPTS {
+                            let delay = reconnect_delay(attempts);
+                            if let Some(reconnect) = &mut record.reconnect {
+                                reconnect.retry_at = Some(Instant::now() + delay);
+                            }
+                            record.summary.status = SessionStatus::Connecting;
+                            record.terminal.append_status(format!(
+                                "connection lost; reconnecting in {}s",
+                                delay.as_secs()
+                            ));
+                        } else {
+                            if can_retry {
+                                record.terminal.append_status(
+                                    "auto-reconnect gave up after repeated failures",
+                                );
+                            } else {
+                                record.terminal.append_status("disconnected");
+                            }
+                            record.summary.status = status_after_closed(record.summary.status);
+                        }
+                    }
+                    LiveShellEvent::HostKeyPrompt(prompt) => {
+                        record.summary.status = SessionStatus::Connecting;
+                        record.terminal.append_status(if prompt.previous_fingerprint.is_some() {
+                            "host key CHANGED — awaiting confirmation"
+                        } else {
+                            "unknown host key — awaiting confirmation"
+                        });
+                        record.pending_host_key = Some(prompt);
                     }
                 }
             }
@@ -655,12 +888,97 @@ impl SessionManager {
                 }
             }
 
+            // Keep the on-disk log current within a tick.
+            if let Some(log) = &mut record.log {
+                let _ = log.writer.flush();
+            }
+
             if closed {
                 record.live = None;
             }
         }
 
+        self.drive_reconnects();
         handled
+    }
+
+    /// Respawn any dropped session whose backoff timer has elapsed.
+    fn drive_reconnects(&mut self) {
+        let now = Instant::now();
+        let due: Vec<SessionId> = self
+            .sessions
+            .iter()
+            .filter(|(_, record)| record.live.is_none())
+            .filter(|(_, record)| {
+                record
+                    .reconnect
+                    .as_ref()
+                    .and_then(|rc| rc.retry_at)
+                    .is_some_and(|at| at <= now)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+
+        for session_id in due {
+            self.attempt_reconnect(session_id);
+        }
+    }
+
+    fn attempt_reconnect(&mut self, session_id: SessionId) {
+        let Some(record) = self.sessions.get(&session_id) else {
+            return;
+        };
+        let profile_id = record.summary.profile_id;
+        let password = record
+            .reconnect
+            .as_ref()
+            .map_or_else(String::new, |rc| rc.password.clone());
+        let attempt_no = record.reconnect.as_ref().map_or(1, |rc| rc.attempts + 1);
+
+        let Some(profile) = self.profiles.iter().find(|p| p.id == profile_id).cloned() else {
+            if let Some(record) = self.sessions.get_mut(&session_id) {
+                record
+                    .terminal
+                    .append_status("reconnect aborted: profile no longer exists");
+                record.summary.status = SessionStatus::Error;
+                if let Some(reconnect) = &mut record.reconnect {
+                    reconnect.retry_at = None;
+                }
+            }
+            return;
+        };
+
+        match spawn_live_shell(&profile, &password) {
+            Ok(live) => {
+                if let Some(record) = self.sessions.get_mut(&session_id) {
+                    record
+                        .terminal
+                        .append_status(format!("reconnecting (attempt {attempt_no})…"));
+                    record.live = Some(live);
+                    record.summary.status = SessionStatus::Connecting;
+                    if let Some(reconnect) = &mut record.reconnect {
+                        reconnect.attempts = attempt_no;
+                        reconnect.retry_at = None;
+                    }
+                }
+            }
+            Err(error) => {
+                if let Some(record) = self.sessions.get_mut(&session_id) {
+                    if let Some(reconnect) = &mut record.reconnect {
+                        reconnect.attempts = attempt_no;
+                        if attempt_no >= MAX_RECONNECT_ATTEMPTS {
+                            reconnect.retry_at = None;
+                            record.summary.status = SessionStatus::Error;
+                            record
+                                .terminal
+                                .append_status(format!("reconnect failed: {error}"));
+                        } else {
+                            reconnect.retry_at = Some(Instant::now() + reconnect_delay(attempt_no));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[must_use]
@@ -731,6 +1049,24 @@ fn build_profile(
     Ok(profile)
 }
 
+/// Spawn a live SSH shell actor for `profile`, reusing `password` for password
+/// auth. Shared by the initial connect and auto-reconnect.
+fn spawn_live_shell(
+    profile: &ConnectionProfile,
+    password: &str,
+) -> Result<LiveShellHandle, SessionError> {
+    let mut request = LiveShellRequest::new(
+        profile.host.clone(),
+        profile.port,
+        profile.username.clone(),
+        password.to_string(),
+    );
+    request.auth = auth_options_for_profile(profile, password);
+    request.cols = 96;
+    request.rows = 28;
+    Ok(adit_ssh::spawn_password_shell(request)?)
+}
+
 fn auth_options_for_profile(profile: &ConnectionProfile, password: &str) -> AuthOptions {
     let identity_file = (!profile.identity_file.trim().is_empty())
         .then(|| std::path::PathBuf::from(profile.identity_file.trim()));
@@ -773,7 +1109,27 @@ fn normalize_group(group: impl Into<String>) -> String {
     }
 }
 
-fn normalize_profile_sort_orders(profiles: &mut Vec<ConnectionProfile>) {
+/// Build a filesystem-safe log file name from a session title and id, e.g.
+/// `prod-web-01_a1b2c3d4.log`.
+fn log_file_name(title: &str, session_id: SessionId) -> String {
+    let safe: String = title
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let safe = safe.trim_matches('_');
+    let stem = if safe.is_empty() { "session" } else { safe };
+    let id = session_id.to_string();
+    let short = &id[..id.len().min(8)];
+    format!("{stem}_{short}.log")
+}
+
+fn normalize_profile_sort_orders(profiles: &mut [ConnectionProfile]) {
     profiles.sort_by(compare_profiles);
     renumber_profile_sort_orders(profiles);
 }
@@ -878,6 +1234,56 @@ fn probe_terminal(profile_name: &str, endpoint: &str, transcript: &str) -> VtTer
 mod tests {
     use super::*;
     use adit_terminal::Color as TermColor;
+
+    #[test]
+    fn reconnect_backoff_is_exponential_and_capped() {
+        assert_eq!(reconnect_delay(0), Duration::from_secs(1));
+        assert_eq!(reconnect_delay(1), Duration::from_secs(2));
+        assert_eq!(reconnect_delay(2), Duration::from_secs(4));
+        assert_eq!(reconnect_delay(3), Duration::from_secs(8));
+        assert_eq!(reconnect_delay(4), Duration::from_secs(16));
+        assert_eq!(reconnect_delay(5), Duration::from_secs(30));
+        assert_eq!(reconnect_delay(20), Duration::from_secs(30));
+    }
+
+    #[test]
+    fn log_file_name_sanitizes_title() {
+        let id = SessionId::new();
+        let name = log_file_name("prod/web 01", id);
+        assert!(name.starts_with("prod_web_01_"), "got {name}");
+        assert!(name.ends_with(".log"));
+
+        let blank = log_file_name("///", id);
+        assert!(blank.starts_with("session_"), "got {blank}");
+    }
+
+    #[test]
+    fn session_logging_lifecycle_writes_file() {
+        let dir = std::env::temp_dir().join(format!("adit-log-test-{}", SessionId::new()));
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        manager
+            .open_mock_session(profile_id)
+            .expect("mock session should open");
+
+        assert!(!manager.active_is_logging());
+        let path = manager
+            .start_active_logging(&dir)
+            .expect("logging should start");
+        assert!(manager.active_is_logging());
+        assert_eq!(manager.active_log_path().as_deref(), Some(path.as_path()));
+        assert!(path.exists());
+
+        let content = std::fs::read_to_string(&path).expect("log should be readable");
+        assert!(content.contains("adit session log"));
+
+        let stopped = manager.stop_active_logging();
+        assert_eq!(stopped.as_deref(), Some(path.as_path()));
+        assert!(!manager.active_is_logging());
+
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
 
     #[test]
     fn mock_session_renders_colored_banner() {

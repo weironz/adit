@@ -20,6 +20,7 @@ use std::{
 };
 use thiserror::Error;
 use tokio::sync::mpsc as tokio_mpsc;
+use tokio::sync::oneshot;
 
 #[derive(Debug, Clone)]
 pub struct PasswordShellProbe {
@@ -66,6 +67,9 @@ pub struct LiveShellRequest {
     pub known_hosts_path: PathBuf,
     pub cols: u16,
     pub rows: u16,
+    /// SSH keepalive interval in seconds (0 disables). Keeps idle sessions alive
+    /// through NAT/firewall timeouts and detects dead connections.
+    pub keepalive_secs: u64,
 }
 
 impl LiveShellRequest {
@@ -85,6 +89,7 @@ impl LiveShellRequest {
             known_hosts_path: default_known_hosts_path(),
             cols: 96,
             rows: 28,
+            keepalive_secs: 30,
         }
     }
 }
@@ -118,6 +123,8 @@ pub enum LiveShellCommand {
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
     Disconnect,
+    /// User's answer to a pending [`LiveShellEvent::HostKeyPrompt`].
+    HostKeyDecision(bool),
 }
 
 #[derive(Debug, Clone)]
@@ -126,6 +133,21 @@ pub enum LiveShellEvent {
     Output(Vec<u8>),
     Error(String),
     Closed,
+    /// The handshake is paused awaiting the user's decision about the server's
+    /// host key. Answer with [`LiveShellCommand::HostKeyDecision`].
+    HostKeyPrompt(HostKeyPrompt),
+}
+
+/// A server host key awaiting the user's trust decision during connect.
+#[derive(Debug, Clone)]
+pub struct HostKeyPrompt {
+    pub host: String,
+    pub port: u16,
+    pub key_type: String,
+    pub fingerprint: String,
+    /// `Some` when the key differs from a previously stored one (a potential
+    /// man-in-the-middle); `None` for a first-time unknown host.
+    pub previous_fingerprint: Option<String>,
 }
 
 pub struct LiveShellHandle {
@@ -167,6 +189,8 @@ pub enum SshError {
         actual: String,
         known_hosts_path: String,
     },
+    #[error("host key was rejected by the user")]
+    HostKeyRejected,
     #[error("known hosts storage failed: {0}")]
     KnownHosts(String),
     #[error("no authentication method is available; enter a password or add a default SSH key under ~/.ssh")]
@@ -243,6 +267,7 @@ pub async fn probe_password_shell(
         request.host.clone(),
         request.port,
         request.known_hosts_path.clone(),
+        None,
         None,
     );
     let mut session =
@@ -344,17 +369,52 @@ async fn run_live_password_shell(
     let _ = events.send(LiveShellEvent::Status(String::from("connecting")));
 
     let config = Arc::new(client::Config {
-        inactivity_timeout: Some(Duration::from_secs(20)),
+        // No idle drop; liveness comes from keepalive instead. With a keepalive
+        // every `keepalive_secs`, the connection is torn down only after
+        // `keepalive_max` unanswered probes (i.e. a genuinely dead link).
+        inactivity_timeout: None,
+        keepalive_interval: (request.keepalive_secs > 0)
+            .then(|| Duration::from_secs(request.keepalive_secs)),
+        keepalive_max: 3,
         ..Default::default()
     });
+    // The host-key check may pause to ask the user. Drive `connect` while
+    // concurrently forwarding the user's HostKeyDecision (and an early
+    // Disconnect) into the handler's one-shot decision channel.
+    let (decision_tx, decision_rx) = oneshot::channel::<bool>();
     let handler = KnownHostsClient::new(
         request.host.clone(),
         request.port,
         request.known_hosts_path.clone(),
         Some(events.clone()),
+        Some(decision_rx),
     );
-    let mut session =
-        client::connect(config, (request.host.as_str(), request.port), handler).await?;
+
+    let connect = client::connect(config, (request.host.as_str(), request.port), handler);
+    tokio::pin!(connect);
+    let mut decision_tx = Some(decision_tx);
+    let mut session = loop {
+        tokio::select! {
+            result = &mut connect => break result?,
+            command = commands.recv() => match command {
+                Some(LiveShellCommand::HostKeyDecision(accept)) => {
+                    if let Some(tx) = decision_tx.take() {
+                        let _ = tx.send(accept);
+                    }
+                }
+                Some(LiveShellCommand::Disconnect) | None => {
+                    // Cancelled before the session opened: reject any pending
+                    // host-key prompt so `connect` unwinds, then stop.
+                    if let Some(tx) = decision_tx.take() {
+                        let _ = tx.send(false);
+                    }
+                    return Ok(());
+                }
+                // Input/resize before the shell exists are dropped.
+                Some(_) => {}
+            },
+        }
+    };
 
     let _ = events.send(LiveShellEvent::Status(String::from("authenticating")));
     authenticate_with_available_methods(
@@ -400,6 +460,8 @@ async fn run_live_password_shell(
                 LiveShellCommand::Disconnect => {
                     should_close = true;
                 }
+                // Only meaningful during the handshake; ignore once connected.
+                LiveShellCommand::HostKeyDecision(_) => {}
             }
         }
 
@@ -790,6 +852,10 @@ struct KnownHostsClient {
     port: u16,
     known_hosts_path: PathBuf,
     events: Option<mpsc::Sender<LiveShellEvent>>,
+    /// Present for interactive (UI) connections so an unknown/changed key can be
+    /// confirmed by the user; absent for the one-shot probe, which keeps
+    /// non-interactive trust-on-first-use.
+    decision: Option<oneshot::Receiver<bool>>,
 }
 
 impl KnownHostsClient {
@@ -798,12 +864,31 @@ impl KnownHostsClient {
         port: u16,
         known_hosts_path: PathBuf,
         events: Option<mpsc::Sender<LiveShellEvent>>,
+        decision: Option<oneshot::Receiver<bool>>,
     ) -> Self {
         Self {
             host,
             port,
             known_hosts_path,
             events,
+            decision,
+        }
+    }
+
+    fn emit_prompt(
+        &self,
+        key: &russh::keys::ssh_key::PublicKey,
+        fingerprint: &str,
+        previous_fingerprint: Option<String>,
+    ) {
+        if let Some(events) = &self.events {
+            let _ = events.send(LiveShellEvent::HostKeyPrompt(HostKeyPrompt {
+                host: self.host.clone(),
+                port: self.port,
+                key_type: key.algorithm().to_string(),
+                fingerprint: fingerprint.to_string(),
+                previous_fingerprint,
+            }));
         }
     }
 }
@@ -815,50 +900,87 @@ impl client::Handler for KnownHostsClient {
         &mut self,
         server_public_key: &russh::keys::ssh_key::PublicKey,
     ) -> Result<bool, Self::Error> {
-        match verify_known_host(
+        let host_spec = known_host_spec(&self.host, self.port);
+        match host_key_status(
             &self.host,
             self.port,
             &self.known_hosts_path,
             server_public_key,
         )? {
-            KnownHostCheck::Trusted { fingerprint } => {
+            HostKeyStatus::Trusted { fingerprint } => {
                 send_status(
                     self.events.as_ref(),
                     format!("host key verified: {fingerprint}"),
                 );
+                Ok(true)
             }
-            KnownHostCheck::Recorded {
-                host_spec,
+            HostKeyStatus::Unknown { fingerprint } => {
+                let Some(decision) = self.decision.take() else {
+                    // Non-interactive probe: keep trust-on-first-use.
+                    append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
+                    return Ok(true);
+                };
+                self.emit_prompt(server_public_key, &fingerprint, None);
+                if decision.await.unwrap_or(false) {
+                    append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
+                    send_status(
+                        self.events.as_ref(),
+                        format!("recorded new host key for {host_spec}: {fingerprint}"),
+                    );
+                    Ok(true)
+                } else {
+                    Err(SshError::HostKeyRejected)
+                }
+            }
+            HostKeyStatus::Changed {
                 fingerprint,
+                previous,
             } => {
-                send_status(
-                    self.events.as_ref(),
-                    format!("recorded new host key for {host_spec}: {fingerprint}"),
-                );
+                let Some(decision) = self.decision.take() else {
+                    return Err(SshError::HostKeyChanged {
+                        host: host_spec,
+                        expected: previous.join(", "),
+                        actual: fingerprint,
+                        known_hosts_path: self.known_hosts_path.display().to_string(),
+                    });
+                };
+                self.emit_prompt(server_public_key, &fingerprint, Some(previous.join(", ")));
+                if decision.await.unwrap_or(false) {
+                    replace_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
+                    send_status(
+                        self.events.as_ref(),
+                        format!("updated host key for {host_spec}: {fingerprint}"),
+                    );
+                    Ok(true)
+                } else {
+                    Err(SshError::HostKeyRejected)
+                }
             }
         }
-
-        Ok(true)
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-enum KnownHostCheck {
+enum HostKeyStatus {
     Trusted {
         fingerprint: String,
     },
-    Recorded {
-        host_spec: String,
+    Unknown {
         fingerprint: String,
+    },
+    Changed {
+        fingerprint: String,
+        previous: Vec<String>,
     },
 }
 
-fn verify_known_host(
+/// Classify a server key against `known_hosts` without modifying the file.
+fn host_key_status(
     host: &str,
     port: u16,
     known_hosts_path: &Path,
     server_public_key: &russh::keys::ssh_key::PublicKey,
-) -> Result<KnownHostCheck, SshError> {
+) -> Result<HostKeyStatus, SshError> {
     let host_spec = known_host_spec(host, port);
     let actual = host_key_fingerprint(server_public_key);
 
@@ -868,41 +990,29 @@ fn verify_known_host(
         Err(error) => return Err(SshError::KnownHosts(error.to_string())),
     };
 
-    let mut expected = Vec::new();
+    let mut previous = Vec::new();
     for line in content.lines() {
         let Some((hosts, public_key)) = parse_known_host_line(line) else {
             continue;
         };
-
         if !known_host_matches(&hosts, &host_spec) {
             continue;
         }
-
         let fingerprint = host_key_fingerprint(&public_key);
         if fingerprint == actual {
-            return Ok(KnownHostCheck::Trusted {
-                fingerprint: actual,
-            });
+            return Ok(HostKeyStatus::Trusted { fingerprint: actual });
         }
-
-        expected.push(fingerprint);
+        previous.push(fingerprint);
     }
 
-    if !expected.is_empty() {
-        return Err(SshError::HostKeyChanged {
-            host: host_spec,
-            expected: expected.join(", "),
-            actual,
-            known_hosts_path: known_hosts_path.display().to_string(),
-        });
+    if previous.is_empty() {
+        Ok(HostKeyStatus::Unknown { fingerprint: actual })
+    } else {
+        Ok(HostKeyStatus::Changed {
+            fingerprint: actual,
+            previous,
+        })
     }
-
-    append_known_host(known_hosts_path, &host_spec, server_public_key)?;
-
-    Ok(KnownHostCheck::Recorded {
-        host_spec,
-        fingerprint: actual,
-    })
 }
 
 fn append_known_host(
@@ -926,6 +1036,40 @@ fn append_known_host(
 
     writeln!(file, "{host_spec} {encoded_key}")
         .map_err(|error| SshError::KnownHosts(error.to_string()))
+}
+
+/// Replace every stored key for `host_spec` with `public_key` (used when the
+/// user accepts a changed host key).
+fn replace_known_host(
+    known_hosts_path: &Path,
+    host_spec: &str,
+    public_key: &russh::keys::ssh_key::PublicKey,
+) -> Result<(), SshError> {
+    let content = match fs::read_to_string(known_hosts_path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => return Err(SshError::KnownHosts(error.to_string())),
+    };
+
+    let mut kept = String::new();
+    for line in content.lines() {
+        let drop_line = parse_known_host_line(line)
+            .is_some_and(|(hosts, _)| known_host_matches(&hosts, host_spec));
+        if !drop_line {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+
+    let encoded_key = public_key
+        .to_openssh()
+        .map_err(|error| SshError::KnownHosts(error.to_string()))?;
+    kept.push_str(&format!("{host_spec} {encoded_key}\n"));
+
+    if let Some(parent) = known_hosts_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| SshError::KnownHosts(error.to_string()))?;
+    }
+    fs::write(known_hosts_path, kept).map_err(|error| SshError::KnownHosts(error.to_string()))
 }
 
 fn parse_known_host_line(line: &str) -> Option<(String, russh::keys::ssh_key::PublicKey)> {
@@ -998,7 +1142,15 @@ fn platform_config_dir() -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use russh::client::Handler as _;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn current_thread_rt() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+    }
 
     const ED25519_KEY: &str =
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAILM+rvN+ot98qgEN796jTiQfZfG1KaT0PtFDJ/XFSqti";
@@ -1006,20 +1158,17 @@ mod tests {
         "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBHwf2HMM5TRXvo2SQJjsNkiDD5KqiiNjrGVv3UUh+mMT5RHxiRtOnlqvjhQtBq0VpmpCV/PwUdhOig4vkbqAcEc=";
 
     #[test]
-    fn unknown_host_is_recorded_and_then_trusted() {
+    fn unknown_host_recorded_then_trusted() {
         let path = temp_known_hosts_path("record");
         let key = public_key(ED25519_KEY);
 
-        let first = verify_known_host("192.168.1.20", 22, &path, &key)
-            .expect("unknown host should be recorded");
-        assert!(matches!(
-            first,
-            KnownHostCheck::Recorded { ref host_spec, .. } if host_spec == "192.168.1.20"
-        ));
+        let first = host_key_status("192.168.1.20", 22, &path, &key).expect("status");
+        assert!(matches!(first, HostKeyStatus::Unknown { .. }));
 
-        let second = verify_known_host("192.168.1.20", 22, &path, &key)
-            .expect("known host should be trusted");
-        assert!(matches!(second, KnownHostCheck::Trusted { .. }));
+        append_known_host(&path, &known_host_spec("192.168.1.20", 22), &key).expect("record");
+
+        let second = host_key_status("192.168.1.20", 22, &path, &key).expect("status");
+        assert!(matches!(second, HostKeyStatus::Trusted { .. }));
 
         let content = fs::read_to_string(&path).expect("known_hosts should exist");
         assert!(content.contains("192.168.1.20 ssh-ed25519"));
@@ -1032,41 +1181,107 @@ mod tests {
         let path = temp_known_hosts_path("port");
         let key = public_key(ED25519_KEY);
 
-        let decision = verify_known_host("example.com", 2222, &path, &key)
-            .expect("unknown non-default port should be recorded");
-
         assert!(matches!(
-            decision,
-            KnownHostCheck::Recorded { ref host_spec, .. } if host_spec == "[example.com]:2222"
+            host_key_status("example.com", 2222, &path, &key).expect("status"),
+            HostKeyStatus::Unknown { .. }
         ));
+
+        let spec = known_host_spec("example.com", 2222);
+        assert_eq!(spec, "[example.com]:2222");
+        append_known_host(&path, &spec, &key).expect("record");
+        let content = fs::read_to_string(&path).expect("known_hosts");
+        assert!(content.contains("[example.com]:2222 ssh-ed25519"));
 
         let _ = fs::remove_file(path);
     }
 
     #[test]
-    fn changed_host_key_is_rejected() {
+    fn changed_host_key_is_detected_and_replaceable() {
         let path = temp_known_hosts_path("changed");
         let original = public_key(ED25519_KEY);
         let changed = public_key(ECDSA_KEY);
+        let spec = known_host_spec("node5", 22);
 
-        verify_known_host("node5", 22, &path, &original).expect("initial key should be recorded");
-        let error = verify_known_host("node5", 22, &path, &changed)
-            .expect_err("changed key should be rejected");
+        append_known_host(&path, &spec, &original).expect("record original");
 
-        match error {
-            SshError::HostKeyChanged {
-                host,
-                expected,
-                actual,
-                ..
+        match host_key_status("node5", 22, &path, &changed).expect("status") {
+            HostKeyStatus::Changed {
+                fingerprint,
+                previous,
             } => {
-                assert_eq!(host, "node5");
-                assert!(expected.starts_with("SHA256:"));
-                assert!(actual.starts_with("SHA256:"));
-                assert_ne!(expected, actual);
+                assert!(fingerprint.starts_with("SHA256:"));
+                assert_eq!(previous.len(), 1);
+                assert!(previous[0].starts_with("SHA256:"));
+                assert_ne!(previous[0], fingerprint);
             }
-            other => panic!("expected HostKeyChanged, got {other:?}"),
+            other => panic!("expected Changed, got {other:?}"),
         }
+
+        // Accepting the change replaces the stored key; it then verifies trusted
+        // and the old entry is gone.
+        replace_known_host(&path, &spec, &changed).expect("replace");
+        assert!(matches!(
+            host_key_status("node5", 22, &path, &changed).expect("status"),
+            HostKeyStatus::Trusted { .. }
+        ));
+        let content = fs::read_to_string(&path).expect("known_hosts");
+        assert_eq!(content.matches("node5").count(), 1, "old key should be gone");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn interactive_unknown_host_prompts_then_records_on_accept() {
+        let path = temp_known_hosts_path("interactive-accept");
+        let key = public_key(ED25519_KEY);
+        let (events_tx, events_rx) = mpsc::channel();
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "node-x".into(),
+            22,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
+        );
+
+        decision_tx.send(true).expect("send decision");
+        let trusted = current_thread_rt()
+            .block_on(handler.check_server_key(&key))
+            .expect("accept should yield Ok");
+        assert!(trusted);
+
+        let event = events_rx.try_recv().expect("a prompt event");
+        assert!(matches!(
+            event,
+            LiveShellEvent::HostKeyPrompt(prompt) if prompt.previous_fingerprint.is_none()
+        ));
+        assert!(fs::read_to_string(&path)
+            .expect("known_hosts")
+            .contains("node-x ssh-ed25519"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn interactive_unknown_host_aborts_on_reject() {
+        let path = temp_known_hosts_path("interactive-reject");
+        let key = public_key(ED25519_KEY);
+        let (events_tx, _events_rx) = mpsc::channel();
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "node-y".into(),
+            22,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
+        );
+
+        decision_tx.send(false).expect("send decision");
+        let error = current_thread_rt()
+            .block_on(handler.check_server_key(&key))
+            .expect_err("reject should abort");
+        assert!(matches!(error, SshError::HostKeyRejected));
+        assert!(!path.exists(), "rejected key must not be recorded");
 
         let _ = fs::remove_file(path);
     }

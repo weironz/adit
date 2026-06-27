@@ -16,7 +16,7 @@ Implementation status:
 - `adit-terminal` now hosts a real ANSI/VT core (`VtTerminal`) driven by the `vte` parser, and it backs every session in `adit-session`; the old line-buffer `MockTerminal` is gone. The UI renders coalesced colored cell runs and a block cursor.
 - Raw keyboard routing is wired through iced subscriptions for ignored key events, covering regular text, common navigation keys, function keys, Alt-prefix text, and Ctrl-A through Ctrl-Z.
 
-This document defines the target architecture for moving Adit from the current Tauri + xterm.js MVP to a mostly pure Rust desktop SSH terminal client. It also tracks the current native prototype so implementation does not drift from the target shape.
+This document defines the target architecture for Adit as a mostly pure Rust desktop SSH terminal client. It also tracks the current native implementation so it does not drift from the target shape. The original Tauri + xterm.js MVP that Adit started from has been removed now that the native client supersedes it; it remains in git history as a behavior reference.
 
 ## Decision
 
@@ -29,7 +29,7 @@ Adit will use the following target stack:
 - Storage: local profile/config files through Rust filesystem APIs
 - Secrets: OS credential vaults through a Rust abstraction
 
-The current Tauri MVP remains useful as a behavior reference until the native Rust client can connect, render, and manage tabs reliably.
+The native Rust client is now the sole product; it connects, renders, and manages tabs reliably, so the earlier Tauri MVP has been retired.
 
 ## Goals
 
@@ -245,7 +245,7 @@ adit/
     native-rust-architecture.md
 ```
 
-The existing Tauri project can stay in place during migration, but the native workspace should become the primary build once the first native terminal tab is usable.
+The native workspace is now the only build. The original Tauri project has been removed from the tree (recoverable from git history).
 
 ## Security Baseline
 
@@ -279,7 +279,7 @@ If iced's high-level drawing APIs are too slow for terminal text, implement a lo
 - Add root Rust workspace.
 - Create `adit-app`, `adit-ui`, `adit-domain`, and `adit-session`.
 - Render the main window, sidebar, tabs, and a mock terminal buffer in iced.
-- Keep the current Tauri app untouched as reference.
+- (The original Tauri app was kept as reference during early migration and has since been removed.)
 
 Exit criteria:
 

@@ -165,6 +165,99 @@ impl Default for CredentialStore {
     }
 }
 
+/// Persisted application/UI preferences: anything that should survive a restart
+/// but is not a connection profile or a secret.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AppSettings {
+    pub dark_mode: bool,
+    #[serde(default)]
+    pub collapsed_groups: Vec<String>,
+    pub window_width: f32,
+    pub window_height: f32,
+    #[serde(default = "default_auto_reconnect")]
+    pub auto_reconnect: bool,
+}
+
+fn default_auto_reconnect() -> bool {
+    true
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            dark_mode: false,
+            collapsed_groups: Vec::new(),
+            window_width: 1360.0,
+            window_height: 860.0,
+            auto_reconnect: true,
+        }
+    }
+}
+
+/// JSON-backed store for [`AppSettings`], saved next to the profile store.
+#[derive(Debug, Clone)]
+pub struct SettingsStore {
+    path: PathBuf,
+}
+
+impl SettingsStore {
+    #[must_use]
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+
+    #[must_use]
+    pub fn default_path() -> PathBuf {
+        platform_config_dir().join("settings.json")
+    }
+
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn load(&self) -> Result<AppSettings, StorageError> {
+        if !self.path.exists() {
+            return Ok(AppSettings::default());
+        }
+
+        let content = fs::read_to_string(&self.path)?;
+        if content.trim().is_empty() {
+            return Ok(AppSettings::default());
+        }
+
+        let document: StoredSettings = serde_json::from_str(&content)?;
+        Ok(document.settings)
+    }
+
+    pub fn save(&self, settings: &AppSettings) -> Result<(), StorageError> {
+        if let Some(parent) = self.path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        let document = StoredSettings {
+            version: 1,
+            settings: settings.clone(),
+        };
+        let content = serde_json::to_string_pretty(&document)?;
+        fs::write(&self.path, content)?;
+
+        Ok(())
+    }
+}
+
+impl Default for SettingsStore {
+    fn default() -> Self {
+        Self::new(Self::default_path())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct StoredSettings {
+    version: u16,
+    settings: AppSettings,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredProfiles {
     version: u16,
@@ -199,6 +292,12 @@ fn normalize_groups(groups: Vec<String>, profiles: &[ConnectionProfile]) -> Vec<
 
 fn normalize_group_name(group: impl AsRef<str>) -> String {
     group.as_ref().trim().to_string()
+}
+
+/// Default directory for session output (transcript) logs.
+#[must_use]
+pub fn default_log_dir() -> PathBuf {
+    platform_config_dir().join("logs")
 }
 
 fn platform_config_dir() -> PathBuf {
@@ -293,6 +392,35 @@ mod tests {
         );
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].group, "Lab");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_and_loads_settings() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let path = env::temp_dir()
+            .join(format!("adit-settings-test-{unique}"))
+            .join("settings.json");
+        let store = SettingsStore::new(&path);
+
+        // Missing file falls back to defaults.
+        assert_eq!(store.load().expect("default load"), AppSettings::default());
+
+        let settings = AppSettings {
+            dark_mode: true,
+            collapsed_groups: vec![String::from("Lab"), String::from("Prod")],
+            window_width: 1500.0,
+            window_height: 900.0,
+            auto_reconnect: false,
+        };
+        store.save(&settings).expect("settings should save");
+        let loaded = store.load().expect("settings should load");
+
+        assert_eq!(loaded, settings);
 
         let _ = fs::remove_file(path);
     }

@@ -1,8 +1,9 @@
 use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus};
 use adit_session::{
-    ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager, SessionSummary,
+    HostKeyPromptInfo, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager,
+    SessionSummary,
 };
-use adit_storage::{CredentialStore, ProfileCatalog, ProfileStore};
+use adit_storage::{AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore};
 use adit_terminal::{Color as TermColor, TerminalLine, TerminalSize, TerminalSnapshot, Viewport};
 use iced::font::Weight;
 use iced::keyboard::{self, key::Named, Key};
@@ -12,8 +13,18 @@ use iced::widget::{
 };
 use iced::{
     clipboard, event, mouse, window, Alignment, Background, Border, Color, Element, Fill, Font,
-    Length, Point, Subscription, Task, Theme,
+    Length, Point, Shadow, Subscription, Task, Theme, Vector,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether the UI is currently painting in dark mode. Set once per frame at the
+/// top of `view` so the palette token fns can resolve light/dark without every
+/// `.style` closure having to thread the theme through.
+static DARK_MODE: AtomicBool = AtomicBool::new(false);
+
+fn is_dark() -> bool {
+    DARK_MODE.load(Ordering::Relaxed)
+}
 use std::{collections::BTreeSet, time::Duration};
 
 pub struct AditApp {
@@ -54,6 +65,11 @@ pub struct AditApp {
     terminal_scroll_offset: usize,
     window_width: f32,
     window_height: f32,
+    dark_mode: bool,
+    settings_store: SettingsStore,
+    /// The last settings snapshot written to disk; the Tick loop persists when
+    /// the live config drifts from this.
+    persisted_settings: AppSettings,
     last_error: Option<String>,
     notice: String,
 }
@@ -85,6 +101,7 @@ pub enum MenuCommand {
     ResizeWide,
     Sftp,
     Logging,
+    ToggleAutoReconnect,
     About,
 }
 
@@ -92,6 +109,7 @@ pub enum MenuCommand {
 pub enum Message {
     Tick,
     ToggleMenu(MenuKind),
+    ToggleTheme,
     RunMenu(MenuCommand),
     SelectProfile(ProfileId),
     ProfilePressed(ProfileId),
@@ -122,6 +140,7 @@ pub enum Message {
     RememberConnectionPasswordChanged(bool),
     ConfirmConnection,
     CancelConnection,
+    RespondHostKey { session_id: SessionId, accept: bool },
     ToggleProfileGroup(String),
     ProfileGroupChanged(String),
     ProfileNameChanged(String),
@@ -199,13 +218,13 @@ enum TerminalScrollAction {
 const TERMINAL_CHAR_WIDTH: f32 = 7.8;
 const TERMINAL_ROW_HEIGHT: f32 = 17.0;
 const SIDEBAR_WIDTH: f32 = 348.0;
-const MENU_BAR_HEIGHT: f32 = 24.0;
-const MENU_PANEL_HEIGHT: f32 = 154.0;
-const TOOLBAR_HEIGHT: f32 = 30.0;
+const MENU_BAR_HEIGHT: f32 = 28.0;
+const TOOLBAR_HEIGHT: f32 = 36.0;
 const WORKSPACE_PADDING_X: f32 = 0.0;
 const WORKSPACE_PADDING_TOP: f32 = 0.0;
-const TAB_BAR_HEIGHT: f32 = 30.0;
-const TERMINAL_PANEL_PADDING: f32 = 6.0;
+const TAB_BAR_HEIGHT: f32 = 34.0;
+const STATUS_BAR_HEIGHT: f32 = 28.0;
+const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 const TERMINAL_CONTEXT_MENU_AND_GAP: f32 = 34.0;
 const PROFILE_ROW_HEIGHT: f32 = 22.0;
@@ -275,8 +294,30 @@ impl AditApp {
         load_error: Option<String>,
     ) -> Self {
         let selected_profile = manager.profiles().first().map(|profile| profile.id);
-        let window_width = 1360.0;
-        let window_height = 860.0;
+
+        // Restore persisted preferences (theme, folded groups, window size,
+        // auto-reconnect).
+        let settings_store = SettingsStore::default();
+        let settings = settings_store.load().unwrap_or_default();
+        let dark_mode = settings.dark_mode;
+        let window_width = settings.window_width;
+        let window_height = settings.window_height;
+        let auto_reconnect = settings.auto_reconnect;
+        let collapsed_groups: BTreeSet<String> = settings.collapsed_groups.into_iter().collect();
+
+        let mut manager = manager;
+        manager.set_auto_reconnect(auto_reconnect);
+
+        // Mirror the in-memory shape (sorted set) so the Tick loop does not
+        // immediately rewrite an identical file on startup.
+        let persisted_settings = AppSettings {
+            dark_mode,
+            collapsed_groups: collapsed_groups.iter().cloned().collect(),
+            window_width,
+            window_height,
+            auto_reconnect,
+        };
+
         let mut app = Self {
             manager,
             profile_store,
@@ -293,7 +334,7 @@ impl AditApp {
             profile_editor: None,
             connection_dialog: None,
             groups,
-            collapsed_groups: BTreeSet::new(),
+            collapsed_groups,
             active_menu: None,
             profile_group: String::new(),
             profile_name: String::new(),
@@ -307,7 +348,7 @@ impl AditApp {
             session_filter: String::new(),
             terminal_input: String::new(),
             terminal_focused: false,
-            terminal_size: estimated_terminal_size(window_width, window_height, false),
+            terminal_size: estimated_terminal_size(window_width, window_height),
             terminal_pointer: None,
             terminal_selection: None,
             terminal_selecting: false,
@@ -315,6 +356,9 @@ impl AditApp {
             terminal_scroll_offset: 0,
             window_width,
             window_height,
+            dark_mode,
+            settings_store,
+            persisted_settings,
             last_error: load_error,
             notice: load_notice,
         };
@@ -324,21 +368,40 @@ impl AditApp {
 }
 
 pub fn run() -> iced::Result {
+    // Restore the saved window size before the window is created.
+    let settings = SettingsStore::default().load().unwrap_or_default();
     iced::application(AditApp::default, update, view)
         .title(app_title)
         .theme(app_theme)
         .subscription(subscription)
-        .window_size((1360.0, 860.0))
+        .window(window::Settings {
+            icon: app_icon(),
+            ..window::Settings::default()
+        })
+        .window_size((settings.window_width, settings.window_height))
         .centered()
         .run()
+}
+
+/// The window/taskbar icon, decoded from a raw 256x256 RGBA blob embedded in
+/// the binary. Returns `None` if the blob is malformed rather than failing.
+fn app_icon() -> Option<window::Icon> {
+    const ICON_RGBA: &[u8] = include_bytes!("../assets/icon.rgba");
+    window::icon::from_rgba(ICON_RGBA.to_vec(), 256, 256).ok()
 }
 
 fn app_title(app: &AditApp) -> String {
     format!("Adit - {}", app.manager.status_line())
 }
 
-fn app_theme(_app: &AditApp) -> Theme {
-    Theme::Dark
+fn app_theme(app: &AditApp) -> Theme {
+    // The chrome is fully custom-styled; the base theme only drives default
+    // widgets (scrollbars, checkboxes), which must match the active mode.
+    if app.dark_mode {
+        Theme::Dark
+    } else {
+        Theme::Light
+    }
 }
 
 fn subscription(_app: &AditApp) -> Subscription<Message> {
@@ -376,6 +439,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::Tick => {
             app.manager.poll_events();
             clamp_terminal_scroll(app);
+            persist_settings_if_changed(app);
         }
         Message::ToggleMenu(menu) => {
             app.active_menu = if app.active_menu == Some(menu) {
@@ -384,6 +448,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 Some(menu)
             };
             sync_terminal_size(app);
+        }
+        Message::ToggleTheme => {
+            app.dark_mode = !app.dark_mode;
+            app.notice = if app.dark_mode {
+                String::from("已切换到深色主题")
+            } else {
+                String::from("已切换到浅色主题")
+            };
         }
         Message::RunMenu(command) => {
             run_menu_command(app, command);
@@ -543,6 +615,17 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.connection_dialog = None;
             app.password.clear();
             app.remember_connection_password = false;
+        }
+        Message::RespondHostKey { session_id, accept } => {
+            if let Err(error) = app.manager.respond_host_key(session_id, accept) {
+                app.last_error = Some(error.to_string());
+            } else {
+                app.notice = if accept {
+                    String::from("已信任主机密钥，继续连接")
+                } else {
+                    String::from("已拒绝主机密钥")
+                };
+            }
         }
         Message::ToggleProfileGroup(group) => {
             if !app.collapsed_groups.remove(&group) {
@@ -789,8 +872,15 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::Sftp => {
             app.notice = String::from("SFTP 面板将在后续里程碑接入");
         }
-        MenuCommand::Logging => {
-            app.notice = String::from("会话日志配置将在持久化模块后接入");
+        MenuCommand::Logging => toggle_active_logging(app),
+        MenuCommand::ToggleAutoReconnect => {
+            let enabled = !app.manager.auto_reconnect();
+            app.manager.set_auto_reconnect(enabled);
+            app.notice = if enabled {
+                String::from("自动重连已开启")
+            } else {
+                String::from("自动重连已关闭")
+            };
         }
         MenuCommand::About => {
             app.notice = String::from("Adit native prototype: iced + russh + Rust terminal core");
@@ -1647,11 +1737,6 @@ fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(
 }
 
 fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
-    let menu_height = if app.active_menu.is_some() {
-        MENU_PANEL_HEIGHT
-    } else {
-        0.0
-    };
     let context_menu_height = if app.terminal_context_menu {
         TERMINAL_CONTEXT_MENU_AND_GAP
     } else {
@@ -1659,7 +1744,6 @@ fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
     };
     let origin_x = SIDEBAR_WIDTH + WORKSPACE_PADDING_X + TERMINAL_PANEL_PADDING;
     let origin_y = MENU_BAR_HEIGHT
-        + menu_height
         + TOOLBAR_HEIGHT
         + WORKSPACE_PADDING_TOP
         + TAB_BAR_HEIGHT
@@ -1802,6 +1886,27 @@ fn clear_active_terminal(app: &mut AditApp) {
     }
 }
 
+fn toggle_active_logging(app: &mut AditApp) {
+    if app.manager.active_session().is_none() {
+        app.last_error = Some(String::from("没有活动会话"));
+        return;
+    }
+
+    if app.manager.active_is_logging() {
+        if let Some(path) = app.manager.stop_active_logging() {
+            app.notice = format!("已停止记录会话日志: {}", path.display());
+        }
+    } else {
+        match app.manager.start_active_logging(&adit_storage::default_log_dir()) {
+            Ok(path) => {
+                app.last_error = None;
+                app.notice = format!("正在记录会话输出到: {}", path.display());
+            }
+            Err(error) => app.last_error = Some(format!("开启会话日志失败: {error}")),
+        }
+    }
+}
+
 fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
     match app.manager.resize_active(cols, rows) {
         Ok(()) => {
@@ -1813,20 +1918,17 @@ fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
     }
 }
 
-fn estimated_terminal_size(width: f32, height: f32, menu_open: bool) -> TerminalSize {
+fn estimated_terminal_size(width: f32, height: f32) -> TerminalSize {
     const WORKSPACE_HORIZONTAL_PADDING: f32 = 0.0;
     const TERMINAL_HORIZONTAL_PADDING: f32 = TERMINAL_PANEL_PADDING * 2.0;
-    const STATUS_BAR_HEIGHT: f32 = 22.0;
     const WORKSPACE_VERTICAL_PADDING: f32 = 0.0;
     const COMMAND_BAR_HEIGHT: f32 = 0.0;
     const TERMINAL_VERTICAL_CHROME: f32 = TERMINAL_PANEL_PADDING * 2.0;
 
-    let menu_height = if menu_open { MENU_PANEL_HEIGHT } else { 0.0 };
     let available_width =
         width - SIDEBAR_WIDTH - WORKSPACE_HORIZONTAL_PADDING - TERMINAL_HORIZONTAL_PADDING;
     let available_height = height
         - MENU_BAR_HEIGHT
-        - menu_height
         - TOOLBAR_HEIGHT
         - STATUS_BAR_HEIGHT
         - WORKSPACE_VERTICAL_PADDING
@@ -1845,11 +1947,7 @@ fn estimated_terminal_size(width: f32, height: f32, menu_open: bool) -> Terminal
 }
 
 fn sync_terminal_size(app: &mut AditApp) {
-    let target = estimated_terminal_size(
-        app.window_width,
-        app.window_height,
-        app.active_menu.is_some(),
-    );
+    let target = estimated_terminal_size(app.window_width, app.window_height);
 
     if target == app.terminal_size {
         return;
@@ -1863,14 +1961,38 @@ fn sync_terminal_size(app: &mut AditApp) {
     }
 }
 
-fn view(app: &AditApp) -> Element<'_, Message> {
-    let mut layout = column![menu_bar(app)];
-
-    if let Some(menu) = app.active_menu {
-        layout = layout.push(menu_panel(menu));
+/// Snapshot the persistable preferences from live app state.
+fn current_settings(app: &AditApp) -> AppSettings {
+    AppSettings {
+        dark_mode: app.dark_mode,
+        // BTreeSet iterates sorted, so the snapshot is order-stable.
+        collapsed_groups: app.collapsed_groups.iter().cloned().collect(),
+        window_width: app.window_width,
+        window_height: app.window_height,
+        auto_reconnect: app.manager.auto_reconnect(),
     }
+}
 
-    let layout = layout
+/// Persist settings when they drift from what is on disk. Called every Tick so
+/// any config change (theme, folded groups, window size) is debounced into at
+/// most one write per frame and survives a restart.
+fn persist_settings_if_changed(app: &mut AditApp) {
+    let current = current_settings(app);
+    if current == app.persisted_settings {
+        return;
+    }
+    if let Err(error) = app.settings_store.save(&current) {
+        app.last_error = Some(format!("保存设置失败: {error}"));
+    }
+    // Update the baseline regardless of outcome so a failing write does not
+    // retry on every frame.
+    app.persisted_settings = current;
+}
+
+fn view(app: &AditApp) -> Element<'_, Message> {
+    DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
+
+    let layout = column![menu_bar(app)]
         .push(toolbar(app))
         .push(row![sidebar(app), workspace(app)].height(Fill).width(Fill))
         .push(status_bar(app))
@@ -1883,10 +2005,23 @@ fn view(app: &AditApp) -> Element<'_, Message> {
         .width(Fill)
         .into();
 
+    // Menus and the connection dialog float above the chrome instead of
+    // reserving layout space, so opening one never shifts the content.
+    let mut layers: Vec<Element<'_, Message>> = vec![base];
+    if let Some(menu) = app.active_menu {
+        layers.push(menu_overlay(menu));
+    }
     if app.connection_dialog.is_some() {
-        stack(vec![base, opaque(connection_dialog_overlay(app))]).into()
+        layers.push(opaque(connection_dialog_overlay(app)));
+    }
+    if let Some((session_id, prompt)) = app.manager.pending_host_key() {
+        layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
+    }
+
+    if layers.len() == 1 {
+        layers.pop().unwrap()
     } else {
-        base
+        stack(layers).into()
     }
 }
 
@@ -1905,11 +2040,11 @@ fn menu_bar(app: &AditApp) -> Element<'_, Message> {
             Space::new().width(Fill),
             text(app.manager.status_line()).size(11).color(muted_text()),
         ]
-        .spacing(2)
+        .spacing(4)
         .align_y(Alignment::Center),
     )
-    .padding([2, 7])
-    .height(24)
+    .padding([3, 10])
+    .height(MENU_BAR_HEIGHT)
     .width(Fill)
     .style(|_theme| top_bar_style())
     .into()
@@ -1925,28 +2060,39 @@ fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a,
         .into()
 }
 
-fn menu_panel(menu: MenuKind) -> Element<'static, Message> {
+fn menu_overlay(menu: MenuKind) -> Element<'static, Message> {
     let mut commands = column![].spacing(0).width(Fill);
     for (label, command) in menu_commands(menu) {
         commands = commands.push(menu_dropdown_button(label, *command));
     }
 
-    container(
+    // The dropdown card, positioned under its menu-bar button.
+    let positioned = column![
+        Space::new().height(Length::Fixed(MENU_BAR_HEIGHT)),
         row![
             Space::new().width(Length::Fixed(menu_dropdown_offset(menu))),
             container(commands)
-                .width(Length::Fixed(178.0))
-                .padding([4, 0])
+                .width(Length::Fixed(182.0))
+                .padding([5, 0])
                 .style(|_theme| menu_dropdown_style()),
             Space::new().width(Fill),
-        ]
-        .align_y(Alignment::Start),
-    )
-    .padding([0, 0])
-    .height(Length::Fixed(MENU_PANEL_HEIGHT))
+        ],
+        Space::new().height(Fill),
+    ]
     .width(Fill)
-    .style(|_theme| menu_panel_style())
-    .into()
+    .height(Fill);
+
+    // A click-catcher below the menu bar that dismisses the menu. It starts
+    // below the bar so the other menu buttons stay clickable underneath.
+    let backdrop = column![
+        Space::new().height(Length::Fixed(MENU_BAR_HEIGHT)),
+        mouse_area(container(Space::new()).width(Fill).height(Fill))
+            .on_press(Message::ToggleMenu(menu)),
+    ]
+    .width(Fill)
+    .height(Fill);
+
+    stack(vec![backdrop.into(), positioned.into()]).into()
 }
 
 fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
@@ -1961,6 +2107,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
         MenuKind::Session => &[
             ("连接", MenuCommand::Connect),
             ("断开", MenuCommand::Disconnect),
+            ("自动重连开关", MenuCommand::ToggleAutoReconnect),
             ("打开演示标签", MenuCommand::OpenMockTab),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
@@ -2018,12 +2165,12 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             text_input("Enter host <Alt+R>", &app.profile_host)
                 .on_input(Message::ProfileHostChanged)
                 .on_submit(Message::ConnectSelectedProfile)
-                .padding([3, 6])
-                .style(|theme, status| toolbar_input_style(theme, status))
+                .padding([4, 8])
+                .style(toolbar_input_style)
                 .width(Length::Fixed(210.0)),
-            button("Connect")
-                .padding([3, 10])
-                .style(|_theme, status| toolbar_action_button_style(status))
+            button(text("Connect").size(13))
+                .padding([5, 14])
+                .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::ConnectSelectedProfile),
             text(form_endpoint(app)).size(11).color(muted_text()),
             Space::new().width(Fill),
@@ -2034,21 +2181,33 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             })
             .size(11)
             .color(muted_text()),
+            theme_toggle_button(app),
         ]
-        .spacing(3)
+        .spacing(5)
         .align_y(Alignment::Center),
     )
-    .padding([3, 7])
-    .height(30)
+    .padding([4, 10])
+    .height(TOOLBAR_HEIGHT)
     .width(Fill)
     .style(|_theme| toolbar_style())
     .into()
 }
 
+fn theme_toggle_button(app: &AditApp) -> Element<'static, Message> {
+    let glyph = if app.dark_mode { "☀" } else { "☾" };
+    button(text(glyph).size(14))
+        .width(Length::Fixed(28.0))
+        .height(Length::Fixed(26.0))
+        .padding(0)
+        .style(|_theme, status| toolbar_icon_button_style(status))
+        .on_press(Message::ToggleTheme)
+        .into()
+}
+
 fn tool_button(label: &'static str, message: Message) -> Element<'static, Message> {
     button(text(label).size(14))
-        .width(Length::Fixed(24.0))
-        .height(Length::Fixed(22.0))
+        .width(Length::Fixed(28.0))
+        .height(Length::Fixed(26.0))
         .padding(0)
         .style(|_theme, status| toolbar_icon_button_style(status))
         .on_press(message)
@@ -2112,7 +2271,7 @@ fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .on_input(Message::ConnectionPasswordChanged)
                 .on_submit(Message::ConfirmConnection)
                 .padding([6, 8])
-                .style(|theme, status| text_input_style(theme, status)),
+                .style(text_input_style),
             checkbox(app.remember_connection_password)
                 .label("保存到系统凭据库")
                 .on_toggle(Message::RememberConnectionPasswordChanged)
@@ -2139,6 +2298,99 @@ fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(12),
     )
     .width(Length::Fixed(430.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+fn host_key_dialog_overlay(
+    session_id: SessionId,
+    prompt: &HostKeyPromptInfo,
+) -> Element<'static, Message> {
+    let changed = prompt.previous_fingerprint.is_some();
+    let title = if changed {
+        "⚠ 主机密钥已变更"
+    } else {
+        "确认主机密钥"
+    };
+    let title_color = if changed { danger() } else { primary_text() };
+
+    let mut details = column![
+        text(title).size(16).color(title_color),
+        text(format!("{}:{}", prompt.host, prompt.port))
+            .size(13)
+            .color(primary_text()),
+        text(format!("密钥类型: {}", prompt.key_type))
+            .size(11)
+            .color(muted_text()),
+        text("SHA256 指纹").size(11).color(muted_text()),
+        text(prompt.fingerprint.clone())
+            .size(12)
+            .font(Font::MONOSPACE)
+            .color(primary_text()),
+    ]
+    .spacing(6);
+
+    if let Some(previous) = &prompt.previous_fingerprint {
+        details = details
+            .push(text("此前记录的指纹").size(11).color(muted_text()))
+            .push(
+                text(previous.clone())
+                    .size(12)
+                    .font(Font::MONOSPACE)
+                    .color(danger()),
+            )
+            .push(
+                text("密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。")
+                    .size(11)
+                    .color(danger()),
+            );
+    } else {
+        details = details.push(
+            text("首次连接此主机。请通过其它可信渠道核对指纹后再信任。")
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+
+    let accept_label = if changed {
+        "更新并继续"
+    } else {
+        "信任并继续"
+    };
+
+    let panel = container(
+        column![
+            details,
+            row![
+                button("拒绝")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::RespondHostKey {
+                        session_id,
+                        accept: false
+                    }),
+                button(text(accept_label))
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::RespondHostKey {
+                        session_id,
+                        accept: true
+                    }),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(460.0))
     .padding(14)
     .style(|_theme| connection_dialog_style());
 
@@ -2269,11 +2521,11 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .map(|message| {
             container(
                 row![
-                    text(message)
-                        .size(12)
-                        .color(Color::from_rgb8(255, 173, 173)),
+                    text(message).size(12).color(danger()),
                     Space::new().width(Fill),
-                    button("x").on_press(Message::ClearError),
+                    button("x")
+                        .on_press(Message::ClearError)
+                        .style(|_theme, status| close_button_style(status)),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -2287,10 +2539,10 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     let mut content = column![
         container(
             row![
-                text("Session Manager").size(13).color(Color::WHITE),
+                text("Session Manager").size(13).color(primary_text()),
                 Space::new().width(Fill),
-                text("▣").size(12).color(Color::WHITE),
-                text("×").size(12).color(Color::WHITE),
+                text("▣").size(12).color(muted_text()),
+                text("×").size(12).color(muted_text()),
             ]
             .spacing(9)
             .align_y(Alignment::Center),
@@ -2318,7 +2570,7 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         text_input("Filter by group/session name <Alt+I>", &app.session_filter)
             .on_input(Message::SessionFilterChanged)
             .padding([4, 6])
-            .style(|theme, status| toolbar_input_style(theme, status)),
+            .style(toolbar_input_style),
         scrollable(profiles).height(Fill),
     ]
     .spacing(0)
@@ -2433,7 +2685,7 @@ fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
                 .on_input(Message::GroupNameDraftChanged)
                 .on_submit(Message::SaveGroupRename)
                 .padding([4, 6])
-                .style(|theme, status| text_input_style(theme, status))
+                .style(text_input_style)
                 .width(Fill),
             button("保存")
                 .padding([4, 8])
@@ -2596,12 +2848,12 @@ fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
                 text_input("Group", &app.profile_group)
                     .on_input(Message::ProfileGroupChanged)
                     .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
+                    .style(text_input_style)
                     .width(Length::FillPortion(1)),
                 text_input("Name", &app.profile_name)
                     .on_input(Message::ProfileNameChanged)
                     .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
+                    .style(text_input_style)
                     .width(Length::FillPortion(1)),
             ]
             .spacing(5),
@@ -2610,12 +2862,12 @@ fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
                 text_input("Host", &app.profile_host)
                     .on_input(Message::ProfileHostChanged)
                     .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
+                    .style(text_input_style)
                     .width(Length::FillPortion(2)),
                 text_input("Port", &app.profile_port)
                     .on_input(Message::ProfilePortChanged)
                     .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
+                    .style(text_input_style)
                     .width(Length::FillPortion(1)),
             ]
             .spacing(5),
@@ -2624,7 +2876,7 @@ fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
                 text_input("User", &app.profile_username)
                     .on_input(Message::ProfileUsernameChanged)
                     .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
+                    .style(text_input_style)
                     .width(Fill),
             ]
             .spacing(5),
@@ -2641,7 +2893,7 @@ fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
                 text_input("Identity file", &app.profile_identity_file)
                     .on_input(Message::ProfileIdentityFileChanged)
                     .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
+                    .style(text_input_style)
                     .width(Fill),
             ],
             row![
@@ -2686,7 +2938,7 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
         .manager
         .sessions()
         .into_iter()
-        .fold(row![].spacing(0).height(30), |tabs, session| {
+        .fold(row![].spacing(2).height(TAB_BAR_HEIGHT), |tabs, session| {
             tabs.push(tab_button(session, app.manager.active_session()))
         });
 
@@ -2701,10 +2953,10 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
                 active_session_action(app),
                 container(text(app.manager.status_line()).size(12).color(muted_text()))
                     .padding([0, 8])
-                    .center_y(30),
+                    .center_y(TAB_BAR_HEIGHT),
             ]
             .align_y(Alignment::Center)
-            .height(30)
+            .height(TAB_BAR_HEIGHT)
             .width(Fill),
             mouse_area(terminal_view(
                 snapshot,
@@ -2970,9 +3222,19 @@ fn status_bar(app: &AditApp) -> Element<'_, Message> {
         app.notice.clone()
     };
 
+    // Left cluster: a red REC badge while the active session is logging,
+    // followed by the current status/notice text.
+    let mut left = row![].spacing(7).align_y(Alignment::Center);
+    if app.manager.active_is_logging() {
+        left = left
+            .push(text("●").size(11).color(danger()))
+            .push(text("REC").size(11).color(danger()));
+    }
+    left = left.push(text(status).size(12).color(muted_text()));
+
     container(
         row![
-            text(status).size(12).color(muted_text()),
+            left,
             Space::new().width(Fill),
             text(app.manager.status_line()).size(12).color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
@@ -2993,74 +3255,109 @@ fn status_bar(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     )
     .padding([6, 14])
-    .height(30)
+    .height(STATUS_BAR_HEIGHT)
     .width(Fill)
     .style(|_theme| status_bar_style())
     .into()
 }
 
+// Corner-radius scale. Interactive controls and floating surfaces are rounded;
+// full-bleed structural bars stay square (see the *_style fns below).
+const RADIUS_SM: f32 = 7.0;
+const RADIUS_MD: f32 = 11.0;
+
+/// Resolve a token to its light or dark value based on the active mode.
+fn pick(light: Color, dark: Color) -> Color {
+    if is_dark() {
+        dark
+    } else {
+        light
+    }
+}
+
 fn muted_text() -> Color {
-    Color::from_rgb8(92, 96, 102)
+    pick(Color::from_rgb8(108, 116, 130), Color::from_rgb8(149, 158, 173))
 }
 
 fn primary_text() -> Color {
-    Color::from_rgb8(17, 24, 32)
+    pick(Color::from_rgb8(28, 35, 48), Color::from_rgb8(228, 232, 240))
 }
 
 fn app_background() -> Color {
-    Color::from_rgb8(210, 214, 219)
+    pick(Color::from_rgb8(236, 239, 244), Color::from_rgb8(24, 27, 33))
+}
+
+/// Raised surface: sidebar, cards, dialogs, floating menus.
+fn surface() -> Color {
+    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(32, 36, 44))
+}
+
+/// Secondary chrome: toolbar, status bar, tab strip.
+fn surface_alt() -> Color {
+    pick(Color::from_rgb8(244, 246, 250), Color::from_rgb8(27, 30, 37))
+}
+
+/// Recessed area the terminal panel floats on.
+fn surface_sunken() -> Color {
+    pick(Color::from_rgb8(228, 232, 238), Color::from_rgb8(18, 20, 25))
 }
 
 fn panel_background_hover() -> Color {
-    Color::from_rgb8(226, 235, 247)
+    pick(Color::from_rgb8(237, 242, 250), Color::from_rgb8(42, 47, 57))
 }
 
 fn field_background() -> Color {
-    Color::from_rgb8(255, 255, 255)
+    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(38, 43, 52))
 }
 
 fn terminal_background() -> Color {
-    Color::from_rgb8(0, 0, 0)
+    // Near-black slate reads well under both light and dark chrome.
+    Color::from_rgb8(14, 17, 23)
 }
 
 fn selection_background() -> Color {
-    Color::from_rgb8(20, 96, 180)
+    Color::from_rgb8(38, 92, 178)
 }
 
 fn border_color() -> Color {
-    Color::from_rgb8(181, 187, 195)
+    pick(Color::from_rgb8(223, 227, 234), Color::from_rgb8(49, 55, 66))
 }
 
 fn border_strong() -> Color {
-    Color::from_rgb8(85, 135, 195)
+    pick(Color::from_rgb8(151, 182, 232), Color::from_rgb8(74, 110, 170))
 }
 
 fn accent() -> Color {
-    Color::from_rgb8(0, 120, 215)
+    Color::from_rgb8(37, 99, 235)
 }
 
 fn accent_hover() -> Color {
-    Color::from_rgb8(26, 140, 232)
+    Color::from_rgb8(59, 130, 246)
 }
 
 fn accent_pressed() -> Color {
-    Color::from_rgb8(0, 93, 170)
+    Color::from_rgb8(29, 78, 216)
+}
+
+/// Soft accent tint for selected/active backgrounds.
+fn accent_soft() -> Color {
+    pick(Color::from_rgb8(226, 236, 254), Color::from_rgb8(33, 46, 74))
 }
 
 fn danger() -> Color {
-    Color::from_rgb8(214, 48, 49)
+    Color::from_rgb8(229, 72, 77)
 }
 
 fn danger_background() -> Color {
-    Color::from_rgb8(255, 235, 235)
+    pick(Color::from_rgb8(253, 237, 237), Color::from_rgb8(58, 36, 38))
 }
 
 fn group_color() -> Color {
-    Color::from_rgb8(232, 169, 46)
+    pick(Color::from_rgb8(220, 154, 38), Color::from_rgb8(224, 170, 70))
 }
 
 fn session_icon_color() -> Color {
-    Color::from_rgb8(82, 88, 96)
+    pick(Color::from_rgb8(100, 110, 124), Color::from_rgb8(149, 158, 173))
 }
 
 fn transparent() -> Color {
@@ -3078,6 +3375,34 @@ fn border(radius: f32, width: f32, color: Color) -> Border {
     }
 }
 
+/// Pronounced elevation for modal dialogs.
+fn soft_shadow() -> Shadow {
+    Shadow {
+        color: Color {
+            r: 0.05,
+            g: 0.09,
+            b: 0.16,
+            a: 0.18,
+        },
+        offset: Vector::new(0.0, 10.0),
+        blur_radius: 28.0,
+    }
+}
+
+/// Light elevation for dropdowns and context menus.
+fn subtle_shadow() -> Shadow {
+    Shadow {
+        color: Color {
+            r: 0.05,
+            g: 0.09,
+            b: 0.16,
+            a: 0.12,
+        },
+        offset: Vector::new(0.0, 4.0),
+        blur_radius: 14.0,
+    }
+}
+
 fn app_background_style() -> container::Style {
     container::Style {
         background: Some(Background::Color(app_background())),
@@ -3088,52 +3413,44 @@ fn app_background_style() -> container::Style {
 
 fn top_bar_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(250, 250, 250))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(198, 202, 207)),
-        ..container::Style::default()
-    }
-}
-
-fn menu_panel_style() -> container::Style {
-    container::Style {
-        background: None,
-        text_color: Some(primary_text()),
-        border: border(0.0, 0.0, transparent()),
+        border: border(0.0, 1.0, border_color()),
         ..container::Style::default()
     }
 }
 
 fn menu_dropdown_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(250, 250, 250))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(167, 174, 184)),
+        border: border(RADIUS_SM, 1.0, border_color()),
+        shadow: subtle_shadow(),
         ..container::Style::default()
     }
 }
 
 fn toolbar_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(238, 240, 243))),
+        background: Some(Background::Color(surface_alt())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(187, 192, 198)),
+        border: border(0.0, 1.0, border_color()),
         ..container::Style::default()
     }
 }
 
 fn sidebar_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(252, 252, 252))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(150, 157, 166)),
+        border: border(0.0, 1.0, border_color()),
         ..container::Style::default()
     }
 }
 
 fn workspace_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(232, 234, 237))),
+        background: Some(Background::Color(surface_sunken())),
         text_color: Some(primary_text()),
         ..container::Style::default()
     }
@@ -3144,12 +3461,12 @@ fn terminal_panel_style(focused: bool) -> container::Style {
         background: Some(Background::Color(terminal_background())),
         text_color: Some(default_foreground()),
         border: border(
-            0.0,
-            1.0,
+            RADIUS_MD,
+            1.5,
             if focused {
                 accent()
             } else {
-                Color::from_rgb8(55, 55, 55)
+                Color::from_rgb8(38, 43, 54)
             },
         ),
         ..container::Style::default()
@@ -3158,9 +3475,10 @@ fn terminal_panel_style(focused: bool) -> container::Style {
 
 fn terminal_menu_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(246, 247, 249))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(1.0, 1.0, border_color()),
+        border: border(RADIUS_SM, 1.0, border_color()),
+        shadow: subtle_shadow(),
         ..container::Style::default()
     }
 }
@@ -3168,10 +3486,10 @@ fn terminal_menu_style() -> container::Style {
 fn dialog_scrim_style() -> container::Style {
     container::Style {
         background: Some(Background::Color(Color {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-            a: 0.32,
+            r: 0.04,
+            g: 0.06,
+            b: 0.10,
+            a: 0.42,
         })),
         ..container::Style::default()
     }
@@ -3179,18 +3497,19 @@ fn dialog_scrim_style() -> container::Style {
 
 fn connection_dialog_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(248, 249, 251))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(2.0, 1.0, Color::from_rgb8(150, 157, 166)),
+        border: border(RADIUS_MD, 1.0, border_color()),
+        shadow: soft_shadow(),
         ..container::Style::default()
     }
 }
 
 fn status_bar_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(238, 240, 243))),
+        background: Some(Background::Color(surface_alt())),
         text_color: Some(muted_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(187, 192, 198)),
+        border: border(0.0, 1.0, border_color()),
         ..container::Style::default()
     }
 }
@@ -3199,7 +3518,7 @@ fn error_panel_style() -> container::Style {
     container::Style {
         background: Some(Background::Color(danger_background())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, danger()),
+        border: border(RADIUS_SM, 1.0, danger()),
         ..container::Style::default()
     }
 }
@@ -3213,11 +3532,11 @@ fn text_input_style(_theme: &Theme, status: text_input::Status) -> text_input::S
 
     text_input::Style {
         background: Background::Color(field_background()),
-        border: border(0.0, 1.0, border_color),
+        border: border(RADIUS_SM, 1.0, border_color),
         icon: muted_text(),
         placeholder: muted_text(),
         value: primary_text(),
-        selection: Color::from_rgb8(188, 216, 244),
+        selection: accent_soft(),
     }
 }
 
@@ -3225,7 +3544,7 @@ fn base_button_style(background: Color, text_color: Color, border_color: Color) 
     button::Style {
         background: Some(Background::Color(background)),
         text_color,
-        border: border(1.0, 1.0, border_color),
+        border: border(RADIUS_SM, 1.0, border_color),
         ..button::Style::default()
     }
 }
@@ -3234,7 +3553,7 @@ fn primary_button_style(status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Hovered => accent_hover(),
         button::Status::Pressed => accent_pressed(),
-        button::Status::Disabled => Color::from_rgb8(220, 224, 229),
+        button::Status::Disabled => Color::from_rgb8(206, 213, 224),
         button::Status::Active => accent(),
     };
     base_button_style(background, Color::WHITE, background)
@@ -3243,9 +3562,9 @@ fn primary_button_style(status: button::Status) -> button::Style {
 fn secondary_button_style(status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Hovered => panel_background_hover(),
-        button::Status::Pressed => Color::from_rgb8(210, 222, 239),
-        button::Status::Disabled => Color::from_rgb8(232, 234, 237),
-        button::Status::Active => Color::from_rgb8(246, 247, 249),
+        button::Status::Pressed => accent_soft(),
+        button::Status::Disabled => surface_alt(),
+        button::Status::Active => surface(),
     };
     base_button_style(background, primary_text(), border_color())
 }
@@ -3254,28 +3573,24 @@ fn method_button_style(selected: bool, status: button::Status) -> button::Style 
     let background = match (selected, status) {
         (true, button::Status::Pressed) => accent_pressed(),
         (true, button::Status::Hovered) => accent_hover(),
-        (true, _) => Color::from_rgb8(210, 230, 250),
+        (true, _) => accent(),
         (false, button::Status::Hovered) => panel_background_hover(),
-        (false, button::Status::Pressed) => Color::from_rgb8(218, 225, 234),
-        _ => field_background(),
+        (false, button::Status::Pressed) => accent_soft(),
+        _ => surface(),
     };
     let border_color = if selected { accent() } else { border_color() };
     base_button_style(
         background,
-        if selected && matches!(status, button::Status::Pressed | button::Status::Hovered) {
-            Color::WHITE
-        } else {
-            primary_text()
-        },
+        if selected { Color::WHITE } else { primary_text() },
         border_color,
     )
 }
 
 fn menu_button_style(active: bool, status: button::Status) -> button::Style {
     let background = match (active, status) {
-        (true, _) => Color::from_rgb8(223, 235, 249),
-        (false, button::Status::Hovered) => Color::from_rgb8(232, 239, 249),
-        (false, button::Status::Pressed) => Color::from_rgb8(214, 226, 241),
+        (true, _) => accent_soft(),
+        (false, button::Status::Hovered) => panel_background_hover(),
+        (false, button::Status::Pressed) => accent_soft(),
         _ => transparent(),
     };
     base_button_style(background, primary_text(), transparent())
@@ -3283,26 +3598,26 @@ fn menu_button_style(active: bool, status: button::Status) -> button::Style {
 
 fn tab_button_style(active: bool, status: button::Status) -> button::Style {
     let background = match (active, status) {
-        (true, _) => Color::from_rgb8(255, 255, 255),
-        (false, button::Status::Hovered) => Color::from_rgb8(244, 247, 251),
-        (false, button::Status::Pressed) => Color::from_rgb8(226, 232, 241),
-        _ => Color::from_rgb8(232, 234, 237),
+        (true, _) => surface(),
+        (false, button::Status::Hovered) => panel_background_hover(),
+        (false, button::Status::Pressed) => accent_soft(),
+        _ => surface_alt(),
     };
-    let border_color = if active {
-        Color::from_rgb8(140, 146, 153)
-    } else {
-        border_color()
-    };
+    let border_color = if active { accent() } else { border_color() };
     base_button_style(background, primary_text(), border_color)
 }
 
 fn close_button_style(status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Hovered => danger_background(),
-        button::Status::Pressed => Color::from_rgb8(255, 214, 214),
+        button::Status::Pressed => Color::from_rgb8(250, 220, 220),
         _ => transparent(),
     };
-    base_button_style(background, muted_text(), transparent())
+    let text_color = match status {
+        button::Status::Hovered | button::Status::Pressed => danger(),
+        _ => muted_text(),
+    };
+    base_button_style(background, text_color, transparent())
 }
 
 fn menu_command_button_style(status: button::Status) -> button::Style {
@@ -3311,25 +3626,16 @@ fn menu_command_button_style(status: button::Status) -> button::Style {
 
 fn toolbar_icon_button_style(status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Hovered => Color::from_rgb8(219, 231, 247),
-        button::Status::Pressed => Color::from_rgb8(199, 218, 243),
+        button::Status::Hovered => panel_background_hover(),
+        button::Status::Pressed => accent_soft(),
         _ => transparent(),
     };
     base_button_style(background, primary_text(), transparent())
 }
 
-fn toolbar_action_button_style(status: button::Status) -> button::Style {
-    let background = match status {
-        button::Status::Hovered => Color::from_rgb8(219, 231, 247),
-        button::Status::Pressed => Color::from_rgb8(199, 218, 243),
-        _ => Color::from_rgb8(247, 248, 250),
-    };
-    base_button_style(background, primary_text(), border_color())
-}
-
 fn toolbar_separator_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(174, 180, 188))),
+        background: Some(Background::Color(border_color())),
         ..container::Style::default()
     }
 }
@@ -3338,26 +3644,24 @@ fn toolbar_input_style(_theme: &Theme, status: text_input::Status) -> text_input
     let border_color = match status {
         text_input::Status::Focused { .. } => accent(),
         text_input::Status::Hovered => border_strong(),
-        text_input::Status::Active | text_input::Status::Disabled => {
-            Color::from_rgb8(160, 166, 174)
-        }
+        text_input::Status::Active | text_input::Status::Disabled => border_color(),
     };
 
     text_input::Style {
-        background: Background::Color(Color::WHITE),
-        border: border(0.0, 1.0, border_color),
+        background: Background::Color(field_background()),
+        border: border(RADIUS_SM, 1.0, border_color),
         icon: muted_text(),
-        placeholder: Color::from_rgb8(115, 120, 126),
+        placeholder: muted_text(),
         value: primary_text(),
-        selection: Color::from_rgb8(188, 216, 244),
+        selection: accent_soft(),
     }
 }
 
 fn sidebar_header_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(80, 98, 118))),
-        text_color: Some(Color::WHITE),
-        border: border(0.0, 1.0, Color::from_rgb8(70, 84, 101)),
+        background: Some(Background::Color(surface_alt())),
+        text_color: Some(muted_text()),
+        border: border(0.0, 1.0, border_color()),
         ..container::Style::default()
     }
 }
@@ -3368,7 +3672,7 @@ fn sidebar_tool_button_style(status: button::Status) -> button::Style {
 
 fn group_row_style(drop_target: bool) -> container::Style {
     let background = if drop_target {
-        Color::from_rgb8(214, 231, 255)
+        accent_soft()
     } else {
         transparent()
     };
@@ -3377,7 +3681,7 @@ fn group_row_style(drop_target: bool) -> container::Style {
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, border_color),
+        border: border(RADIUS_SM, 1.0, border_color),
         ..container::Style::default()
     }
 }
@@ -3389,65 +3693,65 @@ fn tree_item_container_style(
     drop_position: Option<ProfileDropPosition>,
 ) -> container::Style {
     let background = if drop_position.is_some() {
-        Color::from_rgb8(214, 231, 255)
+        accent_soft()
     } else if dragging {
-        Color::from_rgb8(238, 242, 247)
+        surface_alt()
     } else if selected {
-        Color::from_rgb8(207, 207, 207)
+        accent_soft()
     } else if hovered {
-        Color::from_rgb8(232, 239, 249)
+        panel_background_hover()
     } else {
         transparent()
     };
 
     let border_color = match drop_position {
-        Some(ProfileDropPosition::Before) => Color::from_rgb8(0, 120, 215),
-        Some(ProfileDropPosition::After) => Color::from_rgb8(0, 120, 215),
-        None if selected => Color::from_rgb8(154, 154, 154),
+        Some(_) => accent(),
+        None if selected => accent(),
         None => transparent(),
     };
 
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, border_color),
+        border: border(RADIUS_SM, 1.0, border_color),
         ..container::Style::default()
     }
 }
 
 fn profile_context_menu_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(244, 247, 251))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(176, 194, 220)),
+        border: border(RADIUS_SM, 1.0, border_color()),
+        shadow: subtle_shadow(),
         ..container::Style::default()
     }
 }
 
 fn profile_context_button_style(status: button::Status) -> button::Style {
     let background = match status {
-        button::Status::Hovered => Color::from_rgb8(223, 234, 250),
-        button::Status::Pressed => Color::from_rgb8(205, 222, 246),
-        button::Status::Disabled => Color::from_rgb8(232, 235, 239),
-        button::Status::Active => Color::from_rgb8(252, 253, 255),
+        button::Status::Hovered => panel_background_hover(),
+        button::Status::Pressed => accent_soft(),
+        button::Status::Disabled => surface_alt(),
+        button::Status::Active => surface(),
     };
 
-    base_button_style(background, primary_text(), Color::from_rgb8(185, 198, 215))
+    base_button_style(background, primary_text(), transparent())
 }
 
 fn profile_edit_menu_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(248, 250, 253))),
+        background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(176, 194, 220)),
+        border: border(RADIUS_MD, 1.0, border_color()),
         ..container::Style::default()
     }
 }
 
 fn status_color(status: SessionStatus) -> Color {
     match status {
-        SessionStatus::Connecting => Color::from_rgb8(247, 190, 84),
-        SessionStatus::Connected => Color::from_rgb8(76, 208, 137),
+        SessionStatus::Connecting => Color::from_rgb8(245, 158, 11),
+        SessionStatus::Connected => Color::from_rgb8(34, 197, 94),
         SessionStatus::Disconnected => muted_text(),
         SessionStatus::Error => danger(),
     }
