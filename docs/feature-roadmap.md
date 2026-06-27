@@ -70,12 +70,14 @@ A "serious" client should not silently trust new hosts or drop on idle.
 
 ## Phase C — File transfer & tunnels
 
-- **C1. SFTP panel.** ✅ Done — `russh-sftp` over a second SSH connection
-  (reusing the session credential): an overlay file browser with directory
-  listing + navigation, download (to the app `downloads/` dir), upload (native
-  file picker via `rfd`, or a typed path), mkdir, rename, and delete (with
-  confirmation), plus a chunked-transfer progress bar. Future: per-transfer
-  queue, drag-and-drop, and a "download as" save dialog.
+- **C1. SFTP panel.** ✅ Done — a **dual-pane file manager** (SecureFX-style):
+  local filesystem on the left, remote (`russh-sftp` over a second SSH
+  connection reusing the session credential) on the right. Browse both sides,
+  upload (local → remote, plus a `rfd` native picker / typed path), download
+  (remote → the current local dir), mkdir/rename/delete on the remote (with
+  confirmation), and a transfer queue with per-item progress at the bottom.
+  Future: drag-and-drop, local file ops, columns (type/date), and a "download
+  as" dialog.
 - **C2. Port forwarding.** Local (`-L`), remote (`-R`), and dynamic SOCKS (`-D`)
   tunnels, created and managed from the UI, tied to a session.
 - **C3. Jump host / proxy.** `ProxyJump` (bastion chaining) and `ProxyCommand`.

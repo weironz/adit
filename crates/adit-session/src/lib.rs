@@ -106,25 +106,54 @@ impl ReconnectState {
     }
 }
 
-/// The single open SFTP browser, tied to a connected session's profile.
+/// A dual-pane SFTP file manager (local on one side, remote on the other),
+/// tied to a connected session's profile.
 pub struct SftpBrowser {
     handle: SftpHandle,
     pub profile_id: ProfileId,
     pub endpoint: String,
+    // Remote pane.
     pub cwd: String,
     pub entries: Vec<SftpEntry>,
+    // Local pane.
+    pub local_cwd: PathBuf,
+    pub local_entries: Vec<LocalEntry>,
     pub status: String,
     pub busy: bool,
     pub connected: bool,
-    /// Active transfer for the progress bar, if any.
-    pub transfer: Option<TransferProgress>,
+    /// Transfer queue/history (most recent last).
+    pub transfers: Vec<TransferItem>,
+}
+
+/// One local-filesystem entry shown in the local pane.
+#[derive(Debug, Clone)]
+pub struct LocalEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone)]
-pub struct TransferProgress {
-    pub label: String,
+pub struct TransferItem {
+    pub direction: TransferDirection,
+    pub name: String,
     pub done: u64,
     pub total: u64,
+    pub status: TransferStatus,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferDirection {
+    Upload,
+    Download,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferStatus {
+    Pending,
+    Active,
+    Done,
+    Failed,
 }
 
 pub struct SessionManager {
@@ -832,18 +861,48 @@ impl SessionManager {
         request.auth = auth_options_for_profile(&profile, &password);
         let handle = adit_ssh::spawn_sftp_session(request)?;
 
+        let local_cwd = default_local_dir();
+        let local_entries = read_local_dir(&local_cwd);
         self.sftp = Some(SftpBrowser {
             handle,
             profile_id,
             endpoint,
             cwd: String::from("/"),
             entries: Vec::new(),
+            local_cwd,
+            local_entries,
             status: String::from("connecting"),
             busy: false,
             connected: false,
-            transfer: None,
+            transfers: Vec::new(),
         });
         Ok(())
+    }
+
+    // Local pane navigation.
+    pub fn sftp_local_navigate(&mut self, name: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let target = browser.local_cwd.join(name);
+            if target.is_dir() {
+                browser.local_cwd = target;
+                browser.local_entries = read_local_dir(&browser.local_cwd);
+            }
+        }
+    }
+
+    pub fn sftp_local_up(&mut self) {
+        if let Some(browser) = &mut self.sftp {
+            if let Some(parent) = browser.local_cwd.parent() {
+                browser.local_cwd = parent.to_path_buf();
+                browser.local_entries = read_local_dir(&browser.local_cwd);
+            }
+        }
+    }
+
+    pub fn sftp_local_refresh(&mut self) {
+        if let Some(browser) = &mut self.sftp {
+            browser.local_entries = read_local_dir(&browser.local_cwd);
+        }
     }
 
     pub fn sftp_mkdir(&mut self, name: &str) {
@@ -909,20 +968,43 @@ impl SessionManager {
         }
     }
 
-    pub fn sftp_download(&mut self, name: &str, dest_dir: &Path) -> Result<PathBuf, SessionError> {
-        let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
-        let remote = join_remote(&browser.cwd, name);
-        fs::create_dir_all(dest_dir).map_err(|e| SessionError::Sftp(e.to_string()))?;
-        let local = dest_dir.join(name);
-        browser.busy = true;
-        browser.status = format!("downloading {name}…");
-        browser.handle.send(SftpCommand::Download {
-            remote,
-            local: local.clone(),
-        })?;
-        Ok(local)
+    /// Download a remote file into the current local pane directory.
+    pub fn sftp_download(&mut self, name: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let remote = join_remote(&browser.cwd, name);
+            let local = browser.local_cwd.join(name);
+            browser.transfers.push(TransferItem {
+                direction: TransferDirection::Download,
+                name: name.to_string(),
+                done: 0,
+                total: 0,
+                status: TransferStatus::Pending,
+            });
+            browser.busy = true;
+            browser.status = format!("downloading {name}…");
+            let _ = browser.handle.send(SftpCommand::Download { remote, local });
+        }
     }
 
+    /// Upload a file from the current local pane directory to the remote pane.
+    pub fn sftp_upload_local(&mut self, name: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let local = browser.local_cwd.join(name);
+            let remote = join_remote(&browser.cwd, name);
+            browser.transfers.push(TransferItem {
+                direction: TransferDirection::Upload,
+                name: name.to_string(),
+                done: 0,
+                total: 0,
+                status: TransferStatus::Pending,
+            });
+            browser.busy = true;
+            browser.status = format!("uploading {name}…");
+            let _ = browser.handle.send(SftpCommand::Upload { local, remote });
+        }
+    }
+
+    /// Upload an arbitrary local file (e.g. from a file picker) to the remote pane.
     pub fn sftp_upload(&mut self, local: &Path) -> Result<(), SessionError> {
         let name = local
             .file_name()
@@ -931,6 +1013,13 @@ impl SessionManager {
             .to_string();
         let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
         let remote = join_remote(&browser.cwd, &name);
+        browser.transfers.push(TransferItem {
+            direction: TransferDirection::Upload,
+            name: name.clone(),
+            done: 0,
+            total: 0,
+            status: TransferStatus::Pending,
+        });
         browser.busy = true;
         browser.status = format!("uploading {name}…");
         browser.handle.send(SftpCommand::Upload {
@@ -963,18 +1052,43 @@ impl SessionManager {
                             Some(percent) => format!("{label}: {percent}%"),
                             None => format!("{label}: {done} bytes"),
                         };
-                        browser.transfer = Some(TransferProgress { label, done, total });
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| {
+                            t.name == label
+                                && matches!(t.status, TransferStatus::Pending | TransferStatus::Active)
+                        }) {
+                            item.status = TransferStatus::Active;
+                            item.done = done;
+                            item.total = total;
+                        }
                     }
                     SftpEvent::Done { label, bytes } => {
                         browser.busy = false;
-                        browser.transfer = None;
                         browser.status = format!("{label} done ({bytes} bytes)");
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| {
+                            t.name == label
+                                && matches!(t.status, TransferStatus::Pending | TransferStatus::Active)
+                        }) {
+                            item.status = TransferStatus::Done;
+                            item.done = bytes;
+                            if item.total == 0 {
+                                item.total = bytes;
+                            }
+                        }
+                        // Refresh both panes — a transferred file appears on the
+                        // other side.
                         let cwd = browser.cwd.clone();
                         let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+                        browser.local_entries = read_local_dir(&browser.local_cwd);
                     }
                     SftpEvent::Error(error) => {
                         browser.busy = false;
-                        browser.transfer = None;
+                        if let Some(item) = browser
+                            .transfers
+                            .iter_mut()
+                            .find(|t| matches!(t.status, TransferStatus::Pending | TransferStatus::Active))
+                        {
+                            item.status = TransferStatus::Failed;
+                        }
                         browser.status = format!("error: {error}");
                     }
                     SftpEvent::Closed => {
@@ -1304,6 +1418,36 @@ fn parent_remote(path: &str) -> String {
         None | Some(0) => String::from("/"),
         Some(index) => trimmed[..index].to_string(),
     }
+}
+
+/// Read a local directory into sorted entries (directories first).
+fn read_local_dir(dir: &Path) -> Vec<LocalEntry> {
+    let mut entries = Vec::new();
+    if let Ok(read_dir) = fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let (is_dir, size) = entry
+                .metadata()
+                .map(|m| (m.is_dir(), m.len()))
+                .unwrap_or((false, 0));
+            entries.push(LocalEntry { name, is_dir, size });
+        }
+    }
+    entries.sort_by(|a, b| {
+        b.is_dir
+            .cmp(&a.is_dir)
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+    });
+    entries
+}
+
+/// The directory the local pane opens in: the user's home, else the CWD.
+fn default_local_dir() -> PathBuf {
+    std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+        .or_else(|| std::env::current_dir().ok())
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Spawn a live SSH shell actor for `profile`, reusing `password` for password
