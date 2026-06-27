@@ -139,9 +139,41 @@ pub struct LocalEntry {
 pub struct TransferItem {
     pub direction: TransferDirection,
     pub name: String,
+    /// Full source path.
+    pub source: String,
+    /// Full destination path (the key detail: where a download landed locally).
+    pub dest: String,
     pub done: u64,
     pub total: u64,
     pub status: TransferStatus,
+    /// Current transfer speed in bytes/sec.
+    pub bps: u64,
+    started_at: Option<Instant>,
+}
+
+impl TransferItem {
+    fn new(direction: TransferDirection, name: String, source: String, dest: String) -> Self {
+        Self {
+            direction,
+            name,
+            source,
+            dest,
+            done: 0,
+            total: 0,
+            status: TransferStatus::Pending,
+            bps: 0,
+            started_at: Some(Instant::now()),
+        }
+    }
+
+    fn update_speed(&mut self, now: Instant) {
+        if let Some(start) = self.started_at {
+            let elapsed = now.duration_since(start).as_secs_f64();
+            if elapsed > 0.05 {
+                self.bps = (self.done as f64 / elapsed) as u64;
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -998,13 +1030,12 @@ impl SessionManager {
         if let Some(browser) = &mut self.sftp {
             let remote = join_remote(&browser.cwd, name);
             let local = browser.local_cwd.join(name);
-            browser.transfers.push(TransferItem {
-                direction: TransferDirection::Download,
-                name: name.to_string(),
-                done: 0,
-                total: 0,
-                status: TransferStatus::Pending,
-            });
+            browser.transfers.push(TransferItem::new(
+                TransferDirection::Download,
+                name.to_string(),
+                remote.clone(),
+                local.display().to_string(),
+            ));
             browser.busy = true;
             browser.status = format!("downloading {name}…");
             let _ = browser.handle.send(SftpCommand::Download { remote, local });
@@ -1016,20 +1047,20 @@ impl SessionManager {
         if let Some(browser) = &mut self.sftp {
             let local = browser.local_cwd.join(name);
             let remote = join_remote(&browser.cwd, name);
-            browser.transfers.push(TransferItem {
-                direction: TransferDirection::Upload,
-                name: name.to_string(),
-                done: 0,
-                total: 0,
-                status: TransferStatus::Pending,
-            });
+            browser.transfers.push(TransferItem::new(
+                TransferDirection::Upload,
+                name.to_string(),
+                local.display().to_string(),
+                remote.clone(),
+            ));
             browser.busy = true;
             browser.status = format!("uploading {name}…");
             let _ = browser.handle.send(SftpCommand::Upload { local, remote });
         }
     }
 
-    /// Upload an arbitrary local file (e.g. from a file picker) to the remote pane.
+    /// Upload an arbitrary local file (e.g. from a file picker or a dropped
+    /// file) to the remote pane's current directory.
     pub fn sftp_upload(&mut self, local: &Path) -> Result<(), SessionError> {
         let name = local
             .file_name()
@@ -1038,13 +1069,12 @@ impl SessionManager {
             .to_string();
         let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
         let remote = join_remote(&browser.cwd, &name);
-        browser.transfers.push(TransferItem {
-            direction: TransferDirection::Upload,
-            name: name.clone(),
-            done: 0,
-            total: 0,
-            status: TransferStatus::Pending,
-        });
+        browser.transfers.push(TransferItem::new(
+            TransferDirection::Upload,
+            name.clone(),
+            local.display().to_string(),
+            remote.clone(),
+        ));
         browser.busy = true;
         browser.status = format!("uploading {name}…");
         browser.handle.send(SftpCommand::Upload {
@@ -1084,6 +1114,7 @@ impl SessionManager {
                             item.status = TransferStatus::Active;
                             item.done = done;
                             item.total = total;
+                            item.update_speed(Instant::now());
                         }
                     }
                     SftpEvent::Done { label, bytes } => {
@@ -1098,6 +1129,7 @@ impl SessionManager {
                             if item.total == 0 {
                                 item.total = bytes;
                             }
+                            item.update_speed(Instant::now());
                         }
                         // Refresh both panes — a transferred file appears on the
                         // other side.

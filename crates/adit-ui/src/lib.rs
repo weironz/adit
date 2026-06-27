@@ -173,6 +173,7 @@ pub enum Message {
     SftpDownload(String),
     SftpRowPress(SftpPane, String),
     SftpTransferSelected(SftpPane),
+    SftpFileDropped(std::path::PathBuf),
     SftpLocalPathChanged(String),
     SftpLocalGo,
     SftpRemotePathChanged(String),
@@ -510,6 +511,10 @@ fn runtime_event(
         {
             Some(Message::CancelProfileDrag)
         }
+        // Files dragged from the OS file manager onto the window.
+        event::Event::Window(window::Event::FileDropped(path)) => {
+            Some(Message::SftpFileDropped(path))
+        }
         _ => None,
     }
 }
@@ -773,6 +778,17 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
         },
+        Message::SftpFileDropped(path) => {
+            if !app.manager.sftp_is_open() {
+                app.notice = String::from("拖拽上传：请先打开 SFTP 面板");
+            } else if path.is_dir() {
+                app.last_error = Some(String::from("暂不支持上传文件夹，请拖入单个文件"));
+            } else if let Err(error) = app.manager.sftp_upload(&path) {
+                app.last_error = Some(error.to_string());
+            } else {
+                app.notice = format!("上传 {}", path.display());
+            }
+        }
         Message::SftpLocalPathChanged(value) => app.sftp_local_path_edit = value,
         Message::SftpLocalGo => app
             .manager
@@ -2888,11 +2904,26 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
 }
 
 fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
-    let mut col = column![text("传输队列").size(11).color(muted_text())].spacing(2);
+    let column_header = row![
+        text("文件").size(10).color(muted_text()).width(Length::FillPortion(2)),
+        text("目标路径").size(10).color(muted_text()).width(Length::FillPortion(3)),
+        text("大小").size(10).color(muted_text()).width(Length::Fixed(72.0)),
+        text("进度").size(10).color(muted_text()).width(Length::Fixed(112.0)),
+        text("速度").size(10).color(muted_text()).width(Length::Fixed(78.0)),
+        text("状态").size(10).color(muted_text()).width(Length::Fixed(48.0)),
+    ]
+    .spacing(8);
+
+    let mut col = column![
+        text("传输队列").size(11).color(primary_text()),
+        column_header,
+    ]
+    .spacing(3);
+
     if browser.transfers.is_empty() {
         col = col.push(text("（暂无传输）").size(11).color(muted_text()));
     } else {
-        for item in browser.transfers.iter().rev().take(5) {
+        for item in browser.transfers.iter().rev().take(6) {
             col = col.push(sftp_transfer_row(item));
         }
     }
@@ -2920,20 +2951,41 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
         0.0
     };
     let pct = item.done.saturating_mul(100).checked_div(item.total).unwrap_or(0);
+    let speed = if item.bps > 0 {
+        format!("{}/s", human_size(item.bps))
+    } else {
+        String::from("—")
+    };
 
-    row![
-        text(arrow).size(11).color(muted_text()),
-        text(item.name.clone())
-            .size(11)
-            .color(primary_text())
-            .width(Fill),
+    let progress = row![
         progress_bar(0.0..=1.0, fraction)
-            .length(Length::Fixed(140.0))
+            .length(Length::Fixed(70.0))
             .girth(Length::Fixed(6.0)),
         text(format!("{pct}%"))
+            .size(9)
+            .color(muted_text())
+            .width(Length::Fixed(34.0)),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
+
+    row![
+        row![
+            text(arrow).size(10).color(muted_text()),
+            text(item.name.clone()).size(10).color(primary_text()),
+        ]
+        .spacing(4)
+        .width(Length::FillPortion(2)),
+        text(item.dest.clone())
             .size(10)
             .color(muted_text())
-            .width(Length::Fixed(40.0)),
+            .width(Length::FillPortion(3)),
+        text(human_size(item.total))
+            .size(10)
+            .color(muted_text())
+            .width(Length::Fixed(72.0)),
+        container(progress).width(Length::Fixed(112.0)),
+        text(speed).size(10).color(muted_text()).width(Length::Fixed(78.0)),
         text(label).size(10).color(color).width(Length::Fixed(48.0)),
     ]
     .spacing(8)
