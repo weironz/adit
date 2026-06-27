@@ -148,6 +148,8 @@ pub struct TransferItem {
     pub status: TransferStatus,
     /// Current transfer speed in bytes/sec.
     pub bps: u64,
+    /// Failure reason, set when `status` becomes `Failed`.
+    pub error: Option<String>,
     started_at: Option<Instant>,
 }
 
@@ -162,6 +164,7 @@ impl TransferItem {
             total: 0,
             status: TransferStatus::Pending,
             bps: 0,
+            error: None,
             started_at: Some(Instant::now()),
         }
     }
@@ -1179,6 +1182,7 @@ impl SessionManager {
                             .find(|t| matches!(t.status, TransferStatus::Pending | TransferStatus::Active))
                         {
                             item.status = TransferStatus::Failed;
+                            item.error = Some(error.clone());
                         }
                         browser.status = format!("error: {error}");
                     }

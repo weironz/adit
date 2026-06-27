@@ -2740,18 +2740,38 @@ fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         return Space::new().width(Fill).height(Fill).into();
     };
 
+    // While dragging, the status line becomes a prominent drag hint.
+    let (status_text, status_color) = match &app.sftp_drag {
+        Some((src, name)) => {
+            let count = match src {
+                SftpPane::Local => app.sftp_local_selected.len(),
+                SftpPane::Remote => app.sftp_remote_selected.len(),
+            };
+            let selected = match src {
+                SftpPane::Local => app.sftp_local_selected.contains(name),
+                SftpPane::Remote => app.sftp_remote_selected.contains(name),
+            };
+            let subject = if selected && count > 1 {
+                format!("{count} 项")
+            } else {
+                format!("«{name}»")
+            };
+            let target = match src {
+                SftpPane::Local => "松开到右侧远程栏上传",
+                SftpPane::Remote => "松开到左侧本地栏下载",
+            };
+            (format!("⠿ 拖拽 {subject} — {target}"), accent())
+        }
+        None if browser.status.starts_with("error") => (browser.status.clone(), danger()),
+        None => (browser.status.clone(), muted_text()),
+    };
+
     let header = row![
         text(format!("SFTP — {}", browser.endpoint))
             .size(15)
             .color(primary_text()),
         Space::new().width(Fill),
-        text(browser.status.clone())
-            .size(11)
-            .color(if browser.status.starts_with("error") {
-                danger()
-            } else {
-                muted_text()
-            }),
+        text(status_text).size(11).color(status_color),
         Space::new().width(Length::Fixed(12.0)),
         button("×")
             .width(Length::Fixed(26.0))
@@ -3076,6 +3096,11 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
     } else {
         String::from("—")
     };
+    // On failure, show the reason in place of the destination so it's visible.
+    let (detail, detail_color) = match (&item.status, &item.error) {
+        (TransferStatus::Failed, Some(reason)) => (reason.clone(), danger()),
+        _ => (item.dest.clone(), muted_text()),
+    };
 
     let progress = row![
         progress_bar(0.0..=1.0, fraction)
@@ -3096,9 +3121,9 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
         ]
         .spacing(4)
         .width(Length::FillPortion(2)),
-        text(item.dest.clone())
+        text(detail)
             .size(10)
-            .color(muted_text())
+            .color(detail_color)
             .width(Length::FillPortion(3)),
         text(human_size(item.total))
             .size(10)
@@ -3364,11 +3389,12 @@ fn sftp_pane_style() -> container::Style {
     }
 }
 
-/// Pane container that highlights its border when it is the active drop target
-/// of a pane-to-pane drag.
+/// Pane container that highlights (tinted background + accent border) when it is
+/// the active drop target of a pane-to-pane drag.
 fn sftp_pane_style_dropzone(active: bool) -> container::Style {
     let mut style = sftp_pane_style();
     if active {
+        style.background = Some(Background::Color(accent_soft()));
         style.border = border(RADIUS_SM, 2.0, accent());
     }
     style
