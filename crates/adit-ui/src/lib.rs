@@ -87,6 +87,7 @@ pub struct AditApp {
     sftp_last_click: Option<(SftpPane, String, Instant)>,
     sftp_drag: Option<(SftpPane, String)>,
     sftp_drag_over: Option<SftpPane>,
+    sftp_drag_cursor: Option<Point>,
     terminal_input: String,
     terminal_focused: bool,
     terminal_size: TerminalSize,
@@ -205,6 +206,7 @@ pub enum Message {
     SftpCancelDelete,
     SftpSort(SftpPane, SftpSortKey),
     SftpDragEnter(SftpPane),
+    SftpDragMove(SftpPane, Point),
     ToggleProfileGroup(String),
     ProfileGroupChanged(String),
     ProfileNameChanged(String),
@@ -430,6 +432,7 @@ impl AditApp {
             sftp_last_click: None,
             sftp_drag: None,
             sftp_drag_over: None,
+            sftp_drag_cursor: None,
             terminal_input: String::new(),
             terminal_focused: false,
             terminal_size: estimated_terminal_size(window_width, window_height),
@@ -589,7 +592,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_context_menu = None;
             app.group_context_menu = None;
             app.profile_editor = None;
-            open_connection_dialog(app);
+            // Double-click connects immediately, like SecureCRT/Xshell — only
+            // fall back to the dialog when a password is genuinely required.
+            connect_profile(app);
         }
         Message::ProfileHovered(profile_id) => {
             app.hovered_profile = Some(profile_id);
@@ -641,6 +646,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CancelProfileDrag => {
             finish_profile_drag(app);
+            app.sftp_drag_cursor = None;
             // A left-button release also resolves a pane-to-pane SFTP drag:
             // transfer only if the pointer ended over the *other* pane.
             if let Some((src, name)) = app.sftp_drag.take() {
@@ -769,6 +775,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sftp_new_folder.clear();
             app.sftp_drag = None;
             app.sftp_drag_over = None;
+            app.sftp_drag_cursor = None;
             app.sftp_local_selected.clear();
             app.sftp_remote_selected.clear();
             app.sftp_local_path_edit.clear();
@@ -929,6 +936,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::SftpDragEnter(pane) => app.sftp_drag_over = Some(pane),
+        Message::SftpDragMove(pane, position) => {
+            if app.sftp_drag.is_some() {
+                app.sftp_drag_over = Some(pane);
+                app.sftp_drag_cursor = Some(position);
+            }
+        }
         Message::ToggleProfileGroup(group) => {
             if !app.collapsed_groups.remove(&group) {
                 app.collapsed_groups.insert(group);
@@ -1637,6 +1650,54 @@ fn open_selected_mock_tab(app: &mut AditApp) {
                 app.notice = String::from("已打开演示标签");
             }
             Err(error) => app.last_error = Some(error.to_string()),
+        }
+    }
+}
+
+/// Connect to a profile directly (used by double-click). Uses a stored password
+/// when present; for key/agent/auto auth it connects with no password; only
+/// password auth without a stored secret falls back to the connection dialog.
+fn connect_profile(app: &mut AditApp) {
+    let Some(profile_id) = save_profile_from_form(app, false) else {
+        return;
+    };
+    let Some(profile) = app.manager.profile(profile_id).cloned() else {
+        app.last_error = Some(String::from("请选择要连接的会话配置"));
+        return;
+    };
+
+    let stored = app
+        .credential_store
+        .load_profile_password(profile_id)
+        .ok()
+        .flatten();
+    let password = match stored {
+        Some(password) => password,
+        None => {
+            if profile.auth_method == AuthMethod::Password {
+                open_connection_dialog(app);
+                return;
+            }
+            String::new()
+        }
+    };
+
+    let endpoint = profile.endpoint();
+    match app.manager.open_live_ssh_session(profile_id, password) {
+        Ok(_) => {
+            app.connection_dialog = None;
+            app.password.clear();
+            app.remember_connection_password = false;
+            app.terminal_focused = true;
+            app.terminal_scroll_offset = 0;
+            app.terminal_selection = None;
+            app.terminal_context_menu = false;
+            sync_terminal_size(app);
+            app.last_error = None;
+            app.notice = format!("SSH 会话已开始连接: {endpoint}");
+        }
+        Err(error) => {
+            app.last_error = Some(error.to_string());
         }
     }
 }
@@ -2898,9 +2959,7 @@ fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a
     .padding(8)
     .style(move |_theme| sftp_pane_style_dropzone(drop_active));
 
-    mouse_area(pane)
-        .on_enter(Message::SftpDragEnter(SftpPane::Local))
-        .into()
+    sftp_drag_layer(app, SftpPane::Local, pane.into())
 }
 
 fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
@@ -2983,9 +3042,7 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
         .padding(8)
         .style(move |_theme| sftp_pane_style_dropzone(drop_active));
 
-    mouse_area(pane)
-        .on_enter(Message::SftpDragEnter(SftpPane::Remote))
-        .into()
+    sftp_drag_layer(app, SftpPane::Remote, pane.into())
 }
 
 /// Rename bar shown at the panel level for whichever pane is being edited.
@@ -3085,12 +3142,18 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
         TransferStatus::Done => ("完成", Color::from_rgb8(34, 197, 94)),
         TransferStatus::Failed => ("失败", danger()),
     };
-    let fraction = if item.total > 0 {
-        (item.done as f32 / item.total as f32).clamp(0.0, 1.0)
+    // A completed transfer is always 100% — including 0-byte files, where
+    // dividing by total would otherwise leave it at 0%.
+    let (fraction, pct) = if matches!(item.status, TransferStatus::Done) {
+        (1.0, 100)
+    } else if item.total > 0 {
+        (
+            (item.done as f32 / item.total as f32).clamp(0.0, 1.0),
+            item.done.saturating_mul(100).checked_div(item.total).unwrap_or(0),
+        )
     } else {
-        0.0
+        (0.0, 0)
     };
-    let pct = item.done.saturating_mul(100).checked_div(item.total).unwrap_or(0);
     let speed = if item.bps > 0 {
         format!("{}/s", human_size(item.bps))
     } else {
@@ -3385,6 +3448,88 @@ fn sftp_pane_style() -> container::Style {
         background: Some(Background::Color(surface())),
         text_color: Some(primary_text()),
         border: border(RADIUS_SM, 1.0, border_color()),
+        ..container::Style::default()
+    }
+}
+
+/// Wrap a pane in drag plumbing: tracks the cursor while a drag is in flight
+/// (so the ghost can follow it) and overlays the ghost when this pane is the one
+/// under the pointer.
+fn sftp_drag_layer<'a>(
+    app: &AditApp,
+    pane: SftpPane,
+    body: Element<'a, Message>,
+) -> Element<'a, Message> {
+    let dragging = app.sftp_drag.is_some();
+    let content: Element<'a, Message> = match app.sftp_drag_cursor {
+        Some(position) if dragging && app.sftp_drag_over == Some(pane) => {
+            let (name, count) = drag_subject(app);
+            stack![body, drag_ghost(name, count, position)]
+                .width(Length::FillPortion(1))
+                .height(Fill)
+                .into()
+        }
+        _ => body,
+    };
+    let mut area = mouse_area(content).on_enter(Message::SftpDragEnter(pane));
+    if dragging {
+        area = area.on_move(move |point| Message::SftpDragMove(pane, point));
+    }
+    area.into()
+}
+
+/// The dragged file name and how many items the drag carries (the selection if
+/// the dragged file is part of a multi-selection, else 1).
+fn drag_subject(app: &AditApp) -> (String, usize) {
+    match &app.sftp_drag {
+        Some((src, name)) => {
+            let selection = match src {
+                SftpPane::Local => &app.sftp_local_selected,
+                SftpPane::Remote => &app.sftp_remote_selected,
+            };
+            let count = if selection.contains(name) && selection.len() > 1 {
+                selection.len()
+            } else {
+                1
+            };
+            (name.clone(), count)
+        }
+        None => (String::new(), 0),
+    }
+}
+
+/// A floating chip that follows the cursor inside the pane during a drag,
+/// positioned with leading spacers (pane-relative coordinates from `on_move`).
+fn drag_ghost(name: String, count: usize, position: Point) -> Element<'static, Message> {
+    let label = if count > 1 {
+        format!("⠿ {name}  +{}", count - 1)
+    } else {
+        format!("⠿ {name}")
+    };
+    column![
+        Space::new().height(Length::Fixed((position.y + 12.0).max(0.0))),
+        row![
+            Space::new().width(Length::Fixed((position.x + 14.0).max(0.0))),
+            container(text(label).size(11).color(primary_text()))
+                .padding([3, 8])
+                .style(|_theme| drag_ghost_style()),
+        ],
+    ]
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
+fn drag_ghost_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface())),
+        text_color: Some(primary_text()),
+        border: border(RADIUS_SM, 1.5, accent()),
+        shadow: Shadow {
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.25),
+            offset: Vector::new(0.0, 2.0),
+            blur_radius: 8.0,
+        },
         ..container::Style::default()
     }
 }
