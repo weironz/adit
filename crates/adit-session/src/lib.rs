@@ -1,10 +1,11 @@
 use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus};
 use adit_ssh::{
     AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
-    LiveShellRequest, PasswordShellProbe, SshError,
+    LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle, SftpRequest, SshError,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
+pub use adit_ssh::SftpEntry;
 use adit_terminal::{TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal};
 use std::collections::HashMap;
 use std::fs;
@@ -39,6 +40,10 @@ pub enum SessionError {
     Ssh(#[from] SshError),
     #[error("session log failed: {0}")]
     Logging(String),
+    #[error("no active SSH session for SFTP")]
+    NoActiveSshSession,
+    #[error("sftp failed: {0}")]
+    Sftp(String),
 }
 
 #[derive(Debug, Clone)]
@@ -101,11 +106,24 @@ impl ReconnectState {
     }
 }
 
+/// The single open SFTP browser, tied to a connected session's profile.
+pub struct SftpBrowser {
+    handle: SftpHandle,
+    pub profile_id: ProfileId,
+    pub endpoint: String,
+    pub cwd: String,
+    pub entries: Vec<SftpEntry>,
+    pub status: String,
+    pub busy: bool,
+    pub connected: bool,
+}
+
 pub struct SessionManager {
     profiles: Vec<ConnectionProfile>,
     sessions: HashMap<SessionId, SessionRecord>,
     active_session: Option<SessionId>,
     auto_reconnect: bool,
+    sftp: Option<SftpBrowser>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +164,7 @@ impl SessionManager {
             sessions: HashMap::new(),
             active_session: None,
             auto_reconnect: true,
+            sftp: None,
         }
     }
 
@@ -755,6 +774,174 @@ impl SessionManager {
             .map(|log| log.path.clone())
     }
 
+    // --- SFTP ---------------------------------------------------------------
+
+    #[must_use]
+    pub fn sftp_browser(&self) -> Option<&SftpBrowser> {
+        self.sftp.as_ref()
+    }
+
+    #[must_use]
+    pub fn sftp_is_open(&self) -> bool {
+        self.sftp.is_some()
+    }
+
+    /// Open an SFTP browser for the active live session, reusing its
+    /// credentials over a separate SSH connection.
+    pub fn open_sftp_for_active(&mut self) -> Result<(), SessionError> {
+        if self.sftp.is_some() {
+            return Ok(());
+        }
+        let session_id = self
+            .active_session
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let record = self
+            .sessions
+            .get(&session_id)
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let reconnect = record
+            .reconnect
+            .as_ref()
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let profile_id = record.summary.profile_id;
+        let endpoint = record.summary.endpoint.clone();
+        let password = reconnect.password.clone();
+
+        let profile = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or(SessionError::ProfileNotFound)?;
+
+        let mut request = SftpRequest::new(
+            profile.host.clone(),
+            profile.port,
+            profile.username.clone(),
+            password.clone(),
+        );
+        request.auth = auth_options_for_profile(&profile, &password);
+        let handle = adit_ssh::spawn_sftp_session(request)?;
+
+        self.sftp = Some(SftpBrowser {
+            handle,
+            profile_id,
+            endpoint,
+            cwd: String::from("/"),
+            entries: Vec::new(),
+            status: String::from("connecting"),
+            busy: false,
+            connected: false,
+        });
+        Ok(())
+    }
+
+    pub fn close_sftp(&mut self) {
+        if let Some(browser) = self.sftp.take() {
+            let _ = browser.handle.send(SftpCommand::Disconnect);
+        }
+    }
+
+    pub fn sftp_navigate(&mut self, name: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let target = join_remote(&browser.cwd, name);
+            browser.status = format!("opening {target}");
+            let _ = browser.handle.send(SftpCommand::ListDir(target));
+        }
+    }
+
+    pub fn sftp_up(&mut self) {
+        if let Some(browser) = &mut self.sftp {
+            let parent = parent_remote(&browser.cwd);
+            browser.status = format!("opening {parent}");
+            let _ = browser.handle.send(SftpCommand::ListDir(parent));
+        }
+    }
+
+    pub fn sftp_refresh(&mut self) {
+        if let Some(browser) = &mut self.sftp {
+            let cwd = browser.cwd.clone();
+            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+        }
+    }
+
+    pub fn sftp_download(&mut self, name: &str, dest_dir: &Path) -> Result<PathBuf, SessionError> {
+        let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
+        let remote = join_remote(&browser.cwd, name);
+        fs::create_dir_all(dest_dir).map_err(|e| SessionError::Sftp(e.to_string()))?;
+        let local = dest_dir.join(name);
+        browser.busy = true;
+        browser.status = format!("downloading {name}…");
+        browser.handle.send(SftpCommand::Download {
+            remote,
+            local: local.clone(),
+        })?;
+        Ok(local)
+    }
+
+    pub fn sftp_upload(&mut self, local: &Path) -> Result<(), SessionError> {
+        let name = local
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| SessionError::Sftp(String::from("invalid local file path")))?
+            .to_string();
+        let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
+        let remote = join_remote(&browser.cwd, &name);
+        browser.busy = true;
+        browser.status = format!("uploading {name}…");
+        browser.handle.send(SftpCommand::Upload {
+            local: local.to_path_buf(),
+            remote,
+        })?;
+        Ok(())
+    }
+
+    fn poll_sftp_events(&mut self) {
+        let mut closed = false;
+        if let Some(browser) = &mut self.sftp {
+            while let Some(event) = browser.handle.try_recv() {
+                match event {
+                    SftpEvent::Status(status) => browser.status = status,
+                    SftpEvent::Ready { home } => {
+                        browser.connected = true;
+                        browser.cwd = home.clone();
+                        browser.status = format!("connected: {home}");
+                    }
+                    SftpEvent::Listing { path, entries } => {
+                        browser.cwd = path;
+                        browser.entries = entries;
+                        browser.busy = false;
+                        browser.status = format!("{} item(s)", browser.entries.len());
+                    }
+                    SftpEvent::Progress { label, done, total } => {
+                        browser.busy = true;
+                        browser.status = match done.saturating_mul(100).checked_div(total) {
+                            Some(percent) => format!("{label}: {percent}%"),
+                            None => format!("{label}: {done} bytes"),
+                        };
+                    }
+                    SftpEvent::Done { label, bytes } => {
+                        browser.busy = false;
+                        browser.status = format!("{label} done ({bytes} bytes)");
+                        let cwd = browser.cwd.clone();
+                        let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+                    }
+                    SftpEvent::Error(error) => {
+                        browser.busy = false;
+                        browser.status = format!("error: {error}");
+                    }
+                    SftpEvent::Closed => {
+                        closed = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if closed {
+            self.sftp = None;
+        }
+    }
+
     /// The first session whose connect is paused awaiting a host-key decision.
     #[must_use]
     pub fn pending_host_key(&self) -> Option<(SessionId, HostKeyPrompt)> {
@@ -899,6 +1086,7 @@ impl SessionManager {
         }
 
         self.drive_reconnects();
+        self.poll_sftp_events();
         handled
     }
 
@@ -1047,6 +1235,28 @@ fn build_profile(
     profile.identity_file = identity_file;
 
     Ok(profile)
+}
+
+/// Join a POSIX remote path component onto the current directory.
+fn join_remote(cwd: &str, name: &str) -> String {
+    if name.starts_with('/') {
+        return name.to_string();
+    }
+    let base = cwd.trim_end_matches('/');
+    if base.is_empty() {
+        format!("/{name}")
+    } else {
+        format!("{base}/{name}")
+    }
+}
+
+/// The parent of a POSIX remote path (root stays root).
+fn parent_remote(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    match trimmed.rfind('/') {
+        None | Some(0) => String::from("/"),
+        Some(index) => trimmed[..index].to_string(),
+    }
 }
 
 /// Spawn a live SSH shell actor for `profile`, reusing `password` for password
@@ -1234,6 +1444,19 @@ fn probe_terminal(profile_name: &str, endpoint: &str, transcript: &str) -> VtTer
 mod tests {
     use super::*;
     use adit_terminal::Color as TermColor;
+
+    #[test]
+    fn remote_path_join_and_parent() {
+        assert_eq!(join_remote("/home/me", "docs"), "/home/me/docs");
+        assert_eq!(join_remote("/", "etc"), "/etc");
+        assert_eq!(join_remote("/home/", "a"), "/home/a");
+        assert_eq!(join_remote("/home", "/abs/path"), "/abs/path");
+
+        assert_eq!(parent_remote("/home/me/docs"), "/home/me");
+        assert_eq!(parent_remote("/home"), "/");
+        assert_eq!(parent_remote("/"), "/");
+        assert_eq!(parent_remote("/home/me/"), "/home");
+    }
 
     #[test]
     fn reconnect_backoff_is_exponential_and_capped() {

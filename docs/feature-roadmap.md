@@ -70,8 +70,11 @@ A "serious" client should not silently trust new hosts or drop on idle.
 
 ## Phase C — File transfer & tunnels
 
-- **C1. SFTP panel.** `russh-sftp`-backed file browser: list, upload, download,
-  rename, delete, mkdir, with transfer progress. (Currently a stub.)
+- **C1. SFTP panel.** Partial ✅ — `russh-sftp` over a second SSH connection
+  (reusing the session credential): an overlay file browser with directory
+  listing, navigation, per-file download (to the app `downloads/` dir), and
+  upload from a local path, with chunked transfer progress. Pending: mkdir /
+  rename / delete, a native file picker, and a progress bar (status text today).
 - **C2. Port forwarding.** Local (`-L`), remote (`-R`), and dynamic SOCKS (`-D`)
   tunnels, created and managed from the UI, tied to a session.
 - **C3. Jump host / proxy.** `ProxyJump` (bastion chaining) and `ProxyCommand`.

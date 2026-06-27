@@ -300,6 +300,12 @@ pub fn default_log_dir() -> PathBuf {
     platform_config_dir().join("logs")
 }
 
+/// Default directory for SFTP downloads.
+#[must_use]
+pub fn default_download_dir() -> PathBuf {
+    platform_config_dir().join("downloads")
+}
+
 fn platform_config_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
         if let Some(app_data) = env::var_os("APPDATA") {

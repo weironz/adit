@@ -18,7 +18,9 @@ use std::{
     thread,
     time::Duration,
 };
+use russh_sftp::client::SftpSession;
 use thiserror::Error;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc as tokio_mpsc;
 use tokio::sync::oneshot;
 
@@ -193,6 +195,10 @@ pub enum SshError {
     HostKeyRejected,
     #[error("known hosts storage failed: {0}")]
     KnownHosts(String),
+    #[error("sftp error: {0}")]
+    Sftp(String),
+    #[error("local file error: {0}")]
+    LocalIo(String),
     #[error("no authentication method is available; enter a password or add a default SSH key under ~/.ssh")]
     NoAuthenticationMethod,
     #[error("ssh agent error: {0}")]
@@ -845,6 +851,334 @@ fn send_status(events: Option<&mpsc::Sender<LiveShellEvent>>, message: impl Into
     if let Some(events) = events {
         let _ = events.send(LiveShellEvent::Status(message.into()));
     }
+}
+
+// --- SFTP ------------------------------------------------------------------
+
+const SFTP_CHUNK: usize = 64 * 1024;
+const SFTP_PROGRESS_STEP: u64 = 256 * 1024;
+
+/// Connection details for an SFTP session (a separate SSH connection to the
+/// same host, reusing the profile's credentials).
+#[derive(Debug, Clone)]
+pub struct SftpRequest {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub auth: AuthOptions,
+    pub known_hosts_path: PathBuf,
+}
+
+impl SftpRequest {
+    #[must_use]
+    pub fn new(
+        host: impl Into<String>,
+        port: u16,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        Self {
+            host: host.into(),
+            port,
+            username: username.into(),
+            password: password.into(),
+            auth: AuthOptions::default(),
+            known_hosts_path: default_known_hosts_path(),
+        }
+    }
+}
+
+/// One remote directory entry.
+#[derive(Debug, Clone)]
+pub struct SftpEntry {
+    pub name: String,
+    pub is_dir: bool,
+    pub size: u64,
+    pub mtime: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub enum SftpCommand {
+    ListDir(String),
+    Download { remote: String, local: PathBuf },
+    Upload { local: PathBuf, remote: String },
+    Disconnect,
+}
+
+#[derive(Debug, Clone)]
+pub enum SftpEvent {
+    Status(String),
+    Ready { home: String },
+    Listing { path: String, entries: Vec<SftpEntry> },
+    Progress { label: String, done: u64, total: u64 },
+    Done { label: String, bytes: u64 },
+    Error(String),
+    Closed,
+}
+
+pub struct SftpHandle {
+    command_tx: tokio_mpsc::UnboundedSender<SftpCommand>,
+    event_rx: mpsc::Receiver<SftpEvent>,
+}
+
+impl SftpHandle {
+    pub fn send(&self, command: SftpCommand) -> Result<(), SshError> {
+        self.command_tx
+            .send(command)
+            .map_err(|_| SshError::CommandChannelClosed)
+    }
+
+    #[must_use]
+    pub fn try_recv(&self) -> Option<SftpEvent> {
+        self.event_rx.try_recv().ok()
+    }
+}
+
+pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> {
+    if request.host.trim().is_empty() {
+        return Err(SshError::EmptyHost);
+    }
+    if request.username.trim().is_empty() {
+        return Err(SshError::EmptyUsername);
+    }
+    if request.port == 0 {
+        return Err(SshError::InvalidPort);
+    }
+
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel();
+
+    thread::Builder::new()
+        .name(format!("adit-sftp-{}:{}", request.host, request.port))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => {
+                    if let Err(error) =
+                        runtime.block_on(run_sftp_session(request, command_rx, event_tx.clone()))
+                    {
+                        let _ = event_tx.send(SftpEvent::Error(error.to_string()));
+                    }
+                }
+                Err(error) => {
+                    let _ = event_tx.send(SftpEvent::Error(error.to_string()));
+                }
+            }
+            let _ = event_tx.send(SftpEvent::Closed);
+        })
+        .map_err(|error| SshError::Runtime(error.to_string()))?;
+
+    Ok(SftpHandle {
+        command_tx,
+        event_rx,
+    })
+}
+
+async fn run_sftp_session(
+    request: SftpRequest,
+    mut commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
+    events: mpsc::Sender<SftpEvent>,
+) -> Result<(), SshError> {
+    let _ = events.send(SftpEvent::Status(String::from("connecting")));
+
+    let config = Arc::new(client::Config {
+        inactivity_timeout: None,
+        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_max: 3,
+        ..Default::default()
+    });
+    // The shell session already established trust for this host; verify
+    // non-interactively (known host → trusted).
+    let handler = KnownHostsClient::new(
+        request.host.clone(),
+        request.port,
+        request.known_hosts_path.clone(),
+        None,
+        None,
+    );
+    let mut session =
+        client::connect(config, (request.host.as_str(), request.port), handler).await?;
+
+    let _ = events.send(SftpEvent::Status(String::from("authenticating")));
+    authenticate_with_available_methods(
+        &mut session,
+        &request.username,
+        &request.password,
+        &request.auth,
+        None,
+    )
+    .await?;
+
+    let channel = session.channel_open_session().await?;
+    channel.request_subsystem(true, "sftp").await?;
+    let sftp = SftpSession::new(channel.into_stream())
+        .await
+        .map_err(|error| SshError::Sftp(error.to_string()))?;
+
+    let home = sftp.canonicalize(".").await.unwrap_or_else(|_| String::from("/"));
+    let _ = events.send(SftpEvent::Ready { home: home.clone() });
+    list_dir(&sftp, &home, &events).await;
+
+    while let Some(command) = commands.recv().await {
+        match command {
+            SftpCommand::ListDir(path) => list_dir(&sftp, &path, &events).await,
+            SftpCommand::Download { remote, local } => {
+                if let Err(error) = sftp_download(&sftp, &remote, &local, &events).await {
+                    let _ = events.send(SftpEvent::Error(error.to_string()));
+                }
+            }
+            SftpCommand::Upload { local, remote } => {
+                if let Err(error) = sftp_upload(&sftp, &local, &remote, &events).await {
+                    let _ = events.send(SftpEvent::Error(error.to_string()));
+                }
+            }
+            SftpCommand::Disconnect => break,
+        }
+    }
+
+    let _ = sftp.close().await;
+    let _ = session
+        .disconnect(Disconnect::ByApplication, "sftp session closed", "en")
+        .await;
+    Ok(())
+}
+
+async fn list_dir(sftp: &SftpSession, path: &str, events: &mpsc::Sender<SftpEvent>) {
+    match sftp.read_dir(path.to_string()).await {
+        Ok(read_dir) => {
+            let mut entries: Vec<SftpEntry> = read_dir
+                .map(|entry| {
+                    let metadata = entry.metadata();
+                    SftpEntry {
+                        name: entry.file_name(),
+                        is_dir: metadata.is_dir(),
+                        size: metadata.size.unwrap_or(0),
+                        mtime: metadata.mtime,
+                    }
+                })
+                .collect();
+            // Directories first, then case-insensitive by name.
+            entries.sort_by(|a, b| {
+                b.is_dir
+                    .cmp(&a.is_dir)
+                    .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+            });
+            let _ = events.send(SftpEvent::Listing {
+                path: path.to_string(),
+                entries,
+            });
+        }
+        Err(error) => {
+            let _ = events.send(SftpEvent::Error(format!("list {path}: {error}")));
+        }
+    }
+}
+
+async fn sftp_download(
+    sftp: &SftpSession,
+    remote: &str,
+    local: &Path,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<(), SshError> {
+    let label = remote.rsplit('/').next().unwrap_or(remote).to_string();
+    let total = sftp
+        .metadata(remote.to_string())
+        .await
+        .ok()
+        .and_then(|m| m.size)
+        .unwrap_or(0);
+
+    let mut remote_file = sftp
+        .open(remote.to_string())
+        .await
+        .map_err(|error| SshError::Sftp(error.to_string()))?;
+    let mut local_file = tokio::fs::File::create(local)
+        .await
+        .map_err(|error| SshError::LocalIo(error.to_string()))?;
+
+    stream_copy(&mut remote_file, &mut local_file, total, &label, events).await?;
+    local_file
+        .flush()
+        .await
+        .map_err(|error| SshError::LocalIo(error.to_string()))?;
+    Ok(())
+}
+
+async fn sftp_upload(
+    sftp: &SftpSession,
+    local: &Path,
+    remote: &str,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<(), SshError> {
+    let label = remote.rsplit('/').next().unwrap_or(remote).to_string();
+    let total = tokio::fs::metadata(local).await.map(|m| m.len()).unwrap_or(0);
+
+    let mut local_file = tokio::fs::File::open(local)
+        .await
+        .map_err(|error| SshError::LocalIo(error.to_string()))?;
+    let mut remote_file = sftp
+        .create(remote.to_string())
+        .await
+        .map_err(|error| SshError::Sftp(error.to_string()))?;
+
+    stream_copy(&mut local_file, &mut remote_file, total, &label, events).await?;
+    remote_file
+        .shutdown()
+        .await
+        .map_err(|error| SshError::Sftp(error.to_string()))?;
+    Ok(())
+}
+
+/// Copy `reader` into `writer` in chunks, emitting throttled progress events.
+async fn stream_copy<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    total: u64,
+    label: &str,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<(), SshError>
+where
+    R: AsyncReadExt + Unpin,
+    W: AsyncWriteExt + Unpin,
+{
+    let mut buffer = vec![0u8; SFTP_CHUNK];
+    let mut done = 0u64;
+    let mut emitted = 0u64;
+    let _ = events.send(SftpEvent::Progress {
+        label: label.to_string(),
+        done: 0,
+        total,
+    });
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .await
+            .map_err(|error| SshError::Sftp(error.to_string()))?;
+        if read == 0 {
+            break;
+        }
+        writer
+            .write_all(&buffer[..read])
+            .await
+            .map_err(|error| SshError::Sftp(error.to_string()))?;
+        done += read as u64;
+        if done - emitted >= SFTP_PROGRESS_STEP {
+            emitted = done;
+            let _ = events.send(SftpEvent::Progress {
+                label: label.to_string(),
+                done,
+                total,
+            });
+        }
+    }
+    let _ = events.send(SftpEvent::Done {
+        label: label.to_string(),
+        bytes: done,
+    });
+    Ok(())
 }
 
 struct KnownHostsClient {

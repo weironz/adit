@@ -55,6 +55,7 @@ pub struct AditApp {
     password: String,
     remember_connection_password: bool,
     session_filter: String,
+    sftp_upload_path: String,
     terminal_input: String,
     terminal_focused: bool,
     terminal_size: TerminalSize,
@@ -141,6 +142,14 @@ pub enum Message {
     ConfirmConnection,
     CancelConnection,
     RespondHostKey { session_id: SessionId, accept: bool },
+    OpenSftp,
+    CloseSftp,
+    SftpNavigate(String),
+    SftpUp,
+    SftpRefresh,
+    SftpDownload(String),
+    SftpUploadPathChanged(String),
+    SftpUpload,
     ToggleProfileGroup(String),
     ProfileGroupChanged(String),
     ProfileNameChanged(String),
@@ -346,6 +355,7 @@ impl AditApp {
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
+            sftp_upload_path: String::new(),
             terminal_input: String::new(),
             terminal_focused: false,
             terminal_size: estimated_terminal_size(window_width, window_height),
@@ -627,6 +637,41 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 };
             }
         }
+        Message::OpenSftp => {
+            if let Err(error) = app.manager.open_sftp_for_active() {
+                app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+            } else {
+                app.last_error = None;
+            }
+        }
+        Message::CloseSftp => app.manager.close_sftp(),
+        Message::SftpNavigate(name) => app.manager.sftp_navigate(&name),
+        Message::SftpUp => app.manager.sftp_up(),
+        Message::SftpRefresh => app.manager.sftp_refresh(),
+        Message::SftpDownload(name) => {
+            match app
+                .manager
+                .sftp_download(&name, &adit_storage::default_download_dir())
+            {
+                Ok(path) => app.notice = format!("下载到 {}", path.display()),
+                Err(error) => app.last_error = Some(error.to_string()),
+            }
+        }
+        Message::SftpUploadPathChanged(value) => app.sftp_upload_path = value,
+        Message::SftpUpload => {
+            let path = app.sftp_upload_path.trim().to_string();
+            if path.is_empty() {
+                app.last_error = Some(String::from("请输入要上传的本地文件路径"));
+            } else {
+                match app.manager.sftp_upload(std::path::Path::new(&path)) {
+                    Ok(()) => {
+                        app.sftp_upload_path.clear();
+                        app.last_error = None;
+                    }
+                    Err(error) => app.last_error = Some(error.to_string()),
+                }
+            }
+        }
         Message::ToggleProfileGroup(group) => {
             if !app.collapsed_groups.remove(&group) {
                 app.collapsed_groups.insert(group);
@@ -870,7 +915,9 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::ResizeDefault => resize_active(app, 96, 28),
         MenuCommand::ResizeWide => resize_active(app, 120, 36),
         MenuCommand::Sftp => {
-            app.notice = String::from("SFTP 面板将在后续里程碑接入");
+            if let Err(error) = app.manager.open_sftp_for_active() {
+                app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+            }
         }
         MenuCommand::Logging => toggle_active_logging(app),
         MenuCommand::ToggleAutoReconnect => {
@@ -2017,6 +2064,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if let Some((session_id, prompt)) = app.manager.pending_host_key() {
         layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
     }
+    if app.manager.sftp_is_open() {
+        layers.push(opaque(sftp_panel_overlay(app)));
+    }
 
     if layers.len() == 1 {
         layers.pop().unwrap()
@@ -2400,6 +2450,173 @@ fn host_key_dialog_overlay(
         .center(Fill)
         .style(|_theme| dialog_scrim_style())
         .into()
+}
+
+fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
+    let Some(browser) = app.manager.sftp_browser() else {
+        return Space::new().width(Fill).height(Fill).into();
+    };
+
+    let header = row![
+        text(format!("SFTP — {}", browser.endpoint))
+            .size(15)
+            .color(primary_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseSftp),
+    ]
+    .align_y(Alignment::Center);
+
+    let path_bar = row![
+        button(text("↑").size(13))
+            .padding([4, 10])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::SftpUp),
+        button(text("⟳").size(13))
+            .padding([4, 10])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::SftpRefresh),
+        container(
+            text(browser.cwd.clone())
+                .size(12)
+                .font(Font::MONOSPACE)
+                .color(muted_text())
+        )
+        .padding([4, 8]),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+
+    let mut list = column![sftp_dir_row("..", Message::SftpUp)].spacing(1);
+    for entry in &browser.entries {
+        list = list.push(if entry.is_dir {
+            sftp_dir_row(&entry.name, Message::SftpNavigate(entry.name.clone()))
+        } else {
+            sftp_file_row(&entry.name, entry.size)
+        });
+    }
+
+    let status = text(browser.status.clone()).size(11).color(
+        if browser.status.starts_with("error") {
+            danger()
+        } else {
+            muted_text()
+        },
+    );
+
+    let upload = row![
+        text_input("本地文件路径（回车上传）", &app.sftp_upload_path)
+            .on_input(Message::SftpUploadPathChanged)
+            .on_submit(Message::SftpUpload)
+            .padding([6, 8])
+            .style(text_input_style)
+            .width(Fill),
+        button(text("上传").size(13))
+            .padding([6, 14])
+            .style(|_theme, status| primary_button_style(status))
+            .on_press(Message::SftpUpload),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let download_note = text(format!(
+        "下载目录: {}",
+        adit_storage::default_download_dir().display()
+    ))
+    .size(10)
+    .color(muted_text());
+
+    let panel = container(
+        column![
+            header,
+            path_bar,
+            container(scrollable(list).height(Fill))
+                .height(Length::Fixed(360.0))
+                .padding(4)
+                .style(|_theme| profile_edit_menu_style()),
+            status,
+            download_note,
+            upload,
+        ]
+        .spacing(10),
+    )
+    .width(Length::Fixed(640.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+fn sftp_dir_row(name: &str, message: Message) -> Element<'static, Message> {
+    button(
+        row![
+            text(format!("{name}/"))
+                .size(13)
+                .color(accent())
+                .width(Fill),
+            text("DIR").size(10).color(muted_text()),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .width(Fill)
+    .padding([5, 8])
+    .style(|_theme, status| sftp_entry_button_style(status))
+    .on_press(message)
+    .into()
+}
+
+fn sftp_file_row(name: &str, size: u64) -> Element<'static, Message> {
+    container(
+        row![
+            text(name.to_string())
+                .size(13)
+                .color(primary_text())
+                .width(Fill),
+            text(human_size(size)).size(11).color(muted_text()),
+            button(text("下载").size(11))
+                .padding([3, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::SftpDownload(name.to_string())),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([2, 8])
+    .into()
+}
+
+fn sftp_entry_button_style(status: button::Status) -> button::Style {
+    let background = match status {
+        button::Status::Hovered => panel_background_hover(),
+        button::Status::Pressed => accent_soft(),
+        _ => transparent(),
+    };
+    base_button_style(background, primary_text(), transparent())
+}
+
+fn human_size(bytes: u64) -> String {
+    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
+    let mut value = bytes as f64;
+    let mut unit = 0;
+    while value >= 1024.0 && unit < UNITS.len() - 1 {
+        value /= 1024.0;
+        unit += 1;
+    }
+    if unit == 0 {
+        format!("{bytes} B")
+    } else {
+        format!("{value:.1} {}", UNITS[unit])
+    }
 }
 
 fn form_endpoint(app: &AditApp) -> String {
