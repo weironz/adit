@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Adit</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <main class="app-shell">
+      <aside class="sidebar" aria-label="Session manager">
+        <div class="brand-row">
+          <div>
+            <h1>Adit</h1>
+            <p>SSH Terminal</p>
+          </div>
+          <button id="new-profile-button" class="icon-button" type="button" title="New profile">
+            +
+          </button>
+        </div>
+
+        <section class="sidebar-section">
+          <div class="section-header">
+            <h2>会话</h2>
+            <span id="profile-count">0</span>
+          </div>
+          <div id="profile-list" class="profile-list" aria-label="Saved sessions"></div>
+        </section>
+
+        <form id="connection-form" class="connection-form">
+          <label>
+            名称
+            <input id="profile-label" name="label" autocomplete="off" placeholder="prod-web-01" />
+          </label>
+
+          <div class="form-grid">
+            <label>
+              主机
+              <input id="host" name="host" autocomplete="off" required placeholder="10.0.0.12" />
+            </label>
+            <label>
+              端口
+              <input id="port" name="port" inputmode="numeric" required value="22" />
+            </label>
+          </div>
+
+          <label>
+            用户名
+            <input id="username" name="username" autocomplete="username" required placeholder="root" />
+          </label>
+
+          <label>
+            密码
+            <input
+              id="password"
+              name="password"
+              autocomplete="current-password"
+              required
+              type="password"
+              placeholder="Password"
+            />
+          </label>
+
+          <div class="button-row">
+            <button id="save-profile-button" class="secondary-button" type="button">保存</button>
+            <button class="primary-button" type="submit">连接</button>
+          </div>
+        </form>
+      </aside>
+
+      <section class="workspace" aria-label="Terminal workspace">
+        <header class="topbar">
+          <nav id="tab-list" class="tab-list" aria-label="Open sessions"></nav>
+          <div id="connection-state" class="connection-state">Idle</div>
+        </header>
+
+        <section id="terminal-stage" class="terminal-stage">
+          <div id="empty-state" class="empty-state">
+            <h2>未连接</h2>
+          </div>
+        </section>
+      </section>
+    </main>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+[package]
+name = "adit-terminal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+vte = "0.15"
+unicode-width = "0.2"

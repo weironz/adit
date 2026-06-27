@@ -1,0 +1,13 @@
+[package]
+name = "adit-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+adit-domain.workspace = true
+adit-session.workspace = true
+adit-storage.workspace = true
+adit-terminal.workspace = true
+iced.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "adit-session"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+adit-domain.workspace = true
+adit-ssh.workspace = true
+adit-terminal.workspace = true
+thiserror.workspace = true

@@ -1,0 +1,10 @@
+[package]
+name = "adit-app"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+adit-ui.workspace = true
+iced.workspace = true

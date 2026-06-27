@@ -1,0 +1,12 @@
+[package]
+name = "adit-storage"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[dependencies]
+adit-domain.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
