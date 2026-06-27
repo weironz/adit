@@ -72,8 +72,8 @@ pub struct AditApp {
     sftp_remote_path_edit: String,
     sftp_local_cwd_seen: String,
     sftp_remote_cwd_seen: String,
-    sftp_local_selected: Option<String>,
-    sftp_remote_selected: Option<String>,
+    sftp_local_selected: BTreeSet<String>,
+    sftp_remote_selected: BTreeSet<String>,
     sftp_last_click: Option<(SftpPane, String, Instant)>,
     terminal_input: String,
     terminal_focused: bool,
@@ -172,6 +172,7 @@ pub enum Message {
     SftpUploadLocal(String),
     SftpDownload(String),
     SftpRowPress(SftpPane, String),
+    SftpTransferSelected(SftpPane),
     SftpLocalPathChanged(String),
     SftpLocalGo,
     SftpRemotePathChanged(String),
@@ -407,8 +408,8 @@ impl AditApp {
             sftp_remote_path_edit: String::new(),
             sftp_local_cwd_seen: String::new(),
             sftp_remote_cwd_seen: String::new(),
-            sftp_local_selected: None,
-            sftp_remote_selected: None,
+            sftp_local_selected: BTreeSet::new(),
+            sftp_remote_selected: BTreeSet::new(),
             sftp_last_click: None,
             terminal_input: String::new(),
             terminal_focused: false,
@@ -719,8 +720,8 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sftp_rename_from = None;
             app.sftp_delete_target = None;
             app.sftp_new_folder.clear();
-            app.sftp_local_selected = None;
-            app.sftp_remote_selected = None;
+            app.sftp_local_selected.clear();
+            app.sftp_remote_selected.clear();
             app.sftp_local_path_edit.clear();
             app.sftp_remote_path_edit.clear();
             app.sftp_local_cwd_seen.clear();
@@ -742,19 +743,36 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 Some((p, n, t)) if *p == pane && *n == name && now.duration_since(*t) < Duration::from_millis(450)
             );
             if is_double {
+                // Double-click transfers just this file (selection untouched).
                 app.sftp_last_click = None;
                 match pane {
                     SftpPane::Remote => app.manager.sftp_download(&name),
                     SftpPane::Local => app.manager.sftp_upload_local(&name),
                 }
             } else {
+                // Single click toggles the file in the pane's selection.
                 app.sftp_last_click = Some((pane, name.clone(), now));
-                match pane {
-                    SftpPane::Remote => app.sftp_remote_selected = Some(name),
-                    SftpPane::Local => app.sftp_local_selected = Some(name),
+                let set = match pane {
+                    SftpPane::Remote => &mut app.sftp_remote_selected,
+                    SftpPane::Local => &mut app.sftp_local_selected,
+                };
+                if !set.remove(&name) {
+                    set.insert(name);
                 }
             }
         }
+        Message::SftpTransferSelected(pane) => match pane {
+            SftpPane::Remote => {
+                for name in std::mem::take(&mut app.sftp_remote_selected) {
+                    app.manager.sftp_download(&name);
+                }
+            }
+            SftpPane::Local => {
+                for name in std::mem::take(&mut app.sftp_local_selected) {
+                    app.manager.sftp_upload_local(&name);
+                }
+            }
+        },
         Message::SftpLocalPathChanged(value) => app.sftp_local_path_edit = value,
         Message::SftpLocalGo => app
             .manager
@@ -2209,12 +2227,12 @@ fn sync_sftp_state(app: &mut AditApp) {
     if remote != app.sftp_remote_cwd_seen {
         app.sftp_remote_cwd_seen = remote.clone();
         app.sftp_remote_path_edit = remote;
-        app.sftp_remote_selected = None;
+        app.sftp_remote_selected.clear();
     }
     if local != app.sftp_local_cwd_seen {
         app.sftp_local_cwd_seen = local.clone();
         app.sftp_local_path_edit = local;
-        app.sftp_local_selected = None;
+        app.sftp_local_selected.clear();
     }
 }
 
@@ -2719,13 +2737,18 @@ fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a
             .padding([3, 6])
             .style(toolbar_input_style)
             .width(Fill),
+        sftp_batch_button(
+            "上传选中",
+            app.sftp_local_selected.len(),
+            Message::SftpTransferSelected(SftpPane::Local),
+        ),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
 
     let mut list = column![sftp_nav_row("../", Message::SftpLocalUp)].spacing(1);
     for entry in &browser.local_entries {
-        let selected = app.sftp_local_selected.as_deref() == Some(entry.name.as_str());
+        let selected = app.sftp_local_selected.contains(&entry.name);
         list = list.push(sftp_local_entry_row(entry, selected));
     }
 
@@ -2763,6 +2786,11 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
             .padding([3, 6])
             .style(toolbar_input_style)
             .width(Fill),
+        sftp_batch_button(
+            "下载选中",
+            app.sftp_remote_selected.len(),
+            Message::SftpTransferSelected(SftpPane::Remote),
+        ),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -2824,7 +2852,7 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
 
     let mut list = column![sftp_nav_row("../", Message::SftpUp)].spacing(1);
     for entry in &browser.entries {
-        let selected = app.sftp_remote_selected.as_deref() == Some(entry.name.as_str());
+        let selected = app.sftp_remote_selected.contains(&entry.name);
         list = list.push(sftp_remote_entry_row(entry, selected));
     }
     content = content.push(
@@ -2931,7 +2959,11 @@ fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, 
                     .size(12)
                     .color(accent())
                     .width(Fill),
-                text("DIR").size(10).color(muted_text()),
+                text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
+                text(sftp_date(entry.mtime))
+                    .size(10)
+                    .color(muted_text())
+                    .width(Length::Fixed(118.0)),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -2952,7 +2984,14 @@ fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, 
                         .size(12)
                         .color(primary_text())
                         .width(Fill),
-                    text(human_size(entry.size)).size(10).color(muted_text()),
+                    text(human_size(entry.size))
+                        .size(10)
+                        .color(muted_text())
+                        .width(Length::Fixed(64.0)),
+                    text(sftp_date(entry.mtime))
+                        .size(10)
+                        .color(muted_text())
+                        .width(Length::Fixed(118.0)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
@@ -2978,7 +3017,11 @@ fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, 
                 .padding([4, 8])
                 .style(|_theme, status| sftp_entry_button_style(status))
                 .on_press(Message::SftpNavigate(owned.clone())),
-            text("DIR").size(10).color(muted_text()),
+            text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
+            text(sftp_date(entry.mtime.map(u64::from)))
+                .size(10)
+                .color(muted_text())
+                .width(Length::Fixed(118.0)),
             sftp_action("重命名", Message::SftpBeginRename(owned.clone()), false),
             sftp_action("删除", Message::SftpBeginDelete(owned, true), true),
         ]
@@ -2996,7 +3039,14 @@ fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, 
                         .size(12)
                         .color(primary_text())
                         .width(Fill),
-                    text(human_size(entry.size)).size(10).color(muted_text()),
+                    text(human_size(entry.size))
+                        .size(10)
+                        .color(muted_text())
+                        .width(Length::Fixed(64.0)),
+                    text(sftp_date(entry.mtime.map(u64::from)))
+                        .size(10)
+                        .color(muted_text())
+                        .width(Length::Fixed(118.0)),
                 ]
                 .spacing(6)
                 .align_y(Alignment::Center),
@@ -3038,6 +3088,50 @@ fn sftp_action(label: &'static str, message: Message, danger: bool) -> Element<'
         })
         .on_press(message)
         .into()
+}
+
+/// A batch-action button that shows the selection count and is disabled (no
+/// `on_press`) when nothing is selected.
+fn sftp_batch_button(label: &'static str, count: usize, message: Message) -> Element<'static, Message> {
+    let caption = if count > 0 {
+        format!("{label} ({count})")
+    } else {
+        label.to_string()
+    };
+    let button = button(text(caption).size(12))
+        .padding([3, 10])
+        .style(|_theme, status| secondary_button_style(status));
+    if count > 0 {
+        button.on_press(message).into()
+    } else {
+        button.into()
+    }
+}
+
+fn sftp_date(mtime: Option<u64>) -> String {
+    mtime.map(format_mtime).unwrap_or_else(|| String::from("—"))
+}
+
+/// Format a Unix timestamp (seconds, UTC) as `YYYY-MM-DD HH:MM` using the
+/// days-from-civil algorithm (no external date dependency).
+fn format_mtime(secs: u64) -> String {
+    let days = (secs / 86_400) as i64;
+    let tod = secs % 86_400;
+    let hour = tod / 3600;
+    let minute = (tod % 3600) / 60;
+
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let year = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if month <= 2 { year + 1 } else { year };
+
+    format!("{year:04}-{month:02}-{day:02} {hour:02}:{minute:02}")
 }
 
 fn sftp_pane_style() -> container::Style {
@@ -4441,6 +4535,14 @@ fn status_color(status: SessionStatus) -> Color {
 mod tests {
     use super::*;
     use iced::keyboard::key::{Code, Physical};
+
+    #[test]
+    fn format_mtime_matches_known_timestamps() {
+        assert_eq!(format_mtime(0), "1970-01-01 00:00");
+        assert_eq!(format_mtime(1_609_459_200), "2021-01-01 00:00"); // 2021-01-01 UTC
+        assert_eq!(format_mtime(1_703_980_800), "2023-12-31 00:00"); // 2023-12-31 UTC
+        assert_eq!(sftp_date(None), "—");
+    }
 
     fn key_press(
         key: Key,

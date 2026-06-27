@@ -131,6 +131,8 @@ pub struct LocalEntry {
     pub name: String,
     pub is_dir: bool,
     pub size: u64,
+    /// Last-modified time as seconds since the Unix epoch (UTC).
+    pub mtime: Option<u64>,
 }
 
 #[derive(Debug, Clone)]
@@ -1449,11 +1451,21 @@ fn read_local_dir(dir: &Path) -> Vec<LocalEntry> {
     if let Ok(read_dir) = fs::read_dir(dir) {
         for entry in read_dir.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
-            let (is_dir, size) = entry
-                .metadata()
-                .map(|m| (m.is_dir(), m.len()))
-                .unwrap_or((false, 0));
-            entries.push(LocalEntry { name, is_dir, size });
+            let metadata = entry.metadata().ok();
+            let is_dir = metadata.as_ref().is_some_and(std::fs::Metadata::is_dir);
+            let size = metadata.as_ref().map_or(0, std::fs::Metadata::len);
+            let mtime = metadata.as_ref().and_then(|m| {
+                m.modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_secs())
+            });
+            entries.push(LocalEntry {
+                name,
+                is_dir,
+                size,
+                mtime,
+            });
         }
     }
     entries.sort_by(|a, b| {
