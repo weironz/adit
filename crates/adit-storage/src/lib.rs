@@ -1,6 +1,8 @@
-use adit_domain::ConnectionProfile;
+use adit_domain::{ConnectionProfile, ProfileId};
+use keyring::Entry;
 use serde::{Deserialize, Serialize};
 use std::{
+    collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
 };
@@ -14,9 +16,41 @@ pub enum StorageError {
     Json(#[from] serde_json::Error),
 }
 
+#[derive(Debug, Error)]
+pub enum CredentialError {
+    #[error("credential store failed: {0}")]
+    Keyring(#[from] keyring::Error),
+}
+
 #[derive(Debug, Clone)]
 pub struct ProfileStore {
     path: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct CredentialStore {
+    service: String,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ProfileCatalog {
+    pub groups: Vec<String>,
+    pub profiles: Vec<ConnectionProfile>,
+}
+
+impl ProfileCatalog {
+    #[must_use]
+    pub fn new(groups: Vec<String>, profiles: Vec<ConnectionProfile>) -> Self {
+        Self {
+            groups: normalize_groups(groups, &profiles),
+            profiles,
+        }
+    }
+
+    #[must_use]
+    pub fn from_profiles(profiles: Vec<ConnectionProfile>) -> Self {
+        Self::new(Vec::new(), profiles)
+    }
 }
 
 impl ProfileStore {
@@ -36,27 +70,37 @@ impl ProfileStore {
     }
 
     pub fn load_profiles(&self) -> Result<Vec<ConnectionProfile>, StorageError> {
+        Ok(self.load_catalog()?.profiles)
+    }
+
+    pub fn load_catalog(&self) -> Result<ProfileCatalog, StorageError> {
         if !self.path.exists() {
-            return Ok(Vec::new());
+            return Ok(ProfileCatalog::default());
         }
 
         let content = fs::read_to_string(&self.path)?;
         if content.trim().is_empty() {
-            return Ok(Vec::new());
+            return Ok(ProfileCatalog::default());
         }
 
         let document: StoredProfiles = serde_json::from_str(&content)?;
-        Ok(document.profiles)
+        Ok(ProfileCatalog::new(document.groups, document.profiles))
     }
 
     pub fn save_profiles(&self, profiles: &[ConnectionProfile]) -> Result<(), StorageError> {
+        self.save_catalog(&ProfileCatalog::from_profiles(profiles.to_vec()))
+    }
+
+    pub fn save_catalog(&self, catalog: &ProfileCatalog) -> Result<(), StorageError> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
 
+        let groups = normalize_groups(catalog.groups.clone(), &catalog.profiles);
         let document = StoredProfiles {
-            version: 1,
-            profiles: profiles.to_vec(),
+            version: 2,
+            groups,
+            profiles: catalog.profiles.clone(),
         };
         let content = serde_json::to_string_pretty(&document)?;
         fs::write(&self.path, content)?;
@@ -71,10 +115,90 @@ impl Default for ProfileStore {
     }
 }
 
+impl CredentialStore {
+    #[must_use]
+    pub fn new(service: impl Into<String>) -> Self {
+        Self {
+            service: service.into(),
+        }
+    }
+
+    pub fn load_profile_password(
+        &self,
+        profile_id: ProfileId,
+    ) -> Result<Option<String>, CredentialError> {
+        match self.profile_password_entry(profile_id)?.get_password() {
+            Ok(password) => Ok(Some(password)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn save_profile_password(
+        &self,
+        profile_id: ProfileId,
+        password: &str,
+    ) -> Result<(), CredentialError> {
+        self.profile_password_entry(profile_id)?
+            .set_password(password)
+            .map_err(Into::into)
+    }
+
+    pub fn delete_profile_password(&self, profile_id: ProfileId) -> Result<(), CredentialError> {
+        match self.profile_password_entry(profile_id)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn profile_password_entry(&self, profile_id: ProfileId) -> Result<Entry, CredentialError> {
+        Ok(Entry::new(
+            &self.service,
+            &format!("profile:{profile_id}:password"),
+        )?)
+    }
+}
+
+impl Default for CredentialStore {
+    fn default() -> Self {
+        Self::new("Adit SSH")
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredProfiles {
     version: u16,
+    #[serde(default)]
+    groups: Vec<String>,
     profiles: Vec<ConnectionProfile>,
+}
+
+fn normalize_groups(groups: Vec<String>, profiles: &[ConnectionProfile]) -> Vec<String> {
+    let mut normalized = BTreeSet::new();
+
+    for group in groups {
+        let group = normalize_group_name(group);
+        if !group.is_empty() {
+            normalized.insert(group);
+        }
+    }
+
+    for profile in profiles {
+        let group = normalize_group_name(&profile.group);
+        if !group.is_empty() {
+            normalized.insert(group);
+        }
+    }
+
+    if normalized.is_empty() {
+        normalized.insert(String::from("Default"));
+    }
+
+    normalized.into_iter().collect()
+}
+
+fn normalize_group_name(group: impl AsRef<str>) -> String {
+    group.as_ref().trim().to_string()
 }
 
 fn platform_config_dir() -> PathBuf {
@@ -121,8 +245,8 @@ mod tests {
             .join("profiles.json");
         let store = ProfileStore::new(&path);
         let profiles = vec![
-            ConnectionProfile::with_folder("Local", "local-lab", "127.0.0.1", 22, "root"),
-            ConnectionProfile::with_folder("Prod", "web-01", "10.0.0.12", 22, "deploy"),
+            ConnectionProfile::with_group("Local", "local-lab", "127.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Prod", "web-01", "10.0.0.12", 22, "deploy"),
         ];
 
         store
@@ -131,10 +255,44 @@ mod tests {
         let loaded = store.load_profiles().expect("profiles should load");
 
         assert_eq!(loaded.len(), 2);
-        assert_eq!(loaded[0].folder, "Local");
+        assert_eq!(loaded[0].group, "Local");
         assert_eq!(loaded[0].name, "local-lab");
-        assert_eq!(loaded[1].folder, "Prod");
+        assert_eq!(loaded[1].group, "Prod");
         assert_eq!(loaded[1].endpoint(), "deploy@10.0.0.12:22");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn saves_and_loads_empty_groups() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let path = env::temp_dir()
+            .join(format!("adit-storage-groups-test-{unique}"))
+            .join("profiles.json");
+        let store = ProfileStore::new(&path);
+        let catalog = ProfileCatalog::new(
+            vec![String::from("Lab"), String::from("Empty")],
+            vec![ConnectionProfile::with_group(
+                "Lab",
+                "local-lab",
+                "127.0.0.1",
+                22,
+                "root",
+            )],
+        );
+
+        store.save_catalog(&catalog).expect("catalog should save");
+        let loaded = store.load_catalog().expect("catalog should load");
+
+        assert_eq!(
+            loaded.groups,
+            vec![String::from("Empty"), String::from("Lab")]
+        );
+        assert_eq!(loaded.profiles.len(), 1);
+        assert_eq!(loaded.profiles[0].group, "Lab");
 
         let _ = fs::remove_file(path);
     }
@@ -177,6 +335,7 @@ mod tests {
         assert_eq!(profiles[0].auth_method, AuthMethod::Auto);
         assert!(profiles[0].identity_file.is_empty());
         assert_eq!(profiles[0].sort_order, 0);
+        assert_eq!(profiles[0].group, "Legacy");
 
         let _ = fs::remove_file(path);
     }

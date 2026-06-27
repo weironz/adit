@@ -49,7 +49,7 @@ Run the native Rust prototype:
 cargo run -p adit-app
 ```
 
-In the native prototype, select or create a profile, edit the current form, optionally enter an SSH password, and click `连接 SSH`. If the password field is empty, Adit still tries the local SSH agent and default private keys under `~/.ssh`. The connect action uses the current form values and saves them before opening SSH. Profiles are saved to a JSON file shown in the status bar. Password persistence is intentionally not implemented yet; credential vault support is upcoming work.
+In the native prototype, select or create a profile, edit the current form, optionally enter an SSH password, and click `连接 SSH`. If the password field is empty, Adit still tries the local SSH agent and default private keys under `~/.ssh`. The connect action uses the current form values and saves them before opening SSH. Profiles are saved to a JSON file shown in the status bar. Passwords are never written to the profile JSON; the connection dialog can optionally save them in the OS credential vault.
 
 Check the native workspace:
 
@@ -88,6 +88,6 @@ npm run tauri build
 4. Raw keyboard input routing — done
 5. Automatic UI-driven PTY resize measurement
 6. Host key verification — done; known-host management UI remains
-7. Key authentication and SSH agent support — partial: default private keys, Windows OpenSSH Agent, Pageant, and SSH_AUTH_SOCK are wired; OS credential vault support remains
-8. Session folders, tags, search, and import/export
+7. Key authentication, SSH agent, and credential vault support — partial: default private keys, Windows OpenSSH Agent, Pageant, SSH_AUTH_SOCK, and optional OS credential vault storage are wired
+8. Session groups, tags, search, and import/export
 9. Jump hosts, SFTP, logging, transcript search, and macOS packaging

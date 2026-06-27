@@ -66,13 +66,19 @@ pub enum ProfileSortKey {
     Host,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileDropPosition {
+    Before,
+    After,
+}
+
 impl SessionManager {
     #[must_use]
     pub fn with_demo_profiles() -> Self {
         Self::with_profiles(vec![
-            ConnectionProfile::with_folder("Local", "local-lab", "127.0.0.1", 22, "root"),
-            ConnectionProfile::with_folder("Production", "prod-web-01", "10.0.0.12", 22, "deploy"),
-            ConnectionProfile::with_folder("Build", "mac-build", "build-mac.local", 22, "builder"),
+            ConnectionProfile::with_group("Local", "local-lab", "127.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Production", "prod-web-01", "10.0.0.12", 22, "deploy"),
+            ConnectionProfile::with_group("Build", "mac-build", "build-mac.local", 22, "builder"),
         ])
     }
 
@@ -102,7 +108,7 @@ impl SessionManager {
 
     pub fn create_profile(
         &mut self,
-        folder: impl Into<String>,
+        group: impl Into<String>,
         name: impl Into<String>,
         host: impl Into<String>,
         port: u16,
@@ -111,7 +117,7 @@ impl SessionManager {
         identity_file: impl Into<String>,
     ) -> Result<ProfileId, SessionError> {
         let mut profile = build_profile(
-            folder,
+            group,
             name,
             host,
             port,
@@ -119,7 +125,7 @@ impl SessionManager {
             auth_method,
             identity_file,
         )?;
-        profile.sort_order = next_sort_order_for_folder(&self.profiles, &profile.folder);
+        profile.sort_order = next_sort_order_for_group(&self.profiles, &profile.group);
         let profile_id = profile.id;
         self.profiles.push(profile);
         Ok(profile_id)
@@ -128,7 +134,7 @@ impl SessionManager {
     pub fn update_profile(
         &mut self,
         profile_id: ProfileId,
-        folder: impl Into<String>,
+        group: impl Into<String>,
         name: impl Into<String>,
         host: impl Into<String>,
         port: u16,
@@ -137,7 +143,7 @@ impl SessionManager {
         identity_file: impl Into<String>,
     ) -> Result<(), SessionError> {
         let updated = build_profile(
-            folder,
+            group,
             name,
             host,
             port,
@@ -153,15 +159,15 @@ impl SessionManager {
             return Err(SessionError::ProfileNotFound);
         };
 
-        let sort_order = if self.profiles[index].folder == updated.folder {
+        let sort_order = if self.profiles[index].group == updated.group {
             self.profiles[index].sort_order
         } else {
-            next_sort_order_for_folder(&self.profiles, &updated.folder)
+            next_sort_order_for_group(&self.profiles, &updated.group)
         };
 
         let profile = &mut self.profiles[index];
 
-        profile.folder = updated.folder;
+        profile.group = updated.group;
         profile.name = updated.name;
         profile.host = updated.host;
         profile.port = updated.port;
@@ -193,13 +199,13 @@ impl SessionManager {
             .iter()
             .position(|profile| profile.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?;
-        let folder = self.profiles[index].folder.clone();
+        let group = self.profiles[index].group.clone();
 
         let mut ordered = self
             .profiles
             .iter()
             .enumerate()
-            .filter(|(_, profile)| profile.folder == folder)
+            .filter(|(_, profile)| profile.group == group)
             .map(|(index, _)| index)
             .collect::<Vec<_>>();
         ordered
@@ -227,7 +233,7 @@ impl SessionManager {
 
     pub fn sort_profiles(&mut self, key: ProfileSortKey) {
         self.profiles.sort_by(|left, right| {
-            left.folder.cmp(&right.folder).then_with(|| match key {
+            left.group.cmp(&right.group).then_with(|| match key {
                 ProfileSortKey::Name => left
                     .name
                     .to_ascii_lowercase()
@@ -241,6 +247,98 @@ impl SessionManager {
             })
         });
         renumber_profile_sort_orders(&mut self.profiles);
+    }
+
+    pub fn reorder_profile(
+        &mut self,
+        source_id: ProfileId,
+        target_id: ProfileId,
+        position: ProfileDropPosition,
+    ) -> Result<(), SessionError> {
+        if source_id == target_id {
+            return Ok(());
+        }
+
+        normalize_profile_sort_orders(&mut self.profiles);
+
+        let mut ordered = self.profiles.clone();
+        ordered.sort_by(compare_profiles);
+
+        let source_index = ordered
+            .iter()
+            .position(|profile| profile.id == source_id)
+            .ok_or(SessionError::ProfileNotFound)?;
+        let mut source = ordered.remove(source_index);
+
+        let target_index = ordered
+            .iter()
+            .position(|profile| profile.id == target_id)
+            .ok_or(SessionError::ProfileNotFound)?;
+
+        source.group = ordered[target_index].group.clone();
+        let insert_index = match position {
+            ProfileDropPosition::Before => target_index,
+            ProfileDropPosition::After => target_index + 1,
+        };
+
+        ordered.insert(insert_index, source);
+        renumber_profile_sort_orders(&mut ordered);
+        self.profiles = ordered;
+
+        Ok(())
+    }
+
+    pub fn move_profile_to_group(
+        &mut self,
+        profile_id: ProfileId,
+        group: impl Into<String>,
+    ) -> Result<(), SessionError> {
+        let group = normalize_group(group);
+        let Some(index) = self
+            .profiles
+            .iter()
+            .position(|profile| profile.id == profile_id)
+        else {
+            return Err(SessionError::ProfileNotFound);
+        };
+
+        let sort_order = self
+            .profiles
+            .iter()
+            .filter(|profile| profile.id != profile_id && profile.group == group)
+            .map(|profile| profile.sort_order)
+            .max()
+            .unwrap_or(0)
+            + 10;
+
+        self.profiles[index].group = group;
+        self.profiles[index].sort_order = sort_order;
+        normalize_profile_sort_orders(&mut self.profiles);
+
+        Ok(())
+    }
+
+    pub fn rename_group(
+        &mut self,
+        old_group: impl AsRef<str>,
+        new_group: impl Into<String>,
+    ) -> Result<(), SessionError> {
+        let old_group = old_group.as_ref();
+        let new_group = normalize_group(new_group);
+        let mut renamed = false;
+
+        for profile in &mut self.profiles {
+            if profile.group == old_group {
+                profile.group = new_group.clone();
+                renamed = true;
+            }
+        }
+
+        if renamed {
+            normalize_profile_sort_orders(&mut self.profiles);
+        }
+
+        Ok(())
     }
 
     pub fn delete_profile(&mut self, profile_id: ProfileId) -> Result<(), SessionError> {
@@ -265,6 +363,13 @@ impl SessionManager {
     #[must_use]
     pub fn active_session(&self) -> Option<SessionId> {
         self.active_session
+    }
+
+    #[must_use]
+    pub fn active_session_summary(&self) -> Option<SessionSummary> {
+        self.active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+            .map(|record| record.summary.clone())
     }
 
     pub fn open_mock_session(&mut self, profile_id: ProfileId) -> Result<SessionId, SessionError> {
@@ -589,7 +694,7 @@ impl Default for SessionManager {
 }
 
 fn build_profile(
-    folder: impl Into<String>,
+    group: impl Into<String>,
     name: impl Into<String>,
     host: impl Into<String>,
     port: u16,
@@ -597,7 +702,7 @@ fn build_profile(
     auth_method: AuthMethod,
     identity_file: impl Into<String>,
 ) -> Result<ConnectionProfile, SessionError> {
-    let folder = normalize_folder(folder);
+    let group = normalize_group(group);
     let name = name.into().trim().to_string();
     let host = host.into().trim().to_string();
     let username = username.into().trim().to_string();
@@ -619,7 +724,7 @@ fn build_profile(
         return Err(SessionError::InvalidProfilePort);
     }
 
-    let mut profile = ConnectionProfile::with_folder(folder, name, host, port, username);
+    let mut profile = ConnectionProfile::with_group(group, name, host, port, username);
     profile.auth_method = auth_method;
     profile.identity_file = identity_file;
 
@@ -658,13 +763,13 @@ fn auth_options_for_profile(profile: &ConnectionProfile, password: &str) -> Auth
     }
 }
 
-fn normalize_folder(folder: impl Into<String>) -> String {
-    let folder = folder.into().trim().to_string();
+fn normalize_group(group: impl Into<String>) -> String {
+    let group = group.into().trim().to_string();
 
-    if folder.is_empty() {
+    if group.is_empty() {
         String::from("Default")
     } else {
-        folder
+        group
     }
 }
 
@@ -674,12 +779,12 @@ fn normalize_profile_sort_orders(profiles: &mut Vec<ConnectionProfile>) {
 }
 
 fn renumber_profile_sort_orders(profiles: &mut [ConnectionProfile]) {
-    let mut current_folder = String::new();
+    let mut current_group = String::new();
     let mut order = 0_i32;
 
     for profile in profiles {
-        if profile.folder != current_folder {
-            current_folder = profile.folder.clone();
+        if profile.group != current_group {
+            current_group = profile.group.clone();
             order = 10;
         } else {
             order += 10;
@@ -688,10 +793,10 @@ fn renumber_profile_sort_orders(profiles: &mut [ConnectionProfile]) {
     }
 }
 
-fn next_sort_order_for_folder(profiles: &[ConnectionProfile], folder: &str) -> i32 {
+fn next_sort_order_for_group(profiles: &[ConnectionProfile], group: &str) -> i32 {
     profiles
         .iter()
-        .filter(|profile| profile.folder == folder)
+        .filter(|profile| profile.group == group)
         .map(|profile| profile.sort_order)
         .max()
         .unwrap_or(0)
@@ -699,8 +804,8 @@ fn next_sort_order_for_folder(profiles: &[ConnectionProfile], folder: &str) -> i
 }
 
 fn compare_profiles(left: &ConnectionProfile, right: &ConnectionProfile) -> std::cmp::Ordering {
-    left.folder
-        .cmp(&right.folder)
+    left.group
+        .cmp(&right.group)
         .then_with(|| left.sort_order.cmp(&right.sort_order))
         .then_with(|| {
             left.name
@@ -814,6 +919,37 @@ mod tests {
     }
 
     #[test]
+    fn active_session_summary_tracks_active_tab() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let first_profile = manager.profiles()[0].id;
+        let second_profile = manager.profiles()[1].id;
+        let first_session = manager
+            .open_mock_session(first_profile)
+            .expect("first session should open");
+        let second_session = manager
+            .open_mock_session(second_profile)
+            .expect("second session should open");
+
+        assert_eq!(
+            manager
+                .active_session_summary()
+                .expect("active summary should exist")
+                .id,
+            second_session
+        );
+
+        manager
+            .activate(first_session)
+            .expect("first session should activate");
+        let summary = manager
+            .active_session_summary()
+            .expect("active summary should exist");
+
+        assert_eq!(summary.id, first_session);
+        assert_eq!(summary.profile_id, first_profile);
+    }
+
+    #[test]
     fn closed_event_does_not_hide_error_status() {
         assert_eq!(
             status_after_closed(SessionStatus::Error),
@@ -830,11 +966,11 @@ mod tests {
     }
 
     #[test]
-    fn move_profile_reorders_within_folder() {
+    fn move_profile_reorders_within_group() {
         let mut manager = SessionManager::with_profiles(vec![
-            ConnectionProfile::with_folder("Lab", "alpha", "10.0.0.1", 22, "root"),
-            ConnectionProfile::with_folder("Lab", "bravo", "10.0.0.2", 22, "root"),
-            ConnectionProfile::with_folder("Lab", "charlie", "10.0.0.3", 22, "root"),
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "bravo", "10.0.0.2", 22, "root"),
+            ConnectionProfile::with_group("Lab", "charlie", "10.0.0.3", 22, "root"),
         ]);
         let bravo = manager.profiles()[1].id;
 
@@ -852,8 +988,8 @@ mod tests {
     #[test]
     fn sort_profiles_by_host_persists_order_values() {
         let mut manager = SessionManager::with_profiles(vec![
-            ConnectionProfile::with_folder("Lab", "b", "10.0.0.20", 22, "root"),
-            ConnectionProfile::with_folder("Lab", "a", "10.0.0.10", 22, "root"),
+            ConnectionProfile::with_group("Lab", "b", "10.0.0.20", 22, "root"),
+            ConnectionProfile::with_group("Lab", "a", "10.0.0.10", 22, "root"),
         ]);
 
         manager.sort_profiles(ProfileSortKey::Host);
@@ -867,10 +1003,104 @@ mod tests {
     }
 
     #[test]
+    fn reorder_profile_drops_source_after_target() {
+        let mut manager = SessionManager::with_profiles(vec![
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "bravo", "10.0.0.2", 22, "root"),
+            ConnectionProfile::with_group("Lab", "charlie", "10.0.0.3", 22, "root"),
+        ]);
+        let alpha = manager.profiles()[0].id;
+        let charlie = manager.profiles()[2].id;
+
+        manager
+            .reorder_profile(alpha, charlie, ProfileDropPosition::After)
+            .expect("profile should reorder");
+
+        let mut profiles = manager.profiles().to_vec();
+        profiles.sort_by(super::compare_profiles);
+        assert_eq!(profiles[0].name, "bravo");
+        assert_eq!(profiles[1].name, "charlie");
+        assert_eq!(profiles[2].name, "alpha");
+        assert_eq!(profiles[2].sort_order, 30);
+    }
+
+    #[test]
+    fn reorder_profile_across_groups_moves_into_target_group() {
+        let mut manager = SessionManager::with_profiles(vec![
+            ConnectionProfile::with_group("Build", "builder", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.2", 22, "root"),
+            ConnectionProfile::with_group("Lab", "bravo", "10.0.0.3", 22, "root"),
+        ]);
+        let builder = manager.profiles()[0].id;
+        let bravo = manager.profiles()[2].id;
+
+        manager
+            .reorder_profile(builder, bravo, ProfileDropPosition::Before)
+            .expect("profile should move into target group");
+
+        let mut profiles = manager.profiles().to_vec();
+        profiles.sort_by(super::compare_profiles);
+        assert_eq!(
+            profiles
+                .iter()
+                .map(|profile| (profile.group.as_str(), profile.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("Lab", "alpha"), ("Lab", "builder"), ("Lab", "bravo")]
+        );
+    }
+
+    #[test]
+    fn move_profile_to_group_allows_empty_target_group() {
+        let mut manager = SessionManager::with_profiles(vec![
+            ConnectionProfile::with_group("Build", "builder", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.2", 22, "root"),
+        ]);
+        let alpha = manager.profiles()[1].id;
+
+        manager
+            .move_profile_to_group(alpha, "Empty")
+            .expect("profile should move to empty group");
+
+        let profile = manager.profile(alpha).expect("profile should exist");
+        assert_eq!(profile.group, "Empty");
+        assert_eq!(profile.sort_order, 10);
+    }
+
+    #[test]
+    fn rename_group_updates_profiles() {
+        let mut manager = SessionManager::with_profiles(vec![
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "bravo", "10.0.0.2", 22, "root"),
+            ConnectionProfile::with_group("Prod", "web", "10.0.0.3", 22, "root"),
+        ]);
+
+        manager
+            .rename_group("Lab", "Workspace")
+            .expect("group should rename");
+
+        assert_eq!(
+            manager
+                .profiles()
+                .iter()
+                .filter(|profile| profile.group == "Workspace")
+                .count(),
+            2
+        );
+        assert_eq!(
+            manager
+                .profiles()
+                .iter()
+                .filter(|profile| profile.group == "Prod")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn editing_profile_keeps_sort_order() {
         let mut manager = SessionManager::with_profiles(vec![
-            ConnectionProfile::with_folder("Lab", "alpha", "10.0.0.1", 22, "root"),
-            ConnectionProfile::with_folder("Lab", "bravo", "10.0.0.2", 22, "root"),
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "bravo", "10.0.0.2", 22, "root"),
         ]);
         let profile_id = manager.profiles()[1].id;
         let sort_order = manager.profiles()[1].sort_order;

@@ -35,7 +35,7 @@ The current Tauri MVP remains useful as a behavior reference until the native Ru
 
 - Keep application code Rust-first and remove TypeScript/WebView from the long-term product.
 - Prioritize Windows desktop quality first, while keeping macOS support in the architecture.
-- Build toward SecureCRT/Xshell style workflows: session folders, tabs, reconnect, host key management, key auth, jump hosts, SFTP, logging, and transcript search.
+- Build toward SecureCRT/Xshell style workflows: session groups, tabs, reconnect, host key management, key auth, jump hosts, SFTP, logging, and transcript search.
 - Own the terminal UX enough to support high-quality keyboard handling, copy/paste, search, themes, and large scrollback.
 - Isolate risky dependencies behind Adit traits so SSH, terminal parsing, and rendering can evolve independently.
 
@@ -183,7 +183,7 @@ pub trait TerminalCore {
 
 Responsibilities:
 
-- Store connection profiles, folders, settings, themes, and window layout
+- Store connection profiles, groups, settings, themes, and window layout
 - Import/export profile sets
 - Keep secrets out of plain profile files
 
@@ -293,8 +293,8 @@ Current implementation:
 - Done: SecureCRT-style application chrome: clickable menu bar, toolbar, editable session manager sidebar, tabs, terminal viewport, command input, and status bar.
 - Done: Adit-owned shared domain/session/terminal models.
 - Done: mock tabs can open, close, and switch.
-- Done: connection profile create, edit, save, delete, and folder grouping workflows.
-- Done: JSON profile persistence through `adit-storage`; passwords are still never written to profile files.
+- Done: connection profile create, edit, save, delete, and group workflows.
+- Done: JSON profile persistence through `adit-storage`; passwords are never written to profile files and can be saved through the OS credential vault.
 - Pending: custom terminal widget internals and automatic UI-to-PTY resize measurement.
 
 ### Phase 1: SSH Transport
@@ -355,7 +355,7 @@ Current implementation:
 
 - Add known-host storage and verification.
 - Add explicit per-profile private key selection and passphrase prompting.
-- Add OS credential vault integration.
+- Done: add OS credential vault integration for optional password persistence.
 - Add profile import/export.
 
 Exit criteria:
@@ -366,7 +366,7 @@ Exit criteria:
 
 ### Phase 4: Product Workflows
 
-- Session folders, tags, search, and favorites.
+- Session groups, tags, search, and favorites.
 - Reconnect policies and keepalive.
 - Jump hosts and proxy commands.
 - SFTP panel.

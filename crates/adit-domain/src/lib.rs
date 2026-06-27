@@ -49,8 +49,8 @@ impl fmt::Display for SessionId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionProfile {
     pub id: ProfileId,
-    #[serde(default = "default_profile_folder")]
-    pub folder: String,
+    #[serde(default = "default_profile_group", alias = "folder")]
+    pub group: String,
     pub name: String,
     pub host: String,
     pub port: u16,
@@ -71,12 +71,12 @@ impl ConnectionProfile {
         port: u16,
         username: impl Into<String>,
     ) -> Self {
-        Self::with_folder("Default", name, host, port, username)
+        Self::with_group("Default", name, host, port, username)
     }
 
     #[must_use]
-    pub fn with_folder(
-        folder: impl Into<String>,
+    pub fn with_group(
+        group: impl Into<String>,
         name: impl Into<String>,
         host: impl Into<String>,
         port: u16,
@@ -84,7 +84,7 @@ impl ConnectionProfile {
     ) -> Self {
         Self {
             id: ProfileId::new(),
-            folder: folder.into(),
+            group: group.into(),
             name: name.into(),
             host: host.into(),
             port,
@@ -96,12 +96,23 @@ impl ConnectionProfile {
     }
 
     #[must_use]
+    pub fn with_folder(
+        folder: impl Into<String>,
+        name: impl Into<String>,
+        host: impl Into<String>,
+        port: u16,
+        username: impl Into<String>,
+    ) -> Self {
+        Self::with_group(folder, name, host, port, username)
+    }
+
+    #[must_use]
     pub fn endpoint(&self) -> String {
         format!("{}@{}:{}", self.username, self.host, self.port)
     }
 }
 
-fn default_profile_folder() -> String {
+fn default_profile_group() -> String {
     String::from("Default")
 }
 

@@ -1,24 +1,40 @@
 use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus};
-use adit_session::{ProfileMove, ProfileSortKey, SessionManager, SessionSummary};
-use adit_storage::ProfileStore;
+use adit_session::{
+    ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager, SessionSummary,
+};
+use adit_storage::{CredentialStore, ProfileCatalog, ProfileStore};
 use adit_terminal::{Color as TermColor, TerminalLine, TerminalSize, TerminalSnapshot, Viewport};
 use iced::font::Weight;
 use iced::keyboard::{self, key::Named, Key};
 use iced::widget::{
-    button, column, container, mouse_area, row, scrollable, text, text_input, Space,
+    button, checkbox, column, container, mouse_area, opaque, row, scrollable, stack, text,
+    text_input, Space,
 };
 use iced::{
     clipboard, event, mouse, window, Alignment, Background, Border, Color, Element, Fill, Font,
     Length, Point, Subscription, Task, Theme,
 };
-use std::time::Duration;
+use std::{collections::BTreeSet, time::Duration};
 
 pub struct AditApp {
     manager: SessionManager,
     profile_store: ProfileStore,
+    credential_store: CredentialStore,
     selected_profile: Option<ProfileId>,
+    hovered_profile: Option<ProfileId>,
+    dragged_profile: Option<ProfileId>,
+    profile_drop_target: Option<ProfileDropTarget>,
+    group_drop_target: Option<String>,
+    group_context_menu: Option<String>,
+    editing_group: Option<String>,
+    group_name_draft: String,
+    profile_context_menu: Option<ProfileId>,
+    profile_editor: Option<ProfileId>,
+    connection_dialog: Option<ConnectionDialog>,
+    groups: BTreeSet<String>,
+    collapsed_groups: BTreeSet<String>,
     active_menu: Option<MenuKind>,
-    profile_folder: String,
+    profile_group: String,
     profile_name: String,
     profile_host: String,
     profile_port: String,
@@ -26,6 +42,7 @@ pub struct AditApp {
     profile_auth_method: AuthMethod,
     profile_identity_file: String,
     password: String,
+    remember_connection_password: bool,
     session_filter: String,
     terminal_input: String,
     terminal_focused: bool,
@@ -56,6 +73,7 @@ pub enum MenuKind {
 #[derive(Debug, Clone, Copy)]
 pub enum MenuCommand {
     NewProfile,
+    NewGroup,
     SaveProfile,
     DeleteProfile,
     Connect,
@@ -76,7 +94,36 @@ pub enum Message {
     ToggleMenu(MenuKind),
     RunMenu(MenuCommand),
     SelectProfile(ProfileId),
-    ProfileFolderChanged(String),
+    ProfilePressed(ProfileId),
+    ProfileDoubleClicked(ProfileId),
+    ProfileHovered(ProfileId),
+    ProfileHoverExited(ProfileId),
+    ProfileDragOver(ProfileId, ProfileDropPosition),
+    ProfileDropped(ProfileId),
+    ProfileDragOverGroup(String),
+    ProfileDroppedOnGroup(String),
+    ProfileGroupHoverExited(String),
+    CancelProfileDrag,
+    ShowGroupContextMenu(String),
+    HideGroupContextMenu,
+    RenameGroupFromContext(String),
+    NewProfileInGroup(String),
+    DeleteGroupFromContext(String),
+    GroupNameDraftChanged(String),
+    SaveGroupRename,
+    CancelGroupRename,
+    ShowProfileContextMenu(ProfileId),
+    HideProfileContextMenu,
+    EditProfileFromContext(ProfileId),
+    CloseProfileEditor,
+    ConnectProfileFromContext(ProfileId),
+    DeleteProfileFromContext(ProfileId),
+    ConnectionPasswordChanged(String),
+    RememberConnectionPasswordChanged(bool),
+    ConfirmConnection,
+    CancelConnection,
+    ToggleProfileGroup(String),
+    ProfileGroupChanged(String),
     ProfileNameChanged(String),
     ProfileHostChanged(String),
     ProfilePortChanged(String),
@@ -85,11 +132,11 @@ pub enum Message {
     ProfileIdentityFileChanged(String),
     SessionFilterChanged(String),
     NewProfileDraft,
+    NewGroupDraft,
     SaveProfile,
     DeleteSelectedProfile,
     MoveSelectedProfile(ProfileMove),
     SortProfiles(ProfileSortKey),
-    PasswordChanged(String),
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
     WindowResized { width: f32, height: f32 },
@@ -106,6 +153,7 @@ pub enum Message {
     TerminalJumpToBottom,
     OpenSelectedProfile,
     ConnectSelectedProfile,
+    RetryActiveSession,
     ActivateSession(SessionId),
     CloseSession(SessionId),
     DisconnectActive,
@@ -127,6 +175,21 @@ struct TerminalSelection {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProfileDropTarget {
+    profile_id: ProfileId,
+    position: ProfileDropPosition,
+}
+
+#[derive(Debug, Clone)]
+struct ConnectionDialog {
+    profile_id: ProfileId,
+    title: String,
+    endpoint: String,
+    auth_method: AuthMethod,
+    identity_file: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum TerminalScrollAction {
     Lines(i32),
     Top,
@@ -137,7 +200,7 @@ const TERMINAL_CHAR_WIDTH: f32 = 7.8;
 const TERMINAL_ROW_HEIGHT: f32 = 17.0;
 const SIDEBAR_WIDTH: f32 = 348.0;
 const MENU_BAR_HEIGHT: f32 = 24.0;
-const MENU_PANEL_HEIGHT: f32 = 34.0;
+const MENU_PANEL_HEIGHT: f32 = 154.0;
 const TOOLBAR_HEIGHT: f32 = 30.0;
 const WORKSPACE_PADDING_X: f32 = 0.0;
 const WORKSPACE_PADDING_TOP: f32 = 0.0;
@@ -145,49 +208,94 @@ const TAB_BAR_HEIGHT: f32 = 30.0;
 const TERMINAL_PANEL_PADDING: f32 = 6.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 const TERMINAL_CONTEXT_MENU_AND_GAP: f32 = 34.0;
+const PROFILE_ROW_HEIGHT: f32 = 22.0;
 
 impl Default for AditApp {
     fn default() -> Self {
         let profile_store = ProfileStore::default();
-        let load_result = profile_store.load_profiles();
-        let (manager, load_notice, load_error) = match load_result {
-            Ok(profiles) if !profiles.is_empty() => {
-                let count = profiles.len();
+        let load_result = profile_store.load_catalog();
+        let (manager, groups, load_notice, load_error) = match load_result {
+            Ok(catalog) if !catalog.profiles.is_empty() => {
+                let count = catalog.profiles.len();
+                let groups = groups_from_catalog(catalog.groups, &catalog.profiles);
                 (
-                    SessionManager::with_profiles(profiles),
+                    SessionManager::with_profiles(catalog.profiles),
+                    groups,
                     format!(
-                        "已加载 {count} 个会话配置: {}",
+                        "已加载 {count} 个会话配置和分组: {}",
                         profile_store.path().display()
                     ),
                     None,
                 )
             }
-            Ok(_) => (
-                SessionManager::with_demo_profiles(),
-                format!(
-                    "使用演示会话配置，保存后写入 {}",
-                    profile_store.path().display()
-                ),
+            Ok(catalog) if !catalog.groups.is_empty() => (
+                SessionManager::with_profiles(Vec::new()),
+                groups_from_catalog(catalog.groups, &catalog.profiles),
+                format!("已加载空分组配置: {}", profile_store.path().display()),
                 None,
             ),
-            Err(error) => (
-                SessionManager::with_demo_profiles(),
-                format!(
-                    "使用演示会话配置，保存后写入 {}",
-                    profile_store.path().display()
-                ),
-                Some(format!("读取会话配置失败: {error}")),
-            ),
+            Ok(_) => {
+                let manager = SessionManager::with_demo_profiles();
+                let groups = groups_from_profiles(manager.profiles());
+                (
+                    manager,
+                    groups,
+                    format!(
+                        "使用演示会话配置，保存后写入 {}",
+                        profile_store.path().display()
+                    ),
+                    None,
+                )
+            }
+            Err(error) => {
+                let manager = SessionManager::with_demo_profiles();
+                let groups = groups_from_profiles(manager.profiles());
+                (
+                    manager,
+                    groups,
+                    format!(
+                        "使用演示会话配置，保存后写入 {}",
+                        profile_store.path().display()
+                    ),
+                    Some(format!("读取会话配置失败: {error}")),
+                )
+            }
         };
+
+        Self::with_loaded_state(manager, groups, profile_store, load_notice, load_error)
+    }
+}
+
+impl AditApp {
+    fn with_loaded_state(
+        manager: SessionManager,
+        groups: BTreeSet<String>,
+        profile_store: ProfileStore,
+        load_notice: String,
+        load_error: Option<String>,
+    ) -> Self {
         let selected_profile = manager.profiles().first().map(|profile| profile.id);
         let window_width = 1360.0;
         let window_height = 860.0;
         let mut app = Self {
             manager,
             profile_store,
+            credential_store: CredentialStore::default(),
             selected_profile,
+            hovered_profile: None,
+            dragged_profile: None,
+            profile_drop_target: None,
+            group_drop_target: None,
+            group_context_menu: None,
+            editing_group: None,
+            group_name_draft: String::new(),
+            profile_context_menu: None,
+            profile_editor: None,
+            connection_dialog: None,
+            groups,
+            collapsed_groups: BTreeSet::new(),
             active_menu: None,
-            profile_folder: String::new(),
+            profile_group: String::new(),
             profile_name: String::new(),
             profile_host: String::new(),
             profile_port: String::from("22"),
@@ -195,6 +303,7 @@ impl Default for AditApp {
             profile_auth_method: AuthMethod::Auto,
             profile_identity_file: String::new(),
             password: String::new(),
+            remember_connection_password: false,
             session_filter: String::new(),
             terminal_input: String::new(),
             terminal_focused: false,
@@ -253,6 +362,11 @@ fn runtime_event(
             width: size.width,
             height: size.height,
         }),
+        event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+            if status == event::Status::Ignored =>
+        {
+            Some(Message::CancelProfileDrag)
+        }
         _ => None,
     }
 }
@@ -277,14 +391,170 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             sync_terminal_size(app);
         }
         Message::SelectProfile(profile_id) => {
-            app.terminal_focused = false;
-            app.selected_profile = Some(profile_id);
-            load_selected_profile(app);
-            app.last_error = None;
+            select_profile(app, profile_id);
+            app.profile_context_menu = None;
+            app.group_context_menu = None;
+            close_profile_editor_if_other(app, profile_id);
         }
-        Message::ProfileFolderChanged(value) => {
+        Message::ProfilePressed(profile_id) => {
+            select_profile(app, profile_id);
+            app.dragged_profile = Some(profile_id);
+            app.profile_drop_target = None;
+            app.group_drop_target = None;
+            app.profile_context_menu = None;
+            app.group_context_menu = None;
+            close_profile_editor_if_other(app, profile_id);
+        }
+        Message::ProfileDoubleClicked(profile_id) => {
+            select_profile(app, profile_id);
+            app.dragged_profile = None;
+            app.profile_drop_target = None;
+            app.group_drop_target = None;
+            app.profile_context_menu = None;
+            app.group_context_menu = None;
+            app.profile_editor = None;
+            open_connection_dialog(app);
+        }
+        Message::ProfileHovered(profile_id) => {
+            app.hovered_profile = Some(profile_id);
+        }
+        Message::ProfileHoverExited(profile_id) => {
+            if app.hovered_profile == Some(profile_id) {
+                app.hovered_profile = None;
+            }
+            if app
+                .profile_drop_target
+                .is_some_and(|target| target.profile_id == profile_id)
+            {
+                app.profile_drop_target = None;
+            }
+        }
+        Message::ProfileDragOver(profile_id, position) => {
+            app.hovered_profile = Some(profile_id);
+            if app
+                .dragged_profile
+                .is_some_and(|source| source != profile_id)
+            {
+                app.profile_drop_target = Some(ProfileDropTarget {
+                    profile_id,
+                    position,
+                });
+                app.group_drop_target = None;
+            } else if app.dragged_profile.is_some() {
+                app.profile_drop_target = None;
+            }
+        }
+        Message::ProfileDropped(profile_id) => {
+            drop_profile_on_target(app, profile_id);
+        }
+        Message::ProfileDragOverGroup(group) => {
+            if app.dragged_profile.is_some() {
+                app.group_drop_target = Some(group);
+                app.profile_drop_target = None;
+            }
+        }
+        Message::ProfileDroppedOnGroup(group) => {
+            drop_profile_on_group(app, group);
+        }
+        Message::ProfileGroupHoverExited(group) => {
+            if app.dragged_profile.is_none()
+                && app.group_drop_target.as_deref() == Some(group.as_str())
+            {
+                app.group_drop_target = None;
+            }
+        }
+        Message::CancelProfileDrag => {
+            finish_profile_drag(app);
+        }
+        Message::ShowGroupContextMenu(group) => {
+            app.group_context_menu = Some(group);
+            app.profile_context_menu = None;
+            app.profile_editor = None;
+            app.terminal_context_menu = false;
+        }
+        Message::HideGroupContextMenu => {
+            app.group_context_menu = None;
+        }
+        Message::RenameGroupFromContext(group) => {
+            app.group_context_menu = None;
+            app.editing_group = Some(group.clone());
+            app.group_name_draft = group;
+        }
+        Message::NewProfileInGroup(group) => {
+            app.group_context_menu = None;
+            app.profile_group = group;
+            new_profile_draft(app);
+        }
+        Message::DeleteGroupFromContext(group) => {
+            delete_empty_group(app, group);
+        }
+        Message::GroupNameDraftChanged(value) => {
+            app.group_name_draft = value;
+        }
+        Message::SaveGroupRename => {
+            save_group_rename(app);
+        }
+        Message::CancelGroupRename => {
+            app.editing_group = None;
+            app.group_name_draft.clear();
+        }
+        Message::ShowProfileContextMenu(profile_id) => {
+            select_profile(app, profile_id);
+            app.dragged_profile = None;
+            app.profile_drop_target = None;
+            app.group_drop_target = None;
+            app.profile_context_menu = Some(profile_id);
+            app.group_context_menu = None;
+            app.terminal_context_menu = false;
+        }
+        Message::HideProfileContextMenu => {
+            app.profile_context_menu = None;
+        }
+        Message::EditProfileFromContext(profile_id) => {
+            select_profile(app, profile_id);
+            app.profile_context_menu = None;
+            app.profile_editor = Some(profile_id);
+            app.notice = String::from("已打开会话编辑面板");
+        }
+        Message::CloseProfileEditor => {
+            app.profile_editor = None;
+        }
+        Message::ConnectProfileFromContext(profile_id) => {
+            select_profile(app, profile_id);
+            app.profile_context_menu = None;
+            app.profile_editor = None;
+            open_connection_dialog(app);
+        }
+        Message::DeleteProfileFromContext(profile_id) => {
+            select_profile(app, profile_id);
+            app.profile_context_menu = None;
+            delete_selected_profile(app);
+        }
+        Message::ConnectionPasswordChanged(password) => {
+            app.password = password;
+        }
+        Message::RememberConnectionPasswordChanged(remember) => {
+            app.remember_connection_password = remember;
+        }
+        Message::ConfirmConnection => {
+            confirm_connection(app);
+        }
+        Message::CancelConnection => {
+            app.connection_dialog = None;
+            app.password.clear();
+            app.remember_connection_password = false;
+        }
+        Message::ToggleProfileGroup(group) => {
+            if !app.collapsed_groups.remove(&group) {
+                app.collapsed_groups.insert(group);
+            }
+            app.profile_context_menu = None;
+            app.group_context_menu = None;
+            app.profile_editor = None;
+        }
+        Message::ProfileGroupChanged(value) => {
             app.terminal_focused = false;
-            app.profile_folder = value;
+            app.profile_group = value;
         }
         Message::ProfileNameChanged(value) => {
             app.terminal_focused = false;
@@ -317,6 +587,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::NewProfileDraft => {
             new_profile_draft(app);
         }
+        Message::NewGroupDraft => {
+            new_group_draft(app);
+        }
         Message::SaveProfile => {
             save_profile(app);
         }
@@ -328,10 +601,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::SortProfiles(key) => {
             sort_profiles(app, key);
-        }
-        Message::PasswordChanged(password) => {
-            app.terminal_focused = false;
-            app.password = password;
         }
         Message::TerminalInputChanged(input) => {
             app.terminal_focused = false;
@@ -454,7 +723,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             open_selected_mock_tab(app);
         }
         Message::ConnectSelectedProfile => {
-            connect_selected_profile(app);
+            open_connection_dialog(app);
+        }
+        Message::RetryActiveSession => {
+            retry_active_session(app);
         }
         Message::ActivateSession(session_id) => {
             if let Err(error) = app.manager.activate(session_id) {
@@ -494,9 +766,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
 fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
     match command {
         MenuCommand::NewProfile => new_profile_draft(app),
+        MenuCommand::NewGroup => new_group_draft(app),
         MenuCommand::SaveProfile => save_profile(app),
         MenuCommand::DeleteProfile => delete_selected_profile(app),
-        MenuCommand::Connect => connect_selected_profile(app),
+        MenuCommand::Connect => open_connection_dialog(app),
         MenuCommand::Disconnect => disconnect_active(app),
         MenuCommand::OpenMockTab => open_selected_mock_tab(app),
         MenuCommand::CloseActiveTab => {
@@ -525,13 +798,111 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
     }
 }
 
+fn select_profile(app: &mut AditApp, profile_id: ProfileId) {
+    app.terminal_focused = false;
+    app.selected_profile = Some(profile_id);
+    load_selected_profile(app);
+    app.last_error = None;
+}
+
+fn close_profile_editor_if_other(app: &mut AditApp, profile_id: ProfileId) {
+    if app
+        .profile_editor
+        .is_some_and(|editing| editing != profile_id)
+    {
+        app.profile_editor = None;
+    }
+}
+
+fn finish_profile_drag(app: &mut AditApp) {
+    if app.dragged_profile.is_none() {
+        app.profile_drop_target = None;
+        app.group_drop_target = None;
+        return;
+    }
+
+    if let Some(group) = app.group_drop_target.clone() {
+        drop_profile_on_group(app, group);
+        return;
+    }
+
+    if let Some(target) = app.profile_drop_target {
+        drop_profile_on_target(app, target.profile_id);
+        return;
+    }
+
+    app.dragged_profile = None;
+    app.profile_drop_target = None;
+    app.group_drop_target = None;
+}
+
+fn drop_profile_on_target(app: &mut AditApp, release_target: ProfileId) {
+    let Some(source_id) = app.dragged_profile.take() else {
+        app.profile_drop_target = None;
+        app.group_drop_target = None;
+        return;
+    };
+
+    let target = app.profile_drop_target.take().unwrap_or(ProfileDropTarget {
+        profile_id: release_target,
+        position: ProfileDropPosition::After,
+    });
+    app.group_drop_target = None;
+
+    if source_id == target.profile_id {
+        return;
+    }
+
+    match app
+        .manager
+        .reorder_profile(source_id, target.profile_id, target.position)
+    {
+        Ok(()) => {
+            app.selected_profile = Some(source_id);
+            load_selected_profile(app);
+            if persist_profiles(app) {
+                app.notice = String::from("会话排序已更新");
+            }
+        }
+        Err(error) => {
+            app.last_error = Some(error.to_string());
+        }
+    }
+}
+
+fn drop_profile_on_group(app: &mut AditApp, group: String) {
+    let Some(source_id) = app.dragged_profile.take() else {
+        app.group_drop_target = None;
+        return;
+    };
+
+    app.profile_drop_target = None;
+    app.group_drop_target = None;
+
+    match app.manager.move_profile_to_group(source_id, group.clone()) {
+        Ok(()) => {
+            app.groups.insert(group.clone());
+            app.collapsed_groups.remove(&group);
+            app.selected_profile = Some(source_id);
+            load_selected_profile(app);
+            if persist_profiles(app) {
+                app.notice = format!("会话已移动到分组: {group}");
+            }
+        }
+        Err(error) => {
+            app.last_error = Some(error.to_string());
+        }
+    }
+}
+
 fn load_selected_profile(app: &mut AditApp) {
     let profile = app
         .selected_profile
         .and_then(|profile_id| app.manager.profile(profile_id).cloned());
 
     if let Some(profile) = profile {
-        app.profile_folder = profile.folder;
+        app.profile_group = profile.group;
+        app.groups.insert(app.profile_group.clone());
         app.profile_name = profile.name;
         app.profile_host = profile.host;
         app.profile_port = profile.port.to_string();
@@ -543,8 +914,9 @@ fn load_selected_profile(app: &mut AditApp) {
 
 fn new_profile_draft(app: &mut AditApp) {
     let name = next_profile_name(app);
+    let group = active_profile_group(app);
     match app.manager.create_profile(
-        "Default",
+        group.clone(),
         name,
         "127.0.0.1",
         22,
@@ -554,6 +926,9 @@ fn new_profile_draft(app: &mut AditApp) {
     ) {
         Ok(profile_id) => {
             app.selected_profile = Some(profile_id);
+            app.profile_editor = Some(profile_id);
+            app.groups.insert(group.clone());
+            app.collapsed_groups.remove(&group);
             load_selected_profile(app);
             app.last_error = None;
             if persist_profiles(app) {
@@ -562,6 +937,90 @@ fn new_profile_draft(app: &mut AditApp) {
         }
         Err(error) => {
             app.last_error = Some(error.to_string());
+        }
+    }
+}
+
+fn new_group_draft(app: &mut AditApp) {
+    let group = next_group_name(app);
+    app.groups.insert(group.clone());
+    app.collapsed_groups.remove(&group);
+    app.profile_group = group.clone();
+    app.profile_context_menu = None;
+    app.group_context_menu = None;
+    app.profile_editor = None;
+    app.last_error = None;
+
+    if persist_profiles(app) {
+        app.notice = format!("分组已创建: {group}");
+    }
+}
+
+fn save_group_rename(app: &mut AditApp) {
+    let Some(old_group) = app.editing_group.clone() else {
+        return;
+    };
+    let new_group = app.group_name_draft.trim().to_string();
+
+    if new_group.is_empty() {
+        app.last_error = Some(String::from("分组名称不能为空"));
+        return;
+    }
+
+    if old_group != new_group && app.groups.contains(&new_group) {
+        app.last_error = Some(format!("分组已存在: {new_group}"));
+        return;
+    }
+
+    match app.manager.rename_group(&old_group, new_group.clone()) {
+        Ok(()) => {
+            app.groups.remove(&old_group);
+            app.groups.insert(new_group.clone());
+
+            if app.collapsed_groups.remove(&old_group) {
+                app.collapsed_groups.insert(new_group.clone());
+            }
+
+            if app.profile_group == old_group {
+                app.profile_group = new_group.clone();
+            }
+
+            app.editing_group = None;
+            app.group_name_draft.clear();
+            app.last_error = None;
+
+            if persist_profiles(app) {
+                app.notice = format!("分组已重命名: {old_group} -> {new_group}");
+            }
+        }
+        Err(error) => {
+            app.last_error = Some(error.to_string());
+        }
+    }
+}
+
+fn delete_empty_group(app: &mut AditApp, group: String) {
+    app.group_context_menu = None;
+    app.editing_group = None;
+    app.group_name_draft.clear();
+
+    if app
+        .manager
+        .profiles()
+        .iter()
+        .any(|profile| profile.group == group)
+    {
+        app.last_error = Some(String::from("分组非空，请先移动或删除其中的会话"));
+        return;
+    }
+
+    if app.groups.remove(&group) {
+        app.collapsed_groups.remove(&group);
+        if app.profile_group == group {
+            app.profile_group = String::from("Default");
+        }
+        if persist_profiles(app) {
+            app.notice = format!("空分组已删除: {group}");
         }
     }
 }
@@ -582,6 +1041,26 @@ fn next_profile_name(app: &AditApp) -> String {
     }
 }
 
+fn next_group_name(app: &AditApp) -> String {
+    let mut index = app.groups.len() + 1;
+    loop {
+        let name = format!("group-{index}");
+        if !app.groups.contains(&name) {
+            return name;
+        }
+        index += 1;
+    }
+}
+
+fn active_profile_group(app: &AditApp) -> String {
+    let group = app.profile_group.trim();
+    if group.is_empty() {
+        String::from("Default")
+    } else {
+        group.to_string()
+    }
+}
+
 fn save_profile(app: &mut AditApp) {
     let _ = save_profile_from_form(app, true);
 }
@@ -595,7 +1074,7 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
     let result = if let Some(profile_id) = app.selected_profile {
         app.manager.update_profile(
             profile_id,
-            app.profile_folder.clone(),
+            app.profile_group.clone(),
             app.profile_name.clone(),
             app.profile_host.clone(),
             port,
@@ -605,7 +1084,7 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
         )
     } else {
         match app.manager.create_profile(
-            app.profile_folder.clone(),
+            app.profile_group.clone(),
             app.profile_name.clone(),
             app.profile_host.clone(),
             port,
@@ -624,6 +1103,7 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
     match result {
         Ok(()) => {
             load_selected_profile(app);
+            app.collapsed_groups.remove(app.profile_group.trim());
             if persist_profiles(app) {
                 app.last_error = None;
                 if show_notice {
@@ -649,8 +1129,17 @@ fn delete_selected_profile(app: &mut AditApp) {
 
     match app.manager.delete_profile(profile_id) {
         Ok(()) => {
+            app.profile_context_menu = None;
+            app.profile_editor = None;
             app.selected_profile = app.manager.profiles().first().map(|profile| profile.id);
             app.last_error = None;
+            let credential_cleanup = app
+                .credential_store
+                .delete_profile_password(profile_id)
+                .err();
+            if let Some(error) = credential_cleanup {
+                app.last_error = Some(format!("删除系统凭据失败: {error}"));
+            }
             if persist_profiles(app) {
                 app.notice = format!(
                     "会话配置已删除；已打开标签不受影响。已写入 {}",
@@ -701,13 +1190,36 @@ fn sort_profiles(app: &mut AditApp, key: ProfileSortKey) {
 }
 
 fn persist_profiles(app: &mut AditApp) -> bool {
-    match app.profile_store.save_profiles(app.manager.profiles()) {
+    let catalog = ProfileCatalog::new(
+        app.groups.iter().cloned().collect(),
+        app.manager.profiles().to_vec(),
+    );
+
+    match app.profile_store.save_catalog(&catalog) {
         Ok(()) => true,
         Err(error) => {
             app.last_error = Some(format!("保存会话配置失败: {error}"));
             false
         }
     }
+}
+
+fn groups_from_catalog(groups: Vec<String>, profiles: &[ConnectionProfile]) -> BTreeSet<String> {
+    let mut result = groups.into_iter().collect::<BTreeSet<_>>();
+    result.extend(groups_from_profiles(profiles));
+    if result.is_empty() {
+        result.insert(String::from("Default"));
+    }
+    result
+}
+
+fn groups_from_profiles(profiles: &[ConnectionProfile]) -> BTreeSet<String> {
+    profiles
+        .iter()
+        .map(|profile| profile.group.trim())
+        .filter(|group| !group.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 fn parse_port(value: &str) -> Option<u16> {
@@ -731,32 +1243,119 @@ fn open_selected_mock_tab(app: &mut AditApp) {
     }
 }
 
-fn connect_selected_profile(app: &mut AditApp) {
+fn open_connection_dialog(app: &mut AditApp) {
     let Some(profile_id) = save_profile_from_form(app, false) else {
         return;
     };
-    let endpoint = app
-        .manager
-        .profile(profile_id)
-        .map(|profile| profile.endpoint())
-        .unwrap_or_else(|| String::from("unknown"));
+    let Some(profile) = app.manager.profile(profile_id).cloned() else {
+        app.last_error = Some(String::from("请选择要连接的会话配置"));
+        return;
+    };
+
+    let endpoint = profile.endpoint();
+    app.connection_dialog = Some(ConnectionDialog {
+        profile_id,
+        title: profile.name,
+        endpoint,
+        auth_method: profile.auth_method,
+        identity_file: profile.identity_file,
+    });
+
+    match app.credential_store.load_profile_password(profile_id) {
+        Ok(Some(password)) => {
+            app.password = password;
+            app.remember_connection_password = true;
+            app.last_error = None;
+            app.notice = String::from("已载入系统凭据库中的密码");
+        }
+        Ok(None) => {
+            app.password.clear();
+            app.remember_connection_password = false;
+            app.last_error = None;
+            app.notice = String::from("请输入本次连接的密码或 passphrase");
+        }
+        Err(error) => {
+            app.password.clear();
+            app.remember_connection_password = false;
+            app.last_error = Some(format!("读取系统凭据失败: {error}"));
+            app.notice = String::from("请输入本次连接的密码或 passphrase");
+        }
+    }
+
+    app.terminal_focused = false;
+    app.terminal_context_menu = false;
+    app.profile_context_menu = None;
+    app.group_context_menu = None;
+}
+
+fn confirm_connection(app: &mut AditApp) {
+    let Some(dialog) = app.connection_dialog.clone() else {
+        open_connection_dialog(app);
+        return;
+    };
+
+    let credential_warning = sync_connection_password(app, dialog.profile_id).err();
 
     match app
         .manager
-        .open_live_ssh_session(profile_id, app.password.clone())
+        .open_live_ssh_session(dialog.profile_id, app.password.clone())
     {
         Ok(_) => {
+            app.connection_dialog = None;
+            app.password.clear();
+            app.remember_connection_password = false;
             app.terminal_focused = true;
             app.terminal_scroll_offset = 0;
             app.terminal_selection = None;
             app.terminal_context_menu = false;
             sync_terminal_size(app);
-            app.last_error = None;
-            app.notice = format!("SSH 会话已开始连接: {endpoint}");
+            app.last_error = credential_warning
+                .as_ref()
+                .map(|error| format!("保存系统凭据失败: {error}"));
+            app.notice = if credential_warning.is_some() {
+                format!("SSH 会话已开始连接: {}；系统凭据未保存", dialog.endpoint)
+            } else {
+                format!("SSH 会话已开始连接: {}", dialog.endpoint)
+            };
         }
         Err(error) => {
             app.last_error = Some(error.to_string());
         }
+    }
+}
+
+fn retry_active_session(app: &mut AditApp) {
+    let Some(summary) = app.manager.active_session_summary() else {
+        app.last_error = Some(String::from("没有可重连的活动标签"));
+        return;
+    };
+
+    if !matches!(
+        summary.status,
+        SessionStatus::Error | SessionStatus::Disconnected
+    ) {
+        app.notice = String::from("当前会话仍在连接或已连接，无需重连");
+        return;
+    }
+
+    select_profile(app, summary.profile_id);
+    app.manager.close(summary.id);
+    app.terminal_scroll_offset = 0;
+    app.terminal_selection = None;
+    app.terminal_context_menu = false;
+    app.notice = format!("准备重连: {}", summary.endpoint);
+    open_connection_dialog(app);
+}
+
+fn sync_connection_password(
+    app: &mut AditApp,
+    profile_id: ProfileId,
+) -> Result<(), adit_storage::CredentialError> {
+    if app.remember_connection_password && !app.password.is_empty() {
+        app.credential_store
+            .save_profile_password(profile_id, &app.password)
+    } else {
+        app.credential_store.delete_profile_password(profile_id)
     }
 }
 
@@ -1278,11 +1877,17 @@ fn view(app: &AditApp) -> Element<'_, Message> {
         .height(Fill)
         .width(Fill);
 
-    container(layout)
+    let base: Element<'_, Message> = container(layout)
         .style(|_theme| app_background_style())
         .height(Fill)
         .width(Fill)
-        .into()
+        .into();
+
+    if app.connection_dialog.is_some() {
+        stack(vec![base, opaque(connection_dialog_overlay(app))]).into()
+    } else {
+        base
+    }
 }
 
 fn menu_bar(app: &AditApp) -> Element<'_, Message> {
@@ -1321,44 +1926,76 @@ fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a,
 }
 
 fn menu_panel(menu: MenuKind) -> Element<'static, Message> {
-    let commands = match menu {
-        MenuKind::File => row![
-            command_button("新建会话", MenuCommand::NewProfile),
-            command_button("保存会话", MenuCommand::SaveProfile),
-            command_button("删除会话", MenuCommand::DeleteProfile),
-            command_button("关闭标签", MenuCommand::CloseActiveTab),
-        ],
-        MenuKind::Session => row![
-            command_button("连接", MenuCommand::Connect),
-            command_button("断开", MenuCommand::Disconnect),
-            command_button("打开演示标签", MenuCommand::OpenMockTab),
-            command_button("关闭标签", MenuCommand::CloseActiveTab),
-        ],
-        MenuKind::Edit => row![command_button("清屏", MenuCommand::ClearTerminal)],
-        MenuKind::View => row![
-            command_button("终端 96x28", MenuCommand::ResizeDefault),
-            command_button("终端 120x36", MenuCommand::ResizeWide),
-        ],
-        MenuKind::Transfer => row![command_button("SFTP", MenuCommand::Sftp)],
-        MenuKind::Script => row![command_button("日志/脚本", MenuCommand::Logging)],
-        MenuKind::Tools => row![
-            command_button("清屏", MenuCommand::ClearTerminal),
-            command_button("日志", MenuCommand::Logging),
-        ],
-        MenuKind::Help => row![command_button("关于", MenuCommand::About)],
-    };
+    let mut commands = column![].spacing(0).width(Fill);
+    for (label, command) in menu_commands(menu) {
+        commands = commands.push(menu_dropdown_button(label, *command));
+    }
 
-    container(commands.spacing(4).align_y(Alignment::Center))
-        .padding([4, 8])
-        .height(34)
-        .width(Fill)
-        .style(|_theme| menu_panel_style())
-        .into()
+    container(
+        row![
+            Space::new().width(Length::Fixed(menu_dropdown_offset(menu))),
+            container(commands)
+                .width(Length::Fixed(178.0))
+                .padding([4, 0])
+                .style(|_theme| menu_dropdown_style()),
+            Space::new().width(Fill),
+        ]
+        .align_y(Alignment::Start),
+    )
+    .padding([0, 0])
+    .height(Length::Fixed(MENU_PANEL_HEIGHT))
+    .width(Fill)
+    .style(|_theme| menu_panel_style())
+    .into()
 }
 
-fn command_button(label: &'static str, command: MenuCommand) -> Element<'static, Message> {
-    button(label)
-        .padding([4, 8])
+fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
+    match menu {
+        MenuKind::File => &[
+            ("新建会话", MenuCommand::NewProfile),
+            ("新建分组", MenuCommand::NewGroup),
+            ("保存会话", MenuCommand::SaveProfile),
+            ("删除会话", MenuCommand::DeleteProfile),
+            ("关闭标签", MenuCommand::CloseActiveTab),
+        ],
+        MenuKind::Session => &[
+            ("连接", MenuCommand::Connect),
+            ("断开", MenuCommand::Disconnect),
+            ("打开演示标签", MenuCommand::OpenMockTab),
+            ("关闭标签", MenuCommand::CloseActiveTab),
+        ],
+        MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
+        MenuKind::View => &[
+            ("终端 96x28", MenuCommand::ResizeDefault),
+            ("终端 120x36", MenuCommand::ResizeWide),
+        ],
+        MenuKind::Transfer => &[("SFTP", MenuCommand::Sftp)],
+        MenuKind::Script => &[("日志/脚本", MenuCommand::Logging)],
+        MenuKind::Tools => &[
+            ("清屏", MenuCommand::ClearTerminal),
+            ("日志", MenuCommand::Logging),
+        ],
+        MenuKind::Help => &[("关于", MenuCommand::About)],
+    }
+}
+
+fn menu_dropdown_offset(menu: MenuKind) -> f32 {
+    match menu {
+        MenuKind::File => 28.0,
+        MenuKind::Session => 72.0,
+        MenuKind::Edit => 138.0,
+        MenuKind::View => 184.0,
+        MenuKind::Transfer => 236.0,
+        MenuKind::Script => 318.0,
+        MenuKind::Tools => 376.0,
+        MenuKind::Help => 436.0,
+    }
+}
+
+fn menu_dropdown_button(label: &'static str, command: MenuCommand) -> Element<'static, Message> {
+    button(text(label).size(12))
+        .width(Fill)
+        .padding([6, 12])
         .style(|_theme, status| menu_command_button_style(status))
         .on_press(Message::RunMenu(command))
         .into()
@@ -1370,6 +2007,7 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             tool_button("↯", Message::ConnectSelectedProfile),
             tool_button("■", Message::DisconnectActive),
             tool_button("+", Message::NewProfileDraft),
+            tool_button("G+", Message::NewGroupDraft),
             tool_button("□", Message::SaveProfile),
             tool_button("×", Message::DeleteSelectedProfile),
             tool_separator(),
@@ -1428,6 +2066,90 @@ fn tool_separator() -> Element<'static, Message> {
     .into()
 }
 
+fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let Some(dialog) = app.connection_dialog.as_ref() else {
+        return Space::new().width(Fill).height(Fill).into();
+    };
+
+    let auth_hint = match dialog.auth_method {
+        AuthMethod::Auto => "自动认证：密码可选，会先尝试密码、agent 和默认密钥",
+        AuthMethod::Password => "密码认证：请输入 SSH 密码",
+        AuthMethod::Key => "密钥认证：如私钥有 passphrase，请在这里输入",
+        AuthMethod::Agent => "Agent 认证：通常不需要密码",
+    };
+
+    let mut details = column![
+        row![
+            text("连接 SSH").size(16).color(primary_text()),
+            Space::new().width(Fill),
+            button("×")
+                .width(Length::Fixed(26.0))
+                .height(Length::Fixed(24.0))
+                .padding(0)
+                .style(|_theme, status| close_button_style(status))
+                .on_press(Message::CancelConnection),
+        ]
+        .align_y(Alignment::Center),
+        text(dialog.title.clone()).size(13).color(primary_text()),
+        text(dialog.endpoint.clone()).size(12).color(muted_text()),
+        text(auth_hint).size(11).color(muted_text()),
+    ]
+    .spacing(6);
+
+    if !dialog.identity_file.trim().is_empty() {
+        details = details.push(
+            text(format!("Identity: {}", dialog.identity_file))
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+
+    let panel = container(
+        column![
+            details,
+            text_input("Password / passphrase", &app.password)
+                .secure(true)
+                .on_input(Message::ConnectionPasswordChanged)
+                .on_submit(Message::ConfirmConnection)
+                .padding([6, 8])
+                .style(|theme, status| text_input_style(theme, status)),
+            checkbox(app.remember_connection_password)
+                .label("保存到系统凭据库")
+                .on_toggle(Message::RememberConnectionPasswordChanged)
+                .size(14)
+                .text_size(12)
+                .spacing(8),
+            text("仅保存到系统凭据库，不写入 profiles.json")
+                .size(10)
+                .color(muted_text()),
+            row![
+                button("取消")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelConnection),
+                button("连接")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmConnection),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(430.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
 fn form_endpoint(app: &AditApp) -> String {
     let username = app.profile_username.trim();
     let host = app.profile_host.trim();
@@ -1448,7 +2170,7 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         return false;
     };
 
-    profile.folder == app.profile_folder.trim()
+    profile.group == app.profile_group.trim()
         && profile.name == app.profile_name.trim()
         && profile.host == app.profile_host.trim()
         && profile.port.to_string() == app.profile_port.trim()
@@ -1462,22 +2184,83 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     sorted_profiles.sort_by(profile_sidebar_order);
 
     let filter = app.session_filter.trim().to_ascii_lowercase();
-    let sorted_profiles = sorted_profiles
-        .into_iter()
-        .filter(|profile| profile_matches_filter(profile, &filter))
-        .collect::<Vec<_>>();
-    let profile_count = sorted_profiles.len();
+    let filter_active = !filter.is_empty();
+    let profile_count = if filter_active {
+        sorted_profiles
+            .iter()
+            .filter(|profile| profile_matches_filter(profile, &filter))
+            .count()
+    } else {
+        sorted_profiles.len()
+    };
     let mut profiles = column![tree_root_row(profile_count)].spacing(1).width(Fill);
-    let mut current_folder = String::new();
 
-    for profile in sorted_profiles {
-        if profile.folder != current_folder {
-            current_folder = profile.folder.clone();
-            profiles = profiles.push(tree_folder_row(current_folder.clone()));
+    for group in sidebar_group_names(app, &sorted_profiles) {
+        let group_matches = filter_active && group.to_ascii_lowercase().contains(&filter);
+        let group_profiles = sorted_profiles
+            .iter()
+            .filter(|profile| profile.group == group)
+            .filter(|profile| {
+                !filter_active || group_matches || profile_matches_filter(profile, &filter)
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+
+        if filter_active && !group_matches && group_profiles.is_empty() {
+            continue;
         }
 
-        let selected = Some(profile.id) == app.selected_profile;
-        profiles = profiles.push(tree_profile_row(profile, selected));
+        let collapsed = app.collapsed_groups.contains(&group) && !filter_active;
+        let group_count = sorted_profiles
+            .iter()
+            .filter(|candidate| candidate.group == group)
+            .count();
+        let group_drop_target = app.group_drop_target.as_deref() == Some(group.as_str());
+        profiles = profiles.push(tree_group_row(
+            group.clone(),
+            collapsed,
+            group_count,
+            group_drop_target,
+        ));
+
+        if app.group_context_menu.as_deref() == Some(group.as_str()) {
+            profiles = profiles.push(group_context_menu(group.clone(), collapsed));
+        }
+
+        if app.editing_group.as_deref() == Some(group.as_str()) {
+            profiles = profiles.push(group_edit_menu(app));
+        }
+
+        if collapsed {
+            continue;
+        }
+
+        for profile in group_profiles {
+            let selected = Some(profile.id) == app.selected_profile;
+            let hovered = Some(profile.id) == app.hovered_profile;
+            let dragging = Some(profile.id) == app.dragged_profile;
+            let drop_position = app
+                .profile_drop_target
+                .filter(|target| target.profile_id == profile.id)
+                .map(|target| target.position);
+
+            let profile_id = profile.id;
+            profiles = profiles.push(tree_profile_row(
+                profile,
+                selected,
+                hovered,
+                dragging,
+                drop_position,
+            ));
+
+            if app.profile_context_menu == Some(profile_id) {
+                profiles = profiles.push(profile_context_menu(profile_id));
+            }
+
+            if app.profile_editor == Some(profile_id) {
+                profiles = profiles.push(profile_edit_menu(app));
+            }
+        }
     }
 
     let error = app
@@ -1519,6 +2302,7 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
             sidebar_tool_button("↯", Message::ConnectSelectedProfile),
             sidebar_tool_button("▣", Message::OpenSelectedProfile),
             sidebar_tool_button("+", Message::NewProfileDraft),
+            sidebar_tool_button("G+", Message::NewGroupDraft),
             sidebar_tool_button("□", Message::SaveProfile),
             sidebar_tool_button("×", Message::DeleteSelectedProfile),
             sidebar_tool_button("↑", Message::MoveSelectedProfile(ProfileMove::Up)),
@@ -1531,12 +2315,11 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .padding([3, 5])
         .spacing(3)
         .align_y(Alignment::Center),
-        text_input("Filter by folder/session name <Alt+I>", &app.session_filter)
+        text_input("Filter by group/session name <Alt+I>", &app.session_filter)
             .on_input(Message::SessionFilterChanged)
             .padding([4, 6])
             .style(|theme, status| toolbar_input_style(theme, status)),
         scrollable(profiles).height(Fill),
-        profile_editor(app),
     ]
     .spacing(0)
     .height(Fill)
@@ -1556,8 +2339,8 @@ fn tree_root_row(profile_count: usize) -> Element<'static, Message> {
     container(
         row![
             text("▾").size(12).color(primary_text()),
-            text("▣").size(12).color(folder_color()),
-            text("Sessions").size(13).color(primary_text()),
+            text("▣").size(12).color(group_color()),
+            text("Groups").size(13).color(primary_text()),
             Space::new().width(Fill),
             text(profile_count.to_string()).size(11).color(muted_text()),
         ]
@@ -1569,41 +2352,183 @@ fn tree_root_row(profile_count: usize) -> Element<'static, Message> {
     .into()
 }
 
-fn tree_folder_row(folder: String) -> Element<'static, Message> {
-    container(
-        row![
-            Space::new().width(Length::Fixed(14.0)),
-            text("▾").size(12).color(primary_text()),
-            text("▣").size(12).color(folder_color()),
-            text(folder).size(13).color(primary_text()),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center),
+fn sidebar_group_names(app: &AditApp, profiles: &[ConnectionProfile]) -> Vec<String> {
+    let mut groups = app.groups.clone();
+    groups.extend(groups_from_profiles(profiles));
+
+    if groups.is_empty() {
+        groups.insert(String::from("Default"));
+    }
+
+    groups.into_iter().collect()
+}
+
+fn tree_group_row(
+    group: String,
+    collapsed: bool,
+    profile_count: usize,
+    drop_target: bool,
+) -> Element<'static, Message> {
+    let arrow = if collapsed { "▸" } else { "▾" };
+    let group_label = group.clone();
+    let toggle_group = group.clone();
+    let enter_group = group.clone();
+    let hover_group = group.clone();
+    let release_group = group.clone();
+    let exit_group = group.clone();
+    let context_group = group.clone();
+
+    mouse_area(
+        container(
+            row![
+                Space::new().width(Length::Fixed(14.0)),
+                text(arrow).size(12).color(primary_text()),
+                text("▣").size(12).color(group_color()),
+                text(group_label).size(13).color(primary_text()),
+                Space::new().width(Fill),
+                text(profile_count.to_string()).size(10).color(muted_text()),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .padding([2, 4])
+        .width(Fill)
+        .style(move |_theme| group_row_style(drop_target)),
     )
-    .padding([2, 4])
-    .width(Fill)
+    .on_press(Message::ToggleProfileGroup(toggle_group))
+    .on_right_press(Message::ShowGroupContextMenu(context_group))
+    .on_enter(Message::ProfileDragOverGroup(enter_group))
+    .on_move(move |_| Message::ProfileDragOverGroup(hover_group.clone()))
+    .on_release(Message::ProfileDroppedOnGroup(release_group))
+    .on_exit(Message::ProfileGroupHoverExited(exit_group))
+    .interaction(mouse::Interaction::Pointer)
     .into()
 }
 
-fn tree_profile_row(profile: ConnectionProfile, selected: bool) -> Element<'static, Message> {
-    button(
+fn group_context_menu(group: String, collapsed: bool) -> Element<'static, Message> {
+    let toggle_label = if collapsed { "展开" } else { "折叠" };
+    container(
         row![
-            Space::new().width(Length::Fixed(34.0)),
-            text("▣").size(11).color(session_icon_color()),
-            text(profile.name.clone()).size(13).color(primary_text()),
-            Space::new().width(Fill),
-            text(profile.auth_method.label())
-                .size(10)
-                .color(muted_text()),
+            Space::new().width(Length::Fixed(42.0)),
+            profile_context_button("重命名", Message::RenameGroupFromContext(group.clone())),
+            profile_context_button("新会话", Message::NewProfileInGroup(group.clone())),
+            profile_context_button("删空组", Message::DeleteGroupFromContext(group.clone())),
+            profile_context_button(toggle_label, Message::ToggleProfileGroup(group)),
+            profile_context_button("关闭", Message::HideGroupContextMenu),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center),
+    )
+    .padding([3, 4])
+    .width(Fill)
+    .style(|_theme| profile_context_menu_style())
+    .into()
+}
+
+fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
+    container(
+        row![
+            Space::new().width(Length::Fixed(42.0)),
+            text_input("Group name", &app.group_name_draft)
+                .on_input(Message::GroupNameDraftChanged)
+                .on_submit(Message::SaveGroupRename)
+                .padding([4, 6])
+                .style(|theme, status| text_input_style(theme, status))
+                .width(Fill),
+            button("保存")
+                .padding([4, 8])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SaveGroupRename),
+            button("取消")
+                .padding([4, 8])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CancelGroupRename),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
     )
+    .padding([4, 6])
     .width(Fill)
-    .padding([2, 4])
-    .style(move |_theme, status| tree_item_style(selected, status))
-    .on_press(Message::SelectProfile(profile.id))
+    .style(|_theme| profile_edit_menu_style())
     .into()
+}
+
+fn tree_profile_row(
+    profile: ConnectionProfile,
+    selected: bool,
+    hovered: bool,
+    dragging: bool,
+    drop_position: Option<ProfileDropPosition>,
+) -> Element<'static, Message> {
+    let profile_id = profile.id;
+    let interaction = if dragging {
+        mouse::Interaction::Grabbing
+    } else {
+        mouse::Interaction::Grab
+    };
+
+    mouse_area(
+        container(
+            row![
+                Space::new().width(Length::Fixed(34.0)),
+                text("▣").size(11).color(session_icon_color()),
+                text(profile.name.clone()).size(13).color(primary_text()),
+                Space::new().width(Fill),
+                text(profile.auth_method.label())
+                    .size(10)
+                    .color(muted_text()),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .height(Length::Fixed(PROFILE_ROW_HEIGHT))
+        .width(Fill)
+        .padding([2, 4])
+        .style(move |_theme| tree_item_container_style(selected, hovered, dragging, drop_position)),
+    )
+    .on_press(Message::ProfilePressed(profile_id))
+    .on_release(Message::ProfileDropped(profile_id))
+    .on_double_click(Message::ProfileDoubleClicked(profile_id))
+    .on_right_press(Message::ShowProfileContextMenu(profile_id))
+    .on_enter(Message::ProfileHovered(profile_id))
+    .on_move(move |point| Message::ProfileDragOver(profile_id, profile_drop_position(point)))
+    .on_exit(Message::ProfileHoverExited(profile_id))
+    .interaction(interaction)
+    .into()
+}
+
+fn profile_drop_position(point: Point) -> ProfileDropPosition {
+    if point.y < PROFILE_ROW_HEIGHT / 2.0 {
+        ProfileDropPosition::Before
+    } else {
+        ProfileDropPosition::After
+    }
+}
+
+fn profile_context_menu(profile_id: ProfileId) -> Element<'static, Message> {
+    container(
+        row![
+            Space::new().width(Length::Fixed(42.0)),
+            profile_context_button("编辑", Message::EditProfileFromContext(profile_id)),
+            profile_context_button("连接", Message::ConnectProfileFromContext(profile_id)),
+            profile_context_button("删除", Message::DeleteProfileFromContext(profile_id)),
+            profile_context_button("关闭", Message::HideProfileContextMenu),
+        ]
+        .spacing(3)
+        .align_y(Alignment::Center),
+    )
+    .padding([3, 4])
+    .width(Fill)
+    .style(|_theme| profile_context_menu_style())
+    .into()
+}
+
+fn profile_context_button(label: &'static str, message: Message) -> Element<'static, Message> {
+    button(text(label).size(11))
+        .padding([3, 7])
+        .style(|_theme, status| profile_context_button_style(status))
+        .on_press(message)
+        .into()
 }
 
 fn profile_matches_filter(profile: &ConnectionProfile, filter: &str) -> bool {
@@ -1611,7 +2536,7 @@ fn profile_matches_filter(profile: &ConnectionProfile, filter: &str) -> bool {
         return true;
     }
 
-    profile.folder.to_ascii_lowercase().contains(filter)
+    profile.group.to_ascii_lowercase().contains(filter)
         || profile.name.to_ascii_lowercase().contains(filter)
         || profile.host.to_ascii_lowercase().contains(filter)
         || profile.username.to_ascii_lowercase().contains(filter)
@@ -1622,8 +2547,8 @@ fn profile_sidebar_order(
     left: &ConnectionProfile,
     right: &ConnectionProfile,
 ) -> std::cmp::Ordering {
-    left.folder
-        .cmp(&right.folder)
+    left.group
+        .cmp(&right.group)
         .then_with(|| left.sort_order.cmp(&right.sort_order))
         .then_with(|| {
             left.name
@@ -1643,11 +2568,12 @@ fn sidebar_tool_button(label: &'static str, message: Message) -> Element<'static
         .into()
 }
 
-fn profile_editor(app: &AditApp) -> Element<'_, Message> {
+fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
     container(
         column![
             row![
-                text("Properties").size(12).color(primary_text()),
+                Space::new().width(Length::Fixed(42.0)),
+                text("编辑会话").size(12).color(primary_text()),
                 Space::new().width(Fill),
                 text(if form_matches_selected_profile(app) {
                     "saved"
@@ -1656,12 +2582,19 @@ fn profile_editor(app: &AditApp) -> Element<'_, Message> {
                 })
                 .size(10)
                 .color(muted_text()),
+                button("×")
+                    .width(Length::Fixed(22.0))
+                    .height(Length::Fixed(20.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseProfileEditor),
             ]
             .spacing(4)
             .align_y(Alignment::Center),
             row![
-                text_input("Folder", &app.profile_folder)
-                    .on_input(Message::ProfileFolderChanged)
+                Space::new().width(Length::Fixed(42.0)),
+                text_input("Group", &app.profile_group)
+                    .on_input(Message::ProfileGroupChanged)
                     .padding([4, 6])
                     .style(|theme, status| text_input_style(theme, status))
                     .width(Length::FillPortion(1)),
@@ -1673,6 +2606,7 @@ fn profile_editor(app: &AditApp) -> Element<'_, Message> {
             ]
             .spacing(5),
             row![
+                Space::new().width(Length::Fixed(42.0)),
                 text_input("Host", &app.profile_host)
                     .on_input(Message::ProfileHostChanged)
                     .padding([4, 6])
@@ -1686,32 +2620,32 @@ fn profile_editor(app: &AditApp) -> Element<'_, Message> {
             ]
             .spacing(5),
             row![
+                Space::new().width(Length::Fixed(42.0)),
                 text_input("User", &app.profile_username)
                     .on_input(Message::ProfileUsernameChanged)
                     .padding([4, 6])
                     .style(|theme, status| text_input_style(theme, status))
-                    .width(Length::FillPortion(1)),
-                text_input("Password / passphrase", &app.password)
-                    .secure(true)
-                    .on_input(Message::PasswordChanged)
-                    .on_submit(Message::ConnectSelectedProfile)
-                    .padding([4, 6])
-                    .style(|theme, status| text_input_style(theme, status))
-                    .width(Length::FillPortion(1)),
+                    .width(Fill),
             ]
             .spacing(5),
             row![
+                Space::new().width(Length::Fixed(42.0)),
                 auth_method_button(app, AuthMethod::Auto),
                 auth_method_button(app, AuthMethod::Password),
                 auth_method_button(app, AuthMethod::Key),
                 auth_method_button(app, AuthMethod::Agent),
             ]
             .spacing(4),
-            text_input("Identity file", &app.profile_identity_file)
-                .on_input(Message::ProfileIdentityFileChanged)
-                .padding([4, 6])
-                .style(|theme, status| text_input_style(theme, status)),
             row![
+                Space::new().width(Length::Fixed(42.0)),
+                text_input("Identity file", &app.profile_identity_file)
+                    .on_input(Message::ProfileIdentityFileChanged)
+                    .padding([4, 6])
+                    .style(|theme, status| text_input_style(theme, status))
+                    .width(Fill),
+            ],
+            row![
+                Space::new().width(Length::Fixed(42.0)),
                 button("Connect")
                     .width(Fill)
                     .padding([5, 8])
@@ -1733,7 +2667,7 @@ fn profile_editor(app: &AditApp) -> Element<'_, Message> {
         .spacing(5),
     )
     .padding(7)
-    .style(|_theme| properties_panel_style())
+    .style(|_theme| profile_edit_menu_style())
     .into()
 }
 
@@ -1764,6 +2698,7 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
                 scrollable(tabs).direction(scrollable::Direction::Horizontal(
                     scrollable::Scrollbar::new()
                 )),
+                active_session_action(app),
                 container(text(app.manager.status_line()).size(12).color(muted_text()))
                     .padding([0, 8])
                     .center_y(30),
@@ -1793,6 +2728,23 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
     .height(Fill)
     .width(Fill)
     .into()
+}
+
+fn active_session_action(app: &AditApp) -> Element<'_, Message> {
+    if app.manager.active_session_summary().is_some_and(|summary| {
+        matches!(
+            summary.status,
+            SessionStatus::Error | SessionStatus::Disconnected
+        )
+    }) {
+        return button(text("重连").size(12))
+            .padding([4, 10])
+            .style(|_theme, status| primary_button_style(status))
+            .on_press(Message::RetryActiveSession)
+            .into();
+    }
+
+    Space::new().width(Length::Shrink).into()
 }
 
 fn tab_button(
@@ -2103,7 +3055,7 @@ fn danger_background() -> Color {
     Color::from_rgb8(255, 235, 235)
 }
 
-fn folder_color() -> Color {
+fn group_color() -> Color {
     Color::from_rgb8(232, 169, 46)
 }
 
@@ -2145,9 +3097,18 @@ fn top_bar_style() -> container::Style {
 
 fn menu_panel_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(247, 247, 247))),
+        background: None,
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(198, 202, 207)),
+        border: border(0.0, 0.0, transparent()),
+        ..container::Style::default()
+    }
+}
+
+fn menu_dropdown_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(250, 250, 250))),
+        text_color: Some(primary_text()),
+        border: border(0.0, 1.0, Color::from_rgb8(167, 174, 184)),
         ..container::Style::default()
     }
 }
@@ -2200,6 +3161,27 @@ fn terminal_menu_style() -> container::Style {
         background: Some(Background::Color(Color::from_rgb8(246, 247, 249))),
         text_color: Some(primary_text()),
         border: border(1.0, 1.0, border_color()),
+        ..container::Style::default()
+    }
+}
+
+fn dialog_scrim_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+            a: 0.32,
+        })),
+        ..container::Style::default()
+    }
+}
+
+fn connection_dialog_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(248, 249, 251))),
+        text_color: Some(primary_text()),
+        border: border(2.0, 1.0, Color::from_rgb8(150, 157, 166)),
         ..container::Style::default()
     }
 }
@@ -2384,26 +3366,80 @@ fn sidebar_tool_button_style(status: button::Status) -> button::Style {
     toolbar_icon_button_style(status)
 }
 
-fn tree_item_style(selected: bool, status: button::Status) -> button::Style {
-    let background = match (selected, status) {
-        (true, _) => Color::from_rgb8(207, 207, 207),
-        (false, button::Status::Hovered) => Color::from_rgb8(232, 239, 249),
-        (false, button::Status::Pressed) => Color::from_rgb8(218, 228, 242),
-        _ => transparent(),
-    };
-    let border_color = if selected {
-        Color::from_rgb8(154, 154, 154)
+fn group_row_style(drop_target: bool) -> container::Style {
+    let background = if drop_target {
+        Color::from_rgb8(214, 231, 255)
     } else {
         transparent()
     };
-    base_button_style(background, primary_text(), border_color)
+    let border_color = if drop_target { accent() } else { transparent() };
+
+    container::Style {
+        background: Some(Background::Color(background)),
+        text_color: Some(primary_text()),
+        border: border(0.0, 1.0, border_color),
+        ..container::Style::default()
+    }
 }
 
-fn properties_panel_style() -> container::Style {
+fn tree_item_container_style(
+    selected: bool,
+    hovered: bool,
+    dragging: bool,
+    drop_position: Option<ProfileDropPosition>,
+) -> container::Style {
+    let background = if drop_position.is_some() {
+        Color::from_rgb8(214, 231, 255)
+    } else if dragging {
+        Color::from_rgb8(238, 242, 247)
+    } else if selected {
+        Color::from_rgb8(207, 207, 207)
+    } else if hovered {
+        Color::from_rgb8(232, 239, 249)
+    } else {
+        transparent()
+    };
+
+    let border_color = match drop_position {
+        Some(ProfileDropPosition::Before) => Color::from_rgb8(0, 120, 215),
+        Some(ProfileDropPosition::After) => Color::from_rgb8(0, 120, 215),
+        None if selected => Color::from_rgb8(154, 154, 154),
+        None => transparent(),
+    };
+
     container::Style {
-        background: Some(Background::Color(Color::from_rgb8(246, 247, 249))),
+        background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, Color::from_rgb8(185, 190, 197)),
+        border: border(0.0, 1.0, border_color),
+        ..container::Style::default()
+    }
+}
+
+fn profile_context_menu_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(244, 247, 251))),
+        text_color: Some(primary_text()),
+        border: border(0.0, 1.0, Color::from_rgb8(176, 194, 220)),
+        ..container::Style::default()
+    }
+}
+
+fn profile_context_button_style(status: button::Status) -> button::Style {
+    let background = match status {
+        button::Status::Hovered => Color::from_rgb8(223, 234, 250),
+        button::Status::Pressed => Color::from_rgb8(205, 222, 246),
+        button::Status::Disabled => Color::from_rgb8(232, 235, 239),
+        button::Status::Active => Color::from_rgb8(252, 253, 255),
+    };
+
+    base_button_style(background, primary_text(), Color::from_rgb8(185, 198, 215))
+}
+
+fn profile_edit_menu_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(Color::from_rgb8(248, 250, 253))),
+        text_color: Some(primary_text()),
+        border: border(0.0, 1.0, Color::from_rgb8(176, 194, 220)),
         ..container::Style::default()
     }
 }
