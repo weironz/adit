@@ -324,21 +324,25 @@ impl AditApp {
         let settings_store = SettingsStore::default();
         let settings = settings_store.load().unwrap_or_default();
         let dark_mode = settings.dark_mode;
-        let window_width = settings.window_width;
-        let window_height = settings.window_height;
+        // Clamp away a bad persisted size (e.g. a 0x0 written while minimized) so
+        // the window is never created invisible; the file then self-heals on the
+        // next Tick because the clamped value differs from `persisted_settings`.
+        let raw_window_width = settings.window_width;
+        let raw_window_height = settings.window_height;
+        let (window_width, window_height) = sane_window_size(raw_window_width, raw_window_height);
         let auto_reconnect = settings.auto_reconnect;
         let collapsed_groups: BTreeSet<String> = settings.collapsed_groups.into_iter().collect();
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
 
-        // Mirror the in-memory shape (sorted set) so the Tick loop does not
-        // immediately rewrite an identical file on startup.
+        // Mirror what is on disk (raw, not clamped) so a bad size triggers one
+        // corrective write, while a valid size stays untouched.
         let persisted_settings = AppSettings {
             dark_mode,
             collapsed_groups: collapsed_groups.iter().cloned().collect(),
-            window_width,
-            window_height,
+            window_width: raw_window_width,
+            window_height: raw_window_height,
             auto_reconnect,
         };
 
@@ -396,9 +400,24 @@ impl AditApp {
     }
 }
 
+/// Minimum sane window dimension; anything smaller (e.g. a 0x0 saved while
+/// minimized) falls back to the default so the window is never invisible.
+const MIN_WINDOW_DIM: f32 = 320.0;
+const DEFAULT_WINDOW_SIZE: (f32, f32) = (1360.0, 860.0);
+
+fn sane_window_size(width: f32, height: f32) -> (f32, f32) {
+    if width.is_finite() && height.is_finite() && width >= MIN_WINDOW_DIM && height >= MIN_WINDOW_DIM
+    {
+        (width, height)
+    } else {
+        DEFAULT_WINDOW_SIZE
+    }
+}
+
 pub fn run() -> iced::Result {
     // Restore the saved window size before the window is created.
     let settings = SettingsStore::default().load().unwrap_or_default();
+    let size = sane_window_size(settings.window_width, settings.window_height);
     iced::application(AditApp::default, update, view)
         .title(app_title)
         .theme(app_theme)
@@ -407,7 +426,7 @@ pub fn run() -> iced::Result {
             icon: app_icon(),
             ..window::Settings::default()
         })
-        .window_size((settings.window_width, settings.window_height))
+        .window_size(size)
         .centered()
         .run()
 }
@@ -842,9 +861,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::WindowResized { width, height } => {
-            app.window_width = width;
-            app.window_height = height;
-            sync_terminal_size(app);
+            // Minimizing reports a 0x0 size on Windows; ignore it so we never
+            // persist (and later restore) an invisible window.
+            if width >= MIN_WINDOW_DIM && height >= MIN_WINDOW_DIM {
+                app.window_width = width;
+                app.window_height = height;
+                sync_terminal_size(app);
+            }
         }
         Message::FocusTerminal => {
             if !app.terminal_focused {
