@@ -185,7 +185,8 @@ fn default_auto_reconnect() -> bool {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            dark_mode: false,
+            // Dark-first, matching the Termius-style look.
+            dark_mode: true,
             collapsed_groups: Vec::new(),
             window_width: 1360.0,
             window_height: 860.0,

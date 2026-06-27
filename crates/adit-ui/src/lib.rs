@@ -316,7 +316,7 @@ const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 const TERMINAL_CONTEXT_MENU_AND_GAP: f32 = 34.0;
-const PROFILE_ROW_HEIGHT: f32 = 22.0;
+const PROFILE_ROW_HEIGHT: f32 = 46.0;
 
 impl Default for AditApp {
     fn default() -> Self {
@@ -4265,16 +4265,15 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
 fn tree_root_row(profile_count: usize) -> Element<'static, Message> {
     container(
         row![
-            text("▾").size(12).color(primary_text()),
-            text("▣").size(12).color(group_color()),
-            text("Groups").size(13).color(primary_text()),
+            text("▾").size(11).color(muted_text()),
+            text("Hosts").size(12).color(primary_text()),
             Space::new().width(Fill),
             text(profile_count.to_string()).size(11).color(muted_text()),
         ]
-        .spacing(4)
+        .spacing(6)
         .align_y(Alignment::Center),
     )
-    .padding([2, 4])
+    .padding([6, 6])
     .width(Fill)
     .into()
 }
@@ -4308,17 +4307,16 @@ fn tree_group_row(
     mouse_area(
         container(
             row![
-                Space::new().width(Length::Fixed(14.0)),
-                text(arrow).size(12).color(primary_text()),
-                text("▣").size(12).color(group_color()),
-                text(group_label).size(13).color(primary_text()),
+                Space::new().width(Length::Fixed(10.0)),
+                text(arrow).size(11).color(muted_text()),
+                text(group_label).size(12).color(muted_text()),
                 Space::new().width(Fill),
                 text(profile_count.to_string()).size(10).color(muted_text()),
             ]
-            .spacing(4)
+            .spacing(6)
             .align_y(Alignment::Center),
         )
-        .padding([2, 4])
+        .padding([6, 6])
         .width(Fill)
         .style(move |_theme| group_row_style(drop_target)),
     )
@@ -4394,23 +4392,30 @@ fn tree_profile_row(
         mouse::Interaction::Grab
     };
 
+    let endpoint = if profile.username.trim().is_empty() {
+        profile.host.clone()
+    } else {
+        format!("{}@{}", profile.username, profile.host)
+    };
+
     mouse_area(
         container(
             row![
-                Space::new().width(Length::Fixed(34.0)),
-                text("▣").size(11).color(session_icon_color()),
-                text(profile.name.clone()).size(13).color(primary_text()),
+                Space::new().width(Length::Fixed(8.0)),
+                avatar(&profile.name),
+                column![
+                    text(profile.name.clone()).size(13).color(primary_text()),
+                    text(endpoint).size(11).color(muted_text()),
+                ]
+                .spacing(1),
                 Space::new().width(Fill),
-                text(profile.auth_method.label())
-                    .size(10)
-                    .color(muted_text()),
             ]
-            .spacing(4)
+            .spacing(10)
             .align_y(Alignment::Center),
         )
         .height(Length::Fixed(PROFILE_ROW_HEIGHT))
         .width(Fill)
-        .padding([2, 4])
+        .padding([4, 8])
         .style(move |_theme| tree_item_container_style(selected, hovered, dragging, drop_position)),
     )
     .on_press(Message::ProfilePressed(profile_id))
@@ -4429,6 +4434,56 @@ fn profile_drop_position(point: Point) -> ProfileDropPosition {
         ProfileDropPosition::Before
     } else {
         ProfileDropPosition::After
+    }
+}
+
+/// A Termius-style round host avatar: the host's initials on a per-host color.
+fn avatar(name: &str) -> Element<'static, Message> {
+    let color = avatar_color(name);
+    container(text(avatar_initials(name)).size(12).color(Color::WHITE))
+        .center_x(Length::Fixed(32.0))
+        .center_y(Length::Fixed(32.0))
+        .style(move |_theme| avatar_style(color))
+        .into()
+}
+
+fn avatar_initials(name: &str) -> String {
+    let mut initials = String::new();
+    for token in name
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .take(2)
+    {
+        if let Some(first) = token.chars().next() {
+            initials.push(first);
+        }
+    }
+    if initials.is_empty() {
+        initials.push('?');
+    }
+    initials.to_uppercase()
+}
+
+fn avatar_color(name: &str) -> Color {
+    let hash = name
+        .bytes()
+        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(u32::from(b)));
+    match hash % 6 {
+        0 => Color::from_rgb8(15, 158, 140),  // teal
+        1 => Color::from_rgb8(44, 123, 214),  // blue
+        2 => Color::from_rgb8(124, 116, 221), // purple
+        3 => Color::from_rgb8(216, 90, 48),   // coral
+        4 => Color::from_rgb8(196, 78, 122),  // pink
+        _ => Color::from_rgb8(78, 140, 46),   // green
+    }
+}
+
+fn avatar_style(color: Color) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(color)),
+        text_color: Some(Color::WHITE),
+        border: border(16.0, 0.0, transparent()),
+        ..container::Style::default()
     }
 }
 
@@ -4938,8 +4993,8 @@ fn status_bar(app: &AditApp) -> Element<'_, Message> {
 
 // Corner-radius scale. Interactive controls and floating surfaces are rounded;
 // full-bleed structural bars stay square (see the *_style fns below).
-const RADIUS_SM: f32 = 7.0;
-const RADIUS_MD: f32 = 11.0;
+const RADIUS_SM: f32 = 8.0;
+const RADIUS_MD: f32 = 12.0;
 
 /// Resolve a token to its light or dark value based on the active mode.
 fn pick(light: Color, dark: Color) -> Color {
@@ -4950,73 +5005,76 @@ fn pick(light: Color, dark: Color) -> Color {
     }
 }
 
+// Palette inspired by Termius: deep navy-charcoal dark chrome, a clean light
+// theme, and a teal-green accent. Tokens resolve to a (light, dark) pair.
 fn muted_text() -> Color {
-    pick(Color::from_rgb8(108, 116, 130), Color::from_rgb8(149, 158, 173))
+    pick(Color::from_rgb8(108, 113, 134), Color::from_rgb8(139, 144, 160))
 }
 
 fn primary_text() -> Color {
-    pick(Color::from_rgb8(28, 35, 48), Color::from_rgb8(228, 232, 240))
+    pick(Color::from_rgb8(28, 34, 48), Color::from_rgb8(230, 232, 238))
 }
 
 fn app_background() -> Color {
-    pick(Color::from_rgb8(236, 239, 244), Color::from_rgb8(24, 27, 33))
+    pick(Color::from_rgb8(244, 246, 249), Color::from_rgb8(21, 22, 30))
 }
 
 /// Raised surface: sidebar, cards, dialogs, floating menus.
 fn surface() -> Color {
-    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(32, 36, 44))
+    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(27, 29, 41))
 }
 
 /// Secondary chrome: toolbar, status bar, tab strip.
 fn surface_alt() -> Color {
-    pick(Color::from_rgb8(244, 246, 250), Color::from_rgb8(27, 30, 37))
+    pick(Color::from_rgb8(238, 241, 246), Color::from_rgb8(27, 29, 41))
 }
 
 /// Recessed area the terminal panel floats on.
 fn surface_sunken() -> Color {
-    pick(Color::from_rgb8(228, 232, 238), Color::from_rgb8(18, 20, 25))
+    pick(Color::from_rgb8(231, 235, 241), Color::from_rgb8(18, 18, 25))
 }
 
 fn panel_background_hover() -> Color {
-    pick(Color::from_rgb8(237, 242, 250), Color::from_rgb8(42, 47, 57))
+    pick(Color::from_rgb8(232, 242, 240), Color::from_rgb8(38, 42, 56))
 }
 
 fn field_background() -> Color {
-    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(38, 43, 52))
+    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(32, 35, 47))
 }
 
 fn terminal_background() -> Color {
-    // Near-black slate reads well under both light and dark chrome.
-    Color::from_rgb8(14, 17, 23)
+    // Near-black with a faint navy tint, matching the dark chrome.
+    Color::from_rgb8(20, 21, 28)
 }
 
 fn selection_background() -> Color {
-    Color::from_rgb8(38, 92, 178)
+    Color::from_rgb8(22, 92, 84)
 }
 
 fn border_color() -> Color {
-    pick(Color::from_rgb8(223, 227, 234), Color::from_rgb8(49, 55, 66))
+    pick(Color::from_rgb8(225, 230, 236), Color::from_rgb8(38, 42, 56))
 }
 
 fn border_strong() -> Color {
-    pick(Color::from_rgb8(151, 182, 232), Color::from_rgb8(74, 110, 170))
+    pick(Color::from_rgb8(157, 217, 208), Color::from_rgb8(54, 64, 85))
 }
 
 fn accent() -> Color {
-    Color::from_rgb8(37, 99, 235)
+    // Deep enough that white button text stays legible.
+    Color::from_rgb8(15, 158, 140)
 }
 
 fn accent_hover() -> Color {
-    Color::from_rgb8(59, 130, 246)
+    Color::from_rgb8(22, 182, 164)
 }
 
 fn accent_pressed() -> Color {
-    Color::from_rgb8(29, 78, 216)
+    Color::from_rgb8(11, 124, 110)
 }
 
 /// Soft accent tint for selected/active backgrounds.
 fn accent_soft() -> Color {
-    pick(Color::from_rgb8(226, 236, 254), Color::from_rgb8(33, 46, 74))
+    pick(Color::from_rgb8(220, 242, 238), Color::from_rgb8(26, 48, 43))
 }
 
 fn danger() -> Color {
@@ -5025,14 +5083,6 @@ fn danger() -> Color {
 
 fn danger_background() -> Color {
     pick(Color::from_rgb8(253, 237, 237), Color::from_rgb8(58, 36, 38))
-}
-
-fn group_color() -> Color {
-    pick(Color::from_rgb8(220, 154, 38), Color::from_rgb8(224, 170, 70))
-}
-
-fn session_icon_color() -> Color {
-    pick(Color::from_rgb8(100, 110, 124), Color::from_rgb8(149, 158, 173))
 }
 
 fn transparent() -> Color {
@@ -5436,6 +5486,14 @@ fn status_color(status: SessionStatus) -> Color {
 mod tests {
     use super::*;
     use iced::keyboard::key::{Code, Physical};
+
+    #[test]
+    fn avatar_initials_takes_up_to_two_tokens() {
+        assert_eq!(avatar_initials("prod-web-01"), "PW");
+        assert_eq!(avatar_initials("local lab"), "LL");
+        assert_eq!(avatar_initials("redis"), "R");
+        assert_eq!(avatar_initials(""), "?");
+    }
 
     #[test]
     fn sftp_cmp_orders_by_column_and_direction() {
