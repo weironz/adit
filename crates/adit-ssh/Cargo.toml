@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+adit-domain.workspace = true
 bytes.workspace = true
 russh.workspace = true
 russh-sftp = "2.3"

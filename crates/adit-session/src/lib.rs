@@ -927,6 +927,7 @@ impl SessionManager {
         let target = match kind {
             TunnelKind::Local => format!("{target_host}:{target_port}"),
             TunnelKind::Dynamic => String::from("SOCKS5 代理"),
+            TunnelKind::Remote => format!("{target_host}:{target_port}"),
         };
 
         let mut request = TunnelRequest::new(

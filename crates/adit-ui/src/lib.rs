@@ -2864,10 +2864,10 @@ fn add_tunnel(app: &mut AditApp) {
         }
     };
     let (target_host, target_port) = match app.tunnel_kind {
-        TunnelKind::Local => {
+        TunnelKind::Local | TunnelKind::Remote => {
             let host = app.tunnel_target_host.trim().to_string();
             if host.is_empty() {
-                app.last_error = Some(String::from("本地转发需要填写目标主机"));
+                app.last_error = Some(String::from("该转发需要填写目标主机"));
                 return;
             }
             match app.tunnel_target_port.trim().parse::<u16>() {
@@ -2924,6 +2924,7 @@ fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         text("类型").size(12).color(muted_text()).width(Length::Fixed(52.0)),
         tunnel_kind_button("本地转发 -L", TunnelKind::Local, app.tunnel_kind),
         tunnel_kind_button("动态 SOCKS -D", TunnelKind::Dynamic, app.tunnel_kind),
+        tunnel_kind_button("远程转发 -R", TunnelKind::Remote, app.tunnel_kind),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -2931,11 +2932,23 @@ fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     let hint = match app.tunnel_kind {
         TunnelKind::Local => "本机端口 → 经 SSH 服务器 → 目标地址（访问服务器能到达的内网服务）",
         TunnelKind::Dynamic => "本机启动 SOCKS5 代理，应用挂上后所有流量走服务器出口",
+        TunnelKind::Remote => "服务器监听端口 → 经 SSH 隧道 → 本机目标地址（把本地服务暴露给远端网络）",
+    };
+
+    let bind_label = if app.tunnel_kind == TunnelKind::Remote {
+        "远端"
+    } else {
+        "本地"
+    };
+    let bind_placeholder = if app.tunnel_kind == TunnelKind::Remote {
+        "127.0.0.1（远端绑定，0.0.0.0 对外）"
+    } else {
+        "127.0.0.1"
     };
 
     let bind_row = row![
-        text("本地").size(12).color(muted_text()).width(Length::Fixed(52.0)),
-        text_input("127.0.0.1", &app.tunnel_bind_addr)
+        text(bind_label).size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        text_input(bind_placeholder, &app.tunnel_bind_addr)
             .on_input(Message::TunnelBindAddrChanged)
             .padding([4, 8])
             .style(text_input_style)
@@ -2953,10 +2966,15 @@ fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let mut form = column![kind_row, text(hint).size(10).color(muted_text()), bind_row].spacing(8);
 
-    if app.tunnel_kind == TunnelKind::Local {
+    if app.tunnel_kind != TunnelKind::Dynamic {
+        let target_label = if app.tunnel_kind == TunnelKind::Remote {
+            "本地"
+        } else {
+            "目标"
+        };
         form = form.push(
             row![
-                text("目标").size(12).color(muted_text()).width(Length::Fixed(52.0)),
+                text(target_label).size(12).color(muted_text()).width(Length::Fixed(52.0)),
                 text_input("目标主机（如 10.0.0.5）", &app.tunnel_target_host)
                     .on_input(Message::TunnelTargetHostChanged)
                     .padding([4, 8])
@@ -3047,10 +3065,12 @@ fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
     let kind = match tunnel.kind {
         TunnelKind::Local => "L",
         TunnelKind::Dynamic => "D",
+        TunnelKind::Remote => "R",
     };
     let route = match tunnel.kind {
         TunnelKind::Local => format!("{} → {}", tunnel.bind, tunnel.target),
         TunnelKind::Dynamic => format!("{}  (SOCKS5)", tunnel.bind),
+        TunnelKind::Remote => format!("远端 {} → 本地 {}", tunnel.bind, tunnel.target),
     };
     let status_color = if tunnel.error.is_some() {
         danger()

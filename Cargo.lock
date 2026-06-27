@@ -53,6 +53,7 @@ dependencies = [
 name = "adit-ssh"
 version = "0.1.0"
 dependencies = [
+ "adit-domain",
  "bytes",
  "russh",
  "russh-sftp",

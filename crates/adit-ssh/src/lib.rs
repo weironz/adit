@@ -1208,14 +1208,7 @@ where
 
 // ===== Port forwarding (SSH tunnels) =====
 
-/// What kind of forward a tunnel performs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TunnelKind {
-    /// Local forward (`-L`): listen locally, connect out from the SSH server.
-    Local,
-    /// Dynamic SOCKS5 proxy (`-D`): listen locally, route each request via SSH.
-    Dynamic,
-}
+pub use adit_domain::TunnelKind;
 
 #[derive(Debug, Clone)]
 pub struct TunnelRequest {
@@ -1359,13 +1352,30 @@ async fn run_tunnel_session(
         keepalive_max: 3,
         ..Default::default()
     });
-    let handler = KnownHostsClient::new(
-        request.host.clone(),
-        request.port,
-        request.known_hosts_path.clone(),
-        None,
-        None,
-    );
+    // Remote forwards need a handler that pipes server-opened channels to a
+    // local target; local/dynamic forwards use the plain non-interactive handler.
+    let handler = if matches!(request.kind, TunnelKind::Remote) {
+        KnownHostsClient::new(
+            request.host.clone(),
+            request.port,
+            request.known_hosts_path.clone(),
+            None,
+            None,
+        )
+        .with_forward(
+            request.target_host.clone(),
+            request.target_port,
+            events.clone(),
+        )
+    } else {
+        KnownHostsClient::new(
+            request.host.clone(),
+            request.port,
+            request.known_hosts_path.clone(),
+            None,
+            None,
+        )
+    };
     let mut session =
         client::connect(config, (request.host.as_str(), request.port), handler).await?;
 
@@ -1378,6 +1388,10 @@ async fn run_tunnel_session(
         None,
     )
     .await?;
+
+    if matches!(request.kind, TunnelKind::Remote) {
+        return run_remote_forward(session, request, commands, events).await;
+    }
 
     let bind = format!("{}:{}", request.bind_address, request.bind_port);
     let listener = tokio::net::TcpListener::bind(&bind)
@@ -1414,6 +1428,7 @@ async fn run_tunnel_session(
                             forward_local(socket, &session, &target_host, target_port, peer).await
                         }
                         TunnelKind::Dynamic => forward_dynamic(socket, &session, peer).await,
+                        TunnelKind::Remote => unreachable!("remote forward handled separately"),
                     };
                     if let Err(error) = result {
                         let _ = events.send(TunnelEvent::Error(format!("{peer_label}: {error}")));
@@ -1427,6 +1442,52 @@ async fn run_tunnel_session(
     let _ = session
         .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
         .await;
+    Ok(())
+}
+
+/// Remote forward (`-R`): ask the server to listen, then idle until closed —
+/// incoming connections arrive as forwarded channels handled by the connection
+/// handler (`server_channel_open_forwarded_tcpip`).
+async fn run_remote_forward(
+    session: client::Handle<KnownHostsClient>,
+    request: TunnelRequest,
+    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
+    events: mpsc::Sender<TunnelEvent>,
+) -> Result<(), SshError> {
+    session
+        .tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
+        .await
+        .map_err(|error| SshError::Tunnel(format!("remote forward: {error}")))?;
+    let _ = events.send(TunnelEvent::Listening {
+        bind: format!("远端 {}:{}", request.bind_address, request.bind_port),
+    });
+
+    // Idle until a Disconnect command arrives (or the command channel closes);
+    // forwarded connections are served by the handler in the meantime.
+    let _ = commands.recv().await;
+
+    let _ = session
+        .cancel_tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
+        .await;
+    let _ = session
+        .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
+        .await;
+    Ok(())
+}
+
+/// Pipe a server-opened `forwarded-tcpip` channel to a local target.
+async fn pipe_forwarded(
+    channel: russh::Channel<client::Msg>,
+    target_host: &str,
+    target_port: u16,
+) -> Result<(), SshError> {
+    let mut target = tokio::net::TcpStream::connect((target_host, target_port))
+        .await
+        .map_err(|error| SshError::Tunnel(error.to_string()))?;
+    let mut stream = channel.into_stream();
+    tokio::io::copy_bidirectional(&mut target, &mut stream)
+        .await
+        .map_err(|error| SshError::Tunnel(error.to_string()))?;
     Ok(())
 }
 
@@ -1582,6 +1643,10 @@ struct KnownHostsClient {
     /// confirmed by the user; absent for the one-shot probe, which keeps
     /// non-interactive trust-on-first-use.
     decision: Option<oneshot::Receiver<bool>>,
+    /// For remote forwards (`-R`): the local target to pipe forwarded channels to.
+    forward_target: Option<(String, u16)>,
+    /// For remote forwards: the tunnel actor's event channel.
+    tunnel_events: Option<mpsc::Sender<TunnelEvent>>,
 }
 
 impl KnownHostsClient {
@@ -1598,7 +1663,22 @@ impl KnownHostsClient {
             known_hosts_path,
             events,
             decision,
+            forward_target: None,
+            tunnel_events: None,
         }
+    }
+
+    /// Configure this handler to pipe server-opened forwarded channels to a
+    /// local target (remote forward, `-R`).
+    fn with_forward(
+        mut self,
+        target_host: String,
+        target_port: u16,
+        tunnel_events: mpsc::Sender<TunnelEvent>,
+    ) -> Self {
+        self.forward_target = Some((target_host, target_port));
+        self.tunnel_events = Some(tunnel_events);
+        self
     }
 
     fn emit_prompt(
@@ -1621,6 +1701,34 @@ impl KnownHostsClient {
 
 impl client::Handler for KnownHostsClient {
     type Error = SshError;
+
+    /// A remote-forwarded connection arrived: pipe it to the configured local
+    /// target on a detached task so the session loop is not blocked.
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: russh::Channel<client::Msg>,
+        _connected_address: &str,
+        _connected_port: u32,
+        originator_address: &str,
+        originator_port: u32,
+        _session: &mut client::Session,
+    ) -> Result<(), Self::Error> {
+        if let (Some((host, port)), Some(events)) =
+            (self.forward_target.clone(), self.tunnel_events.clone())
+        {
+            let origin = format!("{originator_address}:{originator_port}");
+            let _ = events.send(TunnelEvent::Opened {
+                peer: origin.clone(),
+            });
+            tokio::spawn(async move {
+                if let Err(error) = pipe_forwarded(channel, &host, port).await {
+                    let _ = events.send(TunnelEvent::Error(format!("{origin}: {error}")));
+                }
+                let _ = events.send(TunnelEvent::Closed { peer: origin });
+            });
+        }
+        Ok(())
+    }
 
     async fn check_server_key(
         &mut self,

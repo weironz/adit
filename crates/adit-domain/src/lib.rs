@@ -61,6 +61,8 @@ pub struct ConnectionProfile {
     pub auth_method: AuthMethod,
     #[serde(default)]
     pub identity_file: String,
+    #[serde(default)]
+    pub tunnels: Vec<TunnelDef>,
 }
 
 impl ConnectionProfile {
@@ -92,6 +94,7 @@ impl ConnectionProfile {
             sort_order: 0,
             auth_method: AuthMethod::Auto,
             identity_file: String::new(),
+            tunnels: Vec::new(),
         }
     }
 
@@ -136,6 +139,47 @@ impl AuthMethod {
             Self::Agent => "Agent",
         }
     }
+}
+
+/// What kind of SSH port forward a tunnel performs.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TunnelKind {
+    /// Local forward (`-L`): listen locally, dial out from the SSH server.
+    #[default]
+    Local,
+    /// Dynamic SOCKS5 proxy (`-D`): listen locally, route each request via SSH.
+    Dynamic,
+    /// Remote forward (`-R`): server listens, the client dials a local target.
+    Remote,
+}
+
+impl TunnelKind {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Local => "本地转发 -L",
+            Self::Dynamic => "动态 SOCKS -D",
+            Self::Remote => "远程转发 -R",
+        }
+    }
+}
+
+fn default_bind_address() -> String {
+    String::from("127.0.0.1")
+}
+
+/// A saved port-forward definition, persisted with a profile.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TunnelDef {
+    pub kind: TunnelKind,
+    #[serde(default = "default_bind_address")]
+    pub bind_address: String,
+    pub bind_port: u16,
+    #[serde(default)]
+    pub target_host: String,
+    #[serde(default)]
+    pub target_port: u16,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
