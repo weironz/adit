@@ -4213,17 +4213,11 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
 
     let mut content = column![
         container(
-            row![
-                text("Session Manager").size(13).color(primary_text()),
-                Space::new().width(Fill),
-                text("▣").size(12).color(muted_text()),
-                text("×").size(12).color(muted_text()),
-            ]
-            .spacing(9)
-            .align_y(Alignment::Center),
+            row![text("Session Manager").size(13).color(primary_text())]
+                .align_y(Alignment::Center),
         )
-        .height(Length::Fixed(26.0))
-        .padding([3, 8])
+        .height(Length::Fixed(28.0))
+        .padding([3, 10])
         .style(|_theme| sidebar_header_style()),
         row![
             sidebar_tool_button("↯", Message::ConnectSelectedProfile),
@@ -4735,25 +4729,30 @@ fn tab_button(
 ) -> Element<'static, Message> {
     let active = Some(session.id) == active_session;
 
-    row![
+    let inner = row![
         button(
             row![
-                text("●").size(11).color(status_color(session.status)),
+                text("●").size(10).color(status_color(session.status)),
                 text(session.title).size(12).color(primary_text()),
             ]
-            .spacing(5)
+            .spacing(6)
             .align_y(Alignment::Center),
         )
-        .padding([5, 9])
-        .style(move |_theme, status| tab_button_style(active, status))
+        .padding([5, 6])
+        .style(|_theme, status| tab_title_button_style(status))
         .on_press(Message::ActivateSession(session.id)),
-        button("x")
-            .padding([5, 7])
-            .style(|_theme, status| close_button_style(status))
+        button(text("×").size(15))
+            .padding([2, 7])
+            .style(|_theme, status| tab_close_button_style(status))
             .on_press(Message::CloseSession(session.id)),
     ]
-    .align_y(Alignment::Center)
-    .into()
+    .spacing(1)
+    .align_y(Alignment::Center);
+
+    container(inner)
+        .padding([1, 4])
+        .style(move |_theme| tab_container_style(active))
+        .into()
 }
 
 fn terminal_view(
@@ -5321,15 +5320,37 @@ fn menu_button_style(active: bool, status: button::Status) -> button::Style {
     base_button_style(background, primary_text(), transparent())
 }
 
-fn tab_button_style(active: bool, status: button::Status) -> button::Style {
-    let background = match (active, status) {
-        (true, _) => surface(),
-        (false, button::Status::Hovered) => panel_background_hover(),
-        (false, button::Status::Pressed) => accent_soft(),
-        _ => surface_alt(),
-    };
+/// The whole-tab pill: an accent-bordered surface when active, a flat chip
+/// otherwise. The title and close controls share this single background.
+fn tab_container_style(active: bool) -> container::Style {
+    let background = if active { surface() } else { surface_alt() };
     let border_color = if active { accent() } else { border_color() };
-    base_button_style(background, primary_text(), border_color)
+    container::Style {
+        background: Some(Background::Color(background)),
+        text_color: Some(primary_text()),
+        border: border(RADIUS_SM, 1.0, border_color),
+        ..container::Style::default()
+    }
+}
+
+/// Transparent inner button for the tab title (the pill provides the surface).
+fn tab_title_button_style(status: button::Status) -> button::Style {
+    let background = match status {
+        button::Status::Hovered => panel_background_hover(),
+        _ => transparent(),
+    };
+    base_button_style(background, primary_text(), transparent())
+}
+
+/// Subtle close glyph that hugs the title and lifts gently on hover.
+fn tab_close_button_style(status: button::Status) -> button::Style {
+    let (background, text_color) = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            (panel_background_hover(), primary_text())
+        }
+        _ => (transparent(), muted_text()),
+    };
+    base_button_style(background, text_color, transparent())
 }
 
 fn close_button_style(status: button::Status) -> button::Style {
