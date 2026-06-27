@@ -1,4 +1,4 @@
-use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus};
+use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus, TunnelDef};
 use adit_ssh::{
     AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
     LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle, SftpRequest, SshError,
@@ -959,6 +959,43 @@ impl SessionManager {
             error: None,
         });
         Ok(())
+    }
+
+    /// Append a saved tunnel definition to a profile (deduplicated).
+    pub fn add_profile_tunnel(&mut self, profile_id: ProfileId, def: TunnelDef) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            if !profile.tunnels.contains(&def) {
+                profile.tunnels.push(def);
+            }
+        }
+    }
+
+    /// Remove the saved tunnel definition at `index` from a profile.
+    pub fn remove_profile_tunnel(&mut self, profile_id: ProfileId, index: usize) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            if index < profile.tunnels.len() {
+                profile.tunnels.remove(index);
+            }
+        }
+    }
+
+    /// Open every saved tunnel of a profile (called after it connects).
+    pub fn start_profile_tunnels(&mut self, profile_id: ProfileId) {
+        let defs = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .map(|p| p.tunnels.clone())
+            .unwrap_or_default();
+        for def in defs {
+            let _ = self.open_tunnel(
+                def.kind,
+                def.bind_address,
+                def.bind_port,
+                def.target_host,
+                def.target_port,
+            );
+        }
     }
 
     /// Close a tunnel by id (stops its listener and SSH connection).

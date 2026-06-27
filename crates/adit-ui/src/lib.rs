@@ -1,4 +1,6 @@
-use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus};
+use adit_domain::{
+    AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus, TunnelDef,
+};
 use adit_session::{
     HostKeyPromptInfo, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager,
     SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem, TransferStatus,
@@ -95,6 +97,7 @@ pub struct AditApp {
     tunnel_bind_port: String,
     tunnel_target_host: String,
     tunnel_target_port: String,
+    tunnel_save: bool,
     terminal_input: String,
     terminal_focused: bool,
     terminal_size: TerminalSize,
@@ -191,8 +194,10 @@ pub enum Message {
     TunnelBindPortChanged(String),
     TunnelTargetHostChanged(String),
     TunnelTargetPortChanged(String),
+    ToggleTunnelSave(bool),
     AddTunnel,
     CloseTunnel(u64),
+    RemoveSavedTunnel(usize),
     SftpNavigate(String),
     SftpUp,
     SftpRefresh,
@@ -457,6 +462,7 @@ impl AditApp {
             tunnel_bind_port: String::new(),
             tunnel_target_host: String::new(),
             tunnel_target_port: String::new(),
+            tunnel_save: true,
             terminal_input: String::new(),
             terminal_focused: false,
             terminal_size: estimated_terminal_size(window_width, window_height),
@@ -826,8 +832,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::TunnelTargetPortChanged(value) => {
             app.tunnel_target_port = value.chars().filter(char::is_ascii_digit).collect();
         }
+        Message::ToggleTunnelSave(value) => app.tunnel_save = value,
         Message::AddTunnel => add_tunnel(app),
         Message::CloseTunnel(id) => app.manager.close_tunnel(id),
+        Message::RemoveSavedTunnel(index) => {
+            if let Some(profile_id) = app.manager.active_session_summary().map(|s| s.profile_id) {
+                app.manager.remove_profile_tunnel(profile_id, index);
+                persist_profiles(app);
+            }
+        }
         Message::SftpNavigate(name) => app.manager.sftp_navigate(&name),
         Message::SftpUp => app.manager.sftp_up(),
         Message::SftpRefresh => app.manager.sftp_refresh(),
@@ -1745,6 +1758,7 @@ fn connect_profile(app: &mut AditApp) {
             app.terminal_selection = None;
             app.terminal_context_menu = false;
             sync_terminal_size(app);
+            app.manager.start_profile_tunnels(profile_id);
             app.last_error = None;
             app.notice = format!("SSH 会话已开始连接: {endpoint}");
         }
@@ -1820,6 +1834,7 @@ fn confirm_connection(app: &mut AditApp) {
             app.terminal_selection = None;
             app.terminal_context_menu = false;
             sync_terminal_size(app);
+            app.manager.start_profile_tunnels(dialog.profile_id);
             app.last_error = credential_warning
                 .as_ref()
                 .map(|error| format!("保存系统凭据失败: {error}"));
@@ -2881,16 +2896,42 @@ fn add_tunnel(app: &mut AditApp) {
         TunnelKind::Dynamic => (String::new(), 0),
     };
 
+    let bind_address = {
+        let trimmed = app.tunnel_bind_addr.trim();
+        if trimmed.is_empty() {
+            String::from("127.0.0.1")
+        } else {
+            trimmed.to_string()
+        }
+    };
+
     match app.manager.open_tunnel(
         app.tunnel_kind,
-        app.tunnel_bind_addr.trim().to_string(),
+        bind_address.clone(),
         bind_port,
-        target_host,
+        target_host.clone(),
         target_port,
     ) {
         Ok(()) => {
             app.last_error = None;
             app.notice = String::from("已创建端口转发");
+            // Persist to the active profile so it auto-starts on the next connect.
+            if app.tunnel_save {
+                if let Some(profile_id) = app.manager.active_session_summary().map(|s| s.profile_id)
+                {
+                    app.manager.add_profile_tunnel(
+                        profile_id,
+                        TunnelDef {
+                            kind: app.tunnel_kind,
+                            bind_address,
+                            bind_port,
+                            target_host,
+                            target_port,
+                        },
+                    );
+                    persist_profiles(app);
+                }
+            }
             app.tunnel_bind_port.clear();
             app.tunnel_target_host.clear();
             app.tunnel_target_port.clear();
@@ -2995,12 +3036,18 @@ fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
 
     form = form.push(
         row![
+            checkbox(app.tunnel_save)
+                .label("保存到会话配置（连接时自动开启）")
+                .on_toggle(Message::ToggleTunnelSave)
+                .size(15)
+                .text_size(11),
             Space::new().width(Fill),
             button(text("添加转发").size(12))
                 .padding([5, 16])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::AddTunnel),
         ]
+        .spacing(8)
         .align_y(Alignment::Center),
     );
 
@@ -3014,19 +3061,43 @@ fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
+    // Saved (auto-start) definitions for the active profile.
+    let saved: Vec<TunnelDef> = app
+        .manager
+        .active_session_summary()
+        .and_then(|summary| {
+            app.manager
+                .profile(summary.profile_id)
+                .map(|profile| profile.tunnels.clone())
+        })
+        .unwrap_or_default();
+    let mut saved_list = column![].spacing(2);
+    if saved.is_empty() {
+        saved_list = saved_list.push(text("（无）").size(11).color(muted_text()));
+    } else {
+        for (index, def) in saved.iter().enumerate() {
+            saved_list = saved_list.push(saved_tunnel_row(index, def));
+        }
+    }
+
     let content = column![
         header,
         container(form)
             .padding(12)
             .width(Fill)
             .style(|_theme| sftp_pane_style()),
+        text("已保存（连接时自动开启）").size(12).color(primary_text()),
+        container(saved_list)
+            .padding(8)
+            .width(Fill)
+            .style(|_theme| sftp_list_inner_style()),
         text("活动转发").size(12).color(primary_text()),
         container(scrollable(list).height(Fill))
             .height(Fill)
             .padding(6)
             .style(|_theme| sftp_list_inner_style()),
     ]
-    .spacing(12);
+    .spacing(10);
 
     let panel = container(content)
         .width(Fill)
@@ -3101,6 +3172,31 @@ fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
         .align_y(Alignment::Center),
     )
     .padding([4, 8])
+    .into()
+}
+
+fn saved_tunnel_row(index: usize, def: &TunnelDef) -> Element<'static, Message> {
+    let label = match def.kind {
+        TunnelKind::Local => format!(
+            "L  {}:{} → {}:{}",
+            def.bind_address, def.bind_port, def.target_host, def.target_port
+        ),
+        TunnelKind::Dynamic => format!("D  {}:{}  (SOCKS5)", def.bind_address, def.bind_port),
+        TunnelKind::Remote => format!(
+            "R  远端 {}:{} → 本地 {}:{}",
+            def.bind_address, def.bind_port, def.target_host, def.target_port
+        ),
+    };
+    row![
+        text(label).size(11).color(primary_text()).width(Fill),
+        button(text("删除").size(11))
+            .padding([3, 10])
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::RemoveSavedTunnel(index)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .padding([2, 8])
     .into()
 }
 
