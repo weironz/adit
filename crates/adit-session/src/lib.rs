@@ -905,6 +905,29 @@ impl SessionManager {
         }
     }
 
+    /// Jump the local pane to a typed absolute path.
+    pub fn sftp_local_goto(&mut self, path: &Path) {
+        if let Some(browser) = &mut self.sftp {
+            if path.is_dir() {
+                browser.local_cwd = path.to_path_buf();
+                browser.local_entries = read_local_dir(&browser.local_cwd);
+            } else {
+                browser.status = format!("本地目录不存在: {}", path.display());
+            }
+        }
+    }
+
+    /// Jump the remote pane to a typed path.
+    pub fn sftp_goto(&mut self, path: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let path = path.trim();
+            if !path.is_empty() {
+                browser.status = format!("opening {path}");
+                let _ = browser.handle.send(SftpCommand::ListDir(path.to_string()));
+            }
+        }
+    }
+
     pub fn sftp_mkdir(&mut self, name: &str) {
         if let Some(browser) = &mut self.sftp {
             let path = join_remote(&browser.cwd, name);

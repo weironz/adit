@@ -16,6 +16,14 @@ use iced::{
     Length, Point, Shadow, Subscription, Task, Theme, Vector,
 };
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Instant;
+
+/// Which SFTP pane a row belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpPane {
+    Local,
+    Remote,
+}
 
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
@@ -60,6 +68,13 @@ pub struct AditApp {
     sftp_rename_from: Option<String>,
     sftp_rename_to: String,
     sftp_delete_target: Option<(String, bool)>,
+    sftp_local_path_edit: String,
+    sftp_remote_path_edit: String,
+    sftp_local_cwd_seen: String,
+    sftp_remote_cwd_seen: String,
+    sftp_local_selected: Option<String>,
+    sftp_remote_selected: Option<String>,
+    sftp_last_click: Option<(SftpPane, String, Instant)>,
     terminal_input: String,
     terminal_focused: bool,
     terminal_size: TerminalSize,
@@ -156,6 +171,11 @@ pub enum Message {
     SftpLocalRefresh,
     SftpUploadLocal(String),
     SftpDownload(String),
+    SftpRowPress(SftpPane, String),
+    SftpLocalPathChanged(String),
+    SftpLocalGo,
+    SftpRemotePathChanged(String),
+    SftpRemoteGo,
     SftpUploadPathChanged(String),
     SftpUpload,
     SftpPickUpload,
@@ -383,6 +403,13 @@ impl AditApp {
             sftp_rename_from: None,
             sftp_rename_to: String::new(),
             sftp_delete_target: None,
+            sftp_local_path_edit: String::new(),
+            sftp_remote_path_edit: String::new(),
+            sftp_local_cwd_seen: String::new(),
+            sftp_remote_cwd_seen: String::new(),
+            sftp_local_selected: None,
+            sftp_remote_selected: None,
+            sftp_last_click: None,
             terminal_input: String::new(),
             terminal_focused: false,
             terminal_size: estimated_terminal_size(window_width, window_height),
@@ -491,6 +518,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::Tick => {
             app.manager.poll_events();
             clamp_terminal_scroll(app);
+            sync_sftp_state(app);
             persist_settings_if_changed(app);
         }
         Message::ToggleMenu(menu) => {
@@ -691,6 +719,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sftp_rename_from = None;
             app.sftp_delete_target = None;
             app.sftp_new_folder.clear();
+            app.sftp_local_selected = None;
+            app.sftp_remote_selected = None;
+            app.sftp_local_path_edit.clear();
+            app.sftp_remote_path_edit.clear();
+            app.sftp_local_cwd_seen.clear();
+            app.sftp_remote_cwd_seen.clear();
+            app.sftp_last_click = None;
         }
         Message::SftpNavigate(name) => app.manager.sftp_navigate(&name),
         Message::SftpUp => app.manager.sftp_up(),
@@ -700,6 +735,32 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SftpLocalRefresh => app.manager.sftp_local_refresh(),
         Message::SftpUploadLocal(name) => app.manager.sftp_upload_local(&name),
         Message::SftpDownload(name) => app.manager.sftp_download(&name),
+        Message::SftpRowPress(pane, name) => {
+            let now = Instant::now();
+            let is_double = matches!(
+                &app.sftp_last_click,
+                Some((p, n, t)) if *p == pane && *n == name && now.duration_since(*t) < Duration::from_millis(450)
+            );
+            if is_double {
+                app.sftp_last_click = None;
+                match pane {
+                    SftpPane::Remote => app.manager.sftp_download(&name),
+                    SftpPane::Local => app.manager.sftp_upload_local(&name),
+                }
+            } else {
+                app.sftp_last_click = Some((pane, name.clone(), now));
+                match pane {
+                    SftpPane::Remote => app.sftp_remote_selected = Some(name),
+                    SftpPane::Local => app.sftp_local_selected = Some(name),
+                }
+            }
+        }
+        Message::SftpLocalPathChanged(value) => app.sftp_local_path_edit = value,
+        Message::SftpLocalGo => app
+            .manager
+            .sftp_local_goto(std::path::Path::new(&app.sftp_local_path_edit)),
+        Message::SftpRemotePathChanged(value) => app.sftp_remote_path_edit = value,
+        Message::SftpRemoteGo => app.manager.sftp_goto(&app.sftp_remote_path_edit),
         Message::SftpUploadPathChanged(value) => app.sftp_upload_path = value,
         Message::SftpUpload => {
             let path = app.sftp_upload_path.trim().to_string();
@@ -2135,6 +2196,28 @@ fn persist_settings_if_changed(app: &mut AditApp) {
     app.persisted_settings = current;
 }
 
+/// Keep the SFTP path-bar edit buffers in sync with each pane's current
+/// directory, clearing the per-pane selection when the directory changes.
+fn sync_sftp_state(app: &mut AditApp) {
+    let Some((remote, local)) = app
+        .manager
+        .sftp_browser()
+        .map(|browser| (browser.cwd.clone(), browser.local_cwd.display().to_string()))
+    else {
+        return;
+    };
+    if remote != app.sftp_remote_cwd_seen {
+        app.sftp_remote_cwd_seen = remote.clone();
+        app.sftp_remote_path_edit = remote;
+        app.sftp_remote_selected = None;
+    }
+    if local != app.sftp_local_cwd_seen {
+        app.sftp_local_cwd_seen = local.clone();
+        app.sftp_local_path_edit = local;
+        app.sftp_local_selected = None;
+    }
+}
+
 fn view(app: &AditApp) -> Element<'_, Message> {
     DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
 
@@ -2579,7 +2662,7 @@ fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(6)
     .align_y(Alignment::Center);
 
-    let panes = row![sftp_local_pane(browser), sftp_remote_pane(app, browser)]
+    let panes = row![sftp_local_pane(app, browser), sftp_remote_pane(app, browser)]
         .spacing(10)
         .height(Fill);
 
@@ -2619,7 +2702,7 @@ fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         .into()
 }
 
-fn sftp_local_pane(browser: &SftpBrowser) -> Element<'static, Message> {
+fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
     let header = row![
         text("本地").size(13).color(primary_text()),
         button(text("↑").size(12))
@@ -2630,21 +2713,20 @@ fn sftp_local_pane(browser: &SftpBrowser) -> Element<'static, Message> {
             .padding([3, 9])
             .style(|_theme, status| secondary_button_style(status))
             .on_press(Message::SftpLocalRefresh),
-        container(
-            text(browser.local_cwd.display().to_string())
-                .size(11)
-                .font(Font::MONOSPACE)
-                .color(muted_text())
-        )
-        .padding([3, 6])
-        .width(Fill),
+        text_input("本地路径（回车跳转）", &app.sftp_local_path_edit)
+            .on_input(Message::SftpLocalPathChanged)
+            .on_submit(Message::SftpLocalGo)
+            .padding([3, 6])
+            .style(toolbar_input_style)
+            .width(Fill),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
 
     let mut list = column![sftp_nav_row("../", Message::SftpLocalUp)].spacing(1);
     for entry in &browser.local_entries {
-        list = list.push(sftp_local_entry_row(entry));
+        let selected = app.sftp_local_selected.as_deref() == Some(entry.name.as_str());
+        list = list.push(sftp_local_entry_row(entry, selected));
     }
 
     container(
@@ -2675,14 +2757,12 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
             .padding([3, 9])
             .style(|_theme, status| secondary_button_style(status))
             .on_press(Message::SftpRefresh),
-        container(
-            text(browser.cwd.clone())
-                .size(11)
-                .font(Font::MONOSPACE)
-                .color(muted_text())
-        )
-        .padding([3, 6])
-        .width(Fill),
+        text_input("远程路径（回车跳转）", &app.sftp_remote_path_edit)
+            .on_input(Message::SftpRemotePathChanged)
+            .on_submit(Message::SftpRemoteGo)
+            .padding([3, 6])
+            .style(toolbar_input_style)
+            .width(Fill),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -2744,7 +2824,8 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
 
     let mut list = column![sftp_nav_row("../", Message::SftpUp)].spacing(1);
     for entry in &browser.entries {
-        list = list.push(sftp_remote_entry_row(entry));
+        let selected = app.sftp_remote_selected.as_deref() == Some(entry.name.as_str());
+        list = list.push(sftp_remote_entry_row(entry, selected));
     }
     content = content.push(
         container(scrollable(list).height(Fill))
@@ -2841,10 +2922,10 @@ fn sftp_nav_row(label: &'static str, message: Message) -> Element<'static, Messa
         .into()
 }
 
-fn sftp_local_entry_row(entry: &LocalEntry) -> Element<'static, Message> {
+fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, Message> {
     let owned = entry.name.clone();
     if entry.is_dir {
-        button(
+        return button(
             row![
                 text(format!("{}/", entry.name))
                     .size(12)
@@ -2859,59 +2940,90 @@ fn sftp_local_entry_row(entry: &LocalEntry) -> Element<'static, Message> {
         .padding([4, 8])
         .style(|_theme, status| sftp_entry_button_style(status))
         .on_press(Message::SftpLocalNavigate(owned))
-        .into()
-    } else {
-        container(
-            row![
-                text(entry.name.clone())
-                    .size(12)
-                    .color(primary_text())
-                    .width(Fill),
-                text(human_size(entry.size)).size(10).color(muted_text()),
-                sftp_action("上传 ↑", Message::SftpUploadLocal(owned), false),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding([0, 4])
-        .into()
+        .into();
     }
+
+    // File: click to select, double-click to upload.
+    row![
+        mouse_area(
+            container(
+                row![
+                    text(entry.name.clone())
+                        .size(12)
+                        .color(primary_text())
+                        .width(Fill),
+                    text(human_size(entry.size)).size(10).color(muted_text()),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([4, 8])
+            .style(move |_theme| sftp_row_highlight(selected)),
+        )
+        .on_press(Message::SftpRowPress(SftpPane::Local, owned.clone())),
+        sftp_action("上传 ↑", Message::SftpUploadLocal(owned), false),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .into()
 }
 
-fn sftp_remote_entry_row(entry: &SftpEntry) -> Element<'static, Message> {
+fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, Message> {
     let owned = entry.name.clone();
-    let name_el: Element<'static, Message> = if entry.is_dir {
-        button(text(format!("{}/", entry.name)).size(12).color(accent()))
-            .width(Fill)
-            .padding([4, 8])
-            .style(|_theme, status| sftp_entry_button_style(status))
-            .on_press(Message::SftpNavigate(owned.clone()))
-            .into()
-    } else {
-        container(text(entry.name.clone()).size(12).color(primary_text()))
-            .padding([4, 8])
-            .width(Fill)
-            .into()
-    };
-
-    let mut row = row![name_el].spacing(4).align_y(Alignment::Center);
     if entry.is_dir {
-        row = row.push(text("DIR").size(10).color(muted_text()));
-    } else {
-        row = row.push(text(human_size(entry.size)).size(10).color(muted_text()));
-        row = row.push(sftp_action("下载 ↓", Message::SftpDownload(owned.clone()), false));
+        return row![
+            button(text(format!("{}/", entry.name)).size(12).color(accent()))
+                .width(Fill)
+                .padding([4, 8])
+                .style(|_theme, status| sftp_entry_button_style(status))
+                .on_press(Message::SftpNavigate(owned.clone())),
+            text("DIR").size(10).color(muted_text()),
+            sftp_action("重命名", Message::SftpBeginRename(owned.clone()), false),
+            sftp_action("删除", Message::SftpBeginDelete(owned, true), true),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center)
+        .into();
     }
-    row = row.push(sftp_action(
-        "重命名",
-        Message::SftpBeginRename(owned.clone()),
-        false,
-    ));
-    row = row.push(sftp_action(
-        "删除",
-        Message::SftpBeginDelete(owned, entry.is_dir),
-        true,
-    ));
-    container(row).padding([0, 2]).into()
+
+    // File: click to select, double-click to download.
+    row![
+        mouse_area(
+            container(
+                row![
+                    text(entry.name.clone())
+                        .size(12)
+                        .color(primary_text())
+                        .width(Fill),
+                    text(human_size(entry.size)).size(10).color(muted_text()),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([4, 8])
+            .style(move |_theme| sftp_row_highlight(selected)),
+        )
+        .on_press(Message::SftpRowPress(SftpPane::Remote, owned.clone())),
+        sftp_action("下载 ↓", Message::SftpDownload(owned.clone()), false),
+        sftp_action("重命名", Message::SftpBeginRename(owned.clone()), false),
+        sftp_action("删除", Message::SftpBeginDelete(owned, false), true),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn sftp_row_highlight(selected: bool) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(if selected {
+            accent_soft()
+        } else {
+            transparent()
+        })),
+        ..container::Style::default()
+    }
 }
 
 fn sftp_action(label: &'static str, message: Message, danger: bool) -> Element<'static, Message> {
