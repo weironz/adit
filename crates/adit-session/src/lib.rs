@@ -996,6 +996,40 @@ impl SessionManager {
         }
     }
 
+    /// Rename a file/folder in the local pane's current directory.
+    pub fn sftp_local_rename(&mut self, from: &str, to: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let from_path = browser.local_cwd.join(from);
+            let to_path = browser.local_cwd.join(to);
+            match fs::rename(&from_path, &to_path) {
+                Ok(()) => {
+                    browser.local_entries = read_local_dir(&browser.local_cwd);
+                    browser.status = format!("renamed {from} → {to}");
+                }
+                Err(error) => browser.status = format!("本地重命名失败: {error}"),
+            }
+        }
+    }
+
+    /// Delete a file/folder in the local pane's current directory.
+    pub fn sftp_local_delete(&mut self, name: &str, is_dir: bool) {
+        if let Some(browser) = &mut self.sftp {
+            let path = browser.local_cwd.join(name);
+            let result = if is_dir {
+                fs::remove_dir_all(&path)
+            } else {
+                fs::remove_file(&path)
+            };
+            match result {
+                Ok(()) => {
+                    browser.local_entries = read_local_dir(&browser.local_cwd);
+                    browser.status = format!("deleted {name}");
+                }
+                Err(error) => browser.status = format!("本地删除失败: {error}"),
+            }
+        }
+    }
+
     pub fn close_sftp(&mut self) {
         if let Some(browser) = self.sftp.take() {
             let _ = browser.handle.send(SftpCommand::Disconnect);

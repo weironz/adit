@@ -74,12 +74,13 @@ A "serious" client should not silently trust new hosts or drop on idle.
   local filesystem on the left, remote (`russh-sftp` over a second SSH
   connection reusing the session credential) on the right. Browse both sides,
   upload (local → remote, plus a `rfd` native picker / typed path), download
-  (remote → the current local dir), mkdir/rename/delete on the remote (with
+  (remote → the current local dir), rename/delete on **both** panes (with
   confirmation), multi-select batch transfer, click-to-select + double-click
-  transfer, editable path bars, a modified-time column, drag-from-Explorer
-  upload, and a detailed transfer queue (source → destination, size, progress,
-  speed, status). Future: pane-to-pane drag, local file ops, column sorting,
-  and local-time timestamps.
+  transfer, **pane-to-pane drag** and drag-from-Explorer upload, editable path
+  bars, **clickable column sorting** (name/size/modified), a **local-time**
+  modified column, and a detailed transfer queue (source → destination, size,
+  progress, speed, status). Future: a "download as" dialog and resumable
+  transfers.
 - **C2. Port forwarding.** Local (`-L`), remote (`-R`), and dynamic SOCKS (`-D`)
   tunnels, created and managed from the UI, tied to a session.
 - **C3. Jump host / proxy.** `ProxyJump` (bastion chaining) and `ProxyCommand`.

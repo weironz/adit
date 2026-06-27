@@ -25,6 +25,14 @@ pub enum SftpPane {
     Remote,
 }
 
+/// Column to sort an SFTP pane's listing by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SftpSortKey {
+    Name,
+    Size,
+    Modified,
+}
+
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
@@ -65,16 +73,20 @@ pub struct AditApp {
     session_filter: String,
     sftp_upload_path: String,
     sftp_new_folder: String,
-    sftp_rename_from: Option<String>,
+    sftp_rename: Option<(SftpPane, String)>,
     sftp_rename_to: String,
-    sftp_delete_target: Option<(String, bool)>,
+    sftp_delete_target: Option<(SftpPane, String, bool)>,
     sftp_local_path_edit: String,
     sftp_remote_path_edit: String,
     sftp_local_cwd_seen: String,
     sftp_remote_cwd_seen: String,
     sftp_local_selected: BTreeSet<String>,
     sftp_remote_selected: BTreeSet<String>,
+    sftp_local_sort: (SftpSortKey, bool),
+    sftp_remote_sort: (SftpSortKey, bool),
     sftp_last_click: Option<(SftpPane, String, Instant)>,
+    sftp_drag: Option<(SftpPane, String)>,
+    sftp_drag_over: Option<SftpPane>,
     terminal_input: String,
     terminal_focused: bool,
     terminal_size: TerminalSize,
@@ -184,13 +196,15 @@ pub enum Message {
     SftpUploadPicked(Option<std::path::PathBuf>),
     SftpNewFolderChanged(String),
     SftpMkdir,
-    SftpBeginRename(String),
+    SftpBeginRename(SftpPane, String),
     SftpRenameToChanged(String),
     SftpConfirmRename,
     SftpCancelRename,
-    SftpBeginDelete(String, bool),
+    SftpBeginDelete(SftpPane, String, bool),
     SftpConfirmDelete,
     SftpCancelDelete,
+    SftpSort(SftpPane, SftpSortKey),
+    SftpDragEnter(SftpPane),
     ToggleProfileGroup(String),
     ProfileGroupChanged(String),
     ProfileNameChanged(String),
@@ -402,7 +416,7 @@ impl AditApp {
             session_filter: String::new(),
             sftp_upload_path: String::new(),
             sftp_new_folder: String::new(),
-            sftp_rename_from: None,
+            sftp_rename: None,
             sftp_rename_to: String::new(),
             sftp_delete_target: None,
             sftp_local_path_edit: String::new(),
@@ -411,7 +425,11 @@ impl AditApp {
             sftp_remote_cwd_seen: String::new(),
             sftp_local_selected: BTreeSet::new(),
             sftp_remote_selected: BTreeSet::new(),
+            sftp_local_sort: (SftpSortKey::Name, true),
+            sftp_remote_sort: (SftpSortKey::Name, true),
             sftp_last_click: None,
+            sftp_drag: None,
+            sftp_drag_over: None,
             terminal_input: String::new(),
             terminal_focused: false,
             terminal_size: estimated_terminal_size(window_width, window_height),
@@ -623,6 +641,30 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CancelProfileDrag => {
             finish_profile_drag(app);
+            // A left-button release also resolves a pane-to-pane SFTP drag:
+            // transfer only if the pointer ended over the *other* pane.
+            if let Some((src, name)) = app.sftp_drag.take() {
+                if let Some(dst) = app.sftp_drag_over.take() {
+                    if dst != src {
+                        let selection = match src {
+                            SftpPane::Local => &app.sftp_local_selected,
+                            SftpPane::Remote => &app.sftp_remote_selected,
+                        };
+                        let names: Vec<String> = if selection.contains(&name) && selection.len() > 1
+                        {
+                            selection.iter().cloned().collect()
+                        } else {
+                            vec![name]
+                        };
+                        for entry in names {
+                            match src {
+                                SftpPane::Local => app.manager.sftp_upload_local(&entry),
+                                SftpPane::Remote => app.manager.sftp_download(&entry),
+                            }
+                        }
+                    }
+                }
+            }
         }
         Message::ShowGroupContextMenu(group) => {
             app.group_context_menu = Some(group);
@@ -722,9 +764,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloseSftp => {
             app.manager.close_sftp();
-            app.sftp_rename_from = None;
+            app.sftp_rename = None;
             app.sftp_delete_target = None;
             app.sftp_new_folder.clear();
+            app.sftp_drag = None;
+            app.sftp_drag_over = None;
             app.sftp_local_selected.clear();
             app.sftp_remote_selected.clear();
             app.sftp_local_path_edit.clear();
@@ -742,6 +786,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SftpUploadLocal(name) => app.manager.sftp_upload_local(&name),
         Message::SftpDownload(name) => app.manager.sftp_download(&name),
         Message::SftpRowPress(pane, name) => {
+            // Arm a potential pane-to-pane drag; it only fires if the pointer is
+            // released over the other pane (see PointerReleased).
+            app.sftp_drag = Some((pane, name.clone()));
+            app.sftp_drag_over = Some(pane);
             let now = Instant::now();
             let is_double = matches!(
                 &app.sftp_last_click,
@@ -833,35 +881,54 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.sftp_new_folder.clear();
             }
         }
-        Message::SftpBeginRename(name) => {
+        Message::SftpBeginRename(pane, name) => {
             app.sftp_rename_to = name.clone();
-            app.sftp_rename_from = Some(name);
+            app.sftp_rename = Some((pane, name));
             app.sftp_delete_target = None;
         }
         Message::SftpRenameToChanged(value) => app.sftp_rename_to = value,
         Message::SftpConfirmRename => {
-            if let Some(from) = app.sftp_rename_from.take() {
+            if let Some((pane, from)) = app.sftp_rename.take() {
                 let to = app.sftp_rename_to.trim().to_string();
                 if !to.is_empty() && to != from {
-                    app.manager.sftp_rename(&from, &to);
+                    match pane {
+                        SftpPane::Remote => app.manager.sftp_rename(&from, &to),
+                        SftpPane::Local => app.manager.sftp_local_rename(&from, &to),
+                    }
                 }
             }
             app.sftp_rename_to.clear();
         }
         Message::SftpCancelRename => {
-            app.sftp_rename_from = None;
+            app.sftp_rename = None;
             app.sftp_rename_to.clear();
         }
-        Message::SftpBeginDelete(name, is_dir) => {
-            app.sftp_delete_target = Some((name, is_dir));
-            app.sftp_rename_from = None;
+        Message::SftpBeginDelete(pane, name, is_dir) => {
+            app.sftp_delete_target = Some((pane, name, is_dir));
+            app.sftp_rename = None;
         }
         Message::SftpConfirmDelete => {
-            if let Some((name, is_dir)) = app.sftp_delete_target.take() {
-                app.manager.sftp_delete(&name, is_dir);
+            if let Some((pane, name, is_dir)) = app.sftp_delete_target.take() {
+                match pane {
+                    SftpPane::Remote => app.manager.sftp_delete(&name, is_dir),
+                    SftpPane::Local => app.manager.sftp_local_delete(&name, is_dir),
+                }
             }
         }
         Message::SftpCancelDelete => app.sftp_delete_target = None,
+        Message::SftpSort(pane, key) => {
+            let slot = match pane {
+                SftpPane::Local => &mut app.sftp_local_sort,
+                SftpPane::Remote => &mut app.sftp_remote_sort,
+            };
+            // Toggle direction when re-selecting the same column; else default ascending.
+            if slot.0 == key {
+                slot.1 = !slot.1;
+            } else {
+                *slot = (key, true);
+            }
+        }
+        Message::SftpDragEnter(pane) => app.sftp_drag_over = Some(pane),
         Message::ToggleProfileGroup(group) => {
             if !app.collapsed_groups.remove(&group) {
                 app.collapsed_groups.insert(group);
@@ -2700,6 +2767,14 @@ fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(10)
         .height(Fill);
 
+    let mut panel_body = column![header].spacing(10);
+    if let Some((_, from)) = &app.sftp_rename {
+        panel_body = panel_body.push(sftp_rename_bar(from, &app.sftp_rename_to));
+    }
+    if let Some((_, name, _)) = &app.sftp_delete_target {
+        panel_body = panel_body.push(sftp_delete_bar(name));
+    }
+
     // Extra upload via picker / typed path → remote current directory.
     let upload_extra = row![
         button(text("选择文件上传…").size(12))
@@ -2720,13 +2795,16 @@ fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let panel = container(
-        column![header, panes, upload_extra, sftp_transfer_queue(browser)].spacing(10),
-    )
-    .width(Fill)
-    .height(Fill)
-    .padding(14)
-    .style(|_theme| connection_dialog_style());
+    let panel_body = panel_body
+        .push(panes)
+        .push(upload_extra)
+        .push(sftp_transfer_queue(browser));
+
+    let panel = container(panel_body)
+        .width(Fill)
+        .height(Fill)
+        .padding(14)
+        .style(|_theme| connection_dialog_style());
 
     container(panel)
         .width(Fill)
@@ -2762,15 +2840,32 @@ fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a
     .spacing(6)
     .align_y(Alignment::Center);
 
+    let (key, ascending) = app.sftp_local_sort;
+    let mut items: Vec<&LocalEntry> = browser.local_entries.iter().collect();
+    items.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir).then_with(|| {
+            sftp_cmp(
+                key,
+                ascending,
+                (&a.name, a.size, a.mtime),
+                (&b.name, b.size, b.mtime),
+            )
+        })
+    });
+
     let mut list = column![sftp_nav_row("../", Message::SftpLocalUp)].spacing(1);
-    for entry in &browser.local_entries {
+    for entry in items {
         let selected = app.sftp_local_selected.contains(&entry.name);
         list = list.push(sftp_local_entry_row(entry, selected));
     }
 
-    container(
+    let drop_active = app.sftp_drag.as_ref().map(|(p, _)| *p) == Some(SftpPane::Remote)
+        && app.sftp_drag_over == Some(SftpPane::Local);
+
+    let pane = container(
         column![
             header,
+            sftp_sort_header(SftpPane::Local, app.sftp_local_sort),
             container(scrollable(list).height(Fill))
                 .height(Fill)
                 .padding(3)
@@ -2781,8 +2876,11 @@ fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a
     .width(Length::FillPortion(1))
     .height(Fill)
     .padding(8)
-    .style(|_theme| sftp_pane_style())
-    .into()
+    .style(move |_theme| sftp_pane_style_dropzone(drop_active));
+
+    mouse_area(pane)
+        .on_enter(Message::SftpDragEnter(SftpPane::Local))
+        .into()
 }
 
 fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
@@ -2811,63 +2909,24 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
     .spacing(6)
     .align_y(Alignment::Center);
 
-    let mut content = column![header].spacing(6);
-
-    if let Some(from) = &app.sftp_rename_from {
-        content = content.push(
-            container(
-                row![
-                    text(format!("重命名 {from} →")).size(12).color(primary_text()),
-                    text_input("新名称", &app.sftp_rename_to)
-                        .on_input(Message::SftpRenameToChanged)
-                        .on_submit(Message::SftpConfirmRename)
-                        .padding([4, 8])
-                        .style(text_input_style)
-                        .width(Fill),
-                    button(text("确定").size(11))
-                        .padding([4, 10])
-                        .style(|_theme, status| primary_button_style(status))
-                        .on_press(Message::SftpConfirmRename),
-                    button(text("取消").size(11))
-                        .padding([4, 10])
-                        .style(|_theme, status| secondary_button_style(status))
-                        .on_press(Message::SftpCancelRename),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
+    let (key, ascending) = app.sftp_remote_sort;
+    let mut items: Vec<&SftpEntry> = browser.entries.iter().collect();
+    items.sort_by(|a, b| {
+        b.is_dir.cmp(&a.is_dir).then_with(|| {
+            sftp_cmp(
+                key,
+                ascending,
+                (&a.name, a.size, a.mtime.map(u64::from)),
+                (&b.name, b.size, b.mtime.map(u64::from)),
             )
-            .padding(6)
-            .style(|_theme| profile_edit_menu_style()),
-        );
-    }
+        })
+    });
 
-    if let Some((name, _)) = &app.sftp_delete_target {
-        content = content.push(
-            container(
-                row![
-                    text(format!("确认删除 {name}?"))
-                        .size(12)
-                        .color(danger())
-                        .width(Fill),
-                    button(text("删除").size(11))
-                        .padding([4, 10])
-                        .style(|_theme, status| primary_button_style(status))
-                        .on_press(Message::SftpConfirmDelete),
-                    button(text("取消").size(11))
-                        .padding([4, 10])
-                        .style(|_theme, status| secondary_button_style(status))
-                        .on_press(Message::SftpCancelDelete),
-                ]
-                .spacing(6)
-                .align_y(Alignment::Center),
-            )
-            .padding(6)
-            .style(|_theme| error_panel_style()),
-        );
-    }
+    let mut content = column![header, sftp_sort_header(SftpPane::Remote, app.sftp_remote_sort)]
+        .spacing(6);
 
     let mut list = column![sftp_nav_row("../", Message::SftpUp)].spacing(1);
-    for entry in &browser.entries {
+    for entry in items {
         let selected = app.sftp_remote_selected.contains(&entry.name);
         list = list.push(sftp_remote_entry_row(entry, selected));
     }
@@ -2895,12 +2954,73 @@ fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'
         .align_y(Alignment::Center),
     );
 
-    container(content)
+    let drop_active = app.sftp_drag.as_ref().map(|(p, _)| *p) == Some(SftpPane::Local)
+        && app.sftp_drag_over == Some(SftpPane::Remote);
+
+    let pane = container(content)
         .width(Length::FillPortion(1))
         .height(Fill)
         .padding(8)
-        .style(|_theme| sftp_pane_style())
+        .style(move |_theme| sftp_pane_style_dropzone(drop_active));
+
+    mouse_area(pane)
+        .on_enter(Message::SftpDragEnter(SftpPane::Remote))
         .into()
+}
+
+/// Rename bar shown at the panel level for whichever pane is being edited.
+fn sftp_rename_bar<'a>(from: &str, rename_to: &'a str) -> Element<'a, Message> {
+    container(
+        row![
+            text(format!("重命名 {from} →"))
+                .size(12)
+                .color(primary_text()),
+            text_input("新名称", rename_to)
+                .on_input(Message::SftpRenameToChanged)
+                .on_submit(Message::SftpConfirmRename)
+                .padding([4, 8])
+                .style(text_input_style)
+                .width(Fill),
+            button(text("确定").size(11))
+                .padding([4, 10])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SftpConfirmRename),
+            button(text("取消").size(11))
+                .padding([4, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::SftpCancelRename),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding(6)
+    .style(|_theme| profile_edit_menu_style())
+    .into()
+}
+
+/// Delete-confirmation bar shown at the panel level for whichever pane is being edited.
+fn sftp_delete_bar(name: &str) -> Element<'static, Message> {
+    container(
+        row![
+            text(format!("确认删除 {name}?"))
+                .size(12)
+                .color(danger())
+                .width(Fill),
+            button(text("删除").size(11))
+                .padding([4, 10])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SftpConfirmDelete),
+            button(text("取消").size(11))
+                .padding([4, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::SftpCancelDelete),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding(6)
+    .style(|_theme| error_panel_style())
+    .into()
 }
 
 fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
@@ -3005,25 +3125,30 @@ fn sftp_nav_row(label: &'static str, message: Message) -> Element<'static, Messa
 fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, Message> {
     let owned = entry.name.clone();
     if entry.is_dir {
-        return button(
-            row![
-                text(format!("{}/", entry.name))
-                    .size(12)
-                    .color(accent())
-                    .width(Fill),
-                text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
-                text(sftp_date(entry.mtime))
-                    .size(10)
-                    .color(muted_text())
-                    .width(Length::Fixed(118.0)),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .width(Fill)
-        .padding([4, 8])
-        .style(|_theme, status| sftp_entry_button_style(status))
-        .on_press(Message::SftpLocalNavigate(owned))
+        return row![
+            button(text(format!("{}/", entry.name)).size(12).color(accent()))
+                .width(Fill)
+                .padding([4, 8])
+                .style(|_theme, status| sftp_entry_button_style(status))
+                .on_press(Message::SftpLocalNavigate(owned.clone())),
+            text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
+            text(sftp_date(entry.mtime))
+                .size(10)
+                .color(muted_text())
+                .width(Length::Fixed(118.0)),
+            sftp_action(
+                "重命名",
+                Message::SftpBeginRename(SftpPane::Local, owned.clone()),
+                false,
+            ),
+            sftp_action(
+                "删除",
+                Message::SftpBeginDelete(SftpPane::Local, owned, true),
+                true,
+            ),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center)
         .into();
     }
 
@@ -3053,7 +3178,17 @@ fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, 
             .style(move |_theme| sftp_row_highlight(selected)),
         )
         .on_press(Message::SftpRowPress(SftpPane::Local, owned.clone())),
-        sftp_action("上传 ↑", Message::SftpUploadLocal(owned), false),
+        sftp_action("上传 ↑", Message::SftpUploadLocal(owned.clone()), false),
+        sftp_action(
+            "重命名",
+            Message::SftpBeginRename(SftpPane::Local, owned.clone()),
+            false,
+        ),
+        sftp_action(
+            "删除",
+            Message::SftpBeginDelete(SftpPane::Local, owned, false),
+            true,
+        ),
     ]
     .spacing(4)
     .align_y(Alignment::Center)
@@ -3074,8 +3209,16 @@ fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, 
                 .size(10)
                 .color(muted_text())
                 .width(Length::Fixed(118.0)),
-            sftp_action("重命名", Message::SftpBeginRename(owned.clone()), false),
-            sftp_action("删除", Message::SftpBeginDelete(owned, true), true),
+            sftp_action(
+                "重命名",
+                Message::SftpBeginRename(SftpPane::Remote, owned.clone()),
+                false,
+            ),
+            sftp_action(
+                "删除",
+                Message::SftpBeginDelete(SftpPane::Remote, owned, true),
+                true,
+            ),
         ]
         .spacing(4)
         .align_y(Alignment::Center)
@@ -3109,8 +3252,16 @@ fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, 
         )
         .on_press(Message::SftpRowPress(SftpPane::Remote, owned.clone())),
         sftp_action("下载 ↓", Message::SftpDownload(owned.clone()), false),
-        sftp_action("重命名", Message::SftpBeginRename(owned.clone()), false),
-        sftp_action("删除", Message::SftpBeginDelete(owned, false), true),
+        sftp_action(
+            "重命名",
+            Message::SftpBeginRename(SftpPane::Remote, owned.clone()),
+            false,
+        ),
+        sftp_action(
+            "删除",
+            Message::SftpBeginDelete(SftpPane::Remote, owned, false),
+            true,
+        ),
     ]
     .spacing(4)
     .align_y(Alignment::Center)
@@ -3164,9 +3315,27 @@ fn sftp_date(mtime: Option<u64>) -> String {
     mtime.map(format_mtime).unwrap_or_else(|| String::from("—"))
 }
 
-/// Format a Unix timestamp (seconds, UTC) as `YYYY-MM-DD HH:MM` using the
-/// days-from-civil algorithm (no external date dependency).
+/// Local UTC offset in seconds, cached for the session (timezone is stable).
+/// Falls back to 0 (UTC) if it cannot be determined (e.g. the soundness guard
+/// on multi-threaded Unix; on Windows it always resolves).
+fn local_offset_secs() -> i64 {
+    static OFFSET: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *OFFSET.get_or_init(|| {
+        time::UtcOffset::current_local_offset()
+            .map(|offset| i64::from(offset.whole_seconds()))
+            .unwrap_or(0)
+    })
+}
+
+/// Format a Unix timestamp as local `YYYY-MM-DD HH:MM`.
 fn format_mtime(secs: u64) -> String {
+    let local = (secs as i64).saturating_add(local_offset_secs()).max(0) as u64;
+    format_epoch_utc(local)
+}
+
+/// Format seconds-since-epoch (UTC) as `YYYY-MM-DD HH:MM` using the
+/// days-from-civil algorithm (no external date dependency).
+fn format_epoch_utc(secs: u64) -> String {
     let days = (secs / 86_400) as i64;
     let tod = secs % 86_400;
     let hour = tod / 3600;
@@ -3192,6 +3361,85 @@ fn sftp_pane_style() -> container::Style {
         text_color: Some(primary_text()),
         border: border(RADIUS_SM, 1.0, border_color()),
         ..container::Style::default()
+    }
+}
+
+/// Pane container that highlights its border when it is the active drop target
+/// of a pane-to-pane drag.
+fn sftp_pane_style_dropzone(active: bool) -> container::Style {
+    let mut style = sftp_pane_style();
+    if active {
+        style.border = border(RADIUS_SM, 2.0, accent());
+    }
+    style
+}
+
+fn sort_header_button_style(status: button::Status) -> button::Style {
+    let background = match status {
+        button::Status::Hovered => panel_background_hover(),
+        _ => transparent(),
+    };
+    base_button_style(background, muted_text(), transparent())
+}
+
+/// One clickable column header that sorts a pane and shows an arrow when active.
+fn sftp_sort_cell(
+    label: &'static str,
+    pane: SftpPane,
+    column: SftpSortKey,
+    active: (SftpSortKey, bool),
+    width: Length,
+) -> Element<'static, Message> {
+    let is_active = active.0 == column;
+    let arrow = if is_active {
+        if active.1 {
+            " ▲"
+        } else {
+            " ▼"
+        }
+    } else {
+        ""
+    };
+    let color = if is_active { accent() } else { muted_text() };
+    button(text(format!("{label}{arrow}")).size(10).color(color))
+        .width(width)
+        .padding([2, 4])
+        .style(|_theme, status| sort_header_button_style(status))
+        .on_press(Message::SftpSort(pane, column))
+        .into()
+}
+
+/// The sortable column header row shared by both panes; the trailing space keeps
+/// the columns roughly aligned with the per-row action buttons on the right.
+fn sftp_sort_header(pane: SftpPane, active: (SftpSortKey, bool)) -> Element<'static, Message> {
+    row![
+        sftp_sort_cell("名称", pane, SftpSortKey::Name, active, Length::Fill),
+        sftp_sort_cell("大小", pane, SftpSortKey::Size, active, Length::Fixed(64.0)),
+        sftp_sort_cell("修改时间", pane, SftpSortKey::Modified, active, Length::Fixed(118.0)),
+        Space::new().width(Length::Fixed(132.0)),
+    ]
+    .spacing(6)
+    .padding([0, 6])
+    .into()
+}
+
+/// Compare two entries by the active sort column/direction (dirs are grouped
+/// first by the caller, so this only orders within a group).
+fn sftp_cmp(
+    key: SftpSortKey,
+    ascending: bool,
+    a: (&str, u64, Option<u64>),
+    b: (&str, u64, Option<u64>),
+) -> std::cmp::Ordering {
+    let base = match key {
+        SftpSortKey::Name => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
+        SftpSortKey::Size => a.1.cmp(&b.1),
+        SftpSortKey::Modified => a.2.unwrap_or(0).cmp(&b.2.unwrap_or(0)),
+    };
+    if ascending {
+        base
+    } else {
+        base.reverse()
     }
 }
 
@@ -4589,10 +4837,25 @@ mod tests {
     use iced::keyboard::key::{Code, Physical};
 
     #[test]
-    fn format_mtime_matches_known_timestamps() {
-        assert_eq!(format_mtime(0), "1970-01-01 00:00");
-        assert_eq!(format_mtime(1_609_459_200), "2021-01-01 00:00"); // 2021-01-01 UTC
-        assert_eq!(format_mtime(1_703_980_800), "2023-12-31 00:00"); // 2023-12-31 UTC
+    fn sftp_cmp_orders_by_column_and_direction() {
+        use std::cmp::Ordering;
+        let a = ("alpha", 10u64, Some(100u64));
+        let b = ("beta", 5u64, Some(200u64));
+        // Name ascending: alpha < beta.
+        assert_eq!(sftp_cmp(SftpSortKey::Name, true, a, b), Ordering::Less);
+        // Name descending flips it.
+        assert_eq!(sftp_cmp(SftpSortKey::Name, false, a, b), Ordering::Greater);
+        // Size ascending: 10 > 5.
+        assert_eq!(sftp_cmp(SftpSortKey::Size, true, a, b), Ordering::Greater);
+        // Modified ascending: 100 < 200.
+        assert_eq!(sftp_cmp(SftpSortKey::Modified, true, a, b), Ordering::Less);
+    }
+
+    #[test]
+    fn format_epoch_utc_matches_known_timestamps() {
+        assert_eq!(format_epoch_utc(0), "1970-01-01 00:00");
+        assert_eq!(format_epoch_utc(1_609_459_200), "2021-01-01 00:00"); // 2021-01-01 UTC
+        assert_eq!(format_epoch_utc(1_703_980_800), "2023-12-31 00:00"); // 2023-12-31 UTC
         assert_eq!(sftp_date(None), "—");
     }
 
