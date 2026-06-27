@@ -65,10 +65,23 @@ fn start_menu_dir() -> io::Result<PathBuf> {
 }
 
 fn create_shortcut(install_dir: &Path, app_path: &Path) -> io::Result<()> {
+    // Start menu entry.
     let start_menu_dir = start_menu_dir()?;
     fs::create_dir_all(&start_menu_dir)?;
-    let shortcut = start_menu_dir.join("Adit.lnk");
+    let start_lnk = start_menu_dir.join("Adit.lnk");
+    if !make_lnk(&start_lnk, app_path, install_dir) {
+        write_cmd_shortcut(&start_menu_dir, app_path)?;
+    }
 
+    // Desktop shortcut (best-effort; resolves the real Desktop folder so it
+    // works even when Desktop is redirected to OneDrive).
+    create_desktop_shortcut(app_path, install_dir);
+
+    Ok(())
+}
+
+/// Create a `.lnk` at a known path via the WScript.Shell COM object.
+fn make_lnk(lnk: &Path, app_path: &Path, working_dir: &Path) -> bool {
     let script = format!(
         "$shell = New-Object -ComObject WScript.Shell; \
          $shortcut = $shell.CreateShortcut('{}'); \
@@ -76,26 +89,45 @@ fn create_shortcut(install_dir: &Path, app_path: &Path) -> io::Result<()> {
          $shortcut.WorkingDirectory = '{}'; \
          $shortcut.IconLocation = '{},0'; \
          $shortcut.Save()",
-        ps_escape(&shortcut),
+        ps_escape(lnk),
         ps_escape(app_path),
-        ps_escape(install_dir),
+        ps_escape(working_dir),
         ps_escape(app_path),
     );
+    run_powershell(&script)
+}
 
-    let status = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            script.as_str(),
-        ])
-        .status();
+/// Create (or overwrite) the desktop shortcut, resolving the Desktop folder in
+/// PowerShell to honour OneDrive/known-folder redirection.
+fn create_desktop_shortcut(app_path: &Path, working_dir: &Path) {
+    let script = format!(
+        "$desktop = [Environment]::GetFolderPath('Desktop'); \
+         $shell = New-Object -ComObject WScript.Shell; \
+         $shortcut = $shell.CreateShortcut((Join-Path $desktop 'Adit.lnk')); \
+         $shortcut.TargetPath = '{}'; \
+         $shortcut.WorkingDirectory = '{}'; \
+         $shortcut.IconLocation = '{},0'; \
+         $shortcut.Save()",
+        ps_escape(app_path),
+        ps_escape(working_dir),
+        ps_escape(app_path),
+    );
+    let _ = run_powershell(&script);
+}
 
-    match status {
-        Ok(status) if status.success() => Ok(()),
-        _ => write_cmd_shortcut(&start_menu_dir, app_path),
-    }
+fn run_powershell(script: &str) -> bool {
+    matches!(
+        Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ])
+            .status(),
+        Ok(status) if status.success()
+    )
 }
 
 fn write_cmd_shortcut(start_menu_dir: &Path, app_path: &Path) -> io::Result<()> {
@@ -113,6 +145,8 @@ fn write_uninstall_cmd(install_dir: &Path) -> io::Result<()> {
         format!(
             "@echo off\r\n\
              taskkill /IM Adit.exe /F >nul 2>nul\r\n\
+             del \"%USERPROFILE%\\Desktop\\Adit.lnk\" >nul 2>nul\r\n\
+             rmdir /S /Q \"%APPDATA%\\Microsoft\\Windows\\Start Menu\\Programs\\Adit\" >nul 2>nul\r\n\
              rmdir /S /Q \"{}\"\r\n",
             install_dir.display()
         ),
