@@ -12,7 +12,7 @@ use iced::font::Weight;
 use iced::keyboard::{self, key::Named, Key};
 use iced::widget::{
     button, checkbox, column, container, mouse_area, opaque, progress_bar, row, scrollable, stack,
-    text, text_input, Space,
+    text, text_input, tooltip, Space,
 };
 use iced::{
     clipboard, event, mouse, window, Alignment, Background, Border, Color, Element, Fill, Font,
@@ -4220,21 +4220,24 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .padding([3, 10])
         .style(|_theme| sidebar_header_style()),
         row![
-            sidebar_tool_button("↯", Message::ConnectSelectedProfile),
-            sidebar_tool_button("▣", Message::OpenSelectedProfile),
-            sidebar_tool_button("+", Message::NewProfileDraft),
-            sidebar_tool_button("G+", Message::NewGroupDraft),
-            sidebar_tool_button("□", Message::SaveProfile),
-            sidebar_tool_button("×", Message::DeleteSelectedProfile),
-            sidebar_tool_button("↑", Message::MoveSelectedProfile(ProfileMove::Up)),
-            sidebar_tool_button("↓", Message::MoveSelectedProfile(ProfileMove::Down)),
-            sidebar_tool_button("A", Message::SortProfiles(ProfileSortKey::Name)),
-            sidebar_tool_button("H", Message::SortProfiles(ProfileSortKey::Host)),
-            sidebar_tool_button("*", Message::RunMenu(MenuCommand::Logging)),
+            sidebar_tool_button("▶", "连接所选会话", Message::ConnectSelectedProfile),
+            sidebar_tool_button("↗", "打开连接对话框", Message::OpenSelectedProfile),
+            sidebar_tool_separator(),
+            sidebar_tool_button("+", "新建会话", Message::NewProfileDraft),
+            sidebar_tool_button("⊞", "新建分组", Message::NewGroupDraft),
+            sidebar_tool_button("⤓", "保存会话", Message::SaveProfile),
+            sidebar_tool_button("✕", "删除所选", Message::DeleteSelectedProfile),
+            sidebar_tool_separator(),
+            sidebar_tool_button("↑", "上移", Message::MoveSelectedProfile(ProfileMove::Up)),
+            sidebar_tool_button("↓", "下移", Message::MoveSelectedProfile(ProfileMove::Down)),
+            sidebar_tool_button("A", "按名称排序", Message::SortProfiles(ProfileSortKey::Name)),
+            sidebar_tool_button("H", "按主机排序", Message::SortProfiles(ProfileSortKey::Host)),
+            sidebar_tool_separator(),
+            sidebar_tool_button("▤", "日志 / 脚本", Message::RunMenu(MenuCommand::Logging)),
             Space::new().width(Fill),
         ]
-        .padding([3, 5])
-        .spacing(3)
+        .padding([6, 8])
+        .spacing(4)
         .align_y(Alignment::Center),
         text_input("Filter by group/session name <Alt+I>", &app.session_filter)
             .on_input(Message::SessionFilterChanged)
@@ -4534,14 +4537,47 @@ fn profile_sidebar_order(
         .then_with(|| left.host.cmp(&right.host))
 }
 
-fn sidebar_tool_button(label: &'static str, message: Message) -> Element<'static, Message> {
-    button(text(label).size(13))
-        .width(Length::Fixed(24.0))
-        .height(Length::Fixed(22.0))
+fn sidebar_tool_button(
+    glyph: &'static str,
+    tip: &'static str,
+    message: Message,
+) -> Element<'static, Message> {
+    let control = button(text(glyph).size(14))
+        .width(Length::Fixed(28.0))
+        .height(Length::Fixed(26.0))
         .padding(0)
         .style(|_theme, status| sidebar_tool_button_style(status))
-        .on_press(message)
+        .on_press(message);
+
+    tooltip(
+        control,
+        container(text(tip).size(11).color(primary_text()))
+            .padding([3, 8])
+            .style(|_theme| tooltip_style()),
+        tooltip::Position::Bottom,
+    )
+    .gap(4)
+    .into()
+}
+
+fn sidebar_tool_separator() -> Element<'static, Message> {
+    container(Space::new().height(Length::Fixed(16.0)))
+        .width(Length::Fixed(1.0))
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(border_color())),
+            ..container::Style::default()
+        })
         .into()
+}
+
+fn tooltip_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface())),
+        text_color: Some(primary_text()),
+        border: border(RADIUS_SM, 1.0, border_color()),
+        shadow: subtle_shadow(),
+        ..container::Style::default()
+    }
 }
 
 fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
