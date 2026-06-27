@@ -1,15 +1,16 @@
 * text=auto
 
-*.css text eol=lf
-*.html text eol=lf
 *.json text eol=lf
 *.lock text eol=lf
 *.md text eol=lf
 *.rs text eol=lf
 *.toml text eol=lf
-*.ts text eol=lf
 
 *.exe binary
 *.icns binary
 *.ico binary
 *.png binary
+*.rgba binary
+
+# Icon generator is a dev tool, not product code — keep it out of language stats.
+assets/make_icon.py linguist-detectable=false

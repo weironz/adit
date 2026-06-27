@@ -1,63 +1,61 @@
 # Adit
 
-Adit is a Rust-first desktop SSH terminal client inspired by SecureCRT and Xshell. The current MVP uses Tauri, while the long-term target is a native Rust app with Windows first and macOS support next.
+<img src="assets/icon.png" alt="Adit icon" width="96" align="right" />
 
-## Target Architecture
+Adit is a native, Rust-only desktop SSH terminal client inspired by SecureCRT and Xshell. Windows is the first-class target, with macOS support kept in the architecture.
 
-The long-term direction is a native Rust desktop client based on `iced + russh + alacritty_terminal/vte`.
+It is built on `iced` (GUI), `russh` (pure-Rust SSH), and an Adit-owned `vte`-based terminal core — no web view, no JavaScript. The product is the Cargo workspace under [`crates/`](crates/).
 
-See [docs/native-rust-architecture.md](docs/native-rust-architecture.md).
+> The original Tauri + TypeScript/xterm.js prototype has been removed now that the native client supersedes it; it remains available in git history.
 
-## Stack
+The app icon lives in [`assets/`](assets/) and is reproducible with `python assets/make_icon.py` (requires Pillow), which regenerates the master PNG plus the build inputs: the Windows exe-resource `.ico` ([crates/adit-app/assets/](crates/adit-app/assets/)) embedded via `build.rs`, and the raw RGBA window icon ([crates/adit-ui/assets/](crates/adit-ui/assets/)) loaded at runtime.
 
-Current MVP stack:
+## Architecture
 
-- Rust backend with Tauri commands and events
-- `ssh2`/libssh2 for SSH password authentication, PTY shell, input, output, and resize
-- Vanilla TypeScript frontend
-- xterm.js for terminal rendering
+A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`. See [docs/native-rust-architecture.md](docs/native-rust-architecture.md) for the design and [docs/feature-roadmap.md](docs/feature-roadmap.md) for the prioritized feature plan.
 
-Native Rust workspace, now in progress:
+The workspace crates:
 
-- `iced` application shell
-- Adit-owned `domain`, `session`, and `terminal` crate boundaries
-- `russh` SSH auth chain with password, keyboard-interactive, SSH agent, and default private key fallback
-- Long-lived SSH session actor with input, output, disconnect, and resize commands
-- SecureCRT-style native workbench prototype with clickable menu bar, compact toolbar, editable session manager tree, tabs, terminal viewport, and status bar
-- Persistent session profile CRUD: create, edit, save, delete, group, filter, move, and sort connection profiles from the native UI
-- `adit-storage` JSON profile store under the platform app config directory
-- Real ANSI/VT terminal core (`adit-terminal`) built on the `vte` parser: SGR 16/256/truecolor and bold/dim/reverse, cursor motion, erase/scroll regions, insert/delete, alternate screen, scrollback, wide (CJK) glyphs, and cursor-position/device-attribute replies wired back to the PTY
-- Raw terminal keyboard routing for ignored window keyboard events, including normal text, Enter, Backspace, Tab, Esc, arrows, Home/End, Insert/Delete, PageUp/PageDown, F1-F12, Alt-prefix text, and Ctrl-A through Ctrl-Z
-- Native SSH known-host verification stores host keys under the platform app config directory and rejects changed host keys.
+- `adit-app` — binary entrypoint (iced runtime, embedded window/exe icon)
+- `adit-ui` — iced screens, terminal widget, theme, input handling
+- `adit-session` — session manager and per-session actor lifecycle
+- `adit-ssh` — `russh` wrapper: auth, host-key verification, PTY shell, keepalive
+- `adit-terminal` — `vte`-driven VT/ANSI grid and render-ready snapshots
+- `adit-storage` — profiles, settings, OS credential vault, log directory
+- `adit-domain` — shared ids, errors, profile/auth models
+- `adit-installer` — Windows packaging (embeds `adit-app.exe`, Start-menu shortcut)
 
-## Current MVP
+## Features
 
-- Saved local connection profiles
-- Password, keyboard-interactive, SSH agent, and default private key SSH login
-- Interactive PTY shell
-- Multi-tab terminal workspace
-- Terminal resize synchronization
-- Manual disconnect by closing a tab
-
-Passwords are only used for the current connection attempt and are not saved in local storage.
+- Connection profiles with folders/groups: create, edit, delete, drag-reorder, sort, rename group, filter.
+- Authentication: password, keyboard-interactive (MFA-aware), public key (`~/.ssh` defaults or an explicit identity file), and SSH agent (Windows OpenSSH pipe / Pageant, Unix `SSH_AUTH_SOCK`).
+- Host-key security: interactive first-use confirmation showing the SHA256 fingerprint, with a changed-key (MITM) warning; verified keys are stored in a per-app `known_hosts`.
+- Secrets: optional password persistence in the OS credential vault (never in profile JSON).
+- Real ANSI/VT terminal: 16/256/truecolor + attributes, cursor motion, erase/scroll regions, alternate screen, scrollback, wide (CJK) glyphs.
+- Terminal UX: raw keyboard routing (Ctrl/Alt/function/navigation keys), mouse selection + copy/paste, scrollback navigation, automatic PTY resize.
+- Multi-tab workspace, keepalive, and auto-reconnect with exponential backoff on unexpected drops.
+- Session output (transcript) logging to a file, on demand.
+- Dark/light theme and full settings persistence (theme, folded groups, window size, auto-reconnect).
 
 ## Development
 
-Run the native Rust prototype:
+Run the app:
 
 ```powershell
 cargo run -p adit-app
 ```
 
-In the native prototype, select or create a profile, edit the current form, optionally enter an SSH password, and click `连接 SSH`. If the password field is empty, Adit still tries the local SSH agent and default private keys under `~/.ssh`. The connect action uses the current form values and saves them before opening SSH. Profiles are saved to a JSON file shown in the status bar. Passwords are never written to the profile JSON; the connection dialog can optionally save them in the OS credential vault.
+Select or create a profile, optionally enter an SSH password, and connect. With an empty password Adit still tries the SSH agent and default keys under `~/.ssh`. Profiles persist to a JSON file under the platform app config directory (shown in the status bar); passwords are never written there.
 
-Check the native workspace:
+Check, lint, and test the workspace:
 
 ```powershell
-cargo check -p adit-app
+cargo check --workspace
+cargo clippy --workspace --all-targets
+cargo test --workspace
 ```
 
-Build a Windows release installer for the native app:
+Build the Windows installer:
 
 ```powershell
 cargo build -p adit-app --release
@@ -65,29 +63,10 @@ $env:ADIT_APP_EXE = "$PWD\target\release\adit-app.exe"
 cargo build -p adit-installer --release
 ```
 
-The installer binary is `target\release\adit-installer.exe`. The v0.1 release asset is published as `AditSetup-v0.1.0.exe`.
-
-Run the current Tauri MVP:
-
-```powershell
-npm install
-npm run tauri dev
-```
-
-For a production Windows build:
-
-```powershell
-npm run tauri build
-```
+The installer binary is `target\release\adit-installer.exe`.
 
 ## Roadmap
 
-1. Native iced workspace skeleton — done
-2. `russh` password SSH with long-lived PTY shell actor — done
-3. `vte`-based terminal core integration — done (golden tests for color, cursor, scroll, alt screen, CJK, resize)
-4. Raw keyboard input routing — done
-5. Automatic UI-driven PTY resize measurement
-6. Host key verification — done; known-host management UI remains
-7. Key authentication, SSH agent, and credential vault support — partial: default private keys, Windows OpenSSH Agent, Pageant, SSH_AUTH_SOCK, and optional OS credential vault storage are wired
-8. Session groups, tags, search, and import/export
-9. Jump hosts, SFTP, logging, transcript search, and macOS packaging
+Done: native workspace, `russh` auth chain, `vte` terminal core, raw keyboard input, interactive host-key verification, keepalive + auto-reconnect, session logging, theme + settings persistence, app icon and Windows installer.
+
+Next: SFTP file transfer, scrollback search, fonts/color schemes, port forwarding, jump hosts, import/export, and macOS packaging. See [docs/feature-roadmap.md](docs/feature-roadmap.md) for the full phased plan.
