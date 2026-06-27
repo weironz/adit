@@ -78,9 +78,10 @@ A "serious" client should not silently trust new hosts or drop on idle.
   confirmation), multi-select batch transfer, click-to-select + double-click
   transfer, **pane-to-pane drag** and drag-from-Explorer upload, editable path
   bars, **clickable column sorting** (name/size/modified), a **local-time**
-  modified column, and a detailed transfer queue (source → destination, size,
-  progress, speed, status). Future: a "download as" dialog and resumable
-  transfers.
+  modified column, a drag ghost that follows the cursor, and a managed transfer
+  queue (source → destination, size, progress, speed, status; live counts, a
+  clear-finished button, bounded history). Future: a "download as" dialog,
+  overwrite confirmation, and resumable transfers.
 - **C2. Port forwarding.** Local (`-L`), remote (`-R`), and dynamic SOCKS (`-D`)
   tunnels, created and managed from the UI, tied to a session.
 - **C3. Jump host / proxy.** `ProxyJump` (bastion chaining) and `ProxyCommand`.

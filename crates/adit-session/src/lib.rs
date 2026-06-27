@@ -17,6 +17,9 @@ use thiserror::Error;
 /// Give up auto-reconnect after this many consecutive failed attempts.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
+/// Cap on retained SFTP transfer-queue entries before old finished ones are dropped.
+const MAX_TRANSFER_HISTORY: usize = 200;
+
 /// Exponential backoff (1,2,4,8,16,30,30,…s) between reconnect attempts.
 fn reconnect_delay(attempts: u32) -> Duration {
     Duration::from_secs((1u64 << attempts.min(5)).min(30))
@@ -1033,6 +1036,16 @@ impl SessionManager {
         }
     }
 
+    /// Drop finished (done/failed) transfers from the queue, keeping any that
+    /// are still pending or active.
+    pub fn sftp_clear_finished(&mut self) {
+        if let Some(browser) = &mut self.sftp {
+            browser
+                .transfers
+                .retain(|item| matches!(item.status, TransferStatus::Pending | TransferStatus::Active));
+        }
+    }
+
     pub fn close_sftp(&mut self) {
         if let Some(browser) = self.sftp.take() {
             let _ = browser.handle.send(SftpCommand::Disconnect);
@@ -1190,6 +1203,20 @@ impl SessionManager {
                         closed = true;
                         break;
                     }
+                }
+            }
+            // Bound queue growth over long sessions: drop the oldest finished
+            // transfers once the history gets large (active ones are kept).
+            while browser.transfers.len() > MAX_TRANSFER_HISTORY {
+                match browser
+                    .transfers
+                    .iter()
+                    .position(|item| matches!(item.status, TransferStatus::Done | TransferStatus::Failed))
+                {
+                    Some(index) => {
+                        browser.transfers.remove(index);
+                    }
+                    None => break,
                 }
             }
         }

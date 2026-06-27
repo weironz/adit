@@ -205,6 +205,7 @@ pub enum Message {
     SftpConfirmDelete,
     SftpCancelDelete,
     SftpSort(SftpPane, SftpSortKey),
+    SftpClearTransfers,
     SftpDragEnter(SftpPane),
     SftpDragMove(SftpPane, Point),
     ToggleProfileGroup(String),
@@ -935,6 +936,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 *slot = (key, true);
             }
         }
+        Message::SftpClearTransfers => app.manager.sftp_clear_finished(),
         Message::SftpDragEnter(pane) => app.sftp_drag_over = Some(pane),
         Message::SftpDragMove(pane, position) => {
             if app.sftp_drag.is_some() {
@@ -3101,6 +3103,35 @@ fn sftp_delete_bar(name: &str) -> Element<'static, Message> {
 }
 
 fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
+    let mut done = 0usize;
+    let mut failed = 0usize;
+    let mut active = 0usize;
+    for item in &browser.transfers {
+        match item.status {
+            TransferStatus::Done => done += 1,
+            TransferStatus::Failed => failed += 1,
+            TransferStatus::Pending | TransferStatus::Active => active += 1,
+        }
+    }
+
+    let mut clear = button(text("清空已完成").size(11))
+        .padding([3, 10])
+        .style(|_theme, status| secondary_button_style(status));
+    if done + failed > 0 {
+        clear = clear.on_press(Message::SftpClearTransfers);
+    }
+
+    let title = row![
+        text("传输队列").size(11).color(primary_text()),
+        text(format!("完成 {done} · 失败 {failed} · 进行 {active}"))
+            .size(10)
+            .color(muted_text()),
+        Space::new().width(Fill),
+        clear,
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+
     let column_header = row![
         text("文件").size(10).color(muted_text()).width(Length::FillPortion(2)),
         text("目标路径").size(10).color(muted_text()).width(Length::FillPortion(3)),
@@ -3111,20 +3142,17 @@ fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
     ]
     .spacing(8);
 
-    let mut col = column![
-        text("传输队列").size(11).color(primary_text()),
-        column_header,
-    ]
-    .spacing(3);
-
-    if browser.transfers.is_empty() {
-        col = col.push(text("（暂无传输）").size(11).color(muted_text()));
+    let body: Element<'static, Message> = if browser.transfers.is_empty() {
+        text("（暂无传输）").size(11).color(muted_text()).into()
     } else {
-        for item in browser.transfers.iter().rev().take(6) {
-            col = col.push(sftp_transfer_row(item));
+        let mut list = column![].spacing(1);
+        for item in browser.transfers.iter().rev() {
+            list = list.push(sftp_transfer_row(item));
         }
-    }
-    container(col)
+        scrollable(list).height(Length::Fixed(108.0)).into()
+    };
+
+    container(column![title, column_header, body].spacing(4))
         .width(Fill)
         .padding(8)
         .style(|_theme| sftp_pane_style())
