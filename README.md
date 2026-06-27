@@ -34,7 +34,7 @@ The workspace crates:
 - Real ANSI/VT terminal: 16/256/truecolor + attributes, cursor motion, erase/scroll regions, alternate screen, scrollback, wide (CJK) glyphs.
 - Terminal UX: raw keyboard routing (Ctrl/Alt/function/navigation keys), mouse selection + copy/paste, scrollback navigation, automatic PTY resize.
 - Multi-tab workspace, keepalive, and auto-reconnect with exponential backoff on unexpected drops.
-- SFTP file browser: navigate the remote tree, download files, and upload from a local path (over a second SSH connection reusing the session credential).
+- SFTP file browser: navigate the remote tree; download, upload (native file picker), mkdir, rename, and delete; with a transfer progress bar (over a second SSH connection reusing the session credential).
 - Session output (transcript) logging to a file, on demand.
 - Dark/light theme and full settings persistence (theme, folded groups, window size, auto-reconnect).
 

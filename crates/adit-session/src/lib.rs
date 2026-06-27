@@ -116,6 +116,15 @@ pub struct SftpBrowser {
     pub status: String,
     pub busy: bool,
     pub connected: bool,
+    /// Active transfer for the progress bar, if any.
+    pub transfer: Option<TransferProgress>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TransferProgress {
+    pub label: String,
+    pub done: u64,
+    pub total: u64,
 }
 
 pub struct SessionManager {
@@ -832,8 +841,43 @@ impl SessionManager {
             status: String::from("connecting"),
             busy: false,
             connected: false,
+            transfer: None,
         });
         Ok(())
+    }
+
+    pub fn sftp_mkdir(&mut self, name: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let path = join_remote(&browser.cwd, name);
+            let cwd = browser.cwd.clone();
+            browser.status = format!("mkdir {name}…");
+            let _ = browser.handle.send(SftpCommand::Mkdir(path));
+            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+        }
+    }
+
+    pub fn sftp_rename(&mut self, from: &str, to: &str) {
+        if let Some(browser) = &mut self.sftp {
+            let from_path = join_remote(&browser.cwd, from);
+            let to_path = join_remote(&browser.cwd, to);
+            let cwd = browser.cwd.clone();
+            browser.status = format!("rename {from} → {to}…");
+            let _ = browser.handle.send(SftpCommand::Rename {
+                from: from_path,
+                to: to_path,
+            });
+            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+        }
+    }
+
+    pub fn sftp_delete(&mut self, name: &str, is_dir: bool) {
+        if let Some(browser) = &mut self.sftp {
+            let path = join_remote(&browser.cwd, name);
+            let cwd = browser.cwd.clone();
+            browser.status = format!("delete {name}…");
+            let _ = browser.handle.send(SftpCommand::Remove { path, is_dir });
+            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+        }
     }
 
     pub fn close_sftp(&mut self) {
@@ -919,15 +963,18 @@ impl SessionManager {
                             Some(percent) => format!("{label}: {percent}%"),
                             None => format!("{label}: {done} bytes"),
                         };
+                        browser.transfer = Some(TransferProgress { label, done, total });
                     }
                     SftpEvent::Done { label, bytes } => {
                         browser.busy = false;
+                        browser.transfer = None;
                         browser.status = format!("{label} done ({bytes} bytes)");
                         let cwd = browser.cwd.clone();
                         let _ = browser.handle.send(SftpCommand::ListDir(cwd));
                     }
                     SftpEvent::Error(error) => {
                         browser.busy = false;
+                        browser.transfer = None;
                         browser.status = format!("error: {error}");
                     }
                     SftpEvent::Closed => {

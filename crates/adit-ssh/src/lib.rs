@@ -903,6 +903,9 @@ pub enum SftpCommand {
     ListDir(String),
     Download { remote: String, local: PathBuf },
     Upload { local: PathBuf, remote: String },
+    Mkdir(String),
+    Rename { from: String, to: String },
+    Remove { path: String, is_dir: bool },
     Disconnect,
 }
 
@@ -1033,6 +1036,26 @@ async fn run_sftp_session(
             SftpCommand::Upload { local, remote } => {
                 if let Err(error) = sftp_upload(&sftp, &local, &remote, &events).await {
                     let _ = events.send(SftpEvent::Error(error.to_string()));
+                }
+            }
+            SftpCommand::Mkdir(path) => {
+                if let Err(error) = sftp.create_dir(path.clone()).await {
+                    let _ = events.send(SftpEvent::Error(format!("mkdir {path}: {error}")));
+                }
+            }
+            SftpCommand::Rename { from, to } => {
+                if let Err(error) = sftp.rename(from.clone(), to).await {
+                    let _ = events.send(SftpEvent::Error(format!("rename {from}: {error}")));
+                }
+            }
+            SftpCommand::Remove { path, is_dir } => {
+                let result = if is_dir {
+                    sftp.remove_dir(path.clone()).await
+                } else {
+                    sftp.remove_file(path.clone()).await
+                };
+                if let Err(error) = result {
+                    let _ = events.send(SftpEvent::Error(format!("delete {path}: {error}")));
                 }
             }
             SftpCommand::Disconnect => break,

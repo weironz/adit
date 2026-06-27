@@ -70,11 +70,12 @@ A "serious" client should not silently trust new hosts or drop on idle.
 
 ## Phase C — File transfer & tunnels
 
-- **C1. SFTP panel.** Partial ✅ — `russh-sftp` over a second SSH connection
+- **C1. SFTP panel.** ✅ Done — `russh-sftp` over a second SSH connection
   (reusing the session credential): an overlay file browser with directory
-  listing, navigation, per-file download (to the app `downloads/` dir), and
-  upload from a local path, with chunked transfer progress. Pending: mkdir /
-  rename / delete, a native file picker, and a progress bar (status text today).
+  listing + navigation, download (to the app `downloads/` dir), upload (native
+  file picker via `rfd`, or a typed path), mkdir, rename, and delete (with
+  confirmation), plus a chunked-transfer progress bar. Future: per-transfer
+  queue, drag-and-drop, and a "download as" save dialog.
 - **C2. Port forwarding.** Local (`-L`), remote (`-R`), and dynamic SOCKS (`-D`)
   tunnels, created and managed from the UI, tied to a session.
 - **C3. Jump host / proxy.** `ProxyJump` (bastion chaining) and `ProxyCommand`.
@@ -105,5 +106,5 @@ for the first native milestones.
 ## Suggested order
 
 ~~A1–A2 (security baseline)~~ ✅ → ~~A3 (reconnect + keepalive)~~ ✅ →
-**C1 (SFTP, biggest user-visible win)** → B1/B2 (search, fonts) → A4 (key
-passphrase) → the rest as demand dictates.
+~~C1 (SFTP)~~ ✅ → **B1/B2 (scrollback search, fonts/color schemes)** →
+A4 (key passphrase) → C2 (port forwarding) → the rest as demand dictates.

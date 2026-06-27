@@ -11,3 +11,4 @@ adit-session.workspace = true
 adit-storage.workspace = true
 adit-terminal.workspace = true
 iced.workspace = true
+rfd = "0.15"
