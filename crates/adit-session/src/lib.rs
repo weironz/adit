@@ -2,10 +2,11 @@ use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionSt
 use adit_ssh::{
     AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
     LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle, SftpRequest, SshError,
+    TunnelCommand, TunnelEvent, TunnelRequest,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
-pub use adit_ssh::SftpEntry;
+pub use adit_ssh::{SftpEntry, TunnelKind};
 use adit_terminal::{TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal};
 use std::collections::HashMap;
 use std::fs;
@@ -202,6 +203,22 @@ pub struct SessionManager {
     active_session: Option<SessionId>,
     auto_reconnect: bool,
     sftp: Option<SftpBrowser>,
+    tunnels: Vec<TunnelState>,
+    next_tunnel_id: u64,
+}
+
+/// A live port-forwarding tunnel and its observable state.
+pub struct TunnelState {
+    handle: adit_ssh::TunnelHandle,
+    pub id: u64,
+    pub kind: adit_ssh::TunnelKind,
+    pub bind: String,
+    pub target: String,
+    pub status: String,
+    pub listening: bool,
+    pub active: usize,
+    pub total: usize,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -243,6 +260,8 @@ impl SessionManager {
             active_session: None,
             auto_reconnect: true,
             sftp: None,
+            tunnels: Vec::new(),
+            next_tunnel_id: 0,
         }
     }
 
@@ -866,6 +885,123 @@ impl SessionManager {
 
     /// Open an SFTP browser for the active live session, reusing its
     /// credentials over a separate SSH connection.
+    /// Live port-forwarding tunnels (most recently opened last).
+    #[must_use]
+    pub fn tunnels(&self) -> &[TunnelState] {
+        &self.tunnels
+    }
+
+    /// Open a new tunnel reusing the active session's profile and credentials.
+    pub fn open_tunnel(
+        &mut self,
+        kind: TunnelKind,
+        bind_address: String,
+        bind_port: u16,
+        target_host: String,
+        target_port: u16,
+    ) -> Result<(), SessionError> {
+        let session_id = self.active_session.ok_or(SessionError::NoActiveSshSession)?;
+        let record = self
+            .sessions
+            .get(&session_id)
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let reconnect = record
+            .reconnect
+            .as_ref()
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let profile_id = record.summary.profile_id;
+        let password = reconnect.password.clone();
+        let profile = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or(SessionError::ProfileNotFound)?;
+
+        let bind_address = if bind_address.trim().is_empty() {
+            String::from("127.0.0.1")
+        } else {
+            bind_address
+        };
+        let bind = format!("{bind_address}:{bind_port}");
+        let target = match kind {
+            TunnelKind::Local => format!("{target_host}:{target_port}"),
+            TunnelKind::Dynamic => String::from("SOCKS5 代理"),
+        };
+
+        let mut request = TunnelRequest::new(
+            profile.host.clone(),
+            profile.port,
+            profile.username.clone(),
+            password.clone(),
+            kind,
+            bind_address,
+            bind_port,
+            target_host,
+            target_port,
+        );
+        request.auth = auth_options_for_profile(&profile, &password);
+        let handle = adit_ssh::spawn_tunnel_session(request)?;
+
+        let id = self.next_tunnel_id;
+        self.next_tunnel_id += 1;
+        self.tunnels.push(TunnelState {
+            handle,
+            id,
+            kind,
+            bind,
+            target,
+            status: String::from("connecting"),
+            listening: false,
+            active: 0,
+            total: 0,
+            error: None,
+        });
+        Ok(())
+    }
+
+    /// Close a tunnel by id (stops its listener and SSH connection).
+    pub fn close_tunnel(&mut self, id: u64) {
+        if let Some(index) = self.tunnels.iter().position(|t| t.id == id) {
+            let tunnel = self.tunnels.remove(index);
+            let _ = tunnel.handle.send(TunnelCommand::Disconnect);
+        }
+    }
+
+    /// Drain tunnel events into observable state; drop stopped tunnels.
+    pub fn poll_tunnel_events(&mut self) {
+        let mut stopped = Vec::new();
+        for tunnel in &mut self.tunnels {
+            while let Some(event) = tunnel.handle.try_recv() {
+                match event {
+                    TunnelEvent::Status(status) => tunnel.status = status,
+                    TunnelEvent::Listening { bind } => {
+                        tunnel.listening = true;
+                        tunnel.status = format!("监听 {bind}");
+                    }
+                    TunnelEvent::Opened { .. } => {
+                        tunnel.active += 1;
+                        tunnel.total += 1;
+                    }
+                    TunnelEvent::Closed { .. } => {
+                        tunnel.active = tunnel.active.saturating_sub(1);
+                    }
+                    TunnelEvent::Error(error) => {
+                        tunnel.error = Some(error.clone());
+                        tunnel.status = format!("error: {error}");
+                    }
+                    TunnelEvent::Stopped => {
+                        tunnel.listening = false;
+                        stopped.push(tunnel.id);
+                    }
+                }
+            }
+        }
+        if !stopped.is_empty() {
+            self.tunnels.retain(|t| !stopped.contains(&t.id));
+        }
+    }
+
     pub fn open_sftp_for_active(&mut self) -> Result<(), SessionError> {
         if self.sftp.is_some() {
             return Ok(());
@@ -1370,6 +1506,7 @@ impl SessionManager {
 
         self.drive_reconnects();
         self.poll_sftp_events();
+        self.poll_tunnel_events();
         handled
     }
 

@@ -82,8 +82,12 @@ A "serious" client should not silently trust new hosts or drop on idle.
   queue (source → destination, size, progress, speed, status; live counts, a
   clear-finished button, bounded history). Future: a "download as" dialog,
   overwrite confirmation, and resumable transfers.
-- **C2. Port forwarding.** Local (`-L`), remote (`-R`), and dynamic SOCKS (`-D`)
-  tunnels, created and managed from the UI, tied to a session.
+- **C2. Port forwarding.** 🔄 Partial — **local forward (`-L`)** and **dynamic
+  SOCKS5 (`-D`)** tunnels are done: created/managed from a tunnels panel, each
+  running its own SSH connection (reusing the active session's credential),
+  piping accepted sockets over `direct-tcpip` channels, with live status and an
+  active-connection count. Future: **remote forward (`-R`)** (needs a
+  forwarded-tcpip handler) and per-profile persistence of tunnel definitions.
 - **C3. Jump host / proxy.** `ProxyJump` (bastion chaining) and `ProxyCommand`.
 
 ## Phase D — Workflow & power features

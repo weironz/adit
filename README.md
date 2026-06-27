@@ -35,6 +35,7 @@ The workspace crates:
 - Terminal UX: raw keyboard routing (Ctrl/Alt/function/navigation keys), mouse selection + copy/paste, scrollback navigation, automatic PTY resize.
 - Multi-tab workspace, keepalive, and auto-reconnect with exponential backoff on unexpected drops.
 - SFTP dual-pane file manager (SecureFX-style): browse local and remote side by side; transfer via double-click, multi-select batch, pane-to-pane drag, or drag-from-Explorer (plus a native file picker); rename/delete on both panes; clickable column sorting; and a detailed transfer queue (destination, size, progress, speed) over a second SSH connection reusing the session credential.
+- Port forwarding: local (`-L`) and dynamic SOCKS5 (`-D`) tunnels, created and managed from a tunnels panel with live status and active-connection counts.
 - Session output (transcript) logging to a file, on demand.
 - Dark/light theme and full settings persistence (theme, folded groups, window size, auto-reconnect).
 

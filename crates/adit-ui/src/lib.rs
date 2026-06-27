@@ -2,6 +2,7 @@ use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionSt
 use adit_session::{
     HostKeyPromptInfo, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager,
     SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem, TransferStatus,
+    TunnelKind, TunnelState,
 };
 use adit_storage::{AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore};
 use adit_terminal::{Color as TermColor, TerminalLine, TerminalSize, TerminalSnapshot, Viewport};
@@ -88,6 +89,12 @@ pub struct AditApp {
     sftp_drag: Option<(SftpPane, String)>,
     sftp_drag_over: Option<SftpPane>,
     sftp_drag_cursor: Option<Point>,
+    tunnels_open: bool,
+    tunnel_kind: TunnelKind,
+    tunnel_bind_addr: String,
+    tunnel_bind_port: String,
+    tunnel_target_host: String,
+    tunnel_target_port: String,
     terminal_input: String,
     terminal_focused: bool,
     terminal_size: TerminalSize,
@@ -133,6 +140,7 @@ pub enum MenuCommand {
     ResizeDefault,
     ResizeWide,
     Sftp,
+    Tunnels,
     Logging,
     ToggleAutoReconnect,
     About,
@@ -176,6 +184,15 @@ pub enum Message {
     RespondHostKey { session_id: SessionId, accept: bool },
     OpenSftp,
     CloseSftp,
+    OpenTunnels,
+    CloseTunnels,
+    TunnelKindChanged(TunnelKind),
+    TunnelBindAddrChanged(String),
+    TunnelBindPortChanged(String),
+    TunnelTargetHostChanged(String),
+    TunnelTargetPortChanged(String),
+    AddTunnel,
+    CloseTunnel(u64),
     SftpNavigate(String),
     SftpUp,
     SftpRefresh,
@@ -434,6 +451,12 @@ impl AditApp {
             sftp_drag: None,
             sftp_drag_over: None,
             sftp_drag_cursor: None,
+            tunnels_open: false,
+            tunnel_kind: TunnelKind::Local,
+            tunnel_bind_addr: String::from("127.0.0.1"),
+            tunnel_bind_port: String::new(),
+            tunnel_target_host: String::new(),
+            tunnel_target_port: String::new(),
             terminal_input: String::new(),
             terminal_focused: false,
             terminal_size: estimated_terminal_size(window_width, window_height),
@@ -785,6 +808,26 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sftp_remote_cwd_seen.clear();
             app.sftp_last_click = None;
         }
+        Message::OpenTunnels => {
+            if app.manager.active_session().is_none() {
+                app.last_error = Some(String::from("请先连接一个会话再配置端口转发"));
+            } else {
+                app.tunnels_open = true;
+                app.last_error = None;
+            }
+        }
+        Message::CloseTunnels => app.tunnels_open = false,
+        Message::TunnelKindChanged(kind) => app.tunnel_kind = kind,
+        Message::TunnelBindAddrChanged(value) => app.tunnel_bind_addr = value,
+        Message::TunnelBindPortChanged(value) => {
+            app.tunnel_bind_port = value.chars().filter(char::is_ascii_digit).collect();
+        }
+        Message::TunnelTargetHostChanged(value) => app.tunnel_target_host = value,
+        Message::TunnelTargetPortChanged(value) => {
+            app.tunnel_target_port = value.chars().filter(char::is_ascii_digit).collect();
+        }
+        Message::AddTunnel => add_tunnel(app),
+        Message::CloseTunnel(id) => app.manager.close_tunnel(id),
         Message::SftpNavigate(name) => app.manager.sftp_navigate(&name),
         Message::SftpUp => app.manager.sftp_up(),
         Message::SftpRefresh => app.manager.sftp_refresh(),
@@ -1193,6 +1236,13 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::Sftp => {
             if let Err(error) = app.manager.open_sftp_for_active() {
                 app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+            }
+        }
+        MenuCommand::Tunnels => {
+            if app.manager.active_session().is_none() {
+                app.last_error = Some(String::from("请先连接一个会话再配置端口转发"));
+            } else {
+                app.tunnels_open = true;
             }
         }
         MenuCommand::Logging => toggle_active_logging(app),
@@ -2413,6 +2463,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if app.manager.sftp_is_open() {
         layers.push(opaque(sftp_panel_overlay(app)));
     }
+    if app.tunnels_open {
+        layers.push(opaque(tunnels_panel_overlay(app)));
+    }
 
     if layers.len() == 1 {
         layers.pop().unwrap()
@@ -2512,7 +2565,10 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("终端 96x28", MenuCommand::ResizeDefault),
             ("终端 120x36", MenuCommand::ResizeWide),
         ],
-        MenuKind::Transfer => &[("SFTP", MenuCommand::Sftp)],
+        MenuKind::Transfer => &[
+            ("SFTP", MenuCommand::Sftp),
+            ("端口转发", MenuCommand::Tunnels),
+        ],
         MenuKind::Script => &[("日志/脚本", MenuCommand::Logging)],
         MenuKind::Tools => &[
             ("清屏", MenuCommand::ClearTerminal),
@@ -2557,6 +2613,7 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             tool_button("↺", Message::OpenSelectedProfile),
             tool_button("⌫", Message::ClearActiveTerminal),
             tool_button("⇅", Message::RunMenu(MenuCommand::Sftp)),
+            tool_button("⇄", Message::OpenTunnels),
             tool_separator(),
             text_input("Enter host <Alt+R>", &app.profile_host)
                 .on_input(Message::ProfileHostChanged)
@@ -2796,6 +2853,235 @@ fn host_key_dialog_overlay(
         .center(Fill)
         .style(|_theme| dialog_scrim_style())
         .into()
+}
+
+fn add_tunnel(app: &mut AditApp) {
+    let bind_port: u16 = match app.tunnel_bind_port.trim().parse() {
+        Ok(port) if port > 0 => port,
+        _ => {
+            app.last_error = Some(String::from("请输入有效的本地端口"));
+            return;
+        }
+    };
+    let (target_host, target_port) = match app.tunnel_kind {
+        TunnelKind::Local => {
+            let host = app.tunnel_target_host.trim().to_string();
+            if host.is_empty() {
+                app.last_error = Some(String::from("本地转发需要填写目标主机"));
+                return;
+            }
+            match app.tunnel_target_port.trim().parse::<u16>() {
+                Ok(port) if port > 0 => (host, port),
+                _ => {
+                    app.last_error = Some(String::from("请输入有效的目标端口"));
+                    return;
+                }
+            }
+        }
+        TunnelKind::Dynamic => (String::new(), 0),
+    };
+
+    match app.manager.open_tunnel(
+        app.tunnel_kind,
+        app.tunnel_bind_addr.trim().to_string(),
+        bind_port,
+        target_host,
+        target_port,
+    ) {
+        Ok(()) => {
+            app.last_error = None;
+            app.notice = String::from("已创建端口转发");
+            app.tunnel_bind_port.clear();
+            app.tunnel_target_host.clear();
+            app.tunnel_target_port.clear();
+        }
+        Err(error) => app.last_error = Some(format!("端口转发失败: {error}")),
+    }
+}
+
+fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
+    let endpoint = app
+        .manager
+        .active_session_summary()
+        .map(|summary| summary.endpoint)
+        .unwrap_or_default();
+
+    let header = row![
+        text("端口转发").size(15).color(primary_text()),
+        text(endpoint).size(11).color(muted_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseTunnels),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let kind_row = row![
+        text("类型").size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        tunnel_kind_button("本地转发 -L", TunnelKind::Local, app.tunnel_kind),
+        tunnel_kind_button("动态 SOCKS -D", TunnelKind::Dynamic, app.tunnel_kind),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let hint = match app.tunnel_kind {
+        TunnelKind::Local => "本机端口 → 经 SSH 服务器 → 目标地址（访问服务器能到达的内网服务）",
+        TunnelKind::Dynamic => "本机启动 SOCKS5 代理，应用挂上后所有流量走服务器出口",
+    };
+
+    let bind_row = row![
+        text("本地").size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        text_input("127.0.0.1", &app.tunnel_bind_addr)
+            .on_input(Message::TunnelBindAddrChanged)
+            .padding([4, 8])
+            .style(text_input_style)
+            .width(Length::Fixed(150.0)),
+        text(":").size(12).color(muted_text()),
+        text_input("端口", &app.tunnel_bind_port)
+            .on_input(Message::TunnelBindPortChanged)
+            .on_submit(Message::AddTunnel)
+            .padding([4, 8])
+            .style(text_input_style)
+            .width(Length::Fixed(90.0)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let mut form = column![kind_row, text(hint).size(10).color(muted_text()), bind_row].spacing(8);
+
+    if app.tunnel_kind == TunnelKind::Local {
+        form = form.push(
+            row![
+                text("目标").size(12).color(muted_text()).width(Length::Fixed(52.0)),
+                text_input("目标主机（如 10.0.0.5）", &app.tunnel_target_host)
+                    .on_input(Message::TunnelTargetHostChanged)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Fill),
+                text(":").size(12).color(muted_text()),
+                text_input("端口", &app.tunnel_target_port)
+                    .on_input(Message::TunnelTargetPortChanged)
+                    .on_submit(Message::AddTunnel)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Length::Fixed(90.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+
+    form = form.push(
+        row![
+            Space::new().width(Fill),
+            button(text("添加转发").size(12))
+                .padding([5, 16])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::AddTunnel),
+        ]
+        .align_y(Alignment::Center),
+    );
+
+    let tunnels = app.manager.tunnels();
+    let mut list = column![].spacing(2);
+    if tunnels.is_empty() {
+        list = list.push(text("（暂无转发）").size(11).color(muted_text()));
+    } else {
+        for tunnel in tunnels {
+            list = list.push(tunnel_row(tunnel));
+        }
+    }
+
+    let content = column![
+        header,
+        container(form)
+            .padding(12)
+            .width(Fill)
+            .style(|_theme| sftp_pane_style()),
+        text("活动转发").size(12).color(primary_text()),
+        container(scrollable(list).height(Fill))
+            .height(Fill)
+            .padding(6)
+            .style(|_theme| sftp_list_inner_style()),
+    ]
+    .spacing(12);
+
+    let panel = container(content)
+        .width(Fill)
+        .height(Fill)
+        .padding(16)
+        .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .padding(48)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+fn tunnel_kind_button(
+    label: &'static str,
+    kind: TunnelKind,
+    current: TunnelKind,
+) -> Element<'static, Message> {
+    let selected = kind == current;
+    button(text(label).size(12))
+        .padding([5, 14])
+        .style(move |_theme, status| {
+            if selected {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::TunnelKindChanged(kind))
+        .into()
+}
+
+fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
+    let kind = match tunnel.kind {
+        TunnelKind::Local => "L",
+        TunnelKind::Dynamic => "D",
+    };
+    let route = match tunnel.kind {
+        TunnelKind::Local => format!("{} → {}", tunnel.bind, tunnel.target),
+        TunnelKind::Dynamic => format!("{}  (SOCKS5)", tunnel.bind),
+    };
+    let status_color = if tunnel.error.is_some() {
+        danger()
+    } else if tunnel.listening {
+        Color::from_rgb8(34, 197, 94)
+    } else {
+        muted_text()
+    };
+
+    container(
+        row![
+            text(kind).size(11).color(accent()).width(Length::Fixed(18.0)),
+            text(route).size(12).color(primary_text()).width(Fill),
+            text(format!("活动 {}", tunnel.active))
+                .size(10)
+                .color(muted_text())
+                .width(Length::Fixed(60.0)),
+            text(tunnel.status.clone())
+                .size(10)
+                .color(status_color)
+                .width(Length::Fixed(190.0)),
+            button(text("关闭").size(11))
+                .padding([3, 10])
+                .style(|_theme, status| close_button_style(status))
+                .on_press(Message::CloseTunnel(tunnel.id)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([4, 8])
+    .into()
 }
 
 fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
