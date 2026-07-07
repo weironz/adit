@@ -661,9 +661,11 @@ impl SessionManager {
                 (live, endpoint, terminal, None)
             }
             Protocol::Rdp => {
+                // RDP is launched externally (see `launch_rdp`); it never opens a
+                // terminal session.
                 return Err(SessionError::Unsupported(String::from(
-                    "RDP 协议尚未实现",
-                )))
+                    "RDP 通过系统远程桌面客户端连接",
+                )));
             }
         };
 
@@ -698,6 +700,49 @@ impl SessionManager {
         if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.protocol = protocol;
         }
+    }
+
+    /// Launch an RDP profile in the system Remote Desktop client (mstsc). RDP is
+    /// graphical, so it opens externally rather than in a terminal tab. Returns
+    /// the endpoint that was launched.
+    pub fn launch_rdp(&self, profile_id: ProfileId) -> Result<String, SessionError> {
+        let profile = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .ok_or(SessionError::ProfileNotFound)?;
+
+        let host = profile.host.trim();
+        if host.is_empty() {
+            return Err(SessionError::Unsupported(String::from("请填写 RDP 主机")));
+        }
+        // Port 0/22 means "unset for RDP" → the default RDP port.
+        let port = if profile.port == 0 || profile.port == 22 {
+            3389
+        } else {
+            profile.port
+        };
+        let endpoint = format!("{host}:{port}");
+
+        // A generated .rdp file lets us prefill the address and username;
+        // mstsc still prompts for the password (it is never passed on the CLI).
+        let mut contents = format!(
+            "full address:s:{endpoint}\r\nprompt for credentials:i:1\r\n"
+        );
+        if !profile.username.trim().is_empty() {
+            contents.push_str(&format!("username:s:{}\r\n", profile.username.trim()));
+        }
+
+        let file = std::env::temp_dir().join(format!("adit-rdp-{}.rdp", sanitize_file(host)));
+        std::fs::write(&file, contents)
+            .map_err(|error| SessionError::Unsupported(format!("写入 RDP 文件失败: {error}")))?;
+
+        std::process::Command::new("mstsc.exe")
+            .arg(&file)
+            .spawn()
+            .map_err(|error| SessionError::Unsupported(format!("启动 mstsc 失败: {error}")))?;
+
+        Ok(endpoint)
     }
 
     pub fn build_ssh_probe_session(
@@ -1767,6 +1812,14 @@ fn build_profile(
 }
 
 /// Join a POSIX remote path component onto the current directory.
+/// Keep only filename-safe characters (for the generated .rdp temp file name).
+fn sanitize_file(input: &str) -> String {
+    input
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
+}
+
 fn join_remote(cwd: &str, name: &str) -> String {
     if name.starts_with('/') {
         return name.to_string();

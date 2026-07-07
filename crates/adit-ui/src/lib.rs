@@ -1102,6 +1102,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileProtocolChanged(protocol) => {
             app.terminal_focused = false;
+            // Nudge the port to a sensible default when moving to/from RDP.
+            let port = app.profile_port.trim();
+            if protocol == Protocol::Rdp && (port.is_empty() || port == "22") {
+                app.profile_port = String::from("3389");
+            } else if protocol == Protocol::Ssh && port == "3389" {
+                app.profile_port = String::from("22");
+            }
             app.profile_protocol = protocol;
         }
         Message::ProfileIdentityFileChanged(value) => {
@@ -1833,6 +1840,18 @@ fn connect_profile(app: &mut AditApp) {
         return;
     };
 
+    // RDP is graphical — it opens in the system client, not a terminal tab.
+    if profile.protocol == Protocol::Rdp {
+        match app.manager.launch_rdp(profile_id) {
+            Ok(endpoint) => {
+                app.last_error = None;
+                app.notice = format!("已调起远程桌面 (mstsc): {endpoint}");
+            }
+            Err(error) => app.last_error = Some(error.to_string()),
+        }
+        return;
+    }
+
     // Non-SSH terminal protocols (local shell, serial) need no credential.
     let password = if profile.protocol == Protocol::Ssh {
         let stored = app
@@ -1888,6 +1907,13 @@ fn open_connection_dialog(app: &mut AditApp) {
         app.last_error = Some(String::from("请选择要连接的会话配置"));
         return;
     };
+
+    // Only SSH uses the password dialog; other protocols connect directly (or
+    // launch externally, for RDP).
+    if profile.protocol != Protocol::Ssh {
+        connect_profile(app);
+        return;
+    }
 
     let endpoint = profile.endpoint();
     app.connection_dialog = Some(ConnectionDialog {
@@ -5013,11 +5039,47 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 ));
         }
         Protocol::Rdp => {
-            form = form.push(
-                text("RDP 尚未实现，下一步支持。")
-                    .size(12)
-                    .color(muted_text()),
-            );
+            form = form
+                .push(
+                    row![
+                        container(dialog_field(
+                            "主机",
+                            text_input("10.0.0.5", &app.profile_host)
+                                .on_input(Message::ProfileHostChanged)
+                                .on_submit(Message::ConnectSelectedProfile)
+                                .padding([5, 8])
+                                .style(text_input_style)
+                                .width(Fill)
+                                .into(),
+                        ))
+                        .width(Length::FillPortion(2)),
+                        container(dialog_field(
+                            "端口",
+                            text_input("3389", &app.profile_port)
+                                .on_input(Message::ProfilePortChanged)
+                                .padding([5, 8])
+                                .style(text_input_style)
+                                .width(Fill)
+                                .into(),
+                        ))
+                        .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(10),
+                )
+                .push(dialog_field(
+                    "用户名",
+                    text_input("Administrator", &app.profile_username)
+                        .on_input(Message::ProfileUsernameChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .push(
+                    text("连接时调起系统远程桌面 (mstsc)；密码在 mstsc 中输入。")
+                        .size(11)
+                        .color(muted_text()),
+                );
         }
     }
 
