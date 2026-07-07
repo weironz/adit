@@ -180,6 +180,16 @@ pub struct AppSettings {
     pub sidebar_width: f32,
     #[serde(default = "default_sidebar_visible")]
     pub sidebar_visible: bool,
+    /// Terminal font family (a display name from the UI's preset list, or empty
+    /// for the system monospace default).
+    #[serde(default)]
+    pub font_family: String,
+    #[serde(default = "default_font_size")]
+    pub font_size: f32,
+    /// Terminal color scheme name (from the UI's built-in list; empty/unknown
+    /// falls back to the default palette).
+    #[serde(default)]
+    pub color_scheme: String,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -194,6 +204,10 @@ fn default_sidebar_visible() -> bool {
     true
 }
 
+fn default_font_size() -> f32 {
+    13.0
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -205,6 +219,9 @@ impl Default for AppSettings {
             auto_reconnect: true,
             sidebar_width: default_sidebar_width(),
             sidebar_visible: default_sidebar_visible(),
+            font_family: String::new(),
+            font_size: default_font_size(),
+            color_scheme: String::new(),
         }
     }
 }
@@ -439,6 +456,9 @@ mod tests {
             auto_reconnect: false,
             sidebar_width: 300.0,
             sidebar_visible: false,
+            font_family: String::from("Consolas"),
+            font_size: 15.0,
+            color_scheme: String::from("Dracula"),
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

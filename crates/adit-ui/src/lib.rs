@@ -18,7 +18,7 @@ use iced::{
     clipboard, event, mouse, window, Alignment, Background, Border, Color, Element, Fill, Font,
     Length, Point, Shadow, Subscription, Task, Theme, Vector,
 };
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
 use std::time::Instant;
 
 /// Which SFTP pane a row belongs to.
@@ -40,6 +40,13 @@ pub enum SftpSortKey {
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
 static DARK_MODE: AtomicBool = AtomicBool::new(false);
+
+/// Terminal appearance, set once per frame at the top of `view` (like
+/// [`DARK_MODE`]) so the deep terminal render/hit-test/color fns can read the
+/// active font + palette without threading them through every call.
+static TERM_FONT: AtomicU8 = AtomicU8::new(0);
+static TERM_FONT_SIZE: AtomicU32 = AtomicU32::new(13);
+static TERM_SCHEME: AtomicU8 = AtomicU8::new(0);
 
 fn is_dark() -> bool {
     DARK_MODE.load(Ordering::Relaxed)
@@ -116,6 +123,11 @@ pub struct AditApp {
     cursor_pos: Point,
     context_menu_pos: Point,
     dark_mode: bool,
+    font_family: String,
+    font_size: f32,
+    color_scheme: String,
+    appearance_open: bool,
+    broadcast_input: bool,
     settings_store: SettingsStore,
     /// The last settings snapshot written to disk; the Tick loop persists when
     /// the live config drifts from this.
@@ -153,6 +165,8 @@ pub enum MenuCommand {
     Tunnels,
     Logging,
     ToggleAutoReconnect,
+    Appearance,
+    ToggleBroadcast,
     About,
 }
 
@@ -161,6 +175,12 @@ pub enum Message {
     Tick,
     ToggleMenu(MenuKind),
     ToggleTheme,
+    OpenAppearance,
+    CloseAppearance,
+    FontFamilyChanged(u8),
+    FontSizeStep(i32),
+    ColorSchemeChanged(u8),
+    ToggleBroadcast,
     RunMenu(MenuCommand),
     SelectProfile(ProfileId),
     ProfilePressed(ProfileId),
@@ -319,8 +339,254 @@ enum TerminalScrollAction {
     Bottom,
 }
 
-const TERMINAL_CHAR_WIDTH: f32 = 7.8;
-const TERMINAL_ROW_HEIGHT: f32 = 17.0;
+// Monospace cell metrics derive from the active font size so changing the size
+// rescales the whole grid consistently (render, hit-testing, and size
+// estimation all read the same two fns). Ratios chosen so size 13 reproduces
+// the previous fixed 7.8 x 17.0 cell.
+const CELL_WIDTH_RATIO: f32 = 0.6;
+const CELL_HEIGHT_RATIO: f32 = 1.308;
+const MIN_FONT_SIZE: u32 = 9;
+const MAX_FONT_SIZE: u32 = 28;
+
+/// Active terminal font size in px (the value set on [`TERM_FONT_SIZE`]).
+fn term_font_size() -> f32 {
+    TERM_FONT_SIZE.load(Ordering::Relaxed) as f32
+}
+
+/// Width of one monospace cell at the active font size.
+fn cell_width() -> f32 {
+    term_font_size() * CELL_WIDTH_RATIO
+}
+
+/// Height of one terminal row at the active font size.
+fn cell_height() -> f32 {
+    term_font_size() * CELL_HEIGHT_RATIO
+}
+
+/// Selectable terminal fonts. The first is the system monospace default; the
+/// rest are common Windows monospace families resolved by name (a missing
+/// family falls back through cosmic-text, never a hard error).
+const FONT_PRESETS: &[(&str, Option<&'static str>)] = &[
+    ("系统等宽", None),
+    ("Consolas", Some("Consolas")),
+    ("Cascadia Mono", Some("Cascadia Mono")),
+    ("Cascadia Code", Some("Cascadia Code")),
+    ("Courier New", Some("Courier New")),
+    ("Lucida Console", Some("Lucida Console")),
+];
+
+/// The base terminal font (family only; per-cell weight is layered on top).
+fn term_font() -> Font {
+    let idx = TERM_FONT.load(Ordering::Relaxed) as usize;
+    match FONT_PRESETS.get(idx).and_then(|(_, family)| *family) {
+        Some(name) => Font::with_name(name),
+        None => Font::MONOSPACE,
+    }
+}
+
+/// Preset index for a persisted font-family display name (0 = system default).
+fn font_preset_index(name: &str) -> u8 {
+    FONT_PRESETS
+        .iter()
+        .position(|(display, _)| *display == name)
+        .unwrap_or(0) as u8
+}
+
+/// A terminal color scheme: window background/foreground, selection highlight,
+/// and the 16 ANSI colors (indices 16..=255 use the standard xterm cube/ramp).
+struct ColorScheme {
+    name: &'static str,
+    background: (u8, u8, u8),
+    foreground: (u8, u8, u8),
+    selection: (u8, u8, u8),
+    ansi: [(u8, u8, u8); 16],
+}
+
+const COLOR_SCHEMES: &[ColorScheme] = &[
+    ColorScheme {
+        name: "默认",
+        background: (20, 21, 28),
+        foreground: (220, 226, 235),
+        selection: (22, 92, 84),
+        ansi: [
+            (0, 0, 0),
+            (205, 0, 0),
+            (0, 205, 0),
+            (205, 205, 0),
+            (0, 0, 238),
+            (205, 0, 205),
+            (0, 205, 205),
+            (229, 229, 229),
+            (127, 127, 127),
+            (255, 0, 0),
+            (0, 255, 0),
+            (255, 255, 0),
+            (92, 92, 255),
+            (255, 0, 255),
+            (0, 255, 255),
+            (255, 255, 255),
+        ],
+    },
+    ColorScheme {
+        name: "Dracula",
+        background: (40, 42, 54),
+        foreground: (248, 248, 242),
+        selection: (68, 71, 90),
+        ansi: [
+            (33, 34, 44),
+            (255, 85, 85),
+            (80, 250, 123),
+            (241, 250, 140),
+            (189, 147, 249),
+            (255, 121, 198),
+            (139, 233, 253),
+            (248, 248, 242),
+            (98, 114, 164),
+            (255, 110, 110),
+            (105, 255, 148),
+            (255, 255, 165),
+            (214, 172, 255),
+            (255, 146, 223),
+            (164, 255, 255),
+            (255, 255, 255),
+        ],
+    },
+    ColorScheme {
+        name: "One Dark",
+        background: (40, 44, 52),
+        foreground: (171, 178, 191),
+        selection: (62, 68, 81),
+        ansi: [
+            (40, 44, 52),
+            (224, 108, 117),
+            (152, 195, 121),
+            (229, 192, 123),
+            (97, 175, 239),
+            (198, 120, 221),
+            (86, 182, 194),
+            (171, 178, 191),
+            (92, 99, 112),
+            (224, 108, 117),
+            (152, 195, 121),
+            (229, 192, 123),
+            (97, 175, 239),
+            (198, 120, 221),
+            (86, 182, 194),
+            (255, 255, 255),
+        ],
+    },
+    ColorScheme {
+        name: "Nord",
+        background: (46, 52, 64),
+        foreground: (216, 222, 233),
+        selection: (67, 76, 94),
+        ansi: [
+            (59, 66, 82),
+            (191, 97, 106),
+            (163, 190, 140),
+            (235, 203, 139),
+            (129, 161, 193),
+            (180, 142, 173),
+            (136, 192, 208),
+            (229, 233, 240),
+            (76, 86, 106),
+            (191, 97, 106),
+            (163, 190, 140),
+            (235, 203, 139),
+            (129, 161, 193),
+            (180, 142, 173),
+            (143, 188, 187),
+            (236, 239, 244),
+        ],
+    },
+    ColorScheme {
+        name: "Gruvbox Dark",
+        background: (40, 40, 40),
+        foreground: (235, 219, 178),
+        selection: (80, 73, 69),
+        ansi: [
+            (40, 40, 40),
+            (204, 36, 29),
+            (152, 151, 26),
+            (215, 153, 33),
+            (69, 133, 136),
+            (177, 98, 134),
+            (104, 157, 106),
+            (168, 153, 132),
+            (146, 131, 116),
+            (251, 73, 52),
+            (184, 187, 38),
+            (250, 189, 47),
+            (131, 165, 152),
+            (211, 134, 155),
+            (142, 192, 124),
+            (235, 219, 178),
+        ],
+    },
+    ColorScheme {
+        name: "Solarized Dark",
+        background: (0, 43, 54),
+        foreground: (131, 148, 150),
+        selection: (7, 54, 66),
+        ansi: [
+            (7, 54, 66),
+            (220, 50, 47),
+            (133, 153, 0),
+            (181, 137, 0),
+            (38, 139, 210),
+            (211, 54, 130),
+            (42, 161, 152),
+            (238, 232, 213),
+            (0, 43, 54),
+            (203, 75, 22),
+            (88, 110, 117),
+            (101, 123, 131),
+            (131, 148, 150),
+            (108, 113, 196),
+            (147, 161, 161),
+            (253, 246, 227),
+        ],
+    },
+    ColorScheme {
+        name: "Solarized Light",
+        background: (253, 246, 227),
+        foreground: (101, 123, 131),
+        selection: (238, 232, 213),
+        ansi: [
+            (7, 54, 66),
+            (220, 50, 47),
+            (133, 153, 0),
+            (181, 137, 0),
+            (38, 139, 210),
+            (211, 54, 130),
+            (42, 161, 152),
+            (238, 232, 213),
+            (0, 43, 54),
+            (203, 75, 22),
+            (88, 110, 117),
+            (101, 123, 131),
+            (131, 148, 150),
+            (108, 113, 196),
+            (147, 161, 161),
+            (253, 246, 227),
+        ],
+    },
+];
+
+/// The active color scheme (defaults to the first if the index is stale).
+fn active_scheme() -> &'static ColorScheme {
+    let idx = TERM_SCHEME.load(Ordering::Relaxed) as usize;
+    &COLOR_SCHEMES[idx.min(COLOR_SCHEMES.len() - 1)]
+}
+
+/// Scheme index for a persisted scheme name (0 = default palette).
+fn color_scheme_index(name: &str) -> u8 {
+    COLOR_SCHEMES
+        .iter()
+        .position(|scheme| scheme.name == name)
+        .unwrap_or(0) as u8
+}
+
 const SIDEBAR_MIN_WIDTH: f32 = 220.0;
 const SIDEBAR_MAX_WIDTH: f32 = 640.0;
 const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
@@ -415,6 +681,9 @@ impl AditApp {
             .sidebar_width
             .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
         let sidebar_visible = settings.sidebar_visible;
+        let font_family = settings.font_family;
+        let font_size = settings.font_size.clamp(MIN_FONT_SIZE as f32, MAX_FONT_SIZE as f32);
+        let color_scheme = settings.color_scheme;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -429,6 +698,9 @@ impl AditApp {
             auto_reconnect,
             sidebar_width: settings.sidebar_width,
             sidebar_visible,
+            font_family: font_family.clone(),
+            font_size,
+            color_scheme: color_scheme.clone(),
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -502,6 +774,11 @@ impl AditApp {
             cursor_pos: Point::ORIGIN,
             context_menu_pos: Point::ORIGIN,
             dark_mode,
+            font_family,
+            font_size,
+            color_scheme,
+            appearance_open: false,
+            broadcast_input: false,
             settings_store,
             persisted_settings,
             last_error: load_error,
@@ -642,6 +919,39 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from("已切换到深色主题")
             } else {
                 String::from("已切换到浅色主题")
+            };
+        }
+        Message::OpenAppearance => {
+            app.appearance_open = true;
+            app.active_menu = None;
+        }
+        Message::CloseAppearance => {
+            app.appearance_open = false;
+        }
+        Message::FontFamilyChanged(index) => {
+            if let Some((name, _)) = FONT_PRESETS.get(index as usize) {
+                app.font_family = (*name).to_string();
+            }
+            // Font metrics feed the grid size, so re-fit cols/rows.
+            sync_terminal_size(app);
+        }
+        Message::FontSizeStep(delta) => {
+            let next = (app.font_size as i32 + delta)
+                .clamp(MIN_FONT_SIZE as i32, MAX_FONT_SIZE as i32);
+            app.font_size = next as f32;
+            sync_terminal_size(app);
+        }
+        Message::ColorSchemeChanged(index) => {
+            if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
+                app.color_scheme = scheme.name.to_string();
+            }
+        }
+        Message::ToggleBroadcast => {
+            app.broadcast_input = !app.broadcast_input;
+            app.notice = if app.broadcast_input {
+                String::from("输入广播已开启：键盘输入将同时发往所有已连接会话")
+            } else {
+                String::from("输入广播已关闭")
             };
         }
         Message::RunMenu(command) => {
@@ -1370,6 +1680,15 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
                 String::from("自动重连已开启")
             } else {
                 String::from("自动重连已关闭")
+            };
+        }
+        MenuCommand::Appearance => app.appearance_open = true,
+        MenuCommand::ToggleBroadcast => {
+            app.broadcast_input = !app.broadcast_input;
+            app.notice = if app.broadcast_input {
+                String::from("输入广播已开启：键盘输入将同时发往所有已连接会话")
+            } else {
+                String::from("输入广播已关闭")
             };
         }
         MenuCommand::About => app.about_open = true,
@@ -2214,7 +2533,7 @@ fn apply_terminal_scroll(app: &mut AditApp, action: TerminalScrollAction) {
 fn scroll_delta_to_rows(delta: mouse::ScrollDelta) -> Option<i32> {
     let raw = match delta {
         mouse::ScrollDelta::Lines { y, .. } => y * 3.0,
-        mouse::ScrollDelta::Pixels { y, .. } => y / TERMINAL_ROW_HEIGHT,
+        mouse::ScrollDelta::Pixels { y, .. } => y / cell_height(),
     };
 
     if raw.abs() < f32::EPSILON {
@@ -2318,12 +2637,8 @@ fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
     let origin_x = TERMINAL_PANEL_PADDING;
     let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP;
 
-    let col = ((point.x - origin_x) / TERMINAL_CHAR_WIDTH)
-        .floor()
-        .max(0.0) as usize;
-    let row = ((point.y - origin_y) / TERMINAL_ROW_HEIGHT)
-        .floor()
-        .max(0.0) as usize;
+    let col = ((point.x - origin_x) / cell_width()).floor().max(0.0) as usize;
+    let row = ((point.y - origin_y) / cell_height()).floor().max(0.0) as usize;
 
     TerminalPoint {
         row: row.min(usize::from(app.terminal_size.rows.saturating_sub(1))),
@@ -2503,10 +2818,10 @@ fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> Termi
         - COMMAND_BAR_HEIGHT
         - TERMINAL_VERTICAL_CHROME;
 
-    let cols = (available_width / TERMINAL_CHAR_WIDTH)
+    let cols = (available_width / cell_width())
         .floor()
         .clamp(40.0, 220.0) as u16;
-    let rows = (available_height / TERMINAL_ROW_HEIGHT)
+    let rows = (available_height / cell_height())
         .floor()
         .clamp(12.0, 80.0) as u16;
 
@@ -2544,6 +2859,9 @@ fn current_settings(app: &AditApp) -> AppSettings {
         auto_reconnect: app.manager.auto_reconnect(),
         sidebar_width: app.sidebar_width,
         sidebar_visible: app.sidebar_visible,
+        font_family: app.font_family.clone(),
+        font_size: app.font_size,
+        color_scheme: app.color_scheme.clone(),
     }
 }
 
@@ -2587,6 +2905,12 @@ fn sync_sftp_state(app: &mut AditApp) {
 
 fn view(app: &AditApp) -> Element<'_, Message> {
     DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
+    TERM_FONT.store(font_preset_index(&app.font_family), Ordering::Relaxed);
+    TERM_FONT_SIZE.store(
+        (app.font_size as u32).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE),
+        Ordering::Relaxed,
+    );
+    TERM_SCHEME.store(color_scheme_index(&app.color_scheme), Ordering::Relaxed);
 
     let main = if app.sidebar_visible {
         row![sidebar(app), sidebar_divider(), workspace(app)]
@@ -2638,6 +2962,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if app.about_open {
         layers.push(opaque(about_dialog_overlay()));
+    }
+    if app.appearance_open {
+        layers.push(opaque(appearance_dialog_overlay(app)));
     }
 
     if layers.len() == 1 {
@@ -2735,6 +3062,8 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
         ],
         MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
         MenuKind::View => &[
+            ("外观设置…", MenuCommand::Appearance),
+            ("输入广播开关", MenuCommand::ToggleBroadcast),
             ("终端 96x28", MenuCommand::ResizeDefault),
             ("终端 120x36", MenuCommand::ResizeWide),
         ],
@@ -3132,6 +3461,194 @@ fn about_dialog_overlay() -> Element<'static, Message> {
         .spacing(12),
     )
     .width(Length::Fixed(380.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// A single font-family choice button (label rendered in that very font).
+fn appearance_font_button(index: usize, current: u8) -> Element<'static, Message> {
+    let (label, family) = FONT_PRESETS[index];
+    let selected = index as u8 == current;
+    let font = match family {
+        Some(name) => Font::with_name(name),
+        None => Font::MONOSPACE,
+    };
+    button(text(label).size(12).font(font))
+        .padding([5, 10])
+        .width(Length::Fixed(134.0))
+        .style(move |_theme, status| {
+            if selected {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::FontFamilyChanged(index as u8))
+        .into()
+}
+
+/// A color-scheme choice button: a background swatch plus the scheme name.
+fn appearance_scheme_button(index: usize, current: u8) -> Element<'static, Message> {
+    let scheme = &COLOR_SCHEMES[index];
+    let selected = index as u8 == current;
+    let (br, bg, bb) = scheme.background;
+    let (fr, fg, fb) = scheme.ansi[2];
+    let swatch = container(Space::new())
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(br, bg, bb))),
+            border: Border {
+                color: Color::from_rgb8(fr, fg, fb),
+                width: 1.5,
+                radius: 3.0.into(),
+            },
+            ..container::Style::default()
+        });
+    button(
+        row![swatch, text(scheme.name).size(12)]
+            .spacing(8)
+            .align_y(Alignment::Center),
+    )
+    .padding([5, 10])
+    .width(Length::Fixed(150.0))
+    .style(move |_theme, status| {
+        if selected {
+            primary_button_style(status)
+        } else {
+            secondary_button_style(status)
+        }
+    })
+    .on_press(Message::ColorSchemeChanged(index as u8))
+    .into()
+}
+
+/// Chunk a flat list of built widgets into rows of `per_row`.
+fn wrap_rows(mut buttons: Vec<Element<'static, Message>>, per_row: usize) -> Element<'static, Message> {
+    let mut rows = column![].spacing(8);
+    while !buttons.is_empty() {
+        let take = buttons.len().min(per_row);
+        let mut r = row![].spacing(8);
+        for element in buttons.drain(0..take) {
+            r = r.push(element);
+        }
+        rows = rows.push(r);
+    }
+    rows.into()
+}
+
+fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let current_font = font_preset_index(&app.font_family);
+    let current_scheme = color_scheme_index(&app.color_scheme);
+    let size = app.font_size as i32;
+
+    let font_buttons: Vec<Element<'static, Message>> = (0..FONT_PRESETS.len())
+        .map(|i| appearance_font_button(i, current_font))
+        .collect();
+    let scheme_buttons: Vec<Element<'static, Message>> = (0..COLOR_SCHEMES.len())
+        .map(|i| appearance_scheme_button(i, current_scheme))
+        .collect();
+
+    let size_row = row![
+        text("字号")
+            .size(12)
+            .color(muted_text())
+            .width(Length::Fixed(52.0)),
+        button(text("−").size(15))
+            .width(Length::Fixed(32.0))
+            .padding([2, 0])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::FontSizeStep(-1)),
+        container(text(format!("{size} px")).size(13).color(primary_text()))
+            .width(Length::Fixed(56.0))
+            .center_x(Length::Fixed(56.0)),
+        button(text("＋").size(15))
+            .width(Length::Fixed(32.0))
+            .padding([2, 0])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::FontSizeStep(1)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    // Live preview — the static appearance is already set for this frame, so the
+    // sample renders in exactly the chosen font + palette.
+    let swatches = (0..16).fold(row![].spacing(2), |r, i| {
+        r.push(
+            container(Space::new())
+                .width(Length::Fixed(13.0))
+                .height(Length::Fixed(13.0))
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(palette_color(i))),
+                    border: Border {
+                        radius: 2.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                }),
+        )
+    });
+    let preview = container(
+        column![
+            text("adit@host:~/project$  ls -la  AaBbCc 0123")
+                .size(term_font_size())
+                .font(term_font())
+                .color(default_foreground()),
+            swatches,
+        ]
+        .spacing(8),
+    )
+    .width(Fill)
+    .padding(12)
+    .style(|_theme| container::Style {
+        background: Some(Background::Color(terminal_background())),
+        border: Border {
+            color: border_color(),
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..container::Style::default()
+    });
+
+    let card = container(
+        column![
+            row![
+                text("外观设置").size(18).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseAppearance),
+            ]
+            .align_y(Alignment::Center),
+            text("字体").size(12).color(muted_text()),
+            wrap_rows(font_buttons, 3),
+            size_row,
+            text("配色方案").size(12).color(muted_text()),
+            wrap_rows(scheme_buttons, 3),
+            text("预览").size(12).color(muted_text()),
+            preview,
+            row![
+                Space::new().width(Fill),
+                button(text("完成").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::CloseAppearance),
+            ],
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(520.0))
     .padding(20)
     .style(|_theme| connection_dialog_style());
 
@@ -5288,15 +5805,21 @@ fn terminal_line(
     row_index: usize,
     selection: Option<TerminalSelection>,
 ) -> Element<'static, Message> {
+    let font_size = term_font_size();
+    let base_font = term_font();
+    let cell_w = cell_width();
+    let cell_h = cell_height();
+
     if line.cells.is_empty() {
         // Preserve the exact row height of a visually blank terminal line.
-        return container(text(" ").size(13).font(Font::MONOSPACE))
-            .height(Length::Fixed(TERMINAL_ROW_HEIGHT))
+        return container(text(" ").size(font_size).font(base_font))
+            .height(Length::Fixed(cell_h))
             .into();
     }
 
     let selected_range =
         selection.and_then(|selection| selection_range_for_row(selection, row_index));
+    let selected_fg = selection_foreground();
     let mut col = 0_usize;
     let mut row_widget = row![].spacing(0);
 
@@ -5308,16 +5831,15 @@ fn terminal_line(
             } else {
                 Weight::Normal
             },
-            ..Font::MONOSPACE
+            ..base_font
         };
 
         for ch in cell.text.chars() {
             let selected = selected_range.is_some_and(|range| col >= range.0 && col < range.1);
-            let label = text(ch.to_string()).size(13).font(font).color(if selected {
-                Color::from_rgb8(245, 249, 255)
-            } else {
-                fg
-            });
+            let label = text(ch.to_string())
+                .size(font_size)
+                .font(font)
+                .color(if selected { selected_fg } else { fg });
 
             let background = if selected {
                 Some(selection_background())
@@ -5332,8 +5854,8 @@ fn terminal_line(
             // pixel→cell hit-testing used for selection (no drift).
             row_widget = row_widget.push(
                 container(label)
-                    .width(Length::Fixed(TERMINAL_CHAR_WIDTH))
-                    .height(Length::Fixed(TERMINAL_ROW_HEIGHT))
+                    .width(Length::Fixed(cell_w))
+                    .height(Length::Fixed(cell_h))
                     .style(move |_theme| container::Style {
                         background: background.map(Background::Color),
                         ..container::Style::default()
@@ -5347,8 +5869,21 @@ fn terminal_line(
     row_widget.into()
 }
 
+/// Text color for selected cells: dark on a light selection highlight, light on
+/// a dark one, so selected glyphs stay legible across every scheme.
+fn selection_foreground() -> Color {
+    let (r, g, b) = active_scheme().selection;
+    let luminance = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
+    if luminance > 140.0 {
+        Color::from_rgb8(20, 22, 28)
+    } else {
+        Color::from_rgb8(245, 249, 255)
+    }
+}
+
 fn default_foreground() -> Color {
-    Color::from_rgb8(220, 226, 235)
+    let (r, g, b) = active_scheme().foreground;
+    Color::from_rgb8(r, g, b)
 }
 
 /// Resolve an Adit terminal color into a concrete iced color, using `fallback`
@@ -5364,28 +5899,9 @@ fn term_color(color: TermColor, fallback: Color) -> Color {
 /// The standard xterm 256-color palette: 16 named colors, a 6x6x6 RGB cube, and
 /// a 24-step grayscale ramp.
 fn palette_color(index: u8) -> Color {
-    const NAMED: [(u8, u8, u8); 16] = [
-        (0, 0, 0),
-        (205, 0, 0),
-        (0, 205, 0),
-        (205, 205, 0),
-        (0, 0, 238),
-        (205, 0, 205),
-        (0, 205, 205),
-        (229, 229, 229),
-        (127, 127, 127),
-        (255, 0, 0),
-        (0, 255, 0),
-        (255, 255, 0),
-        (92, 92, 255),
-        (255, 0, 255),
-        (0, 255, 255),
-        (255, 255, 255),
-    ];
-
     match index {
         0..=15 => {
-            let (r, g, b) = NAMED[index as usize];
+            let (r, g, b) = active_scheme().ansi[index as usize];
             Color::from_rgb8(r, g, b)
         }
         16..=231 => {
@@ -5504,12 +6020,13 @@ fn field_background() -> Color {
 }
 
 fn terminal_background() -> Color {
-    // Near-black with a faint navy tint, matching the dark chrome.
-    Color::from_rgb8(20, 21, 28)
+    let (r, g, b) = active_scheme().background;
+    Color::from_rgb8(r, g, b)
 }
 
 fn selection_background() -> Color {
-    Color::from_rgb8(22, 92, 84)
+    let (r, g, b) = active_scheme().selection;
+    Color::from_rgb8(r, g, b)
 }
 
 fn border_color() -> Color {
@@ -6103,7 +6620,7 @@ mod tests {
         assert_eq!(
             scroll_delta_to_rows(mouse::ScrollDelta::Pixels {
                 x: 0.0,
-                y: -TERMINAL_ROW_HEIGHT
+                y: -cell_height()
             }),
             Some(-1)
         );

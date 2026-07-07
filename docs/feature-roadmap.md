@@ -58,8 +58,15 @@ A "serious" client should not silently trust new hosts or drop on idle.
 ## Phase B — Daily-driver terminal UX
 
 - **B1. Scrollback search.** Find-in-history with match highlight and next/prev.
-- **B2. Fonts & color schemes.** Configurable font family/size and terminal color
-  palette (global + per-profile), persisted via settings.
+- **B2. Fonts & color schemes.** ✅ Done (global). An **外观设置** dialog (View
+  menu) picks the terminal **font family** (system monospace + Consolas/Cascadia
+  Mono/Cascadia Code/Courier New/Lucida Console), a **font size** stepper
+  (9–28 px, which rescales the whole cell grid — render, hit-testing, and
+  size-fitting all derive from it), and a **color scheme** (默认/Dracula/One
+  Dark/Nord/Gruvbox Dark/Solarized Dark/Solarized Light — each a full 16-color
+  ANSI palette + background/foreground/selection) with a live preview. All three
+  persist in `settings.json` and apply via per-frame statics like the theme
+  toggle. Future: per-profile overrides, custom user schemes.
 - **B3. Hyperlinks.** URL detection and OSC-8 hyperlink support, click-to-open
   (with the link-safety confirmation already standard in this project).
 - **B4. Mouse reporting passthrough.** Forward mouse events to the remote when an
