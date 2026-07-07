@@ -72,8 +72,12 @@ A "serious" client should not silently trust new hosts or drop on idle.
 - **B4. Mouse reporting passthrough.** Forward mouse events to the remote when an
   app enables mouse mode (vim/tmux/htop). Parser already tracks the modes.
 - **B5. Paste safety.** Bracketed paste and a confirmation for multi-line pastes.
-- **B6. Quick connect & broadcast.** Command history on the quick-connect bar and
-  "send input to all sessions" for fan-out administration.
+- **B6. Quick connect & broadcast.** ✅ Broadcast done. An **输入广播** toggle
+  (toolbar `⇶` button + View menu) fans terminal keystrokes and the command-bar
+  line out to **every connected session** at once (fan-out administration), with
+  an always-visible amber `广播 ×N` badge in the status bar showing the reach so
+  it is never silently left on. Still open: command history on the quick-connect
+  bar.
 
 ## Phase C — File transfer & tunnels
 

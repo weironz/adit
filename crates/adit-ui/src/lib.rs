@@ -2364,7 +2364,15 @@ fn send_terminal_input(app: &mut AditApp) {
     let mut input = app.terminal_input.clone();
     input.push('\r');
 
-    match app.manager.send_input_to_active(input) {
+    let result = if app.broadcast_input {
+        app.manager
+            .send_input_bytes_broadcast(input.into_bytes())
+            .map(|_| ())
+    } else {
+        app.manager.send_input_to_active(input)
+    };
+
+    match result {
         Ok(()) => {
             app.terminal_input.clear();
             app.terminal_scroll_offset = 0;
@@ -2378,6 +2386,16 @@ fn send_terminal_input(app: &mut AditApp) {
 }
 
 fn send_terminal_bytes(app: &mut AditApp, bytes: Vec<u8>) {
+    // Broadcast mode fans keystrokes out to every connected session at once.
+    if app.broadcast_input {
+        app.terminal_scroll_offset = 0;
+        app.terminal_selection = None;
+        if let Err(error) = app.manager.send_input_bytes_broadcast(bytes) {
+            app.last_error = Some(error.to_string());
+        }
+        return;
+    }
+
     if app.manager.active_session().is_none() {
         return;
     }
@@ -3118,6 +3136,7 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             tool_button("⌫", Message::ClearActiveTerminal),
             tool_button("⇅", Message::RunMenu(MenuCommand::Sftp)),
             tool_button("⇄", Message::OpenTunnels),
+            tool_toggle_button("⇶", app.broadcast_input, Message::ToggleBroadcast),
             tool_separator(),
             text_input("Enter host <Alt+R>", &app.profile_host)
                 .on_input(Message::ProfileHostChanged)
@@ -3167,6 +3186,27 @@ fn tool_button(label: &'static str, message: Message) -> Element<'static, Messag
         .height(Length::Fixed(26.0))
         .padding(0)
         .style(|_theme, status| toolbar_icon_button_style(status))
+        .on_press(message)
+        .into()
+}
+
+/// A toolbar icon button that stays highlighted (accent fill) while `active`.
+fn tool_toggle_button(
+    label: &'static str,
+    active: bool,
+    message: Message,
+) -> Element<'static, Message> {
+    button(text(label).size(14))
+        .width(Length::Fixed(28.0))
+        .height(Length::Fixed(26.0))
+        .padding(0)
+        .style(move |_theme, status| {
+            if active {
+                base_button_style(accent(), Color::from_rgb8(245, 249, 255), transparent())
+            } else {
+                toolbar_icon_button_style(status)
+            }
+        })
         .on_press(message)
         .into()
 }
@@ -5936,6 +5976,13 @@ fn status_bar(app: &AditApp) -> Element<'_, Message> {
         left = left
             .push(text("●").size(11).color(danger()))
             .push(text("REC").size(11).color(danger()));
+    }
+    if app.broadcast_input {
+        // Always-visible warning that keystrokes fan out to every session.
+        let reach = app.manager.live_session_count();
+        left = left
+            .push(text("⇶").size(12).color(accent()))
+            .push(text(format!("广播 ×{reach}")).size(11).color(accent()));
     }
     left = left.push(text(status).size(12).color(muted_text()));
 

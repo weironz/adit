@@ -884,6 +884,37 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Send raw bytes to every connected (live) session at once. Returns how
+    /// many sessions received the input. Powers the UI's input-broadcast mode
+    /// (fan-out administration); sessions whose channel is already gone are
+    /// skipped rather than aborting the whole broadcast.
+    pub fn send_input_bytes_broadcast(&mut self, input: Vec<u8>) -> Result<usize, SessionError> {
+        if input.is_empty() {
+            return Ok(0);
+        }
+
+        let mut sent = 0usize;
+        for record in self.sessions.values_mut() {
+            if let Some(live) = &record.live {
+                if live.send(LiveShellCommand::Input(input.clone())).is_ok() {
+                    sent += 1;
+                }
+            }
+        }
+
+        Ok(sent)
+    }
+
+    /// Number of sessions with a live (connected) backend — used by the UI to
+    /// label how many terminals an input broadcast will reach.
+    #[must_use]
+    pub fn live_session_count(&self) -> usize {
+        self.sessions
+            .values()
+            .filter(|record| record.live.is_some())
+            .count()
+    }
+
     pub fn resize_active(&mut self, cols: u16, rows: u16) -> Result<(), SessionError> {
         let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
         let record = self
