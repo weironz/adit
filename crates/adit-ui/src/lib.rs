@@ -112,6 +112,8 @@ pub struct AditApp {
     sidebar_width: f32,
     sidebar_visible: bool,
     sidebar_dragging: bool,
+    cursor_pos: Point,
+    context_menu_pos: Point,
     dark_mode: bool,
     settings_store: SettingsStore,
     /// The last settings snapshot written to disk; the Tick loop persists when
@@ -180,6 +182,7 @@ pub enum Message {
     CancelGroupRename,
     ShowProfileContextMenu(ProfileId),
     HideProfileContextMenu,
+    SidebarCursorMoved(Point),
     EditProfileFromContext(ProfileId),
     CloseProfileEditor,
     ConnectProfileFromContext(ProfileId),
@@ -494,6 +497,8 @@ impl AditApp {
             sidebar_width,
             sidebar_visible,
             sidebar_dragging: false,
+            cursor_pos: Point::ORIGIN,
+            context_menu_pos: Point::ORIGIN,
             dark_mode,
             settings_store,
             persisted_settings,
@@ -782,6 +787,8 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.dragged_profile = None;
             app.profile_drop_target = None;
             app.group_drop_target = None;
+            // Anchor the floating menu at the cursor (last tracked position).
+            app.context_menu_pos = app.cursor_pos;
             app.profile_context_menu = Some(profile_id);
             app.group_context_menu = None;
             app.terminal_context_menu = false;
@@ -789,6 +796,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::HideProfileContextMenu => {
             app.profile_context_menu = None;
         }
+        Message::SidebarCursorMoved(point) => app.cursor_pos = point,
         Message::EditProfileFromContext(profile_id) => {
             select_profile(app, profile_id);
             app.profile_context_menu = None;
@@ -2544,6 +2552,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     let mut layers: Vec<Element<'_, Message>> = vec![base];
     if let Some(menu) = app.active_menu {
         layers.push(menu_overlay(menu));
+    }
+    if let Some(profile_id) = app.profile_context_menu {
+        layers.push(opaque(profile_context_overlay(app, profile_id)));
     }
     if app.connection_dialog.is_some() {
         layers.push(opaque(connection_dialog_overlay(app)));
@@ -4305,9 +4316,8 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                 drop_position,
             ));
 
-            if app.profile_context_menu == Some(profile_id) {
-                profiles = profiles.push(profile_context_menu(profile_id));
-            }
+            // The context menu is now a floating overlay (see the layers stack
+            // in `view`), so it is no longer pushed inline here.
 
             if app.profile_editor == Some(profile_id) {
                 profiles = profiles.push(profile_edit_menu(app));
@@ -4378,10 +4388,18 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         content = content.push(error);
     }
 
-    container(content)
-        .height(Fill)
-        .style(|_theme| sidebar_style())
-        .into()
+    // Track the cursor over the sidebar so a right-click can anchor its floating
+    // context menu at the pointer. `on_move` is panel-relative; the sidebar sits
+    // below the menu bar + toolbar, so convert to window-absolute coordinates.
+    mouse_area(
+        container(content)
+            .height(Fill)
+            .style(|_theme| sidebar_style()),
+    )
+    .on_move(|point| {
+        Message::SidebarCursorMoved(Point::new(point.x, point.y + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT))
+    })
+    .into()
 }
 
 /// The draggable divider between the sidebar and the workspace. Pressing it
@@ -4626,8 +4644,12 @@ fn avatar_style(color: Color) -> container::Style {
     }
 }
 
+const PROFILE_MENU_WIDTH: f32 = 168.0;
+const PROFILE_MENU_HEIGHT: f32 = 132.0;
+
+/// The context-menu card (used inside the floating overlay).
 fn profile_context_menu(profile_id: ProfileId) -> Element<'static, Message> {
-    let card = container(
+    container(
         column![
             profile_menu_item("连接", Message::ConnectProfileFromContext(profile_id), false),
             profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false),
@@ -4638,11 +4660,43 @@ fn profile_context_menu(profile_id: ProfileId) -> Element<'static, Message> {
         .spacing(1),
     )
     .padding(4)
-    .width(Length::Fixed(168.0))
-    .style(|_theme| profile_context_menu_style());
+    .width(Length::Fixed(PROFILE_MENU_WIDTH))
+    .style(|_theme| profile_context_menu_style())
+    .into()
+}
 
-    // Indent slightly so the menu reads as anchored to the row above it.
-    row![Space::new().width(Length::Fixed(40.0)), card].into()
+/// A floating context menu anchored at the cursor, over a transparent scrim that
+/// dismisses it on any outside click.
+fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, Message> {
+    // Clamp so the whole card stays inside the window.
+    let x = app
+        .context_menu_pos
+        .x
+        .min((app.window_width - PROFILE_MENU_WIDTH - 6.0).max(0.0))
+        .max(0.0);
+    let y = app
+        .context_menu_pos
+        .y
+        .min((app.window_height - PROFILE_MENU_HEIGHT - 6.0).max(0.0))
+        .max(0.0);
+
+    let positioned = column![
+        Space::new().height(Length::Fixed(y)),
+        row![
+            Space::new().width(Length::Fixed(x)),
+            profile_context_menu(profile_id),
+        ],
+    ]
+    .width(Fill)
+    .height(Fill);
+
+    stack![
+        mouse_area(Space::new().width(Fill).height(Fill))
+            .on_press(Message::HideProfileContextMenu)
+            .on_right_press(Message::HideProfileContextMenu),
+        positioned,
+    ]
+    .into()
 }
 
 fn profile_menu_item(label: &'static str, message: Message, danger: bool) -> Element<'static, Message> {
