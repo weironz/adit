@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 adit-domain.workspace = true
 bytes.workspace = true
+portable-pty = "0.8"
 russh.workspace = true
 russh-sftp = "2.3"
 thiserror.workspace = true

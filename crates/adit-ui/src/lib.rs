@@ -1,5 +1,5 @@
 use adit_domain::{
-    AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus, TunnelDef,
+    AuthMethod, ConnectionProfile, ProfileId, Protocol, SessionId, SessionStatus, TunnelDef,
 };
 use adit_session::{
     HostKeyPromptInfo, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager,
@@ -70,6 +70,7 @@ pub struct AditApp {
     profile_port: String,
     profile_username: String,
     profile_auth_method: AuthMethod,
+    profile_protocol: Protocol,
     profile_identity_file: String,
     password: String,
     remember_connection_password: bool,
@@ -246,6 +247,7 @@ pub enum Message {
     ProfilePortChanged(String),
     ProfileUsernameChanged(String),
     ProfileAuthMethodChanged(AuthMethod),
+    ProfileProtocolChanged(Protocol),
     ProfileIdentityFileChanged(String),
     SessionFilterChanged(String),
     NewProfileDraft,
@@ -454,6 +456,7 @@ impl AditApp {
             profile_port: String::from("22"),
             profile_username: String::new(),
             profile_auth_method: AuthMethod::Auto,
+            profile_protocol: Protocol::Ssh,
             profile_identity_file: String::new(),
             password: String::new(),
             remember_connection_password: false,
@@ -1097,6 +1100,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = false;
             app.profile_auth_method = auth_method;
         }
+        Message::ProfileProtocolChanged(protocol) => {
+            app.terminal_focused = false;
+            app.profile_protocol = protocol;
+        }
         Message::ProfileIdentityFileChanged(value) => {
             app.terminal_focused = false;
             app.profile_identity_file = value;
@@ -1473,6 +1480,7 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_username = profile.username;
         app.profile_auth_method = profile.auth_method;
         app.profile_identity_file = profile.identity_file;
+        app.profile_protocol = profile.protocol;
     }
 }
 
@@ -1666,6 +1674,12 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
 
     match result {
         Ok(()) => {
+            // Protocol is edited separately from the core fields, so apply it here
+            // before persisting.
+            if let Some(profile_id) = app.selected_profile {
+                app.manager
+                    .set_profile_protocol(profile_id, app.profile_protocol);
+            }
             load_selected_profile(app);
             app.collapsed_groups.remove(app.profile_group.trim());
             if persist_profiles(app) {
@@ -1819,23 +1833,27 @@ fn connect_profile(app: &mut AditApp) {
         return;
     };
 
-    let stored = app
-        .credential_store
-        .load_profile_password(profile_id)
-        .ok()
-        .flatten();
-    let password = match stored {
-        Some(password) => password,
-        None => {
-            if profile.auth_method == AuthMethod::Password {
-                open_connection_dialog(app);
-                return;
+    // Non-SSH terminal protocols (local shell, serial) need no credential.
+    let password = if profile.protocol == Protocol::Ssh {
+        let stored = app
+            .credential_store
+            .load_profile_password(profile_id)
+            .ok()
+            .flatten();
+        match stored {
+            Some(password) => password,
+            None => {
+                if profile.auth_method == AuthMethod::Password {
+                    open_connection_dialog(app);
+                    return;
+                }
+                String::new()
             }
-            String::new()
         }
+    } else {
+        String::new()
     };
 
-    let endpoint = profile.endpoint();
     match app.manager.open_live_ssh_session(profile_id, password) {
         Ok(_) => {
             app.connection_dialog = None;
@@ -1846,9 +1864,15 @@ fn connect_profile(app: &mut AditApp) {
             app.terminal_selection = None;
             app.terminal_context_menu = false;
             sync_terminal_size(app);
-            app.manager.start_profile_tunnels(profile_id);
+            if profile.protocol == Protocol::Ssh {
+                app.manager.start_profile_tunnels(profile_id);
+            }
             app.last_error = None;
-            app.notice = format!("SSH 会话已开始连接: {endpoint}");
+            app.notice = if profile.protocol == Protocol::Ssh {
+                format!("SSH 会话已开始连接: {}", profile.endpoint())
+            } else {
+                format!("已启动{}", profile.protocol.label())
+            };
         }
         Err(error) => {
             app.last_error = Some(error.to_string());
@@ -4258,6 +4282,7 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.username == app.profile_username.trim()
         && profile.auth_method == app.profile_auth_method
         && profile.identity_file == app.profile_identity_file.trim()
+        && profile.protocol == app.profile_protocol
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
@@ -4856,106 +4881,147 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let card = container(
-        column![
-            header,
+    let mut form = column![
+        header,
+        dialog_field(
+            "协议",
             row![
-                dialog_field(
-                    "分组",
-                    text_input("默认", &app.profile_group)
-                        .on_input(Message::ProfileGroupChanged)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
-                        .into(),
-                ),
-                dialog_field(
-                    "名称",
-                    text_input("会话名称", &app.profile_name)
-                        .on_input(Message::ProfileNameChanged)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
-                        .into(),
-                ),
+                protocol_button(app, Protocol::Ssh),
+                protocol_button(app, Protocol::LocalShell),
+                protocol_button(app, Protocol::Serial),
+                protocol_button(app, Protocol::Rdp),
             ]
-            .spacing(10),
-            row![
-                container(dialog_field(
-                    "主机",
-                    text_input("10.0.0.5", &app.profile_host)
-                        .on_input(Message::ProfileHostChanged)
-                        .on_submit(Message::ConnectSelectedProfile)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
-                        .into(),
-                ))
-                .width(Length::FillPortion(2)),
-                container(dialog_field(
-                    "端口",
-                    text_input("22", &app.profile_port)
-                        .on_input(Message::ProfilePortChanged)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
-                        .into(),
-                ))
-                .width(Length::FillPortion(1)),
-            ]
-            .spacing(10),
+            .spacing(6)
+            .into(),
+        ),
+        row![
             dialog_field(
-                "用户名",
-                text_input("root", &app.profile_username)
-                    .on_input(Message::ProfileUsernameChanged)
+                "分组",
+                text_input("默认", &app.profile_group)
+                    .on_input(Message::ProfileGroupChanged)
                     .padding([5, 8])
                     .style(text_input_style)
                     .width(Fill)
                     .into(),
             ),
             dialog_field(
-                "认证方式",
-                row![
-                    auth_method_button(app, AuthMethod::Auto),
-                    auth_method_button(app, AuthMethod::Password),
-                    auth_method_button(app, AuthMethod::Key),
-                    auth_method_button(app, AuthMethod::Agent),
-                ]
-                .spacing(6)
-                .into(),
-            ),
-            dialog_field(
-                "密钥文件（可选）",
-                text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
-                    .on_input(Message::ProfileIdentityFileChanged)
+                "名称",
+                text_input("会话名称", &app.profile_name)
+                    .on_input(Message::ProfileNameChanged)
                     .padding([5, 8])
                     .style(text_input_style)
                     .width(Fill)
                     .into(),
             ),
-            row![
-                Space::new().width(Fill),
-                button(text("取消").size(12))
-                    .padding([6, 16])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::CloseProfileEditor),
-                button(text("连接").size(12))
-                    .padding([6, 16])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::ConnectSelectedProfile),
-                button(text("保存").size(12))
-                    .padding([6, 18])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::SaveProfile),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
         ]
-        .spacing(12),
-    )
-    .width(Length::Fixed(440.0))
-    .padding(20)
-    .style(|_theme| connection_dialog_style());
+        .spacing(10),
+    ]
+    .spacing(12);
+
+    match app.profile_protocol {
+        Protocol::Ssh => {
+            form = form
+                .push(
+                    row![
+                        container(dialog_field(
+                            "主机",
+                            text_input("10.0.0.5", &app.profile_host)
+                                .on_input(Message::ProfileHostChanged)
+                                .on_submit(Message::ConnectSelectedProfile)
+                                .padding([5, 8])
+                                .style(text_input_style)
+                                .width(Fill)
+                                .into(),
+                        ))
+                        .width(Length::FillPortion(2)),
+                        container(dialog_field(
+                            "端口",
+                            text_input("22", &app.profile_port)
+                                .on_input(Message::ProfilePortChanged)
+                                .padding([5, 8])
+                                .style(text_input_style)
+                                .width(Fill)
+                                .into(),
+                        ))
+                        .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(10),
+                )
+                .push(dialog_field(
+                    "用户名",
+                    text_input("root", &app.profile_username)
+                        .on_input(Message::ProfileUsernameChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .push(dialog_field(
+                    "认证方式",
+                    row![
+                        auth_method_button(app, AuthMethod::Auto),
+                        auth_method_button(app, AuthMethod::Password),
+                        auth_method_button(app, AuthMethod::Key),
+                        auth_method_button(app, AuthMethod::Agent),
+                    ]
+                    .spacing(6)
+                    .into(),
+                ))
+                .push(dialog_field(
+                    "密钥文件（可选）",
+                    text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
+                        .on_input(Message::ProfileIdentityFileChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ));
+        }
+        Protocol::LocalShell => {
+            form = form.push(dialog_field(
+                "Shell 程序（可选，留空用系统默认）",
+                text_input("powershell.exe / cmd.exe / bash", &app.profile_host)
+                    .on_input(Message::ProfileHostChanged)
+                    .on_submit(Message::ConnectSelectedProfile)
+                    .padding([5, 8])
+                    .style(text_input_style)
+                    .width(Fill)
+                    .into(),
+            ));
+        }
+        Protocol::Serial | Protocol::Rdp => {
+            form = form.push(
+                text("该协议尚未实现，下一步支持。")
+                    .size(12)
+                    .color(muted_text()),
+            );
+        }
+    }
+
+    form = form.push(
+        row![
+            Space::new().width(Fill),
+            button(text("取消").size(12))
+                .padding([6, 16])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CloseProfileEditor),
+            button(text("连接").size(12))
+                .padding([6, 16])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::ConnectSelectedProfile),
+            button(text("保存").size(12))
+                .padding([6, 18])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SaveProfile),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+
+    let card = container(form)
+        .width(Length::Fixed(440.0))
+        .padding(20)
+        .style(|_theme| connection_dialog_style());
 
     container(card)
         .width(Fill)
@@ -4973,6 +5039,16 @@ fn auth_method_button(app: &AditApp, auth_method: AuthMethod) -> Element<'static
         .padding([4, 6])
         .style(move |_theme, status| method_button_style(selected, status))
         .on_press(Message::ProfileAuthMethodChanged(auth_method))
+        .into()
+}
+
+fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'static, Message> {
+    let selected = app.profile_protocol == protocol;
+
+    button(text(protocol.label()).size(11))
+        .padding([4, 10])
+        .style(move |_theme, status| method_button_style(selected, status))
+        .on_press(Message::ProfileProtocolChanged(protocol))
         .into()
 }
 

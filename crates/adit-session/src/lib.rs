@@ -1,4 +1,6 @@
-use adit_domain::{AuthMethod, ConnectionProfile, ProfileId, SessionId, SessionStatus, TunnelDef};
+use adit_domain::{
+    AuthMethod, ConnectionProfile, ProfileId, Protocol, SessionId, SessionStatus, TunnelDef,
+};
 use adit_ssh::{
     AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
     LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle, SftpRequest, SshError,
@@ -48,6 +50,8 @@ pub enum SessionError {
     NoActiveSshSession,
     #[error("sftp failed: {0}")]
     Sftp(String),
+    #[error("{0}")]
+    Unsupported(String),
 }
 
 #[derive(Debug, Clone)]
@@ -614,11 +618,41 @@ impl SessionManager {
             .ok_or(SessionError::ProfileNotFound)?
             .clone();
 
-        let live = spawn_live_shell(&profile, &password)?;
+        let (live, endpoint, terminal, reconnect) = match profile.protocol {
+            Protocol::Ssh => {
+                let live = spawn_live_shell(&profile, &password)?;
+                let endpoint = profile.endpoint();
+                let mut terminal = live_shell_terminal(&profile.name, &endpoint);
+                terminal.append_status(format!("connecting to {endpoint}"));
+                (
+                    live,
+                    endpoint,
+                    terminal,
+                    Some(ReconnectState::new(password)),
+                )
+            }
+            Protocol::LocalShell => {
+                // A local shell reuses `host` as an optional shell-program override.
+                let program = (!profile.host.trim().is_empty())
+                    .then(|| profile.host.trim().to_string());
+                let live = adit_ssh::spawn_local_shell(96, 28, program)?;
+                let endpoint = String::from("本地 Shell");
+                let terminal = local_shell_terminal(&profile.name);
+                (live, endpoint, terminal, None)
+            }
+            Protocol::Serial => {
+                return Err(SessionError::Unsupported(String::from(
+                    "串口协议尚未实现",
+                )))
+            }
+            Protocol::Rdp => {
+                return Err(SessionError::Unsupported(String::from(
+                    "RDP 协议尚未实现",
+                )))
+            }
+        };
+
         let session_id = SessionId::new();
-        let endpoint = profile.endpoint();
-        let mut terminal = live_shell_terminal(&profile.name, &endpoint);
-        terminal.append_status(format!("connecting to {endpoint}"));
         let summary = SessionSummary {
             id: session_id,
             profile_id,
@@ -635,12 +669,20 @@ impl SessionManager {
                 live: Some(live),
                 log: None,
                 pending_host_key: None,
-                reconnect: Some(ReconnectState::new(password)),
+                reconnect,
             },
         );
         self.active_session = Some(session_id);
 
         Ok(session_id)
+    }
+
+    /// Set a profile's connection protocol (edited separately from the core
+    /// fields so `update_profile` leaves it untouched).
+    pub fn set_profile_protocol(&mut self, profile_id: ProfileId, protocol: Protocol) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.protocol = protocol;
+        }
     }
 
     pub fn build_ssh_probe_session(
@@ -1926,6 +1968,16 @@ fn live_shell_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
          profile  : {profile_name}\r\n\
          endpoint : {endpoint}\r\n\
          status   : creating SSH session actor\r\n\r\n"
+    ));
+    terminal
+}
+
+fn local_shell_terminal(profile_name: &str) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+    terminal.feed_str(&format!(
+        "\x1b[1;36mlocal shell\x1b[0m starting\r\n\r\n\
+         profile  : {profile_name}\r\n\
+         status   : spawning local pseudo-terminal\r\n\r\n"
     ));
     terminal
 }

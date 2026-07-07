@@ -63,6 +63,8 @@ pub struct ConnectionProfile {
     pub identity_file: String,
     #[serde(default)]
     pub tunnels: Vec<TunnelDef>,
+    #[serde(default)]
+    pub protocol: Protocol,
 }
 
 impl ConnectionProfile {
@@ -95,6 +97,7 @@ impl ConnectionProfile {
             auth_method: AuthMethod::Auto,
             identity_file: String::new(),
             tunnels: Vec::new(),
+            protocol: Protocol::Ssh,
         }
     }
 
@@ -138,6 +141,38 @@ impl AuthMethod {
             Self::Key => "密钥",
             Self::Agent => "Agent",
         }
+    }
+}
+
+/// The connection protocol a session profile uses.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    #[default]
+    Ssh,
+    /// A local shell process (ConPTY on Windows, a PTY elsewhere).
+    LocalShell,
+    /// A serial port (COM/tty).
+    Serial,
+    /// Remote Desktop (graphical).
+    Rdp,
+}
+
+impl Protocol {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ssh => "SSH",
+            Self::LocalShell => "本地 Shell",
+            Self::Serial => "串口",
+            Self::Rdp => "RDP",
+        }
+    }
+
+    /// Whether this protocol drives the built-in VT terminal (byte-stream based).
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Ssh | Self::LocalShell | Self::Serial)
     }
 }
 

@@ -12,7 +12,7 @@ use russh::{
 };
 use std::{
     env, fs,
-    io::Write,
+    io::{Read, Write},
     path::{Path, PathBuf},
     sync::{mpsc, Arc},
     thread,
@@ -249,6 +249,141 @@ pub fn spawn_password_shell(request: LiveShellRequest) -> Result<LiveShellHandle
         command_tx,
         event_rx,
     })
+}
+
+/// Spawn a local shell in a pseudo-terminal (ConPTY on Windows), presented
+/// through the same [`LiveShellHandle`] transport as an SSH shell so the session
+/// layer treats it uniformly. `program` overrides the default shell when set.
+pub fn spawn_local_shell(
+    cols: u16,
+    rows: u16,
+    program: Option<String>,
+) -> Result<LiveShellHandle, SshError> {
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel();
+
+    thread::Builder::new()
+        .name(String::from("adit-local-shell"))
+        .spawn(move || {
+            if let Err(error) = run_local_shell(cols, rows, program, command_rx, &event_tx) {
+                let _ = event_tx.send(LiveShellEvent::Error(error));
+            }
+            let _ = event_tx.send(LiveShellEvent::Closed);
+        })
+        .map_err(|error| SshError::Runtime(error.to_string()))?;
+
+    Ok(LiveShellHandle {
+        command_tx,
+        event_rx,
+    })
+}
+
+fn run_local_shell(
+    cols: u16,
+    rows: u16,
+    program: Option<String>,
+    mut commands: tokio_mpsc::UnboundedReceiver<LiveShellCommand>,
+    events: &mpsc::Sender<LiveShellEvent>,
+) -> Result<(), String> {
+    use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+
+    let size = PtySize {
+        rows,
+        cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    };
+    let pair = native_pty_system()
+        .openpty(size)
+        .map_err(|error| error.to_string())?;
+
+    let shell = program
+        .filter(|program| !program.trim().is_empty())
+        .unwrap_or_else(default_shell);
+    let mut builder = CommandBuilder::new(&shell);
+    if let Some(home) = dirs_home() {
+        builder.cwd(home);
+    }
+
+    let mut child = pair
+        .slave
+        .spawn_command(builder)
+        .map_err(|error| format!("failed to start {shell}: {error}"))?;
+    // Close the slave in the parent so the reader sees EOF when the child exits.
+    drop(pair.slave);
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|error| error.to_string())?;
+    let mut writer = pair
+        .master
+        .take_writer()
+        .map_err(|error| error.to_string())?;
+    let master = pair.master;
+
+    let _ = events.send(LiveShellEvent::Status(format!("本地 Shell: {shell}")));
+
+    // Reader thread: PTY output → Output events.
+    let reader_events = events.clone();
+    let reader_handle = thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    if reader_events
+                        .send(LiveShellEvent::Output(buffer[..read].to_vec()))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Command loop: input/resize/disconnect.
+    while let Some(command) = commands.blocking_recv() {
+        match command {
+            LiveShellCommand::Input(bytes) => {
+                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_err() {
+                    break;
+                }
+            }
+            LiveShellCommand::Resize { cols, rows } => {
+                let _ = master.resize(PtySize {
+                    rows,
+                    cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                });
+            }
+            LiveShellCommand::Disconnect => break,
+            LiveShellCommand::HostKeyDecision(_) => {}
+        }
+    }
+
+    let _ = child.kill();
+    drop(writer);
+    drop(master);
+    let _ = reader_handle.join();
+    Ok(())
+}
+
+fn default_shell() -> String {
+    if cfg!(windows) {
+        env::var("COMSPEC").unwrap_or_else(|_| String::from("cmd.exe"))
+    } else {
+        env::var("SHELL").unwrap_or_else(|_| String::from("/bin/sh"))
+    }
+}
+
+fn dirs_home() -> Option<PathBuf> {
+    env::var_os("USERPROFILE")
+        .or_else(|| env::var_os("HOME"))
+        .map(PathBuf::from)
 }
 
 pub fn probe_password_shell_blocking(
