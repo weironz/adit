@@ -632,9 +632,11 @@ impl SessionManager {
                 )
             }
             Protocol::LocalShell => {
-                // A local shell reuses `host` as an optional shell-program override.
-                let program = (!profile.host.trim().is_empty())
-                    .then(|| profile.host.trim().to_string());
+                // `identity_file` doubles as an optional shell-program override
+                // (unused by local shells, and never polluted by quick-connect the
+                // way `host` is). Empty → the system default shell.
+                let program = (!profile.identity_file.trim().is_empty())
+                    .then(|| profile.identity_file.trim().to_string());
                 let live = adit_ssh::spawn_local_shell(96, 28, program)?;
                 let endpoint = String::from("本地 Shell");
                 let terminal = local_shell_terminal(&profile.name);

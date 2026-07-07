@@ -4980,8 +4980,8 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
         Protocol::LocalShell => {
             form = form.push(dialog_field(
                 "Shell 程序（可选，留空用系统默认）",
-                text_input("powershell.exe / cmd.exe / bash", &app.profile_host)
-                    .on_input(Message::ProfileHostChanged)
+                text_input("powershell.exe / cmd.exe / bash", &app.profile_identity_file)
+                    .on_input(Message::ProfileIdentityFileChanged)
                     .on_submit(Message::ConnectSelectedProfile)
                     .padding([5, 8])
                     .style(text_input_style)
