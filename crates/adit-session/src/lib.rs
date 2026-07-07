@@ -1782,6 +1782,48 @@ impl SessionManager {
             .unwrap_or_else(|| TerminalSnapshot::empty(Default::default()))
     }
 
+    /// Snapshot of a specific session (used to render split-pane views, which
+    /// show several sessions at once rather than only the active one).
+    #[must_use]
+    pub fn snapshot_for(&self, session_id: SessionId, viewport: Viewport) -> TerminalSnapshot {
+        self.sessions
+            .get(&session_id)
+            .map(|record| record.terminal.snapshot(viewport))
+            .unwrap_or_else(|| TerminalSnapshot::empty(Default::default()))
+    }
+
+    /// Summary (title/status/endpoint) for a specific session, if it exists.
+    #[must_use]
+    pub fn session_summary(&self, session_id: SessionId) -> Option<SessionSummary> {
+        self.sessions
+            .get(&session_id)
+            .map(|record| record.summary.clone())
+    }
+
+    /// Resize a specific session's terminal + backend. Like [`Self::resize_active`]
+    /// but targets any session, so each split pane can be fitted independently.
+    pub fn resize_session(
+        &mut self,
+        session_id: SessionId,
+        cols: u16,
+        rows: u16,
+    ) -> Result<(), SessionError> {
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+
+        record
+            .terminal
+            .resize(adit_terminal::TerminalSize::new(cols, rows));
+
+        if let Some(live) = &record.live {
+            live.send(LiveShellCommand::Resize { cols, rows })?;
+        }
+
+        Ok(())
+    }
+
     #[must_use]
     pub fn status_line(&self) -> String {
         match self

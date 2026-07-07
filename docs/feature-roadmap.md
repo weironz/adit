@@ -109,7 +109,15 @@ A "serious" client should not silently trust new hosts or drop on idle.
   Adit profile sets.
 - **D2. Per-profile session options.** Startup command, environment, terminal
   type, and character encoding.
-- **D3. Tabs & splits.** Split panes, tab rename, detach/reattach.
+- **D3. Tabs & splits.** ✅ Split panes done. The workspace tiles **2–4 sessions
+  at once** — 2 or 3 side by side, 4 as a 2×2 grid — via a tab-row **▥ 分屏**
+  button (or View menu). Each pane has a header (session title + status dot +
+  close-pane ×); the focused pane carries the accent border and is the manager's
+  active session, so keyboard input, the tab highlight, and the status bar all
+  follow focus. Panes are sized independently (each session's PTY is resized to
+  its pane) and selection hit-tests per pane. Clicking a tab loads that session
+  into the focused pane instead of collapsing the split. Still open: tab rename,
+  detach/reattach.
 - **D4. Triggers & snippets.** Regex-triggered actions; reusable command snippets
   / macros.
 - **D5. Logging enhancements.** Timestamped filenames, per-profile auto-log,

@@ -128,6 +128,11 @@ pub struct AditApp {
     color_scheme: String,
     appearance_open: bool,
     broadcast_input: bool,
+    /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
+    /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
+    /// mirrors the manager's active session.
+    panes: Vec<SessionId>,
+    focused_pane: usize,
     settings_store: SettingsStore,
     /// The last settings snapshot written to disk; the Tick loop persists when
     /// the live config drifts from this.
@@ -167,6 +172,7 @@ pub enum MenuCommand {
     ToggleAutoReconnect,
     Appearance,
     ToggleBroadcast,
+    SplitPane,
     About,
 }
 
@@ -284,6 +290,12 @@ pub enum Message {
     SidebarDragMove(f32),
     EndSidebarDrag,
     FocusTerminal,
+    SplitPane,
+    ClosePane(usize),
+    FocusPane(usize),
+    PaneMousePressed(usize),
+    PaneRightPressed(usize),
+    PanePointerMoved(usize, Point),
     TerminalPointerMoved(Point),
     TerminalScrolled(mouse::ScrollDelta),
     BeginTerminalSelection,
@@ -597,6 +609,10 @@ const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 const PROFILE_ROW_HEIGHT: f32 = 46.0;
+// Split-pane layout.
+const PANE_GAP: f32 = 6.0;
+const PANE_HEADER_HEIGHT: f32 = 26.0;
+const MAX_PANES: usize = 4;
 
 impl Default for AditApp {
     fn default() -> Self {
@@ -779,6 +795,8 @@ impl AditApp {
             color_scheme,
             appearance_open: false,
             broadcast_input: false,
+            panes: Vec::new(),
+            focused_pane: 0,
             settings_store,
             persisted_settings,
             last_error: load_error,
@@ -903,6 +921,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.manager.poll_events();
             clamp_terminal_scroll(app);
             sync_sftp_state(app);
+            // Reconcile split panes with the live session set (closed sessions,
+            // an externally-activated session); refit only if the count changed.
+            let panes_before = app.panes.len();
+            sync_panes(app);
+            if app.panes.len() != panes_before {
+                sync_terminal_size(app);
+            }
             persist_settings_if_changed(app);
         }
         Message::ToggleMenu(menu) => {
@@ -1513,6 +1538,48 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = true;
             app.terminal_context_menu = false;
         }
+        Message::SplitPane => {
+            split_pane(app);
+        }
+        Message::ClosePane(index) => {
+            close_pane(app, index);
+        }
+        Message::FocusPane(index) => {
+            focus_pane(app, index);
+        }
+        Message::PaneMousePressed(index) => {
+            focus_pane(app, index);
+            // Begin a selection at the pointer the pane's on_move just recorded.
+            app.terminal_context_menu = false;
+            let point = app
+                .terminal_pointer
+                .unwrap_or(TerminalPoint { row: 0, col: 0 });
+            app.terminal_selection = Some(TerminalSelection {
+                start: point,
+                end: point,
+            });
+            app.terminal_selecting = true;
+        }
+        Message::PaneRightPressed(index) => {
+            focus_pane(app, index);
+            app.terminal_selecting = false;
+            app.context_menu_pos = app.cursor_pos;
+            app.terminal_context_menu = true;
+        }
+        Message::PanePointerMoved(index, point) => {
+            let terminal_point = terminal_point_from_cursor(app, point);
+            app.terminal_pointer = Some(terminal_point);
+            // Anchor the floating context menu using this pane's screen origin,
+            // not the single-pane offset.
+            let origin = pane_layout(app).pane_body_origin(index);
+            app.cursor_pos = Point::new(origin.x + point.x, origin.y + point.y);
+
+            if app.terminal_selecting {
+                if let Some(selection) = &mut app.terminal_selection {
+                    selection.end = terminal_point;
+                }
+            }
+        }
         Message::TerminalPointerMoved(point) => {
             let terminal_point = terminal_point_from_cursor(app, point);
             app.terminal_pointer = Some(terminal_point);
@@ -1603,6 +1670,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             retry_active_session(app);
         }
         Message::ActivateSession(session_id) => {
+            // In a split, clicking a tab loads that session into the focused pane
+            // (or focuses its existing pane) instead of collapsing the layout.
+            if app.panes.len() >= 2 {
+                if let Some(pos) = app.panes.iter().position(|id| *id == session_id) {
+                    app.focused_pane = pos;
+                } else if app.focused_pane < app.panes.len() {
+                    app.panes[app.focused_pane] = session_id;
+                    let _ = app.manager.resize_session(
+                        session_id,
+                        app.terminal_size.cols,
+                        app.terminal_size.rows,
+                    );
+                }
+            }
             if let Err(error) = app.manager.activate(session_id) {
                 app.last_error = Some(error.to_string());
             } else {
@@ -1683,6 +1764,7 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             };
         }
         MenuCommand::Appearance => app.appearance_open = true,
+        MenuCommand::SplitPane => split_pane(app),
         MenuCommand::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
             app.notice = if app.broadcast_input {
@@ -2818,51 +2900,281 @@ fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
     }
 }
 
-fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> TerminalSize {
-    const WORKSPACE_HORIZONTAL_PADDING: f32 = 0.0;
-    const TERMINAL_HORIZONTAL_PADDING: f32 = TERMINAL_PANEL_PADDING * 2.0;
-    const WORKSPACE_VERTICAL_PADDING: f32 = 0.0;
-    const COMMAND_BAR_HEIGHT: f32 = 0.0;
-    const TERMINAL_VERTICAL_CHROME: f32 = TERMINAL_PANEL_PADDING * 2.0;
+/// Pixel size of the whole terminal region (the grid the panes share), i.e. the
+/// workspace minus the sidebar, top chrome, tab bar, and status bar. Pane
+/// padding/headers are *not* subtracted here — that happens per pane.
+fn terminal_region_area(width: f32, height: f32, sidebar_width: f32) -> (f32, f32) {
+    let region_width = (width - sidebar_width).max(0.0);
+    let region_height =
+        (height - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT - TAB_BAR_HEIGHT - STATUS_BAR_HEIGHT).max(0.0);
+    (region_width, region_height)
+}
 
-    let available_width =
-        width - sidebar_width - WORKSPACE_HORIZONTAL_PADDING - TERMINAL_HORIZONTAL_PADDING;
-    let available_height = height
-        - MENU_BAR_HEIGHT
-        - TOOLBAR_HEIGHT
-        - STATUS_BAR_HEIGHT
-        - WORKSPACE_VERTICAL_PADDING
-        - TAB_BAR_HEIGHT
-        - COMMAND_BAR_HEIGHT
-        - TERMINAL_VERTICAL_CHROME;
-
-    let cols = (available_width / cell_width())
-        .floor()
-        .clamp(40.0, 220.0) as u16;
-    let rows = (available_height / cell_height())
-        .floor()
-        .clamp(12.0, 80.0) as u16;
-
+/// Cols/rows that fit in a single pane's *inner* pixel area (after its own
+/// padding + header have already been removed by the caller).
+fn terminal_size_for_area(inner_width: f32, inner_height: f32) -> TerminalSize {
+    let cols = (inner_width / cell_width()).floor().clamp(20.0, 220.0) as u16;
+    let rows = (inner_height / cell_height()).floor().clamp(6.0, 80.0) as u16;
     TerminalSize::new(cols, rows)
 }
 
-fn sync_terminal_size(app: &mut AditApp) {
+/// How many columns × rows of panes a given pane count tiles into.
+fn pane_grid_dims(count: usize) -> (usize, usize) {
+    match count {
+        0 | 1 => (1, 1),
+        2 => (2, 1),
+        3 => (3, 1),
+        _ => (2, 2),
+    }
+}
+
+/// Geometry for the current pane layout: grid shape, per-pane outer pixel size,
+/// the terminal region's screen origin, and the header height (0 when single).
+struct PaneLayout {
+    cols: usize,
+    pane_w: f32,
+    pane_h: f32,
+    origin_x: f32,
+    origin_y: f32,
+    header: f32,
+}
+
+fn pane_layout(app: &AditApp) -> PaneLayout {
     let effective_sidebar = if app.sidebar_visible {
         app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
     } else {
         0.0
     };
-    let target = estimated_terminal_size(app.window_width, app.window_height, effective_sidebar);
+    let (region_w, region_h) =
+        terminal_region_area(app.window_width, app.window_height, effective_sidebar);
 
+    let count = app.panes.len().max(1);
+    let (cols, rows) = pane_grid_dims(count);
+    let header = if count > 1 { PANE_HEADER_HEIGHT } else { 0.0 };
+
+    let pane_w = ((region_w - PANE_GAP * (cols as f32 - 1.0)) / cols as f32).max(1.0);
+    let pane_h = ((region_h - PANE_GAP * (rows as f32 - 1.0)) / rows as f32).max(1.0);
+
+    PaneLayout {
+        cols,
+        pane_w,
+        pane_h,
+        origin_x: effective_sidebar,
+        origin_y: MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT,
+        header,
+    }
+}
+
+impl PaneLayout {
+    /// Cols/rows that fit one pane in this layout.
+    fn pane_terminal_size(&self) -> TerminalSize {
+        let inner_w = self.pane_w - TERMINAL_PANEL_PADDING * 2.0;
+        let inner_h = self.pane_h - self.header - TERMINAL_PANEL_PADDING * 2.0;
+        terminal_size_for_area(inner_w, inner_h)
+    }
+
+    /// Screen-space top-left of a pane's terminal *body* (below its header).
+    fn pane_body_origin(&self, index: usize) -> Point {
+        let gc = index % self.cols;
+        let gr = index / self.cols;
+        Point::new(
+            self.origin_x + gc as f32 * (self.pane_w + PANE_GAP),
+            self.origin_y + gr as f32 * (self.pane_h + PANE_GAP) + self.header,
+        )
+    }
+}
+
+/// Single-pane / no-split terminal size, for the common path and the status bar.
+fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> TerminalSize {
+    let (region_w, region_h) = terminal_region_area(width, height, sidebar_width);
+    terminal_size_for_area(
+        region_w - TERMINAL_PANEL_PADDING * 2.0,
+        region_h - TERMINAL_PANEL_PADDING * 2.0,
+    )
+}
+
+fn sync_terminal_size(app: &mut AditApp) {
+    let layout = pane_layout(app);
+    let target = layout.pane_terminal_size();
+
+    // Skip the common no-change case so a window drag does not spam resizes.
+    // Pane add/close changes the pane count → the per-pane target changes, so
+    // this still fits panes on split/unsplit; a same-count session *swap* fits
+    // the swapped-in session explicitly in the ActivateSession handler.
     if target == app.terminal_size {
         return;
     }
 
     app.terminal_size = target;
-    if app.manager.active_session().is_some() {
-        if let Err(error) = app.manager.resize_active(target.cols, target.rows) {
-            app.last_error = Some(error.to_string());
+
+    if app.panes.is_empty() {
+        if app.manager.active_session().is_some() {
+            if let Err(error) = app.manager.resize_active(target.cols, target.rows) {
+                app.last_error = Some(error.to_string());
+            }
         }
+    } else {
+        for &session_id in &app.panes {
+            if let Err(error) = app.manager.resize_session(session_id, target.cols, target.rows) {
+                app.last_error = Some(error.to_string());
+            }
+        }
+    }
+}
+
+/// Add another connected session as a split pane (up to [`MAX_PANES`]).
+fn split_pane(app: &mut AditApp) {
+    // Seed the tiling from the active session on the first split.
+    if app.panes.is_empty() {
+        match app.manager.active_session() {
+            Some(active) => {
+                app.panes.push(active);
+                app.focused_pane = 0;
+            }
+            None => {
+                app.last_error = Some(String::from("请先连接一个会话再分屏"));
+                return;
+            }
+        }
+    }
+
+    if app.panes.len() >= MAX_PANES {
+        app.notice = format!("最多同时分屏 {MAX_PANES} 个终端");
+        return;
+    }
+
+    // First open session not already shown in a pane.
+    let candidate = app
+        .manager
+        .sessions()
+        .into_iter()
+        .map(|summary| summary.id)
+        .find(|id| !app.panes.contains(id));
+
+    let Some(session_id) = candidate else {
+        app.panes.clear();
+        app.focused_pane = 0;
+        app.notice = String::from("没有更多会话可分屏（先在侧栏连接另一个会话）");
+        return;
+    };
+
+    let insert_at = (app.focused_pane + 1).min(app.panes.len());
+    app.panes.insert(insert_at, session_id);
+    app.focused_pane = insert_at;
+    let _ = app.manager.activate(session_id);
+    app.terminal_focused = true;
+    app.terminal_scroll_offset = 0;
+    app.terminal_selection = None;
+    app.terminal_context_menu = false;
+    sync_terminal_size(app);
+    app.notice = format!("已分屏：{} 个终端并排", app.panes.len());
+}
+
+/// Remove a pane from the tiling (does not close the session). Collapses back to
+/// the single-pane view when one or fewer remain.
+fn close_pane(app: &mut AditApp, index: usize) {
+    if index >= app.panes.len() {
+        return;
+    }
+    app.panes.remove(index);
+
+    if app.panes.len() <= 1 {
+        let remaining = app.panes.first().copied();
+        app.panes.clear();
+        app.focused_pane = 0;
+        if let Some(session_id) = remaining {
+            let _ = app.manager.activate(session_id);
+        }
+    } else {
+        if index < app.focused_pane || app.focused_pane >= app.panes.len() {
+            app.focused_pane = app
+                .focused_pane
+                .saturating_sub(1)
+                .min(app.panes.len() - 1);
+        }
+        if let Some(&session_id) = app.panes.get(app.focused_pane) {
+            let _ = app.manager.activate(session_id);
+        }
+    }
+
+    app.terminal_scroll_offset = 0;
+    app.terminal_selection = None;
+    app.terminal_context_menu = false;
+    sync_terminal_size(app);
+}
+
+/// Focus a pane: make its session active and reset per-pane scroll/selection.
+fn focus_pane(app: &mut AditApp, index: usize) {
+    let Some(&session_id) = app.panes.get(index) else {
+        return;
+    };
+    let changed =
+        app.focused_pane != index || app.manager.active_session() != Some(session_id);
+    app.focused_pane = index;
+    if app.manager.active_session() != Some(session_id) {
+        let _ = app.manager.activate(session_id);
+    }
+    app.terminal_focused = true;
+    app.terminal_context_menu = false;
+    if changed {
+        app.terminal_scroll_offset = 0;
+        app.terminal_selection = None;
+    }
+}
+
+/// Keep `panes`/`focused_pane` consistent with the live session set: drop closed
+/// sessions and duplicates, and collapse to the single-pane view when the split
+/// no longer makes sense (≤1 pane, or the active session is not tiled).
+fn sync_panes(app: &mut AditApp) {
+    if app.panes.len() <= 1 {
+        if !app.panes.is_empty() {
+            app.panes.clear();
+        }
+        app.focused_pane = 0;
+        return;
+    }
+
+    let existing: Vec<SessionId> = app
+        .manager
+        .sessions()
+        .into_iter()
+        .map(|summary| summary.id)
+        .collect();
+    app.panes.retain(|id| existing.contains(id));
+    let mut seen: Vec<SessionId> = Vec::new();
+    app.panes.retain(|id| {
+        if seen.contains(id) {
+            false
+        } else {
+            seen.push(*id);
+            true
+        }
+    });
+
+    if app.panes.len() <= 1 {
+        app.panes.clear();
+        app.focused_pane = 0;
+        return;
+    }
+
+    match app.manager.active_session() {
+        Some(active) => match app.panes.iter().position(|id| *id == active) {
+            Some(pos) => app.focused_pane = pos,
+            None => {
+                // A session outside the tiling became active (e.g. a fresh
+                // connection): collapse the split and show it single.
+                app.panes.clear();
+                app.focused_pane = 0;
+            }
+        },
+        None => {
+            app.panes.clear();
+            app.focused_pane = 0;
+        }
+    }
+
+    if app.focused_pane >= app.panes.len() {
+        app.focused_pane = app.panes.len().saturating_sub(1);
     }
 }
 
@@ -3081,6 +3393,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
         MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
         MenuKind::View => &[
             ("外观设置…", MenuCommand::Appearance),
+            ("分屏（并排终端）", MenuCommand::SplitPane),
             ("输入广播开关", MenuCommand::ToggleBroadcast),
             ("终端 96x28", MenuCommand::ResizeDefault),
             ("终端 120x36", MenuCommand::ResizeWide),
@@ -5703,7 +6016,25 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
             tabs.push(tab_button(session, app.manager.active_session()))
         });
 
-    let snapshot = active_terminal_snapshot(app);
+    // Split panes: 2–4 tiled sessions. Otherwise the single-pane view, left
+    // byte-for-byte as before (it is the well-tested selection/hit-test path).
+    let body: Element<'_, Message> = if app.panes.len() >= 2 {
+        tiled_workspace_body(app)
+    } else {
+        mouse_area(terminal_view(
+            active_terminal_snapshot(app),
+            app.terminal_focused,
+            app.terminal_selection,
+            app.terminal_scroll_offset,
+        ))
+        .on_press(Message::BeginTerminalSelection)
+        .on_release(Message::EndTerminalSelection)
+        .on_right_press(Message::ShowTerminalContextMenu)
+        .on_move(Message::TerminalPointerMoved)
+        .on_scroll(Message::TerminalScrolled)
+        .interaction(mouse::Interaction::Text)
+        .into()
+    };
 
     container(
         column![
@@ -5715,22 +6046,14 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
                 container(text(app.manager.status_line()).size(12).color(muted_text()))
                     .padding([0, 8])
                     .center_y(TAB_BAR_HEIGHT),
+                Space::new().width(Fill),
+                split_button(app),
             ]
+            .spacing(6)
             .align_y(Alignment::Center)
             .height(TAB_BAR_HEIGHT)
             .width(Fill),
-            mouse_area(terminal_view(
-                snapshot,
-                app.terminal_focused,
-                app.terminal_selection,
-                app.terminal_scroll_offset,
-            ))
-            .on_press(Message::BeginTerminalSelection)
-            .on_release(Message::EndTerminalSelection)
-            .on_right_press(Message::ShowTerminalContextMenu)
-            .on_move(Message::TerminalPointerMoved)
-            .on_scroll(Message::TerminalScrolled)
-            .interaction(mouse::Interaction::Text),
+            body,
         ]
         .height(Fill)
         .width(Fill),
@@ -5740,6 +6063,128 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
     .height(Fill)
     .width(Fill)
     .into()
+}
+
+/// The tab-row split control: adds another connected session as a pane.
+fn split_button(app: &AditApp) -> Element<'static, Message> {
+    let label = if app.panes.len() >= 2 {
+        format!("▥ 分屏 {}", app.panes.len())
+    } else {
+        String::from("▥ 分屏")
+    };
+    button(text(label).size(11))
+        .padding([3, 10])
+        .style(|_theme, status| secondary_button_style(status))
+        .on_press(Message::SplitPane)
+        .into()
+}
+
+/// Tile the current `panes` into a row/grid, each a headed terminal pane.
+fn tiled_workspace_body(app: &AditApp) -> Element<'_, Message> {
+    let layout = pane_layout(app);
+    let mut grid = column![].spacing(PANE_GAP).width(Fill).height(Fill);
+    let mut idx = 0usize;
+
+    while idx < app.panes.len() {
+        let mut r = row![].spacing(PANE_GAP).width(Fill).height(Fill);
+        for _ in 0..layout.cols {
+            if idx >= app.panes.len() {
+                break;
+            }
+            let session_id = app.panes[idx];
+            r = r.push(
+                container(terminal_pane(app, session_id, idx))
+                    .width(Length::FillPortion(1))
+                    .height(Fill),
+            );
+            idx += 1;
+        }
+        grid = grid.push(r);
+    }
+
+    grid.into()
+}
+
+/// One split pane: a clickable header (session title + close-pane ×) over a
+/// terminal body wired to pane-scoped input/selection messages.
+fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) -> Element<'static, Message> {
+    let is_focused = index == app.focused_pane;
+    let summary = app.manager.session_summary(session_id);
+    let title = summary
+        .as_ref()
+        .map(|summary| summary.title.clone())
+        .unwrap_or_else(|| String::from("会话"));
+    let status = summary
+        .map(|summary| summary.status)
+        .unwrap_or(SessionStatus::Disconnected);
+
+    let header = mouse_area(
+        container(
+            row![
+                text("●").size(9).color(status_color(status)),
+                text(title).size(11).color(primary_text()).width(Fill),
+                button(text("×").size(13))
+                    .padding([0, 6])
+                    .style(|_theme, status| tab_close_button_style(status))
+                    .on_press(Message::ClosePane(index)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .padding([1, 6])
+        .height(Length::Fixed(PANE_HEADER_HEIGHT))
+        .width(Fill)
+        .style(move |_theme| pane_header_style(is_focused)),
+    )
+    .on_press(Message::FocusPane(index))
+    .interaction(mouse::Interaction::Pointer);
+
+    let snapshot = pane_snapshot(app, session_id, is_focused);
+    let selection = if is_focused {
+        app.terminal_selection
+    } else {
+        None
+    };
+    let body = mouse_area(terminal_view(
+        snapshot,
+        is_focused,
+        selection,
+        app.terminal_scroll_offset,
+    ))
+    .on_press(Message::PaneMousePressed(index))
+    .on_release(Message::EndTerminalSelection)
+    .on_right_press(Message::PaneRightPressed(index))
+    .on_move(move |point| Message::PanePointerMoved(index, point))
+    .on_scroll(Message::TerminalScrolled)
+    .interaction(mouse::Interaction::Text);
+
+    column![header, body]
+        .spacing(0)
+        .width(Fill)
+        .height(Fill)
+        .into()
+}
+
+/// Snapshot for a pane; only the focused pane honors the scroll-back offset.
+fn pane_snapshot(app: &AditApp, session_id: SessionId, is_focused: bool) -> TerminalSnapshot {
+    let rows = terminal_view_rows(app);
+    let tail = app.manager.snapshot_for(session_id, Viewport::tail(rows));
+
+    if !is_focused || app.terminal_scroll_offset == 0 {
+        return tail;
+    }
+
+    let offset = app
+        .terminal_scroll_offset
+        .min(max_scroll_offset_for(&tail, rows));
+    let first_row = tail.total_rows.saturating_sub(rows).saturating_sub(offset);
+    app.manager.snapshot_for(
+        session_id,
+        Viewport {
+            first_row,
+            height: rows,
+        },
+    )
 }
 
 fn active_session_action(app: &AditApp) -> Element<'_, Message> {
@@ -6223,6 +6668,24 @@ fn terminal_panel_style(focused: bool) -> container::Style {
     }
 }
 
+/// The title bar of a split pane; accent-tinted while it is the focused pane.
+fn pane_header_style(focused: bool) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(if focused {
+            accent_soft()
+        } else {
+            surface_alt()
+        })),
+        text_color: Some(primary_text()),
+        border: border(
+            RADIUS_SM,
+            1.0,
+            if focused { accent() } else { border_color() },
+        ),
+        ..container::Style::default()
+    }
+}
+
 fn dialog_scrim_style() -> container::Style {
     container::Style {
         background: Some(Background::Color(Color {
@@ -6547,6 +7010,52 @@ mod tests {
         assert_eq!(avatar_initials("local lab"), "LL");
         assert_eq!(avatar_initials("redis"), "R");
         assert_eq!(avatar_initials(""), "?");
+    }
+
+    #[test]
+    fn pane_grid_dims_tiles_by_count() {
+        assert_eq!(pane_grid_dims(0), (1, 1));
+        assert_eq!(pane_grid_dims(1), (1, 1));
+        assert_eq!(pane_grid_dims(2), (2, 1));
+        assert_eq!(pane_grid_dims(3), (3, 1));
+        assert_eq!(pane_grid_dims(4), (2, 2));
+    }
+
+    #[test]
+    fn terminal_size_for_area_clamps_to_sane_bounds() {
+        // A tiny area still yields the minimum grid, not zero.
+        let tiny = terminal_size_for_area(1.0, 1.0);
+        assert_eq!(tiny.cols, 20);
+        assert_eq!(tiny.rows, 6);
+        // A generous area scales up but stays under the ceiling.
+        let big = terminal_size_for_area(100_000.0, 100_000.0);
+        assert_eq!(big.cols, 220);
+        assert_eq!(big.rows, 80);
+    }
+
+    #[test]
+    fn pane_body_origin_places_each_cell_of_the_grid() {
+        // A 2x2 layout: verify column/row offsets and the header shift.
+        let layout = PaneLayout {
+            cols: 2,
+            pane_w: 400.0,
+            pane_h: 300.0,
+            origin_x: 348.0,
+            origin_y: 98.0,
+            header: 26.0,
+        };
+        // Top-left pane body starts at origin + header.
+        assert_eq!(layout.pane_body_origin(0), Point::new(348.0, 124.0));
+        // Top-right shifts one column (pane_w + gap).
+        assert_eq!(
+            layout.pane_body_origin(1),
+            Point::new(348.0 + 400.0 + PANE_GAP, 124.0)
+        );
+        // Bottom-left shifts one row (pane_h + gap).
+        assert_eq!(
+            layout.pane_body_origin(2),
+            Point::new(348.0, 98.0 + 300.0 + PANE_GAP + 26.0)
+        );
     }
 
     #[test]
