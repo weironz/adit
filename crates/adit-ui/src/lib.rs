@@ -1112,7 +1112,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             new_group_draft(app);
         }
         Message::SaveProfile => {
-            save_profile(app);
+            // A successful save closes the editor dialog (no-op when it is not open).
+            if save_profile_from_form(app, true).is_some() {
+                app.profile_editor = None;
+            }
         }
         Message::DeleteSelectedProfile => {
             delete_selected_profile(app);
@@ -2567,6 +2570,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if app.terminal_context_menu {
         layers.push(opaque(terminal_context_overlay(app)));
+    }
+    if app.profile_editor.is_some() {
+        layers.push(opaque(profile_editor_overlay(app)));
     }
     if app.connection_dialog.is_some() {
         layers.push(opaque(connection_dialog_overlay(app)));
@@ -4319,7 +4325,6 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                 .filter(|target| target.profile_id == profile.id)
                 .map(|target| target.position);
 
-            let profile_id = profile.id;
             profiles = profiles.push(tree_profile_row(
                 profile,
                 selected,
@@ -4328,12 +4333,8 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                 drop_position,
             ));
 
-            // The context menu is now a floating overlay (see the layers stack
-            // in `view`), so it is no longer pushed inline here.
-
-            if app.profile_editor == Some(profile_id) {
-                profiles = profiles.push(profile_edit_menu(app));
-            }
+            // The context menu and the profile editor are now floating overlays
+            // (see the layers stack in `view`), not pushed inline here.
         }
     }
 
@@ -4826,107 +4827,143 @@ fn tooltip_style() -> container::Style {
     }
 }
 
-fn profile_edit_menu(app: &AditApp) -> Element<'_, Message> {
-    container(
+fn dialog_field<'a>(label: &'static str, input: Element<'a, Message>) -> Element<'a, Message> {
+    column![text(label).size(11).color(muted_text()), input]
+        .spacing(3)
+        .into()
+}
+
+/// The session editor as a centered modal dialog (over a scrim), instead of an
+/// inline editor embedded in the sidebar list.
+fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
+    let status = if form_matches_selected_profile(app) {
+        "已保存"
+    } else {
+        "未保存"
+    };
+
+    let header = row![
+        text("编辑会话").size(15).color(primary_text()),
+        text(status).size(11).color(muted_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseProfileEditor),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let card = container(
         column![
+            header,
             row![
-                Space::new().width(Length::Fixed(42.0)),
-                text("编辑会话").size(12).color(primary_text()),
-                Space::new().width(Fill),
-                text(if form_matches_selected_profile(app) {
-                    "saved"
-                } else {
-                    "modified"
-                })
-                .size(10)
-                .color(muted_text()),
-                button("×")
-                    .width(Length::Fixed(22.0))
-                    .height(Length::Fixed(20.0))
-                    .padding(0)
-                    .style(|_theme, status| close_button_style(status))
-                    .on_press(Message::CloseProfileEditor),
+                dialog_field(
+                    "分组",
+                    text_input("默认", &app.profile_group)
+                        .on_input(Message::ProfileGroupChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ),
+                dialog_field(
+                    "名称",
+                    text_input("会话名称", &app.profile_name)
+                        .on_input(Message::ProfileNameChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ),
             ]
-            .spacing(4)
-            .align_y(Alignment::Center),
+            .spacing(10),
             row![
-                Space::new().width(Length::Fixed(42.0)),
-                text_input("Group", &app.profile_group)
-                    .on_input(Message::ProfileGroupChanged)
-                    .padding([4, 6])
-                    .style(text_input_style)
-                    .width(Length::FillPortion(1)),
-                text_input("Name", &app.profile_name)
-                    .on_input(Message::ProfileNameChanged)
-                    .padding([4, 6])
-                    .style(text_input_style)
-                    .width(Length::FillPortion(1)),
+                container(dialog_field(
+                    "主机",
+                    text_input("10.0.0.5", &app.profile_host)
+                        .on_input(Message::ProfileHostChanged)
+                        .on_submit(Message::ConnectSelectedProfile)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .width(Length::FillPortion(2)),
+                container(dialog_field(
+                    "端口",
+                    text_input("22", &app.profile_port)
+                        .on_input(Message::ProfilePortChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .width(Length::FillPortion(1)),
             ]
-            .spacing(5),
-            row![
-                Space::new().width(Length::Fixed(42.0)),
-                text_input("Host", &app.profile_host)
-                    .on_input(Message::ProfileHostChanged)
-                    .padding([4, 6])
-                    .style(text_input_style)
-                    .width(Length::FillPortion(2)),
-                text_input("Port", &app.profile_port)
-                    .on_input(Message::ProfilePortChanged)
-                    .padding([4, 6])
-                    .style(text_input_style)
-                    .width(Length::FillPortion(1)),
-            ]
-            .spacing(5),
-            row![
-                Space::new().width(Length::Fixed(42.0)),
-                text_input("User", &app.profile_username)
+            .spacing(10),
+            dialog_field(
+                "用户名",
+                text_input("root", &app.profile_username)
                     .on_input(Message::ProfileUsernameChanged)
-                    .padding([4, 6])
+                    .padding([5, 8])
                     .style(text_input_style)
-                    .width(Fill),
-            ]
-            .spacing(5),
-            row![
-                Space::new().width(Length::Fixed(42.0)),
-                auth_method_button(app, AuthMethod::Auto),
-                auth_method_button(app, AuthMethod::Password),
-                auth_method_button(app, AuthMethod::Key),
-                auth_method_button(app, AuthMethod::Agent),
-            ]
-            .spacing(4),
-            row![
-                Space::new().width(Length::Fixed(42.0)),
-                text_input("Identity file", &app.profile_identity_file)
+                    .width(Fill)
+                    .into(),
+            ),
+            dialog_field(
+                "认证方式",
+                row![
+                    auth_method_button(app, AuthMethod::Auto),
+                    auth_method_button(app, AuthMethod::Password),
+                    auth_method_button(app, AuthMethod::Key),
+                    auth_method_button(app, AuthMethod::Agent),
+                ]
+                .spacing(6)
+                .into(),
+            ),
+            dialog_field(
+                "密钥文件（可选）",
+                text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
                     .on_input(Message::ProfileIdentityFileChanged)
-                    .padding([4, 6])
+                    .padding([5, 8])
                     .style(text_input_style)
-                    .width(Fill),
-            ],
+                    .width(Fill)
+                    .into(),
+            ),
             row![
-                Space::new().width(Length::Fixed(42.0)),
-                button("Connect")
-                    .width(Fill)
-                    .padding([5, 8])
-                    .style(|_theme, status| primary_button_style(status))
+                Space::new().width(Fill),
+                button(text("取消").size(12))
+                    .padding([6, 16])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CloseProfileEditor),
+                button(text("连接").size(12))
+                    .padding([6, 16])
+                    .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::ConnectSelectedProfile),
-                button("Save")
-                    .width(Fill)
-                    .padding([5, 8])
-                    .style(|_theme, status| secondary_button_style(status))
+                button(text("保存").size(12))
+                    .padding([6, 18])
+                    .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::SaveProfile),
-                button("Demo")
-                    .width(Fill)
-                    .padding([5, 8])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::OpenSelectedProfile),
             ]
-            .spacing(5),
+            .spacing(8)
+            .align_y(Alignment::Center),
         ]
-        .spacing(5),
+        .spacing(12),
     )
-    .padding(7)
-    .style(|_theme| profile_edit_menu_style())
-    .into()
+    .width(Length::Fixed(440.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
 }
 
 fn auth_method_button(app: &AditApp, auth_method: AuthMethod) -> Element<'static, Message> {
