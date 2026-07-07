@@ -92,6 +92,7 @@ pub struct AditApp {
     sftp_drag_over: Option<SftpPane>,
     sftp_drag_cursor: Option<Point>,
     tunnels_open: bool,
+    about_open: bool,
     tunnel_kind: TunnelKind,
     tunnel_bind_addr: String,
     tunnel_bind_port: String,
@@ -189,6 +190,7 @@ pub enum Message {
     CloseSftp,
     OpenTunnels,
     CloseTunnels,
+    CloseAbout,
     TunnelKindChanged(TunnelKind),
     TunnelBindAddrChanged(String),
     TunnelBindPortChanged(String),
@@ -457,6 +459,7 @@ impl AditApp {
             sftp_drag_over: None,
             sftp_drag_cursor: None,
             tunnels_open: false,
+            about_open: false,
             tunnel_kind: TunnelKind::Local,
             tunnel_bind_addr: String::from("127.0.0.1"),
             tunnel_bind_port: String::new(),
@@ -823,6 +826,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::CloseTunnels => app.tunnels_open = false,
+        Message::CloseAbout => app.about_open = false,
         Message::TunnelKindChanged(kind) => app.tunnel_kind = kind,
         Message::TunnelBindAddrChanged(value) => app.tunnel_bind_addr = value,
         Message::TunnelBindPortChanged(value) => {
@@ -1268,9 +1272,7 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
                 String::from("自动重连已关闭")
             };
         }
-        MenuCommand::About => {
-            app.notice = String::from("Adit native prototype: iced + russh + Rust terminal core");
-        }
+        MenuCommand::About => app.about_open = true,
     }
 }
 
@@ -2481,6 +2483,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if app.tunnels_open {
         layers.push(opaque(tunnels_panel_overlay(app)));
     }
+    if app.about_open {
+        layers.push(opaque(about_dialog_overlay()));
+    }
 
     if layers.len() == 1 {
         layers.pop().unwrap()
@@ -2938,6 +2943,50 @@ fn add_tunnel(app: &mut AditApp) {
         }
         Err(error) => app.last_error = Some(format!("端口转发失败: {error}")),
     }
+}
+
+fn about_dialog_overlay() -> Element<'static, Message> {
+    let version = env!("CARGO_PKG_VERSION");
+    let card = container(
+        column![
+            row![
+                text("Adit").size(20).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseAbout),
+            ]
+            .align_y(Alignment::Center),
+            text(format!("版本 v{version}")).size(13).color(accent()),
+            text("原生 Rust 桌面 SSH 终端").size(13).color(primary_text()),
+            text("iced · russh · vte 终端核心 — 无 WebView，无 JavaScript")
+                .size(12)
+                .color(muted_text()),
+            text("github.com/weironz/adit").size(12).color(muted_text()),
+            row![
+                Space::new().width(Fill),
+                button(text("确定").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::CloseAbout),
+            ],
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(380.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
 }
 
 fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
