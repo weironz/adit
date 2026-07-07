@@ -183,6 +183,7 @@ pub enum Message {
     EditProfileFromContext(ProfileId),
     CloseProfileEditor,
     ConnectProfileFromContext(ProfileId),
+    CloneProfileFromContext(ProfileId),
     DeleteProfileFromContext(ProfileId),
     ConnectionPasswordChanged(String),
     RememberConnectionPasswordChanged(bool),
@@ -802,6 +803,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_context_menu = None;
             app.profile_editor = None;
             open_connection_dialog(app);
+        }
+        Message::CloneProfileFromContext(profile_id) => {
+            app.profile_context_menu = None;
+            if let Some(new_id) = app.manager.duplicate_profile(profile_id) {
+                select_profile(app, new_id);
+                if persist_profiles(app) {
+                    app.notice = String::from("已克隆会话");
+                }
+            }
         }
         Message::DeleteProfileFromContext(profile_id) => {
             select_profile(app, profile_id);
@@ -4617,21 +4627,41 @@ fn avatar_style(color: Color) -> container::Style {
 }
 
 fn profile_context_menu(profile_id: ProfileId) -> Element<'static, Message> {
-    container(
-        row![
-            Space::new().width(Length::Fixed(42.0)),
-            profile_context_button("编辑", Message::EditProfileFromContext(profile_id)),
-            profile_context_button("连接", Message::ConnectProfileFromContext(profile_id)),
-            profile_context_button("删除", Message::DeleteProfileFromContext(profile_id)),
-            profile_context_button("关闭", Message::HideProfileContextMenu),
+    let card = container(
+        column![
+            profile_menu_item("连接", Message::ConnectProfileFromContext(profile_id), false),
+            profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false),
+            profile_menu_item("克隆", Message::CloneProfileFromContext(profile_id), false),
+            profile_menu_divider(),
+            profile_menu_item("删除", Message::DeleteProfileFromContext(profile_id), true),
         ]
-        .spacing(3)
-        .align_y(Alignment::Center),
+        .spacing(1),
     )
-    .padding([3, 4])
-    .width(Fill)
-    .style(|_theme| profile_context_menu_style())
-    .into()
+    .padding(4)
+    .width(Length::Fixed(168.0))
+    .style(|_theme| profile_context_menu_style());
+
+    // Indent slightly so the menu reads as anchored to the row above it.
+    row![Space::new().width(Length::Fixed(40.0)), card].into()
+}
+
+fn profile_menu_item(label: &'static str, message: Message, danger: bool) -> Element<'static, Message> {
+    button(text(label).size(12))
+        .width(Fill)
+        .padding([6, 10])
+        .style(move |_theme, status| profile_menu_item_style(status, danger))
+        .on_press(message)
+        .into()
+}
+
+fn profile_menu_divider() -> Element<'static, Message> {
+    container(Space::new().height(Length::Fixed(1.0)))
+        .width(Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(border_color())),
+            ..container::Style::default()
+        })
+        .into()
 }
 
 fn profile_context_button(label: &'static str, message: Message) -> Element<'static, Message> {
@@ -5656,6 +5686,23 @@ fn profile_context_button_style(status: button::Status) -> button::Style {
     };
 
     base_button_style(background, primary_text(), transparent())
+}
+
+/// A vertical context-menu row: left-aligned, subtle hover, red for destructive.
+fn profile_menu_item_style(status: button::Status, destructive: bool) -> button::Style {
+    let hover_bg = if destructive {
+        danger_background()
+    } else {
+        panel_background_hover()
+    };
+    let background = match status {
+        button::Status::Hovered | button::Status::Pressed => hover_bg,
+        _ => transparent(),
+    };
+    let text_color = if destructive { danger() } else { primary_text() };
+    let mut style = base_button_style(background, text_color, transparent());
+    style.border = border(RADIUS_SM - 2.0, 0.0, transparent());
+    style
 }
 
 fn profile_edit_menu_style() -> container::Style {

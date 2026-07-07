@@ -312,6 +312,20 @@ impl SessionManager {
         Ok(profile_id)
     }
 
+    /// Duplicate an existing profile (a full copy in the same group, placed
+    /// right after the original). Returns the new profile's id.
+    pub fn duplicate_profile(&mut self, profile_id: ProfileId) -> Option<ProfileId> {
+        let index = self.profiles.iter().position(|p| p.id == profile_id)?;
+        let mut clone = self.profiles[index].clone();
+        clone.id = ProfileId::new();
+        clone.name = format!("{} 副本", clone.name);
+        let new_id = clone.id;
+        // Same sort_order as the original; the stable sidebar sort keeps the
+        // copy immediately after it (it is inserted right after in the vec).
+        self.profiles.insert(index + 1, clone);
+        Some(new_id)
+    }
+
     #[allow(clippy::too_many_arguments)] // mirrors the profile editor's field set
     pub fn update_profile(
         &mut self,
@@ -2221,6 +2235,27 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn duplicate_profile_creates_a_copy_after_the_original() {
+        let mut manager = SessionManager::with_profiles(vec![
+            ConnectionProfile::with_group("Lab", "alpha", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("Lab", "bravo", "10.0.0.2", 22, "root"),
+        ]);
+        let original_id = manager.profiles()[0].id;
+
+        let new_id = manager.duplicate_profile(original_id).expect("clone");
+        assert_ne!(new_id, original_id);
+        assert_eq!(manager.profiles().len(), 3);
+
+        // The copy sits immediately after the original, a full field copy but
+        // with a fresh id and a suffixed name.
+        let clone = &manager.profiles()[1];
+        assert_eq!(clone.id, new_id);
+        assert_eq!(clone.name, "alpha 副本");
+        assert_eq!(clone.host, "10.0.0.1");
+        assert_eq!(clone.group, "Lab");
     }
 
     #[test]
