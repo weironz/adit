@@ -311,8 +311,6 @@ const TERMINAL_ROW_HEIGHT: f32 = 17.0;
 const SIDEBAR_WIDTH: f32 = 348.0;
 const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
-const WORKSPACE_PADDING_X: f32 = 0.0;
-const WORKSPACE_PADDING_TOP: f32 = 0.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
@@ -2175,19 +2173,17 @@ fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(
 }
 
 fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
+    // `point` comes from the terminal panel's own `mouse_area` (`on_move` uses
+    // `cursor.position_in(bounds)`), so it is already relative to the panel's
+    // top-left. Only the panel's internal padding and — when shown — the
+    // context-menu strip offset the text grid; the window chrome does not.
     let context_menu_height = if app.terminal_context_menu {
         TERMINAL_CONTEXT_MENU_AND_GAP
     } else {
         0.0
     };
-    let origin_x = SIDEBAR_WIDTH + WORKSPACE_PADDING_X + TERMINAL_PANEL_PADDING;
-    let origin_y = MENU_BAR_HEIGHT
-        + TOOLBAR_HEIGHT
-        + WORKSPACE_PADDING_TOP
-        + TAB_BAR_HEIGHT
-        + TERMINAL_PANEL_PADDING
-        + TERMINAL_HEADER_AND_GAP
-        + context_menu_height;
+    let origin_x = TERMINAL_PANEL_PADDING;
+    let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP + context_menu_height;
 
     let col = ((point.x - origin_x) / TERMINAL_CHAR_WIDTH)
         .floor()
@@ -4917,8 +4913,10 @@ fn terminal_line(
     selection: Option<TerminalSelection>,
 ) -> Element<'static, Message> {
     if line.cells.is_empty() {
-        // Preserve the row height of a visually blank terminal line.
-        return text(" ").size(13).font(Font::MONOSPACE).into();
+        // Preserve the exact row height of a visually blank terminal line.
+        return container(text(" ").size(13).font(Font::MONOSPACE))
+            .height(Length::Fixed(TERMINAL_ROW_HEIGHT))
+            .into();
     }
 
     let selected_range =
@@ -4954,14 +4952,17 @@ fn terminal_line(
                 }
             };
 
-            row_widget = if let Some(background) = background {
-                row_widget.push(container(label).style(move |_theme| container::Style {
-                    background: Some(Background::Color(background)),
-                    ..container::Style::default()
-                }))
-            } else {
-                row_widget.push(label)
-            };
+            // Fixed-size cell so the rendered grid exactly matches the
+            // pixel→cell hit-testing used for selection (no drift).
+            row_widget = row_widget.push(
+                container(label)
+                    .width(Length::Fixed(TERMINAL_CHAR_WIDTH))
+                    .height(Length::Fixed(TERMINAL_ROW_HEIGHT))
+                    .style(move |_theme| container::Style {
+                        background: background.map(Background::Color),
+                        ..container::Style::default()
+                    }),
+            );
 
             col += 1;
         }
