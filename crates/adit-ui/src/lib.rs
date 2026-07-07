@@ -109,6 +109,9 @@ pub struct AditApp {
     terminal_scroll_offset: usize,
     window_width: f32,
     window_height: f32,
+    sidebar_width: f32,
+    sidebar_visible: bool,
+    sidebar_dragging: bool,
     dark_mode: bool,
     settings_store: SettingsStore,
     /// The last settings snapshot written to disk; the Tick loop persists when
@@ -250,6 +253,10 @@ pub enum Message {
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
     WindowResized { width: f32, height: f32 },
+    ToggleSidebar,
+    BeginSidebarDrag,
+    SidebarDragMove(f32),
+    EndSidebarDrag,
     FocusTerminal,
     TerminalPointerMoved(Point),
     TerminalScrolled(mouse::ScrollDelta),
@@ -308,7 +315,9 @@ enum TerminalScrollAction {
 
 const TERMINAL_CHAR_WIDTH: f32 = 7.8;
 const TERMINAL_ROW_HEIGHT: f32 = 17.0;
-const SIDEBAR_WIDTH: f32 = 348.0;
+const SIDEBAR_MIN_WIDTH: f32 = 220.0;
+const SIDEBAR_MAX_WIDTH: f32 = 640.0;
+const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
 const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
@@ -397,6 +406,10 @@ impl AditApp {
         let (window_width, window_height) = sane_window_size(raw_window_width, raw_window_height);
         let auto_reconnect = settings.auto_reconnect;
         let collapsed_groups: BTreeSet<String> = settings.collapsed_groups.into_iter().collect();
+        let sidebar_width = settings
+            .sidebar_width
+            .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        let sidebar_visible = settings.sidebar_visible;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -409,7 +422,10 @@ impl AditApp {
             window_width: raw_window_width,
             window_height: raw_window_height,
             auto_reconnect,
+            sidebar_width: settings.sidebar_width,
+            sidebar_visible,
         };
+        let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
         let mut app = Self {
             manager,
@@ -466,7 +482,7 @@ impl AditApp {
             tunnel_save: true,
             terminal_input: String::new(),
             terminal_focused: false,
-            terminal_size: estimated_terminal_size(window_width, window_height),
+            terminal_size: estimated_terminal_size(window_width, window_height, effective_sidebar),
             terminal_pointer: None,
             terminal_selection: None,
             terminal_selecting: false,
@@ -474,6 +490,9 @@ impl AditApp {
             terminal_scroll_offset: 0,
             window_width,
             window_height,
+            sidebar_width,
+            sidebar_visible,
+            sidebar_dragging: false,
             dark_mode,
             settings_store,
             persisted_settings,
@@ -537,11 +556,33 @@ fn app_theme(app: &AditApp) -> Theme {
     }
 }
 
-fn subscription(_app: &AditApp) -> Subscription<Message> {
-    Subscription::batch([
+fn subscription(app: &AditApp) -> Subscription<Message> {
+    let mut subs = vec![
         iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
         event::listen_with(runtime_event),
-    ])
+    ];
+    // Only track the global cursor while a sidebar resize is in progress, so
+    // idle mouse movement never floods the app with messages.
+    if app.sidebar_dragging {
+        subs.push(event::listen_with(sidebar_drag_event));
+    }
+    Subscription::batch(subs)
+}
+
+fn sidebar_drag_event(
+    event: event::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+            Some(Message::SidebarDragMove(position.x))
+        }
+        event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Some(Message::EndSidebarDrag)
+        }
+        _ => None,
+    }
 }
 
 fn runtime_event(
@@ -1104,6 +1145,18 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 sync_terminal_size(app);
             }
         }
+        Message::ToggleSidebar => {
+            app.sidebar_visible = !app.sidebar_visible;
+            sync_terminal_size(app);
+        }
+        Message::BeginSidebarDrag => app.sidebar_dragging = true,
+        Message::SidebarDragMove(x) => {
+            if app.sidebar_dragging {
+                app.sidebar_width = x.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+                sync_terminal_size(app);
+            }
+        }
+        Message::EndSidebarDrag => app.sidebar_dragging = false,
         Message::FocusTerminal => {
             if !app.terminal_focused {
                 app.notice = String::from("终端已聚焦，键盘输入会发送到当前会话");
@@ -2352,7 +2405,7 @@ fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
     }
 }
 
-fn estimated_terminal_size(width: f32, height: f32) -> TerminalSize {
+fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> TerminalSize {
     const WORKSPACE_HORIZONTAL_PADDING: f32 = 0.0;
     const TERMINAL_HORIZONTAL_PADDING: f32 = TERMINAL_PANEL_PADDING * 2.0;
     const WORKSPACE_VERTICAL_PADDING: f32 = 0.0;
@@ -2360,7 +2413,7 @@ fn estimated_terminal_size(width: f32, height: f32) -> TerminalSize {
     const TERMINAL_VERTICAL_CHROME: f32 = TERMINAL_PANEL_PADDING * 2.0;
 
     let available_width =
-        width - SIDEBAR_WIDTH - WORKSPACE_HORIZONTAL_PADDING - TERMINAL_HORIZONTAL_PADDING;
+        width - sidebar_width - WORKSPACE_HORIZONTAL_PADDING - TERMINAL_HORIZONTAL_PADDING;
     let available_height = height
         - MENU_BAR_HEIGHT
         - TOOLBAR_HEIGHT
@@ -2381,7 +2434,12 @@ fn estimated_terminal_size(width: f32, height: f32) -> TerminalSize {
 }
 
 fn sync_terminal_size(app: &mut AditApp) {
-    let target = estimated_terminal_size(app.window_width, app.window_height);
+    let effective_sidebar = if app.sidebar_visible {
+        app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
+    } else {
+        0.0
+    };
+    let target = estimated_terminal_size(app.window_width, app.window_height, effective_sidebar);
 
     if target == app.terminal_size {
         return;
@@ -2404,6 +2462,8 @@ fn current_settings(app: &AditApp) -> AppSettings {
         window_width: app.window_width,
         window_height: app.window_height,
         auto_reconnect: app.manager.auto_reconnect(),
+        sidebar_width: app.sidebar_width,
+        sidebar_visible: app.sidebar_visible,
     }
 }
 
@@ -2448,9 +2508,17 @@ fn sync_sftp_state(app: &mut AditApp) {
 fn view(app: &AditApp) -> Element<'_, Message> {
     DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
 
+    let main = if app.sidebar_visible {
+        row![sidebar(app), sidebar_divider(), workspace(app)]
+    } else {
+        row![workspace(app)]
+    }
+    .height(Fill)
+    .width(Fill);
+
     let layout = column![menu_bar(app)]
         .push(toolbar(app))
-        .push(row![sidebar(app), workspace(app)].height(Fill).width(Fill))
+        .push(main)
         .push(status_bar(app))
         .height(Fill)
         .width(Fill);
@@ -2619,6 +2687,8 @@ fn menu_dropdown_button(label: &'static str, command: MenuCommand) -> Element<'s
 fn toolbar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
+            tool_button("☰", Message::ToggleSidebar),
+            tool_separator(),
             tool_button("↯", Message::ConnectSelectedProfile),
             tool_button("■", Message::DisconnectActive),
             tool_button("+", Message::NewProfileDraft),
@@ -4292,7 +4362,7 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(0)
     .height(Fill)
-    .width(Length::Fixed(SIDEBAR_WIDTH));
+    .width(Length::Fixed(app.sidebar_width));
 
     if let Some(error) = error {
         content = content.push(error);
@@ -4302,6 +4372,23 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .height(Fill)
         .style(|_theme| sidebar_style())
         .into()
+}
+
+/// The draggable divider between the sidebar and the workspace. Pressing it
+/// starts a resize drag; the drag itself is driven by the global cursor
+/// subscription that is only active while `sidebar_dragging` is set.
+fn sidebar_divider() -> Element<'static, Message> {
+    mouse_area(
+        container(Space::new().width(Length::Fixed(SIDEBAR_DIVIDER_WIDTH)).height(Fill))
+            .height(Fill)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(border_color())),
+                ..container::Style::default()
+            }),
+    )
+    .on_press(Message::BeginSidebarDrag)
+    .interaction(mouse::Interaction::ResizingHorizontally)
+    .into()
 }
 
 fn tree_root_row(profile_count: usize) -> Element<'static, Message> {

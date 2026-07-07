@@ -176,9 +176,21 @@ pub struct AppSettings {
     pub window_height: f32,
     #[serde(default = "default_auto_reconnect")]
     pub auto_reconnect: bool,
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: f32,
+    #[serde(default = "default_sidebar_visible")]
+    pub sidebar_visible: bool,
 }
 
 fn default_auto_reconnect() -> bool {
+    true
+}
+
+fn default_sidebar_width() -> f32 {
+    348.0
+}
+
+fn default_sidebar_visible() -> bool {
     true
 }
 
@@ -191,6 +203,8 @@ impl Default for AppSettings {
             window_width: 1360.0,
             window_height: 860.0,
             auto_reconnect: true,
+            sidebar_width: default_sidebar_width(),
+            sidebar_visible: default_sidebar_visible(),
         }
     }
 }
@@ -423,6 +437,8 @@ mod tests {
             window_width: 1500.0,
             window_height: 900.0,
             auto_reconnect: false,
+            sidebar_width: 300.0,
+            sidebar_visible: false,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");
