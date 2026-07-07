@@ -386,6 +386,91 @@ fn dirs_home() -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// Open a serial port (8N1, no flow control) and present it through the same
+/// [`LiveShellHandle`] transport as an SSH/local shell.
+pub fn spawn_serial(port_name: String, baud: u32) -> Result<LiveShellHandle, SshError> {
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel();
+
+    thread::Builder::new()
+        .name(format!("adit-serial-{port_name}"))
+        .spawn(move || {
+            if let Err(error) = run_serial(&port_name, baud, command_rx, &event_tx) {
+                let _ = event_tx.send(LiveShellEvent::Error(error));
+            }
+            let _ = event_tx.send(LiveShellEvent::Closed);
+        })
+        .map_err(|error| SshError::Runtime(error.to_string()))?;
+
+    Ok(LiveShellHandle {
+        command_tx,
+        event_rx,
+    })
+}
+
+fn run_serial(
+    port_name: &str,
+    baud: u32,
+    mut commands: tokio_mpsc::UnboundedReceiver<LiveShellCommand>,
+    events: &mpsc::Sender<LiveShellEvent>,
+) -> Result<(), String> {
+    use serialport::{DataBits, FlowControl, Parity, StopBits};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    let mut writer = serialport::new(port_name, baud)
+        .data_bits(DataBits::Eight)
+        .parity(Parity::None)
+        .stop_bits(StopBits::One)
+        .flow_control(FlowControl::None)
+        .timeout(Duration::from_millis(50))
+        .open()
+        .map_err(|error| format!("打开串口 {port_name} 失败: {error}"))?;
+    let mut reader = writer.try_clone().map_err(|error| error.to_string())?;
+
+    let _ = events.send(LiveShellEvent::Status(format!(
+        "串口 {port_name} @ {baud} 8N1"
+    )));
+
+    let running = Arc::new(AtomicBool::new(true));
+    let reader_running = Arc::clone(&running);
+    let reader_events = events.clone();
+    let reader_handle = thread::spawn(move || {
+        let mut buffer = [0u8; 4096];
+        while reader_running.load(Ordering::Relaxed) {
+            match reader.read(&mut buffer) {
+                Ok(0) => {}
+                Ok(read) => {
+                    if reader_events
+                        .send(LiveShellEvent::Output(buffer[..read].to_vec()))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                // A read timeout just means "no bytes yet"; keep polling.
+                Err(ref error) if error.kind() == std::io::ErrorKind::TimedOut => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    while let Some(command) = commands.blocking_recv() {
+        match command {
+            LiveShellCommand::Input(bytes) => {
+                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_err() {
+                    break;
+                }
+            }
+            LiveShellCommand::Resize { .. } | LiveShellCommand::HostKeyDecision(_) => {}
+            LiveShellCommand::Disconnect => break,
+        }
+    }
+
+    running.store(false, Ordering::Relaxed);
+    let _ = reader_handle.join();
+    Ok(())
+}
+
 pub fn probe_password_shell_blocking(
     request: PasswordShellProbe,
 ) -> Result<ShellProbeOutput, SshError> {

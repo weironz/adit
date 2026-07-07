@@ -11,5 +11,6 @@ bytes.workspace = true
 portable-pty = "0.8"
 russh.workspace = true
 russh-sftp = "2.3"
+serialport = { version = "4", default-features = false }
 thiserror.workspace = true
 tokio.workspace = true

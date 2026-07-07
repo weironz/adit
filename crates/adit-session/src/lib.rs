@@ -643,9 +643,22 @@ impl SessionManager {
                 (live, endpoint, terminal, None)
             }
             Protocol::Serial => {
-                return Err(SessionError::Unsupported(String::from(
-                    "串口协议尚未实现",
-                )))
+                let port_name = profile.host.trim();
+                if port_name.is_empty() {
+                    return Err(SessionError::Unsupported(String::from(
+                        "请填写串口号（如 COM3）",
+                    )));
+                }
+                // `identity_file` doubles as the baud rate (empty → 115200).
+                let baud = profile
+                    .identity_file
+                    .trim()
+                    .parse::<u32>()
+                    .unwrap_or(115_200);
+                let live = adit_ssh::spawn_serial(port_name.to_string(), baud)?;
+                let endpoint = format!("{port_name} @ {baud}");
+                let terminal = serial_terminal(&profile.name, &endpoint);
+                (live, endpoint, terminal, None)
             }
             Protocol::Rdp => {
                 return Err(SessionError::Unsupported(String::from(
@@ -1980,6 +1993,17 @@ fn local_shell_terminal(profile_name: &str) -> VtTerminal {
         "\x1b[1;36mlocal shell\x1b[0m starting\r\n\r\n\
          profile  : {profile_name}\r\n\
          status   : spawning local pseudo-terminal\r\n\r\n"
+    ));
+    terminal
+}
+
+fn serial_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+    terminal.feed_str(&format!(
+        "\x1b[1;36mserial\x1b[0m starting\r\n\r\n\
+         profile  : {profile_name}\r\n\
+         endpoint : {endpoint}\r\n\
+         status   : opening serial port\r\n\r\n"
     ));
     terminal
 }

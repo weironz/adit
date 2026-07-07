@@ -4989,9 +4989,32 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     .into(),
             ));
         }
-        Protocol::Serial | Protocol::Rdp => {
+        Protocol::Serial => {
+            form = form
+                .push(dialog_field(
+                    "串口号",
+                    text_input("COM3", &app.profile_host)
+                        .on_input(Message::ProfileHostChanged)
+                        .on_submit(Message::ConnectSelectedProfile)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .push(dialog_field(
+                    "波特率（8N1，无流控）",
+                    text_input("115200", &app.profile_identity_file)
+                        .on_input(Message::ProfileIdentityFileChanged)
+                        .on_submit(Message::ConnectSelectedProfile)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ));
+        }
+        Protocol::Rdp => {
             form = form.push(
-                text("该协议尚未实现，下一步支持。")
+                text("RDP 尚未实现，下一步支持。")
                     .size(12)
                     .color(muted_text()),
             );
