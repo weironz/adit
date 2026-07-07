@@ -328,7 +328,6 @@ const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
-const TERMINAL_CONTEXT_MENU_AND_GAP: f32 = 34.0;
 const PROFILE_ROW_HEIGHT: f32 = 46.0;
 
 impl Default for AditApp {
@@ -815,6 +814,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CloneProfileFromContext(profile_id) => {
             app.profile_context_menu = None;
             if let Some(new_id) = app.manager.duplicate_profile(profile_id) {
+                // Copy the source's saved password (kept in the OS vault under the
+                // profile id) to the clone so its auth still works.
+                if let Ok(Some(password)) = app.credential_store.load_profile_password(profile_id) {
+                    let _ = app.credential_store.save_profile_password(new_id, &password);
+                }
                 select_profile(app, new_id);
                 if persist_profiles(app) {
                     app.notice = String::from("已克隆会话");
@@ -1185,6 +1189,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::TerminalPointerMoved(point) => {
             let terminal_point = terminal_point_from_cursor(app, point);
             app.terminal_pointer = Some(terminal_point);
+            // Track the window-absolute cursor so a right-click can anchor the
+            // floating terminal context menu at the pointer.
+            let terminal_left = if app.sidebar_visible {
+                app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
+            } else {
+                0.0
+            };
+            let terminal_top = MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT;
+            app.cursor_pos = Point::new(point.x + terminal_left, point.y + terminal_top);
 
             if app.terminal_selecting {
                 if let Some(selection) = &mut app.terminal_selection {
@@ -1222,6 +1235,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ShowTerminalContextMenu => {
             app.terminal_focused = true;
             app.terminal_selecting = false;
+            app.context_menu_pos = app.cursor_pos;
             app.terminal_context_menu = true;
         }
         Message::HideTerminalContextMenu => {
@@ -2246,15 +2260,10 @@ fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(
 fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
     // `point` comes from the terminal panel's own `mouse_area` (`on_move` uses
     // `cursor.position_in(bounds)`), so it is already relative to the panel's
-    // top-left. Only the panel's internal padding and — when shown — the
-    // context-menu strip offset the text grid; the window chrome does not.
-    let context_menu_height = if app.terminal_context_menu {
-        TERMINAL_CONTEXT_MENU_AND_GAP
-    } else {
-        0.0
-    };
+    // top-left. Only the panel's internal padding offsets the text grid; the
+    // window chrome does not, and the context menu now floats (no shift).
     let origin_x = TERMINAL_PANEL_PADDING;
-    let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP + context_menu_height;
+    let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP;
 
     let col = ((point.x - origin_x) / TERMINAL_CHAR_WIDTH)
         .floor()
@@ -2555,6 +2564,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if let Some(profile_id) = app.profile_context_menu {
         layers.push(opaque(profile_context_overlay(app, profile_id)));
+    }
+    if app.terminal_context_menu {
+        layers.push(opaque(terminal_context_overlay(app)));
     }
     if app.connection_dialog.is_some() {
         layers.push(opaque(connection_dialog_overlay(app)));
@@ -4668,7 +4680,28 @@ fn profile_context_menu(profile_id: ProfileId) -> Element<'static, Message> {
 /// A floating context menu anchored at the cursor, over a transparent scrim that
 /// dismisses it on any outside click.
 fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, Message> {
-    // Clamp so the whole card stays inside the window.
+    floating_context_menu(
+        app,
+        profile_context_menu(profile_id),
+        Message::HideProfileContextMenu,
+    )
+}
+
+fn terminal_context_overlay(app: &AditApp) -> Element<'_, Message> {
+    floating_context_menu(
+        app,
+        terminal_context_menu(),
+        Message::HideTerminalContextMenu,
+    )
+}
+
+/// Place a context-menu `card` at the last-tracked cursor position (clamped to
+/// the window) over a scrim that dismisses it on any outside click.
+fn floating_context_menu<'a>(
+    app: &AditApp,
+    card: Element<'a, Message>,
+    hide: Message,
+) -> Element<'a, Message> {
     let x = app
         .context_menu_pos
         .x
@@ -4682,18 +4715,15 @@ fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, 
 
     let positioned = column![
         Space::new().height(Length::Fixed(y)),
-        row![
-            Space::new().width(Length::Fixed(x)),
-            profile_context_menu(profile_id),
-        ],
+        row![Space::new().width(Length::Fixed(x)), card],
     ]
     .width(Fill)
     .height(Fill);
 
     stack![
         mouse_area(Space::new().width(Fill).height(Fill))
-            .on_press(Message::HideProfileContextMenu)
-            .on_right_press(Message::HideProfileContextMenu),
+            .on_press(hide.clone())
+            .on_right_press(hide),
         positioned,
     ]
     .into()
@@ -4938,7 +4968,6 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
                 snapshot,
                 app.terminal_focused,
                 app.terminal_selection,
-                app.terminal_context_menu,
                 app.terminal_scroll_offset,
             ))
             .on_press(Message::BeginTerminalSelection)
@@ -5011,7 +5040,6 @@ fn terminal_view(
     snapshot: TerminalSnapshot,
     focused: bool,
     selection: Option<TerminalSelection>,
-    context_menu: bool,
     _scroll_offset: usize,
 ) -> Element<'static, Message> {
     let lines = if snapshot.lines.is_empty() {
@@ -5029,15 +5057,9 @@ fn terminal_view(
             })
     };
 
-    let mut body = column![].spacing(0);
-
-    if context_menu {
-        body = body.push(terminal_context_menu());
-    }
-
-    body = body.push(container(lines).height(Fill).width(Fill));
-
-    container(body)
+    // The context menu now floats (see the layers stack in `view`), so the
+    // terminal body no longer reserves a strip for it.
+    container(container(lines).height(Fill).width(Fill))
         .padding(TERMINAL_PANEL_PADDING as u16)
         .height(Fill)
         .width(Fill)
@@ -5045,36 +5067,21 @@ fn terminal_view(
         .into()
 }
 
+/// The terminal context-menu card (used inside the floating overlay).
 fn terminal_context_menu() -> Element<'static, Message> {
     container(
-        row![
-            button("Copy")
-                .padding([7, 10])
-                .style(|_theme, status| secondary_button_style(status))
-                .on_press(Message::CopyTerminalSelection),
-            button("Paste")
-                .padding([7, 10])
-                .style(|_theme, status| secondary_button_style(status))
-                .on_press(Message::PasteIntoTerminal),
-            button("Clear")
-                .padding([7, 10])
-                .style(|_theme, status| secondary_button_style(status))
-                .on_press(Message::ClearActiveTerminal),
-            button("Bottom")
-                .padding([7, 10])
-                .style(|_theme, status| secondary_button_style(status))
-                .on_press(Message::TerminalJumpToBottom),
-            Space::new().width(Fill),
-            button("Close")
-                .padding([7, 10])
-                .style(|_theme, status| close_button_style(status))
-                .on_press(Message::HideTerminalContextMenu),
+        column![
+            profile_menu_item("复制", Message::CopyTerminalSelection, false),
+            profile_menu_item("粘贴", Message::PasteIntoTerminal, false),
+            profile_menu_divider(),
+            profile_menu_item("清屏", Message::ClearActiveTerminal, false),
+            profile_menu_item("回到底部", Message::TerminalJumpToBottom, false),
         ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+        .spacing(1),
     )
-    .padding([7, 9])
-    .style(|_theme| terminal_menu_style())
+    .padding(4)
+    .width(Length::Fixed(PROFILE_MENU_WIDTH))
+    .style(|_theme| profile_context_menu_style())
     .into()
 }
 
@@ -5450,16 +5457,6 @@ fn terminal_panel_style(focused: bool) -> container::Style {
                 Color::from_rgb8(38, 43, 54)
             },
         ),
-        ..container::Style::default()
-    }
-}
-
-fn terminal_menu_style() -> container::Style {
-    container::Style {
-        background: Some(Background::Color(surface())),
-        text_color: Some(primary_text()),
-        border: border(RADIUS_SM, 1.0, border_color()),
-        shadow: subtle_shadow(),
         ..container::Style::default()
     }
 }
