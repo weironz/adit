@@ -749,7 +749,7 @@ const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
-const PROFILE_ROW_HEIGHT: f32 = 46.0;
+const PROFILE_ROW_HEIGHT: f32 = 36.0;
 // Split-pane layout.
 const PANE_GAP: f32 = 6.0;
 const PANE_HEADER_HEIGHT: f32 = 26.0;
@@ -7464,20 +7464,20 @@ fn profile_drag_ghost(app: &AditApp, position: Point) -> Element<'static, Messag
 
     let card = container(
         row![
-            Space::new().width(Length::Fixed(8.0)),
+            Space::new().width(Length::Fixed(4.0)),
             avatar(&profile.name),
             column![
-                text(profile.name.clone()).size(13).color(primary_text()),
-                text(endpoint).size(11).color(muted_text()),
+                text(profile.name.clone()).size(12).color(primary_text()),
+                text(endpoint).size(10).color(muted_text()),
             ]
-            .spacing(1),
+            .spacing(0),
         ]
-        .spacing(10)
+        .spacing(8)
         .align_y(Alignment::Center),
     )
     .height(Length::Fixed(PROFILE_ROW_HEIGHT))
     .width(Length::Fixed((app.sidebar_width - 28.0).max(140.0)))
-    .padding([4, 8])
+    .padding([2, 8])
     .style(|_theme| profile_drag_ghost_style());
 
     // Carry the card under the cursor: centered on it vertically, nudged right.
@@ -7660,21 +7660,21 @@ fn tree_profile_row(
     mouse_area(
         container(
             row![
-                Space::new().width(Length::Fixed(8.0)),
+                Space::new().width(Length::Fixed(4.0)),
                 avatar(&profile.name),
                 column![
-                    text(profile.name.clone()).size(13).color(primary_text()),
-                    text(endpoint).size(11).color(muted_text()),
+                    text(profile.name.clone()).size(12).color(primary_text()),
+                    text(endpoint).size(10).color(muted_text()),
                 ]
-                .spacing(1),
+                .spacing(0),
                 Space::new().width(Fill),
             ]
-            .spacing(10)
+            .spacing(8)
             .align_y(Alignment::Center),
         )
         .height(Length::Fixed(PROFILE_ROW_HEIGHT))
         .width(Fill)
-        .padding([4, 8])
+        .padding([2, 8])
         .style(move |_theme| tree_item_container_style(selected, hovered, dragging)),
     )
     .on_press(Message::ProfilePressed(profile_id))
@@ -7699,9 +7699,9 @@ fn profile_drop_position(point: Point) -> ProfileDropPosition {
 /// A Termius-style round host avatar: the host's initials on a per-host color.
 fn avatar(name: &str) -> Element<'static, Message> {
     let color = avatar_color(name);
-    container(text(avatar_initials(name)).size(12).color(Color::WHITE))
-        .center_x(Length::Fixed(32.0))
-        .center_y(Length::Fixed(32.0))
+    container(text(avatar_initials(name)).size(10).color(Color::WHITE))
+        .center_x(Length::Fixed(24.0))
+        .center_y(Length::Fixed(24.0))
         .style(move |_theme| avatar_style(color))
         .into()
 }
