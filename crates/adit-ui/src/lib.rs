@@ -5791,10 +5791,13 @@ fn tree_profile_row(
     drop_position: Option<ProfileDropPosition>,
 ) -> Element<'static, Message> {
     let profile_id = profile.id;
+    // Windows/winit renders `Grab` as the no-entry cursor, which reads as
+    // "forbidden" on a plain hover. Use the normal arrow when idle and a 4-way
+    // move cursor (a native Windows cursor) while actually dragging to reorder.
     let interaction = if dragging {
-        mouse::Interaction::Grabbing
+        mouse::Interaction::Move
     } else {
-        mouse::Interaction::Grab
+        mouse::Interaction::Idle
     };
 
     let endpoint = if profile.username.trim().is_empty() {
