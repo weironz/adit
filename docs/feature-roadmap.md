@@ -120,8 +120,14 @@ A "serious" client should not silently trust new hosts or drop on idle.
   detach/reattach.
 - **D4. Triggers & snippets.** Regex-triggered actions; reusable command snippets
   / macros.
-- **D5. Logging enhancements.** Timestamped filenames, per-profile auto-log,
-  ANSI-stripped plain-text option, and an optional input (keystroke) log.
+- **D5. Logging enhancements.** ✅ Partly done. A **选项** dialog (File menu)
+  exposes the **configuration folder** (where `profiles.json` / `settings.json` /
+  logs / downloads live) with open-in-Explorer, relocatable via the
+  `ADIT_CONFIG_DIR` env override; and a **session-log** section with a
+  configurable **log folder**, a **filename pattern** (`%N` name, `%H` host,
+  `%Y/%M/%D` date, `%h/%m/%s` time) with a live preview, and **auto-log on
+  connect**. Still open: per-profile log policy, ANSI-stripped plain-text option,
+  and an optional input (keystroke) log.
 
 ## Phase E — Packaging & platform
 

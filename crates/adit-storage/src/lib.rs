@@ -61,7 +61,7 @@ impl ProfileStore {
 
     #[must_use]
     pub fn default_path() -> PathBuf {
-        platform_config_dir().join("profiles.json")
+        config_dir().join("profiles.json")
     }
 
     #[must_use]
@@ -190,6 +190,16 @@ pub struct AppSettings {
     /// falls back to the default palette).
     #[serde(default)]
     pub color_scheme: String,
+    /// Session-log folder; empty ⇒ [`default_log_dir`].
+    #[serde(default)]
+    pub log_dir: String,
+    /// Log filename pattern with `%N/%H/%Y/%M/%D/%h/%m/%s` tokens; empty ⇒ the
+    /// UI's built-in default pattern.
+    #[serde(default)]
+    pub log_name_pattern: String,
+    /// Automatically start logging a session as soon as it connects.
+    #[serde(default)]
+    pub auto_log_on_connect: bool,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -222,6 +232,9 @@ impl Default for AppSettings {
             font_family: String::new(),
             font_size: default_font_size(),
             color_scheme: String::new(),
+            log_dir: String::new(),
+            log_name_pattern: String::new(),
+            auto_log_on_connect: false,
         }
     }
 }
@@ -240,7 +253,7 @@ impl SettingsStore {
 
     #[must_use]
     pub fn default_path() -> PathBuf {
-        platform_config_dir().join("settings.json")
+        config_dir().join("settings.json")
     }
 
     #[must_use]
@@ -326,16 +339,31 @@ fn normalize_group_name(group: impl AsRef<str>) -> String {
     group.as_ref().trim().to_string()
 }
 
+/// The active configuration folder — where `profiles.json`, `settings.json`,
+/// logs, and downloads live. Honors the `ADIT_CONFIG_DIR` environment override
+/// (SecureCRT-style relocatable config, e.g. onto a synced folder); otherwise
+/// the per-platform default.
+#[must_use]
+pub fn config_dir() -> PathBuf {
+    if let Some(dir) = env::var_os("ADIT_CONFIG_DIR") {
+        let dir = PathBuf::from(dir);
+        if !dir.as_os_str().is_empty() {
+            return dir;
+        }
+    }
+    platform_config_dir()
+}
+
 /// Default directory for session output (transcript) logs.
 #[must_use]
 pub fn default_log_dir() -> PathBuf {
-    platform_config_dir().join("logs")
+    config_dir().join("logs")
 }
 
 /// Default directory for SFTP downloads.
 #[must_use]
 pub fn default_download_dir() -> PathBuf {
-    platform_config_dir().join("downloads")
+    config_dir().join("downloads")
 }
 
 fn platform_config_dir() -> PathBuf {
@@ -370,6 +398,22 @@ mod tests {
     use super::*;
     use adit_domain::AuthMethod;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn config_dir_honors_env_override() {
+        let base = env::temp_dir().join("adit-cfgdir-override-test");
+        env::set_var("ADIT_CONFIG_DIR", &base);
+
+        assert_eq!(config_dir(), base);
+        assert_eq!(ProfileStore::default_path(), base.join("profiles.json"));
+        assert_eq!(SettingsStore::default_path(), base.join("settings.json"));
+        assert_eq!(default_log_dir(), base.join("logs"));
+        assert_eq!(default_download_dir(), base.join("downloads"));
+
+        env::remove_var("ADIT_CONFIG_DIR");
+        // With the override cleared, the config dir is no longer that base.
+        assert_ne!(config_dir(), base);
+    }
 
     #[test]
     fn saves_and_loads_profiles() {
@@ -459,6 +503,9 @@ mod tests {
             font_family: String::from("Consolas"),
             font_size: 15.0,
             color_scheme: String::from("Dracula"),
+            log_dir: String::from("D:/logs"),
+            log_name_pattern: String::from("%N-%Y%M%D.log"),
+            auto_log_on_connect: true,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

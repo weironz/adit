@@ -947,10 +947,25 @@ impl SessionManager {
     }
 
     /// Begin appending the active session's raw PTY output to a log file under
-    /// `dir`. Returns the log path. No-op (returns the existing path) if the
-    /// session is already logging.
-    pub fn start_active_logging(&mut self, dir: &Path) -> Result<PathBuf, SessionError> {
+    /// `dir`, using `file_name` (empty ⇒ an auto-generated name). Returns the
+    /// log path. No-op (returns the existing path) if already logging.
+    pub fn start_active_logging(
+        &mut self,
+        dir: &Path,
+        file_name: &str,
+    ) -> Result<PathBuf, SessionError> {
         let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
+        self.start_logging(session_id, dir, file_name)
+    }
+
+    /// Begin logging a specific session (used by manual toggle for the active
+    /// session and by auto-log-on-connect for any session).
+    pub fn start_logging(
+        &mut self,
+        session_id: SessionId,
+        dir: &Path,
+        file_name: &str,
+    ) -> Result<PathBuf, SessionError> {
         let record = self
             .sessions
             .get_mut(&session_id)
@@ -961,7 +976,8 @@ impl SessionManager {
         }
 
         fs::create_dir_all(dir).map_err(|error| SessionError::Logging(error.to_string()))?;
-        let path = dir.join(log_file_name(&record.summary.title, session_id));
+        let name = sanitize_log_file_name(file_name, &record.summary.title, session_id);
+        let path = dir.join(name);
         let file = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1016,6 +1032,15 @@ impl SessionManager {
             .log
             .as_ref()
             .map(|log| log.path.clone())
+    }
+
+    /// Whether a specific session is currently logging (for auto-log-on-connect,
+    /// which must not restart an already-logging session).
+    #[must_use]
+    pub fn session_is_logging(&self, session_id: SessionId) -> bool {
+        self.sessions
+            .get(&session_id)
+            .is_some_and(|record| record.log.is_some())
     }
 
     // --- SFTP ---------------------------------------------------------------
@@ -2016,8 +2041,21 @@ fn normalize_group(group: impl Into<String>) -> String {
 
 /// Build a filesystem-safe log file name from a session title and id, e.g.
 /// `prod-web-01_a1b2c3d4.log`.
-fn log_file_name(title: &str, session_id: SessionId) -> String {
-    let safe: String = title
+/// Filesystem-safe log filename. If `requested` is non-empty it is sanitized and
+/// used (the UI renders its pattern into this); otherwise an auto name is built
+/// from the session title + a short id.
+fn sanitize_log_file_name(requested: &str, title: &str, session_id: SessionId) -> String {
+    if !requested.trim().is_empty() {
+        let safe = sanitize_component(requested);
+        if !safe.is_empty() {
+            return safe;
+        }
+    }
+    log_file_name(title, session_id)
+}
+
+fn sanitize_component(value: &str) -> String {
+    let safe: String = value
         .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
@@ -2027,8 +2065,12 @@ fn log_file_name(title: &str, session_id: SessionId) -> String {
             }
         })
         .collect();
-    let safe = safe.trim_matches('_');
-    let stem = if safe.is_empty() { "session" } else { safe };
+    safe.trim_matches('_').to_string()
+}
+
+fn log_file_name(title: &str, session_id: SessionId) -> String {
+    let safe = sanitize_component(title);
+    let stem = if safe.is_empty() { "session" } else { &safe };
     let id = session_id.to_string();
     let short = &id[..id.len().min(8)];
     format!("{stem}_{short}.log")
@@ -2207,7 +2249,7 @@ mod tests {
 
         assert!(!manager.active_is_logging());
         let path = manager
-            .start_active_logging(&dir)
+            .start_active_logging(&dir, "")
             .expect("logging should start");
         assert!(manager.active_is_logging());
         assert_eq!(manager.active_log_path().as_deref(), Some(path.as_path()));
@@ -2220,6 +2262,31 @@ mod tests {
         assert_eq!(stopped.as_deref(), Some(path.as_path()));
         assert!(!manager.active_is_logging());
 
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir(&dir);
+    }
+
+    #[test]
+    fn logging_uses_and_sanitizes_requested_filename() {
+        let dir = std::env::temp_dir().join(format!("adit-logname-test-{}", SessionId::new()));
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        let session_id = manager
+            .open_mock_session(profile_id)
+            .expect("mock session should open");
+
+        // A rendered pattern with an unsafe char is sanitized but otherwise used.
+        let path = manager
+            .start_active_logging(&dir, "web01@2026-07-08.log")
+            .expect("logging should start");
+        assert_eq!(
+            path.file_name().and_then(|name| name.to_str()),
+            Some("web01_2026-07-08.log")
+        );
+        assert!(path.exists());
+        assert!(manager.session_is_logging(session_id));
+
+        manager.stop_active_logging();
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir(&dir);
     }

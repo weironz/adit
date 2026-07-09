@@ -127,6 +127,11 @@ pub struct AditApp {
     font_size: f32,
     color_scheme: String,
     appearance_open: bool,
+    /// The 选项 (config path + session-log) dialog.
+    options_open: bool,
+    log_dir: String,
+    log_name_pattern: String,
+    auto_log_on_connect: bool,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -171,6 +176,7 @@ pub enum MenuCommand {
     Logging,
     ToggleAutoReconnect,
     Appearance,
+    Options,
     ToggleBroadcast,
     SplitPane,
     About,
@@ -186,6 +192,13 @@ pub enum Message {
     FontFamilyChanged(u8),
     FontSizeStep(i32),
     ColorSchemeChanged(u8),
+    OpenOptions,
+    CloseOptions,
+    LogDirChanged(String),
+    LogNamePatternChanged(String),
+    ToggleAutoLog(bool),
+    OpenConfigFolder,
+    OpenLogFolder,
     ToggleBroadcast,
     RunMenu(MenuCommand),
     SelectProfile(ProfileId),
@@ -700,6 +713,9 @@ impl AditApp {
         let font_family = settings.font_family;
         let font_size = settings.font_size.clamp(MIN_FONT_SIZE as f32, MAX_FONT_SIZE as f32);
         let color_scheme = settings.color_scheme;
+        let log_dir = settings.log_dir;
+        let log_name_pattern = settings.log_name_pattern;
+        let auto_log_on_connect = settings.auto_log_on_connect;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -717,6 +733,9 @@ impl AditApp {
             font_family: font_family.clone(),
             font_size,
             color_scheme: color_scheme.clone(),
+            log_dir: log_dir.clone(),
+            log_name_pattern: log_name_pattern.clone(),
+            auto_log_on_connect,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -794,6 +813,10 @@ impl AditApp {
             font_size,
             color_scheme,
             appearance_open: false,
+            options_open: false,
+            log_dir,
+            log_name_pattern,
+            auto_log_on_connect,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -919,6 +942,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
             app.manager.poll_events();
+            auto_log_connected_sessions(app);
             clamp_terminal_scroll(app);
             sync_sftp_state(app);
             // Reconcile split panes with the live session set (closed sessions,
@@ -970,6 +994,29 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();
             }
+        }
+        Message::OpenOptions => {
+            app.options_open = true;
+            app.active_menu = None;
+        }
+        Message::CloseOptions => {
+            app.options_open = false;
+        }
+        Message::LogDirChanged(value) => {
+            app.log_dir = value;
+        }
+        Message::LogNamePatternChanged(value) => {
+            app.log_name_pattern = value;
+        }
+        Message::ToggleAutoLog(enabled) => {
+            app.auto_log_on_connect = enabled;
+        }
+        Message::OpenConfigFolder => {
+            open_folder(app, adit_storage::config_dir());
+        }
+        Message::OpenLogFolder => {
+            let dir = effective_log_dir(app);
+            open_folder(app, dir);
         }
         Message::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
@@ -1764,6 +1811,7 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             };
         }
         MenuCommand::Appearance => app.appearance_open = true,
+        MenuCommand::Options => app.options_open = true,
         MenuCommand::SplitPane => split_pane(app),
         MenuCommand::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
@@ -2869,22 +2917,125 @@ fn clear_active_terminal(app: &mut AditApp) {
 }
 
 fn toggle_active_logging(app: &mut AditApp) {
-    if app.manager.active_session().is_none() {
+    let Some(summary) = app.manager.active_session_summary() else {
         app.last_error = Some(String::from("没有活动会话"));
         return;
-    }
+    };
 
     if app.manager.active_is_logging() {
         if let Some(path) = app.manager.stop_active_logging() {
             app.notice = format!("已停止记录会话日志: {}", path.display());
         }
     } else {
-        match app.manager.start_active_logging(&adit_storage::default_log_dir()) {
+        let dir = effective_log_dir(app);
+        let name = render_log_name(&effective_log_pattern(app), &summary.title, &summary.endpoint);
+        match app.manager.start_active_logging(&dir, &name) {
             Ok(path) => {
                 app.last_error = None;
                 app.notice = format!("正在记录会话输出到: {}", path.display());
             }
             Err(error) => app.last_error = Some(format!("开启会话日志失败: {error}")),
+        }
+    }
+}
+
+/// Default session-log filename pattern (SecureCRT-style tokens).
+const DEFAULT_LOG_PATTERN: &str = "%N_%Y-%M-%D_%h-%m-%s.log";
+
+/// The effective log folder: the user's override, else the default under the
+/// configuration folder.
+fn effective_log_dir(app: &AditApp) -> std::path::PathBuf {
+    if app.log_dir.trim().is_empty() {
+        adit_storage::default_log_dir()
+    } else {
+        std::path::PathBuf::from(app.log_dir.trim())
+    }
+}
+
+fn effective_log_pattern(app: &AditApp) -> String {
+    if app.log_name_pattern.trim().is_empty() {
+        DEFAULT_LOG_PATTERN.to_string()
+    } else {
+        app.log_name_pattern.clone()
+    }
+}
+
+/// Current local time broken into (year, month, day, hour, minute, second).
+fn now_local_parts() -> (i32, u8, u8, u8, u8, u8) {
+    let offset = time::UtcOffset::from_whole_seconds(local_offset_secs() as i32)
+        .unwrap_or(time::UtcOffset::UTC);
+    let now = time::OffsetDateTime::now_utc().to_offset(offset);
+    (
+        now.year(),
+        u8::from(now.month()),
+        now.day(),
+        now.hour(),
+        now.minute(),
+        now.second(),
+    )
+}
+
+/// Render a log-filename pattern: `%N` session name, `%H` host, `%Y/%M/%D` date,
+/// `%h/%m/%s` time. The host is parsed from the session endpoint.
+fn render_log_name(pattern: &str, session_name: &str, endpoint: &str) -> String {
+    let host = endpoint
+        .rsplit_once('@')
+        .map(|(_, rest)| rest)
+        .unwrap_or(endpoint);
+    let host = host.split(':').next().unwrap_or(host);
+    let (y, mo, d, h, mi, s) = now_local_parts();
+    pattern
+        .replace("%N", session_name)
+        .replace("%H", host)
+        .replace("%Y", &format!("{y:04}"))
+        .replace("%M", &format!("{mo:02}"))
+        .replace("%D", &format!("{d:02}"))
+        .replace("%h", &format!("{h:02}"))
+        .replace("%m", &format!("{mi:02}"))
+        .replace("%s", &format!("{s:02}"))
+}
+
+/// Open a folder in the OS file manager (creating it first if missing).
+fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
+    if let Err(error) = std::fs::create_dir_all(&dir) {
+        app.last_error = Some(format!("无法创建目录 {}: {error}", dir.display()));
+        return;
+    }
+    let opener = if cfg!(target_os = "windows") {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    // explorer.exe returns a nonzero exit code even on success, so ignore the
+    // status and only surface a spawn failure.
+    match std::process::Command::new(opener).arg(&dir).spawn() {
+        Ok(_) => app.notice = format!("已在文件管理器中打开: {}", dir.display()),
+        Err(error) => app.last_error = Some(format!("打开目录失败: {error}")),
+    }
+}
+
+/// Start logging any freshly-connected sessions when auto-log is enabled.
+fn auto_log_connected_sessions(app: &mut AditApp) {
+    if !app.auto_log_on_connect {
+        return;
+    }
+    let dir = effective_log_dir(app);
+    let pattern = effective_log_pattern(app);
+    let targets: Vec<(SessionId, String, String)> = app
+        .manager
+        .sessions()
+        .into_iter()
+        .filter(|summary| summary.status == SessionStatus::Connected)
+        .filter(|summary| !app.manager.session_is_logging(summary.id))
+        .map(|summary| (summary.id, summary.title, summary.endpoint))
+        .collect();
+
+    for (session_id, title, endpoint) in targets {
+        let name = render_log_name(&pattern, &title, &endpoint);
+        if let Err(error) = app.manager.start_logging(session_id, &dir, &name) {
+            app.last_error = Some(format!("自动日志开启失败: {error}"));
         }
     }
 }
@@ -3192,6 +3343,9 @@ fn current_settings(app: &AditApp) -> AppSettings {
         font_family: app.font_family.clone(),
         font_size: app.font_size,
         color_scheme: app.color_scheme.clone(),
+        log_dir: app.log_dir.clone(),
+        log_name_pattern: app.log_name_pattern.clone(),
+        auto_log_on_connect: app.auto_log_on_connect,
     }
 }
 
@@ -3296,6 +3450,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if app.appearance_open {
         layers.push(opaque(appearance_dialog_overlay(app)));
     }
+    if app.options_open {
+        layers.push(opaque(options_dialog_overlay(app)));
+    }
 
     if layers.len() == 1 {
         layers.pop().unwrap()
@@ -3381,6 +3538,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("新建分组", MenuCommand::NewGroup),
             ("保存会话", MenuCommand::SaveProfile),
             ("删除会话", MenuCommand::DeleteProfile),
+            ("选项 / 日志…", MenuCommand::Options),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
         MenuKind::Session => &[
@@ -4002,6 +4160,162 @@ fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(12),
     )
     .width(Length::Fixed(520.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// A read-only path row: label + monospace path + an 打开 button.
+fn options_path_row<'a>(
+    label: &'a str,
+    path: String,
+    open: Option<Message>,
+) -> Element<'a, Message> {
+    let mut row = row![
+        text(label)
+            .size(11)
+            .color(muted_text())
+            .width(Length::Fixed(96.0)),
+        container(text(path).size(12).font(Font::MONOSPACE).color(primary_text()))
+            .width(Fill),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if let Some(message) = open {
+        row = row.push(
+            button(text("打开").size(11))
+                .padding([3, 12])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(message),
+        );
+    }
+    row.into()
+}
+
+fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let config_dir = adit_storage::config_dir();
+    let overridden = std::env::var_os("ADIT_CONFIG_DIR")
+        .is_some_and(|value| !value.is_empty());
+
+    let config_note = if overridden {
+        "由环境变量 ADIT_CONFIG_DIR 指定"
+    } else {
+        "默认位置（设置环境变量 ADIT_CONFIG_DIR 可改到同步盘等其他目录，重启生效）"
+    };
+
+    let config_section = column![
+        text("配置目录").size(13).color(primary_text()),
+        options_path_row(
+            "配置目录",
+            config_dir.display().to_string(),
+            Some(Message::OpenConfigFolder),
+        ),
+        options_path_row(
+            "会话配置",
+            config_dir.join("profiles.json").display().to_string(),
+            None,
+        ),
+        options_path_row(
+            "应用设置",
+            config_dir.join("settings.json").display().to_string(),
+            None,
+        ),
+        text(config_note).size(11).color(muted_text()),
+    ]
+    .spacing(8);
+
+    // Live preview of the rendered log filename for the active (or a sample)
+    // session.
+    let sample = app
+        .manager
+        .active_session_summary()
+        .map(|summary| (summary.title, summary.endpoint))
+        .unwrap_or_else(|| (String::from("web01"), String::from("root@10.0.0.5:22")));
+    let preview_name = render_log_name(&effective_log_pattern(app), &sample.0, &sample.1);
+    let preview_path = effective_log_dir(app).join(&preview_name);
+
+    let log_section = column![
+        text("会话日志").size(13).color(primary_text()),
+        column![
+            text("日志目录（留空 = 配置目录下的 logs）")
+                .size(11)
+                .color(muted_text()),
+            row![
+                text_input(
+                    &adit_storage::default_log_dir().display().to_string(),
+                    &app.log_dir,
+                )
+                .on_input(Message::LogDirChanged)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+                button(text("打开").size(11))
+                    .padding([5, 12])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::OpenLogFolder),
+            ]
+            .spacing(8),
+        ]
+        .spacing(3),
+        column![
+            text("日志文件名（留空 = 默认）").size(11).color(muted_text()),
+            text_input(DEFAULT_LOG_PATTERN, &app.log_name_pattern)
+                .on_input(Message::LogNamePatternChanged)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+        ]
+        .spacing(3),
+        text("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒")
+            .size(11)
+            .color(muted_text()),
+        options_path_row("预览", preview_path.display().to_string(), None),
+        checkbox(app.auto_log_on_connect)
+            .label("连接后自动开始记录日志")
+            .on_toggle(Message::ToggleAutoLog)
+            .size(16)
+            .text_size(12),
+    ]
+    .spacing(8);
+
+    let card = container(
+        column![
+            row![
+                text("选项").size(18).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseOptions),
+            ]
+            .align_y(Alignment::Center),
+            config_section,
+            container(Space::new().height(Length::Fixed(1.0)).width(Fill))
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(border_color())),
+                    ..container::Style::default()
+                }),
+            log_section,
+            row![
+                Space::new().width(Fill),
+                button(text("完成").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::CloseOptions),
+            ],
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fixed(560.0))
     .padding(20)
     .style(|_theme| connection_dialog_style());
 
@@ -7010,6 +7324,22 @@ mod tests {
         assert_eq!(avatar_initials("local lab"), "LL");
         assert_eq!(avatar_initials("redis"), "R");
         assert_eq!(avatar_initials(""), "?");
+    }
+
+    #[test]
+    fn render_log_name_substitutes_name_and_host() {
+        // Host is parsed out of the user@host:port endpoint.
+        assert_eq!(
+            render_log_name("%N@%H.log", "web01", "root@10.0.0.5:22"),
+            "web01@10.0.0.5.log"
+        );
+        // An endpoint without a user part still yields the host.
+        assert_eq!(render_log_name("%H", "x", "COM3"), "COM3");
+        // Date/time tokens are all replaced (no literal % left) and expand to
+        // the expected width.
+        let dated = render_log_name("%Y-%M-%D", "x", "h");
+        assert!(!dated.contains('%'));
+        assert_eq!(dated.len(), "2026-07-08".len());
     }
 
     #[test]
