@@ -81,6 +81,7 @@ pub struct AditApp {
     profile_auth_method: AuthMethod,
     profile_protocol: Protocol,
     profile_identity_file: String,
+    profile_startup_command: String,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -308,6 +309,7 @@ pub enum Message {
     ProfileAuthMethodChanged(AuthMethod),
     ProfileProtocolChanged(Protocol),
     ProfileIdentityFileChanged(String),
+    ProfileStartupCommandChanged(String),
     SessionFilterChanged(String),
     NewProfileDraft,
     NewGroupDraft,
@@ -819,6 +821,7 @@ impl AditApp {
             profile_auth_method: AuthMethod::Auto,
             profile_protocol: Protocol::Ssh,
             profile_identity_file: String::new(),
+            profile_startup_command: String::new(),
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -1573,6 +1576,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = false;
             app.profile_identity_file = value;
         }
+        Message::ProfileStartupCommandChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_startup_command = value;
+        }
         Message::SessionFilterChanged(value) => {
             app.terminal_focused = false;
             app.session_filter = value;
@@ -2297,6 +2304,7 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_auth_method = profile.auth_method;
         app.profile_identity_file = profile.identity_file;
         app.profile_protocol = profile.protocol;
+        app.profile_startup_command = profile.startup_command;
     }
 }
 
@@ -2495,6 +2503,10 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
             if let Some(profile_id) = app.selected_profile {
                 app.manager
                     .set_profile_protocol(profile_id, app.profile_protocol);
+                app.manager.set_profile_startup_command(
+                    profile_id,
+                    app.profile_startup_command.clone(),
+                );
             }
             load_selected_profile(app);
             app.collapsed_groups.remove(app.profile_group.trim());
@@ -6230,6 +6242,7 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.auth_method == app.profile_auth_method
         && profile.identity_file == app.profile_identity_file.trim()
         && profile.protocol == app.profile_protocol
+        && profile.startup_command == app.profile_startup_command.trim()
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
@@ -6921,6 +6934,15 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     "密钥文件（可选）",
                     text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
                         .on_input(Message::ProfileIdentityFileChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .push(dialog_field(
+                    "启动命令（可选，连接后自动执行，如 tmux attach）",
+                    text_input("tmux new -A -s main", &app.profile_startup_command)
+                        .on_input(Message::ProfileStartupCommandChanged)
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Fill)

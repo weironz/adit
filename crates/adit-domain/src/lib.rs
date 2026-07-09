@@ -65,6 +65,10 @@ pub struct ConnectionProfile {
     pub tunnels: Vec<TunnelDef>,
     #[serde(default)]
     pub protocol: Protocol,
+    /// A command sent to the shell right after it opens (e.g. `tmux attach`,
+    /// `cd /srv`). Empty means nothing is sent.
+    #[serde(default)]
+    pub startup_command: String,
 }
 
 impl ConnectionProfile {
@@ -98,6 +102,7 @@ impl ConnectionProfile {
             identity_file: String::new(),
             tunnels: Vec::new(),
             protocol: Protocol::Ssh,
+            startup_command: String::new(),
         }
     }
 

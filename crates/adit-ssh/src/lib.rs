@@ -72,6 +72,8 @@ pub struct LiveShellRequest {
     /// SSH keepalive interval in seconds (0 disables). Keeps idle sessions alive
     /// through NAT/firewall timeouts and detects dead connections.
     pub keepalive_secs: u64,
+    /// A command sent to the shell once it opens (empty = none).
+    pub startup_command: String,
 }
 
 impl LiveShellRequest {
@@ -92,6 +94,7 @@ impl LiveShellRequest {
             cols: 96,
             rows: 28,
             keepalive_secs: 30,
+            startup_command: String::new(),
         }
     }
 }
@@ -670,6 +673,13 @@ async fn run_live_password_shell(
     channel.request_shell(true).await?;
 
     let _ = events.send(LiveShellEvent::Status(String::from("connected")));
+
+    // Run the profile's startup command once the shell is ready.
+    if !request.startup_command.trim().is_empty() {
+        let mut line = request.startup_command.clone();
+        line.push('\r');
+        channel.data_bytes(Bytes::from(line.into_bytes())).await?;
+    }
 
     let mut should_close = false;
     while !should_close {

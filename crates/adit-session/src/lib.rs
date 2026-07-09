@@ -702,6 +702,16 @@ impl SessionManager {
         }
     }
 
+    pub fn set_profile_startup_command(
+        &mut self,
+        profile_id: ProfileId,
+        command: impl Into<String>,
+    ) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.startup_command = command.into();
+        }
+    }
+
     /// Launch an RDP profile in the system Remote Desktop client (mstsc). RDP is
     /// graphical, so it opens externally rather than in a terminal tab. Returns
     /// the endpoint that was launched.
@@ -2020,6 +2030,7 @@ fn spawn_live_shell(
     request.auth = auth_options_for_profile(profile, password);
     request.cols = 96;
     request.rows = 28;
+    request.startup_command = profile.startup_command.clone();
     Ok(adit_ssh::spawn_password_shell(request)?)
 }
 
