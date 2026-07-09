@@ -171,6 +171,7 @@ pub struct AditApp {
     /// mirrors the manager's active session.
     panes: Vec<SessionId>,
     focused_pane: usize,
+    tile_mode: TileMode,
     settings_store: SettingsStore,
     /// The last settings snapshot written to disk; the Tick loop persists when
     /// the live config drifts from this.
@@ -214,6 +215,10 @@ pub enum MenuCommand {
     Snippets,
     ToggleBroadcast,
     SplitPane,
+    TileVertical,
+    TileHorizontal,
+    TileGrid,
+    Untile,
     CheckUpdate,
     About,
 }
@@ -729,7 +734,7 @@ const PROFILE_ROW_HEIGHT: f32 = 46.0;
 // Split-pane layout.
 const PANE_GAP: f32 = 6.0;
 const PANE_HEADER_HEIGHT: f32 = 26.0;
-const MAX_PANES: usize = 4;
+const MAX_PANES: usize = 6;
 
 impl Default for AditApp {
     fn default() -> Self {
@@ -970,6 +975,7 @@ impl AditApp {
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
+            tile_mode: TileMode::Grid,
             settings_store,
             persisted_settings,
             last_error: load_error,
@@ -2452,6 +2458,10 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         // Handled in the RunMenu arm (needs to return an async Task).
         MenuCommand::CheckUpdate => {}
         MenuCommand::SplitPane => split_pane(app),
+        MenuCommand::TileVertical => tile_all_sessions(app, TileMode::Columns),
+        MenuCommand::TileHorizontal => tile_all_sessions(app, TileMode::Rows),
+        MenuCommand::TileGrid => tile_all_sessions(app, TileMode::Grid),
+        MenuCommand::Untile => untile_sessions(app),
         MenuCommand::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
             app.notice = if app.broadcast_input {
@@ -4003,12 +4013,34 @@ fn terminal_size_for_area(inner_width: f32, inner_height: f32) -> TerminalSize {
 }
 
 /// How many columns × rows of panes a given pane count tiles into.
-fn pane_grid_dims(count: usize) -> (usize, usize) {
-    match count {
-        0 | 1 => (1, 1),
-        2 => (2, 1),
-        3 => (3, 1),
-        _ => (2, 2),
+/// How split panes are arranged (SecureCRT-style tiling).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum TileMode {
+    /// A roughly square grid (default; 2 across, 2×2 at four, etc.).
+    #[default]
+    Grid,
+    /// All side by side in one row (vertical tiling).
+    Columns,
+    /// All stacked in one column (horizontal tiling).
+    Rows,
+}
+
+fn pane_grid_dims(count: usize, mode: TileMode) -> (usize, usize) {
+    let count = count.max(1);
+    match mode {
+        TileMode::Columns => (count, 1),
+        TileMode::Rows => (1, count),
+        TileMode::Grid => match count {
+            0 | 1 => (1, 1),
+            2 => (2, 1),
+            3 => (3, 1),
+            4 => (2, 2),
+            5 | 6 => (3, 2),
+            _ => {
+                let cols = (count as f32).sqrt().ceil() as usize;
+                (cols, count.div_ceil(cols))
+            }
+        },
     }
 }
 
@@ -4033,7 +4065,7 @@ fn pane_layout(app: &AditApp) -> PaneLayout {
         terminal_region_area(app.window_width, app.window_height, effective_sidebar);
 
     let count = app.panes.len().max(1);
-    let (cols, rows) = pane_grid_dims(count);
+    let (cols, rows) = pane_grid_dims(count, app.tile_mode);
     let header = if count > 1 { PANE_HEADER_HEIGHT } else { 0.0 };
 
     let pane_w = ((region_w - PANE_GAP * (cols as f32 - 1.0)) / cols as f32).max(1.0);
@@ -4107,7 +4139,55 @@ fn sync_terminal_size(app: &mut AditApp) {
 }
 
 /// Add another connected session as a split pane (up to [`MAX_PANES`]).
+/// Tile every open session (up to [`MAX_PANES`]) in the given orientation —
+/// SecureCRT-style Tile Vertically / Horizontally / grid.
+fn tile_all_sessions(app: &mut AditApp, mode: TileMode) {
+    let ids: Vec<SessionId> = app
+        .manager
+        .sessions()
+        .into_iter()
+        .map(|summary| summary.id)
+        .take(MAX_PANES)
+        .collect();
+    if ids.len() < 2 {
+        app.notice = String::from("至少要两个会话才能平铺（先多连接/打开几个会话）");
+        return;
+    }
+
+    app.panes = ids;
+    app.tile_mode = mode;
+    // Keep the active session focused if it is among the tiled panes.
+    if let Some(active) = app.manager.active_session() {
+        if let Some(pos) = app.panes.iter().position(|id| *id == active) {
+            app.focused_pane = pos;
+        }
+    }
+    app.focused_pane = app.focused_pane.min(app.panes.len() - 1);
+    app.terminal_focused = true;
+    app.terminal_scroll_offset = 0;
+    app.terminal_selection = None;
+    app.terminal_context_menu = false;
+    sync_terminal_size(app);
+    let label = match mode {
+        TileMode::Columns => "垂直",
+        TileMode::Rows => "水平",
+        TileMode::Grid => "网格",
+    };
+    app.notice = format!("已{label}平铺 {} 个会话", app.panes.len());
+}
+
+/// Collapse split panes back to the single-pane tabbed view.
+fn untile_sessions(app: &mut AditApp) {
+    app.panes.clear();
+    app.focused_pane = 0;
+    app.terminal_scroll_offset = 0;
+    app.terminal_selection = None;
+    sync_terminal_size(app);
+    app.notice = String::from("已合并为单标签视图");
+}
+
 fn split_pane(app: &mut AditApp) {
+    app.tile_mode = TileMode::Grid;
     // Seed the tiling from the active session on the first split.
     if app.panes.is_empty() {
         match app.manager.active_session() {
@@ -4531,7 +4611,10 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
         MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
         MenuKind::View => &[
             ("外观设置…", MenuCommand::Appearance),
-            ("分屏（并排终端）", MenuCommand::SplitPane),
+            ("垂直平铺（并排）", MenuCommand::TileVertical),
+            ("水平平铺（上下）", MenuCommand::TileHorizontal),
+            ("网格平铺", MenuCommand::TileGrid),
+            ("合并为标签", MenuCommand::Untile),
             ("输入广播开关", MenuCommand::ToggleBroadcast),
             ("终端 96x28", MenuCommand::ResizeDefault),
             ("终端 120x36", MenuCommand::ResizeWide),
@@ -8870,11 +8953,15 @@ mod tests {
 
     #[test]
     fn pane_grid_dims_tiles_by_count() {
-        assert_eq!(pane_grid_dims(0), (1, 1));
-        assert_eq!(pane_grid_dims(1), (1, 1));
-        assert_eq!(pane_grid_dims(2), (2, 1));
-        assert_eq!(pane_grid_dims(3), (3, 1));
-        assert_eq!(pane_grid_dims(4), (2, 2));
+        use TileMode::*;
+        assert_eq!(pane_grid_dims(1, Grid), (1, 1));
+        assert_eq!(pane_grid_dims(2, Grid), (2, 1));
+        assert_eq!(pane_grid_dims(3, Grid), (3, 1));
+        assert_eq!(pane_grid_dims(4, Grid), (2, 2));
+        assert_eq!(pane_grid_dims(6, Grid), (3, 2));
+        // Columns = all side by side; Rows = all stacked.
+        assert_eq!(pane_grid_dims(4, Columns), (4, 1));
+        assert_eq!(pane_grid_dims(4, Rows), (1, 4));
     }
 
     #[test]
