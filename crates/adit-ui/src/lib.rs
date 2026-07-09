@@ -6,7 +6,9 @@ use adit_session::{
     SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem, TransferStatus,
     TunnelKind, TunnelState,
 };
-use adit_storage::{AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore};
+use adit_storage::{
+    AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
+};
 use adit_terminal::{
     Color as TermColor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot, Viewport,
 };
@@ -85,6 +87,10 @@ pub struct AditApp {
     profile_terminal_type: String,
     connect_timeout_secs: u32,
     scrollback_lines: u32,
+    snippets: Vec<Snippet>,
+    snippets_open: bool,
+    snippet_name_draft: String,
+    snippet_command_draft: String,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -202,6 +208,7 @@ pub enum MenuCommand {
     Appearance,
     Options,
     ImportSshConfig,
+    Snippets,
     ToggleBroadcast,
     SplitPane,
     CheckUpdate,
@@ -370,6 +377,12 @@ pub enum Message {
     SendTerminalInput,
     ClearActiveTerminal,
     ClearError,
+    CloseSnippets,
+    SnippetNameChanged(String),
+    SnippetCommandChanged(String),
+    AddSnippet,
+    DeleteSnippet(usize),
+    SendSnippet(usize),
     OpenSearch,
     CloseSearch,
     SearchQueryChanged(String),
@@ -807,6 +820,7 @@ impl AditApp {
         let connect_timeout_secs = settings.connect_timeout_secs;
         let scrollback_lines = settings.scrollback_lines;
         adit_terminal::set_scrollback_limit(scrollback_lines as usize);
+        let snippets = settings.snippets;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -834,6 +848,7 @@ impl AditApp {
             confirm_multiline_paste,
             connect_timeout_secs,
             scrollback_lines,
+            snippets: snippets.clone(),
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -867,6 +882,10 @@ impl AditApp {
             profile_terminal_type: String::new(),
             connect_timeout_secs,
             scrollback_lines,
+            snippets,
+            snippets_open: false,
+            snippet_name_draft: String::new(),
+            snippet_command_draft: String::new(),
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -2052,6 +2071,43 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ClearError => {
             app.last_error = None;
         }
+        Message::CloseSnippets => {
+            app.snippets_open = false;
+        }
+        Message::SnippetNameChanged(value) => {
+            app.terminal_focused = false;
+            app.snippet_name_draft = value;
+        }
+        Message::SnippetCommandChanged(value) => {
+            app.terminal_focused = false;
+            app.snippet_command_draft = value;
+        }
+        Message::AddSnippet => {
+            let name = app.snippet_name_draft.trim().to_string();
+            let command = app.snippet_command_draft.trim().to_string();
+            if !command.is_empty() {
+                app.snippets.push(Snippet {
+                    name: if name.is_empty() { command.clone() } else { name },
+                    command,
+                });
+                app.snippet_name_draft.clear();
+                app.snippet_command_draft.clear();
+            }
+        }
+        Message::DeleteSnippet(index) => {
+            if index < app.snippets.len() {
+                app.snippets.remove(index);
+            }
+        }
+        Message::SendSnippet(index) => {
+            if let Some(snippet) = app.snippets.get(index) {
+                let name = snippet.name.clone();
+                let mut bytes = snippet.command.clone().into_bytes();
+                bytes.push(b'\r');
+                send_terminal_bytes(app, bytes);
+                app.notice = format!("已发送片段: {name}");
+            }
+        }
         Message::OpenSearch => {
             app.search_open = true;
             app.terminal_focused = false;
@@ -2330,6 +2386,7 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::Appearance => app.appearance_open = true,
         MenuCommand::Options => app.options_open = true,
         MenuCommand::ImportSshConfig => import_ssh_config(app),
+        MenuCommand::Snippets => app.snippets_open = true,
         // Handled in the RunMenu arm (needs to return an async Task).
         MenuCommand::CheckUpdate => {}
         MenuCommand::SplitPane => split_pane(app),
@@ -4166,6 +4223,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         confirm_multiline_paste: app.confirm_multiline_paste,
         connect_timeout_secs: app.connect_timeout_secs,
         scrollback_lines: app.scrollback_lines,
+        snippets: app.snippets.clone(),
     }
 }
 
@@ -4275,6 +4333,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if app.renaming_session.is_some() {
         layers.push(opaque(session_rename_overlay(app)));
+    }
+    if app.snippets_open {
+        layers.push(opaque(snippets_panel_overlay(app)));
     }
     if app.appearance_open {
         layers.push(opaque(appearance_dialog_overlay(app)));
@@ -4390,7 +4451,10 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("SFTP", MenuCommand::Sftp),
             ("端口转发", MenuCommand::Tunnels),
         ],
-        MenuKind::Script => &[("日志/脚本", MenuCommand::Logging)],
+        MenuKind::Script => &[
+            ("命令片段", MenuCommand::Snippets),
+            ("日志/脚本", MenuCommand::Logging),
+        ],
         MenuKind::Tools => &[
             ("清屏", MenuCommand::ClearTerminal),
             ("日志", MenuCommand::Logging),
@@ -5147,6 +5211,99 @@ fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(12),
     )
     .width(Length::Fixed(380.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Command-snippets panel: list saved commands (send / delete) + an add form.
+fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
+    let header = row![
+        text("命令片段").size(16).color(primary_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseSnippets),
+    ]
+    .align_y(Alignment::Center);
+
+    let mut list = column![].spacing(6);
+    if app.snippets.is_empty() {
+        list = list.push(
+            text("还没有片段。在下方添加常用命令，一键发送到当前终端。")
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+    for (index, snippet) in app.snippets.iter().enumerate() {
+        list = list.push(
+            container(
+                row![
+                    column![
+                        text(snippet.name.clone()).size(12).color(primary_text()),
+                        text(snippet.command.clone()).size(11).color(muted_text()),
+                    ]
+                    .spacing(1)
+                    .width(Fill),
+                    button(text("发送").size(11))
+                        .padding([4, 12])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::SendSnippet(index)),
+                    button(text("删除").size(11))
+                        .padding([4, 10])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::DeleteSnippet(index)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 6])
+            .style(|_theme| sftp_pane_style()),
+        );
+    }
+
+    let form = column![
+        text("新增片段").size(12).color(muted_text()),
+        text_input("名称（可选）", &app.snippet_name_draft)
+            .on_input(Message::SnippetNameChanged)
+            .padding([5, 8])
+            .style(text_input_style)
+            .width(Fill),
+        row![
+            text_input("命令，如 tail -f /var/log/syslog", &app.snippet_command_draft)
+                .on_input(Message::SnippetCommandChanged)
+                .on_submit(Message::AddSnippet)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+            button(text("添加").size(12))
+                .padding([5, 16])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::AddSnippet),
+        ]
+        .spacing(8),
+    ]
+    .spacing(6);
+
+    let card = container(
+        column![
+            header,
+            scrollable(list).height(Length::Fixed(240.0)),
+            form,
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fixed(560.0))
     .padding(20)
     .style(|_theme| connection_dialog_style());
 

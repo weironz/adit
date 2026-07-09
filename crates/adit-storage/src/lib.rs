@@ -222,6 +222,16 @@ pub struct AppSettings {
     /// Scrollback history size (lines kept per terminal).
     #[serde(default = "default_scrollback_lines")]
     pub scrollback_lines: u32,
+    /// Reusable command snippets sent to the active session on demand.
+    #[serde(default)]
+    pub snippets: Vec<Snippet>,
+}
+
+/// A saved command snippet (a name + the command text sent to a session).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Snippet {
+    pub name: String,
+    pub command: String,
 }
 
 fn default_connect_timeout() -> u32 {
@@ -275,6 +285,7 @@ impl Default for AppSettings {
             confirm_multiline_paste: true,
             connect_timeout_secs: default_connect_timeout(),
             scrollback_lines: default_scrollback_lines(),
+            snippets: Vec::new(),
         }
     }
 }
@@ -724,6 +735,10 @@ Host db
             confirm_multiline_paste: false,
             connect_timeout_secs: 30,
             scrollback_lines: 8000,
+            snippets: vec![Snippet {
+                name: String::from("uptime"),
+                command: String::from("uptime"),
+            }],
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");
