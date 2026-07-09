@@ -396,6 +396,9 @@ impl SessionManager {
         };
 
         let profile = &mut self.profiles[index];
+        // The open sessions still carry the *old* name, so detect auto-titles
+        // against it before overwriting.
+        let old_base = profile.name.clone();
 
         profile.group = updated.group;
         profile.name = updated.name;
@@ -408,20 +411,17 @@ impl SessionManager {
 
         let endpoint = profile.endpoint();
         let base = profile.name.clone();
-        // Re-title this profile's open sessions, keeping the " (n)" suffixes so
-        // multiple sessions to the same host stay distinguishable.
-        let mut seen = 0;
         for record in self.sessions.values_mut() {
             if record.summary.profile_id == profile_id {
-                seen += 1;
-                record.summary.title = if seen == 1 {
-                    base.clone()
-                } else {
-                    format!("{base} ({seen})")
-                };
+                // Reset auto-titled sessions to the (renamed) base; renumbering
+                // below re-applies " (n)" suffixes. Hand-renamed tabs are kept.
+                if is_auto_session_title(&record.summary.title, &old_base) {
+                    record.summary.title = base.clone();
+                }
                 record.summary.endpoint = endpoint.clone();
             }
         }
+        self.renumber_profile_tabs(profile_id);
 
         Ok(())
     }
@@ -652,22 +652,41 @@ impl SessionManager {
             .map(|record| record.summary.clone())
     }
 
-    /// A tab title unique among currently open sessions: appends " (2)", " (3)"…
-    /// when another open session already shows `base`, so repeat connections to
-    /// the same host stay distinguishable.
-    fn unique_session_title(&self, base: &str) -> String {
-        let taken = |candidate: &str| {
-            self.sessions
-                .values()
-                .any(|record| record.summary.title == candidate)
+    /// Re-title this profile's open, auto-titled sessions so multiple
+    /// connections to the same host are numbered from (1): a lone session keeps
+    /// the bare profile name, and two or more become "name (1)", "name (2)"… in
+    /// tab order. Sessions the user renamed by hand are left untouched.
+    fn renumber_profile_tabs(&mut self, profile_id: ProfileId) {
+        let Some(base) = self
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .map(|profile| profile.name.clone())
+        else {
+            return;
         };
-        if !taken(base) {
-            return base.to_string();
+
+        let family: Vec<SessionId> = self
+            .order
+            .iter()
+            .copied()
+            .filter(|id| {
+                self.sessions.get(id).is_some_and(|record| {
+                    record.summary.profile_id == profile_id
+                        && is_auto_session_title(&record.summary.title, &base)
+                })
+            })
+            .collect();
+
+        for (index, id) in family.iter().enumerate() {
+            if let Some(record) = self.sessions.get_mut(id) {
+                record.summary.title = if family.len() == 1 {
+                    base.clone()
+                } else {
+                    format!("{base} ({})", index + 1)
+                };
+            }
         }
-        (2..)
-            .map(|n| format!("{base} ({n})"))
-            .find(|candidate| !taken(candidate))
-            .unwrap_or_else(|| base.to_string())
     }
 
     pub fn open_mock_session(&mut self, profile_id: ProfileId) -> Result<SessionId, SessionError> {
@@ -680,12 +699,10 @@ impl SessionManager {
         let session_id = SessionId::new();
         let endpoint = profile.endpoint();
         let terminal = welcome_terminal(&profile.name, &endpoint);
-        let base_title = profile.name.clone();
-        let title = self.unique_session_title(&base_title);
         let summary = SessionSummary {
             id: session_id,
             profile_id,
-            title,
+            title: profile.name.clone(),
             endpoint,
             status: SessionStatus::Connected,
         };
@@ -703,6 +720,7 @@ impl SessionManager {
         );
         self.order.push(session_id);
         self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile_id);
 
         Ok(session_id)
     }
@@ -771,11 +789,10 @@ impl SessionManager {
         };
 
         let session_id = SessionId::new();
-        let title = self.unique_session_title(&profile.name);
         let summary = SessionSummary {
             id: session_id,
             profile_id,
-            title,
+            title: profile.name.clone(),
             endpoint,
             status: SessionStatus::Connecting,
         };
@@ -793,6 +810,7 @@ impl SessionManager {
         );
         self.order.push(session_id);
         self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile_id);
 
         Ok(session_id)
     }
@@ -887,11 +905,11 @@ impl SessionManager {
     pub fn open_ssh_probe_session(&mut self, probe: SshProbeSession) -> SessionId {
         let session_id = SessionId::new();
         let terminal = probe_terminal(&probe.title, &probe.endpoint, &probe.transcript);
-        let title = self.unique_session_title(&probe.title);
+        let profile_id = probe.profile_id;
         let summary = SessionSummary {
             id: session_id,
-            profile_id: probe.profile_id,
-            title,
+            profile_id,
+            title: probe.title,
             endpoint: probe.endpoint,
             status: SessionStatus::Disconnected,
         };
@@ -909,6 +927,7 @@ impl SessionManager {
         );
         self.order.push(session_id);
         self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile_id);
 
         session_id
     }
@@ -923,17 +942,24 @@ impl SessionManager {
     }
 
     pub fn close(&mut self, session_id: SessionId) {
-        if let Some(record) = self.sessions.get(&session_id) {
+        let closed_profile = self.sessions.get(&session_id).map(|record| {
             if let Some(live) = &record.live {
                 let _ = live.send(LiveShellCommand::Disconnect);
             }
-        }
+            record.summary.profile_id
+        });
 
         self.sessions.remove(&session_id);
         self.order.retain(|id| *id != session_id);
 
         if self.active_session == Some(session_id) {
             self.active_session = self.order.first().copied();
+        }
+
+        // Renumber the closed session's siblings so, e.g., closing "(1)" of three
+        // leaves a tidy "(1)"/"(2)" rather than "(2)"/"(3)".
+        if let Some(profile_id) = closed_profile {
+            self.renumber_profile_tabs(profile_id);
         }
     }
 
@@ -2302,6 +2328,20 @@ fn log_file_name(title: &str, session_id: SessionId) -> String {
     format!("{stem}_{short}.log")
 }
 
+/// Whether `title` is an auto-generated tab title for `base` — either the bare
+/// name or `base (N)` — as opposed to one the user renamed by hand.
+fn is_auto_session_title(title: &str, base: &str) -> bool {
+    if title == base {
+        return true;
+    }
+    match title.strip_prefix(base).and_then(|rest| rest.strip_prefix(" (")) {
+        Some(rest) => rest
+            .strip_suffix(')')
+            .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())),
+        None => false,
+    }
+}
+
 fn normalize_profile_sort_orders(profiles: &mut [ConnectionProfile]) {
     profiles.sort_by(compare_profiles);
     renumber_profile_sort_orders(profiles);
@@ -2469,20 +2509,36 @@ mod tests {
         let mut manager = SessionManager::with_demo_profiles();
         let profile_id = manager.profiles()[0].id;
         let base = manager.profiles()[0].name.clone();
+        let title = |m: &SessionManager, id| m.session_summary(id).unwrap().title;
 
+        // A lone session keeps the bare name.
         let a = manager.open_mock_session(profile_id).unwrap();
+        assert_eq!(title(&manager, a), base);
+
+        // Opening more numbers the whole family from (1), in tab order.
         let b = manager.open_mock_session(profile_id).unwrap();
         let c = manager.open_mock_session(profile_id).unwrap();
-
-        let title = |m: &SessionManager, id| m.session_summary(id).unwrap().title;
-        assert_eq!(title(&manager, a), base);
+        assert_eq!(title(&manager, a), format!("{base} (1)"));
         assert_eq!(title(&manager, b), format!("{base} (2)"));
         assert_eq!(title(&manager, c), format!("{base} (3)"));
 
-        // Closing the first frees the bare name; the next new session reuses it.
+        // Closing the middle renumbers the survivors to a tidy (1)/(2).
+        manager.close(b);
+        assert_eq!(title(&manager, a), format!("{base} (1)"));
+        assert_eq!(title(&manager, c), format!("{base} (2)"));
+
+        // Down to one -> back to the bare name.
         manager.close(a);
+        assert_eq!(title(&manager, c), base);
+
+        // A hand-renamed tab is left untouched by renumbering.
         let d = manager.open_mock_session(profile_id).unwrap();
-        assert_eq!(title(&manager, d), base);
+        manager.rename_session(c, "prod-box");
+        let e = manager.open_mock_session(profile_id).unwrap();
+        assert_eq!(title(&manager, c), "prod-box");
+        // c is excluded from the family, so d and e number as a pair.
+        assert_eq!(title(&manager, d), format!("{base} (1)"));
+        assert_eq!(title(&manager, e), format!("{base} (2)"));
     }
 
     #[test]

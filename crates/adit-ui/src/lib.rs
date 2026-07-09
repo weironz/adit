@@ -9107,7 +9107,13 @@ fn tab_container_style_dnd(active: bool, dragging: bool) -> container::Style {
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(RADIUS_SM, if dragging { 1.5 } else { 1.0 }, border_color),
+        border: border(RADIUS_SM, if dragging { 2.0 } else { 1.0 }, border_color),
+        // Lift the dragged tab so it reads as picked up while it slides.
+        shadow: if dragging {
+            subtle_shadow()
+        } else {
+            Shadow::default()
+        },
         ..container::Style::default()
     }
 }
@@ -9223,7 +9229,13 @@ fn tree_item_container_style(selected: bool, hovered: bool, dragging: bool) -> c
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(RADIUS_SM, if dragging { 1.5 } else { 1.0 }, border_color),
+        border: border(RADIUS_SM, if dragging { 2.0 } else { 1.0 }, border_color),
+        // A shadow "lifts" the dragged row off the list so it reads as picked up.
+        shadow: if dragging {
+            soft_shadow()
+        } else {
+            Shadow::default()
+        },
         ..container::Style::default()
     }
 }
