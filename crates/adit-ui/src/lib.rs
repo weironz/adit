@@ -82,6 +82,8 @@ pub struct AditApp {
     profile_protocol: Protocol,
     profile_identity_file: String,
     profile_startup_command: String,
+    profile_terminal_type: String,
+    connect_timeout_secs: u32,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -316,6 +318,8 @@ pub enum Message {
     ProfileProtocolChanged(Protocol),
     ProfileIdentityFileChanged(String),
     ProfileStartupCommandChanged(String),
+    ProfileTerminalTypeChanged(String),
+    ConnectTimeoutChanged(String),
     SessionFilterChanged(String),
     NewProfileDraft,
     NewGroupDraft,
@@ -790,8 +794,11 @@ impl AditApp {
         let right_click_paste = settings.right_click_paste;
         let confirm_multiline_paste = settings.confirm_multiline_paste;
 
+        let connect_timeout_secs = settings.connect_timeout_secs;
+
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
+        manager.set_connect_timeout(u64::from(connect_timeout_secs));
 
         // Mirror what is on disk (raw, not clamped) so a bad size triggers one
         // corrective write, while a valid size stays untouched.
@@ -813,6 +820,7 @@ impl AditApp {
             copy_on_select,
             right_click_paste,
             confirm_multiline_paste,
+            connect_timeout_secs,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -843,6 +851,8 @@ impl AditApp {
             profile_protocol: Protocol::Ssh,
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
+            profile_terminal_type: String::new(),
+            connect_timeout_secs,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -1609,6 +1619,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = false;
             app.profile_startup_command = value;
         }
+        Message::ProfileTerminalTypeChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_terminal_type = value;
+        }
+        Message::ConnectTimeoutChanged(value) => {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                app.connect_timeout_secs = 0;
+            } else if let Ok(secs) = trimmed.parse::<u32>() {
+                app.connect_timeout_secs = secs.min(600);
+            }
+            app.manager
+                .set_connect_timeout(u64::from(app.connect_timeout_secs));
+        }
         Message::SessionFilterChanged(value) => {
             app.terminal_focused = false;
             app.session_filter = value;
@@ -2372,6 +2396,7 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_identity_file = profile.identity_file;
         app.profile_protocol = profile.protocol;
         app.profile_startup_command = profile.startup_command;
+        app.profile_terminal_type = profile.terminal_type;
     }
 }
 
@@ -2574,6 +2599,8 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
                     profile_id,
                     app.profile_startup_command.clone(),
                 );
+                app.manager
+                    .set_profile_terminal_type(profile_id, app.profile_terminal_type.clone());
             }
             load_selected_profile(app);
             app.collapsed_groups.remove(app.profile_group.trim());
@@ -4075,6 +4102,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         copy_on_select: app.copy_on_select,
         right_click_paste: app.right_click_paste,
         confirm_multiline_paste: app.confirm_multiline_paste,
+        connect_timeout_secs: app.connect_timeout_secs,
     }
 }
 
@@ -5138,6 +5166,19 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             None,
         ),
         text(config_note).size(11).color(muted_text()),
+        row![
+            text("连接超时（秒，0 = 不限）")
+                .size(12)
+                .color(muted_text())
+                .width(Length::Fixed(180.0)),
+            text_input("20", &app.connect_timeout_secs.to_string())
+                .on_input(Message::ConnectTimeoutChanged)
+                .padding([4, 8])
+                .style(text_input_style)
+                .width(Length::Fixed(80.0)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
     ]
     .spacing(8);
 
@@ -6441,6 +6482,7 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.identity_file == app.profile_identity_file.trim()
         && profile.protocol == app.profile_protocol
         && profile.startup_command == app.profile_startup_command.trim()
+        && profile.terminal_type == app.profile_terminal_type.trim()
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
@@ -7141,6 +7183,15 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     "启动命令（可选，连接后自动执行，如 tmux attach）",
                     text_input("tmux new -A -s main", &app.profile_startup_command)
                         .on_input(Message::ProfileStartupCommandChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .push(dialog_field(
+                    "终端类型 TERM（可选，默认 xterm-256color）",
+                    text_input("xterm-256color", &app.profile_terminal_type)
+                        .on_input(Message::ProfileTerminalTypeChanged)
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Fill)

@@ -209,6 +209,7 @@ pub struct SessionManager {
     sessions: HashMap<SessionId, SessionRecord>,
     active_session: Option<SessionId>,
     auto_reconnect: bool,
+    connect_timeout_secs: u64,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
@@ -266,6 +267,7 @@ impl SessionManager {
             sessions: HashMap::new(),
             active_session: None,
             auto_reconnect: true,
+            connect_timeout_secs: 20,
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
@@ -279,6 +281,16 @@ impl SessionManager {
 
     pub fn set_auto_reconnect(&mut self, enabled: bool) {
         self.auto_reconnect = enabled;
+    }
+
+    pub fn set_connect_timeout(&mut self, secs: u64) {
+        self.connect_timeout_secs = secs;
+    }
+
+    pub fn set_profile_terminal_type(&mut self, profile_id: ProfileId, term: impl Into<String>) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.terminal_type = term.into();
+        }
     }
 
     #[must_use]
@@ -623,7 +635,7 @@ impl SessionManager {
 
         let (live, endpoint, terminal, reconnect) = match profile.protocol {
             Protocol::Ssh => {
-                let live = spawn_live_shell(&profile, &password)?;
+                let live = spawn_live_shell(&profile, &password, self.connect_timeout_secs)?;
                 let endpoint = profile.endpoint();
                 let mut terminal = live_shell_terminal(&profile.name, &endpoint);
                 terminal.append_status(format!("connecting to {endpoint}"));
@@ -1815,7 +1827,7 @@ impl SessionManager {
             return;
         };
 
-        match spawn_live_shell(&profile, &password) {
+        match spawn_live_shell(&profile, &password, self.connect_timeout_secs) {
             Ok(live) => {
                 if let Some(record) = self.sessions.get_mut(&session_id) {
                     record
@@ -2033,6 +2045,7 @@ fn default_local_dir() -> PathBuf {
 fn spawn_live_shell(
     profile: &ConnectionProfile,
     password: &str,
+    connect_timeout_secs: u64,
 ) -> Result<LiveShellHandle, SessionError> {
     let mut request = LiveShellRequest::new(
         profile.host.clone(),
@@ -2044,6 +2057,8 @@ fn spawn_live_shell(
     request.cols = 96;
     request.rows = 28;
     request.startup_command = profile.startup_command.clone();
+    request.term = profile.terminal_type.clone();
+    request.connect_timeout_secs = connect_timeout_secs;
     Ok(adit_ssh::spawn_password_shell(request)?)
 }
 

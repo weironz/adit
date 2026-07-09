@@ -69,6 +69,9 @@ pub struct ConnectionProfile {
     /// `cd /srv`). Empty means nothing is sent.
     #[serde(default)]
     pub startup_command: String,
+    /// `TERM` to request for the PTY (empty ⇒ `xterm-256color`).
+    #[serde(default)]
+    pub terminal_type: String,
 }
 
 impl ConnectionProfile {
@@ -103,6 +106,7 @@ impl ConnectionProfile {
             tunnels: Vec::new(),
             protocol: Protocol::Ssh,
             startup_command: String::new(),
+            terminal_type: String::new(),
         }
     }
 

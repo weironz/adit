@@ -216,6 +216,13 @@ pub struct AppSettings {
     /// against accidentally executing a pasted command block).
     #[serde(default = "default_true")]
     pub confirm_multiline_paste: bool,
+    /// Abort a connection attempt after this many seconds (0 disables the cap).
+    #[serde(default = "default_connect_timeout")]
+    pub connect_timeout_secs: u32,
+}
+
+fn default_connect_timeout() -> u32 {
+    20
 }
 
 fn default_true() -> bool {
@@ -259,6 +266,7 @@ impl Default for AppSettings {
             copy_on_select: false,
             right_click_paste: false,
             confirm_multiline_paste: true,
+            connect_timeout_secs: default_connect_timeout(),
         }
     }
 }
@@ -706,6 +714,7 @@ Host db
             copy_on_select: true,
             right_click_paste: true,
             confirm_multiline_paste: false,
+            connect_timeout_secs: 30,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

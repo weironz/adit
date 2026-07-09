@@ -74,6 +74,11 @@ pub struct LiveShellRequest {
     pub keepalive_secs: u64,
     /// A command sent to the shell once it opens (empty = none).
     pub startup_command: String,
+    /// `TERM` requested for the PTY (empty ⇒ `xterm-256color`).
+    pub term: String,
+    /// Abort the TCP/handshake if it takes longer than this many seconds
+    /// (0 disables the cap).
+    pub connect_timeout_secs: u64,
 }
 
 impl LiveShellRequest {
@@ -95,6 +100,8 @@ impl LiveShellRequest {
             rows: 28,
             keepalive_secs: 30,
             startup_command: String::new(),
+            term: String::new(),
+            connect_timeout_secs: 20,
         }
     }
 }
@@ -212,6 +219,8 @@ pub enum SshError {
     Runtime(String),
     #[error("ssh command channel is closed")]
     CommandChannelClosed,
+    #[error("connection timed out after {0}s")]
+    Timeout(u64),
     #[error("ssh error: {0}")]
     Russh(#[from] russh::Error),
 }
@@ -623,10 +632,22 @@ async fn run_live_password_shell(
 
     let connect = client::connect(config, (request.host.as_str(), request.port), handler);
     tokio::pin!(connect);
+    // Cap the connect/handshake so an unreachable host fails fast instead of
+    // hanging on the OS TCP timeout. A very long sleep stands in for "disabled".
+    let timeout_secs = if request.connect_timeout_secs == 0 {
+        u64::from(u32::MAX)
+    } else {
+        request.connect_timeout_secs
+    };
+    let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
+    tokio::pin!(deadline);
     let mut decision_tx = Some(decision_tx);
     let mut session = loop {
         tokio::select! {
             result = &mut connect => break result?,
+            _ = &mut deadline => {
+                return Err(SshError::Timeout(request.connect_timeout_secs));
+            }
             command = commands.recv() => match command {
                 Some(LiveShellCommand::HostKeyDecision(accept)) => {
                     if let Some(tx) = decision_tx.take() {
@@ -658,11 +679,16 @@ async fn run_live_password_shell(
     .await?;
 
     let _ = events.send(LiveShellEvent::Status(String::from("opening pty")));
+    let term = if request.term.trim().is_empty() {
+        "xterm-256color"
+    } else {
+        request.term.trim()
+    };
     let mut channel = session.channel_open_session().await?;
     channel
         .request_pty(
             true,
-            "xterm-256color",
+            term,
             u32::from(request.cols),
             u32::from(request.rows),
             0,
