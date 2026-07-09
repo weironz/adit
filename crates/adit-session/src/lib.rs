@@ -85,6 +85,9 @@ struct SessionRecord {
 struct SessionLog {
     path: PathBuf,
     writer: BufWriter<fs::File>,
+    /// When set, output is run through this ANSI stripper before writing, for a
+    /// human-readable plaintext transcript.
+    stripper: Option<AnsiStripper>,
 }
 
 /// Auto-reconnect bookkeeping for a live SSH session.
@@ -963,18 +966,21 @@ impl SessionManager {
         &mut self,
         dir: &Path,
         file_name: &str,
+        plaintext: bool,
     ) -> Result<PathBuf, SessionError> {
         let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
-        self.start_logging(session_id, dir, file_name)
+        self.start_logging(session_id, dir, file_name, plaintext)
     }
 
     /// Begin logging a specific session (used by manual toggle for the active
-    /// session and by auto-log-on-connect for any session).
+    /// session and by auto-log-on-connect for any session). When `plaintext` is
+    /// set, escape sequences are stripped for a human-readable transcript.
     pub fn start_logging(
         &mut self,
         session_id: SessionId,
         dir: &Path,
         file_name: &str,
+        plaintext: bool,
     ) -> Result<PathBuf, SessionError> {
         let record = self
             .sessions
@@ -1007,6 +1013,7 @@ impl SessionManager {
         record.log = Some(SessionLog {
             path: path.clone(),
             writer,
+            stripper: plaintext.then(AnsiStripper::default),
         });
         record
             .terminal
@@ -1673,7 +1680,13 @@ impl SessionManager {
                         record.summary.status = SessionStatus::Connected;
                         let mut log_failed = false;
                         if let Some(log) = &mut record.log {
-                            log_failed = log.writer.write_all(&bytes).is_err();
+                            log_failed = if let Some(stripper) = &mut log.stripper {
+                                let mut plain = Vec::with_capacity(bytes.len());
+                                stripper.strip(&bytes, &mut plain);
+                                log.writer.write_all(&plain).is_err()
+                            } else {
+                                log.writer.write_all(&bytes).is_err()
+                            };
                         }
                         if log_failed {
                             record.log = None;
@@ -2078,6 +2091,76 @@ fn normalize_group(group: impl Into<String>) -> String {
 
 /// Build a filesystem-safe log file name from a session title and id, e.g.
 /// `prod-web-01_a1b2c3d4.log`.
+/// Strips ANSI/VT escape sequences from a PTY byte stream, keeping printable
+/// text plus newlines/tabs, for a human-readable plaintext session log. State
+/// persists across chunks so sequences split over reads are handled.
+#[derive(Debug, Default)]
+struct AnsiStripper {
+    state: StripState,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+enum StripState {
+    #[default]
+    Text,
+    /// Saw ESC; deciding the sequence kind.
+    Escape,
+    /// Inside a CSI (`ESC [ … final`).
+    Csi,
+    /// Inside an OSC (`ESC ] … BEL|ST`).
+    Osc,
+    /// Saw ESC inside an OSC, expecting the `\` of ST.
+    OscEsc,
+    /// Drop exactly one more byte (e.g. a charset designator final).
+    Skip1,
+}
+
+impl AnsiStripper {
+    fn strip(&mut self, input: &[u8], out: &mut Vec<u8>) {
+        for &b in input {
+            self.state = match self.state {
+                StripState::Text => match b {
+                    0x1b => StripState::Escape,
+                    b'\n' | b'\t' => {
+                        out.push(b);
+                        StripState::Text
+                    }
+                    // Drop CR and other C0 controls (keep only LF/TAB above).
+                    0x00..=0x1f => StripState::Text,
+                    _ => {
+                        out.push(b);
+                        StripState::Text
+                    }
+                },
+                StripState::Escape => match b {
+                    b'[' => StripState::Csi,
+                    b']' => StripState::Osc,
+                    // nF intermediates (charset designators etc.): drop the final.
+                    b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' | b'#' | b'%' | b' ' => {
+                        StripState::Skip1
+                    }
+                    // Any other ESC x two-byte sequence: already consumed x.
+                    _ => StripState::Text,
+                },
+                StripState::Csi => {
+                    if (0x40..=0x7e).contains(&b) {
+                        StripState::Text
+                    } else {
+                        StripState::Csi
+                    }
+                }
+                StripState::Osc => match b {
+                    0x07 => StripState::Text,
+                    0x1b => StripState::OscEsc,
+                    _ => StripState::Osc,
+                },
+                StripState::OscEsc => StripState::Text,
+                StripState::Skip1 => StripState::Text,
+            };
+        }
+    }
+}
+
 /// Filesystem-safe log filename. If `requested` is non-empty it is sanitized and
 /// used (the UI renders its pattern into this); otherwise an auto name is built
 /// from the session title + a short id.
@@ -2286,7 +2369,7 @@ mod tests {
 
         assert!(!manager.active_is_logging());
         let path = manager
-            .start_active_logging(&dir, "")
+            .start_active_logging(&dir, "", false)
             .expect("logging should start");
         assert!(manager.active_is_logging());
         assert_eq!(manager.active_log_path().as_deref(), Some(path.as_path()));
@@ -2304,6 +2387,25 @@ mod tests {
     }
 
     #[test]
+    fn ansi_stripper_removes_escapes() {
+        let mut stripper = AnsiStripper::default();
+        let mut out = Vec::new();
+        // SGR color + OSC title + CR/LF around plain text.
+        stripper.strip(
+            b"\x1b[32mgreen\x1b[0m\r\n\x1b]0;my title\x07plain\ttab\n",
+            &mut out,
+        );
+        assert_eq!(String::from_utf8(out).unwrap(), "green\nplain\ttab\n");
+
+        // A sequence split across two chunks is still handled.
+        let mut stripper = AnsiStripper::default();
+        let mut out = Vec::new();
+        stripper.strip(b"a\x1b[3", &mut out);
+        stripper.strip(b"1mb", &mut out);
+        assert_eq!(String::from_utf8(out).unwrap(), "ab");
+    }
+
+    #[test]
     fn logging_uses_and_sanitizes_requested_filename() {
         let dir = std::env::temp_dir().join(format!("adit-logname-test-{}", SessionId::new()));
         let mut manager = SessionManager::with_demo_profiles();
@@ -2314,7 +2416,7 @@ mod tests {
 
         // A rendered pattern with an unsafe char is sanitized but otherwise used.
         let path = manager
-            .start_active_logging(&dir, "web01@2026-07-08.log")
+            .start_active_logging(&dir, "web01@2026-07-08.log", false)
             .expect("logging should start");
         assert_eq!(
             path.file_name().and_then(|name| name.to_str()),

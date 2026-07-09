@@ -200,6 +200,10 @@ pub struct AppSettings {
     /// Automatically start logging a session as soon as it connects.
     #[serde(default)]
     pub auto_log_on_connect: bool,
+    /// Write logs as plain text (escape sequences stripped) instead of the raw
+    /// PTY transcript.
+    #[serde(default)]
+    pub log_plaintext: bool,
     /// Selecting text in the terminal copies it to the clipboard on release
     /// (PuTTY-style), without an explicit copy command.
     #[serde(default)]
@@ -251,6 +255,7 @@ impl Default for AppSettings {
             log_dir: String::new(),
             log_name_pattern: String::new(),
             auto_log_on_connect: false,
+            log_plaintext: false,
             copy_on_select: false,
             right_click_paste: false,
             confirm_multiline_paste: true,
@@ -697,6 +702,7 @@ Host db
             log_dir: String::from("D:/logs"),
             log_name_pattern: String::from("%N-%Y%M%D.log"),
             auto_log_on_connect: true,
+            log_plaintext: true,
             copy_on_select: true,
             right_click_paste: true,
             confirm_multiline_paste: false,

@@ -137,6 +137,7 @@ pub struct AditApp {
     log_dir: String,
     log_name_pattern: String,
     auto_log_on_connect: bool,
+    log_plaintext: bool,
     copy_on_select: bool,
     right_click_paste: bool,
     confirm_multiline_paste: bool,
@@ -217,6 +218,7 @@ pub enum Message {
     LogDirChanged(String),
     LogNamePatternChanged(String),
     ToggleAutoLog(bool),
+    ToggleLogPlaintext(bool),
     ToggleCopyOnSelect(bool),
     ToggleRightClickPaste(bool),
     ToggleConfirmMultilinePaste(bool),
@@ -783,6 +785,7 @@ impl AditApp {
         let log_dir = settings.log_dir;
         let log_name_pattern = settings.log_name_pattern;
         let auto_log_on_connect = settings.auto_log_on_connect;
+        let log_plaintext = settings.log_plaintext;
         let copy_on_select = settings.copy_on_select;
         let right_click_paste = settings.right_click_paste;
         let confirm_multiline_paste = settings.confirm_multiline_paste;
@@ -806,6 +809,7 @@ impl AditApp {
             log_dir: log_dir.clone(),
             log_name_pattern: log_name_pattern.clone(),
             auto_log_on_connect,
+            log_plaintext,
             copy_on_select,
             right_click_paste,
             confirm_multiline_paste,
@@ -893,6 +897,7 @@ impl AditApp {
             log_dir,
             log_name_pattern,
             auto_log_on_connect,
+            log_plaintext,
             copy_on_select,
             right_click_paste,
             confirm_multiline_paste,
@@ -1099,6 +1104,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ToggleAutoLog(enabled) => {
             app.auto_log_on_connect = enabled;
+        }
+        Message::ToggleLogPlaintext(enabled) => {
+            app.log_plaintext = enabled;
         }
         Message::ToggleCopyOnSelect(enabled) => {
             app.copy_on_select = enabled;
@@ -3645,7 +3653,7 @@ fn toggle_active_logging(app: &mut AditApp) {
     } else {
         let dir = effective_log_dir(app);
         let name = render_log_name(&effective_log_pattern(app), &summary.title, &summary.endpoint);
-        match app.manager.start_active_logging(&dir, &name) {
+        match app.manager.start_active_logging(&dir, &name, app.log_plaintext) {
             Ok(path) => {
                 app.last_error = None;
                 app.notice = format!("正在记录会话输出到: {}", path.display());
@@ -3748,9 +3756,10 @@ fn auto_log_connected_sessions(app: &mut AditApp) {
         .map(|summary| (summary.id, summary.title, summary.endpoint))
         .collect();
 
+    let plaintext = app.log_plaintext;
     for (session_id, title, endpoint) in targets {
         let name = render_log_name(&pattern, &title, &endpoint);
-        if let Err(error) = app.manager.start_logging(session_id, &dir, &name) {
+        if let Err(error) = app.manager.start_logging(session_id, &dir, &name, plaintext) {
             app.last_error = Some(format!("自动日志开启失败: {error}"));
         }
     }
@@ -4062,6 +4071,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         log_dir: app.log_dir.clone(),
         log_name_pattern: app.log_name_pattern.clone(),
         auto_log_on_connect: app.auto_log_on_connect,
+        log_plaintext: app.log_plaintext,
         copy_on_select: app.copy_on_select,
         right_click_paste: app.right_click_paste,
         confirm_multiline_paste: app.confirm_multiline_paste,
@@ -5180,6 +5190,11 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         checkbox(app.auto_log_on_connect)
             .label("连接后自动开始记录日志")
             .on_toggle(Message::ToggleAutoLog)
+            .size(16)
+            .text_size(12),
+        checkbox(app.log_plaintext)
+            .label("记录为纯文本（去除颜色/转义码，便于阅读和 grep）")
+            .on_toggle(Message::ToggleLogPlaintext)
             .size(16)
             .text_size(12),
     ]
