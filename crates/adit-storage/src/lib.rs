@@ -225,6 +225,9 @@ pub struct AppSettings {
     /// Reusable command snippets sent to the active session on demand.
     #[serde(default)]
     pub snippets: Vec<Snippet>,
+    /// Check GitHub for a newer release on startup (only surfaces if one exists).
+    #[serde(default)]
+    pub auto_check_updates: bool,
 }
 
 /// A saved command snippet (a name + the command text sent to a session).
@@ -286,6 +289,7 @@ impl Default for AppSettings {
             connect_timeout_secs: default_connect_timeout(),
             scrollback_lines: default_scrollback_lines(),
             snippets: Vec::new(),
+            auto_check_updates: false,
         }
     }
 }
@@ -739,6 +743,7 @@ Host db
                 name: String::from("uptime"),
                 command: String::from("uptime"),
             }],
+            auto_check_updates: true,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

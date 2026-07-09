@@ -91,6 +91,7 @@ pub struct AditApp {
     snippets_open: bool,
     snippet_name_draft: String,
     snippet_command_draft: String,
+    auto_check_updates: bool,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -390,6 +391,8 @@ pub enum Message {
     SearchPrev,
     CheckForUpdates,
     UpdateChecked(Result<Option<UpdateInfo>, String>),
+    AutoUpdateChecked(Result<Option<UpdateInfo>, String>),
+    ToggleAutoCheckUpdates(bool),
     StartUpdateDownload,
     UpdateDownloaded(Result<String, String>),
     CloseUpdateDialog,
@@ -821,6 +824,7 @@ impl AditApp {
         let scrollback_lines = settings.scrollback_lines;
         adit_terminal::set_scrollback_limit(scrollback_lines as usize);
         let snippets = settings.snippets;
+        let auto_check_updates = settings.auto_check_updates;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -849,6 +853,7 @@ impl AditApp {
             connect_timeout_secs,
             scrollback_lines,
             snippets: snippets.clone(),
+            auto_check_updates,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -886,6 +891,7 @@ impl AditApp {
             snippets_open: false,
             snippet_name_draft: String::new(),
             snippet_command_draft: String::new(),
+            auto_check_updates,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -987,7 +993,18 @@ pub fn run() -> iced::Result {
     // centered, smaller window that leaves a gap at the top.
     let settings = SettingsStore::default().load().unwrap_or_default();
     let (width, height) = sane_window_size(settings.window_width, settings.window_height);
-    iced::application(AditApp::default, update, view)
+    // Boot: build the app and, if auto-update-check is on, fire a silent check
+    // that only surfaces the dialog when a newer version exists.
+    let boot = || {
+        let app = AditApp::default();
+        let task = if app.auto_check_updates {
+            Task::perform(check_for_update(), Message::AutoUpdateChecked)
+        } else {
+            Task::none()
+        };
+        (app, task)
+    };
+    iced::application(boot, update, view)
         .title(app_title)
         .theme(app_theme)
         .subscription(subscription)
@@ -2139,6 +2156,17 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 Ok(None) => UpdateState::UpToDate,
                 Err(error) => UpdateState::Error(error),
             };
+        }
+        Message::AutoUpdateChecked(result) => {
+            // Silent on startup: only surface the dialog when a newer version
+            // actually exists.
+            if let Ok(Some(info)) = result {
+                app.update_state = UpdateState::Available(info);
+                app.update_dialog_open = true;
+            }
+        }
+        Message::ToggleAutoCheckUpdates(enabled) => {
+            app.auto_check_updates = enabled;
         }
         Message::StartUpdateDownload => {
             if let UpdateState::Available(info) = &app.update_state {
@@ -4224,6 +4252,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         connect_timeout_secs: app.connect_timeout_secs,
         scrollback_lines: app.scrollback_lines,
         snippets: app.snippets.clone(),
+        auto_check_updates: app.auto_check_updates,
     }
 }
 
@@ -5454,6 +5483,11 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         ]
         .spacing(8)
         .align_y(Alignment::Center),
+        checkbox(app.auto_check_updates)
+            .label("启动时自动检查更新")
+            .on_toggle(Message::ToggleAutoCheckUpdates)
+            .size(16)
+            .text_size(12),
     ]
     .spacing(8);
 
