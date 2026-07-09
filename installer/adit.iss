@@ -27,13 +27,15 @@ AppPublisher={#AppPublisher}
 AppPublisherURL={#AppURL}
 AppSupportURL={#AppURL}
 VersionInfoVersion={#AppVersion}
-; Per-user install by default (no UAC) → %LOCALAPPDATA%\Programs\Adit, matching
-; the previous install location; the user can still choose "all users" and a
-; custom folder in the wizard.
+; Default to a standard all-users install in C:\Program Files (requires admin /
+; a UAC prompt). PrivilegesRequiredOverridesAllowed=dialog shows a "for all
+; users / just me" page first, so a user without admin rights can still fall
+; back to a per-user install under %LOCALAPPDATA%\Programs. {autopf} resolves to
+; Program Files in admin mode and to that per-user folder otherwise.
 DefaultDirName={autopf}\{#AppName}
 DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExe}
