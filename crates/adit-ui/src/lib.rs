@@ -132,6 +132,8 @@ pub struct AditApp {
     log_dir: String,
     log_name_pattern: String,
     auto_log_on_connect: bool,
+    copy_on_select: bool,
+    right_click_paste: bool,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -197,6 +199,8 @@ pub enum Message {
     LogDirChanged(String),
     LogNamePatternChanged(String),
     ToggleAutoLog(bool),
+    ToggleCopyOnSelect(bool),
+    ToggleRightClickPaste(bool),
     OpenConfigFolder,
     OpenLogFolder,
     ToggleBroadcast,
@@ -716,6 +720,8 @@ impl AditApp {
         let log_dir = settings.log_dir;
         let log_name_pattern = settings.log_name_pattern;
         let auto_log_on_connect = settings.auto_log_on_connect;
+        let copy_on_select = settings.copy_on_select;
+        let right_click_paste = settings.right_click_paste;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -736,6 +742,8 @@ impl AditApp {
             log_dir: log_dir.clone(),
             log_name_pattern: log_name_pattern.clone(),
             auto_log_on_connect,
+            copy_on_select,
+            right_click_paste,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -817,6 +825,8 @@ impl AditApp {
             log_dir,
             log_name_pattern,
             auto_log_on_connect,
+            copy_on_select,
+            right_click_paste,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -1012,6 +1022,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ToggleAutoLog(enabled) => {
             app.auto_log_on_connect = enabled;
+        }
+        Message::ToggleCopyOnSelect(enabled) => {
+            app.copy_on_select = enabled;
+        }
+        Message::ToggleRightClickPaste(enabled) => {
+            app.right_click_paste = enabled;
         }
         Message::OpenConfigFolder => {
             open_folder(app, adit_storage::config_dir());
@@ -1612,6 +1628,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::PaneRightPressed(index) => {
             focus_pane(app, index);
             app.terminal_selecting = false;
+            if app.right_click_paste {
+                return clipboard::read().map(Message::ClipboardPasted);
+            }
             app.context_menu_pos = app.cursor_pos;
             app.terminal_context_menu = true;
         }
@@ -1674,10 +1693,23 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             {
                 app.terminal_selection = None;
             }
+            // Copy-on-select (PuTTY-style): a completed, non-empty selection goes
+            // straight to the clipboard.
+            if app.copy_on_select && app.terminal_selection.is_some() {
+                let text = selected_terminal_text(app);
+                if !text.is_empty() {
+                    app.notice = String::from("已复制选区到剪贴板");
+                    return clipboard::write(text);
+                }
+            }
         }
         Message::ShowTerminalContextMenu => {
             app.terminal_focused = true;
             app.terminal_selecting = false;
+            // Right-click-paste (PuTTY-style): skip the menu and paste directly.
+            if app.right_click_paste {
+                return clipboard::read().map(Message::ClipboardPasted);
+            }
             app.context_menu_pos = app.cursor_pos;
             app.terminal_context_menu = true;
         }
@@ -3348,6 +3380,8 @@ fn current_settings(app: &AditApp) -> AppSettings {
         log_dir: app.log_dir.clone(),
         log_name_pattern: app.log_name_pattern.clone(),
         auto_log_on_connect: app.auto_log_on_connect,
+        copy_on_select: app.copy_on_select,
+        right_click_paste: app.right_click_paste,
     }
 }
 
@@ -4287,6 +4321,35 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(8);
 
+    let mouse_section = column![
+        text("终端复制 / 粘贴（PuTTY 风格）")
+            .size(13)
+            .color(primary_text()),
+        checkbox(app.copy_on_select)
+            .label("选中内容即复制到剪贴板")
+            .on_toggle(Message::ToggleCopyOnSelect)
+            .size(16)
+            .text_size(12),
+        checkbox(app.right_click_paste)
+            .label("右键直接粘贴（不弹出菜单）")
+            .on_toggle(Message::ToggleRightClickPaste)
+            .size(16)
+            .text_size(12),
+        text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。")
+            .size(11)
+            .color(muted_text()),
+    ]
+    .spacing(8);
+
+    let divider = || {
+        container(Space::new().height(Length::Fixed(1.0)).width(Fill)).style(|_theme| {
+            container::Style {
+                background: Some(Background::Color(border_color())),
+                ..container::Style::default()
+            }
+        })
+    };
+
     let card = container(
         column![
             row![
@@ -4301,12 +4364,10 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             ]
             .align_y(Alignment::Center),
             config_section,
-            container(Space::new().height(Length::Fixed(1.0)).width(Fill))
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(border_color())),
-                    ..container::Style::default()
-                }),
+            divider(),
             log_section,
+            divider(),
+            mouse_section,
             row![
                 Space::new().width(Fill),
                 button(text("完成").size(12))

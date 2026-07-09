@@ -200,6 +200,14 @@ pub struct AppSettings {
     /// Automatically start logging a session as soon as it connects.
     #[serde(default)]
     pub auto_log_on_connect: bool,
+    /// Selecting text in the terminal copies it to the clipboard on release
+    /// (PuTTY-style), without an explicit copy command.
+    #[serde(default)]
+    pub copy_on_select: bool,
+    /// A right-click in the terminal pastes the clipboard immediately instead of
+    /// opening the context menu (PuTTY-style).
+    #[serde(default)]
+    pub right_click_paste: bool,
 }
 
 fn default_auto_reconnect() -> bool {
@@ -235,6 +243,8 @@ impl Default for AppSettings {
             log_dir: String::new(),
             log_name_pattern: String::new(),
             auto_log_on_connect: false,
+            copy_on_select: false,
+            right_click_paste: false,
         }
     }
 }
@@ -506,6 +516,8 @@ mod tests {
             log_dir: String::from("D:/logs"),
             log_name_pattern: String::from("%N-%Y%M%D.log"),
             auto_log_on_connect: true,
+            copy_on_select: true,
+            right_click_paste: true,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");
