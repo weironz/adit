@@ -38,6 +38,9 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
+; The app holds a mutex of this name while running; setup/uninstall detect it
+; and ask the user to close Adit cleanly instead of force-closing the window.
+AppMutex=AditAppInstanceMutex
 SetupIconFile=..\crates\adit-app\assets\icon.ico
 OutputDir=..\target\release
 OutputBaseFilename=adit-installer-v{#AppVersion}
