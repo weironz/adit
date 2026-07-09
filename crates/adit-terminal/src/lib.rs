@@ -113,6 +113,8 @@ pub struct TerminalCell {
     pub bg: Color,
     pub bold: bool,
     pub underline: bool,
+    pub italic: bool,
+    pub dim: bool,
 }
 
 impl TerminalCell {
@@ -124,6 +126,8 @@ impl TerminalCell {
             bg: Color::Default,
             bold: false,
             underline: false,
+            italic: false,
+            dim: false,
         }
     }
 }

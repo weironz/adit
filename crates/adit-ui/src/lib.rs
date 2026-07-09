@@ -7696,12 +7696,20 @@ fn terminal_line(
     let mut row_widget = row![].spacing(0);
 
     for cell in line.cells {
-        let fg = term_color(cell.fg, default_foreground());
+        let mut fg = term_color(cell.fg, default_foreground());
+        if cell.dim {
+            fg = dim_color(fg);
+        }
         let font = Font {
             weight: if cell.bold {
                 Weight::Bold
             } else {
                 Weight::Normal
+            },
+            style: if cell.italic {
+                iced::font::Style::Italic
+            } else {
+                iced::font::Style::Normal
             },
             ..base_font
         };
@@ -7760,6 +7768,17 @@ fn terminal_line(
     }
 
     row_widget.into()
+}
+
+/// Dim (SGR 2) foreground: scale the glyph color toward black so faint text
+/// reads as fainter than normal.
+fn dim_color(color: Color) -> Color {
+    Color {
+        r: color.r * 0.6,
+        g: color.g * 0.6,
+        b: color.b * 0.6,
+        a: color.a,
+    }
 }
 
 /// Text color for selected cells: dark on a light selection highlight, light on

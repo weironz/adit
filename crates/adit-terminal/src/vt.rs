@@ -1010,12 +1010,26 @@ fn is_default_blank(cell: &Cell) -> bool {
         && cell.pen.flags & (UNDERLINE | REVERSE) == 0
 }
 
+/// Render-ready glyph attributes (beyond fg/bg).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+struct RunAttrs {
+    bold: bool,
+    underline: bool,
+    italic: bool,
+    dim: bool,
+}
+
 /// Collapse a cell's pen into render-ready attributes: bold brightens the dim
 /// ANSI colors, reverse swaps fg/bg, and hidden paints fg with bg.
-fn resolve(cell: &Cell) -> (Color, Color, bool, bool) {
+fn resolve(cell: &Cell) -> (Color, Color, RunAttrs) {
     let pen = cell.pen;
     let bold = pen.flags & BOLD != 0;
-    let underline = pen.flags & UNDERLINE != 0;
+    let attrs = RunAttrs {
+        bold,
+        underline: pen.flags & UNDERLINE != 0,
+        italic: pen.flags & ITALIC != 0,
+        dim: pen.flags & DIM != 0,
+    };
     let reverse = pen.flags & REVERSE != 0;
     let hidden = pen.flags & HIDDEN != 0;
 
@@ -1034,7 +1048,7 @@ fn resolve(cell: &Cell) -> (Color, Color, bool, bool) {
     if hidden {
         fg = bg;
     }
-    (fg, bg, bold, underline)
+    (fg, bg, attrs)
 }
 
 fn cursor_cell(text: String) -> TerminalCell {
@@ -1044,6 +1058,20 @@ fn cursor_cell(text: String) -> TerminalCell {
         bg: Color::Rgb(208, 214, 224),
         bold: false,
         underline: false,
+        italic: false,
+        dim: false,
+    }
+}
+
+fn run_cell(text: String, fg: Color, bg: Color, attrs: RunAttrs) -> TerminalCell {
+    TerminalCell {
+        text,
+        fg,
+        bg,
+        bold: attrs.bold,
+        underline: attrs.underline,
+        italic: attrs.italic,
+        dim: attrs.dim,
     }
 }
 
@@ -1066,7 +1094,7 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
 
     let default_cell = Cell::blank(Color::Default);
     let mut out: Vec<TerminalCell> = Vec::new();
-    let mut run: Option<(String, Color, Color, bool, bool)> = None;
+    let mut run: Option<(String, Color, Color, RunAttrs)> = None;
 
     for col in 0..=limit {
         let cell = cells.get(col).unwrap_or(&default_cell);
@@ -1076,14 +1104,8 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
         let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
 
         if cursor_col == Some(col) {
-            if let Some((text, fg, bg, bold, underline)) = run.take() {
-                out.push(TerminalCell {
-                    text,
-                    fg,
-                    bg,
-                    bold,
-                    underline,
-                });
+            if let Some((text, fg, bg, attrs)) = run.take() {
+                out.push(run_cell(text, fg, bg, attrs));
             }
             let mut s = String::new();
             s.push(ch);
@@ -1091,38 +1113,26 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
             continue;
         }
 
-        let (fg, bg, bold, underline) = resolve(cell);
+        let (fg, bg, attrs) = resolve(cell);
         match &mut run {
-            Some((text, rfg, rbg, rbold, rul))
-                if *rfg == fg && *rbg == bg && *rbold == bold && *rul == underline =>
+            Some((text, rfg, rbg, rattrs))
+                if *rfg == fg && *rbg == bg && *rattrs == attrs =>
             {
                 text.push(ch);
             }
             _ => {
-                if let Some((text, pfg, pbg, pbold, pul)) = run.take() {
-                    out.push(TerminalCell {
-                        text,
-                        fg: pfg,
-                        bg: pbg,
-                        bold: pbold,
-                        underline: pul,
-                    });
+                if let Some((text, pfg, pbg, pattrs)) = run.take() {
+                    out.push(run_cell(text, pfg, pbg, pattrs));
                 }
                 let mut s = String::new();
                 s.push(ch);
-                run = Some((s, fg, bg, bold, underline));
+                run = Some((s, fg, bg, attrs));
             }
         }
     }
 
-    if let Some((text, fg, bg, bold, underline)) = run.take() {
-        out.push(TerminalCell {
-            text,
-            fg,
-            bg,
-            bold,
-            underline,
-        });
+    if let Some((text, fg, bg, attrs)) = run.take() {
+        out.push(run_cell(text, fg, bg, attrs));
     }
 
     TerminalLine { cells: out }
@@ -1160,6 +1170,16 @@ mod tests {
         assert!(t.bracketed_paste());
         t.feed_str("\x1b[?2004l");
         assert!(!t.bracketed_paste());
+    }
+
+    #[test]
+    fn italic_and_dim_reach_cells() {
+        let mut t = term(20, 2);
+        t.feed_str("\x1b[3mI\x1b[0m\x1b[2mD\x1b[0m");
+        let snap = t.snapshot(Viewport::tail(2));
+        let cells = &snap.lines[0].cells;
+        assert!(cells.iter().find(|c| c.text.contains('I')).unwrap().italic);
+        assert!(cells.iter().find(|c| c.text.contains('D')).unwrap().dim);
     }
 
     #[test]
