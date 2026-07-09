@@ -2,9 +2,9 @@ use adit_domain::{
     AuthMethod, ConnectionProfile, ProfileId, Protocol, SessionId, SessionStatus, TunnelDef,
 };
 use adit_session::{
-    HostKeyPromptInfo, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionManager,
-    SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem, TransferStatus,
-    TunnelKind, TunnelState,
+    HostKeyPromptInfo, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionError,
+    SessionManager, SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem,
+    TransferStatus, TunnelKind, TunnelState,
 };
 use adit_storage::{
     AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
@@ -76,7 +76,9 @@ pub struct AditApp {
     profile_context_menu: Option<ProfileId>,
     profile_editor: Option<ProfileId>,
     connection_dialog: Option<ConnectionDialog>,
-    groups: BTreeSet<String>,
+    // Folders in user-arrangeable order (top-level tree order); a session may be
+    // ungrouped (top level) and interleaved among these.
+    groups: Vec<String>,
     collapsed_groups: BTreeSet<String>,
     active_menu: Option<MenuKind>,
     profile_group: String,
@@ -274,6 +276,7 @@ pub enum Message {
     ProfileDragOver(ProfileId, ProfileDropPosition),
     ProfileDropped(ProfileId),
     ProfileDragOverTop,
+    ProfileDragOverBottom,
     ProfileDragOverGroup(String),
     ProfileDroppedOnGroup(String),
     ProfileGroupHoverExited(String),
@@ -467,9 +470,16 @@ enum ProfileDrop {
     },
     /// Over a group header: drop into that group.
     IntoGroup(String),
-    /// The top-level zone above every folder: drop ungrouped, at the top.
+    /// The top-level zone above everything: drop ungrouped, at the very top.
     TopLevel,
+    /// The zone below everything: drop ungrouped, at the very bottom.
+    BottomLevel,
 }
+
+/// Spacing between top-level folder slots on the interleave scale. Ungrouped
+/// sessions carry a `sort_order` on this same scale, so they interleave with
+/// folders; a freshly-created session (small order) sits above the first folder.
+const TOP_LEVEL_STEP: i32 = 100_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TerminalPoint {
@@ -829,7 +839,7 @@ impl Default for AditApp {
 impl AditApp {
     fn with_loaded_state(
         manager: SessionManager,
-        groups: BTreeSet<String>,
+        groups: Vec<String>,
         profile_store: ProfileStore,
         load_notice: String,
         load_error: Option<String>,
@@ -1370,6 +1380,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileDragOverTop => {
             if app.dragged_profile.is_some() {
                 app.profile_drop = Some(ProfileDrop::TopLevel);
+                app.group_drop_target = None;
+            }
+        }
+        Message::ProfileDragOverBottom => {
+            if app.dragged_profile.is_some() {
+                app.profile_drop = Some(ProfileDrop::BottomLevel);
                 app.group_drop_target = None;
             }
         }
@@ -2638,9 +2654,59 @@ fn close_profile_editor_if_other(app: &mut AditApp, profile_id: ProfileId) {
     }
 }
 
+/// One entry in the top level: an ungrouped session (keyed by its global
+/// sort_order) or a folder (keyed by its slot). Used to compute drop positions.
+enum TopKind {
+    Session(ProfileId),
+    Folder,
+}
+
+/// The sorted top-level entries (ungrouped sessions + folders), excluding
+/// `exclude`, with their interleave keys.
+fn top_level_entries(app: &AditApp, exclude: ProfileId) -> Vec<(i32, TopKind)> {
+    let profiles = app.manager.profiles();
+    let mut entries: Vec<(i32, TopKind)> = profiles
+        .iter()
+        .filter(|profile| profile.group.trim().is_empty() && profile.id != exclude)
+        .map(|profile| (profile.sort_order, TopKind::Session(profile.id)))
+        .collect();
+    for (index, _) in sidebar_group_names(app, profiles).iter().enumerate() {
+        entries.push(((index as i32 + 1) * TOP_LEVEL_STEP, TopKind::Folder));
+    }
+    entries.sort_by_key(|(key, _)| *key);
+    entries
+}
+
+/// Ungroup `source` and place it at top-level slot `index` (0..=len) by giving
+/// it a sort_order midway between its new neighbours' keys.
+fn place_ungrouped_at(
+    app: &mut AditApp,
+    source_id: ProfileId,
+    index: usize,
+) -> Result<(), SessionError> {
+    let entries = top_level_entries(app, source_id);
+    let prev = if index == 0 {
+        entries.first().map(|(k, _)| k - TOP_LEVEL_STEP).unwrap_or(0)
+    } else {
+        entries[index - 1].0
+    };
+    let next = if index >= entries.len() {
+        entries
+            .last()
+            .map(|(k, _)| k + TOP_LEVEL_STEP)
+            .unwrap_or(TOP_LEVEL_STEP)
+    } else {
+        entries[index].0
+    };
+    let order = prev + (next - prev) / 2;
+    app.manager.move_profile_to_group(source_id, "")?;
+    app.manager.set_profile_sort_order(source_id, order);
+    Ok(())
+}
+
 /// Commit the drag: move the held session to wherever the insertion line sits
-/// (beside a row, into a group, or out to the top level), then persist. A plain
-/// click leaves `profile_drop` unset, so nothing moves.
+/// (beside a row, into/around a folder, or out to the top level), then persist.
+/// A plain click leaves `profile_drop` unset, so nothing moves.
 fn finish_profile_drag(app: &mut AditApp) {
     app.profile_drag_cursor = None;
     let Some(source_id) = app.dragged_profile.take() else {
@@ -2652,28 +2718,36 @@ fn finish_profile_drag(app: &mut AditApp) {
     app.group_drop_target = None;
 
     let result = match drop {
+        Some(ProfileDrop::IntoGroup(group)) => app.manager.move_profile_to_group(source_id, group),
+        Some(ProfileDrop::TopLevel) => place_ungrouped_at(app, source_id, 0),
+        Some(ProfileDrop::BottomLevel) => {
+            let len = top_level_entries(app, source_id).len();
+            place_ungrouped_at(app, source_id, len)
+        }
         Some(ProfileDrop::Beside {
             profile_id,
             position,
         }) if profile_id != source_id => {
-            app.manager.reorder_profile(source_id, profile_id, position)
-        }
-        Some(ProfileDrop::IntoGroup(group)) => app.manager.move_profile_to_group(source_id, group),
-        Some(ProfileDrop::TopLevel) => {
-            // Drop ungrouped at the very top: before the first top-level row if
-            // one exists, otherwise just clear the group.
-            let first_top = app
+            let target_group = app
                 .manager
-                .profiles()
-                .iter()
-                .find(|profile| profile.group.trim().is_empty() && profile.id != source_id)
-                .map(|profile| profile.id);
-            match first_top {
-                Some(target) => {
-                    app.manager
-                        .reorder_profile(source_id, target, ProfileDropPosition::Before)
-                }
-                None => app.manager.move_profile_to_group(source_id, ""),
+                .profile(profile_id)
+                .map(|profile| profile.group.clone())
+                .unwrap_or_default();
+            if target_group.trim().is_empty() {
+                // Interleave at the top level, beside another ungrouped session.
+                let entries = top_level_entries(app, source_id);
+                let at = entries
+                    .iter()
+                    .position(|(_, kind)| matches!(kind, TopKind::Session(id) if *id == profile_id));
+                let index = match at {
+                    Some(i) if position == ProfileDropPosition::After => i + 1,
+                    Some(i) => i,
+                    None => entries.len(),
+                };
+                place_ungrouped_at(app, source_id, index)
+            } else {
+                // Beside a session inside a folder: join that folder at that spot.
+                app.manager.reorder_profile(source_id, profile_id, position)
             }
         }
         _ => return,
@@ -2703,7 +2777,7 @@ fn drop_profile_on_group(app: &mut AditApp, group: String) {
 
     match app.manager.move_profile_to_group(source_id, group.clone()) {
         Ok(()) => {
-            app.groups.insert(group.clone());
+            add_group(&mut app.groups, &group);
             app.collapsed_groups.remove(&group);
             app.selected_profile = Some(source_id);
             load_selected_profile(app);
@@ -2724,9 +2798,8 @@ fn load_selected_profile(app: &mut AditApp) {
 
     if let Some(profile) = profile {
         app.profile_group = profile.group;
-        if !app.profile_group.trim().is_empty() {
-            app.groups.insert(app.profile_group.clone());
-        }
+        let group = app.profile_group.clone();
+        add_group(&mut app.groups, &group);
         app.profile_name = profile.name;
         app.profile_host = profile.host;
         app.profile_port = profile.port.to_string();
@@ -2756,7 +2829,7 @@ fn new_profile_draft(app: &mut AditApp) {
             app.profile_editor = Some(profile_id);
             // Empty group ⇒ ungrouped; don't register a phantom empty folder.
             if !group.is_empty() {
-                app.groups.insert(group.clone());
+                add_group(&mut app.groups, &group);
                 app.collapsed_groups.remove(&group);
             }
             load_selected_profile(app);
@@ -2773,7 +2846,7 @@ fn new_profile_draft(app: &mut AditApp) {
 
 fn new_group_draft(app: &mut AditApp) {
     let group = next_group_name(app);
-    app.groups.insert(group.clone());
+    add_group(&mut app.groups, &group);
     app.collapsed_groups.remove(&group);
     app.profile_group = group.clone();
     app.profile_context_menu = None;
@@ -2804,8 +2877,12 @@ fn save_group_rename(app: &mut AditApp) {
 
     match app.manager.rename_group(&old_group, new_group.clone()) {
         Ok(()) => {
-            app.groups.remove(&old_group);
-            app.groups.insert(new_group.clone());
+            // Replace in place so the folder keeps its position.
+            if let Some(pos) = app.groups.iter().position(|group| group == &old_group) {
+                app.groups[pos] = new_group.clone();
+            } else {
+                add_group(&mut app.groups, &new_group);
+            }
 
             if app.collapsed_groups.remove(&old_group) {
                 app.collapsed_groups.insert(new_group.clone());
@@ -2844,10 +2921,10 @@ fn delete_empty_group(app: &mut AditApp, group: String) {
         return;
     }
 
-    if app.groups.remove(&group) {
+    if remove_group(&mut app.groups, &group) {
         app.collapsed_groups.remove(&group);
         if app.profile_group == group {
-            app.profile_group = String::from("Default");
+            app.profile_group = String::new();
         }
         if persist_profiles(app) {
             app.notice = format!("空分组已删除: {group}");
@@ -3097,7 +3174,7 @@ fn import_ssh_config(app: &mut AditApp) {
     }
 
     if added > 0 {
-        app.groups.insert(group.to_string());
+        add_group(&mut app.groups, group);
         persist_profiles(app);
         app.last_error = None;
         app.notice = if skipped > 0 {
@@ -3111,10 +3188,7 @@ fn import_ssh_config(app: &mut AditApp) {
 }
 
 fn persist_profiles(app: &mut AditApp) -> bool {
-    let catalog = ProfileCatalog::new(
-        app.groups.iter().cloned().collect(),
-        app.manager.profiles().to_vec(),
-    );
+    let catalog = ProfileCatalog::new(app.groups.to_vec(), app.manager.profiles().to_vec());
 
     match app.profile_store.save_catalog(&catalog) {
         Ok(()) => true,
@@ -3125,22 +3199,37 @@ fn persist_profiles(app: &mut AditApp) -> bool {
     }
 }
 
-fn groups_from_catalog(groups: Vec<String>, profiles: &[ConnectionProfile]) -> BTreeSet<String> {
-    let mut result = groups.into_iter().collect::<BTreeSet<_>>();
-    result.extend(groups_from_profiles(profiles));
-    if result.is_empty() {
-        result.insert(String::from("Default"));
+/// The ordered folder list: the persisted order first (user-arrangeable), then
+/// any folder seen only on a profile, deduped, first occurrence wins.
+fn groups_from_catalog(groups: Vec<String>, profiles: &[ConnectionProfile]) -> Vec<String> {
+    let mut result = Vec::new();
+    for group in groups.into_iter().chain(profiles.iter().map(|p| p.group.clone())) {
+        let group = group.trim().to_string();
+        if !group.is_empty() && !result.contains(&group) {
+            result.push(group);
+        }
     }
     result
 }
 
-fn groups_from_profiles(profiles: &[ConnectionProfile]) -> BTreeSet<String> {
-    profiles
-        .iter()
-        .map(|profile| profile.group.trim())
-        .filter(|group| !group.is_empty())
-        .map(ToOwned::to_owned)
-        .collect()
+fn groups_from_profiles(profiles: &[ConnectionProfile]) -> Vec<String> {
+    groups_from_catalog(Vec::new(), profiles)
+}
+
+/// Append a folder to the ordered list if it isn't already present (and not
+/// blank). Order is preserved so folders stay where the user put them.
+fn add_group(groups: &mut Vec<String>, name: &str) {
+    let name = name.trim();
+    if !name.is_empty() && !groups.iter().any(|group| group == name) {
+        groups.push(name.to_string());
+    }
+}
+
+/// Remove a folder from the ordered list; returns whether it was present.
+fn remove_group(groups: &mut Vec<String>, name: &str) -> bool {
+    let before = groups.len();
+    groups.retain(|group| group != name);
+    groups.len() != before
 }
 
 fn parse_port(value: &str) -> Option<u16> {
@@ -7314,72 +7403,96 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
 
     let filter = app.session_filter.trim().to_ascii_lowercase();
     let filter_active = !filter.is_empty();
-    // No single "Hosts" root node: it was the only top-level item, so the groups
-    // (Default, …) are the top level of the tree directly.
+    // No single "Hosts" root node: the top level of the tree holds ungrouped
+    // sessions and folders, freely interleaved by their position.
     let mut profiles = column![].spacing(1).width(Fill);
 
-    // During a drag, a top-level drop zone lets a session be pulled out of any
-    // group to the top level.
-    if app.dragged_profile.is_some() {
-        let targeted = app.profile_drop == Some(ProfileDrop::TopLevel);
-        profiles = profiles.push(top_level_drop_zone(targeted));
+    // Merge the top-level items — ungrouped sessions (keyed by their global
+    // sort_order) and folders (keyed by their slot) — into one ordered list.
+    let folders = sidebar_group_names(app, &sorted_profiles);
+    enum TopEntry<'a> {
+        Session(&'a ConnectionProfile),
+        Folder(String),
     }
-
-    // Ungrouped sessions (empty group) sit at the very top level, above the
-    // folders — a session need not belong to any group.
+    let mut entries: Vec<(i32, TopEntry)> = Vec::new();
     for profile in sorted_profiles
         .iter()
         .filter(|profile| profile.group.trim().is_empty())
-        .filter(|profile| !filter_active || profile_matches_filter(profile, &filter))
     {
-        profiles = profiles.push(sidebar_profile_row(app, profile));
+        if filter_active && !profile_matches_filter(profile, &filter) {
+            continue;
+        }
+        entries.push((profile.sort_order, TopEntry::Session(profile)));
+    }
+    for (index, group) in folders.iter().enumerate() {
+        entries.push((
+            (index as i32 + 1) * TOP_LEVEL_STEP,
+            TopEntry::Folder(group.clone()),
+        ));
+    }
+    entries.sort_by_key(|(key, _)| *key);
+
+    // A drag exposes drop zones at the very top and very bottom so a session can
+    // be pulled out of any folder to the top level.
+    if app.dragged_profile.is_some() {
+        profiles = profiles.push(top_level_drop_zone(
+            app.profile_drop == Some(ProfileDrop::TopLevel),
+        ));
     }
 
-    for group in sidebar_group_names(app, &sorted_profiles) {
-        let group_matches = filter_active && group.to_ascii_lowercase().contains(&filter);
-        let group_profiles = sorted_profiles
-            .iter()
-            .filter(|profile| profile.group == group)
-            .filter(|profile| {
-                !filter_active || group_matches || profile_matches_filter(profile, &filter)
-            })
-            .cloned()
-            .collect::<Vec<_>>();
+    for (_, entry) in entries {
+        match entry {
+            TopEntry::Session(profile) => {
+                profiles = profiles.push(sidebar_profile_row(app, profile));
+            }
+            TopEntry::Folder(group) => {
+                let group_matches = filter_active && group.to_ascii_lowercase().contains(&filter);
+                let group_profiles = sorted_profiles
+                    .iter()
+                    .filter(|profile| profile.group == group)
+                    .filter(|profile| {
+                        !filter_active || group_matches || profile_matches_filter(profile, &filter)
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
 
-        if filter_active && !group_matches && group_profiles.is_empty() {
-            continue;
+                if filter_active && !group_matches && group_profiles.is_empty() {
+                    continue;
+                }
+
+                let collapsed = app.collapsed_groups.contains(&group) && !filter_active;
+                let group_count = sorted_profiles
+                    .iter()
+                    .filter(|candidate| candidate.group == group)
+                    .count();
+                let group_drop_target = app.group_drop_target.as_deref() == Some(group.as_str());
+                profiles = profiles.push(tree_group_row(
+                    group.clone(),
+                    collapsed,
+                    group_count,
+                    group_drop_target,
+                ));
+
+                if app.group_context_menu.as_deref() == Some(group.as_str()) {
+                    profiles = profiles.push(group_context_menu(group.clone(), collapsed));
+                }
+                if app.editing_group.as_deref() == Some(group.as_str()) {
+                    profiles = profiles.push(group_edit_menu(app));
+                }
+                if collapsed {
+                    continue;
+                }
+                for profile in &group_profiles {
+                    profiles = profiles.push(sidebar_profile_row(app, profile));
+                }
+            }
         }
+    }
 
-        let collapsed = app.collapsed_groups.contains(&group) && !filter_active;
-        let group_count = sorted_profiles
-            .iter()
-            .filter(|candidate| candidate.group == group)
-            .count();
-        let group_drop_target = app.group_drop_target.as_deref() == Some(group.as_str());
-        profiles = profiles.push(tree_group_row(
-            group.clone(),
-            collapsed,
-            group_count,
-            group_drop_target,
+    if app.dragged_profile.is_some() {
+        profiles = profiles.push(bottom_level_drop_zone(
+            app.profile_drop == Some(ProfileDrop::BottomLevel),
         ));
-
-        if app.group_context_menu.as_deref() == Some(group.as_str()) {
-            profiles = profiles.push(group_context_menu(group.clone(), collapsed));
-        }
-
-        if app.editing_group.as_deref() == Some(group.as_str()) {
-            profiles = profiles.push(group_edit_menu(app));
-        }
-
-        if collapsed {
-            continue;
-        }
-
-        for profile in &group_profiles {
-            profiles = profiles.push(sidebar_profile_row(app, profile));
-            // The context menu and the profile editor are now floating overlays
-            // (see the layers stack in `view`), not pushed inline here.
-        }
     }
 
     let error = app
@@ -7545,13 +7658,21 @@ fn sidebar_divider() -> Element<'static, Message> {
     .into()
 }
 
+/// Folders in display order: the user-arranged order first, then any folder seen
+/// only on a profile. Empty ("ungrouped") is never a folder.
 fn sidebar_group_names(app: &AditApp, profiles: &[ConnectionProfile]) -> Vec<String> {
-    let mut groups = app.groups.clone();
-    groups.extend(groups_from_profiles(profiles));
-    // Empty is the "ungrouped" sentinel (rendered at the top level), never a
-    // folder of its own.
-    groups.retain(|group| !group.trim().is_empty());
-    groups.into_iter().collect()
+    let mut groups: Vec<String> = app
+        .groups
+        .iter()
+        .filter(|group| !group.trim().is_empty())
+        .cloned()
+        .collect();
+    for group in groups_from_profiles(profiles) {
+        if !groups.contains(&group) {
+            groups.push(group);
+        }
+    }
+    groups
 }
 
 fn tree_group_row(
@@ -7693,25 +7814,35 @@ fn drop_line() -> Element<'static, Message> {
 }
 
 /// A drop zone at the very top of the tree (shown only during a drag) so a
-/// session can be pulled out of any group to the top level.
+/// session can be pulled out of any group to the very top level.
 fn top_level_drop_zone(targeted: bool) -> Element<'static, Message> {
+    edge_drop_zone(targeted, "↥ 拖到此处 · 移到最顶（顶层）", Message::ProfileDragOverTop)
+}
+
+/// A drop zone at the very bottom of the tree so a session can be placed below
+/// every folder at the top level.
+fn bottom_level_drop_zone(targeted: bool) -> Element<'static, Message> {
+    edge_drop_zone(
+        targeted,
+        "↧ 拖到此处 · 移到最底（顶层）",
+        Message::ProfileDragOverBottom,
+    )
+}
+
+fn edge_drop_zone(
+    targeted: bool,
+    label_text: &'static str,
+    on_enter: Message,
+) -> Element<'static, Message> {
     let indicator: Element<'static, Message> = if targeted {
         drop_line()
     } else {
         Space::new().width(Fill).height(Length::Fixed(2.0)).into()
     };
-    let label = if targeted {
-        accent()
-    } else {
-        muted_text()
-    };
+    let label = if targeted { accent() } else { muted_text() };
     mouse_area(
         container(
-            column![
-                indicator,
-                text("↥ 拖到此处 · 移出分组（顶层）").size(10).color(label),
-            ]
-            .spacing(2),
+            column![indicator, text(label_text).size(10).color(label)].spacing(2),
         )
         .width(Fill)
         .padding([2, 8])
@@ -7725,9 +7856,8 @@ fn top_level_drop_zone(targeted: bool) -> Element<'static, Message> {
             ..container::Style::default()
         }),
     )
-    // on_enter arms the top-level drop; the global release (CancelProfileDrag)
-    // commits it, so no on_release is needed here.
-    .on_enter(Message::ProfileDragOverTop)
+    // on_enter arms the drop; the global release (CancelProfileDrag) commits it.
+    .on_enter(on_enter)
     .into()
 }
 

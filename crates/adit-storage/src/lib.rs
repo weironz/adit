@@ -376,27 +376,25 @@ struct StoredProfiles {
 }
 
 fn normalize_groups(groups: Vec<String>, profiles: &[ConnectionProfile]) -> Vec<String> {
-    let mut normalized = BTreeSet::new();
+    // Preserve the given folder order (it is user-arrangeable); dedup keeping the
+    // first occurrence, then append any groups seen only on profiles.
+    let mut ordered: Vec<String> = Vec::new();
+    let mut seen = BTreeSet::new();
+    let push = |group: String, ordered: &mut Vec<String>, seen: &mut BTreeSet<String>| {
+        let group = normalize_group_name(group);
+        if !group.is_empty() && seen.insert(group.clone()) {
+            ordered.push(group);
+        }
+    };
 
     for group in groups {
-        let group = normalize_group_name(group);
-        if !group.is_empty() {
-            normalized.insert(group);
-        }
+        push(group, &mut ordered, &mut seen);
     }
-
     for profile in profiles {
-        let group = normalize_group_name(&profile.group);
-        if !group.is_empty() {
-            normalized.insert(group);
-        }
+        push(profile.group.clone(), &mut ordered, &mut seen);
     }
 
-    if normalized.is_empty() {
-        normalized.insert(String::from("Default"));
-    }
-
-    normalized.into_iter().collect()
+    ordered
 }
 
 fn normalize_group_name(group: impl AsRef<str>) -> String {
@@ -704,9 +702,10 @@ Host db
         store.save_catalog(&catalog).expect("catalog should save");
         let loaded = store.load_catalog().expect("catalog should load");
 
+        // Folder order is preserved as given (user-arrangeable), not alphabetized.
         assert_eq!(
             loaded.groups,
-            vec![String::from("Empty"), String::from("Lab")]
+            vec![String::from("Lab"), String::from("Empty")]
         );
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].group, "Lab");

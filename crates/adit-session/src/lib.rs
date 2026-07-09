@@ -557,6 +557,19 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Set a profile's global `sort_order` directly. Used to place an ungrouped
+    /// (top-level) session at a precise position among the folders; those orders
+    /// are not renumbered, so they persist as chosen.
+    pub fn set_profile_sort_order(&mut self, profile_id: ProfileId, order: i32) {
+        if let Some(profile) = self
+            .profiles
+            .iter_mut()
+            .find(|profile| profile.id == profile_id)
+        {
+            profile.sort_order = order;
+        }
+    }
+
     pub fn rename_group(
         &mut self,
         old_group: impl AsRef<str>,
@@ -2344,12 +2357,17 @@ fn normalize_profile_sort_orders(profiles: &mut [ConnectionProfile]) {
 }
 
 fn renumber_profile_sort_orders(profiles: &mut [ConnectionProfile]) {
-    let mut current_group = String::new();
+    let mut current_group: Option<String> = None;
     let mut order = 0_i32;
 
     for profile in profiles {
-        if profile.group != current_group {
-            current_group = profile.group.clone();
+        // Ungrouped ("") sessions carry a global top-level position that lets
+        // them interleave with folders; leave those sort_orders untouched.
+        if profile.group.trim().is_empty() {
+            continue;
+        }
+        if current_group.as_deref() != Some(profile.group.as_str()) {
+            current_group = Some(profile.group.clone());
             order = 10;
         } else {
             order += 10;
