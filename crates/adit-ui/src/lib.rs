@@ -146,6 +146,10 @@ pub struct AditApp {
     /// reports); and the last cell already reported (to dedupe motion events).
     mouse_button_down: bool,
     mouse_report_cell: Option<TerminalPoint>,
+    search_open: bool,
+    search_query: String,
+    search_matches: Vec<SearchMatch>,
+    search_index: Option<usize>,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -350,6 +354,11 @@ pub enum Message {
     SendTerminalInput,
     ClearActiveTerminal,
     ClearError,
+    OpenSearch,
+    CloseSearch,
+    SearchQueryChanged(String),
+    SearchNext,
+    SearchPrev,
     CheckForUpdates,
     UpdateChecked(Result<Option<UpdateInfo>, String>),
     StartUpdateDownload,
@@ -384,6 +393,14 @@ enum UpdateState {
 struct TerminalPoint {
     row: usize,
     col: usize,
+}
+
+/// A scrollback-search hit: an absolute row plus the matched character span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SearchMatch {
+    row: usize,
+    col: usize,
+    len: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -883,6 +900,10 @@ impl AditApp {
             paste_confirm_open: false,
             mouse_button_down: false,
             mouse_report_cell: None,
+            search_open: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_index: None,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -1610,6 +1631,22 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_input = input;
         }
         Message::KeyboardInput(event) => {
+            // Ctrl+Shift+F opens scrollback search regardless of focus; Escape
+            // closes it. These run before the terminal-focus gate.
+            if terminal_shortcut(&event, 'f') {
+                app.search_open = true;
+                app.terminal_focused = false;
+                recompute_search(app);
+                return focus_search_input();
+            }
+            if app.search_open && is_escape_key(&event) {
+                app.search_open = false;
+                app.search_matches.clear();
+                app.search_index = None;
+                app.terminal_focused = true;
+                return Task::none();
+            }
+
             if !app.terminal_focused {
                 return Task::none();
             }
@@ -1920,6 +1957,28 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ClearError => {
             app.last_error = None;
+        }
+        Message::OpenSearch => {
+            app.search_open = true;
+            app.terminal_focused = false;
+            recompute_search(app);
+            return focus_search_input();
+        }
+        Message::CloseSearch => {
+            app.search_open = false;
+            app.search_matches.clear();
+            app.search_index = None;
+            app.terminal_focused = true;
+        }
+        Message::SearchQueryChanged(query) => {
+            app.search_query = query;
+            recompute_search(app);
+        }
+        Message::SearchNext => {
+            step_search(app, 1);
+        }
+        Message::SearchPrev => {
+            step_search(app, -1);
         }
         Message::CheckForUpdates => {
             return begin_update_check(app);
@@ -3053,6 +3112,16 @@ fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
     true
 }
 
+fn is_escape_key(event: &keyboard::Event) -> bool {
+    matches!(
+        event,
+        keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            ..
+        }
+    )
+}
+
 fn is_terminal_copy_shortcut(event: &keyboard::Event) -> bool {
     terminal_shortcut(event, 'c')
 }
@@ -3129,6 +3198,120 @@ fn perform_paste(app: &mut AditApp, contents: &str, bracketed: bool) {
     }
     send_terminal_bytes(app, bytes);
     app.notice = String::from("已粘贴到当前终端");
+}
+
+fn search_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("terminal-search")
+}
+
+/// A Task that moves keyboard focus to the search input.
+fn focus_search_input() -> Task<Message> {
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
+        search_input_id(),
+    ))
+}
+
+/// Recompute scrollback-search matches over the active session's full buffer
+/// (ASCII case-insensitive), then jump to the last (most recent) match.
+fn recompute_search(app: &mut AditApp) {
+    app.search_matches.clear();
+    app.search_index = None;
+
+    let needle: Vec<char> = app.search_query.chars().map(|c| c.to_ascii_lowercase()).collect();
+    if needle.is_empty() {
+        return;
+    }
+
+    let rows_visible = terminal_view_rows(app);
+    let total = app.manager.active_snapshot(Viewport::tail(rows_visible)).total_rows;
+    if total == 0 {
+        return;
+    }
+    let full = app.manager.active_snapshot(Viewport {
+        first_row: 0,
+        height: total,
+    });
+
+    for (row, line) in full.lines.iter().enumerate() {
+        let hay: Vec<char> = line
+            .cells
+            .iter()
+            .flat_map(|cell| cell.text.chars())
+            .map(|c| c.to_ascii_lowercase())
+            .collect();
+        if needle.len() > hay.len() {
+            continue;
+        }
+        let mut i = 0;
+        while i + needle.len() <= hay.len() {
+            if hay[i..i + needle.len()] == needle[..] {
+                app.search_matches.push(SearchMatch {
+                    row,
+                    col: i,
+                    len: needle.len(),
+                });
+                i += needle.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
+
+    if !app.search_matches.is_empty() {
+        app.search_index = Some(app.search_matches.len() - 1);
+        scroll_to_current_match(app);
+    }
+}
+
+/// Advance the current match by `delta` (wrapping) and scroll it into view.
+fn step_search(app: &mut AditApp, delta: i32) {
+    let count = app.search_matches.len();
+    if count == 0 {
+        return;
+    }
+    let current = app.search_index.unwrap_or(0) as i32;
+    let next = (current + delta).rem_euclid(count as i32) as usize;
+    app.search_index = Some(next);
+    scroll_to_current_match(app);
+}
+
+/// Scroll the terminal so the current match sits roughly a third from the top.
+fn scroll_to_current_match(app: &mut AditApp) {
+    let Some(index) = app.search_index else {
+        return;
+    };
+    let Some(hit) = app.search_matches.get(index).copied() else {
+        return;
+    };
+    let rows_visible = terminal_view_rows(app);
+    let total = app.manager.active_snapshot(Viewport::tail(rows_visible)).total_rows;
+    let first_visible = hit.row.saturating_sub(rows_visible / 3);
+    let offset = total
+        .saturating_sub(rows_visible)
+        .saturating_sub(first_visible);
+    app.terminal_scroll_offset = offset.min(max_terminal_scroll_offset(app));
+}
+
+/// Per-visible-line search highlight ranges `(start, end, is_current)` aligned to
+/// the snapshot's lines; empty when there is nothing to highlight.
+fn search_highlights_for(app: &AditApp, snapshot: &TerminalSnapshot) -> Vec<Vec<(usize, usize, bool)>> {
+    if app.search_matches.is_empty() {
+        return Vec::new();
+    }
+    let current = app.search_index.and_then(|i| app.search_matches.get(i)).copied();
+    snapshot
+        .lines
+        .iter()
+        .enumerate()
+        .map(|(i, _)| {
+            let abs = snapshot.first_row + i;
+            app.search_matches
+                .iter()
+                .filter(|m| m.row == abs)
+                .map(|m| (m.col, m.col + m.len, Some(*m) == current))
+                .collect()
+        })
+        .collect()
 }
 
 fn selected_terminal_text(app: &AditApp) -> String {
@@ -7097,11 +7280,14 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
     let body: Element<'_, Message> = if app.panes.len() >= 2 {
         tiled_workspace_body(app)
     } else {
+        let snapshot = active_terminal_snapshot(app);
+        let highlights = search_highlights_for(app, &snapshot);
         mouse_area(terminal_view(
-            active_terminal_snapshot(app),
+            snapshot,
             app.terminal_focused,
             app.terminal_selection,
             app.terminal_scroll_offset,
+            highlights,
         ))
         .on_press(Message::BeginTerminalSelection)
         .on_release(Message::EndTerminalSelection)
@@ -7112,32 +7298,79 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
         .into()
     };
 
-    container(
-        column![
-            row![
-                scrollable(tabs).direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new()
-                )),
-                active_session_action(app),
-                container(text(app.manager.status_line()).size(12).color(muted_text()))
-                    .padding([0, 8])
-                    .center_y(TAB_BAR_HEIGHT),
-                Space::new().width(Fill),
-                split_button(app),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .height(TAB_BAR_HEIGHT)
-            .width(Fill),
-            body,
-        ]
+    let tab_row = row![
+        scrollable(tabs).direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new()
+        )),
+        active_session_action(app),
+        container(text(app.manager.status_line()).size(12).color(muted_text()))
+            .padding([0, 8])
+            .center_y(TAB_BAR_HEIGHT),
+        Space::new().width(Fill),
+        split_button(app),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center)
+    .height(TAB_BAR_HEIGHT)
+    .width(Fill);
+
+    let mut layout = column![tab_row].height(Fill).width(Fill);
+    if app.search_open {
+        layout = layout.push(terminal_search_bar(app));
+    }
+    layout = layout.push(body);
+
+    container(layout)
+        .padding(0)
+        .style(|_theme| workspace_style())
         .height(Fill)
-        .width(Fill),
+        .width(Fill)
+        .into()
+}
+
+/// The scrollback-search bar shown above the terminal (Ctrl+Shift+F).
+fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
+    let count = app.search_matches.len();
+    let status = if app.search_query.is_empty() {
+        String::new()
+    } else if count == 0 {
+        String::from("无匹配")
+    } else {
+        format!("{}/{}", app.search_index.map(|i| i + 1).unwrap_or(0), count)
+    };
+
+    container(
+        row![
+            text("查找").size(12).color(muted_text()),
+            text_input("搜索终端历史…", &app.search_query)
+                .id(search_input_id())
+                .on_input(Message::SearchQueryChanged)
+                .on_submit(Message::SearchNext)
+                .padding([4, 8])
+                .style(text_input_style)
+                .width(Length::Fixed(280.0)),
+            container(text(status).size(11).color(muted_text()))
+                .width(Length::Fixed(64.0)),
+            button(text("↑").size(13))
+                .padding([3, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::SearchPrev),
+            button(text("↓").size(13))
+                .padding([3, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::SearchNext),
+            Space::new().width(Fill),
+            button(text("×").size(14))
+                .padding([3, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CloseSearch),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
     )
-    .padding(0)
-    .style(|_theme| workspace_style())
-    .height(Fill)
+    .padding([4, 8])
     .width(Fill)
+    .style(|_theme| toolbar_style())
     .into()
 }
 
@@ -7221,11 +7454,17 @@ fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) -> Element<
     } else {
         None
     };
+    let highlights = if is_focused {
+        search_highlights_for(app, &snapshot)
+    } else {
+        Vec::new()
+    };
     let body = mouse_area(terminal_view(
         snapshot,
         is_focused,
         selection,
         app.terminal_scroll_offset,
+        highlights,
     ))
     .on_press(Message::PaneMousePressed(index))
     .on_release(Message::EndTerminalSelection)
@@ -7317,6 +7556,7 @@ fn terminal_view(
     focused: bool,
     selection: Option<TerminalSelection>,
     _scroll_offset: usize,
+    search_highlights: Vec<Vec<(usize, usize, bool)>>,
 ) -> Element<'static, Message> {
     let lines = if snapshot.lines.is_empty() {
         column![text("not connected")
@@ -7329,7 +7569,11 @@ fn terminal_view(
             .into_iter()
             .enumerate()
             .fold(column![].spacing(0), |column, (row_index, line)| {
-                column.push(terminal_line(line, row_index, selection))
+                let highlights = search_highlights
+                    .get(row_index)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]);
+                column.push(terminal_line(line, row_index, selection, highlights))
             })
     };
 
@@ -7365,6 +7609,7 @@ fn terminal_line(
     line: TerminalLine,
     row_index: usize,
     selection: Option<TerminalSelection>,
+    search: &[(usize, usize, bool)],
 ) -> Element<'static, Message> {
     let font_size = term_font_size();
     let base_font = term_font();
@@ -7397,13 +7642,34 @@ fn terminal_line(
 
         for ch in cell.text.chars() {
             let selected = selected_range.is_some_and(|range| col >= range.0 && col < range.1);
+            let search_hit = search
+                .iter()
+                .find_map(|(start, end, current)| (col >= *start && col < *end).then_some(*current));
+
+            let glyph_color = if selected {
+                selected_fg
+            } else if let Some(current) = search_hit {
+                if current {
+                    Color::from_rgb8(24, 24, 24)
+                } else {
+                    Color::from_rgb8(245, 236, 210)
+                }
+            } else {
+                fg
+            };
             let label = text(ch.to_string())
                 .size(font_size)
                 .font(font)
-                .color(if selected { selected_fg } else { fg });
+                .color(glyph_color);
 
             let background = if selected {
                 Some(selection_background())
+            } else if let Some(current) = search_hit {
+                Some(if current {
+                    Color::from_rgb8(240, 180, 60)
+                } else {
+                    Color::from_rgb8(96, 82, 44)
+                })
             } else {
                 match cell.bg {
                     TermColor::Default => None,

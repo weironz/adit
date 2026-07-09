@@ -24,7 +24,7 @@ adit-storage = { path = "crates/adit-storage" }
 adit-terminal = { path = "crates/adit-terminal" }
 adit-ui = { path = "crates/adit-ui" }
 bytes = "1"
-iced = { version = "0.14.0", default-features = true, features = ["tokio"] }
+iced = { version = "0.14.0", default-features = true, features = ["tokio", "advanced"] }
 keyring = "4.1.2"
 russh = { version = "0.61.2", default-features = false, features = ["flate2", "ring", "rsa"] }
 serde = { version = "1", features = ["derive"] }
