@@ -67,6 +67,9 @@ pub struct AditApp {
     // Set once a live drag has actually reordered rows, so a plain click (which
     // also arms a drag) doesn't needlessly re-persist profiles on release.
     profile_drag_moved: bool,
+    // Sidebar-relative cursor position while a profile drag is in flight, so the
+    // floating "ghost" card can follow the pointer.
+    profile_drag_cursor: Option<Point>,
     group_drop_target: Option<String>,
     group_context_menu: Option<String>,
     editing_group: Option<String>,
@@ -895,6 +898,7 @@ impl AditApp {
             hovered_profile: None,
             dragged_profile: None,
             profile_drag_moved: false,
+            profile_drag_cursor: None,
             group_drop_target: None,
             group_context_menu: None,
             editing_group: None,
@@ -1293,6 +1297,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             select_profile(app, profile_id);
             app.dragged_profile = Some(profile_id);
             app.profile_drag_moved = false;
+            // Seed the floating ghost at the press point (cursor_pos is window
+            // absolute; the sidebar starts just below the menu bar + toolbar).
+            app.profile_drag_cursor = Some(Point::new(
+                app.cursor_pos.x,
+                app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
+            ));
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -1420,7 +1430,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::HideProfileContextMenu => {
             app.profile_context_menu = None;
         }
-        Message::SidebarCursorMoved(point) => app.cursor_pos = point,
+        Message::SidebarCursorMoved(point) => {
+            // `point` is sidebar-relative; the context-menu anchor wants it in
+            // window-absolute coordinates.
+            app.cursor_pos = Point::new(point.x, point.y + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT);
+            if app.dragged_profile.is_some() {
+                app.profile_drag_cursor = Some(point);
+            }
+        }
         Message::EditProfileFromContext(profile_id) => {
             select_profile(app, profile_id);
             app.profile_context_menu = None;
@@ -2623,6 +2640,7 @@ fn live_reorder_profile(app: &mut AditApp, target_id: ProfileId) {
 }
 
 fn finish_profile_drag(app: &mut AditApp) {
+    app.profile_drag_cursor = None;
     if app.dragged_profile.is_none() {
         app.group_drop_target = None;
         app.profile_drag_moved = false;
@@ -7322,11 +7340,16 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         }
 
         for profile in group_profiles {
+            // The dragged row is "lifted" into the floating ghost, so its slot
+            // renders as an empty gap the neighbours squeeze around.
+            if Some(profile.id) == app.dragged_profile {
+                profiles = profiles.push(profile_drag_gap());
+                continue;
+            }
             let selected = Some(profile.id) == app.selected_profile;
             let hovered = Some(profile.id) == app.hovered_profile;
-            let dragging = Some(profile.id) == app.dragged_profile;
 
-            profiles = profiles.push(tree_profile_row(profile, selected, hovered, dragging));
+            profiles = profiles.push(tree_profile_row(profile, selected, hovered, false));
 
             // The context menu and the profile editor are now floating overlays
             // (see the layers stack in `view`), not pushed inline here.
@@ -7397,17 +7420,86 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     }
 
     // Track the cursor over the sidebar so a right-click can anchor its floating
-    // context menu at the pointer. `on_move` is panel-relative; the sidebar sits
-    // below the menu bar + toolbar, so convert to window-absolute coordinates.
-    mouse_area(
-        container(content)
-            .height(Fill)
-            .style(|_theme| sidebar_style()),
+    // context menu at the pointer, and (during a drag) so the ghost card follows.
+    // `on_move` gives sidebar-relative coordinates.
+    let panel = container(content)
+        .height(Fill)
+        .style(|_theme| sidebar_style());
+    let layered: Element<'_, Message> = match (app.dragged_profile, app.profile_drag_cursor) {
+        (Some(_), Some(position)) => stack![panel, profile_drag_ghost(app, position)].into(),
+        _ => panel.into(),
+    };
+    mouse_area(layered)
+        .on_move(Message::SidebarCursorMoved)
+        .into()
+}
+
+/// The empty slot left where a dragged profile row used to be — the list
+/// squeezes around it and it marks where the drop will land.
+fn profile_drag_gap() -> Element<'static, Message> {
+    container(Space::new().width(Fill).height(Length::Fixed(PROFILE_ROW_HEIGHT)))
+        .width(Fill)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(accent_soft())),
+            border: border(RADIUS_SM, 1.5, accent()),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// A floating card that mirrors the dragged profile row and follows the cursor
+/// (`position` is sidebar-relative), so the drag reads as picking the row up.
+fn profile_drag_ghost(app: &AditApp, position: Point) -> Element<'static, Message> {
+    let Some(id) = app.dragged_profile else {
+        return Space::new().into();
+    };
+    let Some(profile) = app.manager.profile(id).cloned() else {
+        return Space::new().into();
+    };
+    let endpoint = if profile.username.trim().is_empty() {
+        profile.host.clone()
+    } else {
+        format!("{}@{}", profile.username, profile.host)
+    };
+
+    let card = container(
+        row![
+            Space::new().width(Length::Fixed(8.0)),
+            avatar(&profile.name),
+            column![
+                text(profile.name.clone()).size(13).color(primary_text()),
+                text(endpoint).size(11).color(muted_text()),
+            ]
+            .spacing(1),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
     )
-    .on_move(|point| {
-        Message::SidebarCursorMoved(Point::new(point.x, point.y + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT))
-    })
+    .height(Length::Fixed(PROFILE_ROW_HEIGHT))
+    .width(Length::Fixed((app.sidebar_width - 28.0).max(140.0)))
+    .padding([4, 8])
+    .style(|_theme| profile_drag_ghost_style());
+
+    // Carry the card under the cursor: centered on it vertically, nudged right.
+    let top = (position.y - PROFILE_ROW_HEIGHT / 2.0).max(0.0);
+    let left = (position.x - 18.0).max(0.0);
+    column![
+        Space::new().height(Length::Fixed(top)),
+        row![Space::new().width(Length::Fixed(left)), card],
+    ]
+    .width(Fill)
+    .height(Fill)
     .into()
+}
+
+fn profile_drag_ghost_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface())),
+        text_color: Some(primary_text()),
+        border: border(RADIUS_SM, 1.5, accent()),
+        shadow: soft_shadow(),
+        ..container::Style::default()
+    }
 }
 
 /// The draggable divider between the sidebar and the workspace. Pressing it
