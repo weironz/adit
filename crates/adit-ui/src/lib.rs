@@ -64,9 +64,8 @@ pub struct AditApp {
     selected_profile: Option<ProfileId>,
     hovered_profile: Option<ProfileId>,
     dragged_profile: Option<ProfileId>,
-    // Set once a live drag has actually reordered rows, so a plain click (which
-    // also arms a drag) doesn't needlessly re-persist profiles on release.
-    profile_drag_moved: bool,
+    // Where the dragged profile will land on release (drives the insertion line).
+    profile_drop: Option<ProfileDrop>,
     // Sidebar-relative cursor position while a profile drag is in flight, so the
     // floating "ghost" card can follow the pointer.
     profile_drag_cursor: Option<Point>,
@@ -274,6 +273,7 @@ pub enum Message {
     ProfileHoverExited(ProfileId),
     ProfileDragOver(ProfileId, ProfileDropPosition),
     ProfileDropped(ProfileId),
+    ProfileDragOverTop,
     ProfileDragOverGroup(String),
     ProfileDroppedOnGroup(String),
     ProfileGroupHoverExited(String),
@@ -454,6 +454,21 @@ enum UpdateState {
     Downloading,
     Launched,
     Error(String),
+}
+
+/// Where a dragged sidebar session will drop, shown as an insertion line.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ProfileDrop {
+    /// An insertion line just before/after another session row (adopts that
+    /// row's group — which may be "ungrouped").
+    Beside {
+        profile_id: ProfileId,
+        position: ProfileDropPosition,
+    },
+    /// Over a group header: drop into that group.
+    IntoGroup(String),
+    /// The top-level zone above every folder: drop ungrouped, at the top.
+    TopLevel,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -897,7 +912,7 @@ impl AditApp {
             selected_profile,
             hovered_profile: None,
             dragged_profile: None,
-            profile_drag_moved: false,
+            profile_drop: None,
             profile_drag_cursor: None,
             group_drop_target: None,
             group_context_menu: None,
@@ -1296,7 +1311,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfilePressed(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = Some(profile_id);
-            app.profile_drag_moved = false;
+            app.profile_drop = None;
             // Seed the floating ghost at the press point (cursor_pos is window
             // absolute; the sidebar starts just below the menu bar + toolbar).
             app.profile_drag_cursor = Some(Point::new(
@@ -1321,30 +1336,50 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileHovered(profile_id) => {
             app.hovered_profile = Some(profile_id);
-            // iced's mouse_area fires on_enter (this) — not on_move — on the frame
-            // the cursor crosses into a new row, so the live reorder has to happen
-            // here to reliably trigger on every crossing (on_move alone misses a
-            // fast drag). Direction is derived from the current order.
-            live_reorder_profile(app, profile_id);
+            // on_enter fires (not on_move) on the frame the cursor crosses into a
+            // row, so seed the insertion line here too (defaults to "before").
+            if let Some(dragged) = app.dragged_profile {
+                if dragged != profile_id {
+                    app.profile_drop = Some(ProfileDrop::Beside {
+                        profile_id,
+                        position: ProfileDropPosition::Before,
+                    });
+                    app.group_drop_target = None;
+                }
+            }
         }
         Message::ProfileHoverExited(profile_id) => {
             if app.hovered_profile == Some(profile_id) {
                 app.hovered_profile = None;
             }
         }
-        Message::ProfileDragOver(profile_id, _position) => {
+        Message::ProfileDragOver(profile_id, position) => {
             app.hovered_profile = Some(profile_id);
-            // Continued movement within a row also reorders (redundant with the
-            // on_enter path, but keeps things responsive on a slow drag).
-            live_reorder_profile(app, profile_id);
+            // The insertion line follows the cursor: above the row in its top
+            // half, below it in its bottom half.
+            if let Some(dragged) = app.dragged_profile {
+                if dragged != profile_id {
+                    app.profile_drop = Some(ProfileDrop::Beside {
+                        profile_id,
+                        position,
+                    });
+                    app.group_drop_target = None;
+                }
+            }
+        }
+        Message::ProfileDragOverTop => {
+            if app.dragged_profile.is_some() {
+                app.profile_drop = Some(ProfileDrop::TopLevel);
+                app.group_drop_target = None;
+            }
         }
         Message::ProfileDropped(_profile_id) => {
-            // Live reorder already positioned the row; just finalize + persist.
             finish_profile_drag(app);
         }
         Message::ProfileDragOverGroup(group) => {
             if app.dragged_profile.is_some() {
-                app.group_drop_target = Some(group);
+                app.group_drop_target = Some(group.clone());
+                app.profile_drop = Some(ProfileDrop::IntoGroup(group));
             }
         }
         Message::ProfileDroppedOnGroup(group) => {
@@ -2603,74 +2638,62 @@ fn close_profile_editor_if_other(app: &mut AditApp, profile_id: ProfileId) {
     }
 }
 
-/// Live-reorder the dragged profile so it sits next to `target`, choosing the
-/// side from the current order (dragged is above target ⇒ drop after, below ⇒
-/// drop before). Mirrors the session-tab drag so the held row slides under the
-/// cursor. A no-op when nothing is being dragged or the cursor is over the
-/// dragged row itself, which keeps the drag stable once it lands.
-fn live_reorder_profile(app: &mut AditApp, target_id: ProfileId) {
-    let Some(source_id) = app.dragged_profile else {
-        return;
-    };
-    if source_id == target_id {
-        return;
-    }
-    let index_of = |app: &AditApp, id: ProfileId| {
-        app.manager.profiles().iter().position(|p| p.id == id)
-    };
-    let (Some(source_index), Some(target_index)) =
-        (index_of(app, source_id), index_of(app, target_id))
-    else {
-        return;
-    };
-    let position = if source_index < target_index {
-        ProfileDropPosition::After
-    } else {
-        ProfileDropPosition::Before
-    };
-    if app
-        .manager
-        .reorder_profile(source_id, target_id, position)
-        .is_ok()
-    {
-        app.profile_drag_moved = true;
-        app.selected_profile = Some(source_id);
-        app.group_drop_target = None;
-    }
-}
-
+/// Commit the drag: move the held session to wherever the insertion line sits
+/// (beside a row, into a group, or out to the top level), then persist. A plain
+/// click leaves `profile_drop` unset, so nothing moves.
 fn finish_profile_drag(app: &mut AditApp) {
     app.profile_drag_cursor = None;
-    if app.dragged_profile.is_none() {
+    let Some(source_id) = app.dragged_profile.take() else {
+        app.profile_drop = None;
         app.group_drop_target = None;
-        app.profile_drag_moved = false;
         return;
-    }
+    };
+    let drop = app.profile_drop.take();
+    app.group_drop_target = None;
 
-    // Released over a group header (e.g. an empty or different group) with no
-    // row under the pointer: move into that group. `drop_profile_on_group`
-    // takes `dragged_profile` and persists itself.
-    if let Some(group) = app.group_drop_target.clone() {
-        drop_profile_on_group(app, group);
-    } else {
-        let source_id = app.dragged_profile.take();
-        // A live reorder already rearranged the rows in memory; persist it once
-        // on release (a plain click never sets `profile_drag_moved`, so it won't
-        // rewrite profiles.json).
-        if app.profile_drag_moved {
-            app.selected_profile = source_id;
-            load_selected_profile(app);
-            if persist_profiles(app) {
-                app.notice = String::from("会话排序已更新");
+    let result = match drop {
+        Some(ProfileDrop::Beside {
+            profile_id,
+            position,
+        }) if profile_id != source_id => {
+            app.manager.reorder_profile(source_id, profile_id, position)
+        }
+        Some(ProfileDrop::IntoGroup(group)) => app.manager.move_profile_to_group(source_id, group),
+        Some(ProfileDrop::TopLevel) => {
+            // Drop ungrouped at the very top: before the first top-level row if
+            // one exists, otherwise just clear the group.
+            let first_top = app
+                .manager
+                .profiles()
+                .iter()
+                .find(|profile| profile.group.trim().is_empty() && profile.id != source_id)
+                .map(|profile| profile.id);
+            match first_top {
+                Some(target) => {
+                    app.manager
+                        .reorder_profile(source_id, target, ProfileDropPosition::Before)
+                }
+                None => app.manager.move_profile_to_group(source_id, ""),
             }
         }
-    }
+        _ => return,
+    };
 
-    app.group_drop_target = None;
-    app.profile_drag_moved = false;
+    match result {
+        Ok(()) => {
+            app.selected_profile = Some(source_id);
+            load_selected_profile(app);
+            if persist_profiles(app) {
+                app.notice = String::from("会话已移动");
+            }
+        }
+        Err(error) => app.last_error = Some(error.to_string()),
+    }
 }
 
 fn drop_profile_on_group(app: &mut AditApp, group: String) {
+    app.profile_drop = None;
+    app.profile_drag_cursor = None;
     let Some(source_id) = app.dragged_profile.take() else {
         app.group_drop_target = None;
         return;
@@ -7295,6 +7318,13 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     // (Default, …) are the top level of the tree directly.
     let mut profiles = column![].spacing(1).width(Fill);
 
+    // During a drag, a top-level drop zone lets a session be pulled out of any
+    // group to the top level.
+    if app.dragged_profile.is_some() {
+        let targeted = app.profile_drop == Some(ProfileDrop::TopLevel);
+        profiles = profiles.push(top_level_drop_zone(targeted));
+    }
+
     // Ungrouped sessions (empty group) sit at the very top level, above the
     // folders — a session need not belong to any group.
     for profile in sorted_profiles
@@ -7622,7 +7652,83 @@ fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'s
     }
     let selected = Some(profile.id) == app.selected_profile;
     let hovered = Some(profile.id) == app.hovered_profile;
-    tree_profile_row(profile.clone(), selected, hovered, false)
+    let row = tree_profile_row(profile.clone(), selected, hovered, false);
+
+    // An insertion line above or below this row when it is the drop target.
+    let (before, after) = match &app.profile_drop {
+        Some(ProfileDrop::Beside {
+            profile_id,
+            position,
+        }) if *profile_id == profile.id => match position {
+            ProfileDropPosition::Before => (true, false),
+            ProfileDropPosition::After => (false, true),
+        },
+        _ => (false, false),
+    };
+    if !before && !after {
+        return row;
+    }
+    let mut col = column![].spacing(0).width(Fill);
+    if before {
+        col = col.push(drop_line());
+    }
+    col = col.push(row);
+    if after {
+        col = col.push(drop_line());
+    }
+    col.into()
+}
+
+/// A thin accent bar marking where a dragged session will be inserted.
+fn drop_line() -> Element<'static, Message> {
+    container(Space::new().width(Fill).height(Length::Fixed(2.0)))
+        .width(Fill)
+        .padding([1, 6])
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(accent())),
+            border: border(1.0, 0.0, transparent()),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// A drop zone at the very top of the tree (shown only during a drag) so a
+/// session can be pulled out of any group to the top level.
+fn top_level_drop_zone(targeted: bool) -> Element<'static, Message> {
+    let indicator: Element<'static, Message> = if targeted {
+        drop_line()
+    } else {
+        Space::new().width(Fill).height(Length::Fixed(2.0)).into()
+    };
+    let label = if targeted {
+        accent()
+    } else {
+        muted_text()
+    };
+    mouse_area(
+        container(
+            column![
+                indicator,
+                text("↥ 拖到此处 · 移出分组（顶层）").size(10).color(label),
+            ]
+            .spacing(2),
+        )
+        .width(Fill)
+        .padding([2, 8])
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if targeted {
+                accent_soft()
+            } else {
+                surface_alt()
+            })),
+            border: border(RADIUS_SM, 1.0, if targeted { accent() } else { border_color() }),
+            ..container::Style::default()
+        }),
+    )
+    // on_enter arms the top-level drop; the global release (CancelProfileDrag)
+    // commits it, so no on_release is needed here.
+    .on_enter(Message::ProfileDragOverTop)
+    .into()
 }
 
 fn tree_profile_row(
