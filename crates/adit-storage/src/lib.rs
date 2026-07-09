@@ -208,6 +208,14 @@ pub struct AppSettings {
     /// opening the context menu (PuTTY-style).
     #[serde(default)]
     pub right_click_paste: bool,
+    /// Confirm before pasting clipboard text that spans multiple lines (guards
+    /// against accidentally executing a pasted command block).
+    #[serde(default = "default_true")]
+    pub confirm_multiline_paste: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_auto_reconnect() -> bool {
@@ -245,6 +253,7 @@ impl Default for AppSettings {
             auto_log_on_connect: false,
             copy_on_select: false,
             right_click_paste: false,
+            confirm_multiline_paste: true,
         }
     }
 }
@@ -518,6 +527,7 @@ mod tests {
             auto_log_on_connect: true,
             copy_on_select: true,
             right_click_paste: true,
+            confirm_multiline_paste: false,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

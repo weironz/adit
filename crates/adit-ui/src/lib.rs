@@ -136,6 +136,9 @@ pub struct AditApp {
     auto_log_on_connect: bool,
     copy_on_select: bool,
     right_click_paste: bool,
+    confirm_multiline_paste: bool,
+    pending_paste: Option<String>,
+    paste_confirm_open: bool,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -204,6 +207,9 @@ pub enum Message {
     ToggleAutoLog(bool),
     ToggleCopyOnSelect(bool),
     ToggleRightClickPaste(bool),
+    ToggleConfirmMultilinePaste(bool),
+    ConfirmPaste,
+    CancelPaste,
     OpenConfigFolder,
     OpenLogFolder,
     ToggleBroadcast,
@@ -753,6 +759,7 @@ impl AditApp {
         let auto_log_on_connect = settings.auto_log_on_connect;
         let copy_on_select = settings.copy_on_select;
         let right_click_paste = settings.right_click_paste;
+        let confirm_multiline_paste = settings.confirm_multiline_paste;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -775,6 +782,7 @@ impl AditApp {
             auto_log_on_connect,
             copy_on_select,
             right_click_paste,
+            confirm_multiline_paste,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -860,6 +868,9 @@ impl AditApp {
             auto_log_on_connect,
             copy_on_select,
             right_click_paste,
+            confirm_multiline_paste,
+            pending_paste: None,
+            paste_confirm_open: false,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -1769,12 +1780,36 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ClipboardPasted(contents) => {
             if let Some(contents) = contents {
-                let bytes = normalize_paste(&contents);
-                if !bytes.is_empty() {
-                    send_terminal_bytes(app, bytes);
-                    app.notice = String::from("已粘贴到当前终端");
+                if contents.is_empty() {
+                    return Task::none();
+                }
+                let multiline = contents.contains('\n') || contents.contains('\r');
+                let bracketed = app.manager.active_bracketed_paste();
+                // Bracketed paste already stops the shell from auto-running the
+                // pasted block, so only the un-bracketed multi-line case needs a
+                // guard.
+                if app.confirm_multiline_paste && multiline && !bracketed {
+                    app.pending_paste = Some(contents);
+                    app.paste_confirm_open = true;
+                } else {
+                    perform_paste(app, &contents, bracketed);
                 }
             }
+        }
+        Message::ConfirmPaste => {
+            app.paste_confirm_open = false;
+            if let Some(contents) = app.pending_paste.take() {
+                let bracketed = app.manager.active_bracketed_paste();
+                perform_paste(app, &contents, bracketed);
+            }
+        }
+        Message::CancelPaste => {
+            app.paste_confirm_open = false;
+            app.pending_paste = None;
+            app.notice = String::from("已取消粘贴");
+        }
+        Message::ToggleConfirmMultilinePaste(enabled) => {
+            app.confirm_multiline_paste = enabled;
         }
         Message::TerminalJumpToBottom => {
             apply_terminal_scroll(app, TerminalScrollAction::Bottom);
@@ -2875,6 +2910,24 @@ fn normalize_paste(contents: &str) -> Vec<u8> {
         .into_bytes()
 }
 
+/// Send pasted text to the terminal, wrapping it in the bracketed-paste markers
+/// (`ESC[200~` … `ESC[201~`) when the app has enabled DEC mode 2004.
+fn perform_paste(app: &mut AditApp, contents: &str, bracketed: bool) {
+    let mut bytes = normalize_paste(contents);
+    if bytes.is_empty() {
+        return;
+    }
+    if bracketed {
+        let mut wrapped = Vec::with_capacity(bytes.len() + 12);
+        wrapped.extend_from_slice(b"\x1b[200~");
+        wrapped.append(&mut bytes);
+        wrapped.extend_from_slice(b"\x1b[201~");
+        bytes = wrapped;
+    }
+    send_terminal_bytes(app, bytes);
+    app.notice = String::from("已粘贴到当前终端");
+}
+
 fn selected_terminal_text(app: &AditApp) -> String {
     let snapshot = active_terminal_snapshot(app);
 
@@ -3625,6 +3678,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         auto_log_on_connect: app.auto_log_on_connect,
         copy_on_select: app.copy_on_select,
         right_click_paste: app.right_click_paste,
+        confirm_multiline_paste: app.confirm_multiline_paste,
     }
 }
 
@@ -3728,6 +3782,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if app.update_dialog_open {
         layers.push(opaque(update_dialog_overlay(app)));
+    }
+    if app.paste_confirm_open {
+        layers.push(opaque(paste_confirm_overlay(app)));
     }
     if app.appearance_open {
         layers.push(opaque(appearance_dialog_overlay(app)));
@@ -4572,6 +4629,62 @@ fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .into()
 }
 
+/// Confirmation dialog shown before pasting multi-line clipboard text.
+fn paste_confirm_overlay(app: &AditApp) -> Element<'_, Message> {
+    let contents = app.pending_paste.as_deref().unwrap_or_default();
+    let line_count = contents.lines().count().max(1);
+    let preview: String = contents.lines().take(8).collect::<Vec<_>>().join("\n");
+    let preview = if preview.chars().count() > 400 {
+        format!("{}…", preview.chars().take(400).collect::<String>())
+    } else {
+        preview
+    };
+
+    let card = container(
+        column![
+            text("确认粘贴").size(16).color(primary_text()),
+            text(format!("将向当前终端粘贴 {line_count} 行内容："))
+                .size(12)
+                .color(muted_text()),
+            container(
+                scrollable(text(preview).size(12).font(Font::MONOSPACE).color(primary_text()))
+                    .height(Length::Fixed(140.0))
+            )
+            .width(Fill)
+            .padding(10)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(terminal_background())),
+                border: border(RADIUS_SM, 1.0, border_color()),
+                ..container::Style::default()
+            }),
+            row![
+                Space::new().width(Fill),
+                button(text("取消").size(12))
+                    .padding([5, 16])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelPaste),
+                button(text("粘贴").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmPaste),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(480.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
 /// A read-only path row: label + monospace path + an 打开 button.
 fn options_path_row<'a>(
     label: &'a str,
@@ -4699,7 +4812,12 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             .on_toggle(Message::ToggleRightClickPaste)
             .size(16)
             .text_size(12),
-        text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。")
+        checkbox(app.confirm_multiline_paste)
+            .label("粘贴多行内容前先确认")
+            .on_toggle(Message::ToggleConfirmMultilinePaste)
+            .size(16)
+            .text_size(12),
+        text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。")
             .size(11)
             .color(muted_text()),
     ]

@@ -103,6 +103,7 @@ struct TermState {
     pending_wrap: bool,
     autowrap: bool,
     cursor_visible: bool,
+    bracketed_paste: bool,
     saved_cursor: Option<SavedCursor>,
     alt: Option<AltSaved>,
     title: String,
@@ -125,6 +126,7 @@ impl TermState {
             pending_wrap: false,
             autowrap: true,
             cursor_visible: true,
+            bracketed_paste: false,
             saved_cursor: None,
             alt: None,
             title,
@@ -549,6 +551,7 @@ impl TermState {
                     self.leave_alt_screen();
                 }
             }
+            2004 => self.bracketed_paste = enable,
             _ => {}
         }
     }
@@ -886,6 +889,13 @@ impl VtTerminal {
     pub fn take_bell(&mut self) -> bool {
         std::mem::replace(&mut self.state.bell, false)
     }
+
+    /// Whether the app has enabled bracketed paste (DEC private mode 2004), so
+    /// the UI should wrap pasted text in `ESC[200~` … `ESC[201~`.
+    #[must_use]
+    pub fn bracketed_paste(&self) -> bool {
+        self.state.bracketed_paste
+    }
 }
 
 impl TerminalCore for VtTerminal {
@@ -1108,6 +1118,16 @@ mod tests {
         t.feed_str("hello");
         let snap = t.snapshot(Viewport::tail(4));
         assert_eq!(line_text(&snap, 0).trim_end(), "hello");
+    }
+
+    #[test]
+    fn tracks_bracketed_paste_mode() {
+        let mut t = term(20, 4);
+        assert!(!t.bracketed_paste());
+        t.feed_str("\x1b[?2004h");
+        assert!(t.bracketed_paste());
+        t.feed_str("\x1b[?2004l");
+        assert!(!t.bracketed_paste());
     }
 
     #[test]

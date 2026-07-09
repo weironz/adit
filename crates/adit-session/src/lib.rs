@@ -1034,6 +1034,15 @@ impl SessionManager {
             .map(|log| log.path.clone())
     }
 
+    /// Whether the active session has bracketed paste (DEC 2004) enabled, so the
+    /// UI wraps pasted text in the paste markers.
+    #[must_use]
+    pub fn active_bracketed_paste(&self) -> bool {
+        self.active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+            .is_some_and(|record| record.terminal.bracketed_paste())
+    }
+
     /// Whether a specific session is currently logging (for auto-log-on-connect,
     /// which must not restart an already-logging session).
     #[must_use]
