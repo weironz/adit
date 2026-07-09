@@ -2180,11 +2180,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::UpdateDownloaded(result) => match result {
-            Ok(path) => match std::process::Command::new(&path).spawn() {
+            Ok(path) => match launch_silent_update(&path).spawn() {
                 Ok(_) => {
                     app.update_state = UpdateState::Launched;
-                    app.notice =
-                        String::from("更新安装程序已启动，按提示完成安装（会自动关闭 Adit）");
+                    app.notice = String::from(
+                        "正在后台静默安装更新，完成后 Adit 会自动重启（可能需要确认一次 UAC）",
+                    );
                 }
                 Err(error) => {
                     app.update_state = UpdateState::Error(format!("无法启动安装程序: {error}"));
@@ -2305,6 +2306,33 @@ fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> {
         installer_name,
         notes_url,
     }))
+}
+
+/// Build the command to run the downloaded installer as a silent background
+/// update: no wizard, installed in place over the current location, then the
+/// installer relaunches Adit. A UAC prompt still appears for an all-users
+/// (Program Files) install.
+fn launch_silent_update(installer_path: &str) -> std::process::Command {
+    let mut cmd = std::process::Command::new(installer_path);
+    cmd.args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]);
+
+    // Update in place at the current install directory + scope, so a background
+    // update never creates a second copy elsewhere.
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            cmd.arg(format!("/DIR={}", dir.display()));
+            let in_program_files = dir
+                .to_string_lossy()
+                .to_lowercase()
+                .contains("program files");
+            cmd.arg(if in_program_files {
+                "/ALLUSERS"
+            } else {
+                "/CURRENTUSER"
+            });
+        }
+    }
+    cmd
 }
 
 /// Download the installer to a temp folder; returns the saved path.
@@ -5157,8 +5185,8 @@ fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(6)
         .into(),
         UpdateState::Launched => column![
-            text("安装程序已启动").size(13).color(primary_text()),
-            text("请按提示完成安装，Adit 会被自动关闭并更新")
+            text("正在后台安装更新…").size(13).color(primary_text()),
+            text("无需操作，安装完成后 Adit 会自动关闭并重启（可能需要确认一次 UAC）")
                 .size(11)
                 .color(muted_text()),
         ]
