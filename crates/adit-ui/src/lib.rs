@@ -7289,15 +7289,9 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
 
     let filter = app.session_filter.trim().to_ascii_lowercase();
     let filter_active = !filter.is_empty();
-    let profile_count = if filter_active {
-        sorted_profiles
-            .iter()
-            .filter(|profile| profile_matches_filter(profile, &filter))
-            .count()
-    } else {
-        sorted_profiles.len()
-    };
-    let mut profiles = column![tree_root_row(profile_count)].spacing(1).width(Fill);
+    // No single "Hosts" root node: it was the only top-level item, so the groups
+    // (Default, …) are the top level of the tree directly.
+    let mut profiles = column![].spacing(1).width(Fill);
 
     for group in sidebar_group_names(app, &sorted_profiles) {
         let group_matches = filter_active && group.to_ascii_lowercase().contains(&filter);
@@ -7516,22 +7510,6 @@ fn sidebar_divider() -> Element<'static, Message> {
     )
     .on_press(Message::BeginSidebarDrag)
     .interaction(mouse::Interaction::ResizingHorizontally)
-    .into()
-}
-
-fn tree_root_row(profile_count: usize) -> Element<'static, Message> {
-    container(
-        row![
-            text("▾").size(11).color(muted_text()),
-            text("Hosts").size(12).color(primary_text()),
-            Space::new().width(Fill),
-            text(profile_count.to_string()).size(11).color(muted_text()),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-    )
-    .padding([6, 6])
-    .width(Fill)
     .into()
 }
 
