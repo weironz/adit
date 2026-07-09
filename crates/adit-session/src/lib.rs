@@ -287,6 +287,17 @@ impl SessionManager {
         self.connect_timeout_secs = secs;
     }
 
+    /// Rename an open session's tab (runtime only; not persisted to the profile).
+    pub fn rename_session(&mut self, session_id: SessionId, title: impl Into<String>) {
+        let title = title.into().trim().to_string();
+        if title.is_empty() {
+            return;
+        }
+        if let Some(record) = self.sessions.get_mut(&session_id) {
+            record.summary.title = title;
+        }
+    }
+
     pub fn set_profile_terminal_type(&mut self, profile_id: ProfileId, term: impl Into<String>) {
         if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.terminal_type = term.into();

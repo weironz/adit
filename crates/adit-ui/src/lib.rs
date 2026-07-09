@@ -154,6 +154,8 @@ pub struct AditApp {
     search_query: String,
     search_matches: Vec<SearchMatch>,
     search_index: Option<usize>,
+    renaming_session: Option<SessionId>,
+    session_rename_draft: String,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -318,6 +320,8 @@ pub enum Message {
     ProfileAuthMethodChanged(AuthMethod),
     ProfileProtocolChanged(Protocol),
     ProfileIdentityFileChanged(String),
+    PickIdentityFile,
+    IdentityFilePicked(Option<std::path::PathBuf>),
     ProfileStartupCommandChanged(String),
     ProfileTerminalTypeChanged(String),
     ConnectTimeoutChanged(String),
@@ -358,6 +362,10 @@ pub enum Message {
     RetryActiveSession,
     ActivateSession(SessionId),
     CloseSession(SessionId),
+    RenameSessionPrompt(SessionId),
+    SessionRenameChanged(String),
+    ConfirmRenameSession,
+    CancelRenameSession,
     DisconnectActive,
     SendTerminalInput,
     ClearActiveTerminal,
@@ -925,6 +933,8 @@ impl AditApp {
             search_query: String::new(),
             search_matches: Vec::new(),
             search_index: None,
+            renaming_session: None,
+            session_rename_draft: String::new(),
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -1621,6 +1631,21 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = false;
             app.profile_identity_file = value;
         }
+        Message::PickIdentityFile => {
+            let start = adit_storage::home_dir().map(|home| home.join(".ssh"));
+            let mut dialog = rfd::AsyncFileDialog::new().set_title("选择 SSH 私钥文件");
+            if let Some(dir) = start.filter(|dir| dir.exists()) {
+                dialog = dialog.set_directory(dir);
+            }
+            return Task::perform(dialog.pick_file(), |handle| {
+                Message::IdentityFilePicked(handle.map(|h| h.path().to_path_buf()))
+            });
+        }
+        Message::IdentityFilePicked(path) => {
+            if let Some(path) = path {
+                app.profile_identity_file = path.display().to_string();
+            }
+        }
         Message::ProfileStartupCommandChanged(value) => {
             app.terminal_focused = false;
             app.profile_startup_command = value;
@@ -1992,6 +2017,28 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_selection = None;
             app.terminal_context_menu = false;
             app.notice = String::from("标签已关闭");
+        }
+        Message::RenameSessionPrompt(session_id) => {
+            let current = app
+                .manager
+                .session_summary(session_id)
+                .map(|summary| summary.title)
+                .unwrap_or_default();
+            app.session_rename_draft = current;
+            app.renaming_session = Some(session_id);
+            app.terminal_focused = false;
+        }
+        Message::SessionRenameChanged(value) => {
+            app.session_rename_draft = value;
+        }
+        Message::ConfirmRenameSession => {
+            if let Some(session_id) = app.renaming_session.take() {
+                app.manager
+                    .rename_session(session_id, app.session_rename_draft.clone());
+            }
+        }
+        Message::CancelRenameSession => {
+            app.renaming_session = None;
         }
         Message::DisconnectActive => {
             disconnect_active(app);
@@ -4226,6 +4273,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if app.paste_confirm_open {
         layers.push(opaque(paste_confirm_overlay(app)));
     }
+    if app.renaming_session.is_some() {
+        layers.push(opaque(session_rename_overlay(app)));
+    }
     if app.appearance_open {
         layers.push(opaque(appearance_dialog_overlay(app)));
     }
@@ -5058,6 +5108,45 @@ fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(16),
     )
     .width(Length::Fixed(420.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Small dialog to rename the active session's tab.
+fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
+    let card = container(
+        column![
+            text("重命名标签").size(16).color(primary_text()),
+            text_input("标签名称", &app.session_rename_draft)
+                .on_input(Message::SessionRenameChanged)
+                .on_submit(Message::ConfirmRenameSession)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+            row![
+                Space::new().width(Fill),
+                button(text("取消").size(12))
+                    .padding([5, 16])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelRenameSession),
+                button(text("确定").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmRenameSession),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(380.0))
     .padding(20)
     .style(|_theme| connection_dialog_style());
 
@@ -7201,12 +7290,20 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 ))
                 .push(dialog_field(
                     "密钥文件（可选）",
-                    text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
-                        .on_input(Message::ProfileIdentityFileChanged)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
-                        .into(),
+                    row![
+                        text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
+                            .on_input(Message::ProfileIdentityFileChanged)
+                            .padding([5, 8])
+                            .style(text_input_style)
+                            .width(Fill),
+                        button(text("浏览…").size(12))
+                            .padding([5, 12])
+                            .style(|_theme, status| secondary_button_style(status))
+                            .on_press(Message::PickIdentityFile),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center)
+                    .into(),
                 ))
                 .push(dialog_field(
                     "启动命令（可选，连接后自动执行，如 tmux attach）",
@@ -7640,10 +7737,14 @@ fn tab_button(
     .spacing(1)
     .align_y(Alignment::Center);
 
-    container(inner)
-        .padding([1, 4])
-        .style(move |_theme| tab_container_style(active))
-        .into()
+    // Right-click a tab to rename it.
+    mouse_area(
+        container(inner)
+            .padding([1, 4])
+            .style(move |_theme| tab_container_style(active)),
+    )
+    .on_right_press(Message::RenameSessionPrompt(session.id))
+    .into()
 }
 
 fn terminal_view(
