@@ -64,7 +64,9 @@ pub struct AditApp {
     selected_profile: Option<ProfileId>,
     hovered_profile: Option<ProfileId>,
     dragged_profile: Option<ProfileId>,
-    profile_drop_target: Option<ProfileDropTarget>,
+    // Set once a live drag has actually reordered rows, so a plain click (which
+    // also arms a drag) doesn't needlessly re-persist profiles on release.
+    profile_drag_moved: bool,
     group_drop_target: Option<String>,
     group_context_menu: Option<String>,
     editing_group: Option<String>,
@@ -455,12 +457,6 @@ struct SearchMatch {
 struct TerminalSelection {
     start: TerminalPoint,
     end: TerminalPoint,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ProfileDropTarget {
-    profile_id: ProfileId,
-    position: ProfileDropPosition,
 }
 
 #[derive(Debug, Clone)]
@@ -880,7 +876,7 @@ impl AditApp {
             selected_profile,
             hovered_profile: None,
             dragged_profile: None,
-            profile_drop_target: None,
+            profile_drag_moved: false,
             group_drop_target: None,
             group_context_menu: None,
             editing_group: None,
@@ -1273,7 +1269,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfilePressed(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = Some(profile_id);
-            app.profile_drop_target = None;
+            app.profile_drag_moved = false;
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -1282,7 +1278,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileDoubleClicked(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = None;
-            app.profile_drop_target = None;
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -1298,35 +1293,35 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.hovered_profile == Some(profile_id) {
                 app.hovered_profile = None;
             }
-            if app
-                .profile_drop_target
-                .is_some_and(|target| target.profile_id == profile_id)
-            {
-                app.profile_drop_target = None;
-            }
         }
         Message::ProfileDragOver(profile_id, position) => {
             app.hovered_profile = Some(profile_id);
-            if app
-                .dragged_profile
-                .is_some_and(|source| source != profile_id)
-            {
-                app.profile_drop_target = Some(ProfileDropTarget {
-                    profile_id,
-                    position,
-                });
-                app.group_drop_target = None;
-            } else if app.dragged_profile.is_some() {
-                app.profile_drop_target = None;
+            // Live reorder: as the held profile is dragged over another row, move
+            // it there immediately so the row visibly slides under the cursor
+            // (it keeps the accent highlight, so the motion is obvious). The
+            // source==target case is skipped, which keeps the drag stable once
+            // the dragged row lands under the pointer.
+            if let Some(source) = app.dragged_profile {
+                if source != profile_id {
+                    if app
+                        .manager
+                        .reorder_profile(source, profile_id, position)
+                        .is_ok()
+                    {
+                        app.profile_drag_moved = true;
+                        app.selected_profile = Some(source);
+                    }
+                    app.group_drop_target = None;
+                }
             }
         }
-        Message::ProfileDropped(profile_id) => {
-            drop_profile_on_target(app, profile_id);
+        Message::ProfileDropped(_profile_id) => {
+            // Live reorder already positioned the row; just finalize + persist.
+            finish_profile_drag(app);
         }
         Message::ProfileDragOverGroup(group) => {
             if app.dragged_profile.is_some() {
                 app.group_drop_target = Some(group);
-                app.profile_drop_target = None;
             }
         }
         Message::ProfileDroppedOnGroup(group) => {
@@ -1402,7 +1397,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ShowProfileContextMenu(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = None;
-            app.profile_drop_target = None;
             app.group_drop_target = None;
             // Anchor the floating menu at the cursor (last tracked position).
             app.context_menu_pos = app.cursor_pos;
@@ -2535,58 +2529,32 @@ fn close_profile_editor_if_other(app: &mut AditApp, profile_id: ProfileId) {
 
 fn finish_profile_drag(app: &mut AditApp) {
     if app.dragged_profile.is_none() {
-        app.profile_drop_target = None;
         app.group_drop_target = None;
+        app.profile_drag_moved = false;
         return;
     }
 
+    // Released over a group header (e.g. an empty or different group) with no
+    // row under the pointer: move into that group. `drop_profile_on_group`
+    // takes `dragged_profile` and persists itself.
     if let Some(group) = app.group_drop_target.clone() {
         drop_profile_on_group(app, group);
-        return;
-    }
-
-    if let Some(target) = app.profile_drop_target {
-        drop_profile_on_target(app, target.profile_id);
-        return;
-    }
-
-    app.dragged_profile = None;
-    app.profile_drop_target = None;
-    app.group_drop_target = None;
-}
-
-fn drop_profile_on_target(app: &mut AditApp, release_target: ProfileId) {
-    let Some(source_id) = app.dragged_profile.take() else {
-        app.profile_drop_target = None;
-        app.group_drop_target = None;
-        return;
-    };
-
-    let target = app.profile_drop_target.take().unwrap_or(ProfileDropTarget {
-        profile_id: release_target,
-        position: ProfileDropPosition::After,
-    });
-    app.group_drop_target = None;
-
-    if source_id == target.profile_id {
-        return;
-    }
-
-    match app
-        .manager
-        .reorder_profile(source_id, target.profile_id, target.position)
-    {
-        Ok(()) => {
-            app.selected_profile = Some(source_id);
+    } else {
+        let source_id = app.dragged_profile.take();
+        // A live reorder already rearranged the rows in memory; persist it once
+        // on release (a plain click never sets `profile_drag_moved`, so it won't
+        // rewrite profiles.json).
+        if app.profile_drag_moved {
+            app.selected_profile = source_id;
             load_selected_profile(app);
             if persist_profiles(app) {
                 app.notice = String::from("会话排序已更新");
             }
         }
-        Err(error) => {
-            app.last_error = Some(error.to_string());
-        }
     }
+
+    app.group_drop_target = None;
+    app.profile_drag_moved = false;
 }
 
 fn drop_profile_on_group(app: &mut AditApp, group: String) {
@@ -2595,7 +2563,6 @@ fn drop_profile_on_group(app: &mut AditApp, group: String) {
         return;
     };
 
-    app.profile_drop_target = None;
     app.group_drop_target = None;
 
     match app.manager.move_profile_to_group(source_id, group.clone()) {
@@ -7151,18 +7118,8 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
             let selected = Some(profile.id) == app.selected_profile;
             let hovered = Some(profile.id) == app.hovered_profile;
             let dragging = Some(profile.id) == app.dragged_profile;
-            let drop_position = app
-                .profile_drop_target
-                .filter(|target| target.profile_id == profile.id)
-                .map(|target| target.position);
 
-            profiles = profiles.push(tree_profile_row(
-                profile,
-                selected,
-                hovered,
-                dragging,
-                drop_position,
-            ));
+            profiles = profiles.push(tree_profile_row(profile, selected, hovered, dragging));
 
             // The context menu and the profile editor are now floating overlays
             // (see the layers stack in `view`), not pushed inline here.
@@ -7384,7 +7341,6 @@ fn tree_profile_row(
     selected: bool,
     hovered: bool,
     dragging: bool,
-    drop_position: Option<ProfileDropPosition>,
 ) -> Element<'static, Message> {
     let profile_id = profile.id;
     // Windows/winit renders `Grab` as the no-entry cursor, which reads as
@@ -7420,7 +7376,7 @@ fn tree_profile_row(
         .height(Length::Fixed(PROFILE_ROW_HEIGHT))
         .width(Fill)
         .padding([4, 8])
-        .style(move |_theme| tree_item_container_style(selected, hovered, dragging, drop_position)),
+        .style(move |_theme| tree_item_container_style(selected, hovered, dragging)),
     )
     .on_press(Message::ProfilePressed(profile_id))
     .on_release(Message::ProfileDropped(profile_id))
@@ -8963,17 +8919,11 @@ fn group_row_style(drop_target: bool) -> container::Style {
     }
 }
 
-fn tree_item_container_style(
-    selected: bool,
-    hovered: bool,
-    dragging: bool,
-    drop_position: Option<ProfileDropPosition>,
-) -> container::Style {
-    let background = if drop_position.is_some() {
-        accent_soft()
-    } else if dragging {
-        surface_alt()
-    } else if selected {
+fn tree_item_container_style(selected: bool, hovered: bool, dragging: bool) -> container::Style {
+    // The dragged row gets a clear "lifted" accent (soft fill + thicker accent
+    // border) so, together with its live slide under the cursor, the drag is
+    // obvious.
+    let background = if dragging || selected {
         accent_soft()
     } else if hovered {
         panel_background_hover()
@@ -8981,16 +8931,16 @@ fn tree_item_container_style(
         transparent()
     };
 
-    let border_color = match drop_position {
-        Some(_) => accent(),
-        None if selected => accent(),
-        None => transparent(),
+    let border_color = if dragging || selected {
+        accent()
+    } else {
+        transparent()
     };
 
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(RADIUS_SM, 1.0, border_color),
+        border: border(RADIUS_SM, if dragging { 1.5 } else { 1.0 }, border_color),
         ..container::Style::default()
     }
 }
