@@ -845,19 +845,21 @@ fn sane_window_size(width: f32, height: f32) -> (f32, f32) {
 }
 
 pub fn run() -> iced::Result {
-    // Restore the saved window size before the window is created.
+    // Restore the saved window size (used as the restore-down size) and open
+    // maximized so the window fills the screen's work area instead of a
+    // centered, smaller window that leaves a gap at the top.
     let settings = SettingsStore::default().load().unwrap_or_default();
-    let size = sane_window_size(settings.window_width, settings.window_height);
+    let (width, height) = sane_window_size(settings.window_width, settings.window_height);
     iced::application(AditApp::default, update, view)
         .title(app_title)
         .theme(app_theme)
         .subscription(subscription)
         .window(window::Settings {
             icon: app_icon(),
+            size: iced::Size::new(width, height),
+            maximized: true,
             ..window::Settings::default()
         })
-        .window_size(size)
-        .centered()
         .run()
 }
 
