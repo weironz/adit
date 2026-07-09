@@ -600,7 +600,10 @@ impl SessionManager {
         summaries
     }
 
-    /// Move the `dragged` tab to just before `target` in the tab order.
+    /// Move the `dragged` tab next to `target`: after it when dragging right
+    /// (dragged was left of target), before it when dragging left. This makes a
+    /// drag onto an immediate neighbour swap the two, in either direction —
+    /// "insert before target" alone leaves a rightward neighbour drag a no-op.
     pub fn move_session(&mut self, dragged: SessionId, target: SessionId) {
         if dragged == target {
             return;
@@ -608,12 +611,23 @@ impl SessionManager {
         let Some(from) = self.order.iter().position(|id| *id == dragged) else {
             return;
         };
+        let Some(to) = self.order.iter().position(|id| *id == target) else {
+            return;
+        };
+        let dragging_right = from < to;
         let id = self.order.remove(from);
-        let insert_at = self
+        // `target`'s index shifts down by one once the earlier `dragged` is
+        // removed, so recompute it against the post-removal order.
+        let target_pos = self
             .order
             .iter()
             .position(|s| *s == target)
             .unwrap_or(self.order.len());
+        let insert_at = if dragging_right {
+            target_pos + 1
+        } else {
+            target_pos
+        };
         self.order.insert(insert_at, id);
     }
 
@@ -2430,13 +2444,22 @@ mod tests {
         let order = |m: &SessionManager| m.sessions().iter().map(|s| s.id).collect::<Vec<_>>();
         assert_eq!(order(&manager), vec![a, b, c]);
 
-        // Drag c before a.
+        // Drag c leftward onto a -> c lands before a.
         manager.move_session(c, a);
         assert_eq!(order(&manager), vec![c, a, b]);
 
-        // Closing a keeps the rest in order.
-        manager.close(a);
-        assert_eq!(order(&manager), vec![c, b]);
+        // Drag c rightward onto its immediate neighbour a -> they swap (this is
+        // the case a plain "insert before target" would leave unchanged).
+        manager.move_session(c, a);
+        assert_eq!(order(&manager), vec![a, c, b]);
+
+        // Drag a rightward onto b (immediate neighbour) -> swap again.
+        manager.move_session(a, b);
+        assert_eq!(order(&manager), vec![c, b, a]);
+
+        // Closing keeps the rest in order.
+        manager.close(b);
+        assert_eq!(order(&manager), vec![c, a]);
     }
 
     #[test]

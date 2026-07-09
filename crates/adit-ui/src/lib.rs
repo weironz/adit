@@ -170,7 +170,6 @@ pub struct AditApp {
     renaming_session: Option<SessionId>,
     session_rename_draft: String,
     dragged_tab: Option<SessionId>,
-    tab_drop_target: Option<SessionId>,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -980,7 +979,6 @@ impl AditApp {
             renaming_session: None,
             session_rename_draft: String::new(),
             dragged_tab: None,
-            tab_drop_target: None,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -1076,7 +1074,26 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     if app.terminal_selecting {
         subs.push(event::listen_with(terminal_release_event));
     }
+    // A tab drag reorders live on hover, so it MUST be disarmed on release even
+    // if the button comes up off the tab strip — otherwise merely hovering tabs
+    // afterward would keep reordering them.
+    if app.dragged_tab.is_some() {
+        subs.push(event::listen_with(tab_release_event));
+    }
     Subscription::batch(subs)
+}
+
+fn tab_release_event(
+    event: event::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Some(Message::TabReleased)
+        }
+        _ => None,
+    }
 }
 
 fn terminal_release_event(
@@ -2071,22 +2088,19 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Clicking a tab activates it and arms a possible drag-reorder.
             activate_session(app, session_id);
             app.dragged_tab = Some(session_id);
-            app.tab_drop_target = None;
         }
         Message::TabDragOver(session_id) => {
-            if app
-                .dragged_tab
-                .is_some_and(|dragged| dragged != session_id)
-            {
-                app.tab_drop_target = Some(session_id);
+            // Live reorder: as the held tab is dragged over a neighbour, move it
+            // there immediately so it visibly slides under the cursor (the
+            // dragged tab stays active/highlighted, so the motion is obvious).
+            if let Some(dragged) = app.dragged_tab {
+                if dragged != session_id {
+                    app.manager.move_session(dragged, session_id);
+                }
             }
         }
         Message::TabReleased => {
-            if let (Some(dragged), Some(target)) = (app.dragged_tab, app.tab_drop_target) {
-                app.manager.move_session(dragged, target);
-            }
             app.dragged_tab = None;
-            app.tab_drop_target = None;
         }
         Message::CloseSession(session_id) => {
             app.manager.close(session_id);
@@ -7941,7 +7955,7 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
             tabs.push(tab_button(
                 session,
                 app.manager.active_session(),
-                app.tab_drop_target,
+                app.dragged_tab,
             ))
         });
 
@@ -8192,11 +8206,13 @@ fn active_session_action(app: &AditApp) -> Element<'_, Message> {
 fn tab_button(
     session: SessionSummary,
     active_session: Option<SessionId>,
-    drop_target: Option<SessionId>,
+    dragged: Option<SessionId>,
 ) -> Element<'static, Message> {
     let id = session.id;
     let active = Some(id) == active_session;
-    let is_drop = drop_target == Some(id);
+    // The tab currently being dragged gets a "lifted" accent so its live
+    // reordering is easy to follow.
+    let is_dragging = dragged == Some(id);
 
     // The whole pill is a mouse_area (click = activate, drag = reorder); only the
     // close × stays a button so it can consume its own click.
@@ -8214,7 +8230,7 @@ fn tab_button(
     mouse_area(
         container(inner)
             .padding([2, 6])
-            .style(move |_theme| tab_container_style_dnd(active, is_drop)),
+            .style(move |_theme| tab_container_style_dnd(active, is_dragging)),
     )
     .on_press(Message::TabPressed(id))
     .on_release(Message::TabReleased)
@@ -8836,15 +8852,15 @@ fn menu_button_style(active: bool, status: button::Status) -> button::Style {
 /// The whole-tab pill: an accent-bordered surface when active, a flat chip
 /// otherwise. The title and close controls share this single background.
 /// Tab pill style; `drop_target` highlights the tab a dragged tab will drop onto.
-fn tab_container_style_dnd(active: bool, drop_target: bool) -> container::Style {
-    let background = if drop_target {
+fn tab_container_style_dnd(active: bool, dragging: bool) -> container::Style {
+    let background = if dragging {
         accent_soft()
     } else if active {
         surface()
     } else {
         surface_alt()
     };
-    let border_color = if active || drop_target {
+    let border_color = if active || dragging {
         accent()
     } else {
         border_color()
@@ -8852,7 +8868,7 @@ fn tab_container_style_dnd(active: bool, drop_target: bool) -> container::Style 
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(RADIUS_SM, if drop_target { 1.5 } else { 1.0 }, border_color),
+        border: border(RADIUS_SM, if dragging { 1.5 } else { 1.0 }, border_color),
         ..container::Style::default()
     }
 }
