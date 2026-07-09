@@ -11,11 +11,26 @@ use crate::{
     TerminalSnapshot, Viewport,
 };
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
-const MAX_SCROLLBACK: usize = 5000;
+const DEFAULT_SCROLLBACK: usize = 5000;
 const TAB_WIDTH: usize = 8;
+
+/// Max scrollback rows kept per terminal. A global user preference (like a
+/// theme) so it applies to every session without threading it through each
+/// terminal; clamped to a sane floor.
+static SCROLLBACK_LIMIT: AtomicUsize = AtomicUsize::new(DEFAULT_SCROLLBACK);
+
+/// Set the global scrollback line limit (clamped to at least 200).
+pub fn set_scrollback_limit(lines: usize) {
+    SCROLLBACK_LIMIT.store(lines.max(200), Ordering::Relaxed);
+}
+
+fn scrollback_limit() -> usize {
+    SCROLLBACK_LIMIT.load(Ordering::Relaxed)
+}
 
 // Cell attribute bit flags.
 const BOLD: u16 = 1 << 0;
@@ -272,7 +287,7 @@ impl TermState {
     }
 
     fn push_scrollback(&mut self, row: Vec<Cell>) {
-        if self.scrollback.len() >= MAX_SCROLLBACK {
+        while self.scrollback.len() >= scrollback_limit() {
             self.scrollback.pop_front();
         }
         self.scrollback.push_back(row);

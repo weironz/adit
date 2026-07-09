@@ -84,6 +84,7 @@ pub struct AditApp {
     profile_startup_command: String,
     profile_terminal_type: String,
     connect_timeout_secs: u32,
+    scrollback_lines: u32,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -320,6 +321,7 @@ pub enum Message {
     ProfileStartupCommandChanged(String),
     ProfileTerminalTypeChanged(String),
     ConnectTimeoutChanged(String),
+    ScrollbackLinesChanged(String),
     SessionFilterChanged(String),
     NewProfileDraft,
     NewGroupDraft,
@@ -795,6 +797,8 @@ impl AditApp {
         let confirm_multiline_paste = settings.confirm_multiline_paste;
 
         let connect_timeout_secs = settings.connect_timeout_secs;
+        let scrollback_lines = settings.scrollback_lines;
+        adit_terminal::set_scrollback_limit(scrollback_lines as usize);
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -821,6 +825,7 @@ impl AditApp {
             right_click_paste,
             confirm_multiline_paste,
             connect_timeout_secs,
+            scrollback_lines,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -853,6 +858,7 @@ impl AditApp {
             profile_startup_command: String::new(),
             profile_terminal_type: String::new(),
             connect_timeout_secs,
+            scrollback_lines,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -1632,6 +1638,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             app.manager
                 .set_connect_timeout(u64::from(app.connect_timeout_secs));
+        }
+        Message::ScrollbackLinesChanged(value) => {
+            let trimmed = value.trim();
+            if let Ok(lines) = trimmed.parse::<u32>() {
+                app.scrollback_lines = lines.clamp(200, 200_000);
+                adit_terminal::set_scrollback_limit(app.scrollback_lines as usize);
+            } else if trimmed.is_empty() {
+                app.scrollback_lines = 0;
+            }
         }
         Message::SessionFilterChanged(value) => {
             app.terminal_focused = false;
@@ -4103,6 +4118,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         right_click_paste: app.right_click_paste,
         confirm_multiline_paste: app.confirm_multiline_paste,
         connect_timeout_secs: app.connect_timeout_secs,
+        scrollback_lines: app.scrollback_lines,
     }
 }
 
@@ -5173,6 +5189,19 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .width(Length::Fixed(180.0)),
             text_input("20", &app.connect_timeout_secs.to_string())
                 .on_input(Message::ConnectTimeoutChanged)
+                .padding([4, 8])
+                .style(text_input_style)
+                .width(Length::Fixed(80.0)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            text("滚动历史行数")
+                .size(12)
+                .color(muted_text())
+                .width(Length::Fixed(180.0)),
+            text_input("5000", &app.scrollback_lines.to_string())
+                .on_input(Message::ScrollbackLinesChanged)
                 .padding([4, 8])
                 .style(text_input_style)
                 .width(Length::Fixed(80.0)),

@@ -219,10 +219,17 @@ pub struct AppSettings {
     /// Abort a connection attempt after this many seconds (0 disables the cap).
     #[serde(default = "default_connect_timeout")]
     pub connect_timeout_secs: u32,
+    /// Scrollback history size (lines kept per terminal).
+    #[serde(default = "default_scrollback_lines")]
+    pub scrollback_lines: u32,
 }
 
 fn default_connect_timeout() -> u32 {
     20
+}
+
+fn default_scrollback_lines() -> u32 {
+    5000
 }
 
 fn default_true() -> bool {
@@ -267,6 +274,7 @@ impl Default for AppSettings {
             right_click_paste: false,
             confirm_multiline_paste: true,
             connect_timeout_secs: default_connect_timeout(),
+            scrollback_lines: default_scrollback_lines(),
         }
     }
 }
@@ -715,6 +723,7 @@ Host db
             right_click_paste: true,
             confirm_multiline_paste: false,
             connect_timeout_secs: 30,
+            scrollback_lines: 8000,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

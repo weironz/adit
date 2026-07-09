@@ -8,7 +8,7 @@
 
 mod vt;
 
-pub use vt::VtTerminal;
+pub use vt::{set_scrollback_limit, VtTerminal};
 
 use serde::{Deserialize, Serialize};
 
