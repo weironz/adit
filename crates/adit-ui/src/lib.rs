@@ -173,6 +173,14 @@ pub struct AditApp {
     session_rename_draft: String,
     dragged_tab: Option<SessionId>,
     broadcast_input: bool,
+    // Bottom command window: a line-oriented send box (SecureCRT-style). The
+    // typed text lives in `terminal_input`.
+    command_window_open: bool,
+    command_target: CommandTarget,
+    command_send_immediately: bool,
+    command_history: Vec<String>,
+    // Cursor into `command_history` while stepping with ▲/▼ (None ⇒ live edit).
+    command_history_pos: Option<usize>,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
     /// mirrors the manager's active session.
@@ -221,6 +229,7 @@ pub enum MenuCommand {
     ImportSshConfig,
     Snippets,
     ToggleBroadcast,
+    ToggleCommandWindow,
     SplitPane,
     TileVertical,
     TileHorizontal,
@@ -394,6 +403,11 @@ pub enum Message {
     CancelRenameSession,
     DisconnectActive,
     SendTerminalInput,
+    ToggleCommandWindow,
+    CommandTargetToggled,
+    ToggleCommandSendImmediately,
+    CommandHistoryPrev,
+    CommandHistoryNext,
     ClearActiveTerminal,
     ClearError,
     CloseSnippets,
@@ -837,6 +851,8 @@ impl AditApp {
         adit_terminal::set_scrollback_limit(scrollback_lines as usize);
         let snippets = settings.snippets;
         let auto_check_updates = settings.auto_check_updates;
+        let command_window_open = settings.command_window_open;
+        let command_send_immediately = settings.command_send_immediately;
 
         let mut manager = manager;
         manager.set_auto_reconnect(auto_reconnect);
@@ -866,6 +882,8 @@ impl AditApp {
             scrollback_lines,
             snippets: snippets.clone(),
             auto_check_updates,
+            command_window_open,
+            command_send_immediately,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -976,6 +994,11 @@ impl AditApp {
             session_rename_draft: String::new(),
             dragged_tab: None,
             broadcast_input: false,
+            command_window_open,
+            command_target: CommandTarget::ActiveSession,
+            command_send_immediately,
+            command_history: Vec::new(),
+            command_history_pos: None,
             panes: Vec::new(),
             focused_pane: 0,
             tile_mode: TileMode::Grid,
@@ -1793,6 +1816,16 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::TerminalInputChanged(input) => {
             app.terminal_focused = false;
+            app.command_history_pos = None;
+            // "Send characters immediately": forward the typed delta to the
+            // target as it changes, so a broadcast types live on every host.
+            if app.command_send_immediately {
+                if let Some(bytes) = command_input_delta(&app.terminal_input, &input) {
+                    app.terminal_input = input;
+                    send_command_bytes(app, bytes);
+                    return Task::none();
+                }
+            }
             app.terminal_input = input;
         }
         Message::KeyboardInput(event) => {
@@ -2129,7 +2162,34 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             disconnect_active(app);
         }
         Message::SendTerminalInput => {
-            send_terminal_input(app);
+            return send_terminal_input(app);
+        }
+        Message::ToggleCommandWindow => {
+            app.command_window_open = !app.command_window_open;
+            if app.command_window_open {
+                app.command_history_pos = None;
+                return focus_command_input();
+            }
+        }
+        Message::CommandTargetToggled => {
+            app.command_target = app.command_target.toggled();
+            app.notice = format!("命令窗口目标：{}", app.command_target.label());
+        }
+        Message::ToggleCommandSendImmediately => {
+            app.command_send_immediately = !app.command_send_immediately;
+            app.notice = if app.command_send_immediately {
+                String::from("命令窗口：逐字符即时发送")
+            } else {
+                String::from("命令窗口：回车整行发送")
+            };
+        }
+        Message::CommandHistoryPrev => {
+            command_history_step(app, -1);
+            return focus_command_input();
+        }
+        Message::CommandHistoryNext => {
+            command_history_step(app, 1);
+            return focus_command_input();
         }
         Message::ClearActiveTerminal => {
             clear_active_terminal(app);
@@ -2505,6 +2565,15 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
                 String::from("输入广播已开启：键盘输入将同时发往所有已连接会话")
             } else {
                 String::from("输入广播已关闭")
+            };
+        }
+        MenuCommand::ToggleCommandWindow => {
+            app.command_window_open = !app.command_window_open;
+            app.command_history_pos = None;
+            app.notice = if app.command_window_open {
+                String::from("命令窗口已打开")
+            } else {
+                String::from("命令窗口已关闭")
             };
         }
         MenuCommand::About => app.about_open = true,
@@ -3235,33 +3304,115 @@ fn disconnect_active(app: &mut AditApp) {
     }
 }
 
-fn send_terminal_input(app: &mut AditApp) {
-    if app.terminal_input.trim().is_empty() {
-        return;
-    }
-
-    let mut input = app.terminal_input.clone();
-    input.push('\r');
-
-    let result = if app.broadcast_input {
-        app.manager
-            .send_input_bytes_broadcast(input.into_bytes())
-            .map(|_| ())
+/// Send the command-window line to its target (active session or broadcast),
+/// append a carriage return, remember it in history, and keep focus in the box.
+fn send_terminal_input(app: &mut AditApp) -> Task<Message> {
+    let line = app.terminal_input.clone();
+    // In send-immediately mode the characters were already sent as typed, so
+    // Enter only needs to send the newline that submits the command.
+    let payload = if app.command_send_immediately {
+        String::from("\r")
     } else {
-        app.manager.send_input_to_active(input)
+        if line.trim().is_empty() {
+            return Task::none();
+        }
+        format!("{line}\r")
+    };
+
+    let result = match app.command_target {
+        CommandTarget::AllSessions => app
+            .manager
+            .send_input_bytes_broadcast(payload.into_bytes())
+            .map(|_| ()),
+        CommandTarget::ActiveSession => app.manager.send_input_to_active(payload),
     };
 
     match result {
         Ok(()) => {
+            if !line.trim().is_empty() && app.command_history.last().map(String::as_str) != Some(line.as_str()) {
+                app.command_history.push(line);
+            }
+            app.command_history_pos = None;
             app.terminal_input.clear();
             app.terminal_scroll_offset = 0;
             app.terminal_selection = None;
             app.last_error = None;
+            // Keep typing without re-clicking the box.
+            if app.command_window_open {
+                return focus_command_input();
+            }
         }
         Err(error) => {
             app.last_error = Some(error.to_string());
         }
     }
+    Task::none()
+}
+
+/// Bytes to forward for the change from `old` to `new` in send-immediately mode:
+/// the appended suffix when text was typed, DELs when text was erased. Returns
+/// `None` for a mid-string edit we can't represent as a simple keystroke.
+fn command_input_delta(old: &str, new: &str) -> Option<Vec<u8>> {
+    if new.len() > old.len() && new.starts_with(old) {
+        Some(new.as_bytes()[old.len()..].to_vec())
+    } else if new.len() < old.len() && old.starts_with(new) {
+        // One backspace (DEL, 0x7f) per removed character.
+        Some(vec![0x7f; old[new.len()..].chars().count()])
+    } else if new == old {
+        Some(Vec::new())
+    } else {
+        None
+    }
+}
+
+/// Send raw bytes to the command window's target(s) without disturbing history.
+fn send_command_bytes(app: &mut AditApp, bytes: Vec<u8>) {
+    if bytes.is_empty() {
+        return;
+    }
+    app.terminal_scroll_offset = 0;
+    let result = match app.command_target {
+        CommandTarget::AllSessions => app.manager.send_input_bytes_broadcast(bytes).map(|_| ()),
+        CommandTarget::ActiveSession => app.manager.send_input_bytes_to_active(bytes),
+    };
+    if let Err(error) = result {
+        app.last_error = Some(error.to_string());
+    }
+}
+
+/// Replace the command input with a history entry, stepping `delta` (-1 = older,
+/// +1 = newer). Stepping past the newest entry restores an empty line.
+fn command_history_step(app: &mut AditApp, delta: i32) {
+    if app.command_history.is_empty() {
+        return;
+    }
+    let len = app.command_history.len();
+    let next = match app.command_history_pos {
+        None if delta < 0 => Some(len - 1),
+        None => return,
+        Some(pos) => {
+            let pos = pos as i32 + delta;
+            if pos < 0 {
+                Some(0)
+            } else if pos as usize >= len {
+                None
+            } else {
+                Some(pos as usize)
+            }
+        }
+    };
+    app.command_history_pos = next;
+    app.terminal_input = next.map(|i| app.command_history[i].clone()).unwrap_or_default();
+}
+
+fn command_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("command-window-input")
+}
+
+fn focus_command_input() -> Task<Message> {
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
+        command_input_id(),
+    ))
 }
 
 fn send_terminal_bytes(app: &mut AditApp, bytes: Vec<u8>) {
@@ -4138,6 +4289,32 @@ enum TileMode {
     Rows,
 }
 
+/// Where the command window sends a typed line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum CommandTarget {
+    /// Only the active session/tab.
+    #[default]
+    ActiveSession,
+    /// Every connected session at once (broadcast).
+    AllSessions,
+}
+
+impl CommandTarget {
+    fn label(self) -> &'static str {
+        match self {
+            CommandTarget::ActiveSession => "当前会话",
+            CommandTarget::AllSessions => "所有会话",
+        }
+    }
+
+    fn toggled(self) -> Self {
+        match self {
+            CommandTarget::ActiveSession => CommandTarget::AllSessions,
+            CommandTarget::AllSessions => CommandTarget::ActiveSession,
+        }
+    }
+}
+
 fn pane_grid_dims(count: usize, mode: TileMode) -> (usize, usize) {
     let count = count.max(1);
     match mode {
@@ -4514,6 +4691,8 @@ fn current_settings(app: &AditApp) -> AppSettings {
         scrollback_lines: app.scrollback_lines,
         snippets: app.snippets.clone(),
         auto_check_updates: app.auto_check_updates,
+        command_window_open: app.command_window_open,
+        command_send_immediately: app.command_send_immediately,
     }
 }
 
@@ -4736,6 +4915,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("水平平铺（上下）", MenuCommand::TileHorizontal),
             ("网格平铺", MenuCommand::TileGrid),
             ("合并为标签", MenuCommand::Untile),
+            ("命令窗口", MenuCommand::ToggleCommandWindow),
             ("输入广播开关", MenuCommand::ToggleBroadcast),
             ("终端 96x28", MenuCommand::ResizeDefault),
             ("终端 120x36", MenuCommand::ResizeWide),
@@ -4798,6 +4978,7 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             tool_button("⇅", Message::RunMenu(MenuCommand::Sftp)),
             tool_button("⇄", Message::OpenTunnels),
             tool_toggle_button("⇶", app.broadcast_input, Message::ToggleBroadcast),
+            tool_toggle_button(">_", app.command_window_open, Message::ToggleCommandWindow),
             tool_separator(),
             text_input("Enter host <Alt+R>", &app.profile_host)
                 .on_input(Message::ProfileHostChanged)
@@ -7959,6 +8140,9 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
         layout = layout.push(terminal_search_bar(app));
     }
     layout = layout.push(body);
+    if app.command_window_open {
+        layout = layout.push(command_window_bar(app));
+    }
 
     container(layout)
         .padding(0)
@@ -8006,6 +8190,79 @@ fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
                 .on_press(Message::CloseSearch),
         ]
         .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([4, 8])
+    .width(Fill)
+    .style(|_theme| toolbar_style())
+    .into()
+}
+
+/// The bottom command window: type a line and send it to the active session or
+/// broadcast it to every session, SecureCRT-style. The text lives in
+/// `terminal_input`; sending / history / send-immediately are handled here.
+fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
+    let target = app.command_target;
+    let broadcasting = target == CommandTarget::AllSessions;
+    let target_label = if broadcasting {
+        format!("→ 所有会话 ({})", app.manager.live_session_count())
+    } else {
+        format!("→ {}", target.label())
+    };
+
+    let placeholder = if app.command_send_immediately {
+        "逐字符即时发送到目标…（回车提交整行）"
+    } else if broadcasting {
+        "输入命令，回车广播到所有会话"
+    } else {
+        "输入命令，回车发送到当前会话"
+    };
+
+    let immediate = app.command_send_immediately;
+
+    container(
+        row![
+            button(text(target_label).size(12))
+                .padding([4, 10])
+                .style(move |_theme, status| if broadcasting {
+                    base_button_style(accent(), Color::from_rgb8(245, 249, 255), transparent())
+                } else {
+                    secondary_button_style(status)
+                })
+                .on_press(Message::CommandTargetToggled),
+            text_input(placeholder, &app.terminal_input)
+                .id(command_input_id())
+                .on_input(Message::TerminalInputChanged)
+                .on_submit(Message::SendTerminalInput)
+                .padding([4, 8])
+                .style(text_input_style)
+                .width(Fill),
+            button(text("▲").size(11))
+                .padding([3, 8])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CommandHistoryPrev),
+            button(text("▼").size(11))
+                .padding([3, 8])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CommandHistoryNext),
+            button(text("即时").size(12))
+                .padding([4, 10])
+                .style(move |_theme, status| if immediate {
+                    base_button_style(accent(), Color::from_rgb8(245, 249, 255), transparent())
+                } else {
+                    secondary_button_style(status)
+                })
+                .on_press(Message::ToggleCommandSendImmediately),
+            button(text("发送").size(12))
+                .padding([4, 14])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SendTerminalInput),
+            button(text("×").size(14))
+                .padding([3, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::ToggleCommandWindow),
+        ]
+        .spacing(6)
         .align_y(Alignment::Center),
     )
     .padding([4, 8])
@@ -9068,6 +9325,19 @@ mod tests {
         // Columns = all side by side; Rows = all stacked.
         assert_eq!(pane_grid_dims(4, Columns), (4, 1));
         assert_eq!(pane_grid_dims(4, Rows), (1, 4));
+    }
+
+    #[test]
+    fn command_input_delta_tracks_typing_and_erasing() {
+        // Appended text -> send the suffix.
+        assert_eq!(command_input_delta("ls", "ls -"), Some(b" -".to_vec()));
+        assert_eq!(command_input_delta("", "a"), Some(b"a".to_vec()));
+        // Erased text -> one DEL per removed char.
+        assert_eq!(command_input_delta("ls -l", "ls"), Some(vec![0x7f, 0x7f, 0x7f]));
+        // No change -> nothing to send.
+        assert_eq!(command_input_delta("ls", "ls"), Some(Vec::new()));
+        // A mid-string edit can't be a simple keystroke -> None (don't send).
+        assert_eq!(command_input_delta("cat a.txt", "cat b.txt"), None);
     }
 
     #[test]

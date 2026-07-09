@@ -228,6 +228,13 @@ pub struct AppSettings {
     /// Check GitHub for a newer release on startup (only surfaces if one exists).
     #[serde(default)]
     pub auto_check_updates: bool,
+    /// Show the bottom command window (a line-oriented send box, SecureCRT-style).
+    #[serde(default)]
+    pub command_window_open: bool,
+    /// Command window sends each typed character to the target immediately,
+    /// instead of only sending the whole line on Enter.
+    #[serde(default)]
+    pub command_send_immediately: bool,
 }
 
 /// A saved command snippet (a name + the command text sent to a session).
@@ -290,6 +297,8 @@ impl Default for AppSettings {
             scrollback_lines: default_scrollback_lines(),
             snippets: Vec::new(),
             auto_check_updates: false,
+            command_window_open: false,
+            command_send_immediately: false,
         }
     }
 }
@@ -744,6 +753,8 @@ Host db
                 command: String::from("uptime"),
             }],
             auto_check_updates: true,
+            command_window_open: true,
+            command_send_immediately: true,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");
