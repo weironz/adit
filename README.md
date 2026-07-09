@@ -23,7 +23,8 @@ The workspace crates:
 - `adit-terminal` — `vte`-driven VT/ANSI grid and render-ready snapshots
 - `adit-storage` — profiles, settings, OS credential vault, log directory
 - `adit-domain` — shared ids, errors, profile/auth models
-- `adit-installer` — Windows packaging (embeds `adit-app.exe`, Start-menu shortcut)
+
+The Windows installer is built with **Inno Setup** from [`installer/adit.iss`](installer/adit.iss) (a proper setup wizard), not a workspace crate.
 
 ## Features
 
@@ -36,8 +37,13 @@ The workspace crates:
 - Multi-tab workspace, keepalive, and auto-reconnect with exponential backoff on unexpected drops.
 - SFTP dual-pane file manager (SecureFX-style): browse local and remote side by side; transfer via double-click, multi-select batch, pane-to-pane drag, or drag-from-Explorer (plus a native file picker); rename/delete on both panes; clickable column sorting; and a detailed transfer queue (destination, size, progress, speed) over a second SSH connection reusing the session credential.
 - Port forwarding: local (`-L`), dynamic SOCKS5 (`-D`), and remote (`-R`) tunnels, created and managed from a tunnels panel, optionally saved per profile to auto-start on connect, with live status and active-connection counts.
-- Session output (transcript) logging to a file, on demand.
-- Dark/light theme and full settings persistence (theme, folded groups, window size, auto-reconnect).
+- Protocols beyond SSH: local shell (ConPTY), serial (COM/tty), and RDP (launches the system client).
+- Split panes (2–4 tiled sessions), input broadcast to all sessions, per-profile startup command, per-profile `TERM`, and a configurable connect timeout.
+- Terminal power features: scrollback search (Ctrl+Shift+F) with highlight and next/prev, mouse-reporting passthrough for TUIs (vim/tmux/htop), bracketed paste + multi-line paste confirmation, optional copy-on-select / right-click-paste, and italic/dim rendering.
+- Configurable fonts + color schemes, configurable scrollback size, and a configuration folder (relocatable via `ADIT_CONFIG_DIR`).
+- Session logging with a configurable folder, filename pattern, auto-log-on-connect, and an optional ANSI-stripped plaintext format.
+- Import hosts from `~/.ssh/config`, and in-app check-for-updates with one-click update.
+- Dark/light theme and full settings persistence.
 
 ## Development
 
@@ -57,18 +63,17 @@ cargo clippy --workspace --all-targets
 cargo test --workspace
 ```
 
-Build the Windows installer:
+Build the Windows installer (requires [Inno Setup 6](https://jrsoftware.org/isdl.php)):
 
 ```powershell
 cargo build -p adit-app --release
-$env:ADIT_APP_EXE = "$PWD\target\release\adit-app.exe"
-cargo build -p adit-installer --release
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" /DAppVersion=<version> installer\adit.iss
 ```
 
-The installer binary is `target\release\adit-installer.exe`.
+This produces `target\release\adit-installer-v<version>.exe` — a setup wizard that installs to `C:\Program Files\Adit` (all users, or per-user), creates shortcuts, registers an uninstaller, and closes a running instance before updating.
 
 ## Roadmap
 
-Done: native workspace, `russh` auth chain, `vte` terminal core, raw keyboard input, interactive host-key verification, keepalive + auto-reconnect, session logging, theme + settings persistence, app icon and Windows installer.
+Most of the phased plan is implemented — SSH/SFTP/tunnels, four protocols, split panes, broadcast, fonts/schemes, scrollback search, mouse passthrough, bracketed paste, `~/.ssh/config` import, in-app updates, and the Inno Setup installer.
 
-Next: SFTP file transfer, scrollback search, fonts/color schemes, port forwarding, jump hosts, import/export, and macOS packaging. See [docs/feature-roadmap.md](docs/feature-roadmap.md) for the full phased plan.
+Still open: jump host / `ProxyJump`, command snippets, tab rename, code signing, CI, and macOS packaging. See [docs/feature-roadmap.md](docs/feature-roadmap.md) for the full status.
