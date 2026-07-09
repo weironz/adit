@@ -184,6 +184,7 @@ pub enum MenuCommand {
     ToggleAutoReconnect,
     Appearance,
     Options,
+    ImportSshConfig,
     ToggleBroadcast,
     SplitPane,
     CheckUpdate,
@@ -2122,6 +2123,7 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         }
         MenuCommand::Appearance => app.appearance_open = true,
         MenuCommand::Options => app.options_open = true,
+        MenuCommand::ImportSshConfig => import_ssh_config(app),
         // Handled in the RunMenu arm (needs to return an async Task).
         MenuCommand::CheckUpdate => {}
         MenuCommand::SplitPane => split_pane(app),
@@ -2532,6 +2534,88 @@ fn sort_profiles(app: &mut AditApp, key: ProfileSortKey) {
             ProfileSortKey::Name => String::from("会话已按名称排序"),
             ProfileSortKey::Host => String::from("会话已按主机排序"),
         };
+    }
+}
+
+/// Import hosts from `~/.ssh/config` into the profile list (group "Imported"),
+/// skipping any whose name already exists.
+fn import_ssh_config(app: &mut AditApp) {
+    let Some(path) = adit_storage::ssh_config_path() else {
+        app.last_error = Some(String::from("找不到用户主目录"));
+        return;
+    };
+    if !path.exists() {
+        app.last_error = Some(format!("未找到 {}", path.display()));
+        return;
+    }
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) => {
+            app.last_error = Some(format!("读取 ssh config 失败: {error}"));
+            return;
+        }
+    };
+
+    let hosts = adit_storage::parse_ssh_config(&text);
+    if hosts.is_empty() {
+        app.notice = String::from("~/.ssh/config 中没有可导入的主机");
+        return;
+    }
+
+    let existing: BTreeSet<String> = app
+        .manager
+        .profiles()
+        .iter()
+        .map(|profile| profile.name.clone())
+        .collect();
+    let fallback_user = adit_storage::current_username().unwrap_or_default();
+    let group = "Imported";
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+
+    for host in hosts {
+        if existing.contains(&host.alias) {
+            skipped += 1;
+            continue;
+        }
+        let username = if host.user.is_empty() {
+            fallback_user.clone()
+        } else {
+            host.user
+        };
+        let auth = if host.identity_file.is_empty() {
+            AuthMethod::Auto
+        } else {
+            AuthMethod::Key
+        };
+        if app
+            .manager
+            .create_profile(
+                group,
+                &host.alias,
+                &host.hostname,
+                host.port,
+                username,
+                auth,
+                host.identity_file,
+            )
+            .is_ok()
+        {
+            added += 1;
+        }
+    }
+
+    if added > 0 {
+        app.groups.insert(group.to_string());
+        persist_profiles(app);
+        app.last_error = None;
+        app.notice = if skipped > 0 {
+            format!("已从 ~/.ssh/config 导入 {added} 个会话（跳过 {skipped} 个已存在）")
+        } else {
+            format!("已从 ~/.ssh/config 导入 {added} 个会话")
+        };
+    } else {
+        app.notice = String::from("没有新的主机需要导入（可能都已存在）");
     }
 }
 
@@ -3877,6 +3961,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("新建分组", MenuCommand::NewGroup),
             ("保存会话", MenuCommand::SaveProfile),
             ("删除会话", MenuCommand::DeleteProfile),
+            ("导入 ~/.ssh/config", MenuCommand::ImportSshConfig),
             ("选项 / 日志…", MenuCommand::Options),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
