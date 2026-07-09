@@ -1311,32 +1311,22 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileHovered(profile_id) => {
             app.hovered_profile = Some(profile_id);
+            // iced's mouse_area fires on_enter (this) — not on_move — on the frame
+            // the cursor crosses into a new row, so the live reorder has to happen
+            // here to reliably trigger on every crossing (on_move alone misses a
+            // fast drag). Direction is derived from the current order.
+            live_reorder_profile(app, profile_id);
         }
         Message::ProfileHoverExited(profile_id) => {
             if app.hovered_profile == Some(profile_id) {
                 app.hovered_profile = None;
             }
         }
-        Message::ProfileDragOver(profile_id, position) => {
+        Message::ProfileDragOver(profile_id, _position) => {
             app.hovered_profile = Some(profile_id);
-            // Live reorder: as the held profile is dragged over another row, move
-            // it there immediately so the row visibly slides under the cursor
-            // (it keeps the accent highlight, so the motion is obvious). The
-            // source==target case is skipped, which keeps the drag stable once
-            // the dragged row lands under the pointer.
-            if let Some(source) = app.dragged_profile {
-                if source != profile_id {
-                    if app
-                        .manager
-                        .reorder_profile(source, profile_id, position)
-                        .is_ok()
-                    {
-                        app.profile_drag_moved = true;
-                        app.selected_profile = Some(source);
-                    }
-                    app.group_drop_target = None;
-                }
-            }
+            // Continued movement within a row also reorders (redundant with the
+            // on_enter path, but keeps things responsive on a slow drag).
+            live_reorder_profile(app, profile_id);
         }
         Message::ProfileDropped(_profile_id) => {
             // Live reorder already positioned the row; just finalize + persist.
@@ -2593,6 +2583,42 @@ fn close_profile_editor_if_other(app: &mut AditApp, profile_id: ProfileId) {
         .is_some_and(|editing| editing != profile_id)
     {
         app.profile_editor = None;
+    }
+}
+
+/// Live-reorder the dragged profile so it sits next to `target`, choosing the
+/// side from the current order (dragged is above target ⇒ drop after, below ⇒
+/// drop before). Mirrors the session-tab drag so the held row slides under the
+/// cursor. A no-op when nothing is being dragged or the cursor is over the
+/// dragged row itself, which keeps the drag stable once it lands.
+fn live_reorder_profile(app: &mut AditApp, target_id: ProfileId) {
+    let Some(source_id) = app.dragged_profile else {
+        return;
+    };
+    if source_id == target_id {
+        return;
+    }
+    let index_of = |app: &AditApp, id: ProfileId| {
+        app.manager.profiles().iter().position(|p| p.id == id)
+    };
+    let (Some(source_index), Some(target_index)) =
+        (index_of(app, source_id), index_of(app, target_id))
+    else {
+        return;
+    };
+    let position = if source_index < target_index {
+        ProfileDropPosition::After
+    } else {
+        ProfileDropPosition::Before
+    };
+    if app
+        .manager
+        .reorder_profile(source_id, target_id, position)
+        .is_ok()
+    {
+        app.profile_drag_moved = true;
+        app.selected_profile = Some(source_id);
+        app.group_drop_target = None;
     }
 }
 

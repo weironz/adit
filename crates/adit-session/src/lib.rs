@@ -407,9 +407,18 @@ impl SessionManager {
         profile.identity_file = updated.identity_file;
 
         let endpoint = profile.endpoint();
+        let base = profile.name.clone();
+        // Re-title this profile's open sessions, keeping the " (n)" suffixes so
+        // multiple sessions to the same host stay distinguishable.
+        let mut seen = 0;
         for record in self.sessions.values_mut() {
             if record.summary.profile_id == profile_id {
-                record.summary.title = profile.name.clone();
+                seen += 1;
+                record.summary.title = if seen == 1 {
+                    base.clone()
+                } else {
+                    format!("{base} ({seen})")
+                };
                 record.summary.endpoint = endpoint.clone();
             }
         }
@@ -643,6 +652,24 @@ impl SessionManager {
             .map(|record| record.summary.clone())
     }
 
+    /// A tab title unique among currently open sessions: appends " (2)", " (3)"…
+    /// when another open session already shows `base`, so repeat connections to
+    /// the same host stay distinguishable.
+    fn unique_session_title(&self, base: &str) -> String {
+        let taken = |candidate: &str| {
+            self.sessions
+                .values()
+                .any(|record| record.summary.title == candidate)
+        };
+        if !taken(base) {
+            return base.to_string();
+        }
+        (2..)
+            .map(|n| format!("{base} ({n})"))
+            .find(|candidate| !taken(candidate))
+            .unwrap_or_else(|| base.to_string())
+    }
+
     pub fn open_mock_session(&mut self, profile_id: ProfileId) -> Result<SessionId, SessionError> {
         let profile = self
             .profiles
@@ -653,10 +680,12 @@ impl SessionManager {
         let session_id = SessionId::new();
         let endpoint = profile.endpoint();
         let terminal = welcome_terminal(&profile.name, &endpoint);
+        let base_title = profile.name.clone();
+        let title = self.unique_session_title(&base_title);
         let summary = SessionSummary {
             id: session_id,
             profile_id,
-            title: profile.name.clone(),
+            title,
             endpoint,
             status: SessionStatus::Connected,
         };
@@ -742,10 +771,11 @@ impl SessionManager {
         };
 
         let session_id = SessionId::new();
+        let title = self.unique_session_title(&profile.name);
         let summary = SessionSummary {
             id: session_id,
             profile_id,
-            title: profile.name.clone(),
+            title,
             endpoint,
             status: SessionStatus::Connecting,
         };
@@ -857,10 +887,11 @@ impl SessionManager {
     pub fn open_ssh_probe_session(&mut self, probe: SshProbeSession) -> SessionId {
         let session_id = SessionId::new();
         let terminal = probe_terminal(&probe.title, &probe.endpoint, &probe.transcript);
+        let title = self.unique_session_title(&probe.title);
         let summary = SessionSummary {
             id: session_id,
             profile_id: probe.profile_id,
-            title: probe.title,
+            title,
             endpoint: probe.endpoint,
             status: SessionStatus::Disconnected,
         };
@@ -2431,6 +2462,27 @@ mod tests {
 
         let blank = log_file_name("///", id);
         assert!(blank.starts_with("session_"), "got {blank}");
+    }
+
+    #[test]
+    fn repeat_sessions_get_numbered_titles() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        let base = manager.profiles()[0].name.clone();
+
+        let a = manager.open_mock_session(profile_id).unwrap();
+        let b = manager.open_mock_session(profile_id).unwrap();
+        let c = manager.open_mock_session(profile_id).unwrap();
+
+        let title = |m: &SessionManager, id| m.session_summary(id).unwrap().title;
+        assert_eq!(title(&manager, a), base);
+        assert_eq!(title(&manager, b), format!("{base} (2)"));
+        assert_eq!(title(&manager, c), format!("{base} (3)"));
+
+        // Closing the first frees the bare name; the next new session reuses it.
+        manager.close(a);
+        let d = manager.open_mock_session(profile_id).unwrap();
+        assert_eq!(title(&manager, d), base);
     }
 
     #[test]
