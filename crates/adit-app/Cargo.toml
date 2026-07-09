@@ -6,6 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [dependencies]
+adit-storage.workspace = true
 adit-ui.workspace = true
 iced.workspace = true
 
