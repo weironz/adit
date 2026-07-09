@@ -126,6 +126,9 @@ pub struct AditApp {
     terminal_pointer: Option<TerminalPoint>,
     terminal_selection: Option<TerminalSelection>,
     terminal_selecting: bool,
+    // Last terminal press (cell, time, click-count) for double/triple-click
+    // word/line selection.
+    terminal_click: Option<(TerminalPoint, Instant, u8)>,
     terminal_context_menu: bool,
     terminal_scroll_offset: usize,
     window_width: f32,
@@ -936,6 +939,7 @@ impl AditApp {
             terminal_pointer: None,
             terminal_selection: None,
             terminal_selecting: false,
+            terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
             window_width,
@@ -1061,7 +1065,26 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     if app.sidebar_dragging {
         subs.push(event::listen_with(sidebar_drag_event));
     }
+    // While a text selection drag is live, catch the button-up anywhere — even
+    // outside the terminal panel — so the selection can't get "stuck" extending
+    // after the user releases past the panel edge or over another widget.
+    if app.terminal_selecting {
+        subs.push(event::listen_with(terminal_release_event));
+    }
     Subscription::batch(subs)
+}
+
+fn terminal_release_event(
+    event: event::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Some(Message::EndTerminalSelection)
+        }
+        _ => None,
+    }
 }
 
 fn sidebar_drag_event(
@@ -1844,15 +1867,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 send_mouse_report(app, 0, true, false);
                 return Task::none();
             }
-            // Begin a selection at the pointer the pane's on_move just recorded.
-            let point = app
-                .terminal_pointer
-                .unwrap_or(TerminalPoint { row: 0, col: 0 });
-            app.terminal_selection = Some(TerminalSelection {
-                start: point,
-                end: point,
-            });
-            app.terminal_selecting = true;
+            // Begin a selection at the pointer the pane's on_move just recorded
+            // (single click = drag-select, double = word, triple = line).
+            begin_terminal_click(app);
         }
         Message::PaneRightPressed(index) => {
             focus_pane(app, index);
@@ -1930,14 +1947,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 send_mouse_report(app, 0, true, false);
                 return Task::none();
             }
-            let point = app
-                .terminal_pointer
-                .unwrap_or(TerminalPoint { row: 0, col: 0 });
-            app.terminal_selection = Some(TerminalSelection {
-                start: point,
-                end: point,
-            });
-            app.terminal_selecting = true;
+            begin_terminal_click(app);
         }
         Message::EndTerminalSelection => {
             // A release of a mouse-reporting click sends the button-up report.
@@ -3705,6 +3715,109 @@ fn normalized_selection(selection: TerminalSelection) -> Option<(TerminalPoint, 
     } else {
         Some((start, end))
     }
+}
+
+/// Handle a left-press on the terminal grid, deciding — from how quickly it
+/// follows the previous press on the same cell — whether it starts a drag
+/// selection (single), selects a word (double), or selects a line (triple).
+fn begin_terminal_click(app: &mut AditApp) {
+    let point = app
+        .terminal_pointer
+        .unwrap_or(TerminalPoint { row: 0, col: 0 });
+    let now = Instant::now();
+    let count = match app.terminal_click {
+        Some((last_point, last_time, last_count))
+            if last_point == point
+                && now.duration_since(last_time) < Duration::from_millis(400) =>
+        {
+            // 1 -> 2 -> 3 -> back to 1, so a fourth click restarts the cycle.
+            (last_count % 3) + 1
+        }
+        _ => 1,
+    };
+    app.terminal_click = Some((point, now, count));
+
+    match count {
+        2 => {
+            select_word_at(app, point);
+            // A word/line selection is fixed; don't let the following move extend
+            // it character-by-character.
+            app.terminal_selecting = false;
+        }
+        3 => {
+            select_line_at(app, point);
+            app.terminal_selecting = false;
+        }
+        _ => {
+            app.terminal_selection = Some(TerminalSelection {
+                start: point,
+                end: point,
+            });
+            app.terminal_selecting = true;
+        }
+    }
+}
+
+/// Select the whole word under `point` (double-click).
+fn select_word_at(app: &mut AditApp, point: TerminalPoint) {
+    let snapshot = active_terminal_snapshot(app);
+    let line = snapshot_line_text(&snapshot, point.row);
+    app.terminal_selection = word_bounds(&line, point.col).map(|(start, end)| TerminalSelection {
+        start: TerminalPoint {
+            row: point.row,
+            col: start,
+        },
+        end: TerminalPoint {
+            row: point.row,
+            col: end,
+        },
+    });
+}
+
+/// Select the entire (trailing-blank-trimmed) line under `point` (triple-click).
+fn select_line_at(app: &mut AditApp, point: TerminalPoint) {
+    let snapshot = active_terminal_snapshot(app);
+    let line = snapshot_line_text(&snapshot, point.row);
+    let len = line.trim_end().chars().count();
+    app.terminal_selection = Some(TerminalSelection {
+        start: TerminalPoint {
+            row: point.row,
+            col: 0,
+        },
+        end: TerminalPoint {
+            row: point.row,
+            col: len,
+        },
+    });
+}
+
+fn snapshot_line_text(snapshot: &TerminalSnapshot, row: usize) -> String {
+    snapshot.lines.get(row).map(raw_line_text).unwrap_or_default()
+}
+
+/// Word span `[start, end)` (char indices) around `col` for double-click select.
+/// "Word" chars are alphanumerics plus the punctuation that commonly appears
+/// mid-token in paths, URLs, and hostnames, so `/usr/local/bin` stays one word.
+fn word_bounds(line: &str, col: usize) -> Option<(usize, usize)> {
+    let chars: Vec<char> = line.chars().collect();
+    if col >= chars.len() {
+        return None;
+    }
+    let is_word =
+        |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '~' | ':' | '@' | '+');
+    if !is_word(chars[col]) {
+        // On whitespace or a separator: grab just that single cell.
+        return Some((col, col + 1));
+    }
+    let mut start = col;
+    while start > 0 && is_word(chars[start - 1]) {
+        start -= 1;
+    }
+    let mut end = col + 1;
+    while end < chars.len() && is_word(chars[end]) {
+        end += 1;
+    }
+    Some((start, end))
 }
 
 fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(usize, usize)> {
@@ -8962,6 +9075,20 @@ mod tests {
         // Columns = all side by side; Rows = all stacked.
         assert_eq!(pane_grid_dims(4, Columns), (4, 1));
         assert_eq!(pane_grid_dims(4, Rows), (1, 4));
+    }
+
+    #[test]
+    fn word_bounds_selects_whole_tokens() {
+        // Double-click inside a word grabs the whole word.
+        assert_eq!(word_bounds("hello world", 1), Some((0, 5)));
+        assert_eq!(word_bounds("hello world", 8), Some((6, 11)));
+        // Path-like tokens stay a single word (/, ., -, ~ are word chars).
+        assert_eq!(word_bounds("cd /usr/local/bin", 8), Some((3, 17)));
+        assert_eq!(word_bounds("see ./a.tar.gz now", 6), Some((4, 14)));
+        // On a space/separator, only that one cell is selected.
+        assert_eq!(word_bounds("a b", 1), Some((1, 2)));
+        // Clicking past the end of the line selects nothing.
+        assert_eq!(word_bounds("hi", 5), None);
     }
 
     #[test]
