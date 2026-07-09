@@ -2701,7 +2701,9 @@ fn load_selected_profile(app: &mut AditApp) {
 
     if let Some(profile) = profile {
         app.profile_group = profile.group;
-        app.groups.insert(app.profile_group.clone());
+        if !app.profile_group.trim().is_empty() {
+            app.groups.insert(app.profile_group.clone());
+        }
         app.profile_name = profile.name;
         app.profile_host = profile.host;
         app.profile_port = profile.port.to_string();
@@ -2729,8 +2731,11 @@ fn new_profile_draft(app: &mut AditApp) {
         Ok(profile_id) => {
             app.selected_profile = Some(profile_id);
             app.profile_editor = Some(profile_id);
-            app.groups.insert(group.clone());
-            app.collapsed_groups.remove(&group);
+            // Empty group ⇒ ungrouped; don't register a phantom empty folder.
+            if !group.is_empty() {
+                app.groups.insert(group.clone());
+                app.collapsed_groups.remove(&group);
+            }
             load_selected_profile(app);
             app.last_error = None;
             if persist_profiles(app) {
@@ -2854,13 +2859,10 @@ fn next_group_name(app: &AditApp) -> String {
     }
 }
 
+/// The group a new/saved profile lands in: the editor's group field, trimmed.
+/// Empty means ungrouped (top level), so a new session need not be in a folder.
 fn active_profile_group(app: &AditApp) -> String {
-    let group = app.profile_group.trim();
-    if group.is_empty() {
-        String::from("Default")
-    } else {
-        group.to_string()
-    }
+    app.profile_group.trim().to_string()
 }
 
 fn save_profile(app: &mut AditApp) {
@@ -7293,6 +7295,16 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     // (Default, …) are the top level of the tree directly.
     let mut profiles = column![].spacing(1).width(Fill);
 
+    // Ungrouped sessions (empty group) sit at the very top level, above the
+    // folders — a session need not belong to any group.
+    for profile in sorted_profiles
+        .iter()
+        .filter(|profile| profile.group.trim().is_empty())
+        .filter(|profile| !filter_active || profile_matches_filter(profile, &filter))
+    {
+        profiles = profiles.push(sidebar_profile_row(app, profile));
+    }
+
     for group in sidebar_group_names(app, &sorted_profiles) {
         let group_matches = filter_active && group.to_ascii_lowercase().contains(&filter);
         let group_profiles = sorted_profiles
@@ -7333,18 +7345,8 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
             continue;
         }
 
-        for profile in group_profiles {
-            // The dragged row is "lifted" into the floating ghost, so its slot
-            // renders as an empty gap the neighbours squeeze around.
-            if Some(profile.id) == app.dragged_profile {
-                profiles = profiles.push(profile_drag_gap());
-                continue;
-            }
-            let selected = Some(profile.id) == app.selected_profile;
-            let hovered = Some(profile.id) == app.hovered_profile;
-
-            profiles = profiles.push(tree_profile_row(profile, selected, hovered, false));
-
+        for profile in &group_profiles {
+            profiles = profiles.push(sidebar_profile_row(app, profile));
             // The context menu and the profile editor are now floating overlays
             // (see the layers stack in `view`), not pushed inline here.
         }
@@ -7516,11 +7518,9 @@ fn sidebar_divider() -> Element<'static, Message> {
 fn sidebar_group_names(app: &AditApp, profiles: &[ConnectionProfile]) -> Vec<String> {
     let mut groups = app.groups.clone();
     groups.extend(groups_from_profiles(profiles));
-
-    if groups.is_empty() {
-        groups.insert(String::from("Default"));
-    }
-
+    // Empty is the "ungrouped" sentinel (rendered at the top level), never a
+    // folder of its own.
+    groups.retain(|group| !group.trim().is_empty());
     groups.into_iter().collect()
 }
 
@@ -7611,6 +7611,18 @@ fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .style(|_theme| profile_edit_menu_style())
     .into()
+}
+
+/// Render one session row for the sidebar, or — while it is being dragged — the
+/// empty "gap" its neighbours squeeze around (the row itself floats as the
+/// ghost). Shared by the ungrouped top-level list and every group.
+fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
+    if Some(profile.id) == app.dragged_profile {
+        return profile_drag_gap();
+    }
+    let selected = Some(profile.id) == app.selected_profile;
+    let hovered = Some(profile.id) == app.hovered_profile;
+    tree_profile_row(profile.clone(), selected, hovered, false)
 }
 
 fn tree_profile_row(

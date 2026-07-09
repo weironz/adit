@@ -2211,14 +2211,10 @@ fn auth_options_for_profile(profile: &ConnectionProfile, password: &str) -> Auth
     }
 }
 
+/// Trim a group name. An empty result means "ungrouped" — the profile sits at
+/// the top level of the session tree rather than inside a folder.
 fn normalize_group(group: impl Into<String>) -> String {
-    let group = group.into().trim().to_string();
-
-    if group.is_empty() {
-        String::from("Default")
-    } else {
-        group
-    }
+    group.into().trim().to_string()
 }
 
 /// Build a filesystem-safe log file name from a session title and id, e.g.
@@ -2827,6 +2823,32 @@ mod tests {
         let profile = manager.profile(alpha).expect("profile should exist");
         assert_eq!(profile.group, "Empty");
         assert_eq!(profile.sort_order, 10);
+    }
+
+    #[test]
+    fn profiles_support_ungrouped() {
+        let mut manager = SessionManager::with_profiles(vec![ConnectionProfile::with_group(
+            "Lab", "alpha", "10.0.0.1", 22, "root",
+        )]);
+
+        // Creating with an empty group leaves it ungrouped (not forced to a
+        // "Default" folder).
+        let loose = manager
+            .create_profile("", "loose", "10.9.9.9", 22, "root", AuthMethod::Auto, "")
+            .expect("create ungrouped");
+        assert_eq!(manager.profile(loose).unwrap().group, "");
+
+        // A grouped profile can be pushed out to the top level and back in.
+        let alpha = manager
+            .profiles()
+            .iter()
+            .find(|profile| profile.name == "alpha")
+            .unwrap()
+            .id;
+        manager.move_profile_to_group(alpha, "").expect("ungroup");
+        assert_eq!(manager.profile(alpha).unwrap().group, "");
+        manager.move_profile_to_group(alpha, "Lab").expect("regroup");
+        assert_eq!(manager.profile(alpha).unwrap().group, "Lab");
     }
 
     #[test]
