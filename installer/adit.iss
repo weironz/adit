@@ -38,16 +38,18 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
-; The app holds a mutex of this name while running; setup/uninstall detect it
-; and ask the user to close Adit cleanly instead of force-closing the window.
-AppMutex=AditAppInstanceMutex
 SetupIconFile=..\crates\adit-app\assets\icon.ico
 OutputDir=..\target\release
 OutputBaseFilename=adit-installer-v{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-CloseApplications=yes
+; If Adit is running, the "Preparing to Install" page detects it and offers to
+; close it automatically (selected by default); the user consents by continuing.
+; `force` closes it gracefully first and terminates only if that fails, so a
+; running instance never blocks the install with a manual-close error.
+CloseApplications=force
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
