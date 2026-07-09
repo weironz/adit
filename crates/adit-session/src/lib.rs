@@ -1043,6 +1043,23 @@ impl SessionManager {
             .is_some_and(|record| record.terminal.bracketed_paste())
     }
 
+    /// The active session's mouse-reporting mode (for UI passthrough).
+    #[must_use]
+    pub fn active_mouse_mode(&self) -> adit_terminal::MouseMode {
+        self.active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+            .map(|record| record.terminal.mouse_mode())
+            .unwrap_or_default()
+    }
+
+    /// Whether the active session uses SGR mouse encoding (DEC 1006).
+    #[must_use]
+    pub fn active_mouse_sgr(&self) -> bool {
+        self.active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+            .is_some_and(|record| record.terminal.mouse_sgr())
+    }
+
     /// Whether a specific session is currently logging (for auto-log-on-connect,
     /// which must not restart an already-logging session).
     #[must_use]

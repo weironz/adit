@@ -12,6 +12,33 @@ pub use vt::VtTerminal;
 
 use serde::{Deserialize, Serialize};
 
+/// The mouse-reporting mode an app has enabled via DEC private modes: 1000
+/// (button press/release), 1002 (also motion while a button is held), 1003
+/// (all motion). When not [`MouseMode::Off`], the UI forwards mouse events to
+/// the remote instead of doing local selection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MouseMode {
+    #[default]
+    Off,
+    Normal,
+    ButtonEvent,
+    AnyMotion,
+}
+
+impl MouseMode {
+    /// Whether motion (drag) events should be reported while a button is held.
+    #[must_use]
+    pub fn reports_drag(self) -> bool {
+        matches!(self, MouseMode::ButtonEvent | MouseMode::AnyMotion)
+    }
+
+    /// Whether motion should be reported even with no button held.
+    #[must_use]
+    pub fn reports_any_motion(self) -> bool {
+        matches!(self, MouseMode::AnyMotion)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalSize {
     pub cols: u16,

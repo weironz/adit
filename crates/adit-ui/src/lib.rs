@@ -7,7 +7,9 @@ use adit_session::{
     TunnelKind, TunnelState,
 };
 use adit_storage::{AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore};
-use adit_terminal::{Color as TermColor, TerminalLine, TerminalSize, TerminalSnapshot, Viewport};
+use adit_terminal::{
+    Color as TermColor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot, Viewport,
+};
 use iced::font::Weight;
 use iced::keyboard::{self, key::Named, Key};
 use iced::widget::{
@@ -139,6 +141,10 @@ pub struct AditApp {
     confirm_multiline_paste: bool,
     pending_paste: Option<String>,
     paste_confirm_open: bool,
+    /// Left button held over a mouse-reporting terminal (for drag/release
+    /// reports); and the last cell already reported (to dedupe motion events).
+    mouse_button_down: bool,
+    mouse_report_cell: Option<TerminalPoint>,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -872,6 +878,8 @@ impl AditApp {
             confirm_multiline_paste,
             pending_paste: None,
             paste_confirm_open: false,
+            mouse_button_down: false,
+            mouse_report_cell: None,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -1664,8 +1672,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::PaneMousePressed(index) => {
             focus_pane(app, index);
-            // Begin a selection at the pointer the pane's on_move just recorded.
             app.terminal_context_menu = false;
+            if mouse_reporting_active(app) {
+                app.mouse_button_down = true;
+                app.mouse_report_cell = app.terminal_pointer;
+                send_mouse_report(app, 0, true, false);
+                return Task::none();
+            }
+            // Begin a selection at the pointer the pane's on_move just recorded.
             let point = app
                 .terminal_pointer
                 .unwrap_or(TerminalPoint { row: 0, col: 0 });
@@ -1692,6 +1706,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             let origin = pane_layout(app).pane_body_origin(index);
             app.cursor_pos = Point::new(origin.x + point.x, origin.y + point.y);
 
+            if maybe_report_mouse_motion(app) {
+                return Task::none();
+            }
             if app.terminal_selecting {
                 if let Some(selection) = &mut app.terminal_selection {
                     selection.end = terminal_point;
@@ -1711,6 +1728,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             let terminal_top = MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT;
             app.cursor_pos = Point::new(point.x + terminal_left, point.y + terminal_top);
 
+            if maybe_report_mouse_motion(app) {
+                return Task::none();
+            }
             if app.terminal_selecting {
                 if let Some(selection) = &mut app.terminal_selection {
                     selection.end = terminal_point;
@@ -1719,6 +1739,17 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::TerminalScrolled(delta) => {
             app.terminal_focused = true;
+            // Forward the wheel to a mouse-reporting app instead of scrolling
+            // local history.
+            if mouse_reporting_active(app) {
+                if let Some(lines) = scroll_delta_to_rows(delta) {
+                    let button = if lines > 0 { 64 } else { 65 };
+                    for _ in 0..lines.unsigned_abs().min(5) {
+                        send_mouse_report(app, button, true, false);
+                    }
+                }
+                return Task::none();
+            }
             if let Some(lines) = scroll_delta_to_rows(delta) {
                 apply_terminal_scroll(app, TerminalScrollAction::Lines(lines));
             }
@@ -1726,6 +1757,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::BeginTerminalSelection => {
             app.terminal_focused = true;
             app.terminal_context_menu = false;
+            // Mouse-reporting apps (vim/tmux/htop) want the click, not a local
+            // selection.
+            if mouse_reporting_active(app) {
+                app.mouse_button_down = true;
+                app.mouse_report_cell = app.terminal_pointer;
+                send_mouse_report(app, 0, true, false);
+                return Task::none();
+            }
             let point = app
                 .terminal_pointer
                 .unwrap_or(TerminalPoint { row: 0, col: 0 });
@@ -1736,6 +1775,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_selecting = true;
         }
         Message::EndTerminalSelection => {
+            // A release of a mouse-reporting click sends the button-up report.
+            if app.mouse_button_down && mouse_reporting_active(app) {
+                app.mouse_button_down = false;
+                send_mouse_report(app, 0, false, false);
+                return Task::none();
+            }
+            app.mouse_button_down = false;
             app.terminal_selecting = false;
             if app
                 .terminal_selection
@@ -2932,6 +2978,67 @@ fn send_terminal_bytes(app: &mut AditApp, bytes: Vec<u8>) {
     if let Err(error) = app.manager.send_input_bytes_to_active(bytes) {
         app.last_error = Some(error.to_string());
     }
+}
+
+/// Whether the active session has enabled mouse reporting (so mouse events go
+/// to the remote instead of doing local selection).
+fn mouse_reporting_active(app: &AditApp) -> bool {
+    app.manager.active_mouse_mode() != MouseMode::Off
+}
+
+/// Encode a mouse event as an xterm report. `button`: 0=left, 1=middle,
+/// 2=right, 3=none/release, 64=wheel-up, 65=wheel-down. `col`/`row` are 0-based
+/// cells; `press` is the button-down (or wheel) edge; `motion` marks a drag.
+fn encode_mouse_event(sgr: bool, button: u8, col: usize, row: usize, press: bool, motion: bool) -> Vec<u8> {
+    let mut cb = u32::from(button);
+    if motion {
+        cb += 32;
+    }
+    let cx = col + 1;
+    let cy = row + 1;
+
+    if sgr {
+        let terminator = if press { 'M' } else { 'm' };
+        format!("\x1b[<{cb};{cx};{cy}{terminator}").into_bytes()
+    } else {
+        // Legacy X10: ESC [ M  (Cb+32)  (Cx+32)  (Cy+32), coords capped at 223.
+        let cb_byte = (cb + 32).min(255) as u8;
+        let cx_byte = (32 + cx.min(223)) as u8;
+        let cy_byte = (32 + cy.min(223)) as u8;
+        vec![0x1b, b'[', b'M', cb_byte, cx_byte, cy_byte]
+    }
+}
+
+/// Encode + send a mouse report to the active session at the current pointer
+/// cell (raw send — not broadcast, does not touch the selection).
+fn send_mouse_report(app: &mut AditApp, button: u8, press: bool, motion: bool) {
+    let Some(point) = app.terminal_pointer else {
+        return;
+    };
+    let sgr = app.manager.active_mouse_sgr();
+    let bytes = encode_mouse_event(sgr, button, point.col, point.row, press, motion);
+    let _ = app.manager.send_input_bytes_to_active(bytes);
+}
+
+/// On pointer motion over a mouse-reporting terminal, send a drag (button held)
+/// or any-motion report when the cell changes. Returns true when reporting is
+/// active (so the caller skips local selection).
+fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
+    if !mouse_reporting_active(app) {
+        return false;
+    }
+    let mode = app.manager.active_mouse_mode();
+    if app.terminal_pointer == app.mouse_report_cell {
+        return true; // same cell — consumed, nothing new to report
+    }
+    if app.mouse_button_down && mode.reports_drag() {
+        app.mouse_report_cell = app.terminal_pointer;
+        send_mouse_report(app, 0, true, true);
+    } else if !app.mouse_button_down && mode.reports_any_motion() {
+        app.mouse_report_cell = app.terminal_pointer;
+        send_mouse_report(app, 3, true, true);
+    }
+    true
 }
 
 fn is_terminal_copy_shortcut(event: &keyboard::Event) -> bool {
@@ -7973,6 +8080,22 @@ mod tests {
         let dated = render_log_name("%Y-%M-%D", "x", "h");
         assert!(!dated.contains('%'));
         assert_eq!(dated.len(), "2026-07-08".len());
+    }
+
+    #[test]
+    fn mouse_events_encode_sgr_and_x10() {
+        // SGR (1006): ESC[<cb;col;row(M|m), 1-based coords.
+        assert_eq!(encode_mouse_event(true, 0, 0, 0, true, false), b"\x1b[<0;1;1M");
+        assert_eq!(encode_mouse_event(true, 0, 4, 2, false, false), b"\x1b[<0;5;3m");
+        // Drag adds 32 to the button code.
+        assert_eq!(encode_mouse_event(true, 0, 9, 1, true, true), b"\x1b[<32;10;2M");
+        // Wheel up / down.
+        assert_eq!(encode_mouse_event(true, 64, 0, 0, true, false), b"\x1b[<64;1;1M");
+        // Legacy X10: ESC [ M (cb+32) (col+1+32) (row+1+32).
+        assert_eq!(
+            encode_mouse_event(false, 0, 0, 0, true, false),
+            vec![0x1b, b'[', b'M', 32, 33, 33]
+        );
     }
 
     #[test]

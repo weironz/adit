@@ -104,6 +104,8 @@ struct TermState {
     autowrap: bool,
     cursor_visible: bool,
     bracketed_paste: bool,
+    mouse_mode: crate::MouseMode,
+    mouse_sgr: bool,
     saved_cursor: Option<SavedCursor>,
     alt: Option<AltSaved>,
     title: String,
@@ -127,6 +129,8 @@ impl TermState {
             autowrap: true,
             cursor_visible: true,
             bracketed_paste: false,
+            mouse_mode: crate::MouseMode::Off,
+            mouse_sgr: false,
             saved_cursor: None,
             alt: None,
             title,
@@ -551,6 +555,22 @@ impl TermState {
                     self.leave_alt_screen();
                 }
             }
+            1000 => self.mouse_mode = if enable { crate::MouseMode::Normal } else { crate::MouseMode::Off },
+            1002 => {
+                self.mouse_mode = if enable {
+                    crate::MouseMode::ButtonEvent
+                } else {
+                    crate::MouseMode::Off
+                }
+            }
+            1003 => {
+                self.mouse_mode = if enable {
+                    crate::MouseMode::AnyMotion
+                } else {
+                    crate::MouseMode::Off
+                }
+            }
+            1006 => self.mouse_sgr = enable,
             2004 => self.bracketed_paste = enable,
             _ => {}
         }
@@ -896,6 +916,18 @@ impl VtTerminal {
     pub fn bracketed_paste(&self) -> bool {
         self.state.bracketed_paste
     }
+
+    /// The active mouse-reporting mode (DEC 1000/1002/1003).
+    #[must_use]
+    pub fn mouse_mode(&self) -> crate::MouseMode {
+        self.state.mouse_mode
+    }
+
+    /// Whether SGR mouse encoding (DEC 1006) is enabled.
+    #[must_use]
+    pub fn mouse_sgr(&self) -> bool {
+        self.state.mouse_sgr
+    }
 }
 
 impl TerminalCore for VtTerminal {
@@ -1128,6 +1160,24 @@ mod tests {
         assert!(t.bracketed_paste());
         t.feed_str("\x1b[?2004l");
         assert!(!t.bracketed_paste());
+    }
+
+    #[test]
+    fn tracks_mouse_reporting_modes() {
+        use crate::MouseMode;
+        let mut t = term(20, 4);
+        assert_eq!(t.mouse_mode(), MouseMode::Off);
+        assert!(!t.mouse_sgr());
+        t.feed_str("\x1b[?1000h");
+        assert_eq!(t.mouse_mode(), MouseMode::Normal);
+        t.feed_str("\x1b[?1002h");
+        assert_eq!(t.mouse_mode(), MouseMode::ButtonEvent);
+        t.feed_str("\x1b[?1003h");
+        assert_eq!(t.mouse_mode(), MouseMode::AnyMotion);
+        t.feed_str("\x1b[?1006h");
+        assert!(t.mouse_sgr());
+        t.feed_str("\x1b[?1003l");
+        assert_eq!(t.mouse_mode(), MouseMode::Off);
     }
 
     #[test]
