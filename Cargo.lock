@@ -89,7 +89,9 @@ dependencies = [
  "adit-terminal",
  "iced",
  "rfd",
+ "serde_json",
  "time",
+ "tokio",
 ]
 
 [[package]]

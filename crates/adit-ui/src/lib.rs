@@ -127,6 +127,8 @@ pub struct AditApp {
     font_size: f32,
     color_scheme: String,
     appearance_open: bool,
+    update_dialog_open: bool,
+    update_state: UpdateState,
     /// The 选项 (config path + session-log) dialog.
     options_open: bool,
     log_dir: String,
@@ -181,6 +183,7 @@ pub enum MenuCommand {
     Options,
     ToggleBroadcast,
     SplitPane,
+    CheckUpdate,
     About,
 }
 
@@ -332,6 +335,34 @@ pub enum Message {
     SendTerminalInput,
     ClearActiveTerminal,
     ClearError,
+    CheckForUpdates,
+    UpdateChecked(Result<Option<UpdateInfo>, String>),
+    StartUpdateDownload,
+    UpdateDownloaded(Result<String, String>),
+    CloseUpdateDialog,
+    OpenReleaseNotes(String),
+}
+
+/// A newer release discovered by the in-app update check.
+#[derive(Debug, Clone)]
+pub struct UpdateInfo {
+    tag: String,
+    installer_url: String,
+    installer_name: String,
+    notes_url: String,
+}
+
+/// State of the in-app updater, surfaced in the update dialog.
+#[derive(Debug, Clone, Default)]
+enum UpdateState {
+    #[default]
+    Idle,
+    Checking,
+    UpToDate,
+    Available(UpdateInfo),
+    Downloading,
+    Launched,
+    Error(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -821,6 +852,8 @@ impl AditApp {
             font_size,
             color_scheme,
             appearance_open: false,
+            update_dialog_open: false,
+            update_state: UpdateState::Idle,
             options_open: false,
             log_dir,
             log_name_pattern,
@@ -1045,6 +1078,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             };
         }
         Message::RunMenu(command) => {
+            // The update check needs to return an async Task, unlike the other
+            // (synchronous) menu commands.
+            if matches!(command, MenuCommand::CheckUpdate) {
+                return begin_update_check(app);
+            }
             run_menu_command(app, command);
             app.active_menu = None;
             sync_terminal_size(app);
@@ -1794,9 +1832,212 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ClearError => {
             app.last_error = None;
         }
+        Message::CheckForUpdates => {
+            return begin_update_check(app);
+        }
+        Message::UpdateChecked(result) => {
+            app.update_state = match result {
+                Ok(Some(info)) => UpdateState::Available(info),
+                Ok(None) => UpdateState::UpToDate,
+                Err(error) => UpdateState::Error(error),
+            };
+        }
+        Message::StartUpdateDownload => {
+            if let UpdateState::Available(info) = &app.update_state {
+                let url = info.installer_url.clone();
+                let name = info.installer_name.clone();
+                app.update_state = UpdateState::Downloading;
+                return Task::perform(
+                    download_installer(url, name),
+                    Message::UpdateDownloaded,
+                );
+            }
+        }
+        Message::UpdateDownloaded(result) => match result {
+            Ok(path) => match std::process::Command::new(&path).spawn() {
+                Ok(_) => {
+                    app.update_state = UpdateState::Launched;
+                    app.notice =
+                        String::from("更新安装程序已启动，按提示完成安装（会自动关闭 Adit）");
+                }
+                Err(error) => {
+                    app.update_state = UpdateState::Error(format!("无法启动安装程序: {error}"));
+                }
+            },
+            Err(error) => {
+                app.update_state = UpdateState::Error(error);
+            }
+        },
+        Message::CloseUpdateDialog => {
+            app.update_dialog_open = false;
+        }
+        Message::OpenReleaseNotes(url) => {
+            open_url(app, &url);
+        }
     }
 
     Task::none()
+}
+
+/// Kick off an update check: show the dialog in the "checking" state and query
+/// GitHub in the background.
+fn begin_update_check(app: &mut AditApp) -> Task<Message> {
+    app.active_menu = None;
+    app.update_dialog_open = true;
+    app.update_state = UpdateState::Checking;
+    Task::perform(check_for_update(), Message::UpdateChecked)
+}
+
+/// Open a URL in the default browser (best-effort).
+fn open_url(app: &mut AditApp, url: &str) {
+    let result = if cfg!(target_os = "windows") {
+        no_window(std::process::Command::new("cmd").args(["/C", "start", "", url])).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).spawn()
+    };
+    if let Err(error) = result {
+        app.last_error = Some(format!("打开链接失败: {error}"));
+    }
+}
+
+/// Suppress the console window when spawning a console tool from the GUI app.
+fn no_window(cmd: &mut std::process::Command) -> &mut std::process::Command {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
+
+const UPDATE_REPO: &str = "weironz/adit";
+
+/// Check GitHub for a newer release. `Ok(None)` = already up to date.
+async fn check_for_update() -> Result<Option<UpdateInfo>, String> {
+    tokio::task::spawn_blocking(check_for_update_blocking)
+        .await
+        .map_err(|error| format!("更新检查任务失败: {error}"))?
+}
+
+fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> {
+    let url = format!("https://api.github.com/repos/{UPDATE_REPO}/releases/latest");
+    let output = no_window(std::process::Command::new("curl").args([
+        "-sSL",
+        "--max-time",
+        "25",
+        "-H",
+        "User-Agent: adit-updater",
+        "-H",
+        "Accept: application/vnd.github+json",
+        &url,
+    ]))
+    .output()
+    .map_err(|error| format!("无法运行 curl（检查更新需要系统自带的 curl）: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("检查更新失败: {}", stderr.trim()));
+    }
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("解析发布信息失败: {error}"))?;
+
+    let tag = json["tag_name"]
+        .as_str()
+        .ok_or("发布信息缺少 tag_name")?
+        .to_string();
+    let notes_url = json["html_url"].as_str().unwrap_or_default().to_string();
+
+    let current = env!("CARGO_PKG_VERSION");
+    if !version_is_newer(&tag, current) {
+        return Ok(None);
+    }
+
+    // Pick the Windows installer asset (the .exe).
+    let asset = json["assets"].as_array().and_then(|assets| {
+        assets
+            .iter()
+            .find(|asset| asset["name"].as_str().is_some_and(|n| n.ends_with(".exe")))
+    });
+    let (installer_url, installer_name) = match asset {
+        Some(asset) => (
+            asset["browser_download_url"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            asset["name"].as_str().unwrap_or_default().to_string(),
+        ),
+        None => (String::new(), String::new()),
+    };
+
+    Ok(Some(UpdateInfo {
+        tag,
+        installer_url,
+        installer_name,
+        notes_url,
+    }))
+}
+
+/// Download the installer to a temp folder; returns the saved path.
+async fn download_installer(url: String, name: String) -> Result<String, String> {
+    if url.is_empty() {
+        return Err(String::from("该版本没有可下载的 Windows 安装包"));
+    }
+    tokio::task::spawn_blocking(move || download_installer_blocking(&url, &name))
+        .await
+        .map_err(|error| format!("下载任务失败: {error}"))?
+}
+
+fn download_installer_blocking(url: &str, name: &str) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("adit-update");
+    std::fs::create_dir_all(&dir).map_err(|error| format!("创建下载目录失败: {error}"))?;
+    let safe_name = if name.is_empty() { "adit-installer.exe" } else { name };
+    let dest = dir.join(safe_name);
+
+    let output = no_window(std::process::Command::new("curl").args([
+        "-sSL",
+        "--max-time",
+        "600",
+        "-H",
+        "User-Agent: adit-updater",
+        "-o",
+        &dest.to_string_lossy(),
+        url,
+    ]))
+    .output()
+    .map_err(|error| format!("无法运行 curl: {error}"))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!("下载安装包失败: {}", stderr.trim()));
+    }
+
+    match std::fs::metadata(&dest) {
+        Ok(meta) if meta.len() >= 200_000 => Ok(dest.to_string_lossy().to_string()),
+        Ok(_) => Err(String::from("下载的安装包不完整，请重试")),
+        Err(error) => Err(format!("找不到下载的安装包: {error}")),
+    }
+}
+
+/// Compare a `vX.Y.Z` (or `X.Y.Z`) tag against the current version.
+fn version_is_newer(latest: &str, current: &str) -> bool {
+    parse_semver(latest) > parse_semver(current)
+}
+
+fn parse_semver(value: &str) -> (u32, u32, u32) {
+    let mut parts = value
+        .trim()
+        .trim_start_matches('v')
+        .split('.')
+        .map(|part| part.trim().parse::<u32>().unwrap_or(0));
+    (
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+        parts.next().unwrap_or(0),
+    )
 }
 
 fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
@@ -1846,6 +2087,8 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         }
         MenuCommand::Appearance => app.appearance_open = true,
         MenuCommand::Options => app.options_open = true,
+        // Handled in the RunMenu arm (needs to return an async Task).
+        MenuCommand::CheckUpdate => {}
         MenuCommand::SplitPane => split_pane(app),
         MenuCommand::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
@@ -3483,6 +3726,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if app.about_open {
         layers.push(opaque(about_dialog_overlay()));
     }
+    if app.update_dialog_open {
+        layers.push(opaque(update_dialog_overlay(app)));
+    }
     if app.appearance_open {
         layers.push(opaque(appearance_dialog_overlay(app)));
     }
@@ -3601,7 +3847,10 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("清屏", MenuCommand::ClearTerminal),
             ("日志", MenuCommand::Logging),
         ],
-        MenuKind::Help => &[("关于", MenuCommand::About)],
+        MenuKind::Help => &[
+            ("检查更新…", MenuCommand::CheckUpdate),
+            ("关于", MenuCommand::About),
+        ],
     }
 }
 
@@ -4196,6 +4445,121 @@ fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .spacing(12),
     )
     .width(Length::Fixed(520.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let body: Element<'_, Message> = match &app.update_state {
+        UpdateState::Idle | UpdateState::Checking => {
+            column![text("正在检查更新…").size(13).color(primary_text())].into()
+        }
+        UpdateState::UpToDate => column![
+            text(format!("已是最新版本（v{current}）"))
+                .size(13)
+                .color(primary_text()),
+        ]
+        .into(),
+        UpdateState::Available(info) => {
+            let mut col = column![
+                text(format!("发现新版本 {}", info.tag))
+                    .size(15)
+                    .color(accent()),
+                text(format!("当前版本 v{current}"))
+                    .size(12)
+                    .color(muted_text()),
+            ]
+            .spacing(6);
+            if !info.notes_url.is_empty() {
+                col = col.push(
+                    button(text("查看发布说明").size(12))
+                        .padding([3, 0])
+                        .style(|_theme, _status| {
+                            base_button_style(transparent(), accent(), transparent())
+                        })
+                        .on_press(Message::OpenReleaseNotes(info.notes_url.clone())),
+                );
+            }
+            let action = if info.installer_url.is_empty() {
+                text("该版本暂无 Windows 安装包")
+                    .size(12)
+                    .color(muted_text())
+                    .into()
+            } else {
+                let btn: Element<'_, Message> = button(text("下载并更新").size(12))
+                    .padding([6, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::StartUpdateDownload)
+                    .into();
+                btn
+            };
+            col.push(Space::new().height(Length::Fixed(4.0)))
+                .push(action)
+                .into()
+        }
+        UpdateState::Downloading => column![
+            text("正在下载安装包…").size(13).color(primary_text()),
+            text("完成后会自动启动安装程序")
+                .size(11)
+                .color(muted_text()),
+        ]
+        .spacing(6)
+        .into(),
+        UpdateState::Launched => column![
+            text("安装程序已启动").size(13).color(primary_text()),
+            text("请按提示完成安装，Adit 会被自动关闭并更新")
+                .size(11)
+                .color(muted_text()),
+        ]
+        .spacing(6)
+        .into(),
+        UpdateState::Error(error) => column![
+            text("检查/更新失败").size(13).color(danger()),
+            text(error.clone()).size(11).color(muted_text()),
+            button(text("重试").size(12))
+                .padding([5, 16])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CheckForUpdates),
+        ]
+        .spacing(8)
+        .into(),
+    };
+
+    let card = container(
+        column![
+            row![
+                text("检查更新").size(18).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseUpdateDialog),
+            ]
+            .align_y(Alignment::Center),
+            body,
+            row![
+                Space::new().width(Fill),
+                button(text("关闭").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CloseUpdateDialog),
+            ],
+        ]
+        .spacing(16),
+    )
+    .width(Length::Fixed(420.0))
     .padding(20)
     .style(|_theme| connection_dialog_style());
 
@@ -7406,6 +7770,17 @@ mod tests {
         let dated = render_log_name("%Y-%M-%D", "x", "h");
         assert!(!dated.contains('%'));
         assert_eq!(dated.len(), "2026-07-08".len());
+    }
+
+    #[test]
+    fn version_compare_detects_newer_releases() {
+        assert!(version_is_newer("v0.1.10", "0.1.9"));
+        assert!(version_is_newer("0.2.0", "0.1.9"));
+        assert!(version_is_newer("v1.0.0", "0.9.9"));
+        assert!(!version_is_newer("v0.1.9", "0.1.9"));
+        assert!(!version_is_newer("v0.1.8", "0.1.9"));
+        // Malformed parts degrade to 0 rather than panicking.
+        assert!(!version_is_newer("garbage", "0.1.0"));
     }
 
     #[test]

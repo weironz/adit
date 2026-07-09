@@ -12,4 +12,6 @@ adit-storage.workspace = true
 adit-terminal.workspace = true
 iced.workspace = true
 rfd = "0.15"
+serde_json.workspace = true
 time = { version = "0.3", features = ["local-offset"] }
+tokio.workspace = true
