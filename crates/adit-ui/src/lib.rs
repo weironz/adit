@@ -163,6 +163,8 @@ pub struct AditApp {
     search_index: Option<usize>,
     renaming_session: Option<SessionId>,
     session_rename_draft: String,
+    dragged_tab: Option<SessionId>,
+    tab_drop_target: Option<SessionId>,
     broadcast_input: bool,
     /// Sessions tiled in the workspace. Empty ⇒ the single-pane view (renders the
     /// active session). 2–4 entries ⇒ split panes. `focused_pane` indexes it and
@@ -369,6 +371,9 @@ pub enum Message {
     ConnectSelectedProfile,
     RetryActiveSession,
     ActivateSession(SessionId),
+    TabPressed(SessionId),
+    TabDragOver(SessionId),
+    TabReleased,
     CloseSession(SessionId),
     RenameSessionPrompt(SessionId),
     SessionRenameChanged(String),
@@ -960,6 +965,8 @@ impl AditApp {
             search_index: None,
             renaming_session: None,
             session_rename_draft: String::new(),
+            dragged_tab: None,
+            tab_drop_target: None,
             broadcast_input: false,
             panes: Vec::new(),
             focused_pane: 0,
@@ -2023,29 +2030,28 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             retry_active_session(app);
         }
         Message::ActivateSession(session_id) => {
-            // In a split, clicking a tab loads that session into the focused pane
-            // (or focuses its existing pane) instead of collapsing the layout.
-            if app.panes.len() >= 2 {
-                if let Some(pos) = app.panes.iter().position(|id| *id == session_id) {
-                    app.focused_pane = pos;
-                } else if app.focused_pane < app.panes.len() {
-                    app.panes[app.focused_pane] = session_id;
-                    let _ = app.manager.resize_session(
-                        session_id,
-                        app.terminal_size.cols,
-                        app.terminal_size.rows,
-                    );
-                }
+            activate_session(app, session_id);
+        }
+        Message::TabPressed(session_id) => {
+            // Clicking a tab activates it and arms a possible drag-reorder.
+            activate_session(app, session_id);
+            app.dragged_tab = Some(session_id);
+            app.tab_drop_target = None;
+        }
+        Message::TabDragOver(session_id) => {
+            if app
+                .dragged_tab
+                .is_some_and(|dragged| dragged != session_id)
+            {
+                app.tab_drop_target = Some(session_id);
             }
-            if let Err(error) = app.manager.activate(session_id) {
-                app.last_error = Some(error.to_string());
-            } else {
-                app.terminal_focused = true;
-                app.terminal_scroll_offset = 0;
-                app.terminal_selection = None;
-                app.terminal_context_menu = false;
-                sync_terminal_size(app);
+        }
+        Message::TabReleased => {
+            if let (Some(dragged), Some(target)) = (app.dragged_tab, app.tab_drop_target) {
+                app.manager.move_session(dragged, target);
             }
+            app.dragged_tab = None;
+            app.tab_drop_target = None;
         }
         Message::CloseSession(session_id) => {
             app.manager.close(session_id);
@@ -4179,6 +4185,32 @@ fn close_pane(app: &mut AditApp, index: usize) {
     app.terminal_selection = None;
     app.terminal_context_menu = false;
     sync_terminal_size(app);
+}
+
+/// Activate a session (from a tab click). In a split, load it into the focused
+/// pane instead of collapsing the layout.
+fn activate_session(app: &mut AditApp, session_id: SessionId) {
+    if app.panes.len() >= 2 {
+        if let Some(pos) = app.panes.iter().position(|id| *id == session_id) {
+            app.focused_pane = pos;
+        } else if app.focused_pane < app.panes.len() {
+            app.panes[app.focused_pane] = session_id;
+            let _ = app.manager.resize_session(
+                session_id,
+                app.terminal_size.cols,
+                app.terminal_size.rows,
+            );
+        }
+    }
+    if let Err(error) = app.manager.activate(session_id) {
+        app.last_error = Some(error.to_string());
+    } else {
+        app.terminal_focused = true;
+        app.terminal_scroll_offset = 0;
+        app.terminal_selection = None;
+        app.terminal_context_menu = false;
+        sync_terminal_size(app);
+    }
 }
 
 /// Focus a pane: make its session active and reset per-pane scroll/selection.
@@ -7683,7 +7715,11 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
         .sessions()
         .into_iter()
         .fold(row![].spacing(2).height(TAB_BAR_HEIGHT), |tabs, session| {
-            tabs.push(tab_button(session, app.manager.active_session()))
+            tabs.push(tab_button(
+                session,
+                app.manager.active_session(),
+                app.tab_drop_target,
+            ))
         });
 
     // Split panes: 2–4 tiled sessions. Otherwise the single-pane view, left
@@ -7933,36 +7969,35 @@ fn active_session_action(app: &AditApp) -> Element<'_, Message> {
 fn tab_button(
     session: SessionSummary,
     active_session: Option<SessionId>,
+    drop_target: Option<SessionId>,
 ) -> Element<'static, Message> {
-    let active = Some(session.id) == active_session;
+    let id = session.id;
+    let active = Some(id) == active_session;
+    let is_drop = drop_target == Some(id);
 
+    // The whole pill is a mouse_area (click = activate, drag = reorder); only the
+    // close × stays a button so it can consume its own click.
     let inner = row![
-        button(
-            row![
-                text("●").size(10).color(status_color(session.status)),
-                text(session.title).size(12).color(primary_text()),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
-        )
-        .padding([5, 6])
-        .style(|_theme, status| tab_title_button_style(status))
-        .on_press(Message::ActivateSession(session.id)),
+        text("●").size(10).color(status_color(session.status)),
+        text(session.title).size(12).color(primary_text()),
         button(text("×").size(15))
             .padding([2, 7])
             .style(|_theme, status| tab_close_button_style(status))
-            .on_press(Message::CloseSession(session.id)),
+            .on_press(Message::CloseSession(id)),
     ]
-    .spacing(1)
+    .spacing(6)
     .align_y(Alignment::Center);
 
-    // Right-click a tab to rename it.
     mouse_area(
         container(inner)
-            .padding([1, 4])
-            .style(move |_theme| tab_container_style(active)),
+            .padding([2, 6])
+            .style(move |_theme| tab_container_style_dnd(active, is_drop)),
     )
-    .on_right_press(Message::RenameSessionPrompt(session.id))
+    .on_press(Message::TabPressed(id))
+    .on_release(Message::TabReleased)
+    .on_enter(Message::TabDragOver(id))
+    .on_right_press(Message::RenameSessionPrompt(id))
+    .interaction(mouse::Interaction::Pointer)
     .into()
 }
 
@@ -8577,24 +8612,26 @@ fn menu_button_style(active: bool, status: button::Status) -> button::Style {
 
 /// The whole-tab pill: an accent-bordered surface when active, a flat chip
 /// otherwise. The title and close controls share this single background.
-fn tab_container_style(active: bool) -> container::Style {
-    let background = if active { surface() } else { surface_alt() };
-    let border_color = if active { accent() } else { border_color() };
+/// Tab pill style; `drop_target` highlights the tab a dragged tab will drop onto.
+fn tab_container_style_dnd(active: bool, drop_target: bool) -> container::Style {
+    let background = if drop_target {
+        accent_soft()
+    } else if active {
+        surface()
+    } else {
+        surface_alt()
+    };
+    let border_color = if active || drop_target {
+        accent()
+    } else {
+        border_color()
+    };
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(RADIUS_SM, 1.0, border_color),
+        border: border(RADIUS_SM, if drop_target { 1.5 } else { 1.0 }, border_color),
         ..container::Style::default()
     }
-}
-
-/// Transparent inner button for the tab title (the pill provides the surface).
-fn tab_title_button_style(status: button::Status) -> button::Style {
-    let background = match status {
-        button::Status::Hovered => panel_background_hover(),
-        _ => transparent(),
-    };
-    base_button_style(background, primary_text(), transparent())
 }
 
 /// Subtle close glyph that hugs the title and lifts gently on hover.

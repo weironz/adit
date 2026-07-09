@@ -210,6 +210,9 @@ pub struct SessionManager {
     active_session: Option<SessionId>,
     auto_reconnect: bool,
     connect_timeout_secs: u64,
+    /// Tab display order (session_ids), maintained on open/close/reorder so tabs
+    /// are stable and user-orderable (the session map itself is unordered).
+    order: Vec<SessionId>,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
@@ -268,6 +271,7 @@ impl SessionManager {
             active_session: None,
             auto_reconnect: true,
             connect_timeout_secs: 20,
+            order: Vec::new(),
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
@@ -580,10 +584,37 @@ impl SessionManager {
 
     #[must_use]
     pub fn sessions(&self) -> Vec<SessionSummary> {
-        self.sessions
-            .values()
+        // Iterate in the stable, user-orderable tab order; append any sessions
+        // missing from `order` (defensive) so none is ever dropped.
+        let mut summaries: Vec<SessionSummary> = self
+            .order
+            .iter()
+            .filter_map(|id| self.sessions.get(id))
             .map(|record| record.summary.clone())
-            .collect()
+            .collect();
+        for (id, record) in &self.sessions {
+            if !self.order.contains(id) {
+                summaries.push(record.summary.clone());
+            }
+        }
+        summaries
+    }
+
+    /// Move the `dragged` tab to just before `target` in the tab order.
+    pub fn move_session(&mut self, dragged: SessionId, target: SessionId) {
+        if dragged == target {
+            return;
+        }
+        let Some(from) = self.order.iter().position(|id| *id == dragged) else {
+            return;
+        };
+        let id = self.order.remove(from);
+        let insert_at = self
+            .order
+            .iter()
+            .position(|s| *s == target)
+            .unwrap_or(self.order.len());
+        self.order.insert(insert_at, id);
     }
 
     #[must_use]
@@ -627,6 +658,7 @@ impl SessionManager {
                 reconnect: None,
             },
         );
+        self.order.push(session_id);
         self.active_session = Some(session_id);
 
         Ok(session_id)
@@ -715,6 +747,7 @@ impl SessionManager {
                 reconnect,
             },
         );
+        self.order.push(session_id);
         self.active_session = Some(session_id);
 
         Ok(session_id)
@@ -829,6 +862,7 @@ impl SessionManager {
                 reconnect: None,
             },
         );
+        self.order.push(session_id);
         self.active_session = Some(session_id);
 
         session_id
@@ -851,9 +885,10 @@ impl SessionManager {
         }
 
         self.sessions.remove(&session_id);
+        self.order.retain(|id| *id != session_id);
 
         if self.active_session == Some(session_id) {
-            self.active_session = self.sessions.keys().next().copied();
+            self.active_session = self.order.first().copied();
         }
     }
 
@@ -2382,6 +2417,26 @@ mod tests {
 
         let blank = log_file_name("///", id);
         assert!(blank.starts_with("session_"), "got {blank}");
+    }
+
+    #[test]
+    fn tab_order_tracks_open_reorder_and_close() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        let a = manager.open_mock_session(profile_id).unwrap();
+        let b = manager.open_mock_session(profile_id).unwrap();
+        let c = manager.open_mock_session(profile_id).unwrap();
+
+        let order = |m: &SessionManager| m.sessions().iter().map(|s| s.id).collect::<Vec<_>>();
+        assert_eq!(order(&manager), vec![a, b, c]);
+
+        // Drag c before a.
+        manager.move_session(c, a);
+        assert_eq!(order(&manager), vec![c, a, b]);
+
+        // Closing a keeps the rest in order.
+        manager.close(a);
+        assert_eq!(order(&manager), vec![c, b]);
     }
 
     #[test]
