@@ -131,6 +131,9 @@ pub struct AditApp {
     terminal_click: Option<(TerminalPoint, Instant, u8)>,
     terminal_context_menu: bool,
     terminal_scroll_offset: usize,
+    // Latest keyboard modifier state, so wheel handling can tell a plain scroll
+    // from a Ctrl+wheel zoom.
+    modifiers: keyboard::Modifiers,
     window_width: f32,
     window_height: f32,
     sidebar_width: f32,
@@ -353,6 +356,7 @@ pub enum Message {
     SortProfiles(ProfileSortKey),
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
+    ModifiersChanged(keyboard::Modifiers),
     WindowResized { width: f32, height: f32 },
     ToggleSidebar,
     BeginSidebarDrag,
@@ -942,6 +946,7 @@ impl AditApp {
             terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
+            modifiers: keyboard::Modifiers::empty(),
             window_width,
             window_height,
             sidebar_width,
@@ -1109,6 +1114,11 @@ fn runtime_event(
     _window: window::Id,
 ) -> Option<Message> {
     match event {
+        // Track modifier state unconditionally so Ctrl+wheel zoom works even
+        // when a widget would otherwise consume the keyboard event.
+        event::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+            Some(Message::ModifiersChanged(modifiers))
+        }
         event::Event::Keyboard(event) if status == event::Status::Ignored => {
             Some(Message::KeyboardInput(event))
         }
@@ -1177,10 +1187,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             sync_terminal_size(app);
         }
         Message::FontSizeStep(delta) => {
-            let next = (app.font_size as i32 + delta)
-                .clamp(MIN_FONT_SIZE as i32, MAX_FONT_SIZE as i32);
-            app.font_size = next as f32;
-            sync_terminal_size(app);
+            step_font_size(app, delta);
+        }
+        Message::ModifiersChanged(modifiers) => {
+            app.modifiers = modifiers;
         }
         Message::ColorSchemeChanged(index) => {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
@@ -1921,6 +1931,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::TerminalScrolled(delta) => {
             app.terminal_focused = true;
+            // Ctrl+wheel zooms the terminal font (wheel up = larger), like most
+            // terminal emulators — this takes priority over scrolling/reporting.
+            if app.modifiers.control() {
+                if let Some(lines) = scroll_delta_to_rows(delta) {
+                    step_font_size(app, if lines > 0 { 1 } else { -1 });
+                    app.notice = format!("终端字号 {}px", app.font_size as i32);
+                }
+                return Task::none();
+            }
             // Forward the wheel to a mouse-reporting app instead of scrolling
             // local history.
             if mouse_reporting_active(app) {
@@ -4220,6 +4239,14 @@ fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> Termi
         region_w - TERMINAL_PANEL_PADDING * 2.0,
         region_h - TERMINAL_PANEL_PADDING * 2.0,
     )
+}
+
+/// Adjust the terminal font size by `delta` px, clamped to the sane range, and
+/// re-fit the grid. Shared by the appearance dialog's +/- and Ctrl+wheel zoom.
+fn step_font_size(app: &mut AditApp, delta: i32) {
+    let next = (app.font_size as i32 + delta).clamp(MIN_FONT_SIZE as i32, MAX_FONT_SIZE as i32);
+    app.font_size = next as f32;
+    sync_terminal_size(app);
 }
 
 fn sync_terminal_size(app: &mut AditApp) {
