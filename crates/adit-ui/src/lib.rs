@@ -7723,7 +7723,6 @@ fn tree_group_row(
     mouse_area(
         container(
             row![
-                Space::new().width(Length::Fixed(10.0)),
                 text(arrow).size(11).color(muted_text()),
                 text(group_label).size(12).color(muted_text()),
                 Space::new().width(Fill),
@@ -7732,7 +7731,7 @@ fn tree_group_row(
             .spacing(6)
             .align_y(Alignment::Center),
         )
-        .padding([6, 6])
+        .padding([6, 8])
         .width(Fill)
         .style(move |_theme| group_row_style(drop_target)),
     )
