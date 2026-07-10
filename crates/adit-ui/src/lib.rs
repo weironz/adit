@@ -83,8 +83,12 @@ pub struct AditApp {
     group_drop: Option<String>,
     group_drop_target: Option<String>,
     group_context_menu: Option<String>,
+    // Inline rename: the folder / session whose name is being edited in place (in
+    // the row itself, not a separate popup), plus the working text.
     editing_group: Option<String>,
     group_name_draft: String,
+    editing_profile: Option<ProfileId>,
+    profile_name_draft: String,
     profile_context_menu: Option<ProfileId>,
     profile_editor: Option<ProfileId>,
     connection_dialog: Option<ConnectionDialog>,
@@ -309,6 +313,11 @@ pub enum Message {
     ShowProfileContextMenu(ProfileId),
     HideProfileContextMenu,
     SidebarCursorMoved(Point),
+    // Inline session rename (edits the name in the sidebar row, no popup).
+    RenameProfileFromContext(ProfileId),
+    ProfileNameDraftChanged(String),
+    SaveProfileRename,
+    CancelProfileRename,
     EditProfileFromContext(ProfileId),
     CloseProfileEditor,
     ConnectProfileFromContext(ProfileId),
@@ -959,6 +968,8 @@ impl AditApp {
             group_context_menu: None,
             editing_group: None,
             group_name_draft: String::new(),
+            editing_profile: None,
+            profile_name_draft: String::new(),
             profile_context_menu: None,
             profile_editor: None,
             connection_dialog: None,
@@ -1383,6 +1394,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
+            cancel_inline_rename(app);
             close_profile_editor_if_other(app, profile_id);
         }
         Message::ProfileDoubleClicked(profile_id) => {
@@ -1517,14 +1529,21 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_context_menu = None;
             app.profile_editor = None;
             app.terminal_context_menu = false;
+            cancel_inline_rename(app);
         }
         Message::HideGroupContextMenu => {
             app.group_context_menu = None;
         }
         Message::RenameGroupFromContext(group) => {
+            // Blur the terminal so keys the rename input ignores don't leak to the
+            // active session (the session-rename path gets this via select_profile).
+            app.terminal_focused = false;
             app.group_context_menu = None;
+            app.editing_profile = None;
+            app.profile_name_draft.clear();
             app.editing_group = Some(group.clone());
             app.group_name_draft = group;
+            return focus_rename_input();
         }
         Message::NewProfileInGroup(group) => {
             app.group_context_menu = None;
@@ -1544,6 +1563,30 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.editing_group = None;
             app.group_name_draft.clear();
         }
+        Message::RenameProfileFromContext(profile_id) => {
+            select_profile(app, profile_id);
+            app.profile_context_menu = None;
+            app.editing_group = None;
+            app.group_name_draft.clear();
+            let current = app
+                .manager
+                .profile(profile_id)
+                .map(|profile| profile.name.clone())
+                .unwrap_or_default();
+            app.editing_profile = Some(profile_id);
+            app.profile_name_draft = current;
+            return focus_rename_input();
+        }
+        Message::ProfileNameDraftChanged(value) => {
+            app.profile_name_draft = value;
+        }
+        Message::SaveProfileRename => {
+            save_profile_rename(app);
+        }
+        Message::CancelProfileRename => {
+            app.editing_profile = None;
+            app.profile_name_draft.clear();
+        }
         Message::ShowProfileContextMenu(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = None;
@@ -1553,6 +1596,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_context_menu = Some(profile_id);
             app.group_context_menu = None;
             app.terminal_context_menu = false;
+            cancel_inline_rename(app);
         }
         Message::HideProfileContextMenu => {
             app.profile_context_menu = None;
@@ -1863,12 +1907,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.cursor_pos.x,
                 app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
             ));
-            // A folder press cancels any in-flight session drag / menus.
+            // A folder press cancels any in-flight session drag / menus / rename.
             app.dragged_profile = None;
             app.profile_drag_active = false;
             app.profile_drop = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
+            cancel_inline_rename(app);
         }
         Message::ProfileGroupChanged(value) => {
             app.terminal_focused = false;
@@ -1906,6 +1951,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.profile_port = String::from("3389");
             } else if protocol == Protocol::Ssh && port == "3389" {
                 app.profile_port = String::from("22");
+            }
+            // SSH defaults to password auth; only upgrade the implicit "Auto" so an
+            // explicit Key/Agent choice is preserved.
+            if protocol == Protocol::Ssh && app.profile_auth_method == AuthMethod::Auto {
+                app.profile_auth_method = AuthMethod::Password;
             }
             app.profile_protocol = protocol;
         }
@@ -2008,6 +2058,16 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.search_matches.clear();
                 app.search_index = None;
                 app.terminal_focused = true;
+                return Task::none();
+            }
+            // Escape cancels an in-place rename (the focused text input ignores
+            // Escape, so the key reaches us here).
+            if is_escape_key(&event) && (app.editing_profile.is_some() || app.editing_group.is_some())
+            {
+                app.editing_profile = None;
+                app.profile_name_draft.clear();
+                app.editing_group = None;
+                app.group_name_draft.clear();
                 return Task::none();
             }
 
@@ -3052,6 +3112,8 @@ fn load_selected_profile(app: &mut AditApp) {
 }
 
 fn new_profile_draft(app: &mut AditApp) {
+    // Starting a new session ends any in-place rename in progress.
+    cancel_inline_rename(app);
     let name = next_profile_name(app);
     let group = active_profile_group(app);
     match app.manager.create_profile(
@@ -3060,7 +3122,8 @@ fn new_profile_draft(app: &mut AditApp) {
         "127.0.0.1",
         22,
         "root",
-        AuthMethod::Auto,
+        // New sessions default to SSH, which defaults to password auth.
+        AuthMethod::Password,
         "",
     ) {
         Ok(profile_id) => {
@@ -3084,6 +3147,8 @@ fn new_profile_draft(app: &mut AditApp) {
 }
 
 fn new_group_draft(app: &mut AditApp) {
+    // Starting a new folder ends any in-place rename in progress.
+    cancel_inline_rename(app);
     let group = next_group_name(app);
     add_group(&mut app.groups, &group);
     app.collapsed_groups.remove(&group);
@@ -3095,6 +3160,43 @@ fn new_group_draft(app: &mut AditApp) {
 
     if persist_profiles(app) {
         app.notice = format!("分组已创建: {group}");
+    }
+}
+
+/// Drop any in-place rename in progress (folder or session) without saving.
+fn cancel_inline_rename(app: &mut AditApp) {
+    app.editing_profile = None;
+    app.profile_name_draft.clear();
+    app.editing_group = None;
+    app.group_name_draft.clear();
+}
+
+fn save_profile_rename(app: &mut AditApp) {
+    let Some(profile_id) = app.editing_profile else {
+        return;
+    };
+    let name = app.profile_name_draft.trim().to_string();
+    if name.is_empty() {
+        app.last_error = Some(String::from("会话名称不能为空"));
+        return;
+    }
+
+    match app.manager.rename_profile(profile_id, name.clone()) {
+        Ok(()) => {
+            app.editing_profile = None;
+            app.profile_name_draft.clear();
+            app.last_error = None;
+            // Keep the editor form's name field in sync if it is open on this row.
+            if app.selected_profile == Some(profile_id) {
+                app.profile_name = name;
+            }
+            if persist_profiles(app) {
+                app.notice = String::from("会话已重命名");
+            }
+        }
+        Err(error) => {
+            app.last_error = Some(error.to_string());
+        }
     }
 }
 
@@ -3310,6 +3412,8 @@ fn delete_selected_profile(app: &mut AditApp) {
         Ok(()) => {
             app.profile_context_menu = None;
             app.profile_editor = None;
+            // The deleted row can't cancel its own in-place rename, so do it here.
+            cancel_inline_rename(app);
             app.selected_profile = app.manager.profiles().first().map(|profile| profile.id);
             app.last_error = None;
             let credential_cleanup = app
@@ -4094,6 +4198,19 @@ fn search_input_id() -> iced::advanced::widget::Id {
 fn focus_search_input() -> Task<Message> {
     iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
         search_input_id(),
+    ))
+}
+
+/// The shared id of the in-place rename text input (only one folder or session
+/// is ever renamed at a time).
+fn rename_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("sidebar-inline-rename")
+}
+
+/// A Task that moves keyboard focus to the in-place rename input.
+fn focus_rename_input() -> Task<Message> {
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
+        rename_input_id(),
     ))
 }
 
@@ -7824,23 +7941,28 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                     .filter(|candidate| candidate.group == group)
                     .count();
                 let group_drop_target = app.group_drop_target.as_deref() == Some(group.as_str());
-                // A folder-reorder insertion line above the header (dragging up)
-                // or below the whole block (dragging down).
-                let (line_before, line_after) = folder_reorder_lines(app, &folders, &group);
+                let editing = app.editing_group.as_deref() == Some(group.as_str());
+                // A folder-reorder insertion line above the header (dragging up) or
+                // below the whole block (dragging down). Suppressed while renaming.
+                let (line_before, line_after) = if editing {
+                    (false, false)
+                } else {
+                    folder_reorder_lines(app, &folders, &group)
+                };
                 if line_before {
                     profiles = profiles.push(drop_line());
                 }
-                profiles = profiles.push(tree_group_row(
-                    group.clone(),
-                    collapsed,
-                    group_count,
-                    group_drop_target,
-                ));
-
-                // The folder context menu is a floating overlay (see the view
-                // layers), not pushed inline.
-                if app.editing_group.as_deref() == Some(group.as_str()) {
-                    profiles = profiles.push(group_edit_menu(app));
+                if editing {
+                    // Rename in place: the header itself becomes an editable field.
+                    profiles = profiles
+                        .push(tree_group_edit_row(app.group_name_draft.clone(), collapsed));
+                } else {
+                    profiles = profiles.push(tree_group_row(
+                        group.clone(),
+                        collapsed,
+                        group_count,
+                        group_drop_target,
+                    ));
                 }
                 if !collapsed {
                     for profile in &group_profiles {
@@ -8039,31 +8161,82 @@ fn group_context_overlay(app: &AditApp, group: String, collapsed: bool) -> Eleme
     )
 }
 
-fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
+/// A compact confirm (✓) / cancel (✕) button for an in-place rename row.
+fn inline_edit_button(glyph: &'static str, message: Message, primary: bool) -> Element<'static, Message> {
+    button(text(glyph).size(12))
+        .padding([2, 6])
+        .style(move |_theme, status| {
+            if primary {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(message)
+        .into()
+}
+
+/// A folder header in rename mode: the name is edited in place (no popup), with
+/// Enter / ✓ to save and Esc / ✕ to cancel.
+fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'static, Message> {
+    let arrow = if collapsed { "▸" } else { "▾" };
     container(
         row![
-            Space::new().width(Length::Fixed(42.0)),
-            text_input("Group name", &app.group_name_draft)
+            text(arrow).size(11).color(muted_text()),
+            text_input("分组名称", &draft)
+                .id(rename_input_id())
                 .on_input(Message::GroupNameDraftChanged)
                 .on_submit(Message::SaveGroupRename)
-                .padding([4, 6])
+                .padding([2, 6])
+                .size(12)
                 .style(text_input_style)
                 .width(Fill),
-            button("保存")
-                .padding([4, 8])
-                .style(|_theme, status| primary_button_style(status))
-                .on_press(Message::SaveGroupRename),
-            button("取消")
-                .padding([4, 8])
-                .style(|_theme, status| secondary_button_style(status))
-                .on_press(Message::CancelGroupRename),
+            inline_edit_button("✓", Message::SaveGroupRename, true),
+            inline_edit_button("✕", Message::CancelGroupRename, false),
         ]
-        .spacing(4)
+        .spacing(6)
         .align_y(Alignment::Center),
     )
-    .padding([4, 6])
+    .padding([4, 8])
     .width(Fill)
-    .style(|_theme| profile_edit_menu_style())
+    .style(move |_theme| group_row_style(false))
+    .into()
+}
+
+/// A session row in rename mode: the name line becomes an editable field in place
+/// (no popup), with Enter / ✓ to save and Esc / ✕ to cancel.
+fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -> Element<'static, Message> {
+    let endpoint = if profile.username.trim().is_empty() {
+        profile.host.clone()
+    } else {
+        format!("{}@{}", profile.username, profile.host)
+    };
+    container(
+        row![
+            Space::new().width(Length::Fixed(4.0)),
+            avatar(&profile.name),
+            column![
+                text_input("会话名称", &draft)
+                    .id(rename_input_id())
+                    .on_input(Message::ProfileNameDraftChanged)
+                    .on_submit(Message::SaveProfileRename)
+                    .padding([2, 6])
+                    .size(12)
+                    .style(text_input_style)
+                    .width(Fill),
+                text(endpoint).size(10).color(muted_text()),
+            ]
+            .spacing(0),
+            inline_edit_button("✓", Message::SaveProfileRename, true),
+            inline_edit_button("✕", Message::CancelProfileRename, false),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .height(Length::Fixed(PROFILE_ROW_HEIGHT))
+    .width(Fill)
+    .padding([2, 8])
+    .style(move |_theme| tree_item_container_style(true, false, false))
     .into()
 }
 
@@ -8071,6 +8244,10 @@ fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
 /// list and every group. During a drag the row stays put (SecureCRT-style) and
 /// only an insertion line marks where the drop will land.
 fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
+    // Rename in place: the row's name becomes an editable field (no popup).
+    if app.editing_profile == Some(profile.id) {
+        return tree_profile_edit_row(profile.clone(), app.profile_name_draft.clone());
+    }
     // The dragged row stays in place (SecureCRT-style); only an insertion line at
     // the target shows where it will land. It reads as selected while dragging.
     let selected = Some(profile.id) == app.selected_profile;
@@ -8279,13 +8456,14 @@ fn avatar_style(color: Color) -> container::Style {
 }
 
 const PROFILE_MENU_WIDTH: f32 = 168.0;
-const PROFILE_MENU_HEIGHT: f32 = 132.0;
+const PROFILE_MENU_HEIGHT: f32 = 162.0;
 
 /// The context-menu card (used inside the floating overlay).
 fn profile_context_menu(profile_id: ProfileId) -> Element<'static, Message> {
     container(
         column![
             profile_menu_item("连接", Message::ConnectProfileFromContext(profile_id), false),
+            profile_menu_item("重命名", Message::RenameProfileFromContext(profile_id), false),
             profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false),
             profile_menu_item("克隆", Message::CloneProfileFromContext(profile_id), false),
             profile_menu_divider(),

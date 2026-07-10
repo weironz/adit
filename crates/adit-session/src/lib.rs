@@ -865,6 +865,35 @@ impl SessionManager {
         }
     }
 
+    /// Rename a profile in place (just its display name). Open auto-titled tabs
+    /// follow the new name, exactly like `update_profile` does.
+    pub fn rename_profile(
+        &mut self,
+        profile_id: ProfileId,
+        name: impl Into<String>,
+    ) -> Result<(), SessionError> {
+        let name = name.into();
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err(SessionError::Unsupported(String::from("会话名称不能为空")));
+        }
+        let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) else {
+            return Err(SessionError::ProfileNotFound);
+        };
+        let old_base = profile.name.clone();
+        profile.name = trimmed.to_string();
+        let base = profile.name.clone();
+        for record in self.sessions.values_mut() {
+            if record.summary.profile_id == profile_id
+                && is_auto_session_title(&record.summary.title, &old_base)
+            {
+                record.summary.title = base.clone();
+            }
+        }
+        self.renumber_profile_tabs(profile_id);
+        Ok(())
+    }
+
     pub fn set_profile_startup_command(
         &mut self,
         profile_id: ProfileId,
@@ -2611,6 +2640,25 @@ mod tests {
         // c is excluded from the family, so d stays bare and e is the first dup.
         assert_eq!(title(&manager, d), base);
         assert_eq!(title(&manager, e), format!("{base} (1)"));
+    }
+
+    #[test]
+    fn rename_profile_updates_name_and_auto_titled_tabs() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        let title = |m: &SessionManager, id| m.session_summary(id).unwrap().title;
+
+        // An open, auto-titled tab follows the rename.
+        let a = manager.open_mock_session(profile_id).unwrap();
+        manager.rename_profile(profile_id, "prod-web").unwrap();
+        assert_eq!(manager.profile(profile_id).unwrap().name, "prod-web");
+        assert_eq!(title(&manager, a), "prod-web");
+
+        // Whitespace is trimmed; an empty (or blank) name is rejected.
+        manager.rename_profile(profile_id, "  spaced  ").unwrap();
+        assert_eq!(manager.profile(profile_id).unwrap().name, "spaced");
+        assert!(manager.rename_profile(profile_id, "   ").is_err());
+        assert_eq!(manager.profile(profile_id).unwrap().name, "spaced");
     }
 
     #[test]
