@@ -56,6 +56,7 @@ fn is_dark() -> bool {
     DARK_MODE.load(Ordering::Relaxed)
 }
 use std::{collections::BTreeSet, time::Duration};
+use unicode_width::UnicodeWidthChar;
 
 pub struct AditApp {
     manager: SessionManager,
@@ -69,6 +70,12 @@ pub struct AditApp {
     // Sidebar-relative cursor position while a profile drag is in flight, so the
     // floating "ghost" card can follow the pointer.
     profile_drag_cursor: Option<Point>,
+    // The press point, and whether the pointer has moved far enough to count as a
+    // real drag. Drag visuals (ghost/gap/zones) only appear once active, so a
+    // plain click or double-click never mutates the tree (which would drop the
+    // row's click-tracking and swallow the double-click).
+    profile_drag_origin: Option<Point>,
+    profile_drag_active: bool,
     group_drop_target: Option<String>,
     group_context_menu: Option<String>,
     editing_group: Option<String>,
@@ -928,6 +935,8 @@ impl AditApp {
             dragged_profile: None,
             profile_drop: None,
             profile_drag_cursor: None,
+            profile_drag_origin: None,
+            profile_drag_active: false,
             group_drop_target: None,
             group_context_menu: None,
             editing_group: None,
@@ -1327,12 +1336,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             select_profile(app, profile_id);
             app.dragged_profile = Some(profile_id);
             app.profile_drop = None;
-            // Seed the floating ghost at the press point (cursor_pos is window
+            app.profile_drag_active = false;
+            // Seed the ghost origin at the press point (cursor_pos is window
             // absolute; the sidebar starts just below the menu bar + toolbar).
-            app.profile_drag_cursor = Some(Point::new(
+            let seed = Point::new(
                 app.cursor_pos.x,
                 app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
-            ));
+            );
+            app.profile_drag_cursor = Some(seed);
+            app.profile_drag_origin = Some(seed);
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -1341,6 +1353,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileDoubleClicked(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = None;
+            app.profile_drag_active = false;
+            app.profile_drag_origin = None;
+            app.profile_drag_cursor = None;
+            app.profile_drop = None;
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -1492,6 +1508,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.cursor_pos = Point::new(point.x, point.y + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT);
             if app.dragged_profile.is_some() {
                 app.profile_drag_cursor = Some(point);
+                // Promote to a real drag once the pointer leaves a small dead zone
+                // around the press point — a click/double-click stays inside it.
+                if let Some(origin) = app.profile_drag_origin {
+                    if point.distance(origin) > 5.0 {
+                        app.profile_drag_active = true;
+                    }
+                }
             }
         }
         Message::EditProfileFromContext(profile_id) => {
@@ -2718,6 +2741,9 @@ fn place_ungrouped_at(
 /// A plain click leaves `profile_drop` unset, so nothing moves.
 fn finish_profile_drag(app: &mut AditApp) {
     app.profile_drag_cursor = None;
+    app.profile_drag_origin = None;
+    let was_active = app.profile_drag_active;
+    app.profile_drag_active = false;
     let Some(source_id) = app.dragged_profile.take() else {
         app.profile_drop = None;
         app.group_drop_target = None;
@@ -2725,6 +2751,10 @@ fn finish_profile_drag(app: &mut AditApp) {
     };
     let drop = app.profile_drop.take();
     app.group_drop_target = None;
+    // A press without a real drag (e.g. a click or double-click) never moves.
+    if !was_active {
+        return;
+    }
 
     let result = match drop {
         Some(ProfileDrop::IntoGroup(group)) => app.manager.move_profile_to_group(source_id, group),
@@ -7468,9 +7498,9 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     }
     entries.sort_by_key(|(key, _)| *key);
 
-    // A drag exposes drop zones at the very top and very bottom so a session can
-    // be pulled out of any folder to the top level.
-    if app.dragged_profile.is_some() {
+    // A real drag exposes drop zones at the very top and very bottom so a session
+    // can be pulled out of any folder to the top level.
+    if app.profile_drag_active {
         profiles = profiles.push(top_level_drop_zone(
             app.profile_drop == Some(ProfileDrop::TopLevel),
         ));
@@ -7525,7 +7555,7 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
-    if app.dragged_profile.is_some() {
+    if app.profile_drag_active {
         profiles = profiles.push(bottom_level_drop_zone(
             app.profile_drop == Some(ProfileDrop::BottomLevel),
         ));
@@ -7600,8 +7630,11 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     let panel = container(content)
         .height(Fill)
         .style(|_theme| sidebar_style());
-    let layered: Element<'_, Message> = match (app.dragged_profile, app.profile_drag_cursor) {
-        (Some(_), Some(position)) => stack![panel, profile_drag_ghost(app, position)].into(),
+    // Only overlay the ghost once the drag is active; wrapping the panel in a
+    // stack changes the row widgets' tree path, which would otherwise reset their
+    // click-tracking and swallow a double-click.
+    let layered: Element<'_, Message> = match (app.profile_drag_active, app.profile_drag_cursor) {
+        (true, Some(position)) => stack![panel, profile_drag_ghost(app, position)].into(),
         _ => panel.into(),
     };
     mouse_area(layered)
@@ -7803,7 +7836,9 @@ fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
 /// empty "gap" its neighbours squeeze around (the row itself floats as the
 /// ghost). Shared by the ungrouped top-level list and every group.
 fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
-    if Some(profile.id) == app.dragged_profile {
+    // Only turn the dragged row into a gap once the drag is active; on a plain
+    // press the row must stay a normal row so a double-click still registers.
+    if app.profile_drag_active && Some(profile.id) == app.dragged_profile {
         return profile_drag_gap();
     }
     let selected = Some(profile.id) == app.selected_profile;
@@ -7811,15 +7846,19 @@ fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'s
     let row = tree_profile_row(profile.clone(), selected, hovered, false);
 
     // An insertion line above or below this row when it is the drop target.
-    let (before, after) = match &app.profile_drop {
-        Some(ProfileDrop::Beside {
-            profile_id,
-            position,
-        }) if *profile_id == profile.id => match position {
-            ProfileDropPosition::Before => (true, false),
-            ProfileDropPosition::After => (false, true),
-        },
-        _ => (false, false),
+    let (before, after) = if !app.profile_drag_active {
+        (false, false)
+    } else {
+        match &app.profile_drop {
+            Some(ProfileDrop::Beside {
+                profile_id,
+                position,
+            }) if *profile_id == profile.id => match position {
+                ProfileDropPosition::Before => (true, false),
+                ProfileDropPosition::After => (false, true),
+            },
+            _ => (false, false),
+        }
     };
     if !before && !after {
         return row;
@@ -8946,6 +8985,10 @@ fn terminal_line(
         };
 
         for ch in cell.text.chars() {
+            // A CJK/wide glyph occupies two grid columns; size its cell to two so
+            // it doesn't overflow into (and garble) the next column, and advance
+            // the column counter by two to keep selection/hit-testing aligned.
+            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
             let selected = selected_range.is_some_and(|range| col >= range.0 && col < range.1);
             let search_hit = search
                 .iter()
@@ -8983,10 +9026,11 @@ fn terminal_line(
             };
 
             // Fixed-size cell so the rendered grid exactly matches the
-            // pixel→cell hit-testing used for selection (no drift).
+            // pixel→cell hit-testing used for selection (no drift). Wide glyphs
+            // span two columns.
             row_widget = row_widget.push(
                 container(label)
-                    .width(Length::Fixed(cell_w))
+                    .width(Length::Fixed(cell_w * ch_width as f32))
                     .height(Length::Fixed(cell_h))
                     .style(move |_theme| container::Style {
                         background: background.map(Background::Color),
@@ -8994,7 +9038,7 @@ fn terminal_line(
                     }),
             );
 
-            col += 1;
+            col += ch_width;
         }
     }
 
