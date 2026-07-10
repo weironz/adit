@@ -87,6 +87,9 @@ pub struct AditApp {
     profile_port: String,
     profile_username: String,
     profile_auth_method: AuthMethod,
+    // Password-auth password for the editor. Held only in memory + the OS
+    // credential vault; never serialized to profiles.json.
+    profile_password: String,
     profile_protocol: Protocol,
     profile_identity_file: String,
     profile_startup_command: String,
@@ -355,6 +358,7 @@ pub enum Message {
     ProfilePortChanged(String),
     ProfileUsernameChanged(String),
     ProfileAuthMethodChanged(AuthMethod),
+    ProfilePasswordChanged(String),
     ProfileProtocolChanged(Protocol),
     ProfileIdentityFileChanged(String),
     PickIdentityFile,
@@ -940,6 +944,7 @@ impl AditApp {
             profile_port: String::from("22"),
             profile_username: String::new(),
             profile_auth_method: AuthMethod::Auto,
+            profile_password: String::new(),
             profile_protocol: Protocol::Ssh,
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
@@ -1789,6 +1794,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileAuthMethodChanged(auth_method) => {
             app.terminal_focused = false;
             app.profile_auth_method = auth_method;
+        }
+        Message::ProfilePasswordChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_password = value;
         }
         Message::ProfileProtocolChanged(protocol) => {
             app.terminal_focused = false;
@@ -2809,6 +2818,17 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_protocol = profile.protocol;
         app.profile_startup_command = profile.startup_command;
         app.profile_terminal_type = profile.terminal_type;
+        // Password-auth password comes from the OS credential vault, not the
+        // profile record.
+        app.profile_password = if profile.auth_method == AuthMethod::Password {
+            app.credential_store
+                .load_profile_password(profile.id)
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
     }
 }
 
@@ -3017,6 +3037,16 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
                 );
                 app.manager
                     .set_profile_terminal_type(profile_id, app.profile_terminal_type.clone());
+                // Persist the password-auth password to the OS credential vault
+                // (never to profiles.json). An empty field clears any saved one.
+                if app.profile_auth_method == AuthMethod::Password {
+                    let _ = if app.profile_password.is_empty() {
+                        app.credential_store.delete_profile_password(profile_id)
+                    } else {
+                        app.credential_store
+                            .save_profile_password(profile_id, &app.profile_password)
+                    };
+                }
             }
             load_selected_profile(app);
             app.collapsed_groups.remove(app.profile_group.trim());
@@ -8256,7 +8286,23 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     ]
                     .spacing(6)
                     .into(),
-                ))
+                ));
+            // Password auth: a masked field, saved to the OS credential vault on
+            // Save (never written to profiles.json).
+            if app.profile_auth_method == AuthMethod::Password {
+                form = form.push(dialog_field(
+                    "密码（保存在系统凭据库，不写入配置文件）",
+                    text_input("连接密码", &app.profile_password)
+                        .secure(true)
+                        .on_input(Message::ProfilePasswordChanged)
+                        .on_submit(Message::ConnectSelectedProfile)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ));
+            }
+            form = form
                 .push(dialog_field(
                     "密钥文件（可选）",
                     row![
