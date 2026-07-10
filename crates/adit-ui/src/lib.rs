@@ -126,6 +126,8 @@ pub struct AditApp {
     sftp_rename: Option<(SftpPane, String)>,
     sftp_rename_to: String,
     sftp_delete_target: Option<(SftpPane, String, bool)>,
+    /// Right-click context menu target in an SFTP pane: (pane, entry name, is_dir).
+    sftp_context_menu: Option<(SftpPane, String, bool)>,
     sftp_local_path_edit: String,
     sftp_remote_path_edit: String,
     sftp_local_cwd_seen: String,
@@ -365,6 +367,10 @@ pub enum Message {
     SftpUploadLocal(String),
     SftpDownload(String),
     SftpRowPress(SftpPane, String),
+    // Right-click a pane entry: track the cursor for the anchor, open/close the menu.
+    SftpCursorMoved(Point),
+    ShowSftpContextMenu(SftpPane, String, bool),
+    HideSftpContextMenu,
     SftpTransferSelected(SftpPane),
     SftpFileDropped(std::path::PathBuf),
     SftpLocalPathChanged(String),
@@ -1014,6 +1020,7 @@ impl AditApp {
             sftp_upload_path: String::new(),
             sftp_new_folder: String::new(),
             sftp_rename: None,
+            sftp_context_menu: None,
             sftp_rename_to: String::new(),
             sftp_delete_target: None,
             sftp_local_path_edit: String::new(),
@@ -1745,6 +1752,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.manager.close_sftp();
             app.sftp_rename = None;
             app.sftp_delete_target = None;
+            app.sftp_context_menu = None;
             app.sftp_new_folder.clear();
             app.sftp_drag = None;
             app.sftp_drag_over = None;
@@ -1785,14 +1793,41 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 persist_profiles(app);
             }
         }
-        Message::SftpNavigate(name) => app.manager.sftp_navigate(&name),
+        Message::SftpNavigate(name) => {
+            app.sftp_context_menu = None;
+            app.manager.sftp_navigate(&name);
+        }
         Message::SftpUp => app.manager.sftp_up(),
         Message::SftpRefresh => app.manager.sftp_refresh(),
-        Message::SftpLocalNavigate(name) => app.manager.sftp_local_navigate(&name),
+        Message::SftpLocalNavigate(name) => {
+            app.sftp_context_menu = None;
+            app.manager.sftp_local_navigate(&name);
+        }
         Message::SftpLocalUp => app.manager.sftp_local_up(),
         Message::SftpLocalRefresh => app.manager.sftp_local_refresh(),
-        Message::SftpUploadLocal(name) => app.manager.sftp_upload_local(&name),
-        Message::SftpDownload(name) => app.manager.sftp_download(&name),
+        Message::SftpUploadLocal(name) => {
+            app.sftp_context_menu = None;
+            app.manager.sftp_upload_local(&name);
+        }
+        Message::SftpDownload(name) => {
+            app.sftp_context_menu = None;
+            app.manager.sftp_download(&name);
+        }
+        Message::SftpCursorMoved(point) => {
+            // The SFTP panel is a full-window overlay, so on_move gives window
+            // coordinates directly — used to anchor the right-click menu.
+            app.cursor_pos = point;
+        }
+        Message::ShowSftpContextMenu(pane, name, is_dir) => {
+            app.context_menu_pos = app.cursor_pos;
+            app.sftp_context_menu = Some((pane, name, is_dir));
+            app.profile_context_menu = None;
+            app.group_context_menu = None;
+            app.terminal_context_menu = false;
+        }
+        Message::HideSftpContextMenu => {
+            app.sftp_context_menu = None;
+        }
         Message::SftpRowPress(pane, name) => {
             // Arm a potential pane-to-pane drag; it only fires if the pointer is
             // released over the other pane (see PointerReleased).
@@ -1890,6 +1925,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::SftpBeginRename(pane, name) => {
+            app.sftp_context_menu = None;
             app.sftp_rename_to = name.clone();
             app.sftp_rename = Some((pane, name));
             app.sftp_delete_target = None;
@@ -1912,6 +1948,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sftp_rename_to.clear();
         }
         Message::SftpBeginDelete(pane, name, is_dir) => {
+            app.sftp_context_menu = None;
             app.sftp_delete_target = Some((pane, name, is_dir));
             app.sftp_rename = None;
         }
@@ -5549,6 +5586,10 @@ fn sync_sftp_state(app: &mut AditApp) {
         .sftp_browser()
         .map(|browser| (browser.cwd.clone(), browser.local_cwd.display().to_string()))
     else {
+        // The SFTP session can close on its own (e.g. the channel drops), not just
+        // via the close button — drop any open right-click menu so it can't reappear
+        // over a freshly-reopened session referencing a stale entry.
+        app.sftp_context_menu = None;
         return;
     };
     if remote != app.sftp_remote_cwd_seen {
@@ -5620,6 +5661,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if app.manager.sftp_is_open() {
         layers.push(opaque(sftp_panel_overlay(app)));
+        if let Some((pane, name, is_dir)) = app.sftp_context_menu.clone() {
+            layers.push(opaque(sftp_context_overlay(app, pane, name, is_dir)));
+        }
     }
     if app.tunnels_open {
         layers.push(opaque(tunnels_panel_overlay(app)));
@@ -7320,12 +7364,17 @@ fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         .padding(14)
         .style(|_theme| connection_dialog_style());
 
-    container(panel)
-        .width(Fill)
-        .height(Fill)
-        .padding(20)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    // Track the cursor over the (full-window) panel so a right-click can anchor
+    // its floating actions menu at the pointer.
+    mouse_area(
+        container(panel)
+            .width(Fill)
+            .height(Fill)
+            .padding(20)
+            .style(|_theme| dialog_scrim_style()),
+    )
+    .on_move(Message::SftpCursorMoved)
+    .into()
 }
 
 fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
@@ -7671,47 +7720,19 @@ fn sftp_nav_row(label: &'static str, message: Message) -> Element<'static, Messa
 
 fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, Message> {
     let owned = entry.name.clone();
-    if entry.is_dir {
-        return row![
-            button(text(format!("{}/", entry.name)).size(12).color(accent()))
-                .width(Fill)
-                .padding([4, 8])
-                .style(|_theme, status| sftp_entry_button_style(status))
-                .on_press(Message::SftpLocalNavigate(owned.clone())),
-            text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
-            text(sftp_date(entry.mtime))
-                .size(10)
-                .color(muted_text())
-                .width(Length::Fixed(118.0)),
-            sftp_action(
-                "重命名",
-                Message::SftpBeginRename(SftpPane::Local, owned.clone()),
-                false,
-            ),
-            sftp_action(
-                "删除",
-                Message::SftpBeginDelete(SftpPane::Local, owned, true),
-                true,
-            ),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into();
-    }
-
-    // File: click to select, double-click to upload.
-    row![
-        mouse_area(
+    let is_dir = entry.is_dir;
+    // Right-click anywhere on the row opens the actions menu (SecureFX-style).
+    let context = Message::ShowSftpContextMenu(SftpPane::Local, owned.clone(), is_dir);
+    if is_dir {
+        // A folder: left-click navigates in, right-click opens the menu.
+        return mouse_area(
             container(
                 row![
-                    text(entry.name.clone())
+                    text(format!("{}/", entry.name))
                         .size(12)
-                        .color(primary_text())
+                        .color(accent())
                         .width(Fill),
-                    text(human_size(entry.size))
-                        .size(10)
-                        .color(muted_text())
-                        .width(Length::Fixed(64.0)),
+                    text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
                     text(sftp_date(entry.mtime))
                         .size(10)
                         .color(muted_text())
@@ -7724,67 +7745,55 @@ fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, 
             .padding([4, 8])
             .style(move |_theme| sftp_row_highlight(selected)),
         )
-        .on_press(Message::SftpRowPress(SftpPane::Local, owned.clone())),
-        sftp_action("上传 ↑", Message::SftpUploadLocal(owned.clone()), false),
-        sftp_action(
-            "重命名",
-            Message::SftpBeginRename(SftpPane::Local, owned.clone()),
-            false,
-        ),
-        sftp_action(
-            "删除",
-            Message::SftpBeginDelete(SftpPane::Local, owned, false),
-            true,
-        ),
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center)
+        .on_press(Message::SftpLocalNavigate(owned))
+        .on_right_press(context)
+        .interaction(mouse::Interaction::Pointer)
+        .into();
+    }
+
+    // File: click to select, double-click to upload, right-click for the menu.
+    mouse_area(
+        container(
+            row![
+                text(entry.name.clone())
+                    .size(12)
+                    .color(primary_text())
+                    .width(Fill),
+                text(human_size(entry.size))
+                    .size(10)
+                    .color(muted_text())
+                    .width(Length::Fixed(64.0)),
+                text(sftp_date(entry.mtime))
+                    .size(10)
+                    .color(muted_text())
+                    .width(Length::Fixed(118.0)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([4, 8])
+        .style(move |_theme| sftp_row_highlight(selected)),
+    )
+    .on_press(Message::SftpRowPress(SftpPane::Local, owned))
+    .on_right_press(context)
     .into()
 }
 
 fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, Message> {
     let owned = entry.name.clone();
-    if entry.is_dir {
-        return row![
-            button(text(format!("{}/", entry.name)).size(12).color(accent()))
-                .width(Fill)
-                .padding([4, 8])
-                .style(|_theme, status| sftp_entry_button_style(status))
-                .on_press(Message::SftpNavigate(owned.clone())),
-            text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
-            text(sftp_date(entry.mtime.map(u64::from)))
-                .size(10)
-                .color(muted_text())
-                .width(Length::Fixed(118.0)),
-            sftp_action(
-                "重命名",
-                Message::SftpBeginRename(SftpPane::Remote, owned.clone()),
-                false,
-            ),
-            sftp_action(
-                "删除",
-                Message::SftpBeginDelete(SftpPane::Remote, owned, true),
-                true,
-            ),
-        ]
-        .spacing(4)
-        .align_y(Alignment::Center)
-        .into();
-    }
-
-    // File: click to select, double-click to download.
-    row![
-        mouse_area(
+    let is_dir = entry.is_dir;
+    let context = Message::ShowSftpContextMenu(SftpPane::Remote, owned.clone(), is_dir);
+    if is_dir {
+        // A folder: left-click navigates in, right-click opens the menu.
+        return mouse_area(
             container(
                 row![
-                    text(entry.name.clone())
+                    text(format!("{}/", entry.name))
                         .size(12)
-                        .color(primary_text())
+                        .color(accent())
                         .width(Fill),
-                    text(human_size(entry.size))
-                        .size(10)
-                        .color(muted_text())
-                        .width(Length::Fixed(64.0)),
+                    text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
                     text(sftp_date(entry.mtime.map(u64::from)))
                         .size(10)
                         .color(muted_text())
@@ -7797,21 +7806,38 @@ fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, 
             .padding([4, 8])
             .style(move |_theme| sftp_row_highlight(selected)),
         )
-        .on_press(Message::SftpRowPress(SftpPane::Remote, owned.clone())),
-        sftp_action("下载 ↓", Message::SftpDownload(owned.clone()), false),
-        sftp_action(
-            "重命名",
-            Message::SftpBeginRename(SftpPane::Remote, owned.clone()),
-            false,
-        ),
-        sftp_action(
-            "删除",
-            Message::SftpBeginDelete(SftpPane::Remote, owned, false),
-            true,
-        ),
-    ]
-    .spacing(4)
-    .align_y(Alignment::Center)
+        .on_press(Message::SftpNavigate(owned))
+        .on_right_press(context)
+        .interaction(mouse::Interaction::Pointer)
+        .into();
+    }
+
+    // File: click to select, double-click to download, right-click for the menu.
+    mouse_area(
+        container(
+            row![
+                text(entry.name.clone())
+                    .size(12)
+                    .color(primary_text())
+                    .width(Fill),
+                text(human_size(entry.size))
+                    .size(10)
+                    .color(muted_text())
+                    .width(Length::Fixed(64.0)),
+                text(sftp_date(entry.mtime.map(u64::from)))
+                    .size(10)
+                    .color(muted_text())
+                    .width(Length::Fixed(118.0)),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([4, 8])
+        .style(move |_theme| sftp_row_highlight(selected)),
+    )
+    .on_press(Message::SftpRowPress(SftpPane::Remote, owned))
+    .on_right_press(context)
     .into()
 }
 
@@ -7826,18 +7852,58 @@ fn sftp_row_highlight(selected: bool) -> container::Style {
     }
 }
 
-fn sftp_action(label: &'static str, message: Message, danger: bool) -> Element<'static, Message> {
-    button(text(label).size(11))
-        .padding([3, 8])
-        .style(move |_theme, status| {
-            if danger {
-                close_button_style(status)
-            } else {
-                secondary_button_style(status)
-            }
-        })
-        .on_press(message)
+/// The floating right-click actions menu for one SFTP pane entry (SecureFX-style).
+fn sftp_context_menu_card(
+    pane: SftpPane,
+    name: String,
+    is_dir: bool,
+) -> Element<'static, Message> {
+    let mut items = column![].spacing(1);
+    if is_dir {
+        // Open the folder (navigate into it).
+        let open = match pane {
+            SftpPane::Local => Message::SftpLocalNavigate(name.clone()),
+            SftpPane::Remote => Message::SftpNavigate(name.clone()),
+        };
+        items = items.push(profile_menu_item("打开", open, false));
+    }
+    // Transfer to the other pane. Folder transfer is recursive.
+    let (transfer_label, transfer_msg) = match pane {
+        SftpPane::Remote => ("下载 ↓", Message::SftpDownload(name.clone())),
+        SftpPane::Local => ("上传 ↑", Message::SftpUploadLocal(name.clone())),
+    };
+    items = items
+        .push(profile_menu_item(transfer_label, transfer_msg, false))
+        .push(profile_menu_item(
+            "重命名",
+            Message::SftpBeginRename(pane, name.clone()),
+            false,
+        ))
+        .push(profile_menu_divider())
+        .push(profile_menu_item(
+            "删除",
+            Message::SftpBeginDelete(pane, name, is_dir),
+            true,
+        ));
+
+    container(items)
+        .padding(4)
+        .width(Length::Fixed(PROFILE_MENU_WIDTH))
+        .style(|_theme| profile_context_menu_style())
         .into()
+}
+
+fn sftp_context_overlay(
+    app: &AditApp,
+    pane: SftpPane,
+    name: String,
+    is_dir: bool,
+) -> Element<'_, Message> {
+    floating_context_menu(
+        app,
+        sftp_context_menu_card(pane, name, is_dir),
+        Message::HideSftpContextMenu,
+    )
 }
 
 /// A batch-action button that shows the selection count and is disabled (no
