@@ -1363,6 +1363,30 @@ async fn list_dir(sftp: &SftpSession, path: &str, events: &mpsc::Sender<SftpEven
     }
 }
 
+/// Join a remote (POSIX) directory path with a child name.
+fn join_remote_path(dir: &str, name: &str) -> String {
+    if dir.is_empty() || dir == "/" {
+        format!("/{name}")
+    } else {
+        format!("{}/{}", dir.trim_end_matches('/'), name)
+    }
+}
+
+/// Whether a directory-entry name is a safe single path component. A malicious
+/// or buggy SFTP server can return `readdir` names containing separators or `..`
+/// (or empty); joining those into the local path would let a download escape the
+/// chosen folder (zip-slip) or loop forever, so such entries are skipped.
+fn is_safe_child_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !name.contains('\0')
+}
+
+/// Download a remote path — a single file, or a whole directory tree — into
+/// `local`, emitting one terminal `Done` for the transfer.
 async fn sftp_download(
     sftp: &SftpSession,
     remote: &str,
@@ -1370,13 +1394,123 @@ async fn sftp_download(
     events: &mpsc::Sender<SftpEvent>,
 ) -> Result<(), SshError> {
     let label = remote.rsplit('/').next().unwrap_or(remote).to_string();
-    let total = sftp
+    let is_dir = sftp
         .metadata(remote.to_string())
         .await
         .ok()
-        .and_then(|m| m.size)
-        .unwrap_or(0);
+        .is_some_and(|meta| meta.is_dir());
 
+    if is_dir {
+        let (bytes, skipped) = download_dir(sftp, remote, local, &label, events).await?;
+        let _ = events.send(SftpEvent::Done {
+            label: label.clone(),
+            bytes,
+        });
+        if skipped > 0 {
+            let _ = events.send(SftpEvent::Status(format!(
+                "{label}: 下载完成，跳过 {skipped} 个无法访问的条目"
+            )));
+        }
+    } else {
+        // A lone file shows a percentage, so pass its size as the grand total.
+        let size = sftp
+            .metadata(remote.to_string())
+            .await
+            .ok()
+            .and_then(|meta| meta.size)
+            .unwrap_or(0);
+        let bytes = download_file(sftp, remote, local, &label, 0, size, events).await?;
+        let _ = events.send(SftpEvent::Done { label, bytes });
+    }
+    Ok(())
+}
+
+/// Recursively download a remote directory tree into `local`. Iterative (an
+/// explicit stack) to avoid async recursion. Best-effort: a *deeper* entry that
+/// can't be read (a permission error, a symlink whose target isn't a plain file,
+/// an unsafe name, …) is skipped rather than aborting the whole tree — but a
+/// failure at the transfer ROOT (destination can't be created, or the remote
+/// root can't be listed) is fatal, so a wholly-failed transfer surfaces as an
+/// error rather than a misleading "done". `top_label` names the folder for the
+/// live progress row. Returns the total bytes copied and the number of skips.
+async fn download_dir(
+    sftp: &SftpSession,
+    root_remote: &str,
+    root_local: &Path,
+    top_label: &str,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<(u64, usize), SshError> {
+    tokio::fs::create_dir_all(root_local)
+        .await
+        .map_err(|error| SshError::LocalIo(error.to_string()))?;
+
+    let mut total = 0u64;
+    let mut skipped = 0usize;
+    let mut stack = vec![(root_remote.to_string(), root_local.to_path_buf())];
+    while let Some((remote_dir, local_dir)) = stack.pop() {
+        let read_dir = match sftp.read_dir(remote_dir.clone()).await {
+            Ok(read_dir) => read_dir,
+            Err(error) => {
+                if remote_dir.as_str() == root_remote {
+                    // The root itself can't be listed — nothing can be downloaded.
+                    return Err(SshError::Sftp(error.to_string()));
+                }
+                let _ = events.send(SftpEvent::Status(format!("跳过 {remote_dir}: {error}")));
+                skipped += 1;
+                continue;
+            }
+        };
+        for entry in read_dir {
+            let name = entry.file_name();
+            if name == "." || name == ".." {
+                continue;
+            }
+            if !is_safe_child_name(&name) {
+                let _ = events.send(SftpEvent::Status(format!("跳过不安全的名称: {name}")));
+                skipped += 1;
+                continue;
+            }
+            let child_remote = join_remote_path(&remote_dir, &name);
+            let child_local = local_dir.join(&name);
+            if entry.metadata().is_dir() {
+                match tokio::fs::create_dir_all(&child_local).await {
+                    Ok(()) => stack.push((child_remote, child_local)),
+                    Err(error) => {
+                        let _ = events.send(SftpEvent::Status(format!("跳过 {name}: {error}")));
+                        skipped += 1;
+                    }
+                }
+            } else {
+                // Report progress under the folder label with a running cumulative
+                // total, so an inner filename never aliases another transfer.
+                match download_file(sftp, &child_remote, &child_local, top_label, total, 0, events)
+                    .await
+                {
+                    Ok(bytes) => total += bytes,
+                    Err(error) => {
+                        let _ = events.send(SftpEvent::Status(format!("跳过 {name}: {error}")));
+                        skipped += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok((total, skipped))
+}
+
+/// Download one remote file, reporting progress under `label` with
+/// `done = base + copied` and `grand_total` in the total field (see
+/// [`stream_copy`]). Emits progress but not the terminal `Done`; returns bytes
+/// copied.
+async fn download_file(
+    sftp: &SftpSession,
+    remote: &str,
+    local: &Path,
+    label: &str,
+    base: u64,
+    grand_total: u64,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<u64, SshError> {
     let mut remote_file = sftp
         .open(remote.to_string())
         .await
@@ -1385,14 +1519,17 @@ async fn sftp_download(
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
 
-    stream_copy(&mut remote_file, &mut local_file, total, &label, events).await?;
+    let bytes =
+        stream_copy(&mut remote_file, &mut local_file, label, base, grand_total, events).await?;
     local_file
         .flush()
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
-    Ok(())
+    Ok(bytes)
 }
 
+/// Upload a local path — a single file, or a whole directory tree — to `remote`,
+/// emitting one terminal `Done` for the transfer.
 async fn sftp_upload(
     sftp: &SftpSession,
     local: &Path,
@@ -1400,8 +1537,133 @@ async fn sftp_upload(
     events: &mpsc::Sender<SftpEvent>,
 ) -> Result<(), SshError> {
     let label = remote.rsplit('/').next().unwrap_or(remote).to_string();
-    let total = tokio::fs::metadata(local).await.map(|m| m.len()).unwrap_or(0);
+    let is_dir = tokio::fs::metadata(local)
+        .await
+        .map(|meta| meta.is_dir())
+        .unwrap_or(false);
 
+    if is_dir {
+        let (bytes, skipped) = upload_dir(sftp, local, remote, &label, events).await?;
+        let _ = events.send(SftpEvent::Done {
+            label: label.clone(),
+            bytes,
+        });
+        if skipped > 0 {
+            let _ = events.send(SftpEvent::Status(format!(
+                "{label}: 上传完成，跳过 {skipped} 个无法访问的条目"
+            )));
+        }
+    } else {
+        // A lone file shows a percentage, so pass its size as the grand total.
+        let size = tokio::fs::metadata(local).await.map(|m| m.len()).unwrap_or(0);
+        let bytes = upload_file(sftp, local, remote, &label, 0, size, events).await?;
+        let _ = events.send(SftpEvent::Done { label, bytes });
+    }
+    Ok(())
+}
+
+/// Recursively upload a local directory tree to `remote`. Iterative (an explicit
+/// stack). Best-effort: a *deeper* entry that can't be read/created is skipped
+/// rather than aborting the whole tree — but a failure at the transfer ROOT (the
+/// remote root dir can't be created, or the local root can't be read) is fatal,
+/// so a wholly-failed transfer surfaces as an error rather than a misleading
+/// "done". `top_label` names the folder for the live progress row. Returns the
+/// total bytes copied and the number of skips.
+async fn upload_dir(
+    sftp: &SftpSession,
+    root_local: &Path,
+    root_remote: &str,
+    top_label: &str,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<(u64, usize), SshError> {
+    let mut total = 0u64;
+    let mut skipped = 0usize;
+    let mut stack = vec![(root_local.to_path_buf(), root_remote.to_string())];
+    while let Some((local_dir, remote_dir)) = stack.pop() {
+        let is_root = remote_dir.as_str() == root_remote;
+        // Create the remote dir. Tolerate "already exists" (detected by a
+        // follow-up stat), but treat a genuine failure as a skip so it is not
+        // silently masked into a "success" — and as fatal at the root.
+        if let Err(error) = sftp.create_dir(remote_dir.clone()).await {
+            let exists_as_dir = sftp
+                .metadata(remote_dir.clone())
+                .await
+                .ok()
+                .is_some_and(|meta| meta.is_dir());
+            if !exists_as_dir {
+                if is_root {
+                    return Err(SshError::Sftp(error.to_string()));
+                }
+                let _ = events.send(SftpEvent::Status(format!("跳过 {remote_dir}: {error}")));
+                skipped += 1;
+                continue;
+            }
+        }
+        let mut read_dir = match tokio::fs::read_dir(&local_dir).await {
+            Ok(read_dir) => read_dir,
+            Err(error) => {
+                if is_root {
+                    return Err(SshError::LocalIo(error.to_string()));
+                }
+                let _ = events.send(SftpEvent::Status(format!(
+                    "跳过 {}: {error}",
+                    local_dir.display()
+                )));
+                skipped += 1;
+                continue;
+            }
+        };
+        loop {
+            let entry = match read_dir.next_entry().await {
+                Ok(Some(entry)) => entry,
+                Ok(None) => break,
+                Err(error) => {
+                    let _ = events.send(SftpEvent::Status(format!("跳过条目: {error}")));
+                    skipped += 1;
+                    break;
+                }
+            };
+            let name = entry.file_name().to_string_lossy().to_string();
+            let child_local = entry.path();
+            let child_remote = join_remote_path(&remote_dir, &name);
+            let is_dir = entry
+                .file_type()
+                .await
+                .map(|file_type| file_type.is_dir())
+                .unwrap_or(false);
+            if is_dir {
+                stack.push((child_local, child_remote));
+            } else {
+                // Report progress under the folder label with a running cumulative
+                // total, so an inner filename never aliases another transfer.
+                match upload_file(sftp, &child_local, &child_remote, top_label, total, 0, events)
+                    .await
+                {
+                    Ok(bytes) => total += bytes,
+                    Err(error) => {
+                        let _ = events.send(SftpEvent::Status(format!("跳过 {name}: {error}")));
+                        skipped += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok((total, skipped))
+}
+
+/// Upload one local file, reporting progress under `label` with
+/// `done = base + copied` and `grand_total` in the total field (see
+/// [`stream_copy`]). Emits progress but not the terminal `Done`; returns bytes
+/// copied.
+async fn upload_file(
+    sftp: &SftpSession,
+    local: &Path,
+    remote: &str,
+    label: &str,
+    base: u64,
+    grand_total: u64,
+    events: &mpsc::Sender<SftpEvent>,
+) -> Result<u64, SshError> {
     let mut local_file = tokio::fs::File::open(local)
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
@@ -1410,22 +1672,34 @@ async fn sftp_upload(
         .await
         .map_err(|error| SshError::Sftp(error.to_string()))?;
 
-    stream_copy(&mut local_file, &mut remote_file, total, &label, events).await?;
+    let bytes =
+        stream_copy(&mut local_file, &mut remote_file, label, base, grand_total, events).await?;
     remote_file
         .shutdown()
         .await
         .map_err(|error| SshError::Sftp(error.to_string()))?;
-    Ok(())
+    Ok(bytes)
 }
 
 /// Copy `reader` into `writer` in chunks, emitting throttled progress events.
+/// Returns the number of bytes copied. Does NOT emit the terminal `Done` event —
+/// the caller owns that, so a recursive folder transfer reports a single
+/// completion for the whole tree rather than one per file.
+///
+/// Progress is always reported under `label` (for a folder, the top-level folder
+/// name, never an inner filename — so it can't alias an unrelated queued
+/// transfer of the same name) with `done = base + this_file_bytes`, so a folder
+/// shows smooth cumulative progress. `grand_total` is the value put in the
+/// progress event's `total` (a single file's size for a percentage, or 0 for a
+/// folder where the grand total isn't known — the UI then shows bytes only).
 async fn stream_copy<R, W>(
     reader: &mut R,
     writer: &mut W,
-    total: u64,
     label: &str,
+    base: u64,
+    grand_total: u64,
     events: &mpsc::Sender<SftpEvent>,
-) -> Result<(), SshError>
+) -> Result<u64, SshError>
 where
     R: AsyncReadExt + Unpin,
     W: AsyncWriteExt + Unpin,
@@ -1435,8 +1709,8 @@ where
     let mut emitted = 0u64;
     let _ = events.send(SftpEvent::Progress {
         label: label.to_string(),
-        done: 0,
-        total,
+        done: base,
+        total: grand_total,
     });
     loop {
         let read = reader
@@ -1455,16 +1729,12 @@ where
             emitted = done;
             let _ = events.send(SftpEvent::Progress {
                 label: label.to_string(),
-                done,
-                total,
+                done: base + done,
+                total: grand_total,
             });
         }
     }
-    let _ = events.send(SftpEvent::Done {
-        label: label.to_string(),
-        bytes: done,
-    });
-    Ok(())
+    Ok(done)
 }
 
 // ===== Port forwarding (SSH tunnels) =====
@@ -2261,6 +2531,31 @@ mod tests {
             .enable_all()
             .build()
             .expect("runtime")
+    }
+
+    #[test]
+    fn join_remote_path_handles_root_and_nested() {
+        assert_eq!(join_remote_path("/home/user", "docs"), "/home/user/docs");
+        // A trailing slash on the parent is not doubled.
+        assert_eq!(join_remote_path("/home/user/", "docs"), "/home/user/docs");
+        // Root (or empty) yields a single leading slash.
+        assert_eq!(join_remote_path("/", "docs"), "/docs");
+        assert_eq!(join_remote_path("", "docs"), "/docs");
+    }
+
+    #[test]
+    fn is_safe_child_name_rejects_traversal() {
+        assert!(is_safe_child_name("report.txt"));
+        assert!(is_safe_child_name("my folder"));
+        assert!(is_safe_child_name(".hidden"));
+        // Server-controlled names that would escape the target or loop forever.
+        assert!(!is_safe_child_name(""));
+        assert!(!is_safe_child_name("."));
+        assert!(!is_safe_child_name(".."));
+        assert!(!is_safe_child_name("../evil"));
+        assert!(!is_safe_child_name("..\\evil.exe"));
+        assert!(!is_safe_child_name("a/b"));
+        assert!(!is_safe_child_name("/abs"));
     }
 
     #[test]
