@@ -237,6 +237,8 @@ pub enum MenuCommand {
     NewGroup,
     SaveProfile,
     DeleteProfile,
+    SortByName,
+    SortByHost,
     Connect,
     Disconnect,
     OpenMockTab,
@@ -400,7 +402,6 @@ pub enum Message {
     SaveProfile,
     DeleteSelectedProfile,
     MoveSelectedProfile(ProfileMove),
-    SortProfiles(ProfileSortKey),
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
     ModifiersChanged(keyboard::Modifiers),
@@ -2027,9 +2028,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::MoveSelectedProfile(direction) => {
             move_selected_profile(app, direction);
         }
-        Message::SortProfiles(key) => {
-            sort_profiles(app, key);
-        }
         Message::TerminalInputChanged(input) => {
             app.terminal_focused = false;
             app.command_history_pos = None;
@@ -2744,6 +2742,8 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::NewGroup => new_group_draft(app),
         MenuCommand::SaveProfile => save_profile(app),
         MenuCommand::DeleteProfile => delete_selected_profile(app),
+        MenuCommand::SortByName => sort_profiles(app, ProfileSortKey::Name),
+        MenuCommand::SortByHost => sort_profiles(app, ProfileSortKey::Host),
         MenuCommand::Connect => open_connection_dialog(app),
         MenuCommand::Disconnect => disconnect_active(app),
         MenuCommand::OpenMockTab => open_selected_mock_tab(app),
@@ -3803,13 +3803,14 @@ fn open_connection_dialog(app: &mut AditApp) {
         }
         Ok(None) => {
             app.password.clear();
-            app.remember_connection_password = false;
+            // Auto-save whatever the user types, no opt-in needed (SecureCRT-style).
+            app.remember_connection_password = true;
             app.last_error = None;
             app.notice = String::from("请输入本次连接的密码或 passphrase");
         }
         Err(error) => {
             app.password.clear();
-            app.remember_connection_password = false;
+            app.remember_connection_password = true;
             app.last_error = Some(format!("读取系统凭据失败: {error}"));
             app.notice = String::from("请输入本次连接的密码或 passphrase");
         }
@@ -5524,6 +5525,8 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("新建分组", MenuCommand::NewGroup),
             ("保存会话", MenuCommand::SaveProfile),
             ("删除会话", MenuCommand::DeleteProfile),
+            ("按名称排序", MenuCommand::SortByName),
+            ("按主机排序", MenuCommand::SortByHost),
             ("导入 ~/.ssh/config", MenuCommand::ImportSshConfig),
             ("导入 SecureCRT 会话…", MenuCommand::ImportSecureCrt),
             ("选项 / 日志…", MenuCommand::Options),
@@ -8005,32 +8008,20 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
 
     let mut content = column![
         container(
-            row![text("Session Manager").size(13).color(primary_text())]
-                .align_y(Alignment::Center),
+            row![
+                text("Session Manager").size(13).color(primary_text()),
+                Space::new().width(Fill),
+                // Just the essentials on the right (SecureCRT-style): new session
+                // and a button to hide the whole panel.
+                sidebar_tool_button("⊕", "新建会话", Message::NewProfileDraft),
+                sidebar_tool_button("«", "隐藏会话栏", Message::ToggleSidebar),
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
         )
-        .height(Length::Fixed(28.0))
-        .padding([3, 10])
+        .height(Length::Fixed(30.0))
+        .padding([2, 8])
         .style(|_theme| sidebar_header_style()),
-        row![
-            sidebar_tool_button("▶", "连接所选会话", Message::ConnectSelectedProfile),
-            sidebar_tool_button("↗", "打开连接对话框", Message::OpenSelectedProfile),
-            sidebar_tool_separator(),
-            sidebar_tool_button("+", "新建会话", Message::NewProfileDraft),
-            sidebar_tool_button("⊞", "新建分组", Message::NewGroupDraft),
-            sidebar_tool_button("⤓", "保存会话", Message::SaveProfile),
-            sidebar_tool_button("✕", "删除所选", Message::DeleteSelectedProfile),
-            sidebar_tool_separator(),
-            sidebar_tool_button("↑", "上移", Message::MoveSelectedProfile(ProfileMove::Up)),
-            sidebar_tool_button("↓", "下移", Message::MoveSelectedProfile(ProfileMove::Down)),
-            sidebar_tool_button("A", "按名称排序", Message::SortProfiles(ProfileSortKey::Name)),
-            sidebar_tool_button("H", "按主机排序", Message::SortProfiles(ProfileSortKey::Host)),
-            sidebar_tool_separator(),
-            sidebar_tool_button("▤", "日志 / 脚本", Message::RunMenu(MenuCommand::Logging)),
-            Space::new().width(Fill),
-        ]
-        .padding([6, 8])
-        .spacing(4)
-        .align_y(Alignment::Center),
         text_input("Filter by group/session name <Alt+I>", &app.session_filter)
             .on_input(Message::SessionFilterChanged)
             .padding([4, 6])
@@ -8599,16 +8590,6 @@ fn sidebar_tool_button(
     .into()
 }
 
-fn sidebar_tool_separator() -> Element<'static, Message> {
-    container(Space::new().height(Length::Fixed(16.0)))
-        .width(Length::Fixed(1.0))
-        .style(|_theme| container::Style {
-            background: Some(Background::Color(border_color())),
-            ..container::Style::default()
-        })
-        .into()
-}
-
 fn tooltip_style() -> container::Style {
     container::Style {
         background: Some(Background::Color(surface())),
@@ -8726,8 +8707,8 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 .push(dialog_field(
                     "认证方式",
                     row![
-                        auth_method_button(app, AuthMethod::Auto),
                         auth_method_button(app, AuthMethod::Password),
+                        auth_method_button(app, AuthMethod::Auto),
                         auth_method_button(app, AuthMethod::Key),
                         auth_method_button(app, AuthMethod::Agent),
                     ]
