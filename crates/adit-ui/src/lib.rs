@@ -242,6 +242,7 @@ pub enum MenuCommand {
     Appearance,
     Options,
     ImportSshConfig,
+    ImportSecureCrt,
     Snippets,
     ToggleBroadcast,
     ToggleCommandWindow,
@@ -371,6 +372,7 @@ pub enum Message {
     ProfileIdentityFileChanged(String),
     PickIdentityFile,
     IdentityFilePicked(Option<std::path::PathBuf>),
+    SecureCrtFolderPicked(Option<std::path::PathBuf>),
     ProfileStartupCommandChanged(String),
     ProfileTerminalTypeChanged(String),
     ConnectTimeoutChanged(String),
@@ -1328,9 +1330,26 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if matches!(command, MenuCommand::CheckUpdate) {
                 return begin_update_check(app);
             }
+            // The SecureCRT import opens an async folder picker.
+            if matches!(command, MenuCommand::ImportSecureCrt) {
+                app.active_menu = None;
+                let mut dialog = rfd::AsyncFileDialog::new()
+                    .set_title("选择 SecureCRT 的 Sessions 文件夹");
+                if let Some(dir) = adit_storage::default_securecrt_sessions_dir() {
+                    dialog = dialog.set_directory(dir);
+                }
+                return Task::perform(dialog.pick_folder(), |handle| {
+                    Message::SecureCrtFolderPicked(handle.map(|h| h.path().to_path_buf()))
+                });
+            }
             run_menu_command(app, command);
             app.active_menu = None;
             sync_terminal_size(app);
+        }
+        Message::SecureCrtFolderPicked(path) => {
+            if let Some(path) = path {
+                import_securecrt(app, &path);
+            }
         }
         Message::SelectProfile(profile_id) => {
             select_profile(app, profile_id);
@@ -2658,6 +2677,8 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::Appearance => app.appearance_open = true,
         MenuCommand::Options => app.options_open = true,
         MenuCommand::ImportSshConfig => import_ssh_config(app),
+        // Handled in the RunMenu message arm (opens an async folder picker).
+        MenuCommand::ImportSecureCrt => {}
         MenuCommand::Snippets => app.snippets_open = true,
         // Handled in the RunMenu arm (needs to return an async Task).
         MenuCommand::CheckUpdate => {}
@@ -3198,6 +3219,84 @@ fn sort_profiles(app: &mut AditApp, key: ProfileSortKey) {
 
 /// Import hosts from `~/.ssh/config` into the profile list (group "Imported"),
 /// skipping any whose name already exists.
+/// Import SecureCRT sessions from a `.ini` session tree (folders → groups).
+/// Passwords are not imported (SecureCRT stores them encrypted).
+fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
+    let sessions = adit_storage::parse_securecrt_sessions(root);
+    if sessions.is_empty() {
+        app.last_error =
+            Some(String::from("该文件夹下没有找到 SecureCRT 会话（.ini），请选择 Config/Sessions 文件夹"));
+        return;
+    }
+
+    let existing: BTreeSet<(String, String)> = app
+        .manager
+        .profiles()
+        .iter()
+        .map(|profile| (profile.group.clone(), profile.name.clone()))
+        .collect();
+    let fallback_user = adit_storage::current_username().unwrap_or_default();
+    let mut added = 0usize;
+    let mut skipped = 0usize;
+    let mut touched_groups: Vec<String> = Vec::new();
+
+    for session in sessions {
+        if existing.contains(&(session.group.clone(), session.name.clone())) {
+            skipped += 1;
+            continue;
+        }
+        let username = if session.username.is_empty() {
+            fallback_user.clone()
+        } else {
+            session.username.clone()
+        };
+        match app.manager.create_profile(
+            &session.group,
+            &session.name,
+            &session.hostname,
+            session.port,
+            username,
+            AuthMethod::Auto,
+            "",
+        ) {
+            Ok(id) => {
+                // Everything imports as SSH unless SecureCRT marked it otherwise.
+                let protocol = match session.protocol.as_str() {
+                    "RDP" => Some(Protocol::Rdp),
+                    "Serial" => Some(Protocol::Serial),
+                    _ => None,
+                };
+                if let Some(protocol) = protocol {
+                    app.manager.set_profile_protocol(id, protocol);
+                }
+                if !session.group.is_empty() && !touched_groups.contains(&session.group) {
+                    touched_groups.push(session.group.clone());
+                }
+                added += 1;
+            }
+            Err(_) => skipped += 1,
+        }
+    }
+
+    for group in &touched_groups {
+        add_group(&mut app.groups, group);
+    }
+
+    if added > 0 {
+        app.selected_profile = app.manager.profiles().first().map(|profile| profile.id);
+        load_selected_profile(app);
+        persist_profiles(app);
+        app.last_error = None;
+        app.notice = if skipped > 0 {
+            format!("已从 SecureCRT 导入 {added} 个会话（跳过 {skipped} 个已存在/无效）；密码未导入，请重新设置")
+        } else {
+            format!("已从 SecureCRT 导入 {added} 个会话；密码未导入，请重新设置")
+        };
+    } else {
+        app.notice = String::from("没有新的 SecureCRT 会话需要导入（可能都已存在）");
+    }
+}
+
 fn import_ssh_config(app: &mut AditApp) {
     let Some(path) = adit_storage::ssh_config_path() else {
         app.last_error = Some(String::from("找不到用户主目录"));
@@ -5158,6 +5257,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("保存会话", MenuCommand::SaveProfile),
             ("删除会话", MenuCommand::DeleteProfile),
             ("导入 ~/.ssh/config", MenuCommand::ImportSshConfig),
+            ("导入 SecureCRT 会话…", MenuCommand::ImportSecureCrt),
             ("选项 / 日志…", MenuCommand::Options),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],

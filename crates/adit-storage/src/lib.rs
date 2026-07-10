@@ -576,6 +576,133 @@ fn expand_tilde(path: &str) -> String {
     path.to_string()
 }
 
+/// A session parsed from a SecureCRT `.ini` session file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SecureCrtSession {
+    /// Session name (the `.ini` file stem).
+    pub name: String,
+    /// Folder path relative to the `Sessions` root, joined by `/` (empty ⇒ top
+    /// level / ungrouped).
+    pub group: String,
+    pub hostname: String,
+    pub port: u16,
+    pub username: String,
+    /// Raw SecureCRT "Protocol Name" (e.g. `SSH2`, `SSH1`, `Serial`, `RDP`).
+    pub protocol: String,
+}
+
+/// The likely SecureCRT `Sessions` folder under the user profile (best-effort).
+#[must_use]
+pub fn default_securecrt_sessions_dir() -> Option<PathBuf> {
+    let base = env::var_os("APPDATA").map(PathBuf::from)?;
+    let dir = base.join("VanDyke").join("Config").join("Sessions");
+    dir.is_dir().then_some(dir)
+}
+
+/// Parse every SecureCRT `.ini` session file under `root`. `root` may be the
+/// `Sessions` folder itself or a folder that contains one (e.g. `Config`). The
+/// folder structure becomes each session's group path.
+#[must_use]
+pub fn parse_securecrt_sessions(root: &Path) -> Vec<SecureCrtSession> {
+    let sessions_root = if root.join("Sessions").is_dir() {
+        root.join("Sessions")
+    } else {
+        root.to_path_buf()
+    };
+    let mut out = Vec::new();
+    walk_securecrt(&sessions_root, &sessions_root, &mut out);
+    out.sort_by(|a, b| (a.group.as_str(), a.name.as_str()).cmp(&(&b.group, &b.name)));
+    out
+}
+
+fn walk_securecrt(dir: &Path, root: &Path, out: &mut Vec<SecureCrtSession>) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        // Skip SecureCRT's own metadata files (e.g. __FolderData__.ini).
+        if name.starts_with("__") {
+            continue;
+        }
+        if path.is_dir() {
+            walk_securecrt(&path, root, out);
+        } else if path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("ini"))
+        {
+            if let Some(session) = parse_securecrt_ini(&path, root) {
+                out.push(session);
+            }
+        }
+    }
+}
+
+fn parse_securecrt_ini(path: &Path, root: &Path) -> Option<SecureCrtSession> {
+    let text = fs::read_to_string(path).ok()?;
+    let mut hostname = String::new();
+    let mut username = String::new();
+    let mut protocol = String::new();
+    let mut port: Option<u16> = None;
+
+    for line in text.lines() {
+        let Some((key, value)) = parse_securecrt_line(line) else {
+            continue;
+        };
+        match key {
+            "Hostname" => hostname = value.trim().to_string(),
+            "Username" => username = value.trim().to_string(),
+            "Protocol Name" => protocol = value.trim().to_string(),
+            // Port keys are 8-hex-digit DWORDs, e.g. `D:"[SSH2] Port"=00000016`.
+            // A protocol-specific `[..] Port` wins over a generic one.
+            key if key.ends_with("Port") => {
+                if let Ok(parsed) = u32::from_str_radix(value.trim(), 16) {
+                    if port.is_none() || key.starts_with('[') {
+                        port = Some(parsed.min(u32::from(u16::MAX)) as u16);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if hostname.is_empty() {
+        return None;
+    }
+    let name = path.file_stem()?.to_string_lossy().into_owned();
+    let group = path
+        .parent()
+        .and_then(|parent| parent.strip_prefix(root).ok())
+        .map(|rel| {
+            rel.components()
+                .map(|c| c.as_os_str().to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default();
+
+    Some(SecureCrtSession {
+        name,
+        group,
+        hostname,
+        port: port.filter(|p| *p > 0).unwrap_or(22),
+        username,
+        protocol,
+    })
+}
+
+/// Parse a SecureCRT `.ini` line of the form `X:"Key"=Value` into `(key, value)`.
+fn parse_securecrt_line(line: &str) -> Option<(&str, &str)> {
+    let after_colon = line.trim().split_once(':').map(|(_, rest)| rest)?;
+    let rest = after_colon.strip_prefix('"')?;
+    let close = rest.find('"')?;
+    let key = &rest[..close];
+    let value = rest[close + 1..].strip_prefix('=')?;
+    Some((key, value))
+}
+
 fn platform_config_dir() -> PathBuf {
     if cfg!(target_os = "windows") {
         if let Some(app_data) = env::var_os("APPDATA") {
@@ -608,6 +735,54 @@ mod tests {
     use super::*;
     use adit_domain::AuthMethod;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn parses_securecrt_sessions_with_folders() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = env::temp_dir().join(format!("adit-scrt-{unique}")).join("Sessions");
+        fs::create_dir_all(root.join("cloud")).unwrap();
+
+        // A top-level SSH session.
+        fs::write(
+            root.join("gateway.ini"),
+            "S:\"Hostname\"=10.0.0.1\r\nD:\"[SSH2] Port\"=00000016\r\nS:\"Username\"=root\r\nS:\"Protocol Name\"=SSH2\r\n",
+        )
+        .unwrap();
+        // A grouped session on a non-default port.
+        fs::write(
+            root.join("cloud").join("web-01.ini"),
+            "S:\"Hostname\"=web.example.com\nD:\"[SSH2] Port\"=00000929\nS:\"Username\"=deploy\nS:\"Protocol Name\"=SSH2\n",
+        )
+        .unwrap();
+        // Metadata file must be ignored.
+        fs::write(root.join("__FolderData__.ini"), "S:\"X\"=y\n").unwrap();
+        // A file with no hostname is skipped.
+        fs::write(root.join("blank.ini"), "S:\"Protocol Name\"=SSH2\n").unwrap();
+
+        let sessions = parse_securecrt_sessions(&root);
+        assert_eq!(sessions.len(), 2, "got {sessions:?}");
+
+        let gateway = sessions.iter().find(|s| s.name == "gateway").unwrap();
+        assert_eq!(gateway.group, "");
+        assert_eq!(gateway.hostname, "10.0.0.1");
+        assert_eq!(gateway.port, 22);
+        assert_eq!(gateway.username, "root");
+
+        let web = sessions.iter().find(|s| s.name == "web-01").unwrap();
+        assert_eq!(web.group, "cloud");
+        assert_eq!(web.hostname, "web.example.com");
+        assert_eq!(web.port, 2345); // 0x929
+        assert_eq!(web.username, "deploy");
+
+        // Also accepts a parent that contains the Sessions folder.
+        let parent = root.parent().unwrap();
+        assert_eq!(parse_securecrt_sessions(parent).len(), 2);
+
+        let _ = fs::remove_dir_all(root.parent().unwrap());
+    }
 
     #[test]
     fn parses_ssh_config_hosts() {
