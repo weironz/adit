@@ -1464,6 +1464,8 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ShowGroupContextMenu(group) => {
+            // Anchor the floating menu at the cursor (last tracked position).
+            app.context_menu_pos = app.cursor_pos;
             app.group_context_menu = Some(group);
             app.profile_context_menu = None;
             app.profile_editor = None;
@@ -1483,7 +1485,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             new_profile_draft(app);
         }
         Message::DeleteGroupFromContext(group) => {
-            delete_empty_group(app, group);
+            delete_group(app, group);
         }
         Message::GroupNameDraftChanged(value) => {
             app.group_name_draft = value;
@@ -2971,29 +2973,43 @@ fn save_group_rename(app: &mut AditApp) {
     }
 }
 
-fn delete_empty_group(app: &mut AditApp, group: String) {
+/// Delete a folder and every session config inside it (and each one's saved
+/// password). Open tabs are left running, matching single-session delete.
+fn delete_group(app: &mut AditApp, group: String) {
     app.group_context_menu = None;
     app.editing_group = None;
     app.group_name_draft.clear();
 
-    if app
+    let ids: Vec<ProfileId> = app
         .manager
         .profiles()
         .iter()
-        .any(|profile| profile.group == group)
-    {
-        app.last_error = Some(String::from("分组非空，请先移动或删除其中的会话"));
-        return;
+        .filter(|profile| profile.group == group)
+        .map(|profile| profile.id)
+        .collect();
+    let count = ids.len();
+
+    for id in &ids {
+        let _ = app.manager.delete_profile(*id);
+        let _ = app.credential_store.delete_profile_password(*id);
+    }
+    remove_group(&mut app.groups, &group);
+    app.collapsed_groups.remove(&group);
+    if app.profile_group == group {
+        app.profile_group = String::new();
     }
 
-    if remove_group(&mut app.groups, &group) {
-        app.collapsed_groups.remove(&group);
-        if app.profile_group == group {
-            app.profile_group = String::new();
-        }
-        if persist_profiles(app) {
-            app.notice = format!("空分组已删除: {group}");
-        }
+    app.selected_profile = app.manager.profiles().first().map(|profile| profile.id);
+    if app.selected_profile.is_some() {
+        load_selected_profile(app);
+    }
+    app.last_error = None;
+    if persist_profiles(app) {
+        app.notice = if count > 0 {
+            format!("已删除分组「{group}」及其 {count} 个会话配置（已打开标签不受影响）")
+        } else {
+            format!("已删除空分组「{group}」")
+        };
     }
 }
 
@@ -5012,6 +5028,10 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if let Some(profile_id) = app.profile_context_menu {
         layers.push(opaque(profile_context_overlay(app, profile_id)));
+    }
+    if let Some(group) = app.group_context_menu.clone() {
+        let collapsed = app.collapsed_groups.contains(&group);
+        layers.push(opaque(group_context_overlay(app, group, collapsed)));
     }
     if app.terminal_context_menu {
         layers.push(opaque(terminal_context_overlay(app)));
@@ -7560,9 +7580,8 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                     group_drop_target,
                 ));
 
-                if app.group_context_menu.as_deref() == Some(group.as_str()) {
-                    profiles = profiles.push(group_context_menu(group.clone(), collapsed));
-                }
+                // The folder context menu is a floating overlay (see the view
+                // layers), not pushed inline.
                 if app.editing_group.as_deref() == Some(group.as_str()) {
                     profiles = profiles.push(group_edit_menu(app));
                 }
@@ -7805,24 +7824,33 @@ fn tree_group_row(
     .into()
 }
 
-fn group_context_menu(group: String, collapsed: bool) -> Element<'static, Message> {
+/// The floating folder context menu (mirrors the session menu): rename, new
+/// session, collapse/expand, and a destructive "delete folder" that removes the
+/// folder and its session configs.
+fn group_context_menu_card(group: String, collapsed: bool) -> Element<'static, Message> {
     let toggle_label = if collapsed { "展开" } else { "折叠" };
     container(
-        row![
-            Space::new().width(Length::Fixed(42.0)),
-            profile_context_button("重命名", Message::RenameGroupFromContext(group.clone())),
-            profile_context_button("新会话", Message::NewProfileInGroup(group.clone())),
-            profile_context_button("删空组", Message::DeleteGroupFromContext(group.clone())),
-            profile_context_button(toggle_label, Message::ToggleProfileGroup(group)),
-            profile_context_button("关闭", Message::HideGroupContextMenu),
+        column![
+            profile_menu_item("重命名", Message::RenameGroupFromContext(group.clone()), false),
+            profile_menu_item("新会话", Message::NewProfileInGroup(group.clone()), false),
+            profile_menu_item(toggle_label, Message::ToggleProfileGroup(group.clone()), false),
+            profile_menu_divider(),
+            profile_menu_item("删除分组", Message::DeleteGroupFromContext(group), true),
         ]
-        .spacing(3)
-        .align_y(Alignment::Center),
+        .spacing(1),
     )
-    .padding([3, 4])
-    .width(Fill)
+    .padding(4)
+    .width(Length::Fixed(PROFILE_MENU_WIDTH))
     .style(|_theme| profile_context_menu_style())
     .into()
+}
+
+fn group_context_overlay(app: &AditApp, group: String, collapsed: bool) -> Element<'_, Message> {
+    floating_context_menu(
+        app,
+        group_context_menu_card(group, collapsed),
+        Message::HideGroupContextMenu,
+    )
 }
 
 fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
@@ -8159,13 +8187,6 @@ fn profile_menu_divider() -> Element<'static, Message> {
         .into()
 }
 
-fn profile_context_button(label: &'static str, message: Message) -> Element<'static, Message> {
-    button(text(label).size(11))
-        .padding([3, 7])
-        .style(|_theme, status| profile_context_button_style(status))
-        .on_press(message)
-        .into()
-}
 
 fn profile_matches_filter(profile: &ConnectionProfile, filter: &str) -> bool {
     if filter.is_empty() {
@@ -9682,17 +9703,6 @@ fn profile_context_menu_style() -> container::Style {
         shadow: subtle_shadow(),
         ..container::Style::default()
     }
-}
-
-fn profile_context_button_style(status: button::Status) -> button::Style {
-    let background = match status {
-        button::Status::Hovered => panel_background_hover(),
-        button::Status::Pressed => accent_soft(),
-        button::Status::Disabled => surface_alt(),
-        button::Status::Active => surface(),
-    };
-
-    base_button_style(background, primary_text(), transparent())
 }
 
 /// A vertical context-menu row: left-aligned, subtle hover, red for destructive.
