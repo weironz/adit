@@ -685,9 +685,10 @@ impl SessionManager {
     }
 
     /// Re-title this profile's open, auto-titled sessions so multiple
-    /// connections to the same host are numbered from (1): a lone session keeps
-    /// the bare profile name, and two or more become "name (1)", "name (2)"… in
-    /// tab order. Sessions the user renamed by hand are left untouched.
+    /// connections to the same host are distinguishable: the first (original)
+    /// session keeps the bare profile name and each additional duplicate is
+    /// numbered from (1) — "name (1)", "name (2)"… in tab order. Sessions the
+    /// user renamed by hand are left untouched.
     fn renumber_profile_tabs(&mut self, profile_id: ProfileId) {
         let Some(base) = self
             .profiles
@@ -710,12 +711,14 @@ impl SessionManager {
             })
             .collect();
 
+        // The first (already-connected) session keeps the bare name untouched;
+        // each additional duplicate is numbered from (1): (1), (2), …
         for (index, id) in family.iter().enumerate() {
             if let Some(record) = self.sessions.get_mut(id) {
-                record.summary.title = if family.len() == 1 {
+                record.summary.title = if index == 0 {
                     base.clone()
                 } else {
-                    format!("{base} ({})", index + 1)
+                    format!("{base} ({index})")
                 };
             }
         }
@@ -2584,19 +2587,19 @@ mod tests {
         let a = manager.open_mock_session(profile_id).unwrap();
         assert_eq!(title(&manager, a), base);
 
-        // Opening more numbers the whole family from (1), in tab order.
+        // The first stays bare; each duplicate is numbered from (1), in tab order.
         let b = manager.open_mock_session(profile_id).unwrap();
         let c = manager.open_mock_session(profile_id).unwrap();
-        assert_eq!(title(&manager, a), format!("{base} (1)"));
-        assert_eq!(title(&manager, b), format!("{base} (2)"));
-        assert_eq!(title(&manager, c), format!("{base} (3)"));
-
-        // Closing the middle renumbers the survivors to a tidy (1)/(2).
-        manager.close(b);
-        assert_eq!(title(&manager, a), format!("{base} (1)"));
+        assert_eq!(title(&manager, a), base);
+        assert_eq!(title(&manager, b), format!("{base} (1)"));
         assert_eq!(title(&manager, c), format!("{base} (2)"));
 
-        // Down to one -> back to the bare name.
+        // Closing the middle re-tightens the survivors.
+        manager.close(b);
+        assert_eq!(title(&manager, a), base);
+        assert_eq!(title(&manager, c), format!("{base} (1)"));
+
+        // Down to one -> the bare name.
         manager.close(a);
         assert_eq!(title(&manager, c), base);
 
@@ -2605,9 +2608,9 @@ mod tests {
         manager.rename_session(c, "prod-box");
         let e = manager.open_mock_session(profile_id).unwrap();
         assert_eq!(title(&manager, c), "prod-box");
-        // c is excluded from the family, so d and e number as a pair.
-        assert_eq!(title(&manager, d), format!("{base} (1)"));
-        assert_eq!(title(&manager, e), format!("{base} (2)"));
+        // c is excluded from the family, so d stays bare and e is the first dup.
+        assert_eq!(title(&manager, d), base);
+        assert_eq!(title(&manager, e), format!("{base} (1)"));
     }
 
     #[test]
