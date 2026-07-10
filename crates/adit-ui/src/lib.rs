@@ -67,15 +67,20 @@ pub struct AditApp {
     dragged_profile: Option<ProfileId>,
     // Where the dragged profile will land on release (drives the insertion line).
     profile_drop: Option<ProfileDrop>,
-    // Sidebar-relative cursor position while a profile drag is in flight, so the
-    // floating "ghost" card can follow the pointer.
-    profile_drag_cursor: Option<Point>,
     // The press point, and whether the pointer has moved far enough to count as a
-    // real drag. Drag visuals (ghost/gap/zones) only appear once active, so a
+    // real drag. The insertion line / drop zones only appear once active, so a
     // plain click or double-click never mutates the tree (which would drop the
     // row's click-tracking and swallow the double-click).
     profile_drag_origin: Option<Point>,
     profile_drag_active: bool,
+    // Folder (group) drag-reorder, mirroring the session drag: `dragged_group` is
+    // the held folder, the drag only "activates" once the pointer leaves a dead
+    // zone (so a plain click still toggles collapse), and `group_drop` is the
+    // folder it will land next to — the drag direction decides which side.
+    dragged_group: Option<String>,
+    group_drag_active: bool,
+    group_drag_origin: Option<Point>,
+    group_drop: Option<String>,
     group_drop_target: Option<String>,
     group_context_menu: Option<String>,
     editing_group: Option<String>,
@@ -361,6 +366,9 @@ pub enum Message {
     SftpDragEnter(SftpPane),
     SftpDragMove(SftpPane, Point),
     ToggleProfileGroup(String),
+    // Pressing a folder header arms a folder drag-reorder; a release without any
+    // real movement falls back to toggling the folder's collapse.
+    GroupPressed(String),
     ProfileGroupChanged(String),
     ProfileNameChanged(String),
     ProfileHostChanged(String),
@@ -941,9 +949,12 @@ impl AditApp {
             hovered_profile: None,
             dragged_profile: None,
             profile_drop: None,
-            profile_drag_cursor: None,
             profile_drag_origin: None,
             profile_drag_active: false,
+            dragged_group: None,
+            group_drag_active: false,
+            group_drag_origin: None,
+            group_drop: None,
             group_drop_target: None,
             group_context_menu: None,
             editing_group: None,
@@ -1362,14 +1373,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.dragged_profile = Some(profile_id);
             app.profile_drop = None;
             app.profile_drag_active = false;
-            // Seed the ghost origin at the press point (cursor_pos is window
-            // absolute; the sidebar starts just below the menu bar + toolbar).
-            let seed = Point::new(
+            // Record the press point; the drag only "activates" once the pointer
+            // leaves a small dead zone (cursor_pos is window-absolute; the sidebar
+            // starts just below the menu bar + toolbar).
+            app.profile_drag_origin = Some(Point::new(
                 app.cursor_pos.x,
                 app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
-            );
-            app.profile_drag_cursor = Some(seed);
-            app.profile_drag_origin = Some(seed);
+            ));
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -1380,7 +1390,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.dragged_profile = None;
             app.profile_drag_active = false;
             app.profile_drag_origin = None;
-            app.profile_drag_cursor = None;
             app.profile_drop = None;
             app.group_drop_target = None;
             app.profile_context_menu = None;
@@ -1440,12 +1449,25 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileDragOverGroup(group) => {
             if app.dragged_profile.is_some() {
+                // A session dragged onto a folder header drops *into* the folder.
                 app.group_drop_target = Some(group.clone());
                 app.profile_drop = Some(ProfileDrop::IntoGroup(group));
+            } else if let Some(source) = app.dragged_group.clone() {
+                // A folder dragged onto another folder reorders next to it.
+                if source != group {
+                    app.group_drag_active = true;
+                    app.group_drop = Some(group);
+                } else {
+                    app.group_drop = None;
+                }
             }
         }
         Message::ProfileDroppedOnGroup(group) => {
-            drop_profile_on_group(app, group);
+            if app.dragged_group.is_some() {
+                finish_group_drag_on(app, group);
+            } else {
+                drop_profile_on_group(app, group);
+            }
         }
         Message::ProfileGroupHoverExited(group) => {
             if app.dragged_profile.is_none()
@@ -1453,9 +1475,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             {
                 app.group_drop_target = None;
             }
+            if app.dragged_group.is_some() && app.group_drop.as_deref() == Some(group.as_str()) {
+                app.group_drop = None;
+            }
         }
         Message::CancelProfileDrag => {
             finish_profile_drag(app);
+            // A folder released off any header (over empty space or a session row)
+            // still commits its reorder from the last-hovered target.
+            cancel_group_drag(app);
             app.sftp_drag_cursor = None;
             // A left-button release also resolves a pane-to-pane SFTP drag:
             // transfer only if the pointer ended over the *other* pane.
@@ -1534,12 +1562,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // window-absolute coordinates.
             app.cursor_pos = Point::new(point.x, point.y + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT);
             if app.dragged_profile.is_some() {
-                app.profile_drag_cursor = Some(point);
                 // Promote to a real drag once the pointer leaves a small dead zone
                 // around the press point — a click/double-click stays inside it.
                 if let Some(origin) = app.profile_drag_origin {
                     if point.distance(origin) > 5.0 {
                         app.profile_drag_active = true;
+                    }
+                }
+            }
+            if app.dragged_group.is_some() {
+                // Same dead-zone promotion for a folder drag, so a plain folder
+                // click still toggles collapse instead of reordering.
+                if let Some(origin) = app.group_drag_origin {
+                    if point.distance(origin) > 5.0 {
+                        app.group_drag_active = true;
                     }
                 }
             }
@@ -1814,12 +1850,25 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ToggleProfileGroup(group) => {
-            if !app.collapsed_groups.remove(&group) {
-                app.collapsed_groups.insert(group);
-            }
+            toggle_group_collapsed(app, &group);
+        }
+        Message::GroupPressed(group) => {
+            // Arm a folder drag. It only turns into a real reorder once the pointer
+            // leaves a small dead zone (see SidebarCursorMoved); a plain click
+            // releases still inside it and falls back to toggling collapse.
+            app.dragged_group = Some(group);
+            app.group_drag_active = false;
+            app.group_drop = None;
+            app.group_drag_origin = Some(Point::new(
+                app.cursor_pos.x,
+                app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
+            ));
+            // A folder press cancels any in-flight session drag / menus.
+            app.dragged_profile = None;
+            app.profile_drag_active = false;
+            app.profile_drop = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
-            app.profile_editor = None;
         }
         Message::ProfileGroupChanged(value) => {
             app.terminal_focused = false;
@@ -2778,7 +2827,6 @@ fn place_ungrouped_at(
 /// (beside a row, into/around a folder, or out to the top level), then persist.
 /// A plain click leaves `profile_drop` unset, so nothing moves.
 fn finish_profile_drag(app: &mut AditApp) {
-    app.profile_drag_cursor = None;
     app.profile_drag_origin = None;
     let was_active = app.profile_drag_active;
     app.profile_drag_active = false;
@@ -2844,7 +2892,6 @@ fn finish_profile_drag(app: &mut AditApp) {
 
 fn drop_profile_on_group(app: &mut AditApp, group: String) {
     app.profile_drop = None;
-    app.profile_drag_cursor = None;
     let Some(source_id) = app.dragged_profile.take() else {
         app.group_drop_target = None;
         return;
@@ -2865,6 +2912,110 @@ fn drop_profile_on_group(app: &mut AditApp, group: String) {
         Err(error) => {
             app.last_error = Some(error.to_string());
         }
+    }
+}
+
+/// Toggle a folder's collapsed state (shared by the header click and the folder
+/// context menu's collapse/expand item).
+fn toggle_group_collapsed(app: &mut AditApp, group: &str) {
+    if !app.collapsed_groups.remove(group) {
+        app.collapsed_groups.insert(group.to_string());
+    }
+    app.profile_context_menu = None;
+    app.group_context_menu = None;
+    app.profile_editor = None;
+}
+
+/// A folder drag released directly on the `target` folder header.
+fn finish_group_drag_on(app: &mut AditApp, target: String) {
+    let Some(source) = app.dragged_group.take() else {
+        return;
+    };
+    let active = app.group_drag_active;
+    app.group_drag_active = false;
+    app.group_drag_origin = None;
+    app.group_drop = None;
+    if !active {
+        // No real movement — treat the press+release as a click on the header.
+        toggle_group_collapsed(app, &source);
+        return;
+    }
+    commit_group_reorder(app, source, target);
+}
+
+/// A folder drag released off any header (empty space or a session row). Commits
+/// from the last-hovered target, if any; a press that never moved just toggles.
+fn cancel_group_drag(app: &mut AditApp) {
+    let Some(source) = app.dragged_group.take() else {
+        return;
+    };
+    let active = app.group_drag_active;
+    let target = app.group_drop.take();
+    app.group_drag_active = false;
+    app.group_drag_origin = None;
+    if !active {
+        toggle_group_collapsed(app, &source);
+        return;
+    }
+    if let Some(target) = target {
+        commit_group_reorder(app, source, target);
+    }
+}
+
+/// Move folder `source` next to `target` in the folder order and persist. The
+/// drag direction picks the side: dragging down lands after the target, dragging
+/// up lands before it (mirroring the session/tab reorder).
+fn commit_group_reorder(app: &mut AditApp, source: String, target: String) {
+    // Materialize the full displayed folder order — app.groups may omit folders
+    // that exist only via profiles — so reordering the Vec fully controls order.
+    let order = sidebar_group_names(app, app.manager.profiles());
+    app.groups = reordered_folders(order, &source, &target);
+    if persist_profiles(app) {
+        app.notice = String::from("分组顺序已更新");
+    }
+}
+
+/// Pure folder-reorder: return `order` with `source` moved next to `target`.
+/// Direction-aware — if `source` sits above `target` (dragging down) it lands
+/// after `target`, otherwise (dragging up) before it. A no-op if either name is
+/// missing or they are the same.
+fn reordered_folders(mut order: Vec<String>, source: &str, target: &str) -> Vec<String> {
+    if source == target {
+        return order;
+    }
+    let (Some(si), Some(ti)) = (
+        order.iter().position(|g| g == source),
+        order.iter().position(|g| g == target),
+    ) else {
+        return order;
+    };
+    let after = si < ti;
+    order.retain(|g| g != source);
+    let mut idx = order.iter().position(|g| g == target).unwrap_or(order.len());
+    if after {
+        idx += 1;
+    }
+    order.insert(idx, source.to_string());
+    order
+}
+
+/// Whether to draw a folder-reorder insertion line above/below `group`'s header
+/// while a folder is being dragged. The side follows the drag direction.
+fn folder_reorder_lines(app: &AditApp, folders: &[String], group: &str) -> (bool, bool) {
+    if !app.group_drag_active
+        || app.group_drop.as_deref() != Some(group)
+        || app.dragged_group.as_deref() == Some(group)
+    {
+        return (false, false);
+    }
+    let src_idx = app
+        .dragged_group
+        .as_ref()
+        .and_then(|source| folders.iter().position(|g| g == source));
+    let tgt_idx = folders.iter().position(|g| g == group);
+    match (src_idx, tgt_idx) {
+        (Some(s), Some(t)) if s < t => (false, true), // dragging down → after
+        _ => (true, false),                           // dragging up → before
     }
 }
 
@@ -7673,6 +7824,12 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                     .filter(|candidate| candidate.group == group)
                     .count();
                 let group_drop_target = app.group_drop_target.as_deref() == Some(group.as_str());
+                // A folder-reorder insertion line above the header (dragging up)
+                // or below the whole block (dragging down).
+                let (line_before, line_after) = folder_reorder_lines(app, &folders, &group);
+                if line_before {
+                    profiles = profiles.push(drop_line());
+                }
                 profiles = profiles.push(tree_group_row(
                     group.clone(),
                     collapsed,
@@ -7685,11 +7842,13 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                 if app.editing_group.as_deref() == Some(group.as_str()) {
                     profiles = profiles.push(group_edit_menu(app));
                 }
-                if collapsed {
-                    continue;
+                if !collapsed {
+                    for profile in &group_profiles {
+                        profiles = profiles.push(sidebar_profile_row(app, profile));
+                    }
                 }
-                for profile in &group_profiles {
-                    profiles = profiles.push(sidebar_profile_row(app, profile));
+                if line_after {
+                    profiles = profiles.push(drop_line());
                 }
             }
         }
@@ -7765,89 +7924,15 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
     }
 
     // Track the cursor over the sidebar so a right-click can anchor its floating
-    // context menu at the pointer, and (during a drag) so the ghost card follows.
-    // `on_move` gives sidebar-relative coordinates.
-    let panel = container(content)
-        .height(Fill)
-        .style(|_theme| sidebar_style());
-    // Only overlay the ghost once the drag is active; wrapping the panel in a
-    // stack changes the row widgets' tree path, which would otherwise reset their
-    // click-tracking and swallow a double-click.
-    let layered: Element<'_, Message> = match (app.profile_drag_active, app.profile_drag_cursor) {
-        (true, Some(position)) => stack![panel, profile_drag_ghost(app, position)].into(),
-        _ => panel.into(),
-    };
-    mouse_area(layered)
-        .on_move(Message::SidebarCursorMoved)
-        .into()
-}
-
-/// The empty slot left where a dragged profile row used to be — the list
-/// squeezes around it and it marks where the drop will land.
-fn profile_drag_gap() -> Element<'static, Message> {
-    container(Space::new().width(Fill).height(Length::Fixed(PROFILE_ROW_HEIGHT)))
-        .width(Fill)
-        .style(|_theme| container::Style {
-            background: Some(Background::Color(accent_soft())),
-            border: border(RADIUS_SM, 1.5, accent()),
-            ..container::Style::default()
-        })
-        .into()
-}
-
-/// A floating card that mirrors the dragged profile row and follows the cursor
-/// (`position` is sidebar-relative), so the drag reads as picking the row up.
-fn profile_drag_ghost(app: &AditApp, position: Point) -> Element<'static, Message> {
-    let Some(id) = app.dragged_profile else {
-        return Space::new().into();
-    };
-    let Some(profile) = app.manager.profile(id).cloned() else {
-        return Space::new().into();
-    };
-    let endpoint = if profile.username.trim().is_empty() {
-        profile.host.clone()
-    } else {
-        format!("{}@{}", profile.username, profile.host)
-    };
-
-    let card = container(
-        row![
-            Space::new().width(Length::Fixed(4.0)),
-            avatar(&profile.name),
-            column![
-                text(profile.name.clone()).size(12).color(primary_text()),
-                text(endpoint).size(10).color(muted_text()),
-            ]
-            .spacing(0),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
+    // context menu at the pointer, and (during a drag) so we can tell a click
+    // from a drag. `on_move` gives sidebar-relative coordinates.
+    mouse_area(
+        container(content)
+            .height(Fill)
+            .style(|_theme| sidebar_style()),
     )
-    .height(Length::Fixed(PROFILE_ROW_HEIGHT))
-    .width(Length::Fixed((app.sidebar_width - 28.0).max(140.0)))
-    .padding([2, 8])
-    .style(|_theme| profile_drag_ghost_style());
-
-    // Carry the card under the cursor: centered on it vertically, nudged right.
-    let top = (position.y - PROFILE_ROW_HEIGHT / 2.0).max(0.0);
-    let left = (position.x - 18.0).max(0.0);
-    column![
-        Space::new().height(Length::Fixed(top)),
-        row![Space::new().width(Length::Fixed(left)), card],
-    ]
-    .width(Fill)
-    .height(Fill)
+    .on_move(Message::SidebarCursorMoved)
     .into()
-}
-
-fn profile_drag_ghost_style() -> container::Style {
-    container::Style {
-        background: Some(Background::Color(surface())),
-        text_color: Some(primary_text()),
-        border: border(RADIUS_SM, 1.5, accent()),
-        shadow: soft_shadow(),
-        ..container::Style::default()
-    }
 }
 
 /// The draggable divider between the sidebar and the workspace. Pressing it
@@ -7914,7 +7999,8 @@ fn tree_group_row(
         .width(Fill)
         .style(move |_theme| group_row_style(drop_target)),
     )
-    .on_press(Message::ToggleProfileGroup(toggle_group))
+    // Press arms a folder drag; a release with no real movement toggles collapse.
+    .on_press(Message::GroupPressed(toggle_group))
     .on_right_press(Message::ShowGroupContextMenu(context_group))
     .on_enter(Message::ProfileDragOverGroup(enter_group))
     .on_move(move |_| Message::ProfileDragOverGroup(hover_group.clone()))
@@ -7981,15 +8067,12 @@ fn group_edit_menu(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
-/// Render one session row for the sidebar, or — while it is being dragged — the
-/// empty "gap" its neighbours squeeze around (the row itself floats as the
-/// ghost). Shared by the ungrouped top-level list and every group.
+/// Render one session row for the sidebar. Shared by the ungrouped top-level
+/// list and every group. During a drag the row stays put (SecureCRT-style) and
+/// only an insertion line marks where the drop will land.
 fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
-    // Only turn the dragged row into a gap once the drag is active; on a plain
-    // press the row must stay a normal row so a double-click still registers.
-    if app.profile_drag_active && Some(profile.id) == app.dragged_profile {
-        return profile_drag_gap();
-    }
+    // The dragged row stays in place (SecureCRT-style); only an insertion line at
+    // the target shows where it will land. It reads as selected while dragging.
     let selected = Some(profile.id) == app.selected_profile;
     let hovered = Some(profile.id) == app.hovered_profile;
     let row = tree_profile_row(profile.clone(), selected, hovered, false);
@@ -9920,6 +10003,22 @@ mod tests {
         assert_eq!(command_input_delta("ls", "ls"), Some(Vec::new()));
         // A mid-string edit can't be a simple keystroke -> None (don't send).
         assert_eq!(command_input_delta("cat a.txt", "cat b.txt"), None);
+    }
+
+    #[test]
+    fn folder_reorder_is_direction_aware() {
+        let base = || vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
+        // Drag B (up) onto A -> lands before A.
+        assert_eq!(reordered_folders(base(), "B", "A"), vec!["B", "A", "C", "D"]);
+        // Drag A (down) onto C -> lands after C.
+        assert_eq!(reordered_folders(base(), "A", "C"), vec!["B", "C", "A", "D"]);
+        // Drag D (up) onto B -> lands before B.
+        assert_eq!(reordered_folders(base(), "D", "B"), vec!["A", "D", "B", "C"]);
+        // Drag A (down) onto the last -> lands at the very end.
+        assert_eq!(reordered_folders(base(), "A", "D"), vec!["B", "C", "D", "A"]);
+        // Onto itself, or an unknown name, is a no-op.
+        assert_eq!(reordered_folders(base(), "B", "B"), base());
+        assert_eq!(reordered_folders(base(), "B", "Z"), base());
     }
 
     #[test]
