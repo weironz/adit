@@ -4599,6 +4599,12 @@ fn sync_terminal_size(app: &mut AditApp) {
     let layout = pane_layout(app);
     let target = layout.pane_terminal_size();
 
+    // Keep the manager's "new session" size current even when nothing needs
+    // resizing, so a freshly-connected shell's PTY matches the visible width
+    // (otherwise its ls/output would wrap for the old default width).
+    app.manager
+        .set_default_terminal_size(target.cols, target.rows);
+
     // Skip the common no-change case so a window drag does not spam resizes.
     // Pane add/close changes the pane count → the per-pane target changes, so
     // this still fits panes on split/unsplit; a same-count session *swap* fits

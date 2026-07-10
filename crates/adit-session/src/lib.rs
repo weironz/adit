@@ -213,6 +213,9 @@ pub struct SessionManager {
     /// Tab display order (session_ids), maintained on open/close/reorder so tabs
     /// are stable and user-orderable (the session map itself is unordered).
     order: Vec<SessionId>,
+    /// The grid size new sessions are created at (local terminal + remote PTY),
+    /// kept in sync with the UI so a fresh shell matches the visible width.
+    default_size: TerminalSize,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
@@ -272,10 +275,18 @@ impl SessionManager {
             auto_reconnect: true,
             connect_timeout_secs: 20,
             order: Vec::new(),
+            default_size: TerminalSize::default(),
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
         }
+    }
+
+    /// Set the grid size used for new sessions (local terminal + remote PTY), so
+    /// a shell opened now matches the visible terminal width/height. Clamped to a
+    /// sane minimum.
+    pub fn set_default_terminal_size(&mut self, cols: u16, rows: u16) {
+        self.default_size = TerminalSize::new(cols.max(20), rows.max(4));
     }
 
     #[must_use]
@@ -711,7 +722,7 @@ impl SessionManager {
 
         let session_id = SessionId::new();
         let endpoint = profile.endpoint();
-        let terminal = welcome_terminal(&profile.name, &endpoint);
+        let terminal = welcome_terminal(&profile.name, &endpoint, self.default_size);
         let summary = SessionSummary {
             id: session_id,
             profile_id,
@@ -749,12 +760,13 @@ impl SessionManager {
             .find(|profile| profile.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?
             .clone();
+        let size = self.default_size;
 
         let (live, endpoint, terminal, reconnect) = match profile.protocol {
             Protocol::Ssh => {
-                let live = spawn_live_shell(&profile, &password, self.connect_timeout_secs)?;
+                let live = spawn_live_shell(&profile, &password, self.connect_timeout_secs, size)?;
                 let endpoint = profile.endpoint();
-                let mut terminal = live_shell_terminal(&profile.name, &endpoint);
+                let mut terminal = live_shell_terminal(&profile.name, &endpoint, size);
                 terminal.append_status(format!("connecting to {endpoint}"));
                 (
                     live,
@@ -769,9 +781,9 @@ impl SessionManager {
                 // way `host` is). Empty → the system default shell.
                 let program = (!profile.identity_file.trim().is_empty())
                     .then(|| profile.identity_file.trim().to_string());
-                let live = adit_ssh::spawn_local_shell(96, 28, program)?;
+                let live = adit_ssh::spawn_local_shell(size.cols, size.rows, program)?;
                 let endpoint = String::from("本地 Shell");
-                let terminal = local_shell_terminal(&profile.name);
+                let terminal = local_shell_terminal(&profile.name, size);
                 (live, endpoint, terminal, None)
             }
             Protocol::Serial => {
@@ -789,7 +801,7 @@ impl SessionManager {
                     .unwrap_or(115_200);
                 let live = adit_ssh::spawn_serial(port_name.to_string(), baud)?;
                 let endpoint = format!("{port_name} @ {baud}");
-                let terminal = serial_terminal(&profile.name, &endpoint);
+                let terminal = serial_terminal(&profile.name, &endpoint, size);
                 (live, endpoint, terminal, None)
             }
             Protocol::Rdp => {
@@ -892,6 +904,7 @@ impl SessionManager {
     pub fn build_ssh_probe_session(
         profile: ConnectionProfile,
         password: String,
+        size: TerminalSize,
     ) -> Result<SshProbeSession, SessionError> {
         let mut request = PasswordShellProbe::new(
             profile.host.clone(),
@@ -900,8 +913,8 @@ impl SessionManager {
             password,
         );
         request.auth = auth_options_for_profile(&profile, &request.password);
-        request.cols = 96;
-        request.rows = 28;
+        request.cols = size.cols;
+        request.rows = size.rows;
 
         let output = adit_ssh::probe_password_shell_blocking(request)?;
 
@@ -917,7 +930,8 @@ impl SessionManager {
 
     pub fn open_ssh_probe_session(&mut self, probe: SshProbeSession) -> SessionId {
         let session_id = SessionId::new();
-        let terminal = probe_terminal(&probe.title, &probe.endpoint, &probe.transcript);
+        let terminal =
+            probe_terminal(&probe.title, &probe.endpoint, &probe.transcript, self.default_size);
         let profile_id = probe.profile_id;
         let summary = SessionSummary {
             id: session_id,
@@ -1957,7 +1971,7 @@ impl SessionManager {
             return;
         };
 
-        match spawn_live_shell(&profile, &password, self.connect_timeout_secs) {
+        match spawn_live_shell(&profile, &password, self.connect_timeout_secs, self.default_size) {
             Ok(live) => {
                 if let Some(record) = self.sessions.get_mut(&session_id) {
                     record
@@ -2176,6 +2190,7 @@ fn spawn_live_shell(
     profile: &ConnectionProfile,
     password: &str,
     connect_timeout_secs: u64,
+    size: TerminalSize,
 ) -> Result<LiveShellHandle, SessionError> {
     let mut request = LiveShellRequest::new(
         profile.host.clone(),
@@ -2184,8 +2199,8 @@ fn spawn_live_shell(
         password.to_string(),
     );
     request.auth = auth_options_for_profile(profile, password);
-    request.cols = 96;
-    request.rows = 28;
+    request.cols = size.cols;
+    request.rows = size.rows;
     request.startup_command = profile.startup_command.clone();
     request.term = profile.terminal_type.clone();
     request.connect_timeout_secs = connect_timeout_secs;
@@ -2409,8 +2424,8 @@ fn status_after_closed(status: SessionStatus) -> SessionStatus {
 }
 
 /// Build a banner terminal for a mock (no-SSH) demo tab.
-fn welcome_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+fn welcome_terminal(profile_name: &str, endpoint: &str, size: TerminalSize) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(size, profile_name);
     terminal.feed_str(&format!(
         "\x1b[1;36madit\x1b[0m native rust terminal\r\n\r\n\
          profile  : {profile_name}\r\n\
@@ -2424,8 +2439,8 @@ fn welcome_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
 }
 
 /// Build a banner terminal for a live SSH tab while it connects.
-fn live_shell_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+fn live_shell_terminal(profile_name: &str, endpoint: &str, size: TerminalSize) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(size, profile_name);
     terminal.feed_str(&format!(
         "\x1b[1;32mssh\x1b[0m live shell starting\r\n\r\n\
          profile  : {profile_name}\r\n\
@@ -2435,8 +2450,8 @@ fn live_shell_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
     terminal
 }
 
-fn local_shell_terminal(profile_name: &str) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+fn local_shell_terminal(profile_name: &str, size: TerminalSize) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(size, profile_name);
     terminal.feed_str(&format!(
         "\x1b[1;36mlocal shell\x1b[0m starting\r\n\r\n\
          profile  : {profile_name}\r\n\
@@ -2445,8 +2460,8 @@ fn local_shell_terminal(profile_name: &str) -> VtTerminal {
     terminal
 }
 
-fn serial_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+fn serial_terminal(profile_name: &str, endpoint: &str, size: TerminalSize) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(size, profile_name);
     terminal.feed_str(&format!(
         "\x1b[1;36mserial\x1b[0m starting\r\n\r\n\
          profile  : {profile_name}\r\n\
@@ -2457,8 +2472,13 @@ fn serial_terminal(profile_name: &str, endpoint: &str) -> VtTerminal {
 }
 
 /// Build a terminal that replays a one-shot SSH password probe transcript.
-fn probe_terminal(profile_name: &str, endpoint: &str, transcript: &str) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(TerminalSize::default(), profile_name);
+fn probe_terminal(
+    profile_name: &str,
+    endpoint: &str,
+    transcript: &str,
+    size: TerminalSize,
+) -> VtTerminal {
+    let mut terminal = VtTerminal::with_title(size, profile_name);
     terminal.feed_str(&format!(
         "\x1b[1;36mssh\x1b[0m password probe completed\r\n\r\n\
          profile  : {profile_name}\r\n\
@@ -2516,6 +2536,19 @@ mod tests {
 
         let blank = log_file_name("///", id);
         assert!(blank.starts_with("session_"), "got {blank}");
+    }
+
+    #[test]
+    fn new_sessions_adopt_the_default_terminal_size() {
+        let mut manager = SessionManager::with_demo_profiles();
+        manager.set_default_terminal_size(200, 50);
+        let profile_id = manager.profiles()[0].id;
+        let id = manager.open_mock_session(profile_id).unwrap();
+
+        let snapshot = manager.active_snapshot(Viewport::tail(50));
+        assert_eq!(snapshot.size.cols, 200);
+        assert_eq!(snapshot.size.rows, 50);
+        assert_eq!(id, manager.active_session().unwrap());
     }
 
     #[test]
