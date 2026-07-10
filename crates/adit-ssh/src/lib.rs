@@ -79,6 +79,9 @@ pub struct LiveShellRequest {
     /// Abort the TCP/handshake if it takes longer than this many seconds
     /// (0 disables the cap).
     pub connect_timeout_secs: u64,
+    /// Trust a new (never-seen) host key automatically and record it, instead of
+    /// prompting (trust-on-first-use). A *changed* key still prompts/errors.
+    pub auto_accept_host_keys: bool,
 }
 
 impl LiveShellRequest {
@@ -102,6 +105,7 @@ impl LiveShellRequest {
             startup_command: String::new(),
             term: String::new(),
             connect_timeout_secs: 20,
+            auto_accept_host_keys: false,
         }
     }
 }
@@ -628,7 +632,8 @@ async fn run_live_password_shell(
         request.known_hosts_path.clone(),
         Some(events.clone()),
         Some(decision_rx),
-    );
+    )
+    .with_auto_accept(request.auto_accept_host_keys);
 
     let connect = client::connect(config, (request.host.as_str(), request.port), handler);
     tokio::pin!(connect);
@@ -1899,6 +1904,8 @@ struct KnownHostsClient {
     /// confirmed by the user; absent for the one-shot probe, which keeps
     /// non-interactive trust-on-first-use.
     decision: Option<oneshot::Receiver<bool>>,
+    /// Trust a never-seen host key automatically (record it, no prompt).
+    auto_accept: bool,
     /// For remote forwards (`-R`): the local target to pipe forwarded channels to.
     forward_target: Option<(String, u16)>,
     /// For remote forwards: the tunnel actor's event channel.
@@ -1919,9 +1926,16 @@ impl KnownHostsClient {
             known_hosts_path,
             events,
             decision,
+            auto_accept: false,
             forward_target: None,
             tunnel_events: None,
         }
+    }
+
+    /// Trust a never-seen host key automatically (record it, no prompt).
+    fn with_auto_accept(mut self, auto_accept: bool) -> Self {
+        self.auto_accept = auto_accept;
+        self
     }
 
     /// Configure this handler to pipe server-opened forwarded channels to a
@@ -2005,11 +2019,18 @@ impl client::Handler for KnownHostsClient {
                 Ok(true)
             }
             HostKeyStatus::Unknown { fingerprint } => {
-                let Some(decision) = self.decision.take() else {
-                    // Non-interactive probe: keep trust-on-first-use.
+                // Non-interactive probe, or auto-accept enabled: trust-on-first-use
+                // silently — record the new key and connect without prompting.
+                if self.auto_accept || self.decision.is_none() {
+                    self.decision.take();
                     append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
+                    send_status(
+                        self.events.as_ref(),
+                        format!("auto-trusted new host key for {host_spec}: {fingerprint}"),
+                    );
                     return Ok(true);
-                };
+                }
+                let decision = self.decision.take().expect("decision present");
                 self.emit_prompt(server_public_key, &fingerprint, None);
                 if decision.await.unwrap_or(false) {
                     append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
@@ -2386,6 +2407,37 @@ mod tests {
         assert!(fs::read_to_string(&path)
             .expect("known_hosts")
             .contains("node-x ssh-ed25519"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn auto_accept_records_unknown_host_without_prompting() {
+        let path = temp_known_hosts_path("auto-accept");
+        let key = public_key(ED25519_KEY);
+        let (events_tx, events_rx) = mpsc::channel();
+        let (_decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "node-z".into(),
+            22,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
+        )
+        .with_auto_accept(true);
+
+        let trusted = current_thread_rt()
+            .block_on(handler.check_server_key(&key))
+            .expect("auto-accept should yield Ok");
+        assert!(trusted);
+        // No confirmation prompt was emitted, and the key was recorded.
+        assert!(
+            !matches!(events_rx.try_recv(), Ok(LiveShellEvent::HostKeyPrompt(_))),
+            "auto-accept must not prompt"
+        );
+        assert!(fs::read_to_string(&path)
+            .expect("known_hosts")
+            .contains("node-z ssh-ed25519"));
 
         let _ = fs::remove_file(path);
     }

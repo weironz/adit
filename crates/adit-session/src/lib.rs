@@ -216,6 +216,8 @@ pub struct SessionManager {
     /// The grid size new sessions are created at (local terminal + remote PTY),
     /// kept in sync with the UI so a fresh shell matches the visible width.
     default_size: TerminalSize,
+    /// Trust a new host key automatically (no prompt) when connecting.
+    auto_accept_host_keys: bool,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
@@ -276,6 +278,7 @@ impl SessionManager {
             connect_timeout_secs: 20,
             order: Vec::new(),
             default_size: TerminalSize::default(),
+            auto_accept_host_keys: true,
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
@@ -287,6 +290,11 @@ impl SessionManager {
     /// sane minimum.
     pub fn set_default_terminal_size(&mut self, cols: u16, rows: u16) {
         self.default_size = TerminalSize::new(cols.max(20), rows.max(4));
+    }
+
+    /// Trust a new host key automatically on connect instead of prompting.
+    pub fn set_auto_accept_host_keys(&mut self, auto_accept: bool) {
+        self.auto_accept_host_keys = auto_accept;
     }
 
     #[must_use]
@@ -764,7 +772,13 @@ impl SessionManager {
 
         let (live, endpoint, terminal, reconnect) = match profile.protocol {
             Protocol::Ssh => {
-                let live = spawn_live_shell(&profile, &password, self.connect_timeout_secs, size)?;
+                let live = spawn_live_shell(
+                    &profile,
+                    &password,
+                    self.connect_timeout_secs,
+                    size,
+                    self.auto_accept_host_keys,
+                )?;
                 let endpoint = profile.endpoint();
                 let mut terminal = live_shell_terminal(&profile.name, &endpoint, size);
                 terminal.append_status(format!("connecting to {endpoint}"));
@@ -1971,7 +1985,13 @@ impl SessionManager {
             return;
         };
 
-        match spawn_live_shell(&profile, &password, self.connect_timeout_secs, self.default_size) {
+        match spawn_live_shell(
+            &profile,
+            &password,
+            self.connect_timeout_secs,
+            self.default_size,
+            self.auto_accept_host_keys,
+        ) {
             Ok(live) => {
                 if let Some(record) = self.sessions.get_mut(&session_id) {
                     record
@@ -2191,6 +2211,7 @@ fn spawn_live_shell(
     password: &str,
     connect_timeout_secs: u64,
     size: TerminalSize,
+    auto_accept_host_keys: bool,
 ) -> Result<LiveShellHandle, SessionError> {
     let mut request = LiveShellRequest::new(
         profile.host.clone(),
@@ -2201,6 +2222,7 @@ fn spawn_live_shell(
     request.auth = auth_options_for_profile(profile, password);
     request.cols = size.cols;
     request.rows = size.rows;
+    request.auto_accept_host_keys = auto_accept_host_keys;
     request.startup_command = profile.startup_command.clone();
     request.term = profile.terminal_type.clone();
     request.connect_timeout_secs = connect_timeout_secs;

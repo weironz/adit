@@ -108,6 +108,7 @@ pub struct AditApp {
     snippet_name_draft: String,
     snippet_command_draft: String,
     auto_check_updates: bool,
+    auto_accept_host_keys: bool,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -442,6 +443,7 @@ pub enum Message {
     UpdateChecked(Result<Option<UpdateInfo>, String>),
     AutoUpdateChecked(Result<Option<UpdateInfo>, String>),
     ToggleAutoCheckUpdates(bool),
+    ToggleAutoAcceptHostKeys(bool),
     StartUpdateDownload,
     UpdateDownloaded(Result<String, String>),
     CloseUpdateDialog,
@@ -849,7 +851,7 @@ impl Default for AditApp {
 
 impl AditApp {
     fn with_loaded_state(
-        manager: SessionManager,
+        mut manager: SessionManager,
         groups: Vec<String>,
         profile_store: ProfileStore,
         load_notice: String,
@@ -890,6 +892,8 @@ impl AditApp {
         adit_terminal::set_scrollback_limit(scrollback_lines as usize);
         let snippets = settings.snippets;
         let auto_check_updates = settings.auto_check_updates;
+        let auto_accept_host_keys = settings.auto_accept_host_keys;
+        manager.set_auto_accept_host_keys(auto_accept_host_keys);
         let command_window_open = settings.command_window_open;
         let command_send_immediately = settings.command_send_immediately;
 
@@ -923,6 +927,7 @@ impl AditApp {
             auto_check_updates,
             command_window_open,
             command_send_immediately,
+            auto_accept_host_keys,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -965,6 +970,7 @@ impl AditApp {
             snippet_name_draft: String::new(),
             snippet_command_draft: String::new(),
             auto_check_updates,
+            auto_accept_host_keys,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -2366,6 +2372,15 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ToggleAutoCheckUpdates(enabled) => {
             app.auto_check_updates = enabled;
+        }
+        Message::ToggleAutoAcceptHostKeys(enabled) => {
+            app.auto_accept_host_keys = enabled;
+            app.manager.set_auto_accept_host_keys(enabled);
+            app.notice = if enabled {
+                String::from("已开启：自动信任新主机密钥")
+            } else {
+                String::from("已关闭：新主机密钥将逐个确认")
+            };
         }
         Message::StartUpdateDownload => {
             if let UpdateState::Available(info) = &app.update_state {
@@ -4917,6 +4932,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         auto_check_updates: app.auto_check_updates,
         command_window_open: app.command_window_open,
         command_send_immediately: app.command_send_immediately,
+        auto_accept_host_keys: app.auto_accept_host_keys,
     }
 }
 
@@ -6155,6 +6171,11 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         checkbox(app.auto_check_updates)
             .label("启动时自动检查更新")
             .on_toggle(Message::ToggleAutoCheckUpdates)
+            .size(16)
+            .text_size(12),
+        checkbox(app.auto_accept_host_keys)
+            .label("自动信任新主机密钥（不逐个弹窗确认）")
+            .on_toggle(Message::ToggleAutoAcceptHostKeys)
             .size(16)
             .text_size(12),
     ]

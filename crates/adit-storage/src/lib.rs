@@ -235,6 +235,11 @@ pub struct AppSettings {
     /// instead of only sending the whole line on Enter.
     #[serde(default)]
     pub command_send_immediately: bool,
+    /// Trust a new (never-seen) host key automatically instead of prompting, so
+    /// batch connections don't pop a confirmation for every new host. A *changed*
+    /// key still prompts. On by default.
+    #[serde(default = "default_true")]
+    pub auto_accept_host_keys: bool,
 }
 
 /// A saved command snippet (a name + the command text sent to a session).
@@ -299,6 +304,7 @@ impl Default for AppSettings {
             auto_check_updates: false,
             command_window_open: false,
             command_send_immediately: false,
+            auto_accept_host_keys: true,
         }
     }
 }
@@ -754,6 +760,7 @@ Host db
             auto_check_updates: true,
             command_window_open: true,
             command_send_immediately: true,
+            auto_accept_host_keys: false,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");
