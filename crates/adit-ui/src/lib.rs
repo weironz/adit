@@ -311,7 +311,6 @@ pub enum Message {
     DeleteGroupFromContext(String),
     GroupNameDraftChanged(String),
     SaveGroupRename,
-    CancelGroupRename,
     ShowProfileContextMenu(ProfileId),
     HideProfileContextMenu,
     SidebarCursorMoved(Point),
@@ -319,7 +318,6 @@ pub enum Message {
     RenameProfileFromContext(ProfileId),
     ProfileNameDraftChanged(String),
     SaveProfileRename,
-    CancelProfileRename,
     EditProfileFromContext(ProfileId),
     CloseProfileEditor,
     ConnectProfileFromContext(ProfileId),
@@ -1395,7 +1393,8 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
-            cancel_inline_rename(app);
+            // Clicking another row saves any in-place rename (no confirm buttons).
+            commit_inline_rename(app);
             close_profile_editor_if_other(app, profile_id);
         }
         Message::ProfileDoubleClicked(profile_id) => {
@@ -1530,18 +1529,18 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_context_menu = None;
             app.profile_editor = None;
             app.terminal_context_menu = false;
-            cancel_inline_rename(app);
+            commit_inline_rename(app);
         }
         Message::HideGroupContextMenu => {
             app.group_context_menu = None;
         }
         Message::RenameGroupFromContext(group) => {
+            // Save any other in-place rename first, then start this one.
+            commit_inline_rename(app);
             // Blur the terminal so keys the rename input ignores don't leak to the
             // active session (the session-rename path gets this via select_profile).
             app.terminal_focused = false;
             app.group_context_menu = None;
-            app.editing_profile = None;
-            app.profile_name_draft.clear();
             app.editing_group = Some(group.clone());
             app.group_name_draft = group;
             return focus_rename_input();
@@ -1560,15 +1559,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SaveGroupRename => {
             save_group_rename(app);
         }
-        Message::CancelGroupRename => {
-            app.editing_group = None;
-            app.group_name_draft.clear();
-        }
         Message::RenameProfileFromContext(profile_id) => {
+            // Save any other in-place rename first, then start this one.
+            commit_inline_rename(app);
             select_profile(app, profile_id);
             app.profile_context_menu = None;
-            app.editing_group = None;
-            app.group_name_draft.clear();
             let current = app
                 .manager
                 .profile(profile_id)
@@ -1584,10 +1579,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SaveProfileRename => {
             save_profile_rename(app);
         }
-        Message::CancelProfileRename => {
-            app.editing_profile = None;
-            app.profile_name_draft.clear();
-        }
         Message::ShowProfileContextMenu(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = None;
@@ -1597,7 +1588,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_context_menu = Some(profile_id);
             app.group_context_menu = None;
             app.terminal_context_menu = false;
-            cancel_inline_rename(app);
+            commit_inline_rename(app);
         }
         Message::HideProfileContextMenu => {
             app.profile_context_menu = None;
@@ -1908,13 +1899,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.cursor_pos.x,
                 app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
             ));
-            // A folder press cancels any in-flight session drag / menus / rename.
+            // A folder press cancels any in-flight session drag / menus and saves
+            // any in-place rename (clicking away commits — no confirm buttons).
             app.dragged_profile = None;
             app.profile_drag_active = false;
             app.profile_drop = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
-            cancel_inline_rename(app);
+            commit_inline_rename(app);
         }
         Message::ProfileGroupChanged(value) => {
             app.terminal_focused = false;
@@ -2134,9 +2126,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             close_pane(app, index);
         }
         Message::FocusPane(index) => {
+            // Clicking into the workspace saves any in-place rename (click-away).
+            commit_inline_rename(app);
             focus_pane(app, index);
         }
         Message::PaneMousePressed(index) => {
+            commit_inline_rename(app);
             focus_pane(app, index);
             app.terminal_context_menu = false;
             if mouse_reporting_active(app) {
@@ -2224,6 +2219,8 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::BeginTerminalSelection => {
+            // Clicking into the terminal saves any in-place rename (click-away).
+            commit_inline_rename(app);
             app.terminal_focused = true;
             app.terminal_context_menu = false;
             // Mouse-reporting apps (vim/tmux/htop) want the click, not a local
@@ -3112,8 +3109,8 @@ fn load_selected_profile(app: &mut AditApp) {
 }
 
 fn new_profile_draft(app: &mut AditApp) {
-    // Starting a new session ends any in-place rename in progress.
-    cancel_inline_rename(app);
+    // Starting a new session saves any in-place rename in progress (click-away).
+    commit_inline_rename(app);
     let name = next_profile_name(app);
     let group = active_profile_group(app);
     match app.manager.create_profile(
@@ -3147,8 +3144,8 @@ fn new_profile_draft(app: &mut AditApp) {
 }
 
 fn new_group_draft(app: &mut AditApp) {
-    // Starting a new folder ends any in-place rename in progress.
-    cancel_inline_rename(app);
+    // Starting a new folder saves any in-place rename in progress (click-away).
+    commit_inline_rename(app);
     let group = next_group_name(app);
     add_group(&mut app.groups, &group);
     app.collapsed_groups.remove(&group);
@@ -3164,11 +3161,83 @@ fn new_group_draft(app: &mut AditApp) {
 }
 
 /// Drop any in-place rename in progress (folder or session) without saving.
+/// Used by Escape and by deleting the row being edited.
 fn cancel_inline_rename(app: &mut AditApp) {
     app.editing_profile = None;
     app.profile_name_draft.clear();
     app.editing_group = None;
     app.group_name_draft.clear();
+}
+
+/// Save any in-place rename in progress, then exit edit mode. Invalid edits
+/// (empty / duplicate folder name) silently revert rather than trap the row.
+/// Used when the user clicks away — there are no confirm/cancel buttons.
+fn commit_inline_rename(app: &mut AditApp) {
+    let mut resolved = false;
+    if let Some(profile_id) = app.editing_profile.take() {
+        resolved = true;
+        let name = app.profile_name_draft.trim().to_string();
+        app.profile_name_draft.clear();
+        let unchanged = app
+            .manager
+            .profile(profile_id)
+            .is_some_and(|profile| profile.name == name);
+        if !name.is_empty() && !unchanged {
+            apply_profile_rename(app, profile_id, &name);
+        }
+    }
+    if let Some(old_group) = app.editing_group.take() {
+        resolved = true;
+        let new_group = app.group_name_draft.trim().to_string();
+        app.group_name_draft.clear();
+        if !new_group.is_empty() && new_group != old_group && !app.groups.contains(&new_group) {
+            let _ = apply_group_rename(app, &old_group, &new_group);
+        }
+    }
+    // Resolving the rename clears any lingering validation error it produced.
+    if resolved {
+        app.last_error = None;
+    }
+}
+
+/// Apply a session rename (manager + editor-field sync + persist). Returns false
+/// only if the manager rejects it. Does not touch `editing_profile`.
+fn apply_profile_rename(app: &mut AditApp, profile_id: ProfileId, name: &str) -> bool {
+    if app.manager.rename_profile(profile_id, name.to_string()).is_err() {
+        return false;
+    }
+    // Keep the editor form's name field in sync if it is open on this row.
+    if app.selected_profile == Some(profile_id) {
+        app.profile_name = name.to_string();
+    }
+    if persist_profiles(app) {
+        app.notice = String::from("会话已重命名");
+    }
+    true
+}
+
+/// Apply a validated folder rename (manager + app bookkeeping + persist). Returns
+/// an error message if the manager rejects it. Does not touch `editing_group`.
+fn apply_group_rename(app: &mut AditApp, old_group: &str, new_group: &str) -> Result<(), String> {
+    app.manager
+        .rename_group(old_group, new_group.to_string())
+        .map_err(|error| error.to_string())?;
+    // Replace in place so the folder keeps its position.
+    if let Some(pos) = app.groups.iter().position(|group| group == old_group) {
+        app.groups[pos] = new_group.to_string();
+    } else {
+        add_group(&mut app.groups, new_group);
+    }
+    if app.collapsed_groups.remove(old_group) {
+        app.collapsed_groups.insert(new_group.to_string());
+    }
+    if app.profile_group == old_group {
+        app.profile_group = new_group.to_string();
+    }
+    if persist_profiles(app) {
+        app.notice = format!("分组已重命名: {old_group} -> {new_group}");
+    }
+    Ok(())
 }
 
 fn save_profile_rename(app: &mut AditApp) {
@@ -3180,23 +3249,20 @@ fn save_profile_rename(app: &mut AditApp) {
         app.last_error = Some(String::from("会话名称不能为空"));
         return;
     }
-
-    match app.manager.rename_profile(profile_id, name.clone()) {
-        Ok(()) => {
-            app.editing_profile = None;
-            app.profile_name_draft.clear();
-            app.last_error = None;
-            // Keep the editor form's name field in sync if it is open on this row.
-            if app.selected_profile == Some(profile_id) {
-                app.profile_name = name;
-            }
-            if persist_profiles(app) {
-                app.notice = String::from("会话已重命名");
-            }
-        }
-        Err(error) => {
-            app.last_error = Some(error.to_string());
-        }
+    // Unchanged name — just close the editor (no rewrite, no "renamed" toast).
+    let unchanged = app
+        .manager
+        .profile(profile_id)
+        .is_some_and(|profile| profile.name == name);
+    if unchanged {
+        app.editing_profile = None;
+        app.profile_name_draft.clear();
+        return;
+    }
+    if apply_profile_rename(app, profile_id, &name) {
+        app.editing_profile = None;
+        app.profile_name_draft.clear();
+        app.last_error = None;
     }
 }
 
@@ -3205,44 +3271,28 @@ fn save_group_rename(app: &mut AditApp) {
         return;
     };
     let new_group = app.group_name_draft.trim().to_string();
-
     if new_group.is_empty() {
         app.last_error = Some(String::from("分组名称不能为空"));
         return;
     }
-
-    if old_group != new_group && app.groups.contains(&new_group) {
+    if new_group == old_group {
+        // No change — just close the editor.
+        app.editing_group = None;
+        app.group_name_draft.clear();
+        return;
+    }
+    if app.groups.contains(&new_group) {
         app.last_error = Some(format!("分组已存在: {new_group}"));
         return;
     }
-
-    match app.manager.rename_group(&old_group, new_group.clone()) {
+    match apply_group_rename(app, &old_group, &new_group) {
         Ok(()) => {
-            // Replace in place so the folder keeps its position.
-            if let Some(pos) = app.groups.iter().position(|group| group == &old_group) {
-                app.groups[pos] = new_group.clone();
-            } else {
-                add_group(&mut app.groups, &new_group);
-            }
-
-            if app.collapsed_groups.remove(&old_group) {
-                app.collapsed_groups.insert(new_group.clone());
-            }
-
-            if app.profile_group == old_group {
-                app.profile_group = new_group.clone();
-            }
-
             app.editing_group = None;
             app.group_name_draft.clear();
             app.last_error = None;
-
-            if persist_profiles(app) {
-                app.notice = format!("分组已重命名: {old_group} -> {new_group}");
-            }
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(error);
         }
     }
 }
@@ -5191,6 +5241,8 @@ fn close_pane(app: &mut AditApp, index: usize) {
 /// Activate a session (from a tab click). In a split, load it into the focused
 /// pane instead of collapsing the layout.
 fn activate_session(app: &mut AditApp, session_id: SessionId) {
+    // Switching sessions counts as clicking away from an in-place rename.
+    commit_inline_rename(app);
     if app.panes.len() >= 2 {
         if let Some(pos) = app.panes.iter().position(|id| *id == session_id) {
             app.focused_pane = pos;
@@ -8152,23 +8204,8 @@ fn group_context_overlay(app: &AditApp, group: String, collapsed: bool) -> Eleme
     )
 }
 
-/// A compact confirm (✓) / cancel (✕) button for an in-place rename row.
-fn inline_edit_button(glyph: &'static str, message: Message, primary: bool) -> Element<'static, Message> {
-    button(text(glyph).size(12))
-        .padding([2, 6])
-        .style(move |_theme, status| {
-            if primary {
-                primary_button_style(status)
-            } else {
-                secondary_button_style(status)
-            }
-        })
-        .on_press(message)
-        .into()
-}
-
-/// A folder header in rename mode: the name is edited in place (no popup), with
-/// Enter / ✓ to save and Esc / ✕ to cancel.
+/// A folder header in rename mode: the name is edited in place (no popup). Enter
+/// or clicking away saves; Esc reverts. There are no confirm/cancel buttons.
 fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'static, Message> {
     let arrow = if collapsed { "▸" } else { "▾" };
     container(
@@ -8182,8 +8219,6 @@ fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'static, Messa
                 .size(12)
                 .style(text_input_style)
                 .width(Fill),
-            inline_edit_button("✓", Message::SaveGroupRename, true),
-            inline_edit_button("✕", Message::CancelGroupRename, false),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -8195,7 +8230,7 @@ fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'static, Messa
 }
 
 /// A session row in rename mode: the name line becomes an editable field in place
-/// (no popup), with Enter / ✓ to save and Esc / ✕ to cancel.
+/// (no popup). Enter or clicking away saves; Esc reverts. No confirm/cancel buttons.
 fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -> Element<'static, Message> {
     let endpoint = if profile.username.trim().is_empty() {
         profile.host.clone()
@@ -8218,8 +8253,6 @@ fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -> Element<'
                 text(endpoint).size(10).color(muted_text()),
             ]
             .spacing(0),
-            inline_edit_button("✓", Message::SaveProfileRename, true),
-            inline_edit_button("✕", Message::CancelProfileRename, false),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
