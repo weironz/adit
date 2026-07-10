@@ -408,9 +408,13 @@ fn normalize_group_name(group: impl AsRef<str>) -> String {
 }
 
 /// The active configuration folder — where `profiles.json`, `settings.json`,
-/// logs, and downloads live. Honors the `ADIT_CONFIG_DIR` environment override
-/// (SecureCRT-style relocatable config, e.g. onto a synced folder); otherwise
-/// the per-platform default.
+/// logs, and downloads live. Resolution order (SecureCRT-style relocatable
+/// config, e.g. onto a synced folder like Dropbox):
+/// 1. the `ADIT_CONFIG_DIR` environment override (power users / tests),
+/// 2. the UI-set bootstrap pointer (a small file in the platform default dir
+///    that records where the real config folder lives — see
+///    [`set_custom_config_dir`]),
+/// 3. the per-platform default.
 #[must_use]
 pub fn config_dir() -> PathBuf {
     if let Some(dir) = env::var_os("ADIT_CONFIG_DIR") {
@@ -419,7 +423,91 @@ pub fn config_dir() -> PathBuf {
             return dir;
         }
     }
+    if let Some(dir) = custom_config_dir() {
+        return dir;
+    }
     platform_config_dir()
+}
+
+/// The per-platform default configuration folder, ignoring any override. Used to
+/// show/reset the "default location" in the UI.
+#[must_use]
+pub fn default_config_dir() -> PathBuf {
+    platform_config_dir()
+}
+
+/// The bootstrap pointer file — a fixed location (inside the platform default
+/// config dir) that records where the *real* config folder lives. Kept out of
+/// the config folder itself to avoid a chicken-and-egg problem (settings.json
+/// lives inside the config folder, so it can't record the folder's own path).
+fn config_pointer_path() -> PathBuf {
+    platform_config_dir().join("config_location.txt")
+}
+
+fn parse_config_pointer(content: &str) -> Option<PathBuf> {
+    let trimmed = content.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(PathBuf::from(trimmed))
+    }
+}
+
+/// The custom config folder recorded in the bootstrap pointer, if one is set.
+#[must_use]
+pub fn custom_config_dir() -> Option<PathBuf> {
+    fs::read_to_string(config_pointer_path())
+        .ok()
+        .and_then(|content| parse_config_pointer(&content))
+}
+
+/// Point the bootstrap pointer at `dir`, or clear it (revert to the default
+/// location) when `None`/empty. Takes effect on the next launch. Writing the
+/// pointer never touches the config data itself — see [`copy_config_files`].
+pub fn set_custom_config_dir(dir: Option<&Path>) -> std::io::Result<()> {
+    let pointer = config_pointer_path();
+    match dir {
+        Some(dir) if !dir.as_os_str().is_empty() => {
+            if let Some(parent) = pointer.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            fs::write(&pointer, dir.to_string_lossy().as_bytes())
+        }
+        _ => match fs::remove_file(&pointer) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        },
+    }
+}
+
+/// The config files that make up a portable/syncable config folder. Host keys and
+/// passwords are deliberately excluded — they stay machine-local.
+const CONFIG_FILE_NAMES: [&str; 2] = ["profiles.json", "settings.json"];
+
+/// Whether `dir` already holds Adit config (profiles or settings) — i.e. it is a
+/// real config folder (perhaps synced from another machine) rather than an empty
+/// relocation target.
+#[must_use]
+pub fn config_dir_has_config(dir: &Path) -> bool {
+    CONFIG_FILE_NAMES
+        .iter()
+        .any(|name| dir.join(name).exists())
+}
+
+/// Copy the config files from `from` into `to` (creating `to`), overwriting any
+/// existing copies in `to`. The source is left intact — callers that relocate
+/// onto a synced drive must not delete the shared folder. Host keys/passwords are
+/// not copied (they stay machine-local).
+pub fn copy_config_files(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for name in CONFIG_FILE_NAMES {
+        let src = from.join(name);
+        if src.exists() {
+            fs::copy(&src, to.join(name))?;
+        }
+    }
+    Ok(())
 }
 
 /// Default directory for session output (transcript) logs.
@@ -828,6 +916,67 @@ Host db
         env::remove_var("ADIT_CONFIG_DIR");
         // With the override cleared, the config dir is no longer that base.
         assert_ne!(config_dir(), base);
+    }
+
+    #[test]
+    fn config_pointer_parses_trimmed_nonempty_path() {
+        assert_eq!(parse_config_pointer(""), None);
+        assert_eq!(parse_config_pointer("   \n\t"), None);
+        assert_eq!(
+            parse_config_pointer("  D:/Dropbox/adit \n"),
+            Some(PathBuf::from("D:/Dropbox/adit"))
+        );
+    }
+
+    #[test]
+    fn config_dir_has_config_detects_either_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("adit-hascfg-test-{unique}"));
+
+        let empty = root.join("empty");
+        fs::create_dir_all(&empty).unwrap();
+        assert!(!config_dir_has_config(&empty));
+        assert!(!config_dir_has_config(&root.join("missing")));
+
+        let only_settings = root.join("only-settings");
+        fs::create_dir_all(&only_settings).unwrap();
+        fs::write(only_settings.join("settings.json"), "{}").unwrap();
+        assert!(config_dir_has_config(&only_settings));
+
+        let with_profiles = root.join("with-profiles");
+        fs::create_dir_all(&with_profiles).unwrap();
+        fs::write(with_profiles.join("profiles.json"), "{}").unwrap();
+        assert!(config_dir_has_config(&with_profiles));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn copy_config_files_copies_and_overwrites_but_keeps_source() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        let root = env::temp_dir().join(format!("adit-copycfg-test-{unique}"));
+        let from = root.join("from");
+        fs::create_dir_all(&from).unwrap();
+        fs::write(from.join("profiles.json"), "NEW").unwrap();
+        fs::write(from.join("settings.json"), "NEWCFG").unwrap();
+
+        // Overwrites an existing (stale) file in the target, and leaves the source.
+        let to = root.join("to");
+        fs::create_dir_all(&to).unwrap();
+        fs::write(to.join("profiles.json"), "STALE").unwrap();
+        copy_config_files(&from, &to).unwrap();
+        assert_eq!(fs::read_to_string(to.join("profiles.json")).unwrap(), "NEW");
+        assert_eq!(fs::read_to_string(to.join("settings.json")).unwrap(), "NEWCFG");
+        // Source untouched (must not delete a synced folder's originals).
+        assert_eq!(fs::read_to_string(from.join("profiles.json")).unwrap(), "NEW");
+
+        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

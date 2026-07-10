@@ -176,6 +176,14 @@ pub struct AditApp {
     update_state: UpdateState,
     /// The 选项 (config path + session-log) dialog.
     options_open: bool,
+    /// The config folder in use this run (resolved at startup). Relocating it
+    /// (e.g. onto Dropbox) takes effect on the next launch — `pending_config_dir`
+    /// holds a freshly-chosen target until then.
+    config_dir: std::path::PathBuf,
+    pending_config_dir: Option<std::path::PathBuf>,
+    /// Whether the config folder is a UI-set custom location (drives the "reset
+    /// to default" button). Cached so the options view avoids a per-frame read.
+    config_dir_custom: bool,
     log_dir: String,
     log_name_pattern: String,
     auto_log_on_connect: bool,
@@ -278,8 +286,14 @@ pub enum Message {
     ColorSchemeChanged(u8),
     OpenOptions,
     CloseOptions,
+    // Relocate the configuration folder (e.g. onto a synced drive like Dropbox).
+    PickConfigDir,
+    ConfigDirPicked(Option<std::path::PathBuf>),
+    ResetConfigDir,
     LogDirChanged(String),
     LogNamePatternChanged(String),
+    PickLogDir,
+    LogDirPicked(Option<std::path::PathBuf>),
     ToggleAutoLog(bool),
     ToggleLogPlaintext(bool),
     ToggleCopyOnSelect(bool),
@@ -1047,6 +1061,9 @@ impl AditApp {
             update_dialog_open: false,
             update_state: UpdateState::Idle,
             options_open: false,
+            config_dir: adit_storage::config_dir(),
+            pending_config_dir: None,
+            config_dir_custom: adit_storage::custom_config_dir().is_some(),
             log_dir,
             log_name_pattern,
             auto_log_on_connect,
@@ -1312,11 +1329,53 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CloseOptions => {
             app.options_open = false;
         }
+        Message::PickConfigDir => {
+            let mut dialog = rfd::AsyncFileDialog::new()
+                .set_title("选择配置文件夹（可指向 Dropbox 等同步盘）");
+            if let Some(parent) = app.config_dir.parent() {
+                if parent.exists() {
+                    dialog = dialog.set_directory(parent);
+                }
+            }
+            return Task::perform(dialog.pick_folder(), |handle| {
+                Message::ConfigDirPicked(handle.map(|h| h.path().to_path_buf()))
+            });
+        }
+        Message::ConfigDirPicked(path) => {
+            if let Some(path) = path {
+                relocate_config_dir(app, path);
+            }
+        }
+        Message::ResetConfigDir => {
+            // Same path as picking the default folder: carry current config back
+            // into the default (leaving any synced folder intact) and switch live.
+            relocate_config_dir(app, adit_storage::default_config_dir());
+        }
         Message::LogDirChanged(value) => {
             app.log_dir = value;
         }
         Message::LogNamePatternChanged(value) => {
             app.log_name_pattern = value;
+        }
+        Message::PickLogDir => {
+            let mut dialog = rfd::AsyncFileDialog::new().set_title("选择日志文件夹");
+            let start = effective_log_dir(app);
+            let start = if start.exists() {
+                start
+            } else {
+                app.config_dir.clone()
+            };
+            if start.exists() {
+                dialog = dialog.set_directory(start);
+            }
+            return Task::perform(dialog.pick_folder(), |handle| {
+                Message::LogDirPicked(handle.map(|h| h.path().to_path_buf()))
+            });
+        }
+        Message::LogDirPicked(path) => {
+            if let Some(path) = path {
+                app.log_dir = path.display().to_string();
+            }
         }
         Message::ToggleAutoLog(enabled) => {
             app.auto_log_on_connect = enabled;
@@ -1331,7 +1390,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.right_click_paste = enabled;
         }
         Message::OpenConfigFolder => {
-            open_folder(app, adit_storage::config_dir());
+            open_folder(app, app.config_dir.clone());
         }
         Message::OpenLogFolder => {
             let dir = effective_log_dir(app);
@@ -3694,6 +3753,98 @@ fn persist_profiles(app: &mut AditApp) -> bool {
     }
 }
 
+/// Write (or, for the default location, clear) the bootstrap pointer so the next
+/// launch resolves the config folder to `target`.
+fn write_config_pointer(target: &std::path::Path) -> std::io::Result<()> {
+    if target == adit_storage::default_config_dir() {
+        adit_storage::set_custom_config_dir(None)
+    } else {
+        adit_storage::set_custom_config_dir(Some(target))
+    }
+}
+
+/// Carry the current config into `target` (copying, never deleting the source, so
+/// a shared/synced folder is safe) and switch the running app over to it live.
+/// Returns whether the switch succeeded.
+fn carry_config_to(app: &mut AditApp, target: std::path::PathBuf) -> bool {
+    if let Err(error) = adit_storage::copy_config_files(&app.config_dir, &target) {
+        app.last_error = Some(format!("复制配置到 {} 失败: {error}", target.display()));
+        return false;
+    }
+    if let Err(error) = write_config_pointer(&target) {
+        app.last_error = Some(format!("设置配置文件夹失败: {error}"));
+        return false;
+    }
+    app.profile_store = ProfileStore::new(target.join("profiles.json"));
+    app.settings_store = SettingsStore::new(target.join("settings.json"));
+    app.config_dir_custom = target != adit_storage::default_config_dir();
+    app.config_dir = target;
+    app.pending_config_dir = None;
+    app.last_error = None;
+    // Re-persist the in-memory state into the new stores so they hold the latest.
+    persist_profiles(app);
+    let _ = app.settings_store.save(&current_settings(app));
+    true
+}
+
+/// Point the config folder at `target` (e.g. a Dropbox path). The running app
+/// never calls the live `config_dir()` for its paths — it uses `app.config_dir`
+/// — so nothing is half-applied. Rules:
+/// - target == current: no move, just re-assert the pointer.
+/// - target already has config (synced from another machine): adopt it on the
+///   next launch (do NOT overwrite it); the current run keeps its folder.
+/// - target is empty: copy the current config in and switch over live.
+fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf) {
+    let default = adit_storage::default_config_dir();
+    // Flush the latest in-memory state to the current folder so any copy is fresh.
+    let _ = app.settings_store.save(&current_settings(app));
+    persist_profiles(app);
+
+    if target == app.config_dir {
+        // No move — just make sure the on-disk pointer matches the live folder
+        // (repairs state if a prior reset cleared it).
+        if let Err(error) = write_config_pointer(&target) {
+            app.last_error = Some(format!("设置配置文件夹失败: {error}"));
+            return;
+        }
+        app.config_dir_custom = target != default;
+        app.pending_config_dir = None;
+        app.last_error = None;
+        app.notice = String::from("配置文件夹未改变");
+        return;
+    }
+
+    // Adopt only a *different* populated folder — another machine's synced config.
+    // The default folder's contents are this machine's own (stale) snapshot, so
+    // going there always carries the current config in (overwriting it) instead of
+    // adopting the old copy, matching the "恢复默认" button.
+    if target != default && adit_storage::config_dir_has_config(&target) {
+        // Adopt it on the next launch rather than overwriting it.
+        if let Err(error) = write_config_pointer(&target) {
+            app.last_error = Some(format!("设置配置文件夹失败: {error}"));
+            return;
+        }
+        app.config_dir_custom = true;
+        app.pending_config_dir = Some(target.clone());
+        app.last_error = None;
+        app.notice = format!(
+            "将在重启后加载 {} 中的现有配置（不会覆盖该文件夹）；请尽快重启，重启前的修改不会保留",
+            target.display()
+        );
+        return;
+    }
+
+    // Empty target (or the default folder) — carry the current config in and
+    // switch over live.
+    if carry_config_to(app, target.clone()) {
+        app.notice = if target == default {
+            String::from("已恢复到默认配置文件夹（已生效）")
+        } else {
+            format!("配置文件夹已切换到 {}（已生效）", target.display())
+        };
+    }
+}
+
 /// The ordered folder list: the persisted order first (user-arrangeable), then
 /// any folder seen only on a profile, deduped, first occurrence wins.
 fn groups_from_catalog(groups: Vec<String>, profiles: &[ConnectionProfile]) -> Vec<String> {
@@ -4815,11 +4966,13 @@ fn toggle_active_logging(app: &mut AditApp) {
 /// Default session-log filename pattern (SecureCRT-style tokens).
 const DEFAULT_LOG_PATTERN: &str = "%N_%Y-%M-%D_%h-%m-%s.log";
 
-/// The effective log folder: the user's override, else the default under the
-/// configuration folder.
+/// The effective log folder: the user's override, else `logs/` under the config
+/// folder in use this run. Pinned to `app.config_dir` (not the live
+/// `config_dir()`), so a pending config relocation never splits logs off to a
+/// half-applied location before restart.
 fn effective_log_dir(app: &AditApp) -> std::path::PathBuf {
     if app.log_dir.trim().is_empty() {
-        adit_storage::default_log_dir()
+        app.config_dir.join("logs")
     } else {
         std::path::PathBuf::from(app.log_dir.trim())
     }
@@ -6557,23 +6710,59 @@ fn options_path_row<'a>(
 }
 
 fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
-    let config_dir = adit_storage::config_dir();
+    let config_dir = &app.config_dir;
+    // The env override, if set, wins over the UI, so hide the change controls.
     let overridden = std::env::var_os("ADIT_CONFIG_DIR")
         .is_some_and(|value| !value.is_empty());
+    let is_custom = app.config_dir_custom;
+
+    // The config-folder row: the current path, an "open" button, and (unless the
+    // env override is in force) "change" / "reset to default" buttons.
+    let mut config_dir_row = row![
+        text("配置目录")
+            .size(11)
+            .color(muted_text())
+            .width(Length::Fixed(96.0)),
+        container(
+            text(config_dir.display().to_string())
+                .size(12)
+                .font(Font::MONOSPACE)
+                .color(primary_text())
+        )
+        .width(Fill),
+        button(text("打开").size(11))
+            .padding([3, 12])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::OpenConfigFolder),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if !overridden {
+        config_dir_row = config_dir_row.push(
+            button(text("更改…").size(11))
+                .padding([3, 12])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::PickConfigDir),
+        );
+        if is_custom {
+            config_dir_row = config_dir_row.push(
+                button(text("恢复默认").size(11))
+                    .padding([3, 12])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::ResetConfigDir),
+            );
+        }
+    }
 
     let config_note = if overridden {
-        "由环境变量 ADIT_CONFIG_DIR 指定"
+        "由环境变量 ADIT_CONFIG_DIR 指定（重启生效）"
     } else {
-        "默认位置（设置环境变量 ADIT_CONFIG_DIR 可改到同步盘等其他目录，重启生效）"
+        "指向 Dropbox 等同步盘可在多台机器间同步会话配置（密码仍保存在各机器本地凭据库）。更改后重启 Adit 生效。"
     };
 
-    let config_section = column![
+    let mut config_section = column![
         text("配置目录").size(13).color(primary_text()),
-        options_path_row(
-            "配置目录",
-            config_dir.display().to_string(),
-            Some(Message::OpenConfigFolder),
-        ),
+        config_dir_row,
         options_path_row(
             "会话配置",
             config_dir.join("profiles.json").display().to_string(),
@@ -6585,44 +6774,62 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             None,
         ),
         text(config_note).size(11).color(muted_text()),
-        row![
-            text("连接超时（秒，0 = 不限）")
-                .size(12)
-                .color(muted_text())
-                .width(Length::Fixed(180.0)),
-            text_input("20", &app.connect_timeout_secs.to_string())
-                .on_input(Message::ConnectTimeoutChanged)
-                .padding([4, 8])
-                .style(text_input_style)
-                .width(Length::Fixed(80.0)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-        row![
-            text("滚动历史行数")
-                .size(12)
-                .color(muted_text())
-                .width(Length::Fixed(180.0)),
-            text_input("5000", &app.scrollback_lines.to_string())
-                .on_input(Message::ScrollbackLinesChanged)
-                .padding([4, 8])
-                .style(text_input_style)
-                .width(Length::Fixed(80.0)),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-        checkbox(app.auto_check_updates)
-            .label("启动时自动检查更新")
-            .on_toggle(Message::ToggleAutoCheckUpdates)
-            .size(16)
-            .text_size(12),
-        checkbox(app.auto_accept_host_keys)
-            .label("自动信任新主机密钥（不逐个弹窗确认）")
-            .on_toggle(Message::ToggleAutoAcceptHostKeys)
-            .size(16)
-            .text_size(12),
     ]
     .spacing(8);
+
+    if let Some(pending) = &app.pending_config_dir {
+        config_section = config_section.push(
+            text(format!("重启后生效: {}", pending.display()))
+                .size(11)
+                .color(accent()),
+        );
+    }
+
+    config_section = config_section
+        .push(
+            row![
+                text("连接超时（秒，0 = 不限）")
+                    .size(12)
+                    .color(muted_text())
+                    .width(Length::Fixed(180.0)),
+                text_input("20", &app.connect_timeout_secs.to_string())
+                    .on_input(Message::ConnectTimeoutChanged)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Length::Fixed(80.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .push(
+            row![
+                text("滚动历史行数")
+                    .size(12)
+                    .color(muted_text())
+                    .width(Length::Fixed(180.0)),
+                text_input("5000", &app.scrollback_lines.to_string())
+                    .on_input(Message::ScrollbackLinesChanged)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Length::Fixed(80.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .push(
+            checkbox(app.auto_check_updates)
+                .label("启动时自动检查更新")
+                .on_toggle(Message::ToggleAutoCheckUpdates)
+                .size(16)
+                .text_size(12),
+        )
+        .push(
+            checkbox(app.auto_accept_host_keys)
+                .label("自动信任新主机密钥（不逐个弹窗确认）")
+                .on_toggle(Message::ToggleAutoAcceptHostKeys)
+                .size(16)
+                .text_size(12),
+        );
 
     // Live preview of the rendered log filename for the active (or a sample)
     // session.
@@ -6642,13 +6849,17 @@ fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .color(muted_text()),
             row![
                 text_input(
-                    &adit_storage::default_log_dir().display().to_string(),
+                    &app.config_dir.join("logs").display().to_string(),
                     &app.log_dir,
                 )
                 .on_input(Message::LogDirChanged)
                 .padding([5, 8])
                 .style(text_input_style)
                 .width(Fill),
+                button(text("浏览…").size(11))
+                    .padding([5, 12])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::PickLogDir),
                 button(text("打开").size(11))
                     .padding([5, 12])
                     .style(|_theme, status| secondary_button_style(status))
