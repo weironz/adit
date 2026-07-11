@@ -1,5 +1,6 @@
 use adit_domain::{
-    AuthMethod, ConnectionProfile, ProfileId, Protocol, SessionId, SessionStatus, TunnelDef,
+    AuthMethod, ConnectionProfile, JumpHop, ProfileId, Protocol, SessionId, SessionStatus,
+    TunnelDef,
 };
 use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, HostKeyPromptInfo, KnownHostEntry,
@@ -110,6 +111,9 @@ pub struct AditApp {
     profile_protocol: Protocol,
     profile_identity_file: String,
     profile_startup_command: String,
+    /// Jump-host chain as an editable OpenSSH-style spec (`user@host:port`,
+    /// comma/newline separated), parsed to `profile.jumps` on save.
+    profile_jumps: String,
     profile_terminal_type: String,
     connect_timeout_secs: u32,
     scrollback_lines: u32,
@@ -419,6 +423,7 @@ pub enum Message {
     IdentityFilePicked(Option<std::path::PathBuf>),
     SecureCrtFolderPicked(Option<std::path::PathBuf>),
     ProfileStartupCommandChanged(String),
+    ProfileJumpsChanged(String),
     ProfileTerminalTypeChanged(String),
     ConnectTimeoutChanged(String),
     ScrollbackLinesChanged(String),
@@ -1013,6 +1018,7 @@ impl AditApp {
             profile_protocol: Protocol::Ssh,
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
+            profile_jumps: String::new(),
             profile_terminal_type: String::new(),
             connect_timeout_secs,
             scrollback_lines,
@@ -2094,6 +2100,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileStartupCommandChanged(value) => {
             app.terminal_focused = false;
             app.profile_startup_command = value;
+        }
+        Message::ProfileJumpsChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_jumps = value;
         }
         Message::ProfileTerminalTypeChanged(value) => {
             app.terminal_focused = false;
@@ -3217,6 +3227,7 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_identity_file = profile.identity_file;
         app.profile_protocol = profile.protocol;
         app.profile_startup_command = profile.startup_command;
+        app.profile_jumps = jumps_to_spec(&profile.jumps);
         app.profile_terminal_type = profile.terminal_type;
         // Password-auth password comes from the OS credential vault, not the
         // profile record.
@@ -3498,10 +3509,52 @@ fn save_profile(app: &mut AditApp) {
     let _ = save_profile_from_form(app, true);
 }
 
+/// Render a jump-host chain as a comma-separated OpenSSH-style spec (for the
+/// editor field).
+fn jumps_to_spec(jumps: &[JumpHop]) -> String {
+    jumps
+        .iter()
+        .map(JumpHop::to_spec)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Parse the editor's jump-host field — comma / newline / semicolon separated
+/// `user@host:port` hops — into an ordered chain, reporting the first non-empty
+/// hop that fails to parse. Saving a bad spec (e.g. a typo'd port) must be
+/// surfaced, not silently drop a bastion and downgrade to a direct connection.
+fn parse_jumps_checked(spec: &str) -> Result<Vec<JumpHop>, String> {
+    let mut hops = Vec::new();
+    for token in spec.split([',', '\n', ';']) {
+        let token = token.trim();
+        if token.is_empty() {
+            continue;
+        }
+        match JumpHop::parse(token) {
+            Some(hop) => hops.push(hop),
+            None => {
+                return Err(format!(
+                    "跳板机格式无效：“{token}”（应为 user@host:port，端口 1-65535）"
+                ))
+            }
+        }
+    }
+    Ok(hops)
+}
+
 fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<ProfileId> {
     let Some(port) = parse_port(&app.profile_port) else {
         app.last_error = Some(String::from("端口必须是 1-65535 的数字"));
         return None;
+    };
+    // Validate the jump chain up front: a bad hop must block the save (and be
+    // reported) rather than be dropped, which would silently bypass the bastion.
+    let jumps = match parse_jumps_checked(&app.profile_jumps) {
+        Ok(jumps) => jumps,
+        Err(error) => {
+            app.last_error = Some(error);
+            return None;
+        }
     };
 
     let result = if let Some(profile_id) = app.selected_profile {
@@ -3544,6 +3597,7 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
                     profile_id,
                     app.profile_startup_command.clone(),
                 );
+                app.manager.set_profile_jumps(profile_id, jumps.clone());
                 app.manager
                     .set_profile_terminal_type(profile_id, app.profile_terminal_type.clone());
                 // Persist the password-auth password to the OS credential vault
@@ -8312,6 +8366,10 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.protocol == app.profile_protocol
         && profile.startup_command == app.profile_startup_command.trim()
         && profile.terminal_type == app.profile_terminal_type.trim()
+        // Compare the raw field to the canonical saved spec (not the parsed set):
+        // an unsaved/invalid hop the user typed must read as "modified", never
+        // "saved", so the silent-drop guard on save isn't masked by the indicator.
+        && app.profile_jumps.trim() == jumps_to_spec(&profile.jumps)
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
@@ -9167,6 +9225,15 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     .spacing(6)
                     .align_y(Alignment::Center)
                     .into(),
+                ))
+                .push(dialog_field(
+                    "跳板机 ProxyJump（可选，user@bastion:22，多个用逗号按顺序；各跳板机复用本会话的密码/密钥）",
+                    text_input("jump@bastion.example.com:22", &app.profile_jumps)
+                        .on_input(Message::ProfileJumpsChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
                 ))
                 .push(dialog_field(
                     "启动命令（可选，连接后自动执行，如 tmux attach）",

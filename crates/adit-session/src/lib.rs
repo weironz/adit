@@ -1,6 +1,8 @@
 use adit_domain::{
-    AuthMethod, ConnectionProfile, ProfileId, Protocol, SessionId, SessionStatus, TunnelDef,
+    AuthMethod, ConnectionProfile, JumpHop, ProfileId, Protocol, SessionId, SessionStatus,
+    TunnelDef,
 };
+pub use adit_domain::JumpHop as ProfileJumpHop;
 use adit_ssh::{
     AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
     LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle, SftpRequest, SshError,
@@ -906,6 +908,12 @@ impl SessionManager {
         }
     }
 
+    pub fn set_profile_jumps(&mut self, profile_id: ProfileId, jumps: Vec<JumpHop>) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.jumps = jumps;
+        }
+    }
+
     /// Launch an RDP profile in the system Remote Desktop client (mstsc). RDP is
     /// graphical, so it opens externally rather than in a terminal tab. Returns
     /// the endpoint that was launched.
@@ -1361,6 +1369,8 @@ impl SessionManager {
             target_port,
         );
         request.auth = auth_options_for_profile(&profile, &password);
+        request.jumps = profile.jumps.clone();
+        request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = adit_ssh::spawn_tunnel_session(request)?;
 
         let id = self.next_tunnel_id;
@@ -1492,6 +1502,8 @@ impl SessionManager {
             password.clone(),
         );
         request.auth = auth_options_for_profile(&profile, &password);
+        request.jumps = profile.jumps.clone();
+        request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = adit_ssh::spawn_sftp_session(request)?;
 
         let local_cwd = default_local_dir();
@@ -2260,6 +2272,7 @@ fn spawn_live_shell(
     request.startup_command = profile.startup_command.clone();
     request.term = profile.terminal_type.clone();
     request.connect_timeout_secs = connect_timeout_secs;
+    request.jumps = profile.jumps.clone();
     Ok(adit_ssh::spawn_password_shell(request)?)
 }
 

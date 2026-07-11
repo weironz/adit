@@ -1,3 +1,4 @@
+pub use adit_domain::JumpHop;
 use bytes::Bytes;
 use russh::{
     client,
@@ -82,6 +83,9 @@ pub struct LiveShellRequest {
     /// Trust a new (never-seen) host key automatically and record it, instead of
     /// prompting (trust-on-first-use). A *changed* key still prompts/errors.
     pub auto_accept_host_keys: bool,
+    /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`). Empty ⇒
+    /// connect directly.
+    pub jumps: Vec<JumpHop>,
 }
 
 impl LiveShellRequest {
@@ -106,6 +110,7 @@ impl LiveShellRequest {
             term: String::new(),
             connect_timeout_secs: 20,
             auto_accept_host_keys: false,
+            jumps: Vec::new(),
         }
     }
 }
@@ -622,54 +627,112 @@ async fn run_live_password_shell(
         keepalive_max: 3,
         ..Default::default()
     });
-    // The host-key check may pause to ask the user. Drive `connect` while
-    // concurrently forwarding the user's HostKeyDecision (and an early
-    // Disconnect) into the handler's one-shot decision channel.
-    let (decision_tx, decision_rx) = oneshot::channel::<bool>();
-    let handler = KnownHostsClient::new(
-        request.host.clone(),
-        request.port,
-        request.known_hosts_path.clone(),
-        Some(events.clone()),
-        Some(decision_rx),
-    )
-    .with_auto_accept(request.auto_accept_host_keys);
-
-    let connect = client::connect(config, (request.host.as_str(), request.port), handler);
-    tokio::pin!(connect);
     // Cap the connect/handshake so an unreachable host fails fast instead of
     // hanging on the OS TCP timeout. A very long sleep stands in for "disabled".
-    let timeout_secs = if request.connect_timeout_secs == 0 {
-        u64::from(u32::MAX)
-    } else {
-        request.connect_timeout_secs
-    };
-    let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
-    tokio::pin!(deadline);
-    let mut decision_tx = Some(decision_tx);
-    let mut session = loop {
-        tokio::select! {
-            result = &mut connect => break result?,
-            _ = &mut deadline => {
-                return Err(SshError::Timeout(request.connect_timeout_secs));
+    let timeout_secs = effective_timeout_secs(request.connect_timeout_secs);
+
+    // Connect to the target — directly, or chained through jump hosts. The chain
+    // (jump handles) must stay alive for the whole session, so it is bound here.
+    let (mut session, _jump_handles): (
+        client::Handle<KnownHostsClient>,
+        Vec<client::Handle<KnownHostsClient>>,
+    ) = if request.jumps.is_empty() {
+        // The host-key check may pause to ask the user. Drive `connect` while
+        // concurrently forwarding the user's HostKeyDecision (and an early
+        // Disconnect) into the handler's one-shot decision channel.
+        let (decision_tx, decision_rx) = oneshot::channel::<bool>();
+        let handler = KnownHostsClient::new(
+            request.host.clone(),
+            request.port,
+            request.known_hosts_path.clone(),
+            Some(events.clone()),
+            Some(decision_rx),
+        )
+        .with_auto_accept(request.auto_accept_host_keys);
+
+        let connect = client::connect(config.clone(), (request.host.as_str(), request.port), handler);
+        tokio::pin!(connect);
+        let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
+        tokio::pin!(deadline);
+        let mut decision_tx = Some(decision_tx);
+        let session = loop {
+            tokio::select! {
+                result = &mut connect => break result?,
+                _ = &mut deadline => {
+                    return Err(SshError::Timeout(request.connect_timeout_secs));
+                }
+                command = commands.recv() => match command {
+                    Some(LiveShellCommand::HostKeyDecision(accept)) => {
+                        if let Some(tx) = decision_tx.take() {
+                            let _ = tx.send(accept);
+                        }
+                    }
+                    Some(LiveShellCommand::Disconnect) | None => {
+                        // Cancelled before the session opened: reject any pending
+                        // host-key prompt so `connect` unwinds, then stop.
+                        if let Some(tx) = decision_tx.take() {
+                            let _ = tx.send(false);
+                        }
+                        return Ok(());
+                    }
+                    // Input/resize before the shell exists are dropped.
+                    Some(_) => {}
+                },
             }
-            command = commands.recv() => match command {
-                Some(LiveShellCommand::HostKeyDecision(accept)) => {
-                    if let Some(tx) = decision_tx.take() {
-                        let _ = tx.send(accept);
-                    }
+        };
+        (session, Vec::new())
+    } else {
+        // The bastions auto-record their keys, but the target gets the same
+        // interactive first-use host-key check as a direct shell: its handler
+        // carries the events + decision channel, and we drive the user's
+        // HostKeyDecision into it while the chain connects (a changed key on any
+        // hop or the target still aborts).
+        let _ = events.send(LiveShellEvent::Status(String::from("connecting via jump host")));
+        let (decision_tx, decision_rx) = oneshot::channel::<bool>();
+        let final_handler = KnownHostsClient::new(
+            request.host.clone(),
+            request.port,
+            request.known_hosts_path.clone(),
+            Some(events.clone()),
+            Some(decision_rx),
+        )
+        .with_auto_accept(request.auto_accept_host_keys);
+
+        let connect = connect_through_jumps(
+            &request.jumps,
+            &request.auth,
+            &request.password,
+            &request.host,
+            request.port,
+            final_handler,
+            &config,
+            &request.known_hosts_path,
+        );
+        tokio::pin!(connect);
+        let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
+        tokio::pin!(deadline);
+        let mut decision_tx = Some(decision_tx);
+        loop {
+            tokio::select! {
+                result = &mut connect => break result?,
+                _ = &mut deadline => {
+                    return Err(SshError::Timeout(request.connect_timeout_secs));
                 }
-                Some(LiveShellCommand::Disconnect) | None => {
-                    // Cancelled before the session opened: reject any pending
-                    // host-key prompt so `connect` unwinds, then stop.
-                    if let Some(tx) = decision_tx.take() {
-                        let _ = tx.send(false);
+                command = commands.recv() => match command {
+                    Some(LiveShellCommand::HostKeyDecision(accept)) => {
+                        if let Some(tx) = decision_tx.take() {
+                            let _ = tx.send(accept);
+                        }
                     }
-                    return Ok(());
-                }
-                // Input/resize before the shell exists are dropped.
-                Some(_) => {}
-            },
+                    Some(LiveShellCommand::Disconnect) | None => {
+                        if let Some(tx) = decision_tx.take() {
+                            let _ = tx.send(false);
+                        }
+                        return Ok(());
+                    }
+                    Some(_) => {}
+                },
+            }
         }
     };
 
@@ -762,6 +825,100 @@ async fn run_live_password_shell(
         .await;
 
     Ok(())
+}
+
+/// Default handshake deadline (seconds) for a jump chain when a request doesn't
+/// override it. The shell path uses the profile's connect timeout; SFTP/tunnel
+/// requests default to this and adit-session overrides both with the profile's.
+const DEFAULT_JUMP_CONNECT_TIMEOUT_SECS: u64 = 30;
+
+/// Resolve a connect-timeout knob to an actual deadline: 0 means "disabled", so
+/// stand in a very long sleep rather than a zero-length (instantly-firing) one.
+fn effective_timeout_secs(configured: u64) -> u64 {
+    if configured == 0 {
+        u64::from(u32::MAX)
+    } else {
+        configured
+    }
+}
+
+/// Connect + authenticate through `jumps` in order, then open a `direct-tcpip`
+/// channel to (`final_host`, `final_port`) and run the target handshake over it.
+/// Returns the target session (NOT yet authenticated to the target — the caller
+/// does that with the profile credentials) plus the intermediate hop handles,
+/// which the caller MUST keep alive for the whole session (dropping one closes
+/// its tunnel).
+///
+/// Each hop authenticates with the same profile credentials as the target
+/// (`hop_auth` + `hop_password`) — Adit stores one credential per profile, so a
+/// bastion is expected to accept the same password / key / passphrase. `hop_auth`
+/// carries the password's double duty as a key passphrase, so an encrypted
+/// identity file decrypts on every hop. Jump hops auto-record their host keys
+/// (no interactive prompt through the tunnel); a *changed* hop key is rejected.
+/// The target key is checked by `final_handler`, which the caller can make
+/// interactive.
+#[allow(clippy::too_many_arguments)] // cohesive connect params; a struct adds noise
+async fn connect_through_jumps(
+    jumps: &[JumpHop],
+    hop_auth: &AuthOptions,
+    hop_password: &str,
+    final_host: &str,
+    final_port: u16,
+    final_handler: KnownHostsClient,
+    config: &Arc<client::Config>,
+    known_hosts_path: &Path,
+) -> Result<
+    (
+        client::Handle<KnownHostsClient>,
+        Vec<client::Handle<KnownHostsClient>>,
+    ),
+    SshError,
+> {
+    let mut hops: Vec<client::Handle<KnownHostsClient>> = Vec::new();
+    for (index, hop) in jumps.iter().enumerate() {
+        if hop.host.trim().is_empty() {
+            return Err(SshError::EmptyHost);
+        }
+        // Non-interactive handler: `decision`/`auto_accept` both None ⇒ record an
+        // unknown key on first use and reject a changed one.
+        let handler = KnownHostsClient::new(
+            hop.host.clone(),
+            hop.port,
+            known_hosts_path.to_path_buf(),
+            None,
+            None,
+        );
+        let mut session = if index == 0 {
+            client::connect(config.clone(), (hop.host.as_str(), hop.port), handler).await?
+        } else {
+            let prev = hops.last().expect("previous hop exists");
+            let channel = prev
+                .channel_open_direct_tcpip(
+                    hop.host.clone(),
+                    u32::from(hop.port),
+                    "127.0.0.1".to_string(),
+                    0,
+                )
+                .await?;
+            client::connect_stream(config.clone(), channel.into_stream(), handler).await?
+        };
+        authenticate_with_available_methods(&mut session, &hop.username, hop_password, hop_auth, None)
+            .await?;
+        hops.push(session);
+    }
+
+    let last = hops.last().expect("at least one jump host");
+    let channel = last
+        .channel_open_direct_tcpip(
+            final_host.to_string(),
+            u32::from(final_port),
+            "127.0.0.1".to_string(),
+            0,
+        )
+        .await?;
+    let target =
+        client::connect_stream(config.clone(), channel.into_stream(), final_handler).await?;
+    Ok((target, hops))
 }
 
 async fn authenticate_with_available_methods(
@@ -1131,6 +1288,10 @@ pub struct SftpRequest {
     pub password: String,
     pub auth: AuthOptions,
     pub known_hosts_path: PathBuf,
+    /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
+    pub jumps: Vec<JumpHop>,
+    /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
+    pub connect_timeout_secs: u64,
 }
 
 impl SftpRequest {
@@ -1148,6 +1309,8 @@ impl SftpRequest {
             password: password.into(),
             auth: AuthOptions::default(),
             known_hosts_path: default_known_hosts_path(),
+            jumps: Vec::new(),
+            connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
         }
     }
 }
@@ -1256,17 +1419,45 @@ async fn run_sftp_session(
         keepalive_max: 3,
         ..Default::default()
     });
-    // The shell session already established trust for this host; verify
-    // non-interactively (known host → trusted).
-    let handler = KnownHostsClient::new(
-        request.host.clone(),
-        request.port,
-        request.known_hosts_path.clone(),
-        None,
-        None,
-    );
-    let mut session =
-        client::connect(config, (request.host.as_str(), request.port), handler).await?;
+    // Connect directly, or chain through jump hosts (their handles are kept
+    // alive alongside the session). Host keys are verified non-interactively.
+    let (mut session, _jump_handles) = if request.jumps.is_empty() {
+        let handler = KnownHostsClient::new(
+            request.host.clone(),
+            request.port,
+            request.known_hosts_path.clone(),
+            None,
+            None,
+        );
+        let session =
+            client::connect(config, (request.host.as_str(), request.port), handler).await?;
+        (session, Vec::new())
+    } else {
+        let final_handler = KnownHostsClient::new(
+            request.host.clone(),
+            request.port,
+            request.known_hosts_path.clone(),
+            None,
+            None,
+        );
+        // Bound the whole chain's handshake so a hop that opens the socket but
+        // never completes the SSH handshake can't hang the session forever.
+        tokio::time::timeout(
+            Duration::from_secs(effective_timeout_secs(request.connect_timeout_secs)),
+            connect_through_jumps(
+                &request.jumps,
+                &request.auth,
+                &request.password,
+                &request.host,
+                request.port,
+                final_handler,
+                &config,
+                &request.known_hosts_path,
+            ),
+        )
+        .await
+        .map_err(|_| SshError::Timeout(request.connect_timeout_secs))??
+    };
 
     let _ = events.send(SftpEvent::Status(String::from("authenticating")));
     authenticate_with_available_methods(
@@ -1755,6 +1946,10 @@ pub struct TunnelRequest {
     /// Forward target (Local only; ignored for Dynamic).
     pub target_host: String,
     pub target_port: u16,
+    /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
+    pub jumps: Vec<JumpHop>,
+    /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
+    pub connect_timeout_secs: u64,
 }
 
 impl TunnelRequest {
@@ -1783,6 +1978,8 @@ impl TunnelRequest {
             bind_port,
             target_host: target_host.into(),
             target_port,
+            jumps: Vec::new(),
+            connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
         }
     }
 }
@@ -1907,8 +2104,31 @@ async fn run_tunnel_session(
             None,
         )
     };
-    let mut session =
-        client::connect(config, (request.host.as_str(), request.port), handler).await?;
+    // Connect directly, or chain through jump hosts (their handles are kept
+    // alive alongside the session). The tunnel's forward handler rides the
+    // final target session either way.
+    let (mut session, _jump_handles) = if request.jumps.is_empty() {
+        let session =
+            client::connect(config.clone(), (request.host.as_str(), request.port), handler).await?;
+        (session, Vec::new())
+    } else {
+        // Same whole-chain handshake bound as the SFTP path (see above).
+        tokio::time::timeout(
+            Duration::from_secs(effective_timeout_secs(request.connect_timeout_secs)),
+            connect_through_jumps(
+                &request.jumps,
+                &request.auth,
+                &request.password,
+                &request.host,
+                request.port,
+                handler,
+                &config,
+                &request.known_hosts_path,
+            ),
+        )
+        .await
+        .map_err(|_| SshError::Timeout(request.connect_timeout_secs))??
+    };
 
     let _ = events.send(TunnelEvent::Status(String::from("authenticating")));
     authenticate_with_available_methods(

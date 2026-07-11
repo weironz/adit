@@ -135,6 +135,18 @@ UI lists and deletes entries; deletion reverts to first-connect.
 
 ## 3. ProxyJump / jump host (bastion chaining) + ProxyCommand
 
+**Status: ✅ shipped in v0.1.31 (jump-host chaining).** `JumpHop` on the profile
+(serde default; comma-separated `user@host:port` chain in the SSH editor, IPv6-aware
+parsing with save-time validation), `connect_through_jumps` chains hops (hop 0 via
+`client::connect`, each further hop via `direct-tcpip` + `connect_stream`), and
+shell / SFTP / tunnel all connect through the same chain with the intermediate
+`Handle`s kept alive. Each hop is a real handshake so every host key — bastions and
+target — is verified through the tunnel; the shell path keeps the interactive
+first-use prompt for the **target** key. Hops reuse the profile's password/key
+(one credential per profile). Two Docker integration tests (password- and key-auth,
+target on an internal-only network reachable only via the bastion) plus IPv6/parse
+unit tests. **ProxyCommand** and `ssh_config ProxyJump` import remain as follow-ups.
+
 **What & why.** Reach a target that isn't directly routable by chaining through one
 or more bastions. Many corporate networks *only* allow SSH via a jump host — without
 this, that whole audience can't connect. (Roadmap C3.)

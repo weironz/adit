@@ -28,9 +28,9 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, thread};
 
 use adit_ssh::{
-    spawn_password_shell, spawn_sftp_session, spawn_tunnel_session, AuthOptions, LiveShellCommand,
-    LiveShellEvent, LiveShellRequest, SftpCommand, SftpEvent, SftpRequest, TunnelEvent,
-    TunnelKind, TunnelRequest,
+    spawn_password_shell, spawn_sftp_session, spawn_tunnel_session, AuthOptions, JumpHop,
+    LiveShellCommand, LiveShellEvent, LiveShellRequest, SftpCommand, SftpEvent, SftpRequest,
+    TunnelEvent, TunnelKind, TunnelRequest,
 };
 
 const IMAGE: &str = "adit-test-sshd:latest";
@@ -67,6 +67,33 @@ fn ensure_image() {
     });
 }
 
+/// A throwaway user-defined bridge network; removed on drop. Containers on it
+/// resolve each other by `--network-alias`, which is how a jump host reaches a
+/// target that isn't published to the host at all.
+struct TestNetwork {
+    name: String,
+}
+
+impl TestNetwork {
+    fn create() -> TestNetwork {
+        let name = format!("adit-it-net-{}", unique());
+        docker(&["network", "create", &name]).expect("docker network create");
+        TestNetwork { name }
+    }
+}
+
+impl Drop for TestNetwork {
+    fn drop(&mut self) {
+        let _ = docker(&["network", "rm", &self.name]);
+    }
+}
+
+/// Host-side paths to a keypair generated inside a container.
+struct KeyPair {
+    private: PathBuf,
+    public: PathBuf,
+}
+
 /// A throwaway sshd container; removed on drop.
 struct TestServer {
     id: String,
@@ -81,6 +108,121 @@ impl TestServer {
         let server = TestServer { id, port };
         server.wait_ready(Duration::from_secs(30));
         server
+    }
+
+    /// Start a container attached to `net` under `alias`. When `publish` is set
+    /// it also gets a random host port (so the host can read its banner); when
+    /// not, it is reachable only from inside `net` — the shape a real bastion
+    /// hides its targets behind.
+    fn start_on_network(net: &TestNetwork, alias: &str, publish: bool) -> TestServer {
+        ensure_image();
+        // `--hostname alias` makes the container self-identifying: a shell that
+        // runs `hostname` there prints `alias`, so the test transcript itself
+        // proves *which* server was reached (bastion vs target).
+        let mut args = vec![
+            "run",
+            "-d",
+            "--network",
+            net.name.as_str(),
+            "--network-alias",
+            alias,
+            "--hostname",
+            alias,
+        ];
+        if publish {
+            args.push("-P");
+        }
+        args.push(IMAGE);
+        let id = docker(&args).expect("docker run on network");
+        let port = if publish {
+            published_port(&id, 2222)
+        } else {
+            0
+        };
+        TestServer { id, port }
+    }
+
+    /// Wait until the container's own sshd answers from inside it. Used for a
+    /// non-published server whose banner the host cannot read directly.
+    fn wait_ready_internal(&self, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if docker(&[
+                "exec",
+                &self.id,
+                "sh",
+                "-c",
+                "ssh-keyscan -T 2 -p 2222 127.0.0.1 2>/dev/null | grep -q ssh",
+            ])
+            .is_ok()
+            {
+                return;
+            }
+            thread::sleep(Duration::from_millis(300));
+        }
+        panic!(
+            "sshd never became ready inside container {} (logs: {})",
+            self.id,
+            docker(&["logs", &self.id]).unwrap_or_default()
+        );
+    }
+
+    /// Generate a keypair inside the container, authorize its public half for
+    /// `adit` here, and copy both halves to host temp files. The private key can
+    /// then be presented for auth, and the public key authorized on other
+    /// containers via [`authorize_key`](Self::authorize_key).
+    fn generate_key(&self) -> KeyPair {
+        docker(&[
+            "exec",
+            &self.id,
+            "sh",
+            "-c",
+            "mkdir -p /home/adit/.ssh \
+             && ssh-keygen -t ed25519 -N '' -q -f /home/adit/.ssh/id_ed25519 \
+             && cp /home/adit/.ssh/id_ed25519.pub /home/adit/.ssh/authorized_keys \
+             && chown -R adit:adit /home/adit/.ssh \
+             && chmod 700 /home/adit/.ssh \
+             && chmod 600 /home/adit/.ssh/authorized_keys",
+        ])
+        .expect("generate + authorize key");
+        let private = temp_path("key");
+        let public = temp_path("key.pub");
+        docker(&[
+            "cp",
+            &format!("{}:/home/adit/.ssh/id_ed25519", self.id),
+            &private.to_string_lossy(),
+        ])
+        .expect("copy private key to host");
+        docker(&[
+            "cp",
+            &format!("{}:/home/adit/.ssh/id_ed25519.pub", self.id),
+            &public.to_string_lossy(),
+        ])
+        .expect("copy public key to host");
+        KeyPair { private, public }
+    }
+
+    /// Authorize `pub_key` (a host-side public-key file) for `adit` on this
+    /// container, so a key generated elsewhere can log in here too.
+    fn authorize_key(&self, pub_key: &std::path::Path) {
+        docker(&["exec", &self.id, "mkdir", "-p", "/home/adit/.ssh"])
+            .expect("mkdir .ssh on target");
+        docker(&[
+            "cp",
+            &pub_key.to_string_lossy(),
+            &format!("{}:/home/adit/.ssh/authorized_keys", self.id),
+        ])
+        .expect("copy authorized_keys into target");
+        docker(&[
+            "exec",
+            &self.id,
+            "sh",
+            "-c",
+            "chown -R adit:adit /home/adit/.ssh \
+             && chmod 700 /home/adit/.ssh \
+             && chmod 600 /home/adit/.ssh/authorized_keys",
+        ])
+        .expect("fix authorized_keys perms on target");
     }
 
     /// Wait until the sshd inside the container answers with an SSH banner.
@@ -406,5 +548,110 @@ fn local_forward_reaches_the_remote_sshd() {
     assert!(
         banner.starts_with("SSH-2.0"),
         "expected the remote sshd banner through the forward, got: {banner:?}"
+    );
+}
+
+/// Drive a shell whose target sits behind `bastion` (published) on an
+/// internal-only network, asserting the shell actually landed on the target and
+/// that both host keys were recorded. Shared by the password- and key-auth jump
+/// tests, which differ only in `auth`.
+fn assert_jump_shell_reaches_target(bastion_port: u16, auth: AuthOptions, password: &str) {
+    let known_hosts = temp_known_hosts();
+    // Final host is the bastion-internal alias — unreachable except via the jump.
+    let mut request = LiveShellRequest::new("target", 2222, USER, password);
+    request.known_hosts_path = known_hosts.clone();
+    request.auto_accept_host_keys = true;
+    // `hostname` prints the container's --hostname, so a transcript containing
+    // "JUMP-target" proves the shell ran on the *target* (not the bastion, which
+    // would print "JUMP-bastion") — the transcript alone attests to the jump.
+    request.startup_command = String::from("echo JUMP-$(hostname)");
+    request.auth = auth;
+    request.jumps = vec![JumpHop {
+        host: String::from("127.0.0.1"),
+        port: bastion_port,
+        username: String::from(USER),
+    }];
+
+    let handle = spawn_password_shell(request).expect("spawn shell via bastion");
+    let mut transcript = String::new();
+    let found = pump_until(
+        Duration::from_secs(30),
+        || handle.try_recv(),
+        |event| match event {
+            LiveShellEvent::Output(bytes) => {
+                transcript.push_str(&String::from_utf8_lossy(&bytes));
+                if transcript.contains("JUMP-target") {
+                    ControlFlow::Break(true)
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+            LiveShellEvent::Error(error) => panic!("jump ssh error: {error}"),
+            LiveShellEvent::Closed => ControlFlow::Break(false),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(
+        found,
+        Some(true),
+        "shell reached through the bastion should run on the target; transcript:\n{transcript}"
+    );
+    let _ = handle.send(LiveShellCommand::Disconnect);
+
+    // Both the bastion and the target host keys should have been recorded.
+    let recorded = fs::read_to_string(&known_hosts).unwrap_or_default();
+    let lines = recorded.lines().filter(|l| !l.trim().is_empty()).count();
+    assert!(
+        lines >= 2,
+        "expected bastion + target host keys recorded, got {lines} line(s):\n{recorded}"
+    );
+}
+
+#[test]
+fn jump_host_reaches_a_target_behind_a_bastion() {
+    // Password auth through the whole chain — the profile's default. Both the
+    // bastion and the target accept the same password (as Adit stores one
+    // credential per profile), which is exactly the common case that must work.
+    let net = TestNetwork::create();
+    let target = TestServer::start_on_network(&net, "target", false);
+    target.wait_ready_internal(Duration::from_secs(30));
+    let bastion = TestServer::start_on_network(&net, "bastion", true);
+    bastion.wait_ready(Duration::from_secs(30));
+
+    assert_jump_shell_reaches_target(
+        bastion.port,
+        AuthOptions {
+            try_password: true,
+            try_agent: false,
+            try_default_keys: false,
+            identity_file: None,
+        },
+        PASS,
+    );
+}
+
+#[test]
+fn jump_host_authenticates_with_a_key() {
+    // Key auth end-to-end: one keypair authorized on both the bastion and the
+    // target, no password anywhere. Proves the jump chain does public-key auth
+    // on every hop and on the tunneled target.
+    let net = TestNetwork::create();
+    let target = TestServer::start_on_network(&net, "target", false);
+    target.wait_ready_internal(Duration::from_secs(30));
+    let bastion = TestServer::start_on_network(&net, "bastion", true);
+    bastion.wait_ready(Duration::from_secs(30));
+
+    let keys = bastion.generate_key();
+    target.authorize_key(&keys.public);
+
+    assert_jump_shell_reaches_target(
+        bastion.port,
+        AuthOptions {
+            try_password: false,
+            try_agent: false,
+            try_default_keys: false,
+            identity_file: Some(keys.private),
+        },
+        "", // no password — key only
     );
 }

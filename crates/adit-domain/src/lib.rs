@@ -72,6 +72,107 @@ pub struct ConnectionProfile {
     /// `TERM` to request for the PTY (empty ⇒ `xterm-256color`).
     #[serde(default)]
     pub terminal_type: String,
+    /// Jump hosts (bastions) to chain through before reaching `host`, in order
+    /// (OpenSSH `ProxyJump`). Empty ⇒ connect directly.
+    #[serde(default)]
+    pub jumps: Vec<JumpHop>,
+}
+
+/// One bastion/jump host in a [`ConnectionProfile`]'s chain. Authenticates via
+/// SSH agent / default keys / the profile's identity file (no per-hop password
+/// yet).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct JumpHop {
+    pub host: String,
+    #[serde(default = "default_ssh_port")]
+    pub port: u16,
+    pub username: String,
+}
+
+fn default_ssh_port() -> u16 {
+    22
+}
+
+/// Parse a TCP port, accepting only 1–65535 (0 is not a connectable port).
+fn parse_port(text: &str) -> Option<u16> {
+    match text.trim().parse::<u16>() {
+        Ok(0) => None,
+        Ok(port) => Some(port),
+        Err(_) => None,
+    }
+}
+
+impl JumpHop {
+    /// Parse an OpenSSH-style `[user@]host[:port]` hop spec. Handles IPv6 the
+    /// way ssh does: a bracketed literal (`[2001:db8::1]` or `[2001:db8::1]:22`)
+    /// and a bare literal with no port (`2001:db8::1`, several colons ⇒ all host).
+    #[must_use]
+    pub fn parse(spec: &str) -> Option<JumpHop> {
+        let spec = spec.trim();
+        if spec.is_empty() {
+            return None;
+        }
+        let (username, rest) = match spec.split_once('@') {
+            Some((user, rest)) => (user.trim().to_string(), rest.trim()),
+            None => (String::new(), spec),
+        };
+        let (host, port) = Self::split_host_port(rest)?;
+        if host.is_empty() {
+            return None;
+        }
+        Some(JumpHop {
+            host,
+            port,
+            username,
+        })
+    }
+
+    /// Split `host[:port]` into a host and a port (default 22), respecting IPv6
+    /// brackets and bare IPv6 literals. An explicit port of 0 is rejected.
+    fn split_host_port(rest: &str) -> Option<(String, u16)> {
+        if let Some(stripped) = rest.strip_prefix('[') {
+            // Bracketed IPv6: `[addr]` or `[addr]:port`.
+            let (addr, after) = stripped.split_once(']')?;
+            let port = match after.trim() {
+                "" => 22,
+                p => parse_port(p.strip_prefix(':')?)?,
+            };
+            return Some((addr.trim().to_string(), port));
+        }
+        // A bare literal with two or more colons is an unbracketed IPv6 address
+        // with no port — `rsplit_once(':')` would corrupt it, so keep it whole.
+        if rest.matches(':').count() >= 2 {
+            return Some((rest.trim().to_string(), 22));
+        }
+        match rest.rsplit_once(':') {
+            Some((host, port)) => Some((host.trim().to_string(), parse_port(port)?)),
+            None => Some((rest.trim().to_string(), 22)),
+        }
+    }
+
+    /// Render back to `[user@]host[:port]` (omitting default port 22, and
+    /// bracketing an IPv6 literal so it round-trips through [`parse`]).
+    #[must_use]
+    pub fn to_spec(&self) -> String {
+        let mut spec = String::new();
+        if !self.username.is_empty() {
+            spec.push_str(&self.username);
+            spec.push('@');
+        }
+        let is_ipv6 = self.host.contains(':') && !self.host.starts_with('[');
+        if is_ipv6 {
+            spec.push('[');
+            spec.push_str(&self.host);
+            spec.push(']');
+        } else {
+            spec.push_str(&self.host);
+        }
+        if self.port != 22 {
+            spec.push(':');
+            spec.push_str(&self.port.to_string());
+        }
+        spec
+    }
 }
 
 impl ConnectionProfile {
@@ -107,6 +208,7 @@ impl ConnectionProfile {
             protocol: Protocol::Ssh,
             startup_command: String::new(),
             terminal_type: String::new(),
+            jumps: Vec::new(),
         }
     }
 
@@ -243,5 +345,63 @@ impl SessionStatus {
             Self::Disconnected => "Disconnected",
             Self::Error => "Error",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JumpHop;
+
+    #[test]
+    fn jump_hop_parses_and_renders_specs() {
+        let h = JumpHop::parse("bob@bastion.example.com:2222").unwrap();
+        assert_eq!(h.username, "bob");
+        assert_eq!(h.host, "bastion.example.com");
+        assert_eq!(h.port, 2222);
+        assert_eq!(h.to_spec(), "bob@bastion.example.com:2222");
+
+        // Defaults: no user, default port 22 (omitted in the rendered spec).
+        let h = JumpHop::parse("10.0.0.5").unwrap();
+        assert_eq!(h.username, "");
+        assert_eq!(h.host, "10.0.0.5");
+        assert_eq!(h.port, 22);
+        assert_eq!(h.to_spec(), "10.0.0.5");
+
+        assert_eq!(JumpHop::parse("  ").map(|_| ()), None);
+        assert_eq!(JumpHop::parse("").map(|_| ()), None);
+    }
+
+    #[test]
+    fn jump_hop_parses_ipv6_literals() {
+        // Bare IPv6, no port: kept whole (not split on the last colon).
+        let h = JumpHop::parse("root@2001:db8::10").unwrap();
+        assert_eq!(h.username, "root");
+        assert_eq!(h.host, "2001:db8::10");
+        assert_eq!(h.port, 22);
+        // Round-trips with brackets so re-parsing recovers the same host.
+        assert_eq!(h.to_spec(), "root@[2001:db8::10]");
+        assert_eq!(JumpHop::parse(&h.to_spec()).unwrap(), h);
+
+        // Bracketed IPv6 with a port.
+        let h = JumpHop::parse("[2001:db8::10]:2222").unwrap();
+        assert_eq!(h.host, "2001:db8::10");
+        assert_eq!(h.port, 2222);
+        assert_eq!(h.to_spec(), "[2001:db8::10]:2222");
+        assert_eq!(JumpHop::parse(&h.to_spec()).unwrap(), h);
+
+        // Bracketed IPv6 without a port.
+        let h = JumpHop::parse("[::1]").unwrap();
+        assert_eq!(h.host, "::1");
+        assert_eq!(h.port, 22);
+
+        // A normal host:port still splits as before.
+        let h = JumpHop::parse("bastion:2200").unwrap();
+        assert_eq!(h.host, "bastion");
+        assert_eq!(h.port, 2200);
+
+        // Port 0 and out-of-range ports are rejected (not a connectable port).
+        assert_eq!(JumpHop::parse("bastion:0").map(|_| ()), None);
+        assert_eq!(JumpHop::parse("[::1]:0").map(|_| ()), None);
+        assert_eq!(JumpHop::parse("bastion:70000").map(|_| ()), None);
     }
 }
