@@ -361,6 +361,22 @@ prerequisite the user must set up; the code/CI work is small once it exists.
 
 ## 8. OSC 8 hyperlinks + URL detection (click to open)
 
+**Status: ✅ OSC 8 shipped in v0.1.35.** The terminal core parses `OSC 8 ; params ; URI`
+(rejoins `;`-containing URIs, ignores `id=`, empty URI closes), interns URLs on
+the state (`link: u32` on the cell, off the SGR pen so a mid-link SGR reset keeps
+the link; reset on RIS + across alt-screen; capped 4096×4096 to bound memory),
+coalesces runs by link, and exposes `TerminalCell.hyperlink`. The UI renders
+openable link runs in blue and opens them on **Ctrl/Cmd+click** (so a plain click
+still selects and mouse-reporting passes through) **behind a confirmation dialog
+showing the real destination**. Opening is `http(s)`-only and shell-free (Windows
+`rundll32 url.dll,FileProtocolHandler` with the URL as a single argv); the
+`is_openable_http_url` allowlist requires **printable-ASCII only**, rejecting
+`file:`/`javascript:`, spaces/controls, and Unicode bidi/format chars that could
+spoof the shown URL. Two adversarial review passes; unit-tested (OSC-8
+parse / SGR-survival / `;`-URIs / RIS + alt-screen link reset, the validator
+allowlist incl. bidi spoof cases, panic-free hex parse). **Deferred:** heuristic
+bare-`https://` detection (b) and hover-underline — a separate follow-up.
+
 **What & why.** Make links clickable: (1) OSC 8 explicit hyperlinks
 (`ESC ] 8 ; params ; URI ST`), and (2) heuristic detection of bare `http(s)://…`.
 Hover-underline; Ctrl/Cmd+click opens after a confirmation showing the real

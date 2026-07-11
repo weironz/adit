@@ -60,12 +60,15 @@ impl Default for Pen {
 }
 
 /// One grid cell. `spacer` marks the right half of a double-width glyph; that
-/// column is owned by the wide character immediately to its left.
+/// column is owned by the wide character immediately to its left. `link` is an
+/// OSC 8 hyperlink id (0 ⇒ none) into the state's interning table — kept OFF the
+/// [`Pen`] so an SGR reset mid-link doesn't drop the hyperlink.
 #[derive(Debug, Clone, Copy)]
 struct Cell {
     ch: char,
     pen: Pen,
     spacer: bool,
+    link: u32,
 }
 
 impl Cell {
@@ -78,6 +81,7 @@ impl Cell {
                 flags: 0,
             },
             spacer: false,
+            link: 0,
         }
     }
 }
@@ -101,6 +105,7 @@ struct AltSaved {
     scroll_top: usize,
     scroll_bottom: usize,
     autowrap: bool,
+    current_link: u32,
 }
 
 /// The mutable terminal model. Kept separate from the [`Parser`] so a single
@@ -126,6 +131,10 @@ struct TermState {
     title: String,
     bell: bool,
     responses: Vec<u8>,
+    /// OSC 8 hyperlink targets, interned; a cell's `link` id is `index + 1`
+    /// (0 ⇒ no link). `current_link` is the id applied to newly-printed cells.
+    links: Vec<String>,
+    current_link: u32,
 }
 
 impl TermState {
@@ -151,10 +160,32 @@ impl TermState {
             title,
             bell: false,
             responses: Vec::new(),
+            links: Vec::new(),
+            current_link: 0,
         }
     }
 
     // --- character output ---------------------------------------------------
+
+    /// Intern an OSC 8 URI, returning its 1-based id (`0` for an empty/rejected
+    /// URI). De-dupes, and caps both URL length and table size so a hostile
+    /// stream can't exhaust memory.
+    fn intern_link(&mut self, uri: &str) -> u32 {
+        const MAX_URL_LEN: usize = 4096;
+        const MAX_LINKS: usize = 4096;
+        let uri = uri.trim();
+        if uri.is_empty() || uri.len() > MAX_URL_LEN {
+            return 0;
+        }
+        if let Some(pos) = self.links.iter().position(|u| u == uri) {
+            return (pos + 1) as u32;
+        }
+        if self.links.len() >= MAX_LINKS {
+            return 0;
+        }
+        self.links.push(uri.to_string());
+        self.links.len() as u32
+    }
 
     fn put_char(&mut self, c: char) {
         let width = c.width().unwrap_or(0);
@@ -186,10 +217,12 @@ impl TermState {
         self.clear_wide_artifacts(row, col);
 
         let pen = self.pen;
+        let link = self.current_link;
         self.grid[row][col] = Cell {
             ch: c,
             pen,
             spacer: false,
+            link,
         };
 
         if width == 2 && col + 1 < self.cols {
@@ -198,6 +231,7 @@ impl TermState {
                 ch: ' ',
                 pen,
                 spacer: true,
+                link,
             };
             self.advance_cursor(2);
         } else {
@@ -506,11 +540,14 @@ impl TermState {
             scroll_top: self.scroll_top,
             scroll_bottom: self.scroll_bottom,
             autowrap: self.autowrap,
+            current_link: self.current_link,
         };
         self.alt = Some(saved);
         self.move_to(0, 0);
         self.scroll_top = 0;
         self.scroll_bottom = self.rows - 1;
+        // A hyperlink open on the primary screen must not bleed into alt output.
+        self.current_link = 0;
     }
 
     fn leave_alt_screen(&mut self) {
@@ -524,6 +561,7 @@ impl TermState {
             self.scroll_bottom = saved.scroll_bottom.min(self.rows - 1);
             self.autowrap = saved.autowrap;
             self.pending_wrap = false;
+            self.current_link = saved.current_link;
         }
     }
 
@@ -541,6 +579,10 @@ impl TermState {
         self.saved_cursor = None;
         self.alt = None;
         self.title = String::from("terminal");
+        // RIS closes any open hyperlink and reclaims the interned URLs (safe:
+        // the scrollback that referenced them was just cleared).
+        self.current_link = 0;
+        self.links.clear();
     }
 
     // --- DEC private / ANSI modes ------------------------------------------
@@ -704,7 +746,7 @@ impl TermState {
             } else {
                 None
             };
-            lines.push(render_row(row, cursor));
+            lines.push(render_row(row, cursor, &self.links));
         }
 
         TerminalSnapshot {
@@ -863,6 +905,20 @@ impl Perform for TermState {
         };
         if (kind == b"0" || kind == b"2") && params.len() > 1 {
             self.title = String::from_utf8_lossy(params[1]).into_owned();
+        } else if kind == b"8" {
+            // OSC 8 ; params ; URI  — `params` (id=…) is ignored; the URI may itself
+            // contain ';', so rejoin fields 2.. before interning. An empty URI (or
+            // a missing one) closes the current hyperlink.
+            let uri = if params.len() > 2 {
+                params[2..]
+                    .iter()
+                    .map(|p| String::from_utf8_lossy(p))
+                    .collect::<Vec<_>>()
+                    .join(";")
+            } else {
+                String::new()
+            };
+            self.current_link = self.intern_link(&uri);
         }
     }
 }
@@ -1075,10 +1131,17 @@ fn cursor_cell(text: String) -> TerminalCell {
         underline: false,
         italic: false,
         dim: false,
+        hyperlink: None,
     }
 }
 
-fn run_cell(text: String, fg: Color, bg: Color, attrs: RunAttrs) -> TerminalCell {
+fn run_cell(
+    text: String,
+    fg: Color,
+    bg: Color,
+    attrs: RunAttrs,
+    hyperlink: Option<String>,
+) -> TerminalCell {
     TerminalCell {
         text,
         fg,
@@ -1087,12 +1150,13 @@ fn run_cell(text: String, fg: Color, bg: Color, attrs: RunAttrs) -> TerminalCell
         underline: attrs.underline,
         italic: attrs.italic,
         dim: attrs.dim,
+        hyperlink,
     }
 }
 
 /// Convert one grid row into a coalesced [`TerminalLine`], trimming trailing
 /// default blanks and rendering the cursor (if present) as its own run.
-fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
+fn render_row(cells: &[Cell], cursor_col: Option<usize>, links: &[String]) -> TerminalLine {
     let mut last_meaningful: Option<usize> = None;
     for (i, cell) in cells.iter().enumerate() {
         if !is_default_blank(cell) {
@@ -1107,9 +1171,15 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
         (None, None) => return TerminalLine { cells: Vec::new() },
     };
 
+    // Resolve a cell's `link` id to its interned URL (id 0 / out of range ⇒ none).
+    let link_url = |id: u32| -> Option<String> {
+        (id > 0).then(|| links.get((id - 1) as usize).cloned())?
+    };
+
     let default_cell = Cell::blank(Color::Default);
     let mut out: Vec<TerminalCell> = Vec::new();
-    let mut run: Option<(String, Color, Color, RunAttrs)> = None;
+    // Run key: (fg, bg, attrs, link id) — a link boundary starts a new run.
+    let mut run: Option<(String, Color, Color, RunAttrs, u32)> = None;
 
     for col in 0..=limit {
         let cell = cells.get(col).unwrap_or(&default_cell);
@@ -1119,8 +1189,8 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
         let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
 
         if cursor_col == Some(col) {
-            if let Some((text, fg, bg, attrs)) = run.take() {
-                out.push(run_cell(text, fg, bg, attrs));
+            if let Some((text, fg, bg, attrs, id)) = run.take() {
+                out.push(run_cell(text, fg, bg, attrs, link_url(id)));
             }
             let mut s = String::new();
             s.push(ch);
@@ -1129,25 +1199,26 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>) -> TerminalLine {
         }
 
         let (fg, bg, attrs) = resolve(cell);
+        let id = cell.link;
         match &mut run {
-            Some((text, rfg, rbg, rattrs))
-                if *rfg == fg && *rbg == bg && *rattrs == attrs =>
+            Some((text, rfg, rbg, rattrs, rid))
+                if *rfg == fg && *rbg == bg && *rattrs == attrs && *rid == id =>
             {
                 text.push(ch);
             }
             _ => {
-                if let Some((text, pfg, pbg, pattrs)) = run.take() {
-                    out.push(run_cell(text, pfg, pbg, pattrs));
+                if let Some((text, pfg, pbg, pattrs, pid)) = run.take() {
+                    out.push(run_cell(text, pfg, pbg, pattrs, link_url(pid)));
                 }
                 let mut s = String::new();
                 s.push(ch);
-                run = Some((s, fg, bg, attrs));
+                run = Some((s, fg, bg, attrs, id));
             }
         }
     }
 
-    if let Some((text, fg, bg, attrs)) = run.take() {
-        out.push(run_cell(text, fg, bg, attrs));
+    if let Some((text, fg, bg, attrs, id)) = run.take() {
+        out.push(run_cell(text, fg, bg, attrs, link_url(id)));
     }
 
     TerminalLine { cells: out }
@@ -1195,6 +1266,73 @@ mod tests {
         let cells = &snap.lines[0].cells;
         assert!(cells.iter().find(|c| c.text.contains('I')).unwrap().italic);
         assert!(cells.iter().find(|c| c.text.contains('D')).unwrap().dim);
+    }
+
+    /// The hyperlink attached to the run whose text contains `needle`.
+    fn link_of(snapshot: &TerminalSnapshot, row: usize, needle: &str) -> Option<String> {
+        snapshot.lines[row]
+            .cells
+            .iter()
+            .find(|c| c.text.contains(needle))
+            .and_then(|c| c.hyperlink.clone())
+    }
+
+    #[test]
+    fn osc8_hyperlink_reaches_cells_and_closes() {
+        let mut t = term(40, 2);
+        // OSC 8 open (BEL-terminated) … link text … OSC 8 close … plain text.
+        t.feed_str("\x1b]8;;https://example.com\x07link\x1b]8;;\x07after");
+        let snap = t.snapshot(Viewport::tail(2));
+        assert_eq!(
+            link_of(&snap, 0, "link").as_deref(),
+            Some("https://example.com")
+        );
+        // Text after the empty-URI close carries no link.
+        assert_eq!(link_of(&snap, 0, "after"), None);
+    }
+
+    #[test]
+    fn osc8_link_survives_sgr_reset() {
+        let mut t = term(40, 2);
+        // A colour change and an SGR reset happen *inside* the hyperlink; both the
+        // coloured and the reset text must stay linked (the link is off the pen).
+        t.feed_str("\x1b]8;;https://x/y\x07\x1b[31mred\x1b[0mplain\x1b]8;;\x07");
+        let snap = t.snapshot(Viewport::tail(2));
+        assert_eq!(link_of(&snap, 0, "red").as_deref(), Some("https://x/y"));
+        assert_eq!(link_of(&snap, 0, "plain").as_deref(), Some("https://x/y"));
+    }
+
+    #[test]
+    fn osc8_uri_with_semicolon_and_id_params() {
+        let mut t = term(40, 2);
+        // id= params are ignored; a ';' inside the URI is preserved by rejoining.
+        t.feed_str("\x1b]8;id=42;https://x/a;b\x07L\x1b]8;;\x07");
+        let snap = t.snapshot(Viewport::tail(2));
+        assert_eq!(link_of(&snap, 0, "L").as_deref(), Some("https://x/a;b"));
+    }
+
+    #[test]
+    fn osc8_link_closed_by_full_reset() {
+        let mut t = term(40, 2);
+        // Open a link, then RIS (ESC c) without closing it: later text must NOT
+        // inherit the link.
+        t.feed_str("\x1b]8;;https://example.com\x07\x1bcplain");
+        let snap = t.snapshot(Viewport::tail(2));
+        assert_eq!(link_of(&snap, 0, "plain"), None);
+    }
+
+    #[test]
+    fn osc8_link_does_not_bleed_across_alt_screen() {
+        let mut t = term(40, 3);
+        // Open a link on the primary screen and leave it open, then switch to the
+        // alt screen: alt output must NOT inherit the link.
+        t.feed_str("\x1b]8;;https://primary\x07\x1b[?1049hALT");
+        let alt = t.snapshot(Viewport::tail(3));
+        assert_eq!(link_of(&alt, 0, "ALT"), None, "link bled into alt screen");
+        // Returning to the primary screen restores its still-open link state.
+        t.feed_str("\x1b[?1049lBACK");
+        let back = t.snapshot(Viewport::tail(3));
+        assert_eq!(link_of(&back, 0, "BACK").as_deref(), Some("https://primary"));
     }
 
     #[test]

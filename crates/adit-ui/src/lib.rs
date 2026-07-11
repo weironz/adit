@@ -135,6 +135,8 @@ pub struct AditApp {
     /// the dialog's text inputs can borrow owned values that outlive a `view`.
     auth_prompt: Option<(SessionId, AuthPromptInfo)>,
     auth_prompt_answers: Vec<String>,
+    /// A terminal hyperlink awaiting the user's confirm-before-open decision.
+    pending_hyperlink: Option<String>,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -371,6 +373,9 @@ pub enum Message {
     AuthPromptInput { index: usize, value: String },
     SubmitAuthPrompt { session_id: SessionId },
     CancelAuthPrompt { session_id: SessionId },
+    OpenHyperlink(String),
+    ConfirmOpenHyperlink,
+    CancelOpenHyperlink,
     OpenSftp,
     CloseSftp,
     OpenTunnels,
@@ -1053,6 +1058,7 @@ impl AditApp {
             auto_accept_host_keys,
             auth_prompt: None,
             auth_prompt_answers: Vec::new(),
+            pending_hyperlink: None,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -1823,6 +1829,23 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Err(error) = app.manager.respond_auth_prompt(session_id, Vec::new()) {
                 app.last_error = Some(error.to_string());
             }
+        }
+        Message::OpenHyperlink(url) => {
+            // Terminal output is remote-controlled: confirm the real destination
+            // before opening, and only offer http(s).
+            if is_openable_http_url(&url) {
+                app.pending_hyperlink = Some(url);
+            } else {
+                app.last_error = Some(String::from("仅支持打开 http/https 链接"));
+            }
+        }
+        Message::ConfirmOpenHyperlink => {
+            if let Some(url) = app.pending_hyperlink.take() {
+                open_external_link(app, &url);
+            }
+        }
+        Message::CancelOpenHyperlink => {
+            app.pending_hyperlink = None;
         }
         Message::OpenSftp => {
             if let Err(error) = app.manager.open_sftp_for_active() {
@@ -2761,6 +2784,46 @@ fn begin_update_check(app: &mut AditApp) -> Task<Message> {
 fn open_url(app: &mut AditApp, url: &str) {
     let result = if cfg!(target_os = "windows") {
         no_window(std::process::Command::new("cmd").args(["/C", "start", "", url])).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(url).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(url).spawn()
+    };
+    if let Err(error) = result {
+        app.last_error = Some(format!("打开链接失败: {error}"));
+    }
+}
+
+/// Whether `url` is an `http(s)` link Adit will open from terminal output. The
+/// output is remote-controlled, so this is deliberately strict: anything but an
+/// `http(s)` scheme (e.g. `file:`, `javascript:`) is refused, and **every char
+/// must be printable ASCII**. That last rule rejects not just control/space
+/// chars (a shell/arg-splitting vector) but all non-ASCII — including Unicode
+/// bidi/format/separator characters (RLO, isolates, `U+2028`…) that could
+/// visually reorder the URL shown in the confirmation dialog to spoof its real
+/// destination. A legitimate URL is ASCII (non-ASCII is percent-encoded).
+fn is_openable_http_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    (lower.starts_with("http://") || lower.starts_with("https://"))
+        && url.len() <= 4096
+        && url.chars().all(|c| c.is_ascii_graphic())
+}
+
+/// Open a terminal hyperlink in the OS browser WITHOUT going through a shell, so
+/// a hostile URL can't inject a command. Only `http(s)` is allowed. The caller is
+/// expected to have shown the user the destination and gotten confirmation first.
+fn open_external_link(app: &mut AditApp, url: &str) {
+    if !is_openable_http_url(url) {
+        app.last_error = Some(String::from("仅支持打开 http/https 链接"));
+        return;
+    }
+    let result = if cfg!(target_os = "windows") {
+        // rundll32 receives the URL as a single argv — no cmd.exe re-parsing.
+        no_window(
+            std::process::Command::new("rundll32.exe")
+                .args(["url.dll,FileProtocolHandler", url]),
+        )
+        .spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).spawn()
     } else {
@@ -5878,6 +5941,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
             &app.auth_prompt_answers,
         )));
     }
+    if let Some(url) = &app.pending_hyperlink {
+        layers.push(opaque(hyperlink_confirm_overlay(url)));
+    }
     if app.manager.sftp_is_open() {
         layers.push(opaque(sftp_panel_overlay(app)));
         if let Some((pane, name, is_dir)) = app.sftp_context_menu.clone() {
@@ -6430,6 +6496,52 @@ fn auth_prompt_dialog_overlay<'a>(
         .spacing(12),
     )
     .width(Length::Fixed(420.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Confirm-before-open for a terminal hyperlink: shows the **real** destination
+/// (the URL came from remote output) before launching the browser.
+fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> {
+    let panel = container(
+        column![
+            text("打开链接？").size(16).color(primary_text()),
+            text("此链接来自终端输出，请确认目标地址后再打开：")
+                .size(11)
+                .color(muted_text()),
+            container(
+                text(url.to_string())
+                    .size(12)
+                    .font(Font::MONOSPACE)
+                    .color(primary_text()),
+            )
+            .padding([6, 8])
+            .width(Fill)
+            .style(|_theme| connection_dialog_style()),
+            row![
+                button("取消")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelOpenHyperlink),
+                button(text("打开").size(13))
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmOpenHyperlink),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(480.0))
     .padding(14)
     .style(|_theme| connection_dialog_style());
 
@@ -9714,12 +9826,14 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
     } else {
         let snapshot = active_terminal_snapshot(app);
         let highlights = search_highlights_for(app, &snapshot);
+        let links_clickable = link_open_modifier(app);
         mouse_area(terminal_view(
             snapshot,
             app.terminal_focused,
             app.terminal_selection,
             app.terminal_scroll_offset,
             highlights,
+            links_clickable,
         ))
         .on_press(Message::BeginTerminalSelection)
         .on_release(Message::EndTerminalSelection)
@@ -9973,6 +10087,7 @@ fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) -> Element<
         selection,
         app.terminal_scroll_offset,
         highlights,
+        link_open_modifier(app),
     ))
     .on_press(Message::PaneMousePressed(index))
     .on_release(Message::EndTerminalSelection)
@@ -10086,6 +10201,7 @@ fn terminal_view(
     selection: Option<TerminalSelection>,
     _scroll_offset: usize,
     search_highlights: Vec<Vec<(usize, usize, bool)>>,
+    links_clickable: bool,
 ) -> Element<'static, Message> {
     let lines = if snapshot.lines.is_empty() {
         column![text("not connected")
@@ -10102,7 +10218,13 @@ fn terminal_view(
                     .get(row_index)
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
-                column.push(terminal_line(line, row_index, selection, highlights))
+                column.push(terminal_line(
+                    line,
+                    row_index,
+                    selection,
+                    highlights,
+                    links_clickable,
+                ))
             })
     };
 
@@ -10139,6 +10261,7 @@ fn terminal_line(
     row_index: usize,
     selection: Option<TerminalSelection>,
     search: &[(usize, usize, bool)],
+    links_clickable: bool,
 ) -> Element<'static, Message> {
     let font_size = term_font_size();
     let base_font = term_font();
@@ -10163,6 +10286,16 @@ fn terminal_line(
         if cell.dim {
             fg = dim_color(fg);
         }
+        // OSC 8 hyperlink: only present openable http(s) links as links (a
+        // non-openable scheme stays plain text, not a dead blue click target).
+        // The glyph is wrapped in a click target only while the open modifier
+        // (Ctrl/Cmd) is held, so a plain click always falls through to selection
+        // and mouse-report passthrough rather than being swallowed.
+        let link_url = cell
+            .hyperlink
+            .filter(|url| is_openable_http_url(url));
+        let is_link = link_url.is_some();
+        let link_click = if links_clickable { link_url.clone() } else { None };
         let font = Font {
             weight: if cell.bold {
                 Weight::Bold
@@ -10195,6 +10328,8 @@ fn terminal_line(
                 } else {
                     Color::from_rgb8(245, 236, 210)
                 }
+            } else if is_link {
+                hyperlink_color()
             } else {
                 fg
             };
@@ -10221,15 +10356,21 @@ fn terminal_line(
             // Fixed-size cell so the rendered grid exactly matches the
             // pixel→cell hit-testing used for selection (no drift). Wide glyphs
             // span two columns.
-            row_widget = row_widget.push(
-                container(label)
-                    .width(Length::Fixed(cell_w * ch_width as f32))
-                    .height(Length::Fixed(cell_h))
-                    .style(move |_theme| container::Style {
-                        background: background.map(Background::Color),
-                        ..container::Style::default()
-                    }),
-            );
+            let glyph = container(label)
+                .width(Length::Fixed(cell_w * ch_width as f32))
+                .height(Length::Fixed(cell_h))
+                .style(move |_theme| container::Style {
+                    background: background.map(Background::Color),
+                    ..container::Style::default()
+                });
+            let glyph: Element<'static, Message> = match &link_click {
+                Some(url) => mouse_area(glyph)
+                    .on_press(Message::OpenHyperlink(url.clone()))
+                    .interaction(mouse::Interaction::Pointer)
+                    .into(),
+                None => glyph.into(),
+            };
+            row_widget = row_widget.push(glyph);
 
             col += ch_width;
         }
@@ -10427,6 +10568,19 @@ fn border_strong() -> Color {
 fn accent() -> Color {
     // Deep enough that white button text stays legible.
     Color::from_rgb8(15, 158, 140)
+}
+
+/// Colour for OSC 8 hyperlink runs — a readable link blue on both light and dark
+/// terminal backgrounds.
+fn hyperlink_color() -> Color {
+    Color::from_rgb8(88, 166, 255)
+}
+
+/// Whether the link-open modifier is held (Ctrl, or Cmd/⌘ on macOS). A terminal
+/// hyperlink opens only on modifier+click, so a plain click always falls through
+/// to selection / mouse-report passthrough (in every pane, regardless of mode).
+fn link_open_modifier(app: &AditApp) -> bool {
+    app.modifiers.control() || app.modifiers.logo()
 }
 
 /// Parse a `#RRGGBB` (or `RRGGBB`) hex string into a `Color`.
@@ -10925,6 +11079,36 @@ mod tests {
         assert_eq!(avatar_initials("local lab"), "LL");
         assert_eq!(avatar_initials("redis"), "R");
         assert_eq!(avatar_initials(""), "?");
+    }
+
+    #[test]
+    fn only_safe_http_urls_are_openable() {
+        assert!(is_openable_http_url("https://example.com/a?b=1#c"));
+        assert!(is_openable_http_url("http://10.0.0.1:8080/path"));
+        assert!(is_openable_http_url("HTTPS://Example.COM"));
+        // Non-http(s) schemes a hostile server might emit are refused.
+        assert!(!is_openable_http_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_openable_http_url("javascript:alert(1)"));
+        assert!(!is_openable_http_url("ftp://x/y"));
+        assert!(!is_openable_http_url(""));
+        // Shell/argument-splitting vectors: spaces and control chars are refused.
+        assert!(!is_openable_http_url("https://x/a b"));
+        assert!(!is_openable_http_url("https://x/a\nhttp://y"));
+        assert!(!is_openable_http_url("https://x\t& calc"));
+        // Unicode bidi/format/separator chars that could spoof the shown URL are
+        // refused (only printable ASCII is accepted).
+        assert!(!is_openable_http_url("https://good.com\u{202e}moc.live"));
+        assert!(!is_openable_http_url("https://x\u{2028}evil"));
+        assert!(!is_openable_http_url("https://xn--\u{200b}spoof"));
+        assert!(!is_openable_http_url("https://ｅxample.com")); // full-width e
+    }
+
+    #[test]
+    fn hyperlink_parse_hex_color_is_panic_free() {
+        assert!(parse_hex_color("#zzzzzz").is_none());
+        assert!(parse_hex_color("#12").is_none());
+        assert!(parse_hex_color("１２３４５６").is_none()); // full-width digits
+        assert_eq!(parse_hex_color("#1a2b3c"), Some(Color::from_rgb8(26, 43, 60)));
     }
 
     #[test]

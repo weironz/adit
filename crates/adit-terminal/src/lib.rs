@@ -115,6 +115,10 @@ pub struct TerminalCell {
     pub underline: bool,
     pub italic: bool,
     pub dim: bool,
+    /// OSC 8 hyperlink target for this run (`None` ⇒ not a link). All cells in a
+    /// run share the same target — a link boundary starts a new run.
+    #[serde(default)]
+    pub hyperlink: Option<String>,
 }
 
 impl TerminalCell {
@@ -128,6 +132,7 @@ impl TerminalCell {
             underline: false,
             italic: false,
             dim: false,
+            hyperlink: None,
         }
     }
 }
