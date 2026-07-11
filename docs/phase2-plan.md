@@ -194,6 +194,23 @@ yields a 2-hop chain; profiles without `jumps` load unchanged.
 
 ## 4. Interactive MFA (keyboard-interactive multi-prompt)
 
+**Status: ✅ shipped in v0.1.32.** adit-ssh emits `LiveShellEvent::AuthPrompt`
+(`AuthPromptRequest{name, instructions, prompts:Vec<AuthPromptField{prompt,echo}>}`)
+and takes `LiveShellCommand::AuthResponses(Vec<String>)`. The keyboard-interactive
+driver (`keyboard_interactive_round_answers`) auto-fills account-password fields
+(`should_autofill_password`: masked-or-labelled, excluding second factors and
+new-password prompts) from the stored password and asks the user for anything
+else (e.g. a verification code), across multiple rounds; the shell path pumps the
+command channel in a `tokio::select!` so answers/disconnect arrive mid-handshake,
+and a cancel aborts the whole connect (`AuthenticationCancelled`, no key/agent
+fallback). adit-session bridges it like the host-key prompt
+(`pending_auth_prompt`/`respond_auth_prompt`); adit-ui shows a modal with one
+input per field (masked when `echo=false`). SFTP/tunnel/jump-hops keep the
+non-interactive heuristic. Unit-tested (password vs code split, multi-round,
+mixed round, cancel, non-interactive fallback). **Follow-up:** a real
+PAM/google-authenticator Docker e2e test (deferred — TOTP is time-based/flaky;
+the plan scoped this as "best-effort").
+
 **What & why.** Today keyboard-interactive is only a password fallback that
 auto-answers **every** server prompt with the saved password via a keyword
 heuristic (`adit-ssh/src/lib.rs:922–969`, `keyboard_interactive_answer` at 1099).

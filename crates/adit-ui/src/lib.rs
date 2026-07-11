@@ -3,10 +3,10 @@ use adit_domain::{
     TunnelDef,
 };
 use adit_session::{
-    known_hosts_path, list_known_hosts, remove_known_host, HostKeyPromptInfo, KnownHostEntry,
-    LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionError, SessionManager,
-    SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem, TransferStatus,
-    TunnelKind, TunnelState,
+    known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
+    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionError,
+    SessionManager, SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem,
+    TransferStatus, TunnelKind, TunnelState,
 };
 use adit_storage::{
     AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
@@ -123,6 +123,11 @@ pub struct AditApp {
     snippet_command_draft: String,
     auto_check_updates: bool,
     auto_accept_host_keys: bool,
+    /// The active keyboard-interactive/MFA prompt (its session + fields) mirrored
+    /// into UI state, plus the in-progress answers (one per field). Kept here so
+    /// the dialog's text inputs can borrow owned values that outlive a `view`.
+    auth_prompt: Option<(SessionId, AuthPromptInfo)>,
+    auth_prompt_answers: Vec<String>,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -356,6 +361,9 @@ pub enum Message {
     ConfirmConnection,
     CancelConnection,
     RespondHostKey { session_id: SessionId, accept: bool },
+    AuthPromptInput { index: usize, value: String },
+    SubmitAuthPrompt { session_id: SessionId },
+    CancelAuthPrompt { session_id: SessionId },
     OpenSftp,
     CloseSftp,
     OpenTunnels,
@@ -1028,6 +1036,8 @@ impl AditApp {
             snippet_command_draft: String::new(),
             auto_check_updates,
             auto_accept_host_keys,
+            auth_prompt: None,
+            auth_prompt_answers: Vec::new(),
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -1294,6 +1304,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.manager.poll_events();
             auto_log_connected_sessions(app);
             clamp_terminal_scroll(app);
+            sync_auth_prompt(app);
             sync_sftp_state(app);
             // Reconcile split panes with the live session set (closed sessions,
             // an externally-activated session); refit only if the count changed.
@@ -1769,6 +1780,26 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 } else {
                     String::from("已拒绝主机密钥")
                 };
+            }
+        }
+        Message::AuthPromptInput { index, value } => {
+            if let Some(slot) = app.auth_prompt_answers.get_mut(index) {
+                *slot = value;
+            }
+        }
+        Message::SubmitAuthPrompt { session_id } => {
+            let answers = std::mem::take(&mut app.auth_prompt_answers);
+            app.auth_prompt = None;
+            if let Err(error) = app.manager.respond_auth_prompt(session_id, answers) {
+                app.last_error = Some(error.to_string());
+            }
+        }
+        Message::CancelAuthPrompt { session_id } => {
+            app.auth_prompt_answers.clear();
+            app.auth_prompt = None;
+            // An empty answer set cancels the authentication.
+            if let Err(error) = app.manager.respond_auth_prompt(session_id, Vec::new()) {
+                app.last_error = Some(error.to_string());
             }
         }
         Message::OpenSftp => {
@@ -5741,6 +5772,13 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if let Some((session_id, prompt)) = app.manager.pending_host_key() {
         layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
     }
+    if let Some((session_id, prompt)) = &app.auth_prompt {
+        layers.push(opaque(auth_prompt_dialog_overlay(
+            *session_id,
+            prompt,
+            &app.auth_prompt_answers,
+        )));
+    }
     if app.manager.sftp_is_open() {
         layers.push(opaque(sftp_panel_overlay(app)));
         if let Some((pane, name, is_dir)) = app.sftp_context_menu.clone() {
@@ -6196,6 +6234,103 @@ fn host_key_dialog_overlay(
         .spacing(12),
     )
     .width(Length::Fixed(460.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Mirror the session manager's pending interactive-auth prompt into UI state,
+/// (re)sizing the answer buffer when a new prompt (or round) appears and clearing
+/// it once the prompt is gone.
+fn sync_auth_prompt(app: &mut AditApp) {
+    match app.manager.pending_auth_prompt() {
+        Some((session_id, prompt)) => {
+            let is_new = app.auth_prompt.as_ref().map(|(id, _)| *id) != Some(session_id)
+                || app.auth_prompt_answers.len() != prompt.prompts.len();
+            if is_new {
+                app.auth_prompt_answers = vec![String::new(); prompt.prompts.len()];
+            }
+            app.auth_prompt = Some((session_id, prompt));
+        }
+        None => {
+            if app.auth_prompt.is_some() {
+                app.auth_prompt = None;
+                app.auth_prompt_answers.clear();
+            }
+        }
+    }
+}
+
+/// Modal for keyboard-interactive / MFA challenges: one input per server field
+/// (masked unless the server asks for echo), answered by the user at connect time.
+fn auth_prompt_dialog_overlay<'a>(
+    session_id: SessionId,
+    prompt: &'a AuthPromptInfo,
+    answers: &'a [String],
+) -> Element<'a, Message> {
+    let mut body = column![text("需要交互式验证").size(16).color(primary_text())].spacing(8);
+
+    if !prompt.name.trim().is_empty() {
+        body = body.push(text(prompt.name.clone()).size(12).color(primary_text()));
+    }
+    if !prompt.instructions.trim().is_empty() {
+        body = body.push(
+            text(prompt.instructions.clone())
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+
+    let last = prompt.prompts.len().saturating_sub(1);
+    for (index, field) in prompt.prompts.iter().enumerate() {
+        let value = answers.get(index).map(String::as_str).unwrap_or("");
+        let label = if field.prompt.trim().is_empty() {
+            String::from("请输入")
+        } else {
+            field.prompt.clone()
+        };
+        let mut input = text_input("", value)
+            .on_input(move |value| Message::AuthPromptInput { index, value })
+            .padding([6, 8])
+            .style(text_input_style)
+            .width(Fill);
+        // Only the last field submits on Enter, so a multi-field round isn't sent
+        // prematurely with later fields still blank.
+        if index == last {
+            input = input.on_submit(Message::SubmitAuthPrompt { session_id });
+        }
+        if !field.echo {
+            input = input.secure(true);
+        }
+        body = body.push(column![text(label).size(11).color(muted_text()), input].spacing(4));
+    }
+
+    let panel = container(
+        column![
+            body,
+            row![
+                button("取消")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelAuthPrompt { session_id }),
+                button("确定")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::SubmitAuthPrompt { session_id }),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(420.0))
     .padding(14)
     .style(|_theme| connection_dialog_style());
 

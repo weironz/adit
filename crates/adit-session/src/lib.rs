@@ -4,12 +4,13 @@ use adit_domain::{
 };
 pub use adit_domain::JumpHop as ProfileJumpHop;
 use adit_ssh::{
-    AuthOptions, HostKeyPrompt, LiveShellCommand, LiveShellEvent, LiveShellHandle,
-    LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle, SftpRequest, SshError,
-    TunnelCommand, TunnelEvent, TunnelRequest,
+    AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand, LiveShellEvent,
+    LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle,
+    SftpRequest, SshError, TunnelCommand, TunnelEvent, TunnelRequest,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
+pub use adit_ssh::{AuthPromptField, AuthPromptRequest as AuthPromptInfo};
 pub use adit_ssh::{
     known_hosts_path, list_known_hosts, remove_known_host, KnownHostEntry, SftpEntry, TunnelKind,
 };
@@ -81,6 +82,7 @@ struct SessionRecord {
     live: Option<LiveShellHandle>,
     log: Option<SessionLog>,
     pending_host_key: Option<HostKeyPrompt>,
+    pending_auth_prompt: Option<AuthPromptRequest>,
     reconnect: Option<ReconnectState>,
 }
 
@@ -754,6 +756,7 @@ impl SessionManager {
                 live: None,
                 log: None,
                 pending_host_key: None,
+                pending_auth_prompt: None,
                 reconnect: None,
             },
         );
@@ -851,6 +854,7 @@ impl SessionManager {
                 live: Some(live),
                 log: None,
                 pending_host_key: None,
+                pending_auth_prompt: None,
                 reconnect,
             },
         );
@@ -1005,6 +1009,7 @@ impl SessionManager {
                 live: None,
                 log: None,
                 pending_host_key: None,
+                pending_auth_prompt: None,
                 reconnect: None,
             },
         );
@@ -1861,6 +1866,42 @@ impl SessionManager {
         Ok(())
     }
 
+    /// The first session whose connect is paused awaiting interactive auth
+    /// answers (keyboard-interactive / MFA).
+    #[must_use]
+    pub fn pending_auth_prompt(&self) -> Option<(SessionId, AuthPromptRequest)> {
+        self.sessions.iter().find_map(|(id, record)| {
+            record
+                .pending_auth_prompt
+                .clone()
+                .map(|prompt| (*id, prompt))
+        })
+    }
+
+    /// Answer a pending interactive-auth prompt with one response per field, in
+    /// order. An empty vec cancels the authentication.
+    pub fn respond_auth_prompt(
+        &mut self,
+        session_id: SessionId,
+        answers: Vec<String>,
+    ) -> Result<(), SessionError> {
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+        record.pending_auth_prompt = None;
+        let cancelled = answers.is_empty();
+        if let Some(live) = &record.live {
+            live.send(LiveShellCommand::AuthResponses(answers))?;
+        }
+        record.terminal.append_status(if cancelled {
+            "authentication cancelled"
+        } else {
+            "sending authentication response"
+        });
+        Ok(())
+    }
+
     pub fn poll_events(&mut self) -> usize {
         let mut handled = 0;
         let auto_reconnect = self.auto_reconnect;
@@ -1915,9 +1956,12 @@ impl SessionManager {
                             record.summary.endpoint
                         ));
                         record.summary.status = SessionStatus::Error;
+                        // An auth prompt can't be answered on a dead connection.
+                        record.pending_auth_prompt = None;
                     }
                     LiveShellEvent::Closed => {
                         closed = true;
+                        record.pending_auth_prompt = None;
                         let can_retry = auto_reconnect
                             && record
                                 .reconnect
@@ -1954,6 +1998,13 @@ impl SessionManager {
                             "unknown host key — awaiting confirmation"
                         });
                         record.pending_host_key = Some(prompt);
+                    }
+                    LiveShellEvent::AuthPrompt(prompt) => {
+                        record.summary.status = SessionStatus::Connecting;
+                        record
+                            .terminal
+                            .append_status("interactive authentication — awaiting response");
+                        record.pending_auth_prompt = Some(prompt);
                     }
                 }
             }

@@ -146,6 +146,9 @@ pub enum LiveShellCommand {
     Disconnect,
     /// User's answer to a pending [`LiveShellEvent::HostKeyPrompt`].
     HostKeyDecision(bool),
+    /// User's answers to a pending [`LiveShellEvent::AuthPrompt`], one per prompt
+    /// in order. An empty vec cancels the authentication.
+    AuthResponses(Vec<String>),
 }
 
 #[derive(Debug, Clone)]
@@ -157,6 +160,31 @@ pub enum LiveShellEvent {
     /// The handshake is paused awaiting the user's decision about the server's
     /// host key. Answer with [`LiveShellCommand::HostKeyDecision`].
     HostKeyPrompt(HostKeyPrompt),
+    /// The server is asking for one or more interactive answers (keyboard-
+    /// interactive, e.g. an MFA/OTP code). Answer with
+    /// [`LiveShellCommand::AuthResponses`].
+    AuthPrompt(AuthPromptRequest),
+}
+
+/// A keyboard-interactive challenge from the server that Adit can't auto-answer
+/// with the stored password (e.g. a one-time code), surfaced for the user.
+#[derive(Debug, Clone)]
+pub struct AuthPromptRequest {
+    /// Server-supplied heading (often empty).
+    pub name: String,
+    /// Server-supplied instructions (often empty).
+    pub instructions: String,
+    /// The individual fields to answer, in order.
+    pub prompts: Vec<AuthPromptField>,
+}
+
+/// One field within an [`AuthPromptRequest`].
+#[derive(Debug, Clone)]
+pub struct AuthPromptField {
+    /// The label shown to the user (e.g. `Verification code:`).
+    pub prompt: String,
+    /// Whether the typed answer should be echoed (`false` ⇒ mask it).
+    pub echo: bool,
 }
 
 /// A server host key awaiting the user's trust decision during connect.
@@ -201,6 +229,8 @@ pub enum SshError {
     InvalidPort,
     #[error("authentication was rejected by the server")]
     AuthenticationRejected,
+    #[error("authentication cancelled")]
+    AuthenticationCancelled,
     #[error("identity file was not found: {0}")]
     IdentityFileMissing(String),
     #[error("host key changed for {host}; expected {expected}, got {actual}. Check {known_hosts_path} before trusting this server.")]
@@ -382,7 +412,7 @@ fn run_local_shell(
                 });
             }
             LiveShellCommand::Disconnect => break,
-            LiveShellCommand::HostKeyDecision(_) => {}
+            LiveShellCommand::HostKeyDecision(_) | LiveShellCommand::AuthResponses(_) => {}
         }
     }
 
@@ -482,7 +512,9 @@ fn run_serial(
                     break;
                 }
             }
-            LiveShellCommand::Resize { .. } | LiveShellCommand::HostKeyDecision(_) => {}
+            LiveShellCommand::Resize { .. }
+            | LiveShellCommand::HostKeyDecision(_)
+            | LiveShellCommand::AuthResponses(_) => {}
             LiveShellCommand::Disconnect => break,
         }
     }
@@ -527,6 +559,7 @@ pub async fn probe_password_shell(
         &request.username,
         &request.password,
         &request.auth,
+        None,
         None,
     )
     .await?;
@@ -737,14 +770,45 @@ async fn run_live_password_shell(
     };
 
     let _ = events.send(LiveShellEvent::Status(String::from("authenticating")));
-    authenticate_with_available_methods(
-        &mut session,
-        &request.username,
-        &request.password,
-        &request.auth,
-        Some(&events),
-    )
-    .await?;
+    // Authenticate while concurrently pumping commands, so a keyboard-interactive
+    // MFA prompt can be answered by the user mid-handshake (AuthResponses) and an
+    // early Disconnect unwinds cleanly. The block scopes the auth future so its
+    // borrow of `session` is released before the shell is opened below.
+    {
+        let (kbd_tx, kbd_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
+        let interactive = InteractiveKbd {
+            events: &events,
+            responses: kbd_rx,
+        };
+        let auth = authenticate_with_available_methods(
+            &mut session,
+            &request.username,
+            &request.password,
+            &request.auth,
+            Some(&events),
+            Some(interactive),
+        );
+        tokio::pin!(auth);
+        loop {
+            tokio::select! {
+                result = &mut auth => {
+                    result?;
+                    break;
+                }
+                command = commands.recv() => match command {
+                    Some(LiveShellCommand::AuthResponses(answers)) => {
+                        let _ = kbd_tx.send(answers);
+                    }
+                    Some(LiveShellCommand::Disconnect) | None => {
+                        // Cancel any pending prompt (empty answer ⇒ cancel), then stop.
+                        let _ = kbd_tx.send(Vec::new());
+                        return Ok(());
+                    }
+                    Some(_) => {}
+                },
+            }
+        }
+    }
 
     let _ = events.send(LiveShellEvent::Status(String::from("opening pty")));
     let term = if request.term.trim().is_empty() {
@@ -793,7 +857,7 @@ async fn run_live_password_shell(
                     should_close = true;
                 }
                 // Only meaningful during the handshake; ignore once connected.
-                LiveShellCommand::HostKeyDecision(_) => {}
+                LiveShellCommand::HostKeyDecision(_) | LiveShellCommand::AuthResponses(_) => {}
             }
         }
 
@@ -902,8 +966,15 @@ async fn connect_through_jumps(
                 .await?;
             client::connect_stream(config.clone(), channel.into_stream(), handler).await?
         };
-        authenticate_with_available_methods(&mut session, &hop.username, hop_password, hop_auth, None)
-            .await?;
+        authenticate_with_available_methods(
+            &mut session,
+            &hop.username,
+            hop_password,
+            hop_auth,
+            None,
+            None,
+        )
+        .await?;
         hops.push(session);
     }
 
@@ -921,19 +992,34 @@ async fn connect_through_jumps(
     Ok((target, hops))
 }
 
+/// Channel back to the UI for answering keyboard-interactive challenges that
+/// can't be auto-filled from the stored password (an MFA/OTP code). Present only
+/// on the interactive shell path; SFTP/tunnel connections pass `None`.
+struct InteractiveKbd<'a> {
+    events: &'a mpsc::Sender<LiveShellEvent>,
+    responses: tokio_mpsc::UnboundedReceiver<Vec<String>>,
+}
+
 async fn authenticate_with_available_methods(
     session: &mut client::Handle<KnownHostsClient>,
     username: &str,
     password: &str,
     auth: &AuthOptions,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
+    interactive: Option<InteractiveKbd<'_>>,
 ) -> Result<(), SshError> {
     let mut attempted = false;
 
     if auth.try_password && !password.is_empty() {
         attempted = true;
-        if authenticate_password_or_keyboard_interactive(session, username, password, events)
-            .await?
+        if authenticate_password_or_keyboard_interactive(
+            session,
+            username,
+            password,
+            events,
+            interactive,
+        )
+        .await?
         {
             return Ok(());
         }
@@ -1081,6 +1167,7 @@ async fn authenticate_password_or_keyboard_interactive(
     username: &str,
     password: &str,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
+    mut interactive: Option<InteractiveKbd<'_>>,
 ) -> Result<bool, SshError> {
     let auth = session
         .authenticate_password(username.to_owned(), password.to_owned())
@@ -1104,25 +1191,154 @@ async fn authenticate_password_or_keyboard_interactive(
         match response {
             client::KeyboardInteractiveAuthResponse::Success => return Ok(true),
             client::KeyboardInteractiveAuthResponse::Failure { .. } => return Ok(false),
-            client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                if rounds >= 8 {
+            client::KeyboardInteractiveAuthResponse::InfoRequest {
+                name,
+                instructions,
+                prompts,
+            } => {
+                if rounds >= 16 {
                     return Ok(false);
                 }
                 rounds += 1;
 
-                let responses = prompts
-                    .iter()
-                    .map(|prompt| {
-                        keyboard_interactive_answer(&prompt.prompt, prompt.echo, password)
-                    })
-                    .collect();
+                // A user cancel propagates as `AuthenticationCancelled`, which
+                // aborts the whole connect rather than falling through to other
+                // auth methods (keys/agent).
+                let answers = keyboard_interactive_round_answers(
+                    &name,
+                    &instructions,
+                    &prompts,
+                    password,
+                    events,
+                    interactive.as_mut(),
+                )
+                .await?;
 
                 response = session
-                    .authenticate_keyboard_interactive_respond(responses)
+                    .authenticate_keyboard_interactive_respond(answers)
                     .await?;
             }
         }
     }
+}
+
+/// Produce the answers for one keyboard-interactive round. The account
+/// password / key passphrase is auto-filled from the stored password; any
+/// remaining field (an MFA code, a *new* password, an echoed username) is asked
+/// of the user when an interactive channel is available. A user cancel surfaces
+/// as [`SshError::AuthenticationCancelled`] so the whole connect aborts. Without
+/// an interactive channel (SFTP/tunnel) it falls back to the best-effort
+/// heuristic.
+async fn keyboard_interactive_round_answers(
+    name: &str,
+    instructions: &str,
+    prompts: &[client::Prompt],
+    password: &str,
+    events: Option<&mpsc::Sender<LiveShellEvent>>,
+    interactive: Option<&mut InteractiveKbd<'_>>,
+) -> Result<Vec<String>, SshError> {
+    // Auto-fill account-password fields; leave the rest as `None` ("needs the user").
+    let answers: Vec<Option<String>> = prompts
+        .iter()
+        .map(|p| {
+            (should_autofill_password(&p.prompt, p.echo) && !password.is_empty())
+                .then(|| password.to_owned())
+        })
+        .collect();
+
+    if answers.iter().all(Option::is_some) {
+        return Ok(fill_answers(answers, std::iter::empty()));
+    }
+
+    match interactive {
+        Some(kbd) => {
+            let fields: Vec<AuthPromptField> = prompts
+                .iter()
+                .zip(answers.iter())
+                .filter(|(_, filled)| filled.is_none())
+                .map(|(p, _)| AuthPromptField {
+                    prompt: p.prompt.clone(),
+                    echo: p.echo,
+                })
+                .collect();
+            send_status(events, "waiting for interactive authentication (MFA)");
+            let _ = kbd.events.send(LiveShellEvent::AuthPrompt(AuthPromptRequest {
+                name: name.to_owned(),
+                instructions: instructions.to_owned(),
+                prompts: fields,
+            }));
+            // Block until the user answers; a closed channel or an empty vec is a
+            // deliberate cancel that aborts authentication.
+            let user = kbd
+                .responses
+                .recv()
+                .await
+                .ok_or(SshError::AuthenticationCancelled)?;
+            if user.is_empty() {
+                return Err(SshError::AuthenticationCancelled);
+            }
+            Ok(fill_answers(answers, user.into_iter()))
+        }
+        None => {
+            // Non-interactive path: best effort with the stored password.
+            Ok(prompts
+                .iter()
+                .map(|p| keyboard_interactive_answer(&p.prompt, p.echo, password))
+                .collect())
+        }
+    }
+}
+
+/// Splice user-supplied answers into the `None` slots of `answers`, in order.
+fn fill_answers(
+    answers: Vec<Option<String>>,
+    mut supplied: impl Iterator<Item = String>,
+) -> Vec<String> {
+    answers
+        .into_iter()
+        .map(|slot| slot.unwrap_or_else(|| supplied.next().unwrap_or_default()))
+        .collect()
+}
+
+/// Whether Adit may auto-fill a keyboard-interactive prompt with the stored
+/// account password, rather than asking the user. Mirrors the pre-MFA behaviour
+/// (any masked field is the password) but carves out the two cases where reusing
+/// the stored password is wrong: a *second factor* (OTP / verification code /
+/// Duo / token) and *setting a new* password (new / retype / confirm / change).
+fn should_autofill_password(prompt: &str, echo: bool) -> bool {
+    let p = prompt.to_ascii_lowercase();
+
+    // A one-time code / second factor — never the stored password.
+    const SECOND_FACTOR: &[&str] = &[
+        "otp",
+        "one-time",
+        "one time",
+        "verification",
+        "verify",
+        "passcode",
+        "token",
+        "authenticator",
+        "2fa",
+        "two-factor",
+        "duo",
+        "code",
+        "pin",
+        "yubikey",
+        "securid",
+    ];
+    if SECOND_FACTOR.iter().any(|needle| p.contains(needle)) {
+        return false;
+    }
+
+    // Choosing / confirming a *new* password — don't reuse the old one.
+    const NEW_PASSWORD: &[&str] = &["new ", "retype", "re-type", "again", "confirm", "change"];
+    if NEW_PASSWORD.iter().any(|needle| p.contains(needle)) {
+        return false;
+    }
+
+    // A masked (non-echoed) field is the account password / passphrase; an
+    // explicitly password-labelled field qualifies even if oddly echoed.
+    !echo || p.contains("password") || p.contains("passphrase")
 }
 
 async fn authenticate_with_default_private_keys(
@@ -1465,6 +1681,7 @@ async fn run_sftp_session(
         &request.username,
         &request.password,
         &request.auth,
+        None,
         None,
     )
     .await?;
@@ -2136,6 +2353,7 @@ async fn run_tunnel_session(
         &request.username,
         &request.password,
         &request.auth,
+        None,
         None,
     )
     .await?;
@@ -2844,6 +3062,165 @@ mod tests {
         // Root (or empty) yields a single leading slash.
         assert_eq!(join_remote_path("/", "docs"), "/docs");
         assert_eq!(join_remote_path("", "docs"), "/docs");
+    }
+
+    #[test]
+    fn should_autofill_password_distinguishes_password_from_mfa_and_new_password() {
+        // The account password / key passphrase (masked): auto-fillable.
+        assert!(should_autofill_password("Password: ", false));
+        assert!(should_autofill_password("Password for user:", false));
+        assert!(should_autofill_password(
+            "Enter passphrase for key /home/x/.ssh/id_ed25519:",
+            false
+        ));
+        // A masked field with a localized or empty label is still the password
+        // (mirrors the pre-MFA behaviour — no regression).
+        assert!(should_autofill_password("Passwort: ", false));
+        assert!(should_autofill_password("", false));
+        // Second factors / one-time codes must NOT be auto-filled.
+        assert!(!should_autofill_password("Verification code: ", false));
+        assert!(!should_autofill_password("One-time password (OTP): ", false));
+        assert!(!should_autofill_password("OTP: ", false));
+        assert!(!should_autofill_password("Passcode or option (1-3): ", false));
+        assert!(!should_autofill_password("Duo two-factor login", false));
+        // Hardware tokens (RSA SecurID PIN, Yubikey) are second factors too.
+        assert!(!should_autofill_password("Enter PIN: ", false));
+        assert!(!should_autofill_password("YubiKey: ", false));
+        // Setting a NEW password must NOT reuse the stored (old) one.
+        assert!(!should_autofill_password("New password: ", false));
+        assert!(!should_autofill_password("Retype new password: ", false));
+        assert!(!should_autofill_password("Confirm password: ", false));
+        // Echoed fields (e.g. a username) are asked, not auto-filled.
+        assert!(!should_autofill_password("Username: ", true));
+    }
+
+    #[test]
+    fn fill_answers_splices_user_input_into_empty_slots() {
+        let answers = vec![
+            Some("pw".to_string()),
+            None,
+            Some("x".to_string()),
+            None,
+        ];
+        let got = fill_answers(answers, ["code".to_string(), "more".to_string()].into_iter());
+        assert_eq!(got, vec!["pw", "code", "x", "more"]);
+
+        // Fewer user answers than empty slots ⇒ the remainder become empty strings.
+        let answers = vec![None, None];
+        let got = fill_answers(answers, ["only".to_string()].into_iter());
+        assert_eq!(got, vec!["only", ""]);
+    }
+
+    #[test]
+    fn kbd_round_auto_fills_password_but_prompts_for_a_code() {
+        let rt = current_thread_rt();
+        rt.block_on(async {
+            let (events_tx, events_rx) = mpsc::channel::<LiveShellEvent>();
+            let (resp_tx, resp_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
+            let mut kbd = InteractiveKbd {
+                events: &events_tx,
+                responses: resp_rx,
+            };
+
+            // A password-only round auto-fills silently — no AuthPrompt emitted.
+            let pw = [client::Prompt {
+                prompt: "Password: ".into(),
+                echo: false,
+            }];
+            let answers = keyboard_interactive_round_answers(
+                "",
+                "",
+                &pw,
+                "hunter2",
+                Some(&events_tx),
+                Some(&mut kbd),
+            )
+            .await
+            .unwrap();
+            assert_eq!(answers, vec!["hunter2".to_string()]);
+            assert!(events_rx.try_recv().is_err(), "no event for a silent round");
+
+            // A verification-code round emits an AuthPrompt and returns the user's code.
+            resp_tx.send(vec!["123456".to_string()]).unwrap();
+            let code = [client::Prompt {
+                prompt: "Verification code: ".into(),
+                echo: false,
+            }];
+            let answers = keyboard_interactive_round_answers(
+                "MFA",
+                "Enter code",
+                &code,
+                "hunter2",
+                Some(&events_tx),
+                Some(&mut kbd),
+            )
+            .await
+            .unwrap();
+            assert_eq!(answers, vec!["123456".to_string()]);
+            let mut saw_prompt = false;
+            while let Ok(event) = events_rx.try_recv() {
+                if let LiveShellEvent::AuthPrompt(request) = event {
+                    assert_eq!(request.prompts.len(), 1);
+                    assert_eq!(request.prompts[0].prompt, "Verification code: ");
+                    saw_prompt = true;
+                }
+            }
+            assert!(saw_prompt, "a code round must surface an AuthPrompt");
+
+            // A mixed round: password auto-filled, only the code asked of the user.
+            resp_tx.send(vec!["999".to_string()]).unwrap();
+            let mixed = [
+                client::Prompt {
+                    prompt: "Password: ".into(),
+                    echo: false,
+                },
+                client::Prompt {
+                    prompt: "Verification code: ".into(),
+                    echo: false,
+                },
+            ];
+            let answers = keyboard_interactive_round_answers(
+                "",
+                "",
+                &mixed,
+                "hunter2",
+                Some(&events_tx),
+                Some(&mut kbd),
+            )
+            .await
+            .unwrap();
+            assert_eq!(answers, vec!["hunter2".to_string(), "999".to_string()]);
+
+            // Cancelling (empty answers) aborts auth with a distinct error, so the
+            // connect does not silently fall through to key/agent methods.
+            resp_tx.send(Vec::new()).unwrap();
+            let result = keyboard_interactive_round_answers(
+                "",
+                "",
+                &code,
+                "hunter2",
+                Some(&events_tx),
+                Some(&mut kbd),
+            )
+            .await;
+            assert!(matches!(result, Err(SshError::AuthenticationCancelled)));
+        });
+    }
+
+    #[test]
+    fn kbd_round_without_interactive_channel_falls_back_to_heuristic() {
+        let rt = current_thread_rt();
+        rt.block_on(async {
+            // SFTP/tunnel path: no user to ask, so best-effort with the password.
+            let code = [client::Prompt {
+                prompt: "Verification code: ".into(),
+                echo: false,
+            }];
+            let answers = keyboard_interactive_round_answers("", "", &code, "pw", None, None)
+                .await
+                .unwrap();
+            assert_eq!(answers, vec!["pw".to_string()]);
+        });
     }
 
     #[test]
