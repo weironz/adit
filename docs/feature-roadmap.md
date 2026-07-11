@@ -8,6 +8,12 @@ This complements [native-rust-architecture.md](native-rust-architecture.md),
 which covers the migration phases and target architecture. This document is a
 prioritized **feature** backlog.
 
+> **Next stage:** the researched, best-practice-backed plan for the next batch of
+> work lives in [phase2-plan.md](phase2-plan.md) — integration tests vs. a real
+> `sshd`, host-key policy + known_hosts UI, ProxyJump, interactive MFA, key
+> passphrase / `.ppk`, per-session appearance, Windows code signing, OSC 8
+> hyperlinks, and (deferred) Zmodem.
+
 ## Current state (implemented)
 
 - Connection profiles with folders/groups: create, edit, delete, drag-reorder,
