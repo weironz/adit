@@ -202,6 +202,30 @@ impl TestServer {
         KeyPair { private, public }
     }
 
+    /// Generate a *passphrase-encrypted* keypair inside the container, authorize
+    /// it for `adit` here, and copy the private half to the host. Used to prove
+    /// the distinct key-passphrase path (right passphrase connects; wrong one
+    /// fails with a clear error).
+    fn generate_encrypted_key(&self, passphrase: &str) -> PathBuf {
+        let script = format!(
+            "mkdir -p /home/adit/.ssh \
+             && ssh-keygen -t ed25519 -N '{passphrase}' -q -f /home/adit/.ssh/id_ed25519 \
+             && cp /home/adit/.ssh/id_ed25519.pub /home/adit/.ssh/authorized_keys \
+             && chown -R adit:adit /home/adit/.ssh \
+             && chmod 700 /home/adit/.ssh \
+             && chmod 600 /home/adit/.ssh/authorized_keys"
+        );
+        docker(&["exec", &self.id, "sh", "-c", &script]).expect("generate encrypted key");
+        let private = temp_path("enckey");
+        docker(&[
+            "cp",
+            &format!("{}:/home/adit/.ssh/id_ed25519", self.id),
+            &private.to_string_lossy(),
+        ])
+        .expect("copy encrypted private key to host");
+        private
+    }
+
     /// Authorize `pub_key` (a host-side public-key file) for `adit` on this
     /// container, so a key generated elsewhere can log in here too.
     fn authorize_key(&self, pub_key: &std::path::Path) {
@@ -398,6 +422,7 @@ fn wrong_password_is_rejected() {
         try_agent: false,
         try_default_keys: false,
         identity_file: None,
+        passphrase: None,
     };
 
     let handle = spawn_password_shell(request).expect("spawn shell");
@@ -625,6 +650,7 @@ fn jump_host_reaches_a_target_behind_a_bastion() {
             try_agent: false,
             try_default_keys: false,
             identity_file: None,
+            passphrase: None,
         },
         PASS,
     );
@@ -651,7 +677,80 @@ fn jump_host_authenticates_with_a_key() {
             try_agent: false,
             try_default_keys: false,
             identity_file: Some(keys.private),
+            passphrase: None,
         },
         "", // no password — key only
+    );
+}
+
+/// Build a key-auth request against `server` using `key`, decrypting it with
+/// `passphrase` (in its own field, not the login password).
+fn encrypted_key_request(server: &TestServer, key: PathBuf, passphrase: &str) -> LiveShellRequest {
+    let mut request = LiveShellRequest::new("127.0.0.1", server.port, USER, "");
+    request.known_hosts_path = temp_known_hosts();
+    request.auto_accept_host_keys = true;
+    request.auth = AuthOptions {
+        try_password: false,
+        try_agent: false,
+        try_default_keys: false,
+        identity_file: Some(key),
+        passphrase: (!passphrase.is_empty()).then(|| passphrase.to_string()),
+    };
+    request
+}
+
+#[test]
+fn encrypted_key_connects_with_its_passphrase() {
+    let server = TestServer::start();
+    let key = server.generate_encrypted_key("s3cr3t-phrase");
+    let mut request = encrypted_key_request(&server, key, "s3cr3t-phrase");
+    request.startup_command = String::from("echo KEY-$((6*7))");
+
+    let handle = spawn_password_shell(request).expect("spawn shell");
+    let mut transcript = String::new();
+    let found = pump_until(
+        Duration::from_secs(20),
+        || handle.try_recv(),
+        |event| match event {
+            LiveShellEvent::Output(bytes) => {
+                transcript.push_str(&String::from_utf8_lossy(&bytes));
+                if transcript.contains("KEY-42") {
+                    ControlFlow::Break(true)
+                } else {
+                    ControlFlow::Continue(())
+                }
+            }
+            LiveShellEvent::Error(error) => panic!("ssh error: {error}"),
+            LiveShellEvent::Closed => ControlFlow::Break(false),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(found, Some(true), "encrypted key + right passphrase should log in");
+    let _ = handle.send(LiveShellCommand::Disconnect);
+}
+
+#[test]
+fn encrypted_key_wrong_passphrase_gives_a_clear_error() {
+    let server = TestServer::start();
+    let key = server.generate_encrypted_key("s3cr3t-phrase");
+    // Wrong passphrase: the key fails to decrypt locally, and — because it is an
+    // explicitly configured identity file — that surfaces as a clear passphrase
+    // error rather than a silent fall-through to another method.
+    let request = encrypted_key_request(&server, key, "WRONG-phrase");
+
+    let handle = spawn_password_shell(request).expect("spawn shell");
+    let message = pump_until(
+        Duration::from_secs(20),
+        || handle.try_recv(),
+        |event| match event {
+            LiveShellEvent::Error(error) => ControlFlow::Break(error),
+            LiveShellEvent::Closed => ControlFlow::Break(String::from("closed")),
+            _ => ControlFlow::Continue(()),
+        },
+    )
+    .expect("a wrong passphrase should surface an error");
+    assert!(
+        message.to_lowercase().contains("passphrase"),
+        "expected a passphrase error, got: {message}"
     );
 }

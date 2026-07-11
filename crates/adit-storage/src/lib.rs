@@ -157,6 +157,43 @@ impl CredentialStore {
             &format!("profile:{profile_id}:password"),
         )?)
     }
+
+    pub fn load_profile_passphrase(
+        &self,
+        profile_id: ProfileId,
+    ) -> Result<Option<String>, CredentialError> {
+        match self.profile_passphrase_entry(profile_id)?.get_password() {
+            Ok(passphrase) => Ok(Some(passphrase)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    pub fn save_profile_passphrase(
+        &self,
+        profile_id: ProfileId,
+        passphrase: &str,
+    ) -> Result<(), CredentialError> {
+        self.profile_passphrase_entry(profile_id)?
+            .set_password(passphrase)
+            .map_err(Into::into)
+    }
+
+    pub fn delete_profile_passphrase(&self, profile_id: ProfileId) -> Result<(), CredentialError> {
+        match self.profile_passphrase_entry(profile_id)?.delete_credential() {
+            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    /// The key passphrase is stored under a distinct account so it never collides
+    /// with the login password (a profile can have both).
+    fn profile_passphrase_entry(&self, profile_id: ProfileId) -> Result<Entry, CredentialError> {
+        Ok(Entry::new(
+            &self.service,
+            &format!("profile:{profile_id}:passphrase"),
+        )?)
+    }
 }
 
 impl Default for CredentialStore {

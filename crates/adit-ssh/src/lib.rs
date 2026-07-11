@@ -121,6 +121,10 @@ pub struct AuthOptions {
     pub try_agent: bool,
     pub try_default_keys: bool,
     pub identity_file: Option<PathBuf>,
+    /// Passphrase for an encrypted `identity_file`, distinct from the login
+    /// password. When `None`/empty the login password is tried as a fallback
+    /// (so profiles that stored the passphrase in the password field still work).
+    pub passphrase: Option<String>,
 }
 
 impl Default for AuthOptions {
@@ -130,6 +134,7 @@ impl Default for AuthOptions {
             try_agent: true,
             try_default_keys: true,
             identity_file: None,
+            passphrase: None,
         }
     }
 }
@@ -231,6 +236,10 @@ pub enum SshError {
     AuthenticationRejected,
     #[error("authentication cancelled")]
     AuthenticationCancelled,
+    #[error("could not load private key {0}; if it is passphrase-protected, set its passphrase in the profile")]
+    KeyPassphraseRequired(String),
+    #[error("could not load private key {0} with the given passphrase (wrong passphrase or unsupported key format)")]
+    KeyPassphraseWrong(String),
     #[error("identity file was not found: {0}")]
     IdentityFileMissing(String),
     #[error("host key changed for {host}; expected {expected}, got {actual}. Check {known_hosts_path} before trusting this server.")]
@@ -1025,9 +1034,30 @@ async fn authenticate_with_available_methods(
         }
     }
 
+    // Prefer the distinct key passphrase; fall back to the login password so
+    // profiles that stored the passphrase in the password field still work. Used
+    // for both the explicit identity file and the ~/.ssh default-key scan.
+    let key_secret = auth
+        .passphrase
+        .as_deref()
+        .filter(|p| !p.is_empty())
+        .unwrap_or(password);
+
     if let Some(identity_file) = &auth.identity_file {
         attempted = true;
-        if authenticate_with_private_key(session, username, identity_file, password, events).await?
+        // Surface a clear passphrase error only when this key is the last resort
+        // (no agent/default-key fallback left, e.g. explicit Key auth); in Auto a
+        // load failure falls through to the remaining methods instead.
+        let require = !(auth.try_agent || auth.try_default_keys);
+        if authenticate_with_private_key(
+            session,
+            username,
+            identity_file,
+            key_secret,
+            require,
+            events,
+        )
+        .await?
         {
             return Ok(());
         }
@@ -1044,7 +1074,7 @@ async fn authenticate_with_available_methods(
 
     if auth.try_default_keys {
         let (authenticated, key_attempted) =
-            authenticate_with_default_private_keys(session, username, password, events).await?;
+            authenticate_with_default_private_keys(session, username, key_secret, events).await?;
         attempted |= key_attempted;
         if authenticated {
             return Ok(());
@@ -1360,8 +1390,10 @@ async fn authenticate_with_default_private_keys(
 
     let rsa_hash = session.best_supported_rsa_hash().await?.flatten();
     for path in existing_keys {
+        // Opportunistic ~/.ssh scan: a key that won't load (e.g. encrypted with a
+        // different passphrase) is skipped, not fatal — `require = false`.
         if authenticate_with_private_key_and_hash(
-            session, username, path, password, rsa_hash, events,
+            session, username, path, password, rsa_hash, events, false,
         )
         .await?
         {
@@ -1376,7 +1408,8 @@ async fn authenticate_with_private_key(
     session: &mut client::Handle<KnownHostsClient>,
     username: &str,
     path: &Path,
-    password: &str,
+    passphrase: &str,
+    require: bool,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
 ) -> Result<bool, SshError> {
     if !path.is_file() {
@@ -1388,31 +1421,44 @@ async fn authenticate_with_private_key(
     }
 
     let rsa_hash = session.best_supported_rsa_hash().await?.flatten();
-    authenticate_with_private_key_and_hash(session, username, path, password, rsa_hash, events)
-        .await
+    // When `require`, a key that won't load is a hard error (a clear passphrase
+    // message); otherwise it's skipped so other auth methods can be tried.
+    authenticate_with_private_key_and_hash(
+        session, username, path, passphrase, rsa_hash, events, require,
+    )
+    .await
 }
 
 async fn authenticate_with_private_key_and_hash(
     session: &mut client::Handle<KnownHostsClient>,
     username: &str,
     path: &Path,
-    password: &str,
+    passphrase: &str,
     rsa_hash: Option<HashAlg>,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
+    require: bool,
 ) -> Result<bool, SshError> {
     send_status(
         events,
         format!("trying private key {}", key_file_label(path)),
     );
 
-    let passphrase = (!password.is_empty()).then_some(password);
-    let key_pair = match load_secret_key(path, passphrase) {
+    let secret = (!passphrase.is_empty()).then_some(passphrase);
+    let key_pair = match load_secret_key(path, secret) {
         Ok(key_pair) => key_pair,
         Err(error) => {
-            send_status(
-                events,
-                format!("skipping private key {}: {error}", key_file_label(path)),
-            );
+            let label = key_file_label(path);
+            send_status(events, format!("could not load private key {label}: {error}"));
+            if require {
+                // Distinguish "needs a passphrase" from "wrong passphrase" by
+                // whether one was supplied; both messages are phrased to also
+                // cover an unsupported/corrupt key.
+                return Err(if passphrase.is_empty() {
+                    SshError::KeyPassphraseRequired(label)
+                } else {
+                    SshError::KeyPassphraseWrong(label)
+                });
+            }
             return Ok(false);
         }
     };

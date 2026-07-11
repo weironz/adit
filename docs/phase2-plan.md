@@ -251,6 +251,18 @@ single-password keyboard-interactive server still works with the saved password;
 
 ## 5. Key passphrase (distinct field) + `.ppk` support
 
+**Status: Phase 1 ✅ shipped in v0.1.33.** A distinct key **passphrase** now lives
+in its own masked field (Key/Auto auth) in the profile editor, saved to the OS
+credential vault under a separate account (`profile:{id}:passphrase`), never in
+profiles.json. `AuthOptions.passphrase` is threaded through connect / reconnect /
+SFTP / tunnel; an explicitly-configured key that fails to load now surfaces a
+**clear passphrase error** (`KeyPassphraseRequired` / `KeyPassphraseWrong`)
+instead of silently falling through, while the opportunistic `~/.ssh` default-key
+scan still skips. Backward-compatible: when no passphrase is set the login
+password is still tried as the key secret. Docker integration tests cover an
+encrypted key connecting with the right passphrase and erroring on the wrong one.
+**Phase 2 (`.ppk` parsing — PuTTY v2 SHA-1 MAC / v3 Argon2id) is still pending.**
+
 **What & why.** Today the encrypted-key passphrase reuses the single login-password
 field (`authenticate_with_private_key_and_hash`, `adit-ssh/src/lib.rs` ~1035),
 **silently swallows load errors** (`Ok(false)`), and never handles PuTTY `.ppk` —

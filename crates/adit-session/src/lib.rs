@@ -100,6 +100,9 @@ struct SessionLog {
 struct ReconnectState {
     /// Credential to reuse when respawning (empty for key/agent auth).
     password: String,
+    /// Key passphrase to reuse when respawning (empty unless using an encrypted
+    /// key). Also reused by the SFTP/tunnel sessions opened from this one.
+    passphrase: String,
     /// Consecutive failed attempts since the last successful connect.
     attempts: u32,
     /// When the next attempt is due (set after an unexpected drop).
@@ -112,9 +115,10 @@ struct ReconnectState {
 }
 
 impl ReconnectState {
-    fn new(password: String) -> Self {
+    fn new(password: String, passphrase: String) -> Self {
         Self {
             password,
+            passphrase,
             attempts: 0,
             retry_at: None,
             manual: false,
@@ -771,6 +775,7 @@ impl SessionManager {
         &mut self,
         profile_id: ProfileId,
         password: String,
+        passphrase: String,
     ) -> Result<SessionId, SessionError> {
         let profile = self
             .profiles
@@ -785,6 +790,7 @@ impl SessionManager {
                 let live = spawn_live_shell(
                     &profile,
                     &password,
+                    &passphrase,
                     self.connect_timeout_secs,
                     size,
                     self.auto_accept_host_keys,
@@ -796,7 +802,7 @@ impl SessionManager {
                     live,
                     endpoint,
                     terminal,
-                    Some(ReconnectState::new(password)),
+                    Some(ReconnectState::new(password, passphrase)),
                 )
             }
             Protocol::LocalShell => {
@@ -972,7 +978,9 @@ impl SessionManager {
             profile.username.clone(),
             password,
         );
-        request.auth = auth_options_for_profile(&profile, &request.password);
+        // The probe reuses the single entered secret as both password and key
+        // passphrase (it predates the distinct passphrase field).
+        request.auth = auth_options_for_profile(&profile, &request.password, &request.password);
         request.cols = size.cols;
         request.rows = size.rows;
 
@@ -1343,6 +1351,7 @@ impl SessionManager {
             .ok_or(SessionError::NoActiveSshSession)?;
         let profile_id = record.summary.profile_id;
         let password = reconnect.password.clone();
+        let passphrase = reconnect.passphrase.clone();
         let profile = self
             .profiles
             .iter()
@@ -1373,7 +1382,7 @@ impl SessionManager {
             target_host,
             target_port,
         );
-        request.auth = auth_options_for_profile(&profile, &password);
+        request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = adit_ssh::spawn_tunnel_session(request)?;
@@ -1492,6 +1501,7 @@ impl SessionManager {
         let profile_id = record.summary.profile_id;
         let endpoint = record.summary.endpoint.clone();
         let password = reconnect.password.clone();
+        let passphrase = reconnect.passphrase.clone();
 
         let profile = self
             .profiles
@@ -1506,7 +1516,7 @@ impl SessionManager {
             profile.username.clone(),
             password.clone(),
         );
-        request.auth = auth_options_for_profile(&profile, &password);
+        request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = adit_ssh::spawn_sftp_session(request)?;
@@ -2067,6 +2077,10 @@ impl SessionManager {
             .reconnect
             .as_ref()
             .map_or_else(String::new, |rc| rc.password.clone());
+        let passphrase = record
+            .reconnect
+            .as_ref()
+            .map_or_else(String::new, |rc| rc.passphrase.clone());
         let attempt_no = record.reconnect.as_ref().map_or(1, |rc| rc.attempts + 1);
 
         let Some(profile) = self.profiles.iter().find(|p| p.id == profile_id).cloned() else {
@@ -2085,6 +2099,7 @@ impl SessionManager {
         match spawn_live_shell(
             &profile,
             &password,
+            &passphrase,
             self.connect_timeout_secs,
             self.default_size,
             self.auto_accept_host_keys,
@@ -2302,10 +2317,12 @@ fn default_local_dir() -> PathBuf {
 }
 
 /// Spawn a live SSH shell actor for `profile`, reusing `password` for password
-/// auth. Shared by the initial connect and auto-reconnect.
+/// auth and `passphrase` for an encrypted key. Shared by the initial connect and
+/// auto-reconnect.
 fn spawn_live_shell(
     profile: &ConnectionProfile,
     password: &str,
+    passphrase: &str,
     connect_timeout_secs: u64,
     size: TerminalSize,
     auto_accept_host_keys: bool,
@@ -2316,7 +2333,7 @@ fn spawn_live_shell(
         profile.username.clone(),
         password.to_string(),
     );
-    request.auth = auth_options_for_profile(profile, password);
+    request.auth = auth_options_for_profile(profile, password, passphrase);
     request.cols = size.cols;
     request.rows = size.rows;
     request.auto_accept_host_keys = auto_accept_host_keys;
@@ -2327,9 +2344,14 @@ fn spawn_live_shell(
     Ok(adit_ssh::spawn_password_shell(request)?)
 }
 
-fn auth_options_for_profile(profile: &ConnectionProfile, password: &str) -> AuthOptions {
+fn auth_options_for_profile(
+    profile: &ConnectionProfile,
+    password: &str,
+    passphrase: &str,
+) -> AuthOptions {
     let identity_file = (!profile.identity_file.trim().is_empty())
         .then(|| std::path::PathBuf::from(profile.identity_file.trim()));
+    let passphrase = (!passphrase.is_empty()).then(|| passphrase.to_string());
 
     match profile.auth_method {
         AuthMethod::Auto => AuthOptions {
@@ -2337,24 +2359,28 @@ fn auth_options_for_profile(profile: &ConnectionProfile, password: &str) -> Auth
             try_agent: true,
             try_default_keys: true,
             identity_file,
+            passphrase,
         },
         AuthMethod::Password => AuthOptions {
             try_password: true,
             try_agent: false,
             try_default_keys: false,
             identity_file: None,
+            passphrase: None,
         },
         AuthMethod::Key => AuthOptions {
             try_password: false,
             try_agent: false,
             try_default_keys: identity_file.is_none(),
             identity_file,
+            passphrase,
         },
         AuthMethod::Agent => AuthOptions {
             try_password: false,
             try_agent: true,
             try_default_keys: false,
             identity_file: None,
+            passphrase: None,
         },
     }
 }

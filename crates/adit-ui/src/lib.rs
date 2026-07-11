@@ -108,6 +108,9 @@ pub struct AditApp {
     // Password-auth password for the editor. Held only in memory + the OS
     // credential vault; never serialized to profiles.json.
     profile_password: String,
+    /// Key passphrase draft; saved to the credential vault, never to
+    /// profiles.json. Distinct from `profile_password`.
+    profile_passphrase: String,
     profile_protocol: Protocol,
     profile_identity_file: String,
     profile_startup_command: String,
@@ -425,6 +428,7 @@ pub enum Message {
     ProfileUsernameChanged(String),
     ProfileAuthMethodChanged(AuthMethod),
     ProfilePasswordChanged(String),
+    ProfilePassphraseChanged(String),
     ProfileProtocolChanged(Protocol),
     ProfileIdentityFileChanged(String),
     PickIdentityFile,
@@ -1023,6 +1027,7 @@ impl AditApp {
             profile_username: String::new(),
             profile_auth_method: AuthMethod::Auto,
             profile_password: String::new(),
+            profile_passphrase: String::new(),
             profile_protocol: Protocol::Ssh,
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
@@ -1741,10 +1746,17 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CloneProfileFromContext(profile_id) => {
             app.profile_context_menu = None;
             if let Some(new_id) = app.manager.duplicate_profile(profile_id) {
-                // Copy the source's saved password (kept in the OS vault under the
-                // profile id) to the clone so its auth still works.
+                // Copy the source's saved password + key passphrase (kept in the
+                // OS vault under the profile id) to the clone so its auth works.
                 if let Ok(Some(password)) = app.credential_store.load_profile_password(profile_id) {
                     let _ = app.credential_store.save_profile_password(new_id, &password);
+                }
+                if let Ok(Some(passphrase)) =
+                    app.credential_store.load_profile_passphrase(profile_id)
+                {
+                    let _ = app
+                        .credential_store
+                        .save_profile_passphrase(new_id, &passphrase);
                 }
                 select_profile(app, new_id);
                 if persist_profiles(app) {
@@ -2092,6 +2104,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfilePasswordChanged(value) => {
             app.terminal_focused = false;
             app.profile_password = value;
+        }
+        Message::ProfilePassphraseChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_passphrase = value;
         }
         Message::ProfileProtocolChanged(protocol) => {
             app.terminal_focused = false;
@@ -3271,6 +3287,18 @@ fn load_selected_profile(app: &mut AditApp) {
         } else {
             String::new()
         };
+        // The key passphrase is likewise vault-stored, distinct from the password,
+        // and only relevant to key-bearing auth methods.
+        app.profile_passphrase =
+            if matches!(profile.auth_method, AuthMethod::Key | AuthMethod::Auto) {
+                app.credential_store
+                    .load_profile_passphrase(profile.id)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
     }
 }
 
@@ -3482,6 +3510,7 @@ fn delete_group(app: &mut AditApp, group: String) {
     for id in &ids {
         let _ = app.manager.delete_profile(*id);
         let _ = app.credential_store.delete_profile_password(*id);
+        let _ = app.credential_store.delete_profile_passphrase(*id);
     }
     remove_group(&mut app.groups, &group);
     app.collapsed_groups.remove(&group);
@@ -3641,6 +3670,18 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
                             .save_profile_password(profile_id, &app.profile_password)
                     };
                 }
+                // Persist the key passphrase to the vault (distinct entry) only
+                // for key-bearing auth with a non-empty value; otherwise clear any
+                // saved one so a Password/Agent profile never keeps a stale secret.
+                let keep_passphrase =
+                    matches!(app.profile_auth_method, AuthMethod::Key | AuthMethod::Auto)
+                        && !app.profile_passphrase.is_empty();
+                let _ = if keep_passphrase {
+                    app.credential_store
+                        .save_profile_passphrase(profile_id, &app.profile_passphrase)
+                } else {
+                    app.credential_store.delete_profile_passphrase(profile_id)
+                };
             }
             load_selected_profile(app);
             app.collapsed_groups.remove(app.profile_group.trim());
@@ -3679,6 +3720,7 @@ fn delete_selected_profile(app: &mut AditApp) {
                 .credential_store
                 .delete_profile_password(profile_id)
                 .err();
+            let _ = app.credential_store.delete_profile_passphrase(profile_id);
             if let Some(error) = credential_cleanup {
                 app.last_error = Some(format!("删除系统凭据失败: {error}"));
             }
@@ -4094,7 +4136,19 @@ fn connect_profile(app: &mut AditApp) {
         String::new()
     };
 
-    match app.manager.open_live_ssh_session(profile_id, password) {
+    // The key passphrase is saved separately in the vault (via the profile
+    // editor), so it's loaded here regardless of how the password was obtained.
+    let passphrase = app
+        .credential_store
+        .load_profile_passphrase(profile_id)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
+
+    match app
+        .manager
+        .open_live_ssh_session(profile_id, password, passphrase)
+    {
         Ok(_) => {
             app.connection_dialog = None;
             app.password.clear();
@@ -4180,10 +4234,16 @@ fn confirm_connection(app: &mut AditApp) {
     };
 
     let credential_warning = sync_connection_password(app, dialog.profile_id).err();
+    let passphrase = app
+        .credential_store
+        .load_profile_passphrase(dialog.profile_id)
+        .ok()
+        .flatten()
+        .unwrap_or_default();
 
     match app
         .manager
-        .open_live_ssh_session(dialog.profile_id, app.password.clone())
+        .open_live_ssh_session(dialog.profile_id, app.password.clone(), passphrase)
     {
         Ok(_) => {
             app.connection_dialog = None;
@@ -6076,7 +6136,7 @@ fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let auth_hint = match dialog.auth_method {
         AuthMethod::Auto => "自动认证：密码可选，会先尝试密码、agent 和默认密钥",
         AuthMethod::Password => "密码认证：请输入 SSH 密码",
-        AuthMethod::Key => "密钥认证：如私钥有 passphrase，请在这里输入",
+        AuthMethod::Key => "密钥认证：passphrase 建议在会话设置里保存；未保存时可在此临时输入",
         AuthMethod::Agent => "Agent 认证：通常不需要密码",
     };
 
@@ -9343,24 +9403,38 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                         .into(),
                 ));
             }
+            form = form.push(dialog_field(
+                "密钥文件（可选）",
+                row![
+                    text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
+                        .on_input(Message::ProfileIdentityFileChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill),
+                    button(text("浏览…").size(12))
+                        .padding([5, 12])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::PickIdentityFile),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+                .into(),
+            ));
+            // Key passphrase (masked, saved to the vault, distinct from the login
+            // password). Relevant only to key-bearing auth methods.
+            if matches!(app.profile_auth_method, AuthMethod::Key | AuthMethod::Auto) {
+                form = form.push(dialog_field(
+                    "密钥 passphrase（可选，保存在系统凭据库；私钥加密时填写）",
+                    text_input("私钥 passphrase", &app.profile_passphrase)
+                        .secure(true)
+                        .on_input(Message::ProfilePassphraseChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ));
+            }
             form = form
-                .push(dialog_field(
-                    "密钥文件（可选）",
-                    row![
-                        text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
-                            .on_input(Message::ProfileIdentityFileChanged)
-                            .padding([5, 8])
-                            .style(text_input_style)
-                            .width(Fill),
-                        button(text("浏览…").size(12))
-                            .padding([5, 12])
-                            .style(|_theme, status| secondary_button_style(status))
-                            .on_press(Message::PickIdentityFile),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center)
-                    .into(),
-                ))
                 .push(dialog_field(
                     "跳板机 ProxyJump（可选，user@bastion:22，多个用逗号按顺序；各跳板机复用本会话的密码/密钥）",
                     text_input("jump@bastion.example.com:22", &app.profile_jumps)
