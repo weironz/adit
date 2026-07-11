@@ -33,6 +33,14 @@ Legend: Effort S/M/L/XL, Risk low/med/high.
 
 ## 1. Integration tests against a real `sshd` (Docker in CI)
 
+**Status: ✅ initial suite landed.** `crates/adit-ssh/tests/integration.rs`
+(feature `integration`) drives the `spawn_*` API against a throwaway OpenSSH
+container (`docker/test-sshd/`), with a new `ubuntu-latest` CI job. Covered:
+password auth (accept + reject), SFTP single-file **and** recursive-directory
+round-trips, and a local port-forward round-trip to the remote sshd. The default
+`cargo test --workspace` (Windows, no Docker) skips it. Still open: dynamic/remote
+forwarding, agent auth, and keyboard-interactive (blocked on the MFA work, item 4).
+
 **What & why.** Everything shipped in the recent push (recursive SFTP, config
 relocation, rename, etc.) was verified by review + unit tests — never against a
 real server or the real GUI. In-process russh tests can't catch interop bugs with

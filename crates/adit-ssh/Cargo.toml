@@ -5,6 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+# Gates the Docker-backed integration tests (tests/integration.rs) so the
+# default `cargo test --workspace` (which has no Docker) skips them. Run with:
+#   cargo test -p adit-ssh --features integration -- --include-ignored
+integration = []
+
 [dependencies]
 adit-domain.workspace = true
 bytes.workspace = true

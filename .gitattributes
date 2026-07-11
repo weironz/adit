@@ -6,6 +6,11 @@
 *.rs text eol=lf
 *.toml text eol=lf
 
+# The test sshd image + its config must stay LF; a CRLF sshd_config breaks sshd.
+docker/test-sshd/Dockerfile text eol=lf
+docker/test-sshd/sshd_config text eol=lf
+.github/** text eol=lf
+
 *.exe binary
 *.icns binary
 *.ico binary

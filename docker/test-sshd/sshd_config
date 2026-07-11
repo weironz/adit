@@ -1,0 +1,14 @@
+# Test-only sshd config. Deliberately permissive so the integration matrix can
+# exercise password auth, TCP forwarding, and SFTP. Do not use anywhere real.
+Port 2222
+AddressFamily inet
+PermitRootLogin no
+PasswordAuthentication yes
+PubkeyAuthentication yes
+KbdInteractiveAuthentication no
+UsePAM no
+AllowTcpForwarding yes
+GatewayPorts clientspecified
+PermitTunnel yes
+Subsystem sftp internal-sftp
+LogLevel VERBOSE
