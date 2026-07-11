@@ -1,7 +1,8 @@
 use adit_domain::{
-    AuthMethod, ConnectionProfile, JumpHop, ProfileId, Protocol, SessionId, SessionStatus,
-    TunnelDef,
+    AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
+    SessionStatus, TunnelDef,
 };
+pub use adit_domain::Environment as ProfileEnvironment;
 pub use adit_domain::JumpHop as ProfileJumpHop;
 use adit_ssh::{
     AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand, LiveShellEvent,
@@ -921,6 +922,22 @@ impl SessionManager {
     pub fn set_profile_jumps(&mut self, profile_id: ProfileId, jumps: Vec<JumpHop>) {
         if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.jumps = jumps;
+        }
+    }
+
+    /// Set a profile's tab colour-coding (environment + optional custom accent +
+    /// optional badge label).
+    pub fn set_profile_appearance(
+        &mut self,
+        profile_id: ProfileId,
+        environment: Environment,
+        accent_color: Option<String>,
+        label: Option<String>,
+    ) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.environment = environment;
+            profile.accent_color = accent_color;
+            profile.label = label;
         }
     }
 

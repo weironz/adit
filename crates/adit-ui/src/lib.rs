@@ -1,6 +1,6 @@
 use adit_domain::{
-    AuthMethod, ConnectionProfile, JumpHop, ProfileId, Protocol, SessionId, SessionStatus,
-    TunnelDef,
+    AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
+    SessionStatus, TunnelDef,
 };
 use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
@@ -118,6 +118,10 @@ pub struct AditApp {
     /// comma/newline separated), parsed to `profile.jumps` on save.
     profile_jumps: String,
     profile_terminal_type: String,
+    /// Per-profile tab colour-coding drafts.
+    profile_environment: Environment,
+    profile_accent_color: String,
+    profile_label: String,
     connect_timeout_secs: u32,
     scrollback_lines: u32,
     snippets: Vec<Snippet>,
@@ -436,6 +440,9 @@ pub enum Message {
     SecureCrtFolderPicked(Option<std::path::PathBuf>),
     ProfileStartupCommandChanged(String),
     ProfileJumpsChanged(String),
+    ProfileEnvironmentChanged(Environment),
+    ProfileAccentColorChanged(String),
+    ProfileLabelChanged(String),
     ProfileTerminalTypeChanged(String),
     ConnectTimeoutChanged(String),
     ScrollbackLinesChanged(String),
@@ -1033,6 +1040,9 @@ impl AditApp {
             profile_startup_command: String::new(),
             profile_jumps: String::new(),
             profile_terminal_type: String::new(),
+            profile_environment: Environment::None,
+            profile_accent_color: String::new(),
+            profile_label: String::new(),
             connect_timeout_secs,
             scrollback_lines,
             snippets,
@@ -2151,6 +2161,22 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileJumpsChanged(value) => {
             app.terminal_focused = false;
             app.profile_jumps = value;
+        }
+        Message::ProfileEnvironmentChanged(environment) => {
+            app.terminal_focused = false;
+            app.profile_environment = environment;
+            // Prefill a sensible custom colour so the picker isn't blank.
+            if environment == Environment::Custom && app.profile_accent_color.trim().is_empty() {
+                app.profile_accent_color = String::from("#3f7fd1");
+            }
+        }
+        Message::ProfileAccentColorChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_accent_color = value;
+        }
+        Message::ProfileLabelChanged(value) => {
+            app.terminal_focused = false;
+            app.profile_label = value;
         }
         Message::ProfileTerminalTypeChanged(value) => {
             app.terminal_focused = false;
@@ -3276,6 +3302,9 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_startup_command = profile.startup_command;
         app.profile_jumps = jumps_to_spec(&profile.jumps);
         app.profile_terminal_type = profile.terminal_type;
+        app.profile_environment = profile.environment;
+        app.profile_accent_color = profile.accent_color.clone().unwrap_or_default();
+        app.profile_label = profile.label.clone().unwrap_or_default();
         // Password-auth password comes from the OS credential vault, not the
         // profile record.
         app.profile_password = if profile.auth_method == AuthMethod::Password {
@@ -3660,6 +3689,16 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
                 app.manager.set_profile_jumps(profile_id, jumps.clone());
                 app.manager
                     .set_profile_terminal_type(profile_id, app.profile_terminal_type.clone());
+                let accent_color = (!app.profile_accent_color.trim().is_empty())
+                    .then(|| app.profile_accent_color.trim().to_string());
+                let label = (!app.profile_label.trim().is_empty())
+                    .then(|| app.profile_label.trim().to_string());
+                app.manager.set_profile_appearance(
+                    profile_id,
+                    app.profile_environment,
+                    accent_color,
+                    label,
+                );
                 // Persist the password-auth password to the OS credential vault
                 // (never to profiles.json). An empty field clears any saved one.
                 if app.profile_auth_method == AuthMethod::Password {
@@ -8565,6 +8604,9 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         // an unsaved/invalid hop the user typed must read as "modified", never
         // "saved", so the silent-drop guard on save isn't masked by the indicator.
         && app.profile_jumps.trim() == jumps_to_spec(&profile.jumps)
+        && profile.environment == app.profile_environment
+        && profile.accent_color.as_deref().unwrap_or_default() == app.profile_accent_color.trim()
+        && profile.label.as_deref().unwrap_or_default() == app.profile_label.trim()
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
@@ -9461,7 +9503,39 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                         .style(text_input_style)
                         .width(Fill)
                         .into(),
+                ))
+                .push(dialog_field(
+                    "环境色标（标签页配色，避免连错服务器）",
+                    row![
+                        environment_button(app, Environment::None),
+                        environment_button(app, Environment::Development),
+                        environment_button(app, Environment::Staging),
+                        environment_button(app, Environment::Production),
+                        environment_button(app, Environment::Custom),
+                    ]
+                    .spacing(6)
+                    .into(),
                 ));
+            if app.profile_environment == Environment::Custom {
+                form = form.push(dialog_field(
+                    "自定义颜色（#RRGGBB）",
+                    text_input("#3f7fd1", &app.profile_accent_color)
+                        .on_input(Message::ProfileAccentColorChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ));
+            }
+            form = form.push(dialog_field(
+                "标签徽标（可选，如 PROD；留空用环境名）",
+                text_input("PROD", &app.profile_label)
+                    .on_input(Message::ProfileLabelChanged)
+                    .padding([5, 8])
+                    .style(text_input_style)
+                    .width(Fill)
+                    .into(),
+            ));
         }
         Protocol::LocalShell => {
             form = form.push(dialog_field(
@@ -9587,6 +9661,25 @@ fn auth_method_button(app: &AditApp, auth_method: AuthMethod) -> Element<'static
         .into()
 }
 
+fn environment_button(app: &AditApp, environment: Environment) -> Element<'static, Message> {
+    let selected = app.profile_environment == environment;
+    // Tint the selected chip with the environment's own colour so the picker is
+    // itself a legend (green=dev, amber=staging, red=prod).
+    let env_accent = environment.preset_hex().and_then(parse_hex_color);
+    button(text(environment.label()).size(11))
+        .padding([4, 8])
+        .style(move |_theme, status| {
+            if selected {
+                let fill = env_accent.unwrap_or_else(accent);
+                base_button_style(fill, Color::from_rgb8(245, 249, 255), transparent())
+            } else {
+                method_button_style(false, status)
+            }
+        })
+        .on_press(Message::ProfileEnvironmentChanged(environment))
+        .into()
+}
+
 fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'static, Message> {
     let selected = app.profile_protocol == protocol;
 
@@ -9603,10 +9696,14 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
         .sessions()
         .into_iter()
         .fold(row![].spacing(2).height(TAB_BAR_HEIGHT), |tabs, session| {
+            let accent = profile_accent(app, session.profile_id);
+            let badge = profile_badge(app, session.profile_id);
             tabs.push(tab_button(
                 session,
                 app.manager.active_session(),
                 app.dragged_tab,
+                accent,
+                badge,
             ))
         });
 
@@ -9934,6 +10031,8 @@ fn tab_button(
     session: SessionSummary,
     active_session: Option<SessionId>,
     dragged: Option<SessionId>,
+    accent: Option<Color>,
+    badge: Option<String>,
 ) -> Element<'static, Message> {
     let id = session.id;
     let active = Some(id) == active_session;
@@ -9943,16 +10042,30 @@ fn tab_button(
 
     // The whole pill is a mouse_area (click = activate, drag = reorder); only the
     // close × stays a button so it can consume its own click.
-    let inner = row![
-        text("●").size(10).color(status_color(session.status)),
-        text(session.title).size(12).color(primary_text()),
-        button(text("×").size(15))
-            .padding([2, 7])
-            .style(|_theme, status| tab_close_button_style(status))
-            .on_press(Message::CloseSession(id)),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+    let mut inner = row![text("●").size(10).color(status_color(session.status))]
+        .spacing(6)
+        .align_y(Alignment::Center);
+    // Environment badge (e.g. PROD) so an operator can tell prod from staging.
+    if let Some(badge_text) = badge {
+        let badge_bg = accent.unwrap_or_else(muted_text);
+        inner = inner.push(
+            container(text(badge_text).size(9).color(Color::WHITE))
+                .padding([1, 5])
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(badge_bg)),
+                    border: iced::border::rounded(4),
+                    ..container::Style::default()
+                }),
+        );
+    }
+    let inner = inner
+        .push(text(session.title).size(12).color(primary_text()))
+        .push(
+            button(text("×").size(15))
+                .padding([2, 7])
+                .style(|_theme, status| tab_close_button_style(status))
+                .on_press(Message::CloseSession(id)),
+        );
 
     mouse_area(
         container(inner)
@@ -10314,6 +10427,29 @@ fn border_strong() -> Color {
 fn accent() -> Color {
     // Deep enough that white button text stays legible.
     Color::from_rgb8(15, 158, 140)
+}
+
+/// Parse a `#RRGGBB` (or `RRGGBB`) hex string into a `Color`.
+fn parse_hex_color(hex: &str) -> Option<Color> {
+    let hex = hex.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::from_rgb8(r, g, b))
+}
+
+/// A profile's tab accent colour (environment preset or custom hex), or `None`.
+fn profile_accent(app: &AditApp, profile_id: ProfileId) -> Option<Color> {
+    let hex = app.manager.profile(profile_id)?.accent_hex()?;
+    parse_hex_color(&hex)
+}
+
+/// A profile's short tab badge (e.g. `生产`), or `None`.
+fn profile_badge(app: &AditApp, profile_id: ProfileId) -> Option<String> {
+    app.manager.profile(profile_id)?.badge_label()
 }
 
 fn accent_hover() -> Color {

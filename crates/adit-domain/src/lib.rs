@@ -76,6 +76,69 @@ pub struct ConnectionProfile {
     /// (OpenSSH `ProxyJump`). Empty ⇒ connect directly.
     #[serde(default)]
     pub jumps: Vec<JumpHop>,
+    /// Colour-coding to tell prod/staging tabs apart at a glance.
+    #[serde(default)]
+    pub environment: Environment,
+    /// Custom accent colour (`#RRGGBB`) used when `environment` is
+    /// [`Environment::Custom`]; ignored otherwise.
+    #[serde(default)]
+    pub accent_color: Option<String>,
+    /// Short tab badge (e.g. `PROD`). Empty/None ⇒ the environment's own label.
+    #[serde(default)]
+    pub label: Option<String>,
+}
+
+/// A profile's deployment environment, used to colour-code its tab so an operator
+/// can tell prod from staging at a glance (the classic "wrong server" guard).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Environment {
+    /// No colour-coding (the default; old profiles load as this).
+    #[default]
+    None,
+    Development,
+    Staging,
+    Production,
+    /// Use the profile's `accent_color`.
+    Custom,
+}
+
+impl Environment {
+    /// The picker label / default tab badge.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "无",
+            Self::Development => "开发",
+            Self::Staging => "预发",
+            Self::Production => "生产",
+            Self::Custom => "自定义",
+        }
+    }
+
+    /// The preset accent colour (`#RRGGBB`) for the built-in environments; `None`
+    /// for [`Self::None`] (no colour) and [`Self::Custom`] (uses `accent_color`).
+    #[must_use]
+    pub fn preset_hex(self) -> Option<&'static str> {
+        match self {
+            Self::Development => Some("#2e9e5b"), // green
+            Self::Staging => Some("#d99a2b"),     // amber
+            Self::Production => Some("#d1453b"),  // red
+            Self::None | Self::Custom => None,
+        }
+    }
+
+    /// All environments in picker order.
+    #[must_use]
+    pub fn all() -> [Environment; 5] {
+        [
+            Self::None,
+            Self::Development,
+            Self::Staging,
+            Self::Production,
+            Self::Custom,
+        ]
+    }
 }
 
 /// One bastion/jump host in a [`ConnectionProfile`]'s chain. Authenticates via
@@ -209,6 +272,9 @@ impl ConnectionProfile {
             startup_command: String::new(),
             terminal_type: String::new(),
             jumps: Vec::new(),
+            environment: Environment::None,
+            accent_color: None,
+            label: None,
         }
     }
 
@@ -226,6 +292,34 @@ impl ConnectionProfile {
     #[must_use]
     pub fn endpoint(&self) -> String {
         format!("{}@{}:{}", self.username, self.host, self.port)
+    }
+
+    /// The effective accent colour hex (`#RRGGBB`) for this profile's tab, or
+    /// `None` when it has no colour-coding.
+    #[must_use]
+    pub fn accent_hex(&self) -> Option<String> {
+        match self.environment {
+            Environment::Custom => self
+                .accent_color
+                .as_deref()
+                .map(str::trim)
+                .filter(|hex| !hex.is_empty())
+                .map(str::to_string),
+            other => other.preset_hex().map(str::to_string),
+        }
+    }
+
+    /// The short tab badge for this profile: the explicit `label` if set,
+    /// otherwise the environment's own label (nothing for [`Environment::None`]).
+    #[must_use]
+    pub fn badge_label(&self) -> Option<String> {
+        if let Some(label) = self.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+            return Some(label.to_string());
+        }
+        match self.environment {
+            Environment::None => None,
+            other => Some(other.label().to_string()),
+        }
     }
 }
 
@@ -350,7 +444,7 @@ impl SessionStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::JumpHop;
+    use super::{ConnectionProfile, Environment, JumpHop};
 
     #[test]
     fn jump_hop_parses_and_renders_specs() {
@@ -403,5 +497,30 @@ mod tests {
         assert_eq!(JumpHop::parse("bastion:0").map(|_| ()), None);
         assert_eq!(JumpHop::parse("[::1]:0").map(|_| ()), None);
         assert_eq!(JumpHop::parse("bastion:70000").map(|_| ()), None);
+    }
+
+    #[test]
+    fn appearance_resolves_accent_and_badge() {
+        let mut p = ConnectionProfile::new("web", "h", 22, "u");
+        // Default: no colour-coding.
+        assert_eq!(p.accent_hex(), None);
+        assert_eq!(p.badge_label(), None);
+
+        // A preset environment gives a colour and its own label as the badge.
+        p.environment = Environment::Production;
+        assert_eq!(p.accent_hex().as_deref(), Some("#d1453b"));
+        assert_eq!(p.badge_label().as_deref(), Some("生产"));
+
+        // An explicit label overrides the environment label but keeps the colour.
+        p.label = Some("PROD".to_string());
+        assert_eq!(p.badge_label().as_deref(), Some("PROD"));
+        assert_eq!(p.accent_hex().as_deref(), Some("#d1453b"));
+
+        // Custom uses accent_color; a blank one yields no colour.
+        p.environment = Environment::Custom;
+        p.accent_color = Some("#0a0b0c".to_string());
+        assert_eq!(p.accent_hex().as_deref(), Some("#0a0b0c"));
+        p.accent_color = Some("  ".to_string());
+        assert_eq!(p.accent_hex(), None);
     }
 }

@@ -293,6 +293,17 @@ storage; (d) a `.ppk` v2 and v3 key load and authenticate; (e) a corrupt/MAC-mis
 
 ## 6. Per-session appearance (color-code prod/staging)
 
+**Status: ✅ shipped in v0.1.34.** `ConnectionProfile` gained `environment`
+(None/Development/Staging/Production/Custom), `accent_color` (hex, for Custom),
+and `label` (all `#[serde(default)]`, old files load unchanged). `Environment`
+presets green/amber/red; `profile.accent_hex()` / `profile.badge_label()` resolve
+the tab's colour + badge. Each session **tab shows a coloured badge** (e.g. red
+生产/PROD) so prod is unmistakable; the profile editor has an environment picker
+(chips tinted by their own colour), a Custom hex field, and a badge-label field.
+Old profiles render exactly as before. **Deferred:** per-pane terminal-background
+tinting (would require replacing the process-global `TERM_SCHEME` with a
+per-session resolve — the tab badge already delivers the core "wrong server" guard).
+
 **What & why.** Let a profile carry its own accent/tab color, optional background
 tint, and a short label/badge (e.g. "PROD"), so an operator can tell at a glance
 which server a tab/pane is. Directly targets the "ran it on the wrong server"
