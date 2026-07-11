@@ -8,7 +8,9 @@ use adit_ssh::{
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
-pub use adit_ssh::{SftpEntry, TunnelKind};
+pub use adit_ssh::{
+    known_hosts_path, list_known_hosts, remove_known_host, KnownHostEntry, SftpEntry, TunnelKind,
+};
 use adit_terminal::{TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal};
 use std::collections::HashMap;
 use std::fs;

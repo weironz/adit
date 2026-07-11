@@ -2489,6 +2489,89 @@ fn host_key_fingerprint(public_key: &russh::keys::ssh_key::PublicKey) -> String 
     public_key.fingerprint(HashAlg::Sha256).to_string()
 }
 
+/// One trusted host key recorded in a `known_hosts` file (for the management UI).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownHostEntry {
+    /// `host` or `[host]:port`.
+    pub host: String,
+    /// The key algorithm, e.g. `ssh-ed25519`.
+    pub key_type: String,
+    /// The OpenSSH `SHA256:…` fingerprint.
+    pub fingerprint: String,
+}
+
+/// List the trusted host keys in a `known_hosts` file (one row per host). A
+/// missing/unreadable file yields an empty list. Tolerant of OpenSSH markers
+/// (`@revoked`/`@cert-authority`), comment lines, and `[host]:port` specs.
+#[must_use]
+pub fn list_known_hosts(path: &Path) -> Vec<KnownHostEntry> {
+    let Ok(content) = fs::read_to_string(path) else {
+        return Vec::new();
+    };
+    let mut entries = Vec::new();
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let mut tokens = trimmed.split_whitespace();
+        let Some(first) = tokens.next() else { continue };
+        let hosts = if first.starts_with('@') {
+            match tokens.next() {
+                Some(host) => host,
+                None => continue,
+            }
+        } else {
+            first
+        };
+        let (Some(key_type), Some(key_body)) = (tokens.next(), tokens.next()) else {
+            continue;
+        };
+        let Ok(public_key) =
+            format!("{key_type} {key_body}").parse::<russh::keys::ssh_key::PublicKey>()
+        else {
+            continue;
+        };
+        let fingerprint = host_key_fingerprint(&public_key);
+        // A line may pin several hosts (comma-separated) — emit one row each.
+        for host in hosts.split(',').filter(|host| !host.is_empty()) {
+            entries.push(KnownHostEntry {
+                host: host.to_string(),
+                key_type: key_type.to_string(),
+                fingerprint: fingerprint.clone(),
+            });
+        }
+    }
+    entries
+}
+
+/// Remove the trusted key matching `host` + `fingerprint` from a `known_hosts`
+/// file (the "forget this host" action — the host reverts to first-connect).
+pub fn remove_known_host(path: &Path, host: &str, fingerprint: &str) -> Result<(), SshError> {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(SshError::KnownHosts(error.to_string())),
+    };
+    let mut kept = String::new();
+    for line in content.lines() {
+        let drop_line = parse_known_host_line(line).is_some_and(|(hosts, key)| {
+            known_host_matches(&hosts, host) && host_key_fingerprint(&key) == fingerprint
+        });
+        if !drop_line {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    fs::write(path, kept).map_err(|error| SshError::KnownHosts(error.to_string()))
+}
+
+/// The `known_hosts` file Adit records trusted host keys in.
+#[must_use]
+pub fn known_hosts_path() -> PathBuf {
+    default_known_hosts_path()
+}
+
 fn default_known_hosts_path() -> PathBuf {
     platform_config_dir().join("known_hosts")
 }
@@ -2635,6 +2718,31 @@ mod tests {
         append_known_host(&path, &spec, &key).expect("record");
         let content = fs::read_to_string(&path).expect("known_hosts");
         assert!(content.contains("[example.com]:2222 ssh-ed25519"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn lists_and_removes_trusted_host_keys() {
+        let path = temp_known_hosts_path("manage");
+        let ed = public_key(ED25519_KEY);
+        let ec = public_key(ECDSA_KEY);
+        append_known_host(&path, &known_host_spec("host-a", 22), &ed).unwrap();
+        append_known_host(&path, &known_host_spec("host-b", 2222), &ec).unwrap();
+
+        let entries = list_known_hosts(&path);
+        assert_eq!(entries.len(), 2);
+        let a = entries.iter().find(|e| e.host == "host-a").expect("host-a listed");
+        assert_eq!(a.key_type, "ssh-ed25519");
+        assert!(a.fingerprint.starts_with("SHA256:"));
+        assert!(entries.iter().any(|e| e.host == "[host-b]:2222"
+            && e.key_type == "ecdsa-sha2-nistp256"));
+
+        // Removing by (host, fingerprint) drops only that entry.
+        remove_known_host(&path, "host-a", &a.fingerprint).unwrap();
+        let after = list_known_hosts(&path);
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].host, "[host-b]:2222");
 
         let _ = fs::remove_file(path);
     }

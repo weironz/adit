@@ -2,9 +2,10 @@ use adit_domain::{
     AuthMethod, ConnectionProfile, ProfileId, Protocol, SessionId, SessionStatus, TunnelDef,
 };
 use adit_session::{
-    HostKeyPromptInfo, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionError,
-    SessionManager, SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem,
-    TransferStatus, TunnelKind, TunnelState,
+    known_hosts_path, list_known_hosts, remove_known_host, HostKeyPromptInfo, KnownHostEntry,
+    LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionError, SessionManager,
+    SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem, TransferStatus,
+    TunnelKind, TunnelState,
 };
 use adit_storage::{
     AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
@@ -176,6 +177,9 @@ pub struct AditApp {
     appearance_open: bool,
     update_dialog_open: bool,
     update_state: UpdateState,
+    /// The trusted-host-keys (known_hosts) management dialog + its loaded list.
+    known_hosts_open: bool,
+    known_hosts: Vec<KnownHostEntry>,
     /// The 选项 (config path + session-log) dialog.
     options_open: bool,
     /// The config folder in use this run (resolved at startup). Relocating it
@@ -260,6 +264,7 @@ pub enum MenuCommand {
     Tunnels,
     Logging,
     ToggleAutoReconnect,
+    KnownHosts,
     Appearance,
     Options,
     ImportSshConfig,
@@ -288,6 +293,9 @@ pub enum Message {
     ColorSchemeChanged(u8),
     OpenOptions,
     CloseOptions,
+    // Trusted-host-keys (known_hosts) management.
+    CloseKnownHosts,
+    RemoveKnownHost(String, String),
     // Relocate the configuration folder (e.g. onto a synced drive like Dropbox).
     PickConfigDir,
     ConfigDirPicked(Option<std::path::PathBuf>),
@@ -1067,6 +1075,8 @@ impl AditApp {
             appearance_open: false,
             update_dialog_open: false,
             update_state: UpdateState::Idle,
+            known_hosts_open: false,
+            known_hosts: Vec::new(),
             options_open: false,
             config_dir: adit_storage::config_dir(),
             pending_config_dir: None,
@@ -1335,6 +1345,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloseOptions => {
             app.options_open = false;
+        }
+        Message::CloseKnownHosts => {
+            app.known_hosts_open = false;
+        }
+        Message::RemoveKnownHost(host, fingerprint) => {
+            match remove_known_host(&known_hosts_path(), &host, &fingerprint) {
+                Ok(()) => {
+                    app.known_hosts = list_known_hosts(&known_hosts_path());
+                    app.notice = format!("已删除受信主机密钥: {host}");
+                }
+                Err(error) => {
+                    app.last_error = Some(format!("删除主机密钥失败: {error}"));
+                }
+            }
         }
         Message::PickConfigDir => {
             let mut dialog = rfd::AsyncFileDialog::new()
@@ -2875,6 +2899,10 @@ fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             } else {
                 String::from("自动重连已关闭")
             };
+        }
+        MenuCommand::KnownHosts => {
+            app.known_hosts = list_known_hosts(&known_hosts_path());
+            app.known_hosts_open = true;
         }
         MenuCommand::Appearance => app.appearance_open = true,
         MenuCommand::Options => app.options_open = true,
@@ -5689,6 +5717,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     if app.options_open {
         layers.push(opaque(options_dialog_overlay(app)));
     }
+    if app.known_hosts_open {
+        layers.push(opaque(known_hosts_overlay(app)));
+    }
 
     if layers.len() == 1 {
         layers.pop().unwrap()
@@ -5785,6 +5816,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("连接", MenuCommand::Connect),
             ("断开", MenuCommand::Disconnect),
             ("自动重连开关", MenuCommand::ToggleAutoReconnect),
+            ("主机密钥…", MenuCommand::KnownHosts),
             ("打开演示标签", MenuCommand::OpenMockTab),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
@@ -6751,6 +6783,84 @@ fn options_path_row<'a>(
         );
     }
     row.into()
+}
+
+/// The trusted-host-keys (known_hosts) management dialog: list each pinned
+/// `host → key type · SHA256 fingerprint` and forget individual entries.
+fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
+    let header = row![
+        text("受信主机密钥").size(15).color(primary_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseKnownHosts),
+    ]
+    .align_y(Alignment::Center);
+
+    let mut list = column![].spacing(4).width(Fill);
+    if app.known_hosts.is_empty() {
+        list = list.push(
+            text("尚无受信主机密钥（首次连接会自动信任并记录）")
+                .size(12)
+                .color(muted_text()),
+        );
+    } else {
+        for entry in &app.known_hosts {
+            let host = entry.host.clone();
+            let fingerprint = entry.fingerprint.clone();
+            list = list.push(
+                container(
+                    row![
+                        column![
+                            text(entry.host.clone()).size(12).color(primary_text()),
+                            text(format!("{} · {}", entry.key_type, entry.fingerprint))
+                                .size(10)
+                                .font(Font::MONOSPACE)
+                                .color(muted_text()),
+                        ]
+                        .spacing(1)
+                        .width(Fill),
+                        button(text("删除").size(11))
+                            .padding([3, 10])
+                            .style(|_theme, status| close_button_style(status))
+                            .on_press(Message::RemoveKnownHost(host, fingerprint)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([4, 6])
+                .style(|_theme| sftp_row_highlight(false)),
+            );
+        }
+    }
+
+    let body = column![
+        header,
+        text(known_hosts_path().display().to_string())
+            .size(10)
+            .font(Font::MONOSPACE)
+            .color(muted_text()),
+        text("删除某台主机后，下次连接会重新记录其密钥；密钥被更改（可能的中间人）时仍会拦截。")
+            .size(11)
+            .color(muted_text()),
+        scrollable(list).height(Length::Fixed(360.0)),
+    ]
+    .spacing(10);
+
+    let card = container(body)
+        .width(Length::Fixed(560.0))
+        .padding(18)
+        .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
 }
 
 fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
