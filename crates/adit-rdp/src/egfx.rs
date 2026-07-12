@@ -7,16 +7,26 @@
 //! hands us into a shared framebuffer the session loop emits as tiles.
 //!
 //! No H.264 decoder is configured, so IronRDP advertises the V8 (no-AVC)
-//! capability set and the server falls back to a codec we can decode (RemoteFX
-//! Progressive / planar / uncompressed / ClearCodec).
+//! capability set and the server falls back to **RemoteFX Progressive**
+//! (`WireToSurface2`, which IronRDP delivers via [`on_wire_to_surface2`] but does
+//! NOT decode itself). We decode it with [`ironrdp_graphics::progressive`] and
+//! composite the resulting 64×64 RGBA tiles.
+//!
+//! [`GraphicsPipelineClient`]: ironrdp_egfx::client::GraphicsPipelineClient
+//! [`on_wire_to_surface2`]: GraphicsPipelineHandler::on_wire_to_surface2
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler, Surface};
+use ironrdp_egfx::pdu::{DeleteEncodingContextPdu, WireToSurface2Pdu};
+use ironrdp_graphics::progressive::ProgressiveDecoder;
 
 /// Match the framebuffer clamp on the app side.
 const MAX_DIMENSION: u32 = 8192;
+
+/// RemoteFX Progressive tile edge, in pixels (MS-RDPRFX): tiles are 64×64.
+const TILE: usize = 64;
 
 /// The EGFX output framebuffer, written by the handler (which runs inside
 /// `ActiveStage::process`) and sampled by the session loop.
@@ -59,18 +69,49 @@ pub(crate) fn take_frame(shared: &SharedEgfx) -> Option<(u16, u16, Vec<u8>)> {
     Some((frame.width, frame.height, frame.rgba.clone()))
 }
 
+/// A server surface: where it maps onto the output, and its size.
+struct SurfaceInfo {
+    origin_x: u32,
+    origin_y: u32,
+    width: u16,
+    height: u16,
+}
+
 pub(crate) struct EgfxHandler {
     shared: SharedEgfx,
-    /// surface_id → output origin (x, y). A bitmap update targets a surface; the
-    /// surface is mapped to a position on the output.
-    origins: HashMap<u16, (u32, u32)>,
+    /// surface_id → mapping/size. A bitmap update targets a surface; the surface
+    /// is mapped to a position on the output.
+    surfaces: HashMap<u16, SurfaceInfo>,
+    /// RemoteFX Progressive decoder, keyed internally by codec-context id. Kept
+    /// across frames (progressive frames refine earlier ones).
+    progressive: ProgressiveDecoder,
 }
 
 impl EgfxHandler {
     pub(crate) fn new(shared: SharedEgfx) -> Self {
         Self {
             shared,
-            origins: HashMap::new(),
+            surfaces: HashMap::new(),
+            progressive: ProgressiveDecoder::new(),
+        }
+    }
+
+    /// Composite a 64×64 RGBA tile at output pixel (`px`, `py`), clamped to the
+    /// framebuffer (edge tiles overhang a surface whose size isn't a multiple of 64).
+    fn blit_tile(frame: &mut EgfxFrame, px: usize, py: usize, pixels: &[u8]) {
+        if pixels.len() < TILE * TILE * 4 {
+            return;
+        }
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if px >= fw || py >= fh {
+            return;
+        }
+        let cols = TILE.min(fw - px);
+        let rows = TILE.min(fh - py);
+        for row in 0..rows {
+            let dst = ((py + row) * fw + px) * 4;
+            let src = row * TILE * 4;
+            frame.rgba[dst..dst + cols * 4].copy_from_slice(&pixels[src..src + cols * 4]);
         }
     }
 }
@@ -85,34 +126,46 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_created(&mut self, surface: &Surface) {
-        if surface.is_mapped {
-            self.origins
-                .insert(surface.id, (surface.output_origin_x, surface.output_origin_y));
-        }
+        self.surfaces.insert(
+            surface.id,
+            SurfaceInfo {
+                origin_x: surface.output_origin_x,
+                origin_y: surface.output_origin_y,
+                width: surface.width,
+                height: surface.height,
+            },
+        );
     }
 
     fn on_surface_mapped(&mut self, surface_id: u16, origin_x: u32, origin_y: u32) {
-        self.origins.insert(surface_id, (origin_x, origin_y));
+        if let Some(surface) = self.surfaces.get_mut(&surface_id) {
+            surface.origin_x = origin_x;
+            surface.origin_y = origin_y;
+        }
     }
 
     fn on_surface_deleted(&mut self, surface_id: u16) {
-        self.origins.remove(&surface_id);
+        self.surfaces.remove(&surface_id);
     }
 
+    /// `WireToSurface1` path (uncompressed / H.264): IronRDP hands us already-decoded
+    /// RGBA. (No H.264 decoder is configured, so in practice this fires only for
+    /// uncompressed updates.)
     fn on_bitmap_updated(&mut self, update: &BitmapUpdate) {
         if update.data.is_empty() {
-            // No decoded pixels for this codec/command — nothing to composite.
-            tracing::debug!(surface_id = update.surface_id, "EGFX bitmap update with no decoded data");
-            return;
+            return; // decode skipped (no decoder for this codec)
         }
-        let (ox, oy) = self.origins.get(&update.surface_id).copied().unwrap_or((0, 0));
+        let (ox, oy) = self
+            .surfaces
+            .get(&update.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+            .unwrap_or((0, 0));
         let dst_x = (ox + u32::from(update.destination_rectangle.left)) as usize;
         let dst_y = (oy + u32::from(update.destination_rectangle.top)) as usize;
         let (tw, th) = (usize::from(update.width), usize::from(update.height));
 
         if let Ok(mut frame) = self.shared.lock() {
             let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
-            // Drop anything out of bounds or short of the declared size.
             if tw == 0
                 || th == 0
                 || dst_x + tw > fw
@@ -128,6 +181,48 @@ impl GraphicsPipelineHandler for EgfxHandler {
             }
             frame.dirty = true;
         }
+    }
+
+    /// `WireToSurface2` path: RemoteFX Progressive. IronRDP delivers the raw
+    /// progressive stream here without decoding it (it only decodes H.264), so we
+    /// decode it ourselves and composite the 64×64 tiles. This is what GNOME
+    /// Remote Desktop uses — without it the desktop renders solid black.
+    fn on_wire_to_surface2(&mut self, pdu: &WireToSurface2Pdu) {
+        let Some((sw, sh, ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.width, s.height, s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+
+        let tiles =
+            match self
+                .progressive
+                .decode_bitmap(pdu.codec_context_id, sw, sh, &pdu.bitmap_data)
+            {
+                Ok(tiles) => tiles,
+                Err(error) => {
+                    tracing::warn!("EGFX progressive decode failed: {error}");
+                    return;
+                }
+            };
+        if tiles.is_empty() {
+            return;
+        }
+
+        if let Ok(mut frame) = self.shared.lock() {
+            for tile in &tiles {
+                let px = ox as usize + usize::from(tile.x_idx) * TILE;
+                let py = oy as usize + usize::from(tile.y_idx) * TILE;
+                Self::blit_tile(&mut frame, px, py, &tile.pixels);
+            }
+            frame.dirty = true;
+        }
+    }
+
+    fn on_delete_encoding_context(&mut self, pdu: &DeleteEncodingContextPdu) {
+        self.progressive.delete_context(pdu.codec_context_id);
     }
 
     fn on_frame_complete(&mut self, _frame_id: u32) {
