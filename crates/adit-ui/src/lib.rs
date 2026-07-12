@@ -9558,7 +9558,7 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 ));
             }
             form = form.push(dialog_field(
-                "密钥文件（可选）",
+                "密钥文件（可选，支持 OpenSSH 与 PuTTY .ppk）",
                 row![
                     text_input("~/.ssh/id_ed25519", &app.profile_identity_file)
                         .on_input(Message::ProfileIdentityFileChanged)

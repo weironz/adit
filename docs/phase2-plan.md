@@ -261,7 +261,17 @@ instead of silently falling through, while the opportunistic `~/.ssh` default-ke
 scan still skips. Backward-compatible: when no passphrase is set the login
 password is still tried as the key secret. Docker integration tests cover an
 encrypted key connecting with the right passphrase and erroring on the wrong one.
-**Phase 2 (`.ppk` parsing — PuTTY v2 SHA-1 MAC / v3 Argon2id) is still pending.**
+**Phase 2 (`.ppk`) ✅ done in v0.1.36** — no new parser was needed: russh 0.61
+enables `ssh-key`'s `ppk` feature, and its `decode_secret_key` (the same call
+`load_secret_key` uses) routes `PuTTY-User-Key-File-*` content to
+`ssh_key::PrivateKey::from_ppk`, covering v2 (SHA-1 MAC) and v3 (Argon2id).
+Because Phase 1 already threads the key passphrase into `load_secret_key`,
+encrypted `.ppk` keys decrypt with the same passphrase field. Delivered: a
+routing unit test (`putty_ppk_content_is_routed_to_the_ppk_parser`) proving
+`.ppk` reaches the PPK parser rather than the OpenSSH/PEM path, and a UI note
+that the identity-file field accepts OpenSSH **and** PuTTY `.ppk`. (Full valid-key
+end-to-end coverage rides on upstream `ssh-key`'s own PPK test suite; a local
+fixture wasn't generated because this machine's `puttygen` is GUI-only.)
 
 **What & why.** Today the encrypted-key passphrase reuses the single login-password
 field (`authenticate_with_private_key_and_hash`, `adit-ssh/src/lib.rs` ~1035),

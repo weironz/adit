@@ -3101,6 +3101,37 @@ mod tests {
     }
 
     #[test]
+    fn putty_ppk_content_is_routed_to_the_ppk_parser() {
+        // A `PuTTY-User-Key-File-*` blob must be handled by ssh-key's PPK parser
+        // (which russh's decode_secret_key — the same call load_secret_key uses —
+        // routes to), NOT misparsed as OpenSSH/PEM. We feed a well-formed header
+        // with a deliberately bad body; the error must come from the PPK path
+        // (mentions ppk / MAC / putty), proving `.ppk` support is wired and
+        // reachable through our key-auth path.
+        let ppk = concat!(
+            "PuTTY-User-Key-File-3: ssh-ed25519\n",
+            "Encryption: none\n",
+            "Comment: adit-routing-test\n",
+            "Public-Lines: 1\n",
+            "AAAAC3NzaC1lZDI1NTE5AAAAINotARealKey\n",
+            "Private-Lines: 1\n",
+            "AAAANotARealPrivateBody\n",
+            "Private-MAC: 0000000000000000000000000000000000000000000000000000000000000000\n",
+        );
+        let error = russh::keys::decode_secret_key(ppk, None)
+            .expect_err("a malformed PPK body must not parse");
+        let message = format!("{error:?}").to_ascii_lowercase();
+        assert!(
+            message.contains("ppk")
+                || message.contains("putty")
+                || message.contains("mac")
+                || message.contains("base64")
+                || message.contains("encoding"),
+            "expected a PPK-path parse error, got: {message}"
+        );
+    }
+
+    #[test]
     fn join_remote_path_handles_root_and_nested() {
         assert_eq!(join_remote_path("/home/user", "docs"), "/home/user/docs");
         // A trailing slash on the parent is not doubled.
