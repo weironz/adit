@@ -229,6 +229,21 @@ In rough chronological order — each wall and its root cause.
    is correct and robust (RDSTLS is strictly request/response, so nothing else is on the
    wire between them).
 
+9. **App-side: connecting RDP aborted the whole app, silently (v0.1.41).**
+   *Symptom:* the window vanished on connect — no error dialog, nothing in `crash.log`.
+   *Diagnosis:* the empty crash.log is the tell — Adit's panic hook can't run for an
+   `abort()`/guard-page fault. The **Windows Application event log** (Windows Error
+   Reporting / Application Error) gave the real cause: exception `0xC00000FD`
+   (`STATUS_STACK_OVERFLOW`) on the main thread. *Root cause:* the main thread reserves
+   only **1 MiB** of stack on Windows (the PE default; Rust doesn't enlarge the main
+   thread), and iced runs its recursive layout/draw + wgpu on it. Rendering the RDP image
+   surface inside a deep widget tree spikes past 1 MiB. Flaky because it's tree-depth /
+   transient-path dependent (steady-state render survives even a 256 KiB stack).
+   *Fix (v0.1.42):* `crates/adit-app/build.rs` passes `/STACK:33554432` to the MSVC linker
+   → 32 MiB main-thread reserve (virtual only). Validated: 1 MiB overflows a ~1.5 MiB-deep
+   call, 32 MiB survives. Not RDP-protocol-specific, but the RDP surface is the deep render
+   that triggered it. See the memory note `adit-windows-stack-overflow-crash`.
+
 ---
 
 ## 7. How to reproduce / smoke-test
