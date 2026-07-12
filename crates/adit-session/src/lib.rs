@@ -797,8 +797,9 @@ impl SessionManager {
                     self.auto_accept_host_keys,
                 )?;
                 let endpoint = profile.endpoint();
-                let mut terminal = live_shell_terminal(&profile.name, &endpoint, size);
-                terminal.append_status(format!("connecting to {endpoint}"));
+                // The terminal stays clean on connect — connection progress shows
+                // in the tab status dot and the title bar, not the scrollback.
+                let terminal = live_shell_terminal(&profile.name, &endpoint, size);
                 (
                     live,
                     endpoint,
@@ -1982,7 +1983,11 @@ impl SessionManager {
 
                 match event {
                     LiveShellEvent::Status(status) => {
-                        record.terminal.append_status(&status);
+                        // Connection-progress statuses (connecting / host key /
+                        // authenticating / opening pty / connected) drive the
+                        // session state machine but are NOT printed to the
+                        // terminal — they only cluttered the scrollback. Failures
+                        // still surface via LiveShellEvent::Error below.
                         if status == "connected" {
                             record.summary.status = SessionStatus::Connected;
                             if let Some(reconnect) = &mut record.reconnect {
