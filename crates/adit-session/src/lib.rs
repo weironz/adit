@@ -1101,6 +1101,47 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Manually reconnect a session that is currently disconnected, reusing its
+    /// stored credentials. A no-op if the session is still live, or for protocols
+    /// that don't carry reconnect state (only SSH sessions do — `attempt_reconnect`
+    /// spawns an SSH shell, so it must not run for a local shell/serial tab).
+    pub fn reconnect(&mut self, session_id: SessionId) -> Result<(), SessionError> {
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+        if record.live.is_some() || record.reconnect.is_none() {
+            return Ok(());
+        }
+        if let Some(reconnect) = &mut record.reconnect {
+            reconnect.manual = false;
+            reconnect.attempts = 0;
+            reconnect.retry_at = None;
+        }
+        record.terminal.append_status("manual reconnect requested");
+        self.attempt_reconnect(session_id);
+        Ok(())
+    }
+
+    /// Open a second session for the same profile as `session_id`, reusing that
+    /// session's own stored credentials (so cloning works even when nothing is
+    /// saved in the vault). Returns the new session's id.
+    pub fn clone_session(&mut self, session_id: SessionId) -> Result<SessionId, SessionError> {
+        let (profile_id, password, passphrase) = {
+            let record = self
+                .sessions
+                .get(&session_id)
+                .ok_or(SessionError::SessionNotFound)?;
+            let (password, passphrase) = record
+                .reconnect
+                .as_ref()
+                .map(|rc| (rc.password.clone(), rc.passphrase.clone()))
+                .unwrap_or_default();
+            (record.summary.profile_id, password, passphrase)
+        };
+        self.open_live_ssh_session(profile_id, password, passphrase)
+    }
+
     pub fn send_input_to_active(&mut self, input: impl Into<String>) -> Result<(), SessionError> {
         let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
         let record = self

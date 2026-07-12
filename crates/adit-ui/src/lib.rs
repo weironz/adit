@@ -92,6 +92,8 @@ pub struct AditApp {
     editing_profile: Option<ProfileId>,
     profile_name_draft: String,
     profile_context_menu: Option<ProfileId>,
+    /// The session tab whose right-click context menu is open.
+    tab_context_menu: Option<SessionId>,
     profile_editor: Option<ProfileId>,
     connection_dialog: Option<ConnectionDialog>,
     // Folders in user-arrangeable order (top-level tree order); a session may be
@@ -356,6 +358,9 @@ pub enum Message {
     ShowProfileContextMenu(ProfileId),
     HideProfileContextMenu,
     SidebarCursorMoved(Point),
+    /// Window-absolute cursor position, tracked globally so context menus (e.g.
+    /// the tab menu, whose strip has no local tracker) anchor at the pointer.
+    GlobalCursorMoved(Point),
     // Inline session rename (edits the name in the sidebar row, no popup).
     RenameProfileFromContext(ProfileId),
     ProfileNameDraftChanged(String),
@@ -491,6 +496,11 @@ pub enum Message {
     TabReleased,
     CloseSession(SessionId),
     RenameSessionPrompt(SessionId),
+    ShowTabContextMenu(SessionId),
+    HideTabContextMenu,
+    DisconnectSession(SessionId),
+    ReconnectSession(SessionId),
+    CloneSessionFromTab(SessionId),
     SessionRenameChanged(String),
     ConfirmRenameSession,
     CancelRenameSession,
@@ -1027,6 +1037,7 @@ impl AditApp {
             editing_profile: None,
             profile_name_draft: String::new(),
             profile_context_menu: None,
+            tab_context_menu: None,
             profile_editor: None,
             connection_dialog: None,
             groups,
@@ -1306,6 +1317,11 @@ fn runtime_event(
             width: size.width,
             height: size.height,
         }),
+        // Window-absolute cursor for context-menu anchoring (the tab strip has no
+        // local move tracker of its own).
+        event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+            Some(Message::GlobalCursorMoved(position))
+        }
         event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             if status == event::Status::Ignored =>
         {
@@ -1720,6 +1736,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::HideProfileContextMenu => {
             app.profile_context_menu = None;
+        }
+        Message::GlobalCursorMoved(point) => {
+            // Already window-absolute; keeps the anchor fresh over widgets (like
+            // the tab strip) that don't report their own cursor moves.
+            app.cursor_pos = point;
         }
         Message::SidebarCursorMoved(point) => {
             // `point` is sidebar-relative; the context-menu anchor wants it in
@@ -2577,6 +2598,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.dragged_tab = None;
         }
         Message::CloseSession(session_id) => {
+            app.tab_context_menu = None;
             app.manager.close(session_id);
             app.terminal_scroll_offset = 0;
             app.terminal_selection = None;
@@ -2584,6 +2606,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.notice = String::from("标签已关闭");
         }
         Message::RenameSessionPrompt(session_id) => {
+            app.tab_context_menu = None;
             let current = app
                 .manager
                 .session_summary(session_id)
@@ -2592,6 +2615,48 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.session_rename_draft = current;
             app.renaming_session = Some(session_id);
             app.terminal_focused = false;
+        }
+        Message::ShowTabContextMenu(session_id) => {
+            // Anchor the floating menu at the cursor (last tracked position).
+            app.context_menu_pos = app.cursor_pos;
+            app.tab_context_menu = Some(session_id);
+            app.profile_context_menu = None;
+            app.group_context_menu = None;
+            app.terminal_context_menu = false;
+        }
+        Message::HideTabContextMenu => {
+            app.tab_context_menu = None;
+        }
+        Message::DisconnectSession(session_id) => {
+            app.tab_context_menu = None;
+            if let Err(error) = app.manager.disconnect(session_id) {
+                app.last_error = Some(error.to_string());
+            } else {
+                app.notice = String::from("已断开连接");
+            }
+        }
+        Message::ReconnectSession(session_id) => {
+            app.tab_context_menu = None;
+            if let Err(error) = app.manager.reconnect(session_id) {
+                app.last_error = Some(error.to_string());
+            } else {
+                sync_terminal_size(app);
+                app.notice = String::from("正在重新连接…");
+            }
+        }
+        Message::CloneSessionFromTab(session_id) => {
+            app.tab_context_menu = None;
+            match app.manager.clone_session(session_id) {
+                Ok(_) => {
+                    app.terminal_focused = true;
+                    app.terminal_scroll_offset = 0;
+                    app.terminal_selection = None;
+                    app.terminal_context_menu = false;
+                    sync_terminal_size(app);
+                    app.notice = String::from("已克隆会话");
+                }
+                Err(error) => app.last_error = Some(error.to_string()),
+            }
         }
         Message::SessionRenameChanged(value) => {
             app.session_rename_draft = value;
@@ -5917,6 +5982,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     }
     if let Some(profile_id) = app.profile_context_menu {
         layers.push(opaque(profile_context_overlay(app, profile_id)));
+    }
+    if let Some(session_id) = app.tab_context_menu {
+        layers.push(opaque(tab_context_overlay(app, session_id)));
     }
     if let Some(group) = app.group_context_menu.clone() {
         let collapsed = app.collapsed_groups.contains(&group);
@@ -9305,6 +9373,45 @@ fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, 
     )
 }
 
+fn tab_context_overlay(app: &AditApp, session_id: SessionId) -> Element<'_, Message> {
+    // Connected sessions can be disconnected; already-disconnected ones offer a
+    // reconnect instead.
+    let connected = app.manager.session_summary(session_id).is_some_and(|s| {
+        matches!(
+            s.status,
+            SessionStatus::Connected | SessionStatus::Connecting
+        )
+    });
+    floating_context_menu(
+        app,
+        tab_context_menu(session_id, connected),
+        Message::HideTabContextMenu,
+    )
+}
+
+/// The session-tab right-click menu card (rename / (dis)connect / clone / close).
+fn tab_context_menu(session_id: SessionId, connected: bool) -> Element<'static, Message> {
+    let connection_item = if connected {
+        profile_menu_item("断开连接", Message::DisconnectSession(session_id), false)
+    } else {
+        profile_menu_item("重新连接", Message::ReconnectSession(session_id), false)
+    };
+    container(
+        column![
+            profile_menu_item("重命名", Message::RenameSessionPrompt(session_id), false),
+            connection_item,
+            profile_menu_item("克隆会话", Message::CloneSessionFromTab(session_id), false),
+            profile_menu_divider(),
+            profile_menu_item("关闭", Message::CloseSession(session_id), true),
+        ]
+        .spacing(1),
+    )
+    .padding(4)
+    .width(Length::Fixed(PROFILE_MENU_WIDTH))
+    .style(|_theme| profile_context_menu_style())
+    .into()
+}
+
 fn terminal_context_overlay(app: &AditApp) -> Element<'_, Message> {
     floating_context_menu(
         app,
@@ -10190,7 +10297,7 @@ fn tab_button(
     .on_press(Message::TabPressed(id))
     .on_release(Message::TabReleased)
     .on_enter(Message::TabDragOver(id))
-    .on_right_press(Message::RenameSessionPrompt(id))
+    .on_right_press(Message::ShowTabContextMenu(id))
     .interaction(mouse::Interaction::Pointer)
     .into()
 }
