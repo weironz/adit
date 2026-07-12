@@ -25,6 +25,9 @@ pub enum CredentialError {
 #[derive(Debug, Clone)]
 pub struct ProfileStore {
     path: PathBuf,
+    // Lazily-spawned background writer for non-blocking saves. Shared across
+    // clones so there is a single writer thread per store path.
+    writer: std::sync::Arc<std::sync::OnceLock<std::sync::mpsc::Sender<String>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -56,7 +59,10 @@ impl ProfileCatalog {
 impl ProfileStore {
     #[must_use]
     pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+        Self {
+            path: path.into(),
+            writer: std::sync::Arc::new(std::sync::OnceLock::new()),
+        }
     }
 
     #[must_use]
@@ -104,6 +110,52 @@ impl ProfileStore {
         };
         let content = serde_json::to_string_pretty(&document)?;
         fs::write(&self.path, content)?;
+
+        Ok(())
+    }
+
+    /// Persist the catalog WITHOUT blocking the caller. Serialization runs on the
+    /// caller (fast, in-memory); the disk write is handed to a dedicated
+    /// background thread. `fs::write` can block for seconds on antivirus real-time
+    /// scanning, a cloud-synced folder, or a file lock, and the caller is usually
+    /// the UI thread — blocking it there shows up as "Not Responding" (this was a
+    /// real RDP-connect freeze: `connect_profile` → `save_profile_from_form` →
+    /// here). Writes are coalesced (only the newest queued catalog is written) and
+    /// atomic (temp file + rename), so a slow write never leaves a truncated file.
+    pub fn save_catalog_async(&self, catalog: &ProfileCatalog) -> Result<(), StorageError> {
+        let groups = normalize_groups(catalog.groups.clone(), &catalog.profiles);
+        let document = StoredProfiles {
+            version: 2,
+            groups,
+            profiles: catalog.profiles.clone(),
+        };
+        let content = serde_json::to_string_pretty(&document)?;
+
+        let tx = self.writer.get_or_init(|| {
+            let (tx, rx) = std::sync::mpsc::channel::<String>();
+            let path = self.path.clone();
+            let _ = std::thread::Builder::new()
+                .name("adit-profile-writer".into())
+                .spawn(move || {
+                    while let Ok(mut content) = rx.recv() {
+                        // Coalesce a burst of saves: keep only the latest catalog.
+                        while let Ok(newer) = rx.try_recv() {
+                            content = newer;
+                        }
+                        if let Some(parent) = path.parent() {
+                            let _ = fs::create_dir_all(parent);
+                        }
+                        let mut tmp = path.clone().into_os_string();
+                        tmp.push(".tmp");
+                        let tmp = PathBuf::from(tmp);
+                        if fs::write(&tmp, content.as_bytes()).is_ok() {
+                            let _ = fs::rename(&tmp, &path);
+                        }
+                    }
+                });
+            tx
+        });
+        let _ = tx.send(content);
 
         Ok(())
     }

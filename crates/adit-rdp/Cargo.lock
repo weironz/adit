@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "adit-rdp"
-version = "0.1.43"
+version = "0.1.44"
 dependencies = [
  "adit-rdp-proto",
  "ironrdp-async",
@@ -45,7 +45,7 @@ dependencies = [
 
 [[package]]
 name = "adit-rdp-proto"
-version = "0.1.43"
+version = "0.1.44"
 dependencies = [
  "bincode",
  "serde",

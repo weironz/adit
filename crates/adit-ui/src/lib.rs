@@ -4250,7 +4250,12 @@ fn import_ssh_config(app: &mut AditApp) {
 fn persist_profiles(app: &mut AditApp) -> bool {
     let catalog = ProfileCatalog::new(app.groups.to_vec(), app.manager.profiles().to_vec());
 
-    match app.profile_store.save_catalog(&catalog) {
+    // Write on a background thread: the profiles.json disk write can block for
+    // seconds (antivirus scan / synced folder / lock), and this runs on the UI
+    // thread — a synchronous write froze the whole app on RDP connect
+    // (`connect_profile` → `save_profile_from_form` → here). Only serialization
+    // (fast, in-memory) stays on the caller and can still surface an error.
+    match app.profile_store.save_catalog_async(&catalog) {
         Ok(()) => true,
         Err(error) => {
             app.last_error = Some(format!("保存会话配置失败: {error}"));
@@ -4512,9 +4517,14 @@ fn open_connection_dialog(app: &mut AditApp) {
         return;
     };
 
-    // Only SSH uses the password dialog; other protocols connect directly (or
-    // launch externally, for RDP).
-    if profile.protocol != Protocol::Ssh {
+    // SSH and RDP both need the password dialog (RDP uses NLA). Only the
+    // credential-free protocols (local shell, serial) connect directly here.
+    //
+    // RDP used to fall into this `connect_profile` branch: when no password was
+    // stored, `connect_profile` called back into `open_connection_dialog`, which
+    // called `connect_profile` again — unbounded mutual recursion that froze the
+    // UI ("Not Responding"), or overflowed the stack outright on smaller stacks.
+    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp) {
         connect_profile(app);
         return;
     }
