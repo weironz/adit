@@ -14,6 +14,11 @@ single vendored crate. This file is the map. When IronRDP grows native support
 (tracking issues below), delete the corresponding piece and switch back to the
 crates.io connector.
 
+> For the **design + pitfalls narrative** (the connection flow, wire details, and
+> the debugging journey behind these patches), see
+> [`docs/rdp-gnome-remote-desktop.md`](../../docs/rdp-gnome-remote-desktop.md).
+> This file is the mechanical patch reference; that one is the "why".
+
 ## What lives where
 
 ### Additive (no upstream changes) — `crates/adit-rdp/src/`
