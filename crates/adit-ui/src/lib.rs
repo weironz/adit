@@ -187,6 +187,11 @@ pub struct AditApp {
     rdp_image: Option<iced::widget::image::Handle>,
     rdp_frame_generation: u64,
     rdp_surface_size: Option<(u16, u16)>,
+    // The remote desktop size we last *asked* for (viewport pixels). Sizing the
+    // remote to the on-screen area renders it 1:1 instead of upscaling a fixed
+    // 1280×720 surface (which looked blurry). Deduped so a resize is only sent
+    // when the target actually changes.
+    rdp_target_size: Option<(u16, u16)>,
     // Which session `rdp_image`/`rdp_surface_size`/`rdp_frame_generation` belong
     // to. Each RDP session has its own generation counter, so on a tab switch the
     // cache must be invalidated — otherwise we'd render one host's frame under
@@ -1129,6 +1134,7 @@ impl AditApp {
             rdp_image: None,
             rdp_frame_generation: 0,
             rdp_surface_size: None,
+            rdp_target_size: None,
             rdp_frame_session: None,
             modifiers: keyboard::Modifiers::empty(),
             window_width,
@@ -1393,6 +1399,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_frame_generation = 0;
                 app.rdp_image = None;
                 app.rdp_surface_size = None;
+                // Different session ⇒ forget the requested size so the next layout
+                // sync re-asserts the viewport for the newly-active desktop.
+                app.rdp_target_size = None;
             }
             // Sample the active RDP framebuffer; rebuild the GPU image handle only
             // when the helper produced a new generation.
@@ -2775,8 +2784,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         .flatten();
                     match stored {
                         Some(password) => {
-                            match app.manager.open_live_rdp_session(profile_id, password, 0, 0) {
+                            let (rw, rh) = rdp_viewport_size(app);
+                            match app.manager.open_live_rdp_session(profile_id, password, rw, rh) {
                                 Ok(_) => {
+                                    app.rdp_target_size = (rw > 0).then_some((rw, rh));
                                     app.terminal_focused = true;
                                     app.rdp_frame_generation = 0;
                                     app.last_error = None;
@@ -4434,8 +4445,10 @@ fn connect_profile(app: &mut AditApp) {
             open_connection_dialog(app);
             return;
         };
-        match app.manager.open_live_rdp_session(profile_id, password, 0, 0) {
+        let (rw, rh) = rdp_viewport_size(app);
+        match app.manager.open_live_rdp_session(profile_id, password, rw, rh) {
             Ok(_) => {
+                app.rdp_target_size = (rw > 0).then_some((rw, rh));
                 app.connection_dialog = None;
                 app.password.clear();
                 app.remember_connection_password = false;
@@ -4577,11 +4590,13 @@ fn confirm_connection(app: &mut AditApp) {
         app.manager.profile(dialog.profile_id).map(|p| p.protocol) == Some(Protocol::Rdp);
     if is_rdp {
         let credential_warning = sync_connection_password(app, dialog.profile_id).err();
+        let (rw, rh) = rdp_viewport_size(app);
         match app
             .manager
-            .open_live_rdp_session(dialog.profile_id, app.password.clone(), 0, 0)
+            .open_live_rdp_session(dialog.profile_id, app.password.clone(), rw, rh)
         {
             Ok(_) => {
+                app.rdp_target_size = (rw > 0).then_some((rw, rh));
                 app.connection_dialog = None;
                 app.password.clear();
                 app.remember_connection_password = false;
@@ -5793,6 +5808,41 @@ fn terminal_region_area(width: f32, height: f32, sidebar_width: f32) -> (f32, f3
     (region_width, region_height)
 }
 
+/// The RDP remote-desktop size to request: the on-screen surface area, so the
+/// framebuffer maps ~1:1 to the widget instead of being upscaled from a fixed
+/// 1280×720 (which blurs). Rounded to even dimensions (RDP dislikes odd) and
+/// clamped to sane bounds. Returns 0×0 when there's no room yet (caller falls
+/// back to the helper's default).
+fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
+    let sidebar = if app.sidebar_visible { app.sidebar_width } else { 0.0 };
+    let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar);
+    // Round down to a multiple of 4 — some RDP servers reject odd/non-aligned
+    // desktop dimensions.
+    let align4 = |v: f32| ((v.round() as i32).clamp(0, 8192) as u16) & !3;
+    let (w, h) = (align4(w), align4(h));
+    // Below the RDP minimum (200×200) there's effectively no viewport; signal
+    // "use default" with 0×0 rather than requesting a degenerate desktop.
+    if w < 200 || h < 200 {
+        (0, 0)
+    } else {
+        (w, h)
+    }
+}
+
+/// After a layout change, ask the active RDP desktop to match the viewport, but
+/// only when the target actually changed (window/sidebar drags fire continuously).
+fn maybe_resize_active_rdp(app: &mut AditApp) {
+    if !app.manager.active_rdp_live() {
+        return;
+    }
+    let (w, h) = rdp_viewport_size(app);
+    if w == 0 || h == 0 || app.rdp_target_size == Some((w, h)) {
+        return;
+    }
+    app.rdp_target_size = Some((w, h));
+    app.manager.resize_active_rdp(w, h);
+}
+
 /// Cols/rows that fit in a single pane's *inner* pixel area (after its own
 /// padding + header have already been removed by the caller).
 fn terminal_size_for_area(inner_width: f32, inner_height: f32) -> TerminalSize {
@@ -5933,6 +5983,10 @@ fn step_font_size(app: &mut AditApp, delta: i32) {
 }
 
 fn sync_terminal_size(app: &mut AditApp) {
+    // An RDP desktop tracks the viewport in pixels, which can change even when the
+    // terminal's cols/rows (below) don't — so do this before the grid early-return.
+    maybe_resize_active_rdp(app);
+
     let layout = pane_layout(app);
     let target = layout.pane_terminal_size();
 
@@ -10355,6 +10409,10 @@ fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         let picture = iced::widget::image(handle)
             .width(Fill)
             .height(Fill)
+            // The remote desktop is sized to this viewport (see `rdp_viewport_size`),
+            // so it maps ~1:1; nearest-neighbour keeps text crisp and avoids the
+            // blur that bilinear scaling of a fixed 1280×720 surface produced.
+            .filter_method(iced::widget::image::FilterMethod::Nearest)
             .content_fit(iced::ContentFit::Contain);
 
         mouse_area(picture)

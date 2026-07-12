@@ -311,6 +311,9 @@ async fn active_session(
     // call, which would otherwise busy-loop the whole session and re-send shutdown
     // PDUs until the server happens to close the TCP connection.
     let mut input_open = true;
+    // Latches once the EGFX pipeline paints; from then on the legacy `image` is
+    // not the display surface and must never be emitted (it would flash black).
+    let mut egfx_active = false;
 
     'session: loop {
         let outputs = tokio::select! {
@@ -404,17 +407,30 @@ async fn active_session(
                     let mut connection_activation = activation_factory.create();
                     let mut buf = WriteBuf::new();
                     'activation: loop {
-                        let written = single_sequence_step_read(
+                        // Tolerate a failed reactivation step rather than tearing the
+                        // whole session down: GNOME interleaves stray PDUs into the
+                        // reactivation sequence that `single_sequence_step_read` can't
+                        // decode, and for an EGFX session the graphics keep flowing on
+                        // the shared buffer regardless of the legacy `image`. Abandon
+                        // the reactivation and keep the session alive.
+                        let written = match single_sequence_step_read(
                             &mut reader,
                             &mut connection_activation,
                             &mut buf,
                         )
                         .await
-                        .map_err(|e| ironrdp_session::custom_err!("reactivation step", e))?;
+                        {
+                            Ok(w) => w,
+                            Err(error) => {
+                                tracing::warn!("abandoning reactivation, keeping session: {error}");
+                                break 'activation;
+                            }
+                        };
                         if written.size().is_some() {
-                            writer.write_all(buf.filled()).await.map_err(|e| {
-                                ironrdp_session::custom_err!("write reactivation", e)
-                            })?;
+                            if let Err(error) = writer.write_all(buf.filled()).await {
+                                tracing::warn!("reactivation write failed, keeping session: {error}");
+                                break 'activation;
+                            }
                         }
                         if let ConnectionActivationState::Finalized {
                             desktop_size,
@@ -461,7 +477,13 @@ async fn active_session(
             }
         }
 
-        if dirty && host_tx.send(full_frame_tile(&image)).is_err() {
+        // Emit the legacy DecodedImage only for legacy-bitmap servers. Once the
+        // EGFX pipeline has produced a frame, `image` is NOT the display surface
+        // (GNOME/modern Windows paint via EGFX into the shared buffer, leaving
+        // `image` black apart from a software cursor); emitting it would flash a
+        // black frame over the real content — including right after a
+        // Deactivation-Reactivation, which rebuilds `image` empty.
+        if dirty && !egfx_active && host_tx.send(full_frame_tile(&image)).is_err() {
             // The app stopped listening; end the session.
             break 'session;
         }
@@ -470,6 +492,7 @@ async fn active_session(
         // buffer by the pipeline handler that just ran inside `process`; emit them
         // as tiles, preceded by a Resized if the graphics output size changed.
         if let Some((width, height, rgba)) = egfx::take_frame(egfx) {
+            egfx_active = true;
             if (width, height) != egfx_size {
                 egfx_size = (width, height);
                 if host_tx

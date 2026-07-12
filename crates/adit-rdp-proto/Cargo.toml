@@ -4,7 +4,7 @@ name = "adit-rdp-proto"
 # Concrete metadata (not workspace-inherited): this crate is a member of the main
 # workspace but is ALSO a path dependency of the standalone `adit-rdp` workspace,
 # so it must resolve without depending on either workspace's inheritance.
-version = "0.1.48"
+version = "0.1.49"
 edition = "2021"
 authors = ["Adit"]
 license = "MIT"
@@ -12,3 +12,6 @@ license = "MIT"
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 bincode = "1.3"
+
+[dev-dependencies]
+image = { version = "0.25", default-features = false, features = ["png"] }

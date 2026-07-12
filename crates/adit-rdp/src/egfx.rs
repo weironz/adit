@@ -121,7 +121,12 @@ impl GraphicsPipelineHandler for EgfxHandler {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;
         if let Ok(mut frame) = self.shared.lock() {
-            frame.resize(w, h);
+            // Only reallocate (which zeroes) on an actual size change. GNOME sends
+            // RESET_GRAPHICS immediately before repainting; zeroing every time would
+            // flash the surface black in the gap before the first new tile lands.
+            if frame.width != w || frame.height != h || frame.rgba.is_empty() {
+                frame.resize(w, h);
+            }
         }
     }
 
