@@ -90,7 +90,10 @@ pub struct RdpClientHandle {
     cmd_tx: std_mpsc::Sender<ClientMsg>,
     event_rx: std_mpsc::Receiver<RdpClientEvent>,
     surface: Arc<Mutex<Surface>>,
-    child: Arc<Mutex<Child>>,
+    // Populated asynchronously: the helper is spawned on a background thread so the
+    // UI thread never blocks on `Command::spawn` (see `spawn_rdp_session`). `None`
+    // until the spawn completes.
+    child: Arc<Mutex<Option<Child>>>,
 }
 
 impl RdpClientHandle {
@@ -139,21 +142,33 @@ impl Drop for RdpClientHandle {
         // race ahead of the `Close` even reaching the helper's stdin, so we reap on
         // a background thread with a short grace window — and still guarantee no
         // leaked process if the helper hangs.
+        //
+        // Dropping `cmd_tx` also closes the writer thread's channel, which drops the
+        // helper's stdin; the helper sees EOF and shuts down. That covers the rare
+        // case where the handle is dropped before the async spawn even produced a
+        // `Child` (nothing to kill yet) — the helper still exits on its own.
         let _ = self.cmd_tx.send(ClientMsg::Close);
         let child = Arc::clone(&self.child);
         let _ = thread::Builder::new()
             .name("adit-rdp-client-reap".into())
             .spawn(move || {
-                for _ in 0..40 {
-                    // Exited gracefully?
-                    if let Ok(Ok(Some(_))) = child.lock().map(|mut c| c.try_wait()) {
-                        return;
+                // Wait up to ~10s: first for the spawn to produce a Child, then for
+                // it to exit gracefully; force-kill if it overstays.
+                for _ in 0..400 {
+                    if let Ok(mut guard) = child.lock() {
+                        if let Some(c) = guard.as_mut() {
+                            if let Ok(Some(_)) = c.try_wait() {
+                                return; // exited on its own
+                            }
+                        }
                     }
                     std::thread::sleep(std::time::Duration::from_millis(25));
                 }
-                if let Ok(mut c) = child.lock() {
-                    let _ = c.kill();
-                    let _ = c.wait();
+                if let Ok(mut guard) = child.lock() {
+                    if let Some(c) = guard.as_mut() {
+                        let _ = c.kill();
+                        let _ = c.wait();
+                    }
                 }
             });
     }
@@ -212,48 +227,84 @@ fn no_window(_cmd: &mut Command) {}
 
 /// Spawn the helper and open an RDP session. Returns immediately; connection
 /// progress arrives as [`RdpClientEvent`]s.
+///
+/// The actual `Command::spawn` and pipe wiring happen on a **background thread**,
+/// never on the caller's (UI) thread: the first spawn of a freshly-installed,
+/// unsigned helper can block for seconds while Windows Defender scans the image,
+/// and blocking the UI thread that long makes the whole app go "Not Responding".
+/// A spawn failure surfaces as an [`RdpClientEvent::Error`] + `Closed` instead of
+/// a returned `Err`.
 pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, RdpClientError> {
+    // Locating the helper is a couple of cheap filesystem stats — keep it on the
+    // caller so a missing/uninstalled helper still fails fast and visibly.
     let helper = locate_helper().ok_or_else(|| RdpClientError::HelperMissing(HELPER_EXE.into()))?;
 
-    let mut command = Command::new(&helper);
-    command
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        // Let the helper's stderr diagnostics flow to our own stderr.
-        .stderr(Stdio::inherit());
-    no_window(&mut command);
+    let surface = Arc::new(Mutex::new(Surface::new(1, 1)));
+    let (cmd_tx, cmd_rx) = std_mpsc::channel::<ClientMsg>();
+    let (event_tx, event_rx) = std_mpsc::channel::<RdpClientEvent>();
+    let child_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
 
-    let mut child = command
-        .spawn()
+    let surface_bg = Arc::clone(&surface);
+    let child_bg = Arc::clone(&child_slot);
+    thread::Builder::new()
+        .name("adit-rdp-client-spawn".into())
+        .spawn(move || {
+            let mut command = Command::new(&helper);
+            command
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                // Let the helper's stderr diagnostics flow to our own stderr.
+                .stderr(Stdio::inherit());
+            no_window(&mut command);
+
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(e) => {
+                    let _ = event_tx.send(RdpClientEvent::Error(format!(
+                        "could not start the RDP helper: {e}"
+                    )));
+                    let _ = event_tx.send(RdpClientEvent::Closed);
+                    return;
+                }
+            };
+
+            // Wire the pipes; on failure kill the child (its drop does NOT terminate
+            // the process, so a half-wired helper would leak — possibly running a
+            // real session with the password the user can't see or control). The
+            // writer takes `cmd_rx` by value; the reader takes a clone of `event_tx`
+            // so this thread keeps the original for error reporting.
+            if let Err(error) = wire_up(&mut child, request, cmd_rx, event_tx.clone(), &surface_bg) {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = event_tx.send(RdpClientEvent::Error(error.to_string()));
+                let _ = event_tx.send(RdpClientEvent::Closed);
+                return;
+            }
+            if let Ok(mut slot) = child_bg.lock() {
+                *slot = Some(child);
+            }
+        })
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
-    // Any failure after spawn must kill the child: `Child`'s drop does NOT
-    // terminate the process, so a half-wired helper would leak — possibly running
-    // a real RDP session (with the password) that the user can't see or control.
-    match wire_up(&mut child, request) {
-        Ok((cmd_tx, event_rx, surface)) => Ok(RdpClientHandle {
-            cmd_tx,
-            event_rx,
-            surface,
-            child: Arc::new(Mutex::new(child)),
-        }),
-        Err(error) => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Err(error)
-        }
-    }
+    Ok(RdpClientHandle {
+        cmd_tx,
+        event_rx,
+        surface,
+        child: child_slot,
+    })
 }
 
-type WireUp = (
-    std_mpsc::Sender<ClientMsg>,
-    std_mpsc::Receiver<RdpClientEvent>,
-    Arc<Mutex<Surface>>,
-);
-
-/// Wire the helper's pipes to channels + threads. On any error the caller kills
-/// the child; on success the child's ownership moves into the returned handle.
-fn wire_up(child: &mut Child, request: ConnectRequest) -> Result<WireUp, RdpClientError> {
+/// Take the helper's pipes, send the opening `Connect`, and start the stdin-writer
+/// and stdout-reader bridge threads. Runs on the background spawn thread. `cmd_rx`
+/// (moved into the writer) and `event_tx` (cloned into the reader) come from the
+/// handle created in [`spawn_rdp_session`].
+fn wire_up(
+    child: &mut Child,
+    request: ConnectRequest,
+    cmd_rx: std_mpsc::Receiver<ClientMsg>,
+    event_tx: std_mpsc::Sender<RdpClientEvent>,
+    surface: &Arc<Mutex<Surface>>,
+) -> Result<(), RdpClientError> {
     let mut stdin = child
         .stdin
         .take()
@@ -266,10 +317,6 @@ fn wire_up(child: &mut Child, request: ConnectRequest) -> Result<WireUp, RdpClie
     // Open the session before handing stdin to the writer thread.
     write_msg(&mut stdin, &ClientMsg::Connect(request))
         .map_err(|e| RdpClientError::Io(e.to_string()))?;
-
-    let surface = Arc::new(Mutex::new(Surface::new(1, 1)));
-    let (cmd_tx, cmd_rx) = std_mpsc::channel::<ClientMsg>();
-    let (event_tx, event_rx) = std_mpsc::channel::<RdpClientEvent>();
 
     // stdin writer: serialise ClientMsgs to the helper.
     thread::Builder::new()
@@ -284,7 +331,7 @@ fn wire_up(child: &mut Child, request: ConnectRequest) -> Result<WireUp, RdpClie
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
     // stdout reader: apply framebuffer tiles and forward discrete events.
-    let reader_surface = Arc::clone(&surface);
+    let reader_surface = Arc::clone(surface);
     thread::Builder::new()
         .name("adit-rdp-client-stdout".into())
         .spawn(move || {
@@ -334,5 +381,5 @@ fn wire_up(child: &mut Child, request: ConnectRequest) -> Result<WireUp, RdpClie
         })
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
-    Ok((cmd_tx, event_rx, surface))
+    Ok(())
 }
