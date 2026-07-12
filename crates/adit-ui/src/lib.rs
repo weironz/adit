@@ -6642,16 +6642,29 @@ fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         return Space::new().width(Fill).height(Fill).into();
     };
 
-    let auth_hint = match dialog.auth_method {
-        AuthMethod::Auto => "自动认证：密码可选，会先尝试密码、agent 和默认密钥",
-        AuthMethod::Password => "密码认证：请输入 SSH 密码",
-        AuthMethod::Key => "密钥认证：passphrase 建议在会话设置里保存；未保存时可在此临时输入",
-        AuthMethod::Agent => "Agent 认证：通常不需要密码",
+    // The dialog is shared by SSH and RDP; label it by the profile's protocol.
+    let protocol = app
+        .manager
+        .profile(dialog.profile_id)
+        .map(|p| p.protocol)
+        .unwrap_or(Protocol::Ssh);
+    let is_rdp = protocol == Protocol::Rdp;
+
+    let auth_hint = if is_rdp {
+        "密码认证：请输入远程桌面 (RDP) 登录密码"
+    } else {
+        match dialog.auth_method {
+            AuthMethod::Auto => "自动认证：密码可选，会先尝试密码、agent 和默认密钥",
+            AuthMethod::Password => "密码认证：请输入 SSH 密码",
+            AuthMethod::Key => "密钥认证：passphrase 建议在会话设置里保存；未保存时可在此临时输入",
+            AuthMethod::Agent => "Agent 认证：通常不需要密码",
+        }
     };
+    let dialog_title = if is_rdp { "连接 RDP" } else { "连接 SSH" };
 
     let mut details = column![
         row![
-            text("连接 SSH").size(16).color(primary_text()),
+            text(dialog_title).size(16).color(primary_text()),
             Space::new().width(Fill),
             button("×")
                 .width(Length::Fixed(26.0))
