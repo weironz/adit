@@ -101,7 +101,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
     fn on_bitmap_updated(&mut self, update: &BitmapUpdate) {
         if update.data.is_empty() {
-            return; // decode skipped (no decoder for this codec)
+            // No decoded pixels for this codec/command — nothing to composite.
+            tracing::debug!(surface_id = update.surface_id, "EGFX bitmap update with no decoded data");
+            return;
         }
         let (ox, oy) = self.origins.get(&update.surface_id).copied().unwrap_or((0, 0));
         let dst_x = (ox + u32::from(update.destination_rectangle.left)) as usize;

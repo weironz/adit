@@ -21,11 +21,35 @@ use crate::RdpError;
 
 /// Entry point for the `adit-rdp-host` binary. Blocks until the session ends.
 pub fn run_host() -> Result<(), RdpError> {
-    // Diagnostics to stderr only (stdout is the framed protocol). No-op unless
-    // RUST_LOG is set. `try_init` so a double-init (e.g. tests) can't panic.
+    // Diagnostics go to a log file next to the app config (the GUI app discards
+    // the helper's stderr), so an RDP session's lifecycle/errors are visible even
+    // in a release build. Truncated per launch. `try_init` so a double-init can't panic.
+    let log_path = {
+        let base = std::env::var_os("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        base.join("Adit").join("rdp-helper.log")
+    };
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(
+        &log_path,
+        format!("=== adit-rdp-host {} start ===\n", env!("CARGO_PKG_VERSION")),
+    );
+    // Default: session lifecycle + warnings/errors only (no per-frame spam).
+    // Override with RUST_LOG for deeper tracing.
+    let filter = std::env::var("RUST_LOG")
+        .unwrap_or_else(|_| "warn,adit_rdp=info,ironrdp_async=info".to_owned());
     let _ = tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_ansi(false)
+        .with_writer(move || -> Box<dyn std::io::Write + Send> {
+            match std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                Ok(file) => Box::new(file),
+                Err(_) => Box::new(std::io::sink()),
+            }
+        })
+        .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
         .try_init();
 
     let (req_tx, req_rx) = std_mpsc::channel::<ConnectRequest>();

@@ -49,6 +49,14 @@ pub(crate) async fn run_session(
 ) -> Result<(), RdpError> {
     // Shared framebuffer the EGFX handler (running inside `ActiveStage::process`)
     // composites into; the active loop samples it and emits tiles.
+    tracing::info!(
+        host = %request.host,
+        port = request.port,
+        user = %request.username,
+        domain = ?request.domain,
+        password_len = request.password.len(),
+        "starting RDP session"
+    );
     let shared_egfx = egfx::new_shared();
     let mut routing_token: Option<Vec<u8>> = None;
     // One-time credentials for the RDSTLS handover auth, populated on a redirect.
@@ -70,7 +78,13 @@ pub(crate) async fn run_session(
             loop {
                 tokio::select! {
                     result = &mut connect_fut => {
-                        break result.map_err(|e| RdpError::Connect(e.to_string()))?;
+                        match result {
+                            Ok(v) => break v,
+                            Err(e) => {
+                                tracing::error!("RDP connect failed: {e}");
+                                return Err(RdpError::Connect(e.to_string()));
+                            }
+                        }
                     }
                     _ = &mut deadline => {
                         return Err(RdpError::Connect(format!(
