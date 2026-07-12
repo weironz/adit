@@ -2647,37 +2647,19 @@ fn welcome_terminal(profile_name: &str, endpoint: &str, size: TerminalSize) -> V
     terminal
 }
 
-/// Build a banner terminal for a live SSH tab while it connects.
-fn live_shell_terminal(profile_name: &str, endpoint: &str, size: TerminalSize) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(size, profile_name);
-    terminal.feed_str(&format!(
-        "\x1b[1;32mssh\x1b[0m live shell starting\r\n\r\n\
-         profile  : {profile_name}\r\n\
-         endpoint : {endpoint}\r\n\
-         status   : creating SSH session actor\r\n\r\n"
-    ));
-    terminal
+/// A terminal for a live SSH tab. It starts empty — no connect banner — so the
+/// scrollback begins at the server's own output, like a normal SSH client.
+/// Connection state is conveyed by the tab status dot and the title bar.
+fn live_shell_terminal(profile_name: &str, _endpoint: &str, size: TerminalSize) -> VtTerminal {
+    VtTerminal::with_title(size, profile_name)
 }
 
 fn local_shell_terminal(profile_name: &str, size: TerminalSize) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(size, profile_name);
-    terminal.feed_str(&format!(
-        "\x1b[1;36mlocal shell\x1b[0m starting\r\n\r\n\
-         profile  : {profile_name}\r\n\
-         status   : spawning local pseudo-terminal\r\n\r\n"
-    ));
-    terminal
+    VtTerminal::with_title(size, profile_name)
 }
 
-fn serial_terminal(profile_name: &str, endpoint: &str, size: TerminalSize) -> VtTerminal {
-    let mut terminal = VtTerminal::with_title(size, profile_name);
-    terminal.feed_str(&format!(
-        "\x1b[1;36mserial\x1b[0m starting\r\n\r\n\
-         profile  : {profile_name}\r\n\
-         endpoint : {endpoint}\r\n\
-         status   : opening serial port\r\n\r\n"
-    ));
-    terminal
+fn serial_terminal(profile_name: &str, _endpoint: &str, size: TerminalSize) -> VtTerminal {
+    VtTerminal::with_title(size, profile_name)
 }
 
 /// Build a terminal that replays a one-shot SSH password probe transcript.
