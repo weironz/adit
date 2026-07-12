@@ -61,6 +61,10 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "..\target\release\adit-app.exe"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
+; The native RDP client runs as a separate helper process (IronRDP can't share
+; a Cargo.lock with the main app's russh), built from its own workspace. Adit
+; locates it next to adit.exe.
+Source: "..\crates\adit-rdp\target\release\adit-rdp-host.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

@@ -2,29 +2,38 @@
 members = [
     "crates/adit-app",
     "crates/adit-domain",
+    "crates/adit-rdp-proto",
     "crates/adit-session",
     "crates/adit-ssh",
     "crates/adit-storage",
     "crates/adit-terminal",
     "crates/adit-ui",
 ]
+# adit-rdp links the IronRDP stack, whose `picky` crate exact-pins pre-release
+# RustCrypto versions that conflict irreconcilably with russh's. It therefore
+# builds as its own workspace (own Cargo.lock) and ships as a separate helper
+# process; the main app talks to it over IPC. See crates/adit-rdp.
+exclude = ["crates/adit-rdp"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.39"
+version = "0.1.40"
 edition = "2021"
 authors = ["Adit"]
 license = "MIT"
 
 [workspace.dependencies]
 adit-domain = { path = "crates/adit-domain" }
+adit-rdp-proto = { path = "crates/adit-rdp-proto" }
 adit-session = { path = "crates/adit-session" }
 adit-ssh = { path = "crates/adit-ssh" }
 adit-storage = { path = "crates/adit-storage" }
 adit-terminal = { path = "crates/adit-terminal" }
 adit-ui = { path = "crates/adit-ui" }
 bytes = "1"
-iced = { version = "0.14.0", default-features = true, features = ["tokio", "advanced"] }
+# `image-without-codecs` gives the `image` widget (for the RDP framebuffer)
+# without pulling PNG/JPEG decoders — Adit only ever feeds it raw RGBA.
+iced = { version = "0.14.0", default-features = true, features = ["tokio", "advanced", "image-without-codecs"] }
 keyring = "4.1.2"
 russh = { version = "0.61.2", default-features = false, features = ["flate2", "ring", "rsa"] }
 serde = { version = "1", features = ["derive"] }

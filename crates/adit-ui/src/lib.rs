@@ -4,9 +4,9 @@ use adit_domain::{
 };
 use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
-    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, SessionError,
-    SessionManager, SessionSummary, SftpBrowser, SftpEntry, TransferDirection, TransferItem,
-    TransferStatus, TunnelKind, TunnelState,
+    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, RdpInput,
+    RdpMouseButton, SessionError, SessionManager, SessionSummary, SftpBrowser, SftpEntry,
+    TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
 use adit_storage::{
     AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
@@ -180,6 +180,18 @@ pub struct AditApp {
     terminal_click: Option<(TerminalPoint, Instant, u8)>,
     terminal_context_menu: bool,
     terminal_scroll_offset: usize,
+    // RDP: the active session's framebuffer as an iced image handle, rebuilt only
+    // when the helper reports a new generation (`rdp_frame_generation` is the
+    // generation currently uploaded). `rdp_surface_size` is the last size we told
+    // the helper, so a window resize only sends a Resize when it actually changed.
+    rdp_image: Option<iced::widget::image::Handle>,
+    rdp_frame_generation: u64,
+    rdp_surface_size: Option<(u16, u16)>,
+    // Which session `rdp_image`/`rdp_surface_size`/`rdp_frame_generation` belong
+    // to. Each RDP session has its own generation counter, so on a tab switch the
+    // cache must be invalidated — otherwise we'd render one host's frame under
+    // another's tab (and could get stuck if the generations happened to match).
+    rdp_frame_session: Option<SessionId>,
     // Latest keyboard modifier state, so wheel handling can tell a plain scroll
     // from a Ctrl+wheel zoom.
     modifiers: keyboard::Modifiers,
@@ -304,6 +316,12 @@ pub enum MenuCommand {
 #[derive(Debug, Clone)]
 pub enum Message {
     Tick,
+    // RDP: per-frame surface sampling + input over the graphical surface.
+    RdpTick,
+    RdpPointerMoved(Point),
+    RdpPressed(mouse::Button),
+    RdpReleased(mouse::Button),
+    RdpScrolled(mouse::ScrollDelta),
     ToggleMenu(MenuKind),
     ToggleTheme,
     OpenAppearance,
@@ -1108,6 +1126,10 @@ impl AditApp {
             terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
+            rdp_image: None,
+            rdp_frame_generation: 0,
+            rdp_surface_size: None,
+            rdp_frame_session: None,
             modifiers: keyboard::Modifiers::empty(),
             window_width,
             window_height,
@@ -1236,6 +1258,13 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
         iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
         event::listen_with(runtime_event),
     ];
+    // RDP is a video surface: while the ACTIVE session is a live RDP session,
+    // sample its framebuffer every frame (vsync-paced) so the desktop stays
+    // smooth (the 100 ms Tick would look choppy). Gating on the active tab avoids
+    // pinning the app at 60 fps just because a background RDP tab is open.
+    if app.manager.active_rdp_live() {
+        subs.push(window::frames().map(|_| Message::RdpTick));
+    }
     // Only track the global cursor while a sidebar resize is in progress, so
     // idle mouse movement never floods the app with messages.
     if app.sidebar_dragging {
@@ -1351,6 +1380,75 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 sync_terminal_size(app);
             }
             persist_settings_if_changed(app);
+        }
+        Message::RdpTick => {
+            // The cached frame belongs to one session; if the active session
+            // changed (tab switch, or a close that auto-activated another tab),
+            // drop the cache so we never paint one host's frame under another's
+            // tab. Each RDP session has its own generation counter, so comparing
+            // across sessions would otherwise be meaningless.
+            let active = app.manager.active_session();
+            if active != app.rdp_frame_session {
+                app.rdp_frame_session = active;
+                app.rdp_frame_generation = 0;
+                app.rdp_image = None;
+                app.rdp_surface_size = None;
+            }
+            // Sample the active RDP framebuffer; rebuild the GPU image handle only
+            // when the helper produced a new generation.
+            if let Some(frame) = app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation) {
+                app.rdp_frame_generation = frame.generation;
+                app.rdp_surface_size = Some((frame.width, frame.height));
+                app.rdp_image = Some(iced::widget::image::Handle::from_rgba(
+                    u32::from(frame.width),
+                    u32::from(frame.height),
+                    frame.rgba,
+                ));
+            }
+        }
+        Message::RdpPointerMoved(point) => {
+            // `point` already carries surface pixel coords (mapped in the view).
+            app.manager.send_rdp_input_to_active(RdpInput::MouseMove {
+                x: point.x.max(0.0) as u16,
+                y: point.y.max(0.0) as u16,
+            });
+        }
+        Message::RdpPressed(button) => {
+            if let Some(b) = rdp_mouse_button(button) {
+                app.terminal_focused = true;
+                app.manager
+                    .send_rdp_input_to_active(RdpInput::MouseButton { button: b, pressed: true });
+            }
+        }
+        Message::RdpReleased(button) => {
+            if let Some(b) = rdp_mouse_button(button) {
+                app.manager
+                    .send_rdp_input_to_active(RdpInput::MouseButton { button: b, pressed: false });
+            }
+        }
+        Message::RdpScrolled(delta) => {
+            let (vertical, amount) = match delta {
+                mouse::ScrollDelta::Lines { x, y } => {
+                    if y.abs() >= x.abs() {
+                        (true, y)
+                    } else {
+                        (false, x)
+                    }
+                }
+                mouse::ScrollDelta::Pixels { x, y } => {
+                    if y.abs() >= x.abs() {
+                        (true, y / 20.0)
+                    } else {
+                        (false, x / 20.0)
+                    }
+                }
+            };
+            if amount != 0.0 {
+                // RDP wheel units: 120 per notch, sign = scroll direction.
+                let units = (amount * 120.0).clamp(-32768.0, 32767.0) as i16;
+                app.manager
+                    .send_rdp_input_to_active(RdpInput::Wheel { vertical, delta: units });
+            }
         }
         Message::ToggleMenu(menu) => {
             app.active_menu = if app.active_menu == Some(menu) {
@@ -2312,6 +2410,19 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            // RDP: keys go to the remote desktop as scancodes, not VT bytes.
+            // (Clipboard copy/paste will ride the RDP clipboard channel later.)
+            if app.manager.active_is_rdp() {
+                if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
+                    app.manager.send_rdp_input_to_active(RdpInput::Key {
+                        scancode,
+                        extended,
+                        pressed,
+                    });
+                }
+                return Task::none();
+            }
+
             if is_terminal_copy_shortcut(&event) {
                 let text = selected_terminal_text(app);
                 if !text.is_empty() {
@@ -2646,6 +2757,42 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloneSessionFromTab(session_id) => {
             app.tab_context_menu = None;
+            // RDP keeps no password in session state (vault-only), so clone it like
+            // a fresh connect: load the vault password and open a new RDP session,
+            // else prompt for it. `clone_session` refuses RDP for this reason.
+            if app.manager.session_is_rdp(session_id) {
+                let profile_id = app
+                    .manager
+                    .sessions()
+                    .into_iter()
+                    .find(|summary| summary.id == session_id)
+                    .map(|summary| summary.profile_id);
+                if let Some(profile_id) = profile_id {
+                    let stored = app
+                        .credential_store
+                        .load_profile_password(profile_id)
+                        .ok()
+                        .flatten();
+                    match stored {
+                        Some(password) => {
+                            match app.manager.open_live_rdp_session(profile_id, password, 0, 0) {
+                                Ok(_) => {
+                                    app.terminal_focused = true;
+                                    app.rdp_frame_generation = 0;
+                                    app.last_error = None;
+                                    app.notice = String::from("已克隆 RDP 会话");
+                                }
+                                Err(error) => app.last_error = Some(error.to_string()),
+                            }
+                        }
+                        None => {
+                            select_profile(app, profile_id);
+                            open_connection_dialog(app);
+                        }
+                    }
+                }
+                return Task::none();
+            }
             match app.manager.clone_session(session_id) {
                 Ok(_) => {
                     app.terminal_focused = true;
@@ -4270,12 +4417,27 @@ fn connect_profile(app: &mut AditApp) {
         return;
     };
 
-    // RDP is graphical — it opens in the system client, not a terminal tab.
+    // RDP opens a native graphical session in a tab (via the helper process).
+    // NLA needs a password: use the stored one, else prompt through the dialog.
     if profile.protocol == Protocol::Rdp {
-        match app.manager.launch_rdp(profile_id) {
-            Ok(endpoint) => {
+        let stored = app
+            .credential_store
+            .load_profile_password(profile_id)
+            .ok()
+            .flatten();
+        let Some(password) = stored else {
+            open_connection_dialog(app);
+            return;
+        };
+        match app.manager.open_live_rdp_session(profile_id, password, 0, 0) {
+            Ok(_) => {
+                app.connection_dialog = None;
+                app.password.clear();
+                app.remember_connection_password = false;
+                app.terminal_focused = true;
+                app.rdp_frame_generation = 0;
                 app.last_error = None;
-                app.notice = format!("已调起远程桌面 (mstsc): {endpoint}");
+                app.notice = format!("RDP 会话已开始连接: {}", profile.endpoint());
             }
             Err(error) => app.last_error = Some(error.to_string()),
         }
@@ -4399,6 +4561,31 @@ fn confirm_connection(app: &mut AditApp) {
         open_connection_dialog(app);
         return;
     };
+
+    // RDP opens a native graphical tab (helper process) instead of an SSH shell.
+    let is_rdp =
+        app.manager.profile(dialog.profile_id).map(|p| p.protocol) == Some(Protocol::Rdp);
+    if is_rdp {
+        let credential_warning = sync_connection_password(app, dialog.profile_id).err();
+        match app
+            .manager
+            .open_live_rdp_session(dialog.profile_id, app.password.clone(), 0, 0)
+        {
+            Ok(_) => {
+                app.connection_dialog = None;
+                app.password.clear();
+                app.remember_connection_password = false;
+                app.terminal_focused = true;
+                app.rdp_frame_generation = 0;
+                app.last_error = credential_warning
+                    .as_ref()
+                    .map(|error| format!("保存系统凭据失败: {error}"));
+                app.notice = format!("RDP 会话已开始连接: {}", dialog.endpoint);
+            }
+            Err(error) => app.last_error = Some(error.to_string()),
+        }
+        return;
+    }
 
     let credential_warning = sync_connection_password(app, dialog.profile_id).err();
     let passphrase = app
@@ -5195,6 +5382,137 @@ fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
     }
 }
 
+/// Map an iced keyboard event to an RDP scancode press/release.
+/// Returns `(scancode, extended, pressed)` using PC/AT set-1 make codes; the
+/// `extended` flag marks the E0 set (right-side modifiers, nav cluster, arrows,
+/// numpad Enter/Divide, Windows/Menu keys). Layout-independent: it keys off the
+/// physical key, so the remote applies its own layout.
+fn encode_rdp_scancode(event: &keyboard::Event) -> Option<(u8, bool, bool)> {
+    let (physical, pressed) = match event {
+        keyboard::Event::KeyPressed { physical_key, .. } => (physical_key, true),
+        keyboard::Event::KeyReleased { physical_key, .. } => (physical_key, false),
+        _ => return None,
+    };
+    let keyboard::key::Physical::Code(code) = physical else {
+        return None;
+    };
+    let (scancode, extended) = rdp_scancode_for_code(*code)?;
+    Some((scancode, extended, pressed))
+}
+
+/// PC/AT set-1 make code + E0-extended flag for a physical key code.
+fn rdp_scancode_for_code(code: keyboard::key::Code) -> Option<(u8, bool)> {
+    use keyboard::key::Code::*;
+    let mapped = match code {
+        Escape => (0x01, false),
+        Digit1 => (0x02, false),
+        Digit2 => (0x03, false),
+        Digit3 => (0x04, false),
+        Digit4 => (0x05, false),
+        Digit5 => (0x06, false),
+        Digit6 => (0x07, false),
+        Digit7 => (0x08, false),
+        Digit8 => (0x09, false),
+        Digit9 => (0x0A, false),
+        Digit0 => (0x0B, false),
+        Minus => (0x0C, false),
+        Equal => (0x0D, false),
+        Backspace => (0x0E, false),
+        Tab => (0x0F, false),
+        KeyQ => (0x10, false),
+        KeyW => (0x11, false),
+        KeyE => (0x12, false),
+        KeyR => (0x13, false),
+        KeyT => (0x14, false),
+        KeyY => (0x15, false),
+        KeyU => (0x16, false),
+        KeyI => (0x17, false),
+        KeyO => (0x18, false),
+        KeyP => (0x19, false),
+        BracketLeft => (0x1A, false),
+        BracketRight => (0x1B, false),
+        Enter => (0x1C, false),
+        ControlLeft => (0x1D, false),
+        KeyA => (0x1E, false),
+        KeyS => (0x1F, false),
+        KeyD => (0x20, false),
+        KeyF => (0x21, false),
+        KeyG => (0x22, false),
+        KeyH => (0x23, false),
+        KeyJ => (0x24, false),
+        KeyK => (0x25, false),
+        KeyL => (0x26, false),
+        Semicolon => (0x27, false),
+        Quote => (0x28, false),
+        Backquote => (0x29, false),
+        ShiftLeft => (0x2A, false),
+        Backslash => (0x2B, false),
+        KeyZ => (0x2C, false),
+        KeyX => (0x2D, false),
+        KeyC => (0x2E, false),
+        KeyV => (0x2F, false),
+        KeyB => (0x30, false),
+        KeyN => (0x31, false),
+        KeyM => (0x32, false),
+        Comma => (0x33, false),
+        Period => (0x34, false),
+        Slash => (0x35, false),
+        ShiftRight => (0x36, false),
+        NumpadMultiply => (0x37, false),
+        AltLeft => (0x38, false),
+        Space => (0x39, false),
+        CapsLock => (0x3A, false),
+        F1 => (0x3B, false),
+        F2 => (0x3C, false),
+        F3 => (0x3D, false),
+        F4 => (0x3E, false),
+        F5 => (0x3F, false),
+        F6 => (0x40, false),
+        F7 => (0x41, false),
+        F8 => (0x42, false),
+        F9 => (0x43, false),
+        F10 => (0x44, false),
+        NumLock => (0x45, false),
+        ScrollLock => (0x46, false),
+        Numpad7 => (0x47, false),
+        Numpad8 => (0x48, false),
+        Numpad9 => (0x49, false),
+        NumpadSubtract => (0x4A, false),
+        Numpad4 => (0x4B, false),
+        Numpad5 => (0x4C, false),
+        Numpad6 => (0x4D, false),
+        NumpadAdd => (0x4E, false),
+        Numpad1 => (0x4F, false),
+        Numpad2 => (0x50, false),
+        Numpad3 => (0x51, false),
+        Numpad0 => (0x52, false),
+        NumpadDecimal => (0x53, false),
+        IntlBackslash => (0x56, false),
+        F11 => (0x57, false),
+        F12 => (0x58, false),
+        // ── E0-extended set ──────────────────────────────────────────────
+        NumpadEnter => (0x1C, true),
+        ControlRight => (0x1D, true),
+        NumpadDivide => (0x35, true),
+        AltRight => (0x38, true),
+        Home => (0x47, true),
+        ArrowUp => (0x48, true),
+        PageUp => (0x49, true),
+        ArrowLeft => (0x4B, true),
+        ArrowRight => (0x4D, true),
+        End => (0x4F, true),
+        ArrowDown => (0x50, true),
+        PageDown => (0x51, true),
+        Insert => (0x52, true),
+        Delete => (0x53, true),
+        SuperLeft => (0x5B, true),
+        SuperRight => (0x5C, true),
+        ContextMenu => (0x5D, true),
+        _ => return None,
+    };
+    Some(mapped)
+}
+
 fn encode_keyboard_event(event: keyboard::Event) -> Option<Vec<u8>> {
     let keyboard::Event::KeyPressed {
         key,
@@ -5688,6 +6006,13 @@ fn untile_sessions(app: &mut AditApp) {
 }
 
 fn split_pane(app: &mut AditApp) {
+    // RDP is a full-surface graphical session and isn't rendered inside a tile, so
+    // it can't participate in split panes.
+    if app.panes.is_empty() && app.manager.active_is_rdp() {
+        app.last_error = Some(String::from("RDP 会话不支持分屏"));
+        return;
+    }
+
     app.tile_mode = TileMode::Grid;
     // Seed the tiling from the active session on the first split.
     if app.panes.is_empty() {
@@ -5708,13 +6033,14 @@ fn split_pane(app: &mut AditApp) {
         return;
     }
 
-    // First open session not already shown in a pane.
+    // First open session not already shown in a pane. RDP sessions are excluded —
+    // they render as a full surface, not a terminal tile.
     let candidate = app
         .manager
         .sessions()
         .into_iter()
         .map(|summary| summary.id)
-        .find(|id| !app.panes.contains(id));
+        .find(|id| !app.panes.contains(id) && !app.manager.session_is_rdp(*id));
 
     let Some(session_id) = candidate else {
         app.panes.clear();
@@ -9829,7 +10155,8 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                         .into(),
                 ))
                 .push(
-                    text("连接时调起系统远程桌面 (mstsc)；密码在 mstsc 中输入。")
+                    text("原生 RDP（NLA/CredSSP）。用户名可用 域\\用户 形式指定域；\
+                          连接时在弹出的密码框输入密码（可勾选记住，存入系统凭据）。")
                         .size(11)
                         .color(muted_text()),
                 );
@@ -9930,6 +10257,8 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
     // byte-for-byte as before (it is the well-tested selection/hit-test path).
     let body: Element<'_, Message> = if app.panes.len() >= 2 {
         tiled_workspace_body(app)
+    } else if app.manager.active_is_rdp() {
+        rdp_surface_view(app)
     } else {
         let snapshot = active_terminal_snapshot(app);
         let highlights = search_highlights_for(app, &snapshot);
@@ -9982,6 +10311,76 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
         .height(Fill)
         .width(Fill)
         .into()
+}
+
+/// The active RDP session's framebuffer, scaled to fit (aspect-preserved), with
+/// mouse and scroll captured and mapped to remote-desktop pixels. A single OS
+/// cursor is shown (the server pointer isn't composited), so there's no
+/// double-cursor; its shape is a plain arrow for now.
+fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
+    let handle = app.rdp_image.clone();
+    let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
+
+    let surface = iced::widget::responsive(move |area| {
+        let Some(handle) = handle.clone() else {
+            return container(text("正在连接 RDP…").size(14).color(muted_text()))
+                .center_x(Fill)
+                .center_y(Fill)
+                .into();
+        };
+
+        let picture = iced::widget::image(handle)
+            .width(Fill)
+            .height(Fill)
+            .content_fit(iced::ContentFit::Contain);
+
+        mouse_area(picture)
+            .on_move(move |p| {
+                // Map the widget-local cursor to remote pixels, undoing the
+                // `Contain` letterbox (centred, uniform scale). Guard against a
+                // zero surface or a zero-area transition frame (would divide by 0).
+                if sw == 0 || sh == 0 || area.width <= 0.0 || area.height <= 0.0 {
+                    return Message::RdpPointerMoved(Point::ORIGIN);
+                }
+                let scale = (area.width / f32::from(sw)).min(area.height / f32::from(sh));
+                let dw = f32::from(sw) * scale;
+                let dh = f32::from(sh) * scale;
+                let ox = (area.width - dw) / 2.0;
+                let oy = (area.height - dh) / 2.0;
+                let x = ((p.x - ox) / scale).clamp(0.0, f32::from(sw) - 1.0);
+                let y = ((p.y - oy) / scale).clamp(0.0, f32::from(sh) - 1.0);
+                Message::RdpPointerMoved(Point::new(x, y))
+            })
+            .on_press(Message::RdpPressed(mouse::Button::Left))
+            .on_release(Message::RdpReleased(mouse::Button::Left))
+            .on_right_press(Message::RdpPressed(mouse::Button::Right))
+            .on_right_release(Message::RdpReleased(mouse::Button::Right))
+            .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
+            .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
+            .on_scroll(Message::RdpScrolled)
+            .into()
+    });
+
+    container(surface)
+        .width(Fill)
+        .height(Fill)
+        .style(|_theme| container::Style {
+            background: Some(Color::BLACK.into()),
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// Map an iced mouse button to the RDP button set (`Other` is ignored).
+fn rdp_mouse_button(button: mouse::Button) -> Option<RdpMouseButton> {
+    match button {
+        mouse::Button::Left => Some(RdpMouseButton::Left),
+        mouse::Button::Right => Some(RdpMouseButton::Right),
+        mouse::Button::Middle => Some(RdpMouseButton::Middle),
+        mouse::Button::Back => Some(RdpMouseButton::X1),
+        mouse::Button::Forward => Some(RdpMouseButton::X2),
+        mouse::Button::Other(_) => None,
+    }
 }
 
 /// The scrollback-search bar shown above the terminal (Ctrl+Shift+F).
@@ -11186,6 +11585,27 @@ mod tests {
         assert_eq!(avatar_initials("local lab"), "LL");
         assert_eq!(avatar_initials("redis"), "R");
         assert_eq!(avatar_initials(""), "?");
+    }
+
+    #[test]
+    fn rdp_scancodes_match_pc_at_set1() {
+        // Base make codes.
+        assert_eq!(rdp_scancode_for_code(Code::KeyQ), Some((0x10, false)));
+        assert_eq!(rdp_scancode_for_code(Code::KeyA), Some((0x1E, false)));
+        assert_eq!(rdp_scancode_for_code(Code::KeyZ), Some((0x2C, false)));
+        assert_eq!(rdp_scancode_for_code(Code::Enter), Some((0x1C, false)));
+        assert_eq!(rdp_scancode_for_code(Code::Space), Some((0x39, false)));
+        assert_eq!(rdp_scancode_for_code(Code::Digit1), Some((0x02, false)));
+        assert_eq!(rdp_scancode_for_code(Code::F1), Some((0x3B, false)));
+        assert_eq!(rdp_scancode_for_code(Code::F12), Some((0x58, false)));
+        // E0-extended: same base code, extended flag distinguishes it.
+        assert_eq!(rdp_scancode_for_code(Code::NumpadEnter), Some((0x1C, true)));
+        assert_eq!(rdp_scancode_for_code(Code::ArrowUp), Some((0x48, true)));
+        assert_eq!(rdp_scancode_for_code(Code::ArrowLeft), Some((0x4B, true)));
+        assert_eq!(rdp_scancode_for_code(Code::ControlRight), Some((0x1D, true)));
+        assert_eq!(rdp_scancode_for_code(Code::NumpadDivide), Some((0x35, true)));
+        // Unmapped keys yield None (e.g. PrintScreen's multi-byte sequence).
+        assert_eq!(rdp_scancode_for_code(Code::PrintScreen), None);
     }
 
     #[test]

@@ -23,6 +23,14 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 use thiserror::Error;
 
+mod rdp_client;
+pub use adit_rdp_proto::{InputEvent as RdpInput, MouseButton as RdpMouseButton};
+pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFrame};
+
+/// Default RDP desktop size when the caller doesn't specify one.
+const DEFAULT_RDP_WIDTH: u16 = 1280;
+const DEFAULT_RDP_HEIGHT: u16 = 720;
+
 /// Give up auto-reconnect after this many consecutive failed attempts.
 const MAX_RECONNECT_ATTEMPTS: u32 = 10;
 
@@ -81,10 +89,21 @@ struct SessionRecord {
     summary: SessionSummary,
     terminal: VtTerminal,
     live: Option<LiveShellHandle>,
+    /// Set for RDP sessions: the out-of-process helper handle. RDP sessions keep
+    /// a placeholder `terminal` (never rendered) and leave `live`/`reconnect`
+    /// `None`, so terminal-only code paths skip them.
+    rdp: Option<RdpClientHandle>,
     log: Option<SessionLog>,
     pending_host_key: Option<HostKeyPrompt>,
     pending_auth_prompt: Option<AuthPromptRequest>,
     reconnect: Option<ReconnectState>,
+}
+
+impl SessionRecord {
+    /// True for a native RDP session (graphical surface, not a VT terminal).
+    fn is_rdp(&self) -> bool {
+        self.rdp.is_some()
+    }
 }
 
 /// An open transcript log for a session: raw PTY output is appended here while
@@ -759,6 +778,7 @@ impl SessionManager {
                 summary,
                 terminal,
                 live: None,
+                rdp: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -860,6 +880,7 @@ impl SessionManager {
                 summary,
                 terminal,
                 live: Some(live),
+                rdp: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -942,15 +963,25 @@ impl SessionManager {
         }
     }
 
-    /// Launch an RDP profile in the system Remote Desktop client (mstsc). RDP is
-    /// graphical, so it opens externally rather than in a terminal tab. Returns
-    /// the endpoint that was launched.
-    pub fn launch_rdp(&self, profile_id: ProfileId) -> Result<String, SessionError> {
+    /// Open a native RDP session in a tab. The connection runs in the
+    /// out-of-process `adit-rdp-host` helper; connection progress and the
+    /// framebuffer arrive via [`Self::poll_events`] and the session's RDP surface.
+    /// `width`/`height` are the initial desktop size (0 ⇒ the default); the UI can
+    /// resize later. The password comes from the caller (keyring) and is handed to
+    /// the helper over a pipe, never a command line.
+    pub fn open_live_rdp_session(
+        &mut self,
+        profile_id: ProfileId,
+        password: String,
+        width: u16,
+        height: u16,
+    ) -> Result<SessionId, SessionError> {
         let profile = self
             .profiles
             .iter()
             .find(|p| p.id == profile_id)
-            .ok_or(SessionError::ProfileNotFound)?;
+            .ok_or(SessionError::ProfileNotFound)?
+            .clone();
 
         let host = profile.host.trim();
         if host.is_empty() {
@@ -964,25 +995,56 @@ impl SessionManager {
         };
         let endpoint = format!("{host}:{port}");
 
-        // A generated .rdp file lets us prefill the address and username;
-        // mstsc still prompts for the password (it is never passed on the CLI).
-        let mut contents = format!(
-            "full address:s:{endpoint}\r\nprompt for credentials:i:1\r\n"
+        // Split an optional Windows domain out of the username (DOMAIN\user).
+        let (domain, username) = split_domain(profile.username.trim());
+        let width = if width == 0 { DEFAULT_RDP_WIDTH } else { width };
+        let height = if height == 0 { DEFAULT_RDP_HEIGHT } else { height };
+
+        let request = adit_rdp_proto::ConnectRequest {
+            host: host.to_string(),
+            port,
+            username,
+            password,
+            domain,
+            width,
+            height,
+            enable_clipboard: false,
+            enable_audio: false,
+        };
+
+        let handle = rdp_client::spawn_rdp_session(request)
+            .map_err(|error| SessionError::Unsupported(error.to_string()))?;
+
+        let session_id = SessionId::new();
+        let summary = SessionSummary {
+            id: session_id,
+            profile_id,
+            title: profile.name.clone(),
+            endpoint: endpoint.clone(),
+            status: SessionStatus::Connecting,
+        };
+        // RDP renders a graphical surface, not a VT grid; keep a placeholder
+        // terminal so terminal-only paths (which check `is_rdp()`/`live`) stay valid.
+        let terminal = live_shell_terminal(&profile.name, &endpoint, self.default_size);
+
+        self.sessions.insert(
+            session_id,
+            SessionRecord {
+                summary,
+                terminal,
+                live: None,
+                rdp: Some(handle),
+                log: None,
+                pending_host_key: None,
+                pending_auth_prompt: None,
+                reconnect: None,
+            },
         );
-        if !profile.username.trim().is_empty() {
-            contents.push_str(&format!("username:s:{}\r\n", profile.username.trim()));
-        }
+        self.order.push(session_id);
+        self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile_id);
 
-        let file = std::env::temp_dir().join(format!("adit-rdp-{}.rdp", sanitize_file(host)));
-        std::fs::write(&file, contents)
-            .map_err(|error| SessionError::Unsupported(format!("写入 RDP 文件失败: {error}")))?;
-
-        std::process::Command::new("mstsc.exe")
-            .arg(&file)
-            .spawn()
-            .map_err(|error| SessionError::Unsupported(format!("启动 mstsc 失败: {error}")))?;
-
-        Ok(endpoint)
+        Ok(session_id)
     }
 
     pub fn build_ssh_probe_session(
@@ -1033,6 +1095,7 @@ impl SessionManager {
                 summary,
                 terminal,
                 live: None,
+                rdp: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -1059,6 +1122,12 @@ impl SessionManager {
         let closed_profile = self.sessions.get(&session_id).map(|record| {
             if let Some(live) = &record.live {
                 let _ = live.send(LiveShellCommand::Disconnect);
+            }
+            // RDP: ask the helper to disconnect gracefully before the record (and
+            // its handle) is dropped, so the server logs the session off rather
+            // than leaving it half-open until it times out.
+            if let Some(rdp) = &record.rdp {
+                rdp.close();
             }
             record.summary.profile_id
         });
@@ -1087,6 +1156,14 @@ impl SessionManager {
         if let Some(reconnect) = &mut record.reconnect {
             reconnect.manual = true;
             reconnect.retry_at = None;
+        }
+
+        // RDP runs in the helper process; ask it to disconnect. The last frame
+        // stays on screen (status shows disconnected).
+        if let Some(rdp) = &record.rdp {
+            rdp.close();
+            record.summary.status = SessionStatus::Disconnected;
+            return Ok(());
         }
 
         if let Some(live) = &record.live {
@@ -1128,7 +1205,7 @@ impl SessionManager {
     /// session's own stored credentials (so cloning works even when nothing is
     /// saved in the vault). Returns the new session's id.
     pub fn clone_session(&mut self, session_id: SessionId) -> Result<SessionId, SessionError> {
-        let (profile_id, password, passphrase) = {
+        let (profile_id, password, passphrase, is_rdp) = {
             let record = self
                 .sessions
                 .get(&session_id)
@@ -1138,8 +1215,18 @@ impl SessionManager {
                 .as_ref()
                 .map(|rc| (rc.password.clone(), rc.passphrase.clone()))
                 .unwrap_or_default();
-            (record.summary.profile_id, password, passphrase)
+            (record.summary.profile_id, password, passphrase, record.is_rdp())
         };
+        // RDP doesn't retain the password (secrets stay in the vault), so it can't
+        // be cloned from session state alone. The UI clones RDP by loading the
+        // vault password and calling `open_live_rdp_session` directly; reaching
+        // here means that path was bypassed, so fail loudly instead of connecting
+        // with an empty password (which would silently fail NLA).
+        if is_rdp {
+            return Err(SessionError::Unsupported(String::from(
+                "克隆 RDP 会话需要重新提供密码",
+            )));
+        }
         self.open_live_ssh_session(profile_id, password, passphrase)
     }
 
@@ -1150,6 +1237,11 @@ impl SessionManager {
             .get_mut(&session_id)
             .ok_or(SessionError::SessionNotFound)?;
         let input = input.into();
+
+        // RDP takes scancode/pointer input, not a byte stream; ignore here.
+        if record.is_rdp() {
+            return Ok(());
+        }
 
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::Input(input.into_bytes()))?;
@@ -1172,6 +1264,11 @@ impl SessionManager {
             .get_mut(&session_id)
             .ok_or(SessionError::SessionNotFound)?;
 
+        // RDP takes scancode/pointer input, not a byte stream; ignore here.
+        if record.is_rdp() {
+            return Ok(());
+        }
+
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::Input(input))?;
         } else {
@@ -1179,6 +1276,18 @@ impl SessionManager {
         }
 
         Ok(())
+    }
+
+    /// Send an RDP input event (mouse / key / resize) to the active session. A
+    /// no-op for non-RDP sessions.
+    pub fn send_rdp_input_to_active(&self, event: RdpInput) {
+        if let Some(session_id) = self.active_session {
+            if let Some(record) = self.sessions.get(&session_id) {
+                if let Some(rdp) = &record.rdp {
+                    rdp.send_input(event);
+                }
+            }
+        }
     }
 
     /// Send raw bytes to every connected (live) session at once. Returns how
@@ -1219,6 +1328,11 @@ impl SessionManager {
             .get_mut(&session_id)
             .ok_or(SessionError::SessionNotFound)?;
 
+        // RDP resizes by pixel size via `resize_active_rdp`, not terminal cells.
+        if record.is_rdp() {
+            return Ok(());
+        }
+
         record
             .terminal
             .resize(adit_terminal::TerminalSize::new(cols, rows));
@@ -1228,6 +1342,51 @@ impl SessionManager {
         }
 
         Ok(())
+    }
+
+    /// Resize the active RDP desktop to a pixel size. A no-op for non-RDP sessions.
+    pub fn resize_active_rdp(&self, width: u16, height: u16) {
+        self.send_rdp_input_to_active(RdpInput::Resize { width, height });
+    }
+
+    /// Whether the active session is a native RDP session (graphical surface).
+    #[must_use]
+    pub fn active_is_rdp(&self) -> bool {
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .is_some_and(SessionRecord::is_rdp)
+    }
+
+    /// Whether a specific session is a native RDP session.
+    #[must_use]
+    pub fn session_is_rdp(&self, session_id: SessionId) -> bool {
+        self.sessions
+            .get(&session_id)
+            .is_some_and(SessionRecord::is_rdp)
+    }
+
+    /// Whether the *active* session is a live RDP session (connecting or
+    /// connected). Drives the per-frame redraw subscription: only the visible,
+    /// live RDP tab needs 60 fps sampling — a background RDP tab updates its own
+    /// framebuffer regardless, and an errored/closed tab keeps a frozen last frame.
+    #[must_use]
+    pub fn active_rdp_live(&self) -> bool {
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .is_some_and(|record| {
+                record.is_rdp()
+                    && matches!(
+                        record.summary.status,
+                        SessionStatus::Connecting | SessionStatus::Connected
+                    )
+            })
+    }
+
+    /// The active RDP session's framebuffer, if it changed since `last_generation`.
+    #[must_use]
+    pub fn active_rdp_frame_if_newer(&self, last_generation: u64) -> Option<RdpFrame> {
+        let record = self.sessions.get(&self.active_session?)?;
+        record.rdp.as_ref()?.frame_if_newer(last_generation)
     }
 
     pub fn clear_active_terminal(&mut self) -> Result<(), SessionError> {
@@ -2082,6 +2241,28 @@ impl SessionManager {
                 }
             }
 
+            // Drain RDP helper events. Framebuffer tiles are applied to the
+            // surface on the client thread; here we only track status. The tab's
+            // pixels refresh from a per-frame redraw subscription in the UI.
+            while let Some(event) = record.rdp.as_ref().and_then(RdpClientHandle::try_recv) {
+                handled += 1;
+                match event {
+                    RdpClientEvent::Connected { .. } => {
+                        record.summary.status = SessionStatus::Connected;
+                    }
+                    RdpClientEvent::Resized { .. } | RdpClientEvent::ClipboardText(_) => {}
+                    RdpClientEvent::Error(message) => {
+                        record.summary.status = SessionStatus::Error;
+                        record
+                            .terminal
+                            .append_status(format!("RDP error: {message}"));
+                    }
+                    RdpClientEvent::Closed => {
+                        record.summary.status = status_after_closed(record.summary.status);
+                    }
+                }
+            }
+
             // Forward any terminal-generated replies (cursor position reports,
             // device attributes) back to the remote PTY.
             if record.live.is_some() {
@@ -2309,13 +2490,16 @@ fn build_profile(
     Ok(profile)
 }
 
-/// Join a POSIX remote path component onto the current directory.
-/// Keep only filename-safe characters (for the generated .rdp temp file name).
-fn sanitize_file(input: &str) -> String {
-    input
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
+/// Split an optional Windows domain out of an RDP username. Accepts the
+/// `DOMAIN\user` form; returns `(domain, bare_username)`. A UPN (`user@domain`)
+/// is left intact as the username so it isn't mis-parsed.
+fn split_domain(username: &str) -> (Option<String>, String) {
+    if let Some((domain, user)) = username.split_once('\\') {
+        if !domain.is_empty() && !user.is_empty() {
+            return (Some(domain.to_string()), user.to_string());
+        }
+    }
+    (None, username.to_string())
 }
 
 fn join_remote(cwd: &str, name: &str) -> String {

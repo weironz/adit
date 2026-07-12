@@ -1,5 +1,7 @@
 # Rust build output
 /target
+# adit-rdp is a separate (nested) workspace with its own target dir.
+crates/adit-rdp/target/
 
 # Session logs
 logs

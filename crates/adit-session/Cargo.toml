@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 adit-domain.workspace = true
+adit-rdp-proto.workspace = true
 adit-ssh.workspace = true
 adit-terminal.workspace = true
 thiserror.workspace = true
