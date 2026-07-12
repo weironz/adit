@@ -310,7 +310,23 @@ async fn active_session(
                         return Ok(Some(redirection));
                     }
                 }
-                active_stage.process(&mut image, action, &payload)?
+                // Tolerate a single PDU the active stage can't decode/process rather
+                // than tearing down the whole session: skip it and keep going. GNOME
+                // Remote Desktop emits occasional PDUs IronRDP doesn't parse, and one
+                // of them was killing the connection right after the handover (the
+                // desktop showed "connecting" forever). Losing one frame/order is far
+                // better than losing the session.
+                match active_stage.process(&mut image, action, &payload) {
+                    Ok(outputs) => outputs,
+                    Err(error) => {
+                        tracing::warn!(
+                            ?action,
+                            payload_len = payload.len(),
+                            "skipping PDU the active stage could not process: {error}"
+                        );
+                        Vec::new()
+                    }
+                }
             }
             input = input_rx.recv(), if input_open => {
                 match input {
