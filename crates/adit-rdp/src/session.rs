@@ -7,12 +7,14 @@
 //! bridges those channels to the child process's stdin/stdout.
 
 use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
 
 use adit_rdp_proto::{ConnectRequest, HostMsg, InputEvent};
 use ironrdp_connector::{ClientConnector, ConnectionResult, ServerName};
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp_dvc::DrdynvcClient;
+use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_graphics::image_processing::PixelFormat;
 use ironrdp_input::Database;
 use ironrdp_session::image::DecodedImage;
@@ -23,6 +25,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc as tokio_mpsc;
 
+use crate::egfx::{self, EgfxHandler, SharedEgfx};
 use crate::{build_connector_config, input::map_input, RdpError};
 
 /// A type-erased upgraded (post-TLS) framed transport.
@@ -33,59 +36,128 @@ type UpgradedFramed = TokioFramed<Box<dyn AsyncReadWrite + Unpin + Send + Sync>>
 /// Abort a TCP/TLS/CredSSP handshake that stalls this long.
 const CONNECT_TIMEOUT_SECS: u64 = 30;
 
-/// Drive a full RDP session to completion: connect, announce, then run the active
-/// loop until the server terminates or the app drops its input channel.
+/// Cap on chained server redirections (guards against a redirect loop).
+const MAX_REDIRECTS: u32 = 5;
+
+/// Drive an RDP session to completion, following any server redirections (GNOME
+/// system-mode handover): connect, announce, run the active loop; on a redirection
+/// PDU, reconnect to the target carrying the routing token, and repeat.
 pub(crate) async fn run_session(
-    request: ConnectRequest,
+    mut request: ConnectRequest,
     mut input_rx: tokio_mpsc::UnboundedReceiver<InputEvent>,
     host_tx: std_mpsc::Sender<HostMsg>,
 ) -> Result<(), RdpError> {
-    // Connect with a timeout, and let a Close (the app dropping stdin ⇒ `input_rx`
-    // closed) cancel a hung handshake instead of blocking forever. `input_rx` is
-    // only borrowed here, so it's still available for the active session.
-    let connect_fut = connect(&request);
-    tokio::pin!(connect_fut);
-    let deadline = tokio::time::sleep(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS));
-    tokio::pin!(deadline);
-    let (connection_result, framed) = loop {
-        tokio::select! {
-            result = &mut connect_fut => {
-                break result.map_err(|e| RdpError::Connect(e.to_string()))?;
-            }
-            _ = &mut deadline => {
-                return Err(RdpError::Connect(format!(
-                    "connection timed out after {CONNECT_TIMEOUT_SECS}s"
-                )));
-            }
-            msg = input_rx.recv() => {
-                // None ⇒ the app closed the control channel (cancel). A stray input
-                // before we're connected has no surface to act on; ignore it.
-                if msg.is_none() {
-                    return Err(RdpError::ControlChannelClosed);
+    // Shared framebuffer the EGFX handler (running inside `ActiveStage::process`)
+    // composites into; the active loop samples it and emits tiles.
+    let shared_egfx = egfx::new_shared();
+    let mut routing_token: Option<Vec<u8>> = None;
+    // One-time credentials for the RDSTLS handover auth, populated on a redirect.
+    let mut rdstls_creds: Option<crate::rdstls::RdstlsCreds> = None;
+    let mut announced = false;
+    let mut redirects = 0u32;
+
+    loop {
+        // Connect with a timeout; a Close (input channel drop) cancels a hung
+        // handshake instead of blocking forever. Scoped in its own block so the
+        // futures borrowing `request` / `routing_token` are dropped before we may
+        // reassign those on a redirect.
+        let (connection_result, framed) = {
+            let connect_fut =
+                connect(&request, &shared_egfx, routing_token.as_deref(), rdstls_creds.as_ref());
+            tokio::pin!(connect_fut);
+            let deadline = tokio::time::sleep(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS));
+            tokio::pin!(deadline);
+            loop {
+                tokio::select! {
+                    result = &mut connect_fut => {
+                        break result.map_err(|e| RdpError::Connect(e.to_string()))?;
+                    }
+                    _ = &mut deadline => {
+                        return Err(RdpError::Connect(format!(
+                            "connection timed out after {CONNECT_TIMEOUT_SECS}s"
+                        )));
+                    }
+                    msg = input_rx.recv() => {
+                        if msg.is_none() {
+                            return Err(RdpError::ControlChannelClosed);
+                        }
+                    }
                 }
             }
+        };
+
+        // Announce the negotiated size once (the first successful connect); after a
+        // redirect the desktop size, if different, comes through as a Resized tile.
+        if !announced {
+            announced = true;
+            let desktop = connection_result.desktop_size;
+            if host_tx
+                .send(HostMsg::Connected {
+                    width: desktop.width,
+                    height: desktop.height,
+                })
+                .is_err()
+            {
+                return Err(RdpError::ControlChannelClosed);
+            }
         }
-    };
 
-    let desktop = connection_result.desktop_size;
-    if host_tx
-        .send(HostMsg::Connected {
-            width: desktop.width,
-            height: desktop.height,
-        })
-        .is_err()
-    {
-        return Err(RdpError::ControlChannelClosed);
+        match active_session(framed, connection_result, &mut input_rx, &host_tx, &shared_egfx)
+            .await
+            .map_err(|e| RdpError::Session(e.to_string()))?
+        {
+            None => return Ok(()),
+            Some(redir) => {
+                redirects += 1;
+                if redirects > MAX_REDIRECTS {
+                    return Err(RdpError::Session("too many server redirections".into()));
+                }
+                // Follow the redirection. GNOME hands off on the same host with a
+                // routing token (usually no target address); carry the token into the
+                // reconnect so the front daemon routes us to the pre-authenticated
+                // session, and authenticate there with the one-time credentials via
+                // RDSTLS (built below), not the original NLA credentials.
+                if let Some(host) = redir.host() {
+                    request.host = host.to_owned();
+                }
+                if let Some(user) = redir.username.as_deref().filter(|u| !u.is_empty()) {
+                    request.username = user.to_owned();
+                }
+                if let Some(domain) = redir.domain.as_deref().filter(|d| !d.is_empty()) {
+                    request.domain = Some(domain.to_owned());
+                }
+                routing_token = redir.load_balance_info.clone();
+                // The RDSTLS auth request echoes the redirection GUID and forwards the
+                // one-time username/domain/password verbatim (the password is an opaque
+                // blob the handover daemon issued and re-validates).
+                rdstls_creds = Some(crate::rdstls::RdstlsCreds {
+                    redirection_guid: redir.redirection_guid.clone().unwrap_or_default(),
+                    username: redir.username.clone().unwrap_or_default(),
+                    domain: redir.domain.clone().unwrap_or_default(),
+                    password: redir.password.clone().unwrap_or_default(),
+                });
+                tracing::info!(
+                    host = %request.host,
+                    user = %request.username,
+                    has_token = routing_token.is_some(),
+                    has_guid = redir.redirection_guid.is_some(),
+                    pw_len = redir.password.as_deref().map(<[u8]>::len).unwrap_or(0),
+                    "following RDP server redirection (RDSTLS handover)"
+                );
+            }
+        }
     }
-
-    active_session(framed, connection_result, input_rx, &host_tx)
-        .await
-        .map_err(|e| RdpError::Session(e.to_string()))
 }
 
-/// Direct TCP connect, TLS upgrade, then CredSSP/NLA finalize.
+/// Direct TCP connect, TLS upgrade, then finalize. On the initial connect the
+/// connector does CredSSP/NLA; on a redirection reconnect (`routing_token` set) it
+/// negotiates RDSTLS instead, and `rdstls_creds` carries the one-time credentials
+/// we authenticate with on the TLS stream before MCS.
 async fn connect(
     request: &ConnectRequest,
+    shared_egfx: &SharedEgfx,
+    routing_token: Option<&[u8]>,
+    rdstls_creds: Option<&crate::rdstls::RdstlsCreds>,
 ) -> Result<(ConnectionResult, UpgradedFramed), ironrdp_connector::ConnectorError> {
     let dest = format!("{}:{}", request.host, request.port);
     let stream = TcpStream::connect(&dest)
@@ -96,11 +168,18 @@ async fn connect(
         .map_err(|e| ironrdp_connector::custom_err!("local address", e))?;
     let mut framed = TokioFramed::new(stream);
 
-    let config = build_connector_config(request);
+    let config = build_connector_config(request, routing_token);
 
-    // DVC (DisplayControl for dynamic resize) is the one dynamic channel we need.
-    let drdynvc =
-        DrdynvcClient::new().with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())));
+    // Dynamic virtual channels: DisplayControl (dynamic resize) and the EGFX
+    // graphics pipeline. Opening the EGFX channel is what signals Graphics
+    // Pipeline support — servers like GNOME Remote Desktop reject clients that
+    // don't. No H.264 decoder ⇒ IronRDP advertises the V8 (no-AVC) caps and the
+    // server uses a codec we can decode.
+    let egfx_client =
+        GraphicsPipelineClient::new(Box::new(EgfxHandler::new(Arc::clone(shared_egfx))), None);
+    let drdynvc = DrdynvcClient::new()
+        .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())))
+        .with_dynamic_channel(egfx_client);
     // `mut` is always needed for the `&mut connector` borrows in `connect_begin` /
     // `mark_as_upgraded`; the feature blocks below may also reassign it.
     #[allow(unused_mut)]
@@ -126,9 +205,19 @@ async fn connect(
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector).await?;
 
     let (initial_stream, leftover) = framed.into_inner();
-    let (tls_stream, tls_cert) = ironrdp_tls::upgrade(initial_stream, &request.host)
+    let (mut tls_stream, tls_cert) = ironrdp_tls::upgrade(initial_stream, &request.host)
         .await
         .map_err(|e| ironrdp_connector::custom_err!("TLS upgrade", e))?;
+
+    // GNOME system-mode handover: authenticate with the one-time credentials via
+    // RDSTLS on the freshly-upgraded TLS stream, before MCS. The connector selected
+    // RDSTLS (not HYBRID) for this reconnect, so `connect_finalize` skips CredSSP and
+    // goes straight to the MCS connect once this succeeds.
+    if let Some(creds) = rdstls_creds {
+        crate::rdstls::authenticate(&mut tls_stream, creds)
+            .await
+            .map_err(|e| ironrdp_connector::custom_err!("RDSTLS auth", e))?;
+    }
 
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
 
@@ -173,14 +262,21 @@ fn full_frame_tile(image: &DecodedImage) -> HostMsg {
 async fn active_session(
     framed: UpgradedFramed,
     connection_result: ConnectionResult,
-    mut input_rx: tokio_mpsc::UnboundedReceiver<InputEvent>,
+    input_rx: &mut tokio_mpsc::UnboundedReceiver<InputEvent>,
     host_tx: &std_mpsc::Sender<HostMsg>,
-) -> Result<(), ironrdp_session::SessionError> {
+    egfx: &SharedEgfx,
+) -> Result<Option<crate::redirect::Redirection>, ironrdp_session::SessionError> {
     let (mut reader, mut writer) = split_tokio_framed(framed);
 
     let desktop_size = connection_result.desktop_size;
+    // Size the app last knows about; an EGFX reset to a different size sends a
+    // Resized before the next tile.
+    let mut egfx_size = (desktop_size.width, desktop_size.height);
     let mut image = DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
     let activation_factory = connection_result.activation_factory;
+    // Server Redirection PDUs arrive on the I/O channel; we intercept them before
+    // the active stage (which can't decode them).
+    let io_channel_id = connection_result.io_channel_id;
 
     let mut active_stage = ActiveStageBuilder {
         static_channels: connection_result.static_channels,
@@ -207,6 +303,13 @@ async fn active_session(
             frame_read = reader.read_pdu() => {
                 let (action, payload) = frame_read
                     .map_err(|e| ironrdp_session::custom_err!("read PDU", e))?;
+                // Intercept a Server Redirection PDU (GNOME system-mode handover)
+                // before the active stage, which can't decode it.
+                if matches!(action, ironrdp_pdu::Action::X224) {
+                    if let Some(redirection) = crate::redirect::detect(&payload, io_channel_id) {
+                        return Ok(Some(redirection));
+                    }
+                }
                 active_stage.process(&mut image, action, &payload)?
             }
             input = input_rx.recv(), if input_open => {
@@ -332,7 +435,32 @@ async fn active_session(
             // The app stopped listening; end the session.
             break 'session;
         }
+
+        // EGFX graphics (GNOME RDP / modern Windows) are composited into the shared
+        // buffer by the pipeline handler that just ran inside `process`; emit them
+        // as tiles, preceded by a Resized if the graphics output size changed.
+        if let Some((width, height, rgba)) = egfx::take_frame(egfx) {
+            if (width, height) != egfx_size {
+                egfx_size = (width, height);
+                if host_tx
+                    .send(HostMsg::Resized { width, height })
+                    .is_err()
+                {
+                    break 'session;
+                }
+            }
+            let tile = HostMsg::Tile {
+                x: 0,
+                y: 0,
+                width,
+                height,
+                rgba,
+            };
+            if host_tx.send(tile).is_err() {
+                break 'session;
+            }
+        }
     }
 
-    Ok(())
+    Ok(None)
 }

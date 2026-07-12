@@ -43,6 +43,7 @@ ironrdp-session = "0.11"
 ironrdp-graphics = "0.9"
 ironrdp-input = "0.7"
 ironrdp-displaycontrol = "0.8"
+ironrdp-egfx = "0.3"
 ironrdp-async = "0.10"
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", features = ["rustls"] }
@@ -56,3 +57,15 @@ smallvec = "1.15"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "io-util", "net", "macros"] }
 tracing = "0.1"
+# Diagnostics go to STDERR only (stdout is the binary protocol). Off unless
+# RUST_LOG is set, so normal runs stay silent.
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Vendored + patched ironrdp-connector (crates.io 0.10.0 + three marked hunks):
+# RDSTLS on the GNOME handover redirect, EGFX capability advertisement, and
+# dropping the MCS message channel to dodge a connect-time deadlock. Byte-for-byte
+# identical to upstream otherwise. Full rationale + re-vendoring steps in
+# IRONRDP-PATCHES.md; each hunk is tagged `ADIT PATCH` in
+# vendor/ironrdp-connector/src/connection.rs.
+[patch.crates-io]
+ironrdp-connector = { path = "vendor/ironrdp-connector" }

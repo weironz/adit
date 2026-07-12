@@ -17,8 +17,11 @@ use thiserror::Error;
 
 #[cfg(feature = "clipboard")]
 mod clipboard;
+mod egfx;
 mod host;
 mod input;
+mod rdstls;
+mod redirect;
 mod session;
 
 pub use host::run_host;
@@ -35,13 +38,30 @@ pub enum RdpError {
     ControlChannelClosed,
 }
 
-/// Build the IronRDP connector config from a connect request.
+/// Extract the value of a `Cookie: msts=<value>\r\n` load-balance / routing token
+/// (IronRDP's `routing_token` re-adds the `Cookie: msts=` prefix and CRLF).
+pub(crate) fn routing_token_value(load_balance_info: &[u8]) -> String {
+    let text = String::from_utf8_lossy(load_balance_info);
+    let text = text.trim_end_matches(['\r', '\n']);
+    text.strip_prefix("Cookie: msts=").unwrap_or(text).to_owned()
+}
+
+/// Build the IronRDP connector config from a connect request. On a redirection
+/// reconnect, `routing_token` carries the server's load-balance info, which goes
+/// into the X.224 connection request so the server routes us to the right session.
 pub(crate) fn build_connector_config(
     request: &adit_rdp_proto::ConnectRequest,
+    routing_token: Option<&[u8]>,
 ) -> ConnectorConfig {
     use ironrdp_pdu::gcc::KeyboardType;
+    use ironrdp_pdu::nego::NegoRequestData;
     use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
     use ironrdp_pdu::rdp::client_info::PerformanceFlags;
+
+    // Redirection reconnect ⇒ send the routing token; initial connect ⇒ leave it
+    // None so the connector falls back to a `mstshash` cookie with the username.
+    let request_data =
+        routing_token.map(|token| NegoRequestData::routing_token(routing_token_value(token)));
 
     // RDP desktop width must be even; clamp both dims into the protocol's range.
     let width = request.width.clamp(200, 8192) & !1;
@@ -76,7 +96,7 @@ pub(crate) fn build_connector_config(
         client_dir: "C:\\Windows\\System32\\mstscax.dll".to_owned(),
         platform: MajorPlatformType::WINDOWS,
         hardware_id: None,
-        request_data: None,
+        request_data,
         autologon: false,
         enable_audio_playback: request.enable_audio,
         // Deliver the pointer as separate updates (not composited into the image);

@@ -12,6 +12,9 @@ logs
 !.vscode/extensions.json
 .idea
 .DS_Store
+
+# Claude Code local session/config dir
+.claude/
 *.suo
 *.sw?
 

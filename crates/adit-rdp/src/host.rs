@@ -21,6 +21,13 @@ use crate::RdpError;
 
 /// Entry point for the `adit-rdp-host` binary. Blocks until the session ends.
 pub fn run_host() -> Result<(), RdpError> {
+    // Diagnostics to stderr only (stdout is the framed protocol). No-op unless
+    // RUST_LOG is set. `try_init` so a double-init (e.g. tests) can't panic.
+    let _ = tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .try_init();
+
     let (req_tx, req_rx) = std_mpsc::channel::<ConnectRequest>();
     let (input_tx, input_rx) = tokio_mpsc::unbounded_channel();
     let (host_tx, host_rx) = std_mpsc::channel::<HostMsg>();
