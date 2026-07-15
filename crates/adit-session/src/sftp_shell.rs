@@ -153,16 +153,26 @@ impl SftpShell {
                 self.writeln(terminal, "输入 help 查看可用命令，或直接把文件拖进来上传。");
                 self.prompt(terminal);
             }
-            SftpEvent::Listing { path, entries } => {
-                match self.pending.take() {
-                    Some(Pending::Cd) => {
-                        self.cwd = path;
-                        self.writeln(terminal, &format!("远程目录: {}", self.cwd));
-                    }
-                    _ => self.print_listing(terminal, &entries),
+            // Only ever print a listing that was actually asked for. The SFTP
+            // backend lists the home directory on its own right after connecting
+            // (to populate the dual-pane panel, which shares this connection type),
+            // and dumping that unasked buried the prompt under the whole home dir.
+            SftpEvent::Listing { path, entries } => match self.pending {
+                Some(Pending::Cd) => {
+                    self.pending = None;
+                    self.cwd = path;
+                    self.writeln(terminal, &format!("远程目录: {}", self.cwd));
+                    self.prompt(terminal);
                 }
-                self.prompt(terminal);
-            }
+                Some(Pending::List) => {
+                    self.pending = None;
+                    self.print_listing(terminal, &entries);
+                    self.prompt(terminal);
+                }
+                // Unsolicited (or a stray listing while a transfer is pending):
+                // stay quiet and leave `pending` alone.
+                _ => {}
+            },
             // Per-chunk progress would fight the prompt for the line; `Done` reports.
             SftpEvent::Progress { .. } => {}
             SftpEvent::Done { label, bytes } => {
