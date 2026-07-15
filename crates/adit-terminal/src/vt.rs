@@ -1122,16 +1122,22 @@ fn resolve(cell: &Cell) -> (Color, Color, RunAttrs) {
     (fg, bg, attrs)
 }
 
-fn cursor_cell(text: String) -> TerminalCell {
+/// The cell under the text cursor, as its own run.
+///
+/// It keeps the cell's real colours and attributes and is only *flagged*; the
+/// renderer paints the cursor. Baking a fixed light-on-dark pair in here (what
+/// this used to do) hardcoded the cursor's colours against the theme and left the
+/// renderer no way to hide it — so it could never blink or dim on focus loss.
+fn cursor_cell(
+    text: String,
+    fg: Color,
+    bg: Color,
+    attrs: RunAttrs,
+    hyperlink: Option<String>,
+) -> TerminalCell {
     TerminalCell {
-        text,
-        fg: Color::Rgb(18, 20, 26),
-        bg: Color::Rgb(208, 214, 224),
-        bold: false,
-        underline: false,
-        italic: false,
-        dim: false,
-        hyperlink: None,
+        cursor: true,
+        ..run_cell(text, fg, bg, attrs, hyperlink)
     }
 }
 
@@ -1151,6 +1157,7 @@ fn run_cell(
         italic: attrs.italic,
         dim: attrs.dim,
         hyperlink,
+        cursor: false,
     }
 }
 
@@ -1194,7 +1201,9 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>, links: &[String]) -> Te
             }
             let mut s = String::new();
             s.push(ch);
-            out.push(cursor_cell(s));
+            // Keep the cell's own colours; the renderer decides how to mark it.
+            let (fg, bg, attrs) = resolve(cell);
+            out.push(cursor_cell(s, fg, bg, attrs, link_url(cell.link)));
             continue;
         }
 

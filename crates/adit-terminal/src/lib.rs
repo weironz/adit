@@ -119,6 +119,11 @@ pub struct TerminalCell {
     /// run share the same target — a link boundary starts a new run.
     #[serde(default)]
     pub hyperlink: Option<String>,
+    /// This run is the single cell under the text cursor. It keeps its real
+    /// colours: whether (and how) to paint a cursor is the renderer's call, since
+    /// only the renderer knows about focus, the theme, and the blink phase.
+    #[serde(default)]
+    pub cursor: bool,
 }
 
 impl TerminalCell {
@@ -133,6 +138,7 @@ impl TerminalCell {
             italic: false,
             dim: false,
             hyperlink: None,
+            cursor: false,
         }
     }
 }

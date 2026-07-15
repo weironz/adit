@@ -181,6 +181,8 @@ pub struct AditApp {
     // While drag-selecting past the top/bottom edge: rows to scroll per tick,
     // negative = up (older), positive = down (newer), 0 = pointer inside.
     selection_autoscroll: i32,
+    /// Text-cursor blink phase: true = the block is painted this instant.
+    cursor_blink_on: bool,
     // Last terminal press (cell, time, click-count) for double/triple-click
     // word/line selection.
     terminal_click: Option<(TerminalPoint, Instant, u8)>,
@@ -507,6 +509,11 @@ pub enum Message {
     PaneRightPressed(usize),
     PanePointerMoved(usize, Point),
     TerminalPointerMoved(Point),
+    /// Window-absolute cursor while a selection drag is live (tracked globally so
+    /// the drag survives leaving the text area).
+    SelectionCursorMoved(Point),
+    /// Toggle the text cursor's blink phase.
+    CursorBlink,
     /// Tick while drag-selecting past the pane edge: scroll and extend.
     SelectionAutoScroll,
     TerminalScrolled(mouse::ScrollDelta),
@@ -1137,6 +1144,7 @@ impl AditApp {
             terminal_selection: None,
             terminal_selecting: false,
             selection_autoscroll: 0,
+            cursor_blink_on: true,
             terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
@@ -1297,6 +1305,12 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     if app.manager.active_rdp_live() {
         subs.push(window::frames().map(|_| Message::RdpTick));
     }
+    // Blink the text cursor only where one is actually drawn — a focused terminal
+    // tab. Otherwise this would wake the app twice a second to redraw nothing.
+    // 530 ms is the long-standing terminal blink period.
+    if terminal_cursor_blinks(app) {
+        subs.push(iced::time::every(Duration::from_millis(530)).map(|_| Message::CursorBlink));
+    }
     // Only track the global cursor while a sidebar resize is in progress, so
     // idle mouse movement never floods the app with messages.
     if app.sidebar_dragging {
@@ -1306,7 +1320,7 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     // outside the terminal panel — so the selection can't get "stuck" extending
     // after the user releases past the panel edge or over another widget.
     if app.terminal_selecting {
-        subs.push(event::listen_with(terminal_release_event));
+        subs.push(event::listen_with(terminal_selection_event));
         // Dragging past the top/bottom edge keeps scrolling (and extending the
         // selection) even if the cursor then holds still — no more mouse events
         // would arrive to drive it.
@@ -1338,7 +1352,14 @@ fn tab_release_event(
     }
 }
 
-fn terminal_release_event(
+/// While a selection drag is live, track the cursor and the button-up GLOBALLY.
+///
+/// A pane's `mouse_area` only reports `on_move` while the pointer is inside its
+/// bounds, so once the drag leaves the text area the selection would freeze (and
+/// the edge auto-scroll would never arm — nothing would tell it the pointer is
+/// past the edge). Listening at the runtime level keeps the drag alive anywhere in
+/// the window, which is also how the sidebar resize works.
+fn terminal_selection_event(
     event: event::Event,
     _status: event::Status,
     _window: window::Id,
@@ -1346,6 +1367,9 @@ fn terminal_release_event(
     match event {
         event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
             Some(Message::EndTerminalSelection)
+        }
+        event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+            Some(Message::SelectionCursorMoved(position))
         }
         _ => None,
     }
@@ -2611,6 +2635,18 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             if app.terminal_selecting {
                 extend_terminal_selection(app, point);
+            }
+        }
+        Message::CursorBlink => {
+            app.cursor_blink_on = !app.cursor_blink_on;
+        }
+        Message::SelectionCursorMoved(position) => {
+            // The pane's own `on_move` stops at its bounds; this arrives from the
+            // runtime, so a drag past the edge keeps extending (and arms the edge
+            // auto-scroll) instead of freezing.
+            if app.terminal_selecting {
+                let local = window_to_pane_local(app, position);
+                extend_terminal_selection(app, local);
             }
         }
         Message::SelectionAutoScroll => {
@@ -4915,6 +4951,11 @@ fn focus_command_input() -> Task<Message> {
 }
 
 fn send_terminal_bytes(app: &mut AditApp, bytes: Vec<u8>) {
+    // Keep the cursor solid while typing — a cursor that blinks out from under the
+    // character you just typed reads as a dropped keystroke. It resumes blinking
+    // on the next tick once you stop.
+    app.cursor_blink_on = true;
+
     // Broadcast mode fans keystrokes out to every connected session at once.
     if app.broadcast_input {
         app.terminal_scroll_offset = 0;
@@ -5457,6 +5498,27 @@ fn begin_terminal_click(app: &mut AditApp) {
             app.terminal_selecting = true;
         }
     }
+}
+
+/// Map a window-absolute cursor position into the focused pane's terminal-local
+/// space — the coordinates `terminal_point_from_cursor` expects (i.e. relative to
+/// that pane's `mouse_area`). `pane_layout` covers the unsplit case too (one pane,
+/// no header), so both the single-terminal and split-pane paths agree here.
+/// Whether a blinking text cursor is on screen right now — i.e. the terminal has
+/// keyboard focus and the tab is a terminal (RDP draws the remote's own cursor).
+/// Gates both the blink timer and the painting, so they can't disagree.
+fn terminal_cursor_blinks(app: &AditApp) -> bool {
+    app.terminal_focused && !app.manager.active_is_rdp() && app.manager.active_session().is_some()
+}
+
+fn window_to_pane_local(app: &AditApp, position: Point) -> Point {
+    let index = if app.panes.is_empty() {
+        0
+    } else {
+        app.focused_pane.min(app.panes.len() - 1)
+    };
+    let origin = pane_layout(app).pane_body_origin(index);
+    Point::new(position.x - origin.x, position.y - origin.y)
 }
 
 /// Extend a live drag-selection to the cursor, and arm/disarm auto-scroll when the
@@ -10608,6 +10670,7 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
             app.terminal_scroll_offset,
             highlights,
             links_clickable,
+            app.terminal_focused && app.cursor_blink_on,
         ))
         .on_press(Message::BeginTerminalSelection)
         .on_release(Message::EndTerminalSelection)
@@ -10936,6 +10999,9 @@ fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) -> Element<
         app.terminal_scroll_offset,
         highlights,
         link_open_modifier(app),
+        // Only the focused pane shows a cursor — that's what marks it as the one
+        // taking keystrokes.
+        is_focused && app.terminal_focused && app.cursor_blink_on,
     ))
     .on_press(Message::PaneMousePressed(index))
     .on_release(Message::EndTerminalSelection)
@@ -11050,6 +11116,7 @@ fn terminal_view(
     _scroll_offset: usize,
     search_highlights: Vec<Vec<(usize, usize, bool)>>,
     links_clickable: bool,
+    show_cursor: bool,
 ) -> Element<'static, Message> {
     // The selection is anchored in absolute scrollback rows; map it into this
     // snapshot's viewport rows (clipped to the visible window) to render it.
@@ -11076,6 +11143,7 @@ fn terminal_view(
                     selection,
                     highlights,
                     links_clickable,
+                    show_cursor,
                 ))
             })
     };
@@ -11114,6 +11182,7 @@ fn terminal_line(
     selection: Option<TerminalSelection>,
     search: &[(usize, usize, bool)],
     links_clickable: bool,
+    show_cursor: bool,
 ) -> Element<'static, Message> {
     let font_size = term_font_size();
     let base_font = term_font();
@@ -11172,7 +11241,15 @@ fn terminal_line(
                 .iter()
                 .find_map(|(start, end, current)| (col >= *start && col < *end).then_some(*current));
 
-            let glyph_color = if selected {
+            // The text cursor is a reverse-video block on its own cell: the glyph
+            // takes the background colour and vice-versa, so it reads correctly in
+            // any theme and stays legible over whatever it sits on.
+            let cursor_here = cell.cursor && show_cursor;
+            let glyph_color = if cursor_here {
+                // Under the block, the glyph takes the cell's background — which
+                // for a default cell is the terminal's own background colour.
+                term_color(cell.bg, terminal_background())
+            } else if selected {
                 selected_fg
             } else if let Some(current) = search_hit {
                 if current {
@@ -11190,7 +11267,9 @@ fn terminal_line(
                 .font(font)
                 .color(glyph_color);
 
-            let background = if selected {
+            let background = if cursor_here {
+                Some(fg)
+            } else if selected {
                 Some(selection_background())
             } else if let Some(current) = search_hit {
                 Some(if current {
