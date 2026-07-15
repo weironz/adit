@@ -1,3 +1,7 @@
+mod sftp_shell;
+
+pub use sftp_shell::SftpShell;
+
 use adit_domain::{
     AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
     SessionStatus, TunnelDef,
@@ -93,6 +97,9 @@ struct SessionRecord {
     /// a placeholder `terminal` (never rendered) and leave `live`/`reconnect`
     /// `None`, so terminal-only code paths skip them.
     rdp: Option<RdpClientHandle>,
+    /// Set for a command-line SFTP tab: typed bytes go to this interpreter instead
+    /// of a PTY, and it owns the `sftp>` prompt in `terminal`.
+    sftp_shell: Option<SftpShell>,
     log: Option<SessionLog>,
     pending_host_key: Option<HostKeyPrompt>,
     pending_auth_prompt: Option<AuthPromptRequest>,
@@ -808,6 +815,7 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: None,
+                sftp_shell: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -911,6 +919,7 @@ impl SessionManager {
                 terminal,
                 live: Some(live),
                 rdp: None,
+                sftp_shell: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -1065,6 +1074,7 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: Some(handle),
+                sftp_shell: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -1128,6 +1138,7 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: None,
+                sftp_shell: None,
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
@@ -1276,6 +1287,21 @@ impl SessionManager {
             return Ok(());
         }
 
+        // A command-line SFTP tab interprets the line itself (see the byte path).
+        // Terminate it so a command window / snippet actually submits.
+        if record.sftp_shell.is_some() {
+            let SessionRecord {
+                terminal,
+                sftp_shell,
+                ..
+            } = record;
+            if let Some(shell) = sftp_shell.as_mut() {
+                shell.feed_input(terminal, input.as_bytes());
+                shell.feed_input(terminal, b"\r");
+            }
+            return Ok(());
+        }
+
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::Input(input.into_bytes()))?;
         } else {
@@ -1299,6 +1325,20 @@ impl SessionManager {
 
         // RDP takes scancode/pointer input, not a byte stream; ignore here.
         if record.is_rdp() {
+            return Ok(());
+        }
+
+        // A command-line SFTP tab has no PTY: typed bytes go through its own line
+        // editor, which owns the echo and the `sftp>` prompt.
+        if record.sftp_shell.is_some() {
+            let SessionRecord {
+                terminal,
+                sftp_shell,
+                ..
+            } = record;
+            if let Some(shell) = sftp_shell.as_mut() {
+                shell.feed_input(terminal, &input);
+            }
             return Ok(());
         }
 
@@ -1732,6 +1772,105 @@ impl SessionManager {
         if !stopped.is_empty() {
             self.tunnels.retain(|t| !stopped.contains(&t.id));
         }
+    }
+
+    /// Open a command-line SFTP tab for the active SSH session (SecureCRT's Alt+P).
+    ///
+    /// This is the `sftp>` prompt, not the dual-pane panel ([`Self::open_sftp_for_active`]).
+    /// Like the panel it gets its OWN SFTP connection rather than multiplexing the
+    /// shell's channel, reusing the active session's stored credentials.
+    pub fn open_sftp_shell_for_active(&mut self) -> Result<SessionId, SessionError> {
+        let source_id = self
+            .active_session
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let record = self
+            .sessions
+            .get(&source_id)
+            .ok_or(SessionError::NoActiveSshSession)?;
+        // Only a live SSH session carries the credentials to open SFTP with; RDP
+        // and local shells have nothing to connect to.
+        let reconnect = record
+            .reconnect
+            .as_ref()
+            .ok_or(SessionError::NoActiveSshSession)?;
+        let profile_id = record.summary.profile_id;
+        let endpoint = record.summary.endpoint.clone();
+        let password = reconnect.password.clone();
+        let passphrase = reconnect.passphrase.clone();
+
+        let profile = self
+            .profiles
+            .iter()
+            .find(|p| p.id == profile_id)
+            .cloned()
+            .ok_or(SessionError::ProfileNotFound)?;
+
+        let mut request = SftpRequest::new(
+            profile.host.clone(),
+            profile.port,
+            profile.username.clone(),
+            password.clone(),
+        );
+        request.auth = auth_options_for_profile(&profile, &password, &passphrase);
+        request.jumps = profile.jumps.clone();
+        request.connect_timeout_secs = self.connect_timeout_secs;
+        let handle = adit_ssh::spawn_sftp_session(request)?;
+
+        let session_id = SessionId::new();
+        let title = format!("SFTP-{}", profile.name);
+        let mut terminal = VtTerminal::with_title(self.default_size, title.clone());
+        terminal.feed_str(&format!("正在连接 SFTP: {endpoint}\r\n"));
+
+        self.sessions.insert(
+            session_id,
+            SessionRecord {
+                summary: SessionSummary {
+                    id: session_id,
+                    profile_id,
+                    title,
+                    endpoint,
+                    status: SessionStatus::Connecting,
+                },
+                terminal,
+                live: None,
+                rdp: None,
+                sftp_shell: Some(SftpShell::new(handle, default_local_dir())),
+                log: None,
+                pending_host_key: None,
+                pending_auth_prompt: None,
+                auth_rejected: None,
+                reconnect: None,
+            },
+        );
+        self.order.push(session_id);
+        self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile_id);
+        Ok(session_id)
+    }
+
+    /// True when the active tab is a command-line SFTP shell.
+    #[must_use]
+    pub fn active_is_sftp_shell(&self) -> bool {
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .is_some_and(|record| record.sftp_shell.is_some())
+    }
+
+    /// Upload a dropped file into the active SFTP shell's remote directory.
+    pub fn sftp_shell_upload_dropped(&mut self, local: &Path) -> Result<(), SessionError> {
+        let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+        let SessionRecord {
+            terminal,
+            sftp_shell,
+            ..
+        } = record;
+        let shell = sftp_shell.as_mut().ok_or(SessionError::NoActiveSshSession)?;
+        shell.upload_dropped(terminal, local);
+        Ok(())
     }
 
     pub fn open_sftp_for_active(&mut self) -> Result<(), SessionError> {
@@ -2182,6 +2321,29 @@ impl SessionManager {
 
         for record in self.sessions.values_mut() {
             let mut closed = false;
+
+            // Command-line SFTP tab: fold its events into the transcript.
+            if record.sftp_shell.is_some() {
+                let SessionRecord {
+                    terminal,
+                    sftp_shell,
+                    summary,
+                    ..
+                } = record;
+                if let Some(shell) = sftp_shell.as_mut() {
+                    while let Some(event) = shell.try_recv() {
+                        handled += 1;
+                        let ended = shell.on_event(terminal, event);
+                        if shell.connected {
+                            summary.status = SessionStatus::Connected;
+                        }
+                        if ended {
+                            summary.status = SessionStatus::Disconnected;
+                            break;
+                        }
+                    }
+                }
+            }
 
             while let Some(event) = record.live.as_ref().and_then(LiveShellHandle::try_recv) {
                 handled += 1;

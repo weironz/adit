@@ -2139,10 +2139,16 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         },
         Message::SftpFileDropped(path) => {
-            if !app.manager.sftp_is_open() {
-                app.notice = String::from("拖拽上传：请先打开 SFTP 面板");
-            } else if path.is_dir() {
+            if path.is_dir() {
                 app.last_error = Some(String::from("暂不支持上传文件夹，请拖入单个文件"));
+            } else if app.manager.active_is_sftp_shell() {
+                // Dropped onto a command-line SFTP tab: upload into its cwd.
+                if let Err(error) = app.manager.sftp_shell_upload_dropped(&path) {
+                    app.last_error = Some(error.to_string());
+                }
+            } else if !app.manager.sftp_is_open() {
+                app.notice =
+                    String::from("拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)");
             } else if let Err(error) = app.manager.sftp_upload(&path) {
                 app.last_error = Some(error.to_string());
             } else {
@@ -2424,13 +2430,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_input = input;
         }
         Message::KeyboardInput(event) => {
-            // Alt+P opens the SFTP file manager for the active session
-            // (SecureCRT-style), regardless of focus.
+            // Alt+P opens a command-line SFTP tab for the active session
+            // (SecureCRT-style), regardless of focus. This is the `sftp>` prompt,
+            // not the dual-pane panel — that one has its own toolbar button.
             if alt_shortcut(&event, 'p') {
-                if let Err(error) = app.manager.open_sftp_for_active() {
-                    app.last_error = Some(format!("打开 SFTP 失败: {error}"));
-                } else {
-                    app.last_error = None;
+                match app.manager.open_sftp_shell_for_active() {
+                    Ok(_) => {
+                        app.terminal_focused = true;
+                        app.last_error = None;
+                        app.notice = String::from("已打开 SFTP 命令行 (输入 help 查看命令)");
+                        sync_terminal_size(app);
+                    }
+                    Err(error) => {
+                        app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+                    }
                 }
                 return Task::none();
             }
