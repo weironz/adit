@@ -1,5 +1,8 @@
-use adit_domain::{ConnectionProfile, ProfileId};
-use keyring::Entry;
+mod credentials;
+
+pub use credentials::{CredentialError, CredentialStore};
+
+use adit_domain::ConnectionProfile;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeSet,
@@ -16,23 +19,12 @@ pub enum StorageError {
     Json(#[from] serde_json::Error),
 }
 
-#[derive(Debug, Error)]
-pub enum CredentialError {
-    #[error("credential store failed: {0}")]
-    Keyring(#[from] keyring::Error),
-}
-
 #[derive(Debug, Clone)]
 pub struct ProfileStore {
     path: PathBuf,
     // Lazily-spawned background writer for non-blocking saves. Shared across
     // clones so there is a single writer thread per store path.
     writer: std::sync::Arc<std::sync::OnceLock<std::sync::mpsc::Sender<String>>>,
-}
-
-#[derive(Debug, Clone)]
-pub struct CredentialStore {
-    service: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -164,93 +156,6 @@ impl ProfileStore {
 impl Default for ProfileStore {
     fn default() -> Self {
         Self::new(Self::default_path())
-    }
-}
-
-impl CredentialStore {
-    #[must_use]
-    pub fn new(service: impl Into<String>) -> Self {
-        Self {
-            service: service.into(),
-        }
-    }
-
-    pub fn load_profile_password(
-        &self,
-        profile_id: ProfileId,
-    ) -> Result<Option<String>, CredentialError> {
-        match self.profile_password_entry(profile_id)?.get_password() {
-            Ok(password) => Ok(Some(password)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    pub fn save_profile_password(
-        &self,
-        profile_id: ProfileId,
-        password: &str,
-    ) -> Result<(), CredentialError> {
-        self.profile_password_entry(profile_id)?
-            .set_password(password)
-            .map_err(Into::into)
-    }
-
-    pub fn delete_profile_password(&self, profile_id: ProfileId) -> Result<(), CredentialError> {
-        match self.profile_password_entry(profile_id)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    fn profile_password_entry(&self, profile_id: ProfileId) -> Result<Entry, CredentialError> {
-        Ok(Entry::new(
-            &self.service,
-            &format!("profile:{profile_id}:password"),
-        )?)
-    }
-
-    pub fn load_profile_passphrase(
-        &self,
-        profile_id: ProfileId,
-    ) -> Result<Option<String>, CredentialError> {
-        match self.profile_passphrase_entry(profile_id)?.get_password() {
-            Ok(passphrase) => Ok(Some(passphrase)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    pub fn save_profile_passphrase(
-        &self,
-        profile_id: ProfileId,
-        passphrase: &str,
-    ) -> Result<(), CredentialError> {
-        self.profile_passphrase_entry(profile_id)?
-            .set_password(passphrase)
-            .map_err(Into::into)
-    }
-
-    pub fn delete_profile_passphrase(&self, profile_id: ProfileId) -> Result<(), CredentialError> {
-        match self.profile_passphrase_entry(profile_id)?.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(error) => Err(error.into()),
-        }
-    }
-
-    /// The key passphrase is stored under a distinct account so it never collides
-    /// with the login password (a profile can have both).
-    fn profile_passphrase_entry(&self, profile_id: ProfileId) -> Result<Entry, CredentialError> {
-        Ok(Entry::new(
-            &self.service,
-            &format!("profile:{profile_id}:passphrase"),
-        )?)
-    }
-}
-
-impl Default for CredentialStore {
-    fn default() -> Self {
-        Self::new("Adit SSH")
     }
 }
 
@@ -572,7 +477,11 @@ pub fn set_custom_config_dir(dir: Option<&Path>) -> std::io::Result<()> {
 
 /// The config files that make up a portable/syncable config folder. Host keys and
 /// passwords are deliberately excluded — they stay machine-local.
-const CONFIG_FILE_NAMES: [&str; 2] = ["profiles.json", "settings.json"];
+const CONFIG_FILE_NAMES: [&str; 3] = [
+    "profiles.json",
+    "settings.json",
+    credentials::CREDENTIALS_FILE,
+];
 
 /// Whether `dir` already holds Adit config (profiles or settings) — i.e. it is a
 /// real config folder (perhaps synced from another machine) rather than an empty

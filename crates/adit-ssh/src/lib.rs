@@ -161,6 +161,11 @@ pub enum LiveShellEvent {
     Status(String),
     Output(Vec<u8>),
     Error(String),
+    /// Authentication failed in a way the user can fix by supplying credentials
+    /// (rejected password/key, a missing password, or no method available). Kept
+    /// separate from [`LiveShellEvent::Error`] so the UI can re-prompt for the
+    /// password instead of only showing an error.
+    AuthRejected(String),
     Closed,
     /// The handshake is paused awaiting the user's decision about the server's
     /// host key. Answer with [`LiveShellCommand::HostKeyDecision`].
@@ -293,7 +298,7 @@ pub fn spawn_password_shell(request: LiveShellRequest) -> Result<LiveShellHandle
                         command_rx,
                         event_tx.clone(),
                     )) {
-                        let _ = event_tx.send(LiveShellEvent::Error(error.to_string()));
+                        let _ = event_tx.send(live_shell_failure(&error));
                     }
                 }
                 Err(error) => {
@@ -309,6 +314,21 @@ pub fn spawn_password_shell(request: LiveShellRequest) -> Result<LiveShellHandle
         command_tx,
         event_rx,
     })
+}
+
+/// Classify a failed handshake: credential problems the user can fix by typing a
+/// password become [`LiveShellEvent::AuthRejected`] (the UI re-prompts); everything
+/// else is a plain error. A *cancelled* auth is deliberately not included — the
+/// user just dismissed the prompt, so re-opening it would trap them in a loop.
+fn live_shell_failure(error: &SshError) -> LiveShellEvent {
+    match error {
+        SshError::AuthenticationRejected
+        | SshError::EmptyPassword
+        | SshError::NoAuthenticationMethod
+        | SshError::KeyPassphraseRequired(_)
+        | SshError::KeyPassphraseWrong(_) => LiveShellEvent::AuthRejected(error.to_string()),
+        _ => LiveShellEvent::Error(error.to_string()),
+    }
 }
 
 /// Spawn a local shell in a pseudo-terminal (ConPTY on Windows), presented

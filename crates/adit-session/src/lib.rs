@@ -96,6 +96,9 @@ struct SessionRecord {
     log: Option<SessionLog>,
     pending_host_key: Option<HostKeyPrompt>,
     pending_auth_prompt: Option<AuthPromptRequest>,
+    /// Set when the handshake failed on credentials; the UI drains this via
+    /// [`SessionManager::take_auth_rejection`] and re-opens the password dialog.
+    auth_rejected: Option<String>,
     reconnect: Option<ReconnectState>,
 }
 
@@ -104,6 +107,32 @@ impl SessionRecord {
     fn is_rdp(&self) -> bool {
         self.rdp.is_some()
     }
+}
+
+/// Whether an RDP helper error reads as a credential rejection, so the UI can
+/// re-prompt for the password. Unlike SSH (which reports a typed
+/// `LiveShellEvent::AuthRejected`), the RDP helper only sends connector errors as
+/// text across the IPC boundary, so this matches the markers IronRDP/CredSSP and
+/// the Windows status codes use for bad or unusable credentials.
+fn rdp_error_is_auth_failure(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    [
+        "logon failure",
+        "logon_failure",
+        "authentication failed",
+        "authentication error",
+        "credssp",
+        "access denied",
+        "access_denied",
+        "invalid credentials",
+        "wrong password",
+        "password expired",
+        "account restriction",
+        "account_disabled",
+        "account locked",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
 }
 
 /// An open transcript log for a session: raw PTY output is appended here while
@@ -782,6 +811,7 @@ impl SessionManager {
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
+                auth_rejected: None,
                 reconnect: None,
             },
         );
@@ -884,6 +914,7 @@ impl SessionManager {
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
+                auth_rejected: None,
                 reconnect,
             },
         );
@@ -1037,6 +1068,7 @@ impl SessionManager {
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
+                auth_rejected: None,
                 reconnect: None,
             },
         );
@@ -1099,6 +1131,7 @@ impl SessionManager {
                 log: None,
                 pending_host_key: None,
                 pending_auth_prompt: None,
+                auth_rejected: None,
                 reconnect: None,
             },
         );
@@ -2106,6 +2139,19 @@ impl SessionManager {
         })
     }
 
+    /// Take the next session whose handshake failed on credentials, so the caller
+    /// can re-prompt for the password. Draining (rather than peeking) means the
+    /// dialog opens exactly once per failure instead of on every poll.
+    pub fn take_auth_rejection(&mut self) -> Option<(SessionId, ProfileId, String)> {
+        let (id, profile_id, reason) = self.sessions.iter_mut().find_map(|(id, record)| {
+            record
+                .auth_rejected
+                .take()
+                .map(|reason| (*id, record.summary.profile_id, reason))
+        })?;
+        Some((id, profile_id, reason))
+    }
+
     /// Answer a pending interactive-auth prompt with one response per field, in
     /// order. An empty vec cancels the authentication.
     pub fn respond_auth_prompt(
@@ -2191,6 +2237,20 @@ impl SessionManager {
                         // An auth prompt can't be answered on a dead connection.
                         record.pending_auth_prompt = None;
                     }
+                    LiveShellEvent::AuthRejected(error) => {
+                        record.terminal.append_status(format!(
+                            "authentication failed for {}: {error}",
+                            record.summary.endpoint
+                        ));
+                        record.summary.status = SessionStatus::Error;
+                        record.pending_auth_prompt = None;
+                        // Flag it so the UI re-prompts for the password. A rejected
+                        // password would only be re-rejected, so don't auto-retry.
+                        record.auth_rejected = Some(error);
+                        if let Some(reconnect) = &mut record.reconnect {
+                            reconnect.retry_at = None;
+                        }
+                    }
                     LiveShellEvent::Closed => {
                         closed = true;
                         record.pending_auth_prompt = None;
@@ -2256,6 +2316,9 @@ impl SessionManager {
                         record
                             .terminal
                             .append_status(format!("RDP error: {message}"));
+                        if rdp_error_is_auth_failure(&message) {
+                            record.auth_rejected = Some(message);
+                        }
                     }
                     RdpClientEvent::Closed => {
                         record.summary.status = status_after_closed(record.summary.status);
@@ -2877,6 +2940,37 @@ fn probe_terminal(
 mod tests {
     use super::*;
     use adit_terminal::Color as TermColor;
+
+    #[test]
+    fn rdp_auth_failures_are_told_apart_from_other_errors() {
+        // Credential rejections → re-prompt for the password.
+        for message in [
+            "RDP connect failed: STATUS_LOGON_FAILURE",
+            "CredSSP: authentication failed",
+            "the server denied access: Access Denied",
+            "Invalid credentials supplied",
+            "password expired",
+        ] {
+            assert!(
+                rdp_error_is_auth_failure(message),
+                "should be treated as an auth failure: {message}"
+            );
+        }
+
+        // Everything else must NOT re-prompt — asking for a password again would
+        // be useless and would hide the real problem.
+        for message in [
+            "connection timed out after 30s",
+            "TCP connect: connection refused",
+            "TLS upgrade failed: certificate expired",
+            "too many server redirections",
+        ] {
+            assert!(
+                !rdp_error_is_auth_failure(message),
+                "should NOT be treated as an auth failure: {message}"
+            );
+        }
+    }
 
     #[test]
     fn remote_path_join_and_parent() {

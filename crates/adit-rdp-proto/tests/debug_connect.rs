@@ -12,7 +12,6 @@
 //! interleave of black legacy frames with real EGFX frames (the flicker) shows
 //! up directly in the log.
 
-use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -133,7 +132,7 @@ fn debug_connect_real_host() {
                     let kind = if is_black { "BLACK " } else { "content" };
                     // Log the full black/content sequence for the first 80 frames
                     // (enough to expose an interleave), then every 30th.
-                    if frames <= 80 || frames % 30 == 0 {
+                    if frames <= 80 || frames.is_multiple_of(30) {
                         let _ = tx.send(format!(
                             "[{:>6.2}s] Tile #{frames:<3} {width}x{height}@({x},{y}) {kind} nonblack={:>5.1}%",
                             start.elapsed().as_secs_f32(),

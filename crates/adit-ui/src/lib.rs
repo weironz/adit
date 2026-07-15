@@ -173,8 +173,14 @@ pub struct AditApp {
     terminal_focused: bool,
     terminal_size: TerminalSize,
     terminal_pointer: Option<TerminalPoint>,
+    // Anchored in ABSOLUTE scrollback rows (not viewport rows) so it stays correct
+    // across scrolling — which is what lets a drag auto-scroll past the pane edge.
+    // Mapped back into viewport space only at render (`selection_for_viewport`).
     terminal_selection: Option<TerminalSelection>,
     terminal_selecting: bool,
+    // While drag-selecting past the top/bottom edge: rows to scroll per tick,
+    // negative = up (older), positive = down (newer), 0 = pointer inside.
+    selection_autoscroll: i32,
     // Last terminal press (cell, time, click-count) for double/triple-click
     // word/line selection.
     terminal_click: Option<(TerminalPoint, Instant, u8)>,
@@ -501,6 +507,8 @@ pub enum Message {
     PaneRightPressed(usize),
     PanePointerMoved(usize, Point),
     TerminalPointerMoved(Point),
+    /// Tick while drag-selecting past the pane edge: scroll and extend.
+    SelectionAutoScroll,
     TerminalScrolled(mouse::ScrollDelta),
     BeginTerminalSelection,
     EndTerminalSelection,
@@ -1128,6 +1136,7 @@ impl AditApp {
             terminal_pointer: None,
             terminal_selection: None,
             terminal_selecting: false,
+            selection_autoscroll: 0,
             terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
@@ -1190,7 +1199,24 @@ impl AditApp {
             notice: load_notice,
         };
         load_selected_profile(&mut app);
+        migrate_keyring_credentials(&mut app);
         app
+    }
+}
+
+/// One-time import of secrets an older build stored in the OS keyring into the
+/// encrypted store in the config folder. Without this, upgrading would look like
+/// every saved password vanished. Cheap and idempotent: once a secret is in the
+/// file the keyring copy is ignored, and profiles with nothing stored cost a
+/// single miss each.
+fn migrate_keyring_credentials(app: &mut AditApp) {
+    let profile_ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+    if profile_ids.is_empty() {
+        return;
+    }
+    let imported = app.credential_store.migrate_from_keyring(&profile_ids);
+    if imported > 0 {
+        app.notice = format!("已从系统密钥环导入 {imported} 条密码到配置目录(可随 Dropbox 同步)");
     }
 }
 
@@ -1281,6 +1307,14 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     // after the user releases past the panel edge or over another widget.
     if app.terminal_selecting {
         subs.push(event::listen_with(terminal_release_event));
+        // Dragging past the top/bottom edge keeps scrolling (and extending the
+        // selection) even if the cursor then holds still — no more mouse events
+        // would arrive to drive it.
+        if app.selection_autoscroll != 0 {
+            subs.push(
+                iced::time::every(Duration::from_millis(60)).map(|_| Message::SelectionAutoScroll),
+            );
+        }
     }
     // A tab drag reorders live on hover, so it MUST be disarmed on release even
     // if the button comes up off the tab strip — otherwise merely hovering tabs
@@ -1377,6 +1411,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             auto_log_connected_sessions(app);
             clamp_terminal_scroll(app);
             sync_auth_prompt(app);
+            sync_auth_retry(app);
             sync_sftp_state(app);
             // Reconcile split panes with the live session set (closed sessions,
             // an externally-activated session); refit only if the count changed.
@@ -2389,6 +2424,16 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_input = input;
         }
         Message::KeyboardInput(event) => {
+            // Alt+P opens the SFTP file manager for the active session
+            // (SecureCRT-style), regardless of focus.
+            if alt_shortcut(&event, 'p') {
+                if let Err(error) = app.manager.open_sftp_for_active() {
+                    app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+                } else {
+                    app.last_error = None;
+                }
+                return Task::none();
+            }
             // Ctrl+Shift+F opens scrollback search regardless of focus; Escape
             // closes it. These run before the terminal-focus gate.
             if terminal_shortcut(&event, 'f') {
@@ -2532,9 +2577,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
             if app.terminal_selecting {
-                if let Some(selection) = &mut app.terminal_selection {
-                    selection.end = terminal_point;
-                }
+                extend_terminal_selection(app, point);
             }
         }
         Message::TerminalPointerMoved(point) => {
@@ -2554,10 +2597,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
             if app.terminal_selecting {
-                if let Some(selection) = &mut app.terminal_selection {
-                    selection.end = terminal_point;
-                }
+                extend_terminal_selection(app, point);
             }
+        }
+        Message::SelectionAutoScroll => {
+            selection_autoscroll_tick(app);
         }
         Message::TerminalScrolled(delta) => {
             app.terminal_focused = true;
@@ -2609,6 +2653,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             app.mouse_button_down = false;
             app.terminal_selecting = false;
+            app.selection_autoscroll = 0;
             if app
                 .terminal_selection
                 .is_some_and(|selection| selection.start == selection.end)
@@ -4521,6 +4566,53 @@ fn connect_profile(app: &mut AditApp) {
     }
 }
 
+/// A connection was rejected on credentials: re-open the password dialog for that
+/// profile so the user can correct them, instead of leaving them with just an
+/// error in the transcript. Unlike [`open_connection_dialog`] this targets the
+/// failed session's profile rather than the sidebar form, and starts with an empty
+/// field — whatever was there is exactly what the server just refused.
+fn open_password_reprompt(app: &mut AditApp, profile_id: ProfileId, reason: &str) {
+    let Some(profile) = app.manager.profile(profile_id).cloned() else {
+        return;
+    };
+    // Only the credential-based protocols have a password to re-ask for.
+    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp) {
+        return;
+    }
+    // Keep the user's "remember" intent: if this profile had a stored password,
+    // the corrected one should replace it rather than silently not be saved.
+    let had_stored = app
+        .credential_store
+        .load_profile_password(profile_id)
+        .ok()
+        .flatten()
+        .is_some();
+
+    let endpoint = profile.endpoint();
+    app.connection_dialog = Some(ConnectionDialog {
+        profile_id,
+        title: profile.name,
+        endpoint,
+        auth_method: profile.auth_method,
+        identity_file: profile.identity_file,
+    });
+    app.password.clear();
+    app.remember_connection_password = had_stored;
+    app.last_error = Some(format!("认证失败，请重新输入密码: {reason}"));
+}
+
+/// Drain a credential rejection and re-open the password dialog for it. Skipped
+/// while a dialog is already open (the flag stays set for the next poll) so we
+/// never wipe what the user is currently typing.
+fn sync_auth_retry(app: &mut AditApp) {
+    if app.connection_dialog.is_some() {
+        return;
+    }
+    if let Some((_session_id, profile_id, reason)) = app.manager.take_auth_rejection() {
+        open_password_reprompt(app, profile_id, &reason);
+    }
+}
+
 fn open_connection_dialog(app: &mut AditApp) {
     let Some(profile_id) = save_profile_from_form(app, false) else {
         return;
@@ -4929,6 +5021,29 @@ fn terminal_shortcut(event: &keyboard::Event, key: char) -> bool {
             .is_some_and(|pressed| pressed.eq_ignore_ascii_case(&key))
 }
 
+/// A plain Alt+<key> app shortcut (SecureCRT-style, e.g. Alt+P opens SFTP).
+/// Matched via the physical key so it works on non-Latin layouts. Alt normally
+/// prefixes terminal input with ESC (Meta), so this deliberately claims the combo
+/// before the terminal sees it.
+fn alt_shortcut(event: &keyboard::Event, key: char) -> bool {
+    let keyboard::Event::KeyPressed {
+        key: logical_key,
+        physical_key,
+        modifiers,
+        ..
+    } = event
+    else {
+        return false;
+    };
+
+    modifiers.alt()
+        && !modifiers.control()
+        && !modifiers.shift()
+        && logical_key
+            .to_latin(*physical_key)
+            .is_some_and(|pressed| pressed.eq_ignore_ascii_case(&key))
+}
+
 fn terminal_scroll_shortcut(
     event: &keyboard::Event,
     visible_rows: u16,
@@ -5179,7 +5294,8 @@ fn apply_terminal_scroll(app: &mut AditApp, action: TerminalScrollAction) {
     app.terminal_context_menu = false;
 
     if next != previous {
-        app.terminal_selection = None;
+        // The selection is anchored in absolute scrollback rows, so scrolling no
+        // longer invalidates it — keep it (and let a drag extend through a scroll).
         app.notice = if next == 0 {
             String::from("终端已回到底部")
         } else {
@@ -5235,7 +5351,12 @@ fn selection_to_text(snapshot: &TerminalSnapshot, selection: TerminalSelection) 
 
     let mut lines = Vec::new();
     for row_index in start.row..=end.row {
-        let Some(line) = snapshot.lines.get(row_index) else {
+        // Selection rows are absolute scrollback rows; the snapshot holds a window
+        // starting at `first_row`.
+        let Some(line) = row_index
+            .checked_sub(snapshot.first_row)
+            .and_then(|i| snapshot.lines.get(i))
+        else {
             continue;
         };
 
@@ -5279,9 +5400,18 @@ fn normalized_selection(selection: TerminalSelection) -> Option<(TerminalPoint, 
 /// follows the previous press on the same cell — whether it starts a drag
 /// selection (single), selects a word (double), or selects a line (triple).
 fn begin_terminal_click(app: &mut AditApp) {
-    let point = app
+    // A fresh press must never inherit the previous drag's auto-scroll, or the
+    // view would scroll the instant the button goes down.
+    app.selection_autoscroll = 0;
+    // `terminal_pointer` is viewport-relative (mouse reporting needs that); the
+    // selection is anchored in absolute scrollback rows.
+    let viewport_point = app
         .terminal_pointer
         .unwrap_or(TerminalPoint { row: 0, col: 0 });
+    let point = TerminalPoint {
+        row: viewport_first_row(app).saturating_add(viewport_point.row),
+        col: viewport_point.col,
+    };
     let now = Instant::now();
     let count = match app.terminal_click {
         Some((last_point, last_time, last_count))
@@ -5313,6 +5443,45 @@ fn begin_terminal_click(app: &mut AditApp) {
             });
             app.terminal_selecting = true;
         }
+    }
+}
+
+/// Extend a live drag-selection to the cursor, and arm/disarm auto-scroll when the
+/// cursor is dragged past the pane's top/bottom edge.
+fn extend_terminal_selection(app: &mut AditApp, point: Point) {
+    let end = terminal_selection_point(app, point);
+    let overshoot = terminal_row_overshoot(app, point);
+    if let Some(selection) = &mut app.terminal_selection {
+        selection.end = end;
+    }
+    // Scroll faster the further past the edge the cursor is, but stay smooth.
+    app.selection_autoscroll = overshoot.signum() * overshoot.abs().min(5);
+}
+
+/// One auto-scroll step while drag-selecting past an edge: scroll, then re-anchor
+/// the selection end to the edge row now under the cursor.
+fn selection_autoscroll_tick(app: &mut AditApp) {
+    let lines = app.selection_autoscroll;
+    if lines == 0 || !app.terminal_selecting {
+        return;
+    }
+    // Past the bottom ⇒ reveal newer rows (offset down); past the top ⇒ older.
+    let before = app.terminal_scroll_offset;
+    apply_terminal_scroll(app, TerminalScrollAction::Lines(-lines));
+    if app.terminal_scroll_offset == before {
+        // Already at the end of the scrollback; nothing more to reveal.
+        return;
+    }
+
+    let rows = terminal_view_rows(app);
+    let first_row = viewport_first_row(app);
+    let edge_row = if lines > 0 {
+        first_row + rows.saturating_sub(1)
+    } else {
+        first_row
+    };
+    if let Some(selection) = &mut app.terminal_selection {
+        selection.end.row = edge_row;
     }
 }
 
@@ -5349,8 +5518,12 @@ fn select_line_at(app: &mut AditApp, point: TerminalPoint) {
     });
 }
 
+/// Text of an ABSOLUTE scrollback row, resolved against the snapshot's window.
 fn snapshot_line_text(snapshot: &TerminalSnapshot, row: usize) -> String {
-    snapshot.lines.get(row).map(raw_line_text).unwrap_or_default()
+    row.checked_sub(snapshot.first_row)
+        .and_then(|i| snapshot.lines.get(i))
+        .map(raw_line_text)
+        .unwrap_or_default()
 }
 
 /// Word span `[start, end)` (char indices) around `col` for double-click select.
@@ -5388,6 +5561,81 @@ fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(
     let end_col = if row == end.row { end.col } else { usize::MAX };
 
     (start_col < end_col).then_some((start_col, end_col))
+}
+
+/// The absolute scrollback row currently shown at the top of the viewport.
+/// Mirrors the window `active_terminal_snapshot` renders.
+fn viewport_first_row(app: &AditApp) -> usize {
+    let rows = terminal_view_rows(app);
+    let tail = app.manager.active_snapshot(Viewport::tail(rows));
+    let offset = app
+        .terminal_scroll_offset
+        .min(max_scroll_offset_for(&tail, rows));
+    tail.total_rows.saturating_sub(rows).saturating_sub(offset)
+}
+
+/// The cursor's position as an ABSOLUTE scrollback point, for anchoring a
+/// selection. (`terminal_point_from_cursor` stays viewport-relative because mouse
+/// reporting must send viewport cells to the remote app.)
+fn terminal_selection_point(app: &AditApp, point: Point) -> TerminalPoint {
+    let viewport = terminal_point_from_cursor(app, point);
+    TerminalPoint {
+        row: viewport_first_row(app).saturating_add(viewport.row),
+        col: viewport.col,
+    }
+}
+
+/// How many rows the cursor is past the viewport edge: negative above the top,
+/// positive below the bottom, 0 inside. Drives selection auto-scroll.
+fn terminal_row_overshoot(app: &AditApp, point: Point) -> i32 {
+    let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP;
+    let raw = ((point.y - origin_y) / cell_height()).floor();
+    let last = f32::from(app.terminal_size.rows.saturating_sub(1));
+    let overshoot = if raw < 0.0 {
+        raw
+    } else if raw > last {
+        raw - last
+    } else {
+        0.0
+    };
+    (overshoot as i32).clamp(-40, 40)
+}
+
+/// Map an absolute-row selection into viewport row space for rendering, clipping
+/// to the visible window. `None` when the selection is entirely off-screen. A row
+/// clipped off the top starts at column 0; one clipped off the bottom runs to EOL
+/// (`usize::MAX`), matching `selection_range_for_row`'s convention.
+fn selection_for_viewport(
+    selection: TerminalSelection,
+    first_row: usize,
+    rows: usize,
+) -> Option<TerminalSelection> {
+    let (start, end) = normalized_selection(selection)?;
+    let last_row = first_row + rows.saturating_sub(1);
+    if end.row < first_row || start.row > last_row {
+        return None;
+    }
+
+    let start = if start.row < first_row {
+        TerminalPoint { row: 0, col: 0 }
+    } else {
+        TerminalPoint {
+            row: start.row - first_row,
+            col: start.col,
+        }
+    };
+    let end = if end.row > last_row {
+        TerminalPoint {
+            row: rows.saturating_sub(1),
+            col: usize::MAX,
+        }
+    } else {
+        TerminalPoint {
+            row: end.row - first_row,
+            col: end.col,
+        }
+    };
+    Some(TerminalSelection { start, end })
 }
 
 fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
@@ -10790,6 +11038,10 @@ fn terminal_view(
     search_highlights: Vec<Vec<(usize, usize, bool)>>,
     links_clickable: bool,
 ) -> Element<'static, Message> {
+    // The selection is anchored in absolute scrollback rows; map it into this
+    // snapshot's viewport rows (clipped to the visible window) to render it.
+    let selection = selection
+        .and_then(|sel| selection_for_viewport(sel, snapshot.first_row, snapshot.lines.len()));
     let lines = if snapshot.lines.is_empty() {
         column![text("not connected")
             .size(13)
@@ -11962,6 +12214,113 @@ mod tests {
         };
 
         assert_eq!(selection_to_text(&snapshot, selection), "pha\nbravo\nchar");
+    }
+
+    /// The selection is stored in ABSOLUTE scrollback rows, so a snapshot scrolled
+    /// back (first_row > 0) must resolve them against its own window — otherwise a
+    /// selection made after scrolling would copy the wrong lines.
+    #[test]
+    fn selection_to_text_resolves_absolute_rows_in_a_scrolled_snapshot() {
+        let snapshot = TerminalSnapshot {
+            title: String::from("test"),
+            size: TerminalSize::new(10, 3),
+            first_row: 100,
+            total_rows: 103,
+            lines: vec![
+                TerminalLine::plain("alpha"),
+                TerminalLine::plain("bravo"),
+                TerminalLine::plain("charlie"),
+            ],
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+        };
+        // Absolute rows 100..=102 are the three visible lines.
+        let selection = TerminalSelection {
+            start: TerminalPoint { row: 100, col: 2 },
+            end: TerminalPoint { row: 102, col: 4 },
+        };
+        assert_eq!(selection_to_text(&snapshot, selection), "pha\nbravo\nchar");
+
+        // Rows entirely above the window resolve to nothing.
+        let above = TerminalSelection {
+            start: TerminalPoint { row: 0, col: 0 },
+            end: TerminalPoint { row: 5, col: 4 },
+        };
+        assert_eq!(selection_to_text(&snapshot, above), "");
+    }
+
+    #[test]
+    fn selection_for_viewport_clips_to_the_visible_window() {
+        let first_row = 100;
+        let rows = 3; // absolute rows 100..=102 visible
+
+        // Entirely inside: shifted down by first_row, cols preserved.
+        let inside = TerminalSelection {
+            start: TerminalPoint { row: 101, col: 2 },
+            end: TerminalPoint { row: 102, col: 4 },
+        };
+        assert_eq!(
+            selection_for_viewport(inside, first_row, rows),
+            Some(TerminalSelection {
+                start: TerminalPoint { row: 1, col: 2 },
+                end: TerminalPoint { row: 2, col: 4 },
+            })
+        );
+
+        // Starts above the window: clipped to row 0 col 0 (whole first row selected).
+        let from_above = TerminalSelection {
+            start: TerminalPoint { row: 40, col: 7 },
+            end: TerminalPoint { row: 101, col: 3 },
+        };
+        assert_eq!(
+            selection_for_viewport(from_above, first_row, rows),
+            Some(TerminalSelection {
+                start: TerminalPoint { row: 0, col: 0 },
+                end: TerminalPoint { row: 1, col: 3 },
+            })
+        );
+
+        // Runs off the bottom: last visible row runs to end-of-line.
+        let past_below = TerminalSelection {
+            start: TerminalPoint { row: 101, col: 1 },
+            end: TerminalPoint { row: 500, col: 2 },
+        };
+        assert_eq!(
+            selection_for_viewport(past_below, first_row, rows),
+            Some(TerminalSelection {
+                start: TerminalPoint { row: 1, col: 1 },
+                end: TerminalPoint {
+                    row: 2,
+                    col: usize::MAX
+                },
+            })
+        );
+
+        // Wholly off-screen in either direction renders nothing.
+        let above = TerminalSelection {
+            start: TerminalPoint { row: 10, col: 0 },
+            end: TerminalPoint { row: 20, col: 0 },
+        };
+        assert_eq!(selection_for_viewport(above, first_row, rows), None);
+        let below = TerminalSelection {
+            start: TerminalPoint { row: 200, col: 0 },
+            end: TerminalPoint { row: 300, col: 0 },
+        };
+        assert_eq!(selection_for_viewport(below, first_row, rows), None);
+
+        // A reversed drag (end above start) is normalized before clipping.
+        let reversed = TerminalSelection {
+            start: TerminalPoint { row: 102, col: 4 },
+            end: TerminalPoint { row: 101, col: 2 },
+        };
+        assert_eq!(
+            selection_for_viewport(reversed, first_row, rows),
+            Some(TerminalSelection {
+                start: TerminalPoint { row: 1, col: 2 },
+                end: TerminalPoint { row: 2, col: 4 },
+            })
+        );
     }
 
     #[test]

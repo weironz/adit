@@ -17,7 +17,7 @@ exclude = ["crates/adit-rdp"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.49"
+version = "0.1.50"
 edition = "2021"
 authors = ["Adit"]
 license = "MIT"
@@ -35,6 +35,14 @@ bytes = "1"
 # without pulling PNG/JPEG decoders — Adit only ever feeds it raw RGBA.
 iced = { version = "0.14.0", default-features = true, features = ["tokio", "advanced", "image-without-codecs"] }
 keyring = "4.1.2"
+# Credential store at rest: XChaCha20-Poly1305 (24-byte random nonces, so no
+# nonce-reuse risk) with an Argon2id-derived key. Stable releases on purpose —
+# the RustCrypto pre-release train that `russh`/`ssh-cipher` pin is a moving
+# target (see crates/adit-rdp/IRONRDP-PATCHES.md); these resolve independently.
+chacha20poly1305 = "0.10"
+argon2 = "0.5"
+hex = "0.4"
+zeroize = { version = "1", features = ["derive"] }
 russh = { version = "0.61.2", default-features = false, features = ["flate2", "ring", "rsa"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
