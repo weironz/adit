@@ -1227,6 +1227,16 @@ impl SessionManager {
     /// stored credentials. A no-op if the session is still live, or for protocols
     /// that don't carry reconnect state (only SSH sessions do — `attempt_reconnect`
     /// spawns an SSH shell, so it must not run for a local shell/serial tab).
+    /// Whether the active session can be reconnected in place (SSH-style: it has
+    /// stored reconnect credentials and isn't currently live). RDP and the SFTP
+    /// shell have no `reconnect` state, so they fall back to the dialog path.
+    #[must_use]
+    pub fn active_can_reconnect(&self) -> bool {
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .is_some_and(|record| record.live.is_none() && record.reconnect.is_some())
+    }
+
     pub fn reconnect(&mut self, session_id: SessionId) -> Result<(), SessionError> {
         let record = self
             .sessions

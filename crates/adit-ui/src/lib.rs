@@ -183,6 +183,8 @@ pub struct AditApp {
     selection_autoscroll: i32,
     /// Text-cursor blink phase: true = the block is painted this instant.
     cursor_blink_on: bool,
+    /// A terminal scrollbar-thumb drag is in progress (track the cursor globally).
+    scrollbar_dragging: bool,
     // Last terminal press (cell, time, click-count) for double/triple-click
     // word/line selection.
     terminal_click: Option<(TerminalPoint, Instant, u8)>,
@@ -514,6 +516,12 @@ pub enum Message {
     SelectionCursorMoved(Point),
     /// Toggle the text cursor's blink phase.
     CursorBlink,
+    /// Grab the terminal scrollbar thumb (start a drag).
+    BeginScrollbarDrag,
+    /// Cursor moved during a scrollbar drag; the value is the window-absolute Y.
+    ScrollbarDragMove(f32),
+    /// Release the scrollbar thumb.
+    EndScrollbarDrag,
     /// Tick while drag-selecting past the pane edge: scroll and extend.
     SelectionAutoScroll,
     TerminalScrolled(mouse::ScrollDelta),
@@ -1145,6 +1153,7 @@ impl AditApp {
             terminal_selecting: false,
             selection_autoscroll: 0,
             cursor_blink_on: true,
+            scrollbar_dragging: false,
             terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
@@ -1315,6 +1324,11 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     // idle mouse movement never floods the app with messages.
     if app.sidebar_dragging {
         subs.push(event::listen_with(sidebar_drag_event));
+    }
+    // A scrollbar-thumb drag tracks the cursor window-wide so it doesn't get stuck
+    // when the pointer slips off the thin bar.
+    if app.scrollbar_dragging {
+        subs.push(event::listen_with(scrollbar_drag_event));
     }
     // While a text selection drag is live, catch the button-up anywhere — even
     // outside the terminal panel — so the selection can't get "stuck" extending
@@ -2501,6 +2515,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            // A dead session: Enter reconnects (SecureCRT-style) instead of going
+            // nowhere. Checked before the RDP branch so a disconnected RDP tab
+            // reconnects too, rather than firing a scancode at a closed helper.
+            if is_enter_key(&event) && active_session_is_dead(app) {
+                reconnect_active_session(app);
+                return Task::none();
+            }
+
             // RDP: keys go to the remote desktop as scancodes, not VT bytes.
             // (Clipboard copy/paste will ride the RDP clipboard channel later.)
             if app.manager.active_is_rdp() {
@@ -2640,6 +2662,16 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CursorBlink => {
             app.cursor_blink_on = !app.cursor_blink_on;
         }
+        Message::BeginScrollbarDrag => {
+            app.scrollbar_dragging = true;
+            app.terminal_context_menu = false;
+        }
+        Message::ScrollbarDragMove(window_y) => {
+            if app.scrollbar_dragging {
+                scrollbar_drag_to(app, window_y);
+            }
+        }
+        Message::EndScrollbarDrag => app.scrollbar_dragging = false,
         Message::SelectionCursorMoved(position) => {
             // The pane's own `on_move` stops at its bounds; this arrives from the
             // runtime, so a drag past the edge keeps extending (and arms the edge
@@ -5039,6 +5071,50 @@ fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
     true
 }
 
+fn is_enter_key(event: &keyboard::Event) -> bool {
+    matches!(
+        event,
+        keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Enter),
+            ..
+        }
+    )
+}
+
+/// Whether the active tab's session has dropped (errored or disconnected) and so
+/// is a candidate for Enter-to-reconnect.
+fn active_session_is_dead(app: &AditApp) -> bool {
+    app.manager.active_session_summary().is_some_and(|summary| {
+        matches!(
+            summary.status,
+            SessionStatus::Error | SessionStatus::Disconnected
+        )
+    })
+}
+
+/// Reconnect the active dead session. SSH reconnects in place with its stored
+/// credentials (no dialog); RDP / the SFTP shell / a session with nothing stored
+/// fall back to the dialog path, which re-asks for the password.
+fn reconnect_active_session(app: &mut AditApp) {
+    if app.manager.active_can_reconnect() {
+        let Some(summary) = app.manager.active_session_summary() else {
+            return;
+        };
+        match app.manager.reconnect(summary.id) {
+            Ok(()) => {
+                app.terminal_scroll_offset = 0;
+                app.terminal_selection = None;
+                app.last_error = None;
+                app.notice = format!("正在重连: {}", summary.endpoint);
+            }
+            Err(error) => app.last_error = Some(error.to_string()),
+        }
+    } else {
+        // No in-place reconnect (RDP / SFTP shell): reopen the connection dialog.
+        retry_active_session(app);
+    }
+}
+
 fn is_escape_key(event: &keyboard::Event) -> bool {
     matches!(
         event,
@@ -5519,6 +5595,50 @@ fn window_to_pane_local(app: &AditApp, position: Point) -> Point {
     };
     let origin = pane_layout(app).pane_body_origin(index);
     Point::new(position.x - origin.x, position.y - origin.y)
+}
+
+/// Map a window-absolute cursor Y (during a scrollbar drag) to a scrollback
+/// offset. The scrollbar spans the focused pane's terminal body; the thumb centre
+/// follows the cursor, top = oldest (max offset), bottom = newest (offset 0).
+fn scrollbar_drag_to(app: &mut AditApp, window_y: f32) {
+    let max_offset = max_terminal_scroll_offset(app);
+    if max_offset == 0 {
+        return;
+    }
+    let index = if app.panes.is_empty() {
+        0
+    } else {
+        app.focused_pane.min(app.panes.len().saturating_sub(1))
+    };
+    let layout = pane_layout(app);
+    let origin = layout.pane_body_origin(index);
+    // The scrollbar track = the lines area (pane body minus the panel padding).
+    let track_top = origin.y + TERMINAL_PANEL_PADDING;
+    let track_h = (layout.pane_h - layout.header - TERMINAL_PANEL_PADDING * 2.0).max(1.0);
+    // 0 at the top of the track, 1 at the bottom.
+    let frac = ((window_y - track_top) / track_h).clamp(0.0, 1.0);
+    // Bottom (frac 1) = newest = offset 0; top (frac 0) = oldest = max offset.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let offset = ((1.0 - frac) * max_offset as f32).round() as usize;
+    app.terminal_scroll_offset = offset.min(max_offset);
+}
+
+/// While a scrollbar drag is live, track the cursor and the button-up GLOBALLY, so
+/// the drag survives leaving the thin scrollbar (same as the sidebar resize).
+fn scrollbar_drag_event(
+    event: event::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
+            Some(Message::ScrollbarDragMove(position.y))
+        }
+        event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+            Some(Message::EndScrollbarDrag)
+        }
+        _ => None,
+    }
 }
 
 /// Extend a live drag-selection to the cursor, and arm/disarm auto-scroll when the
@@ -6272,7 +6392,10 @@ fn pane_layout(app: &AditApp) -> PaneLayout {
 impl PaneLayout {
     /// Cols/rows that fit one pane in this layout.
     fn pane_terminal_size(&self) -> TerminalSize {
-        let inner_w = self.pane_w - TERMINAL_PANEL_PADDING * 2.0;
+        // The scrollbar gutter eats into the text width, so the grid must fit the
+        // remaining space — otherwise the remote wraps a column or two past the
+        // visible edge.
+        let inner_w = self.pane_w - TERMINAL_PANEL_PADDING * 2.0 - SCROLLBAR_WIDTH;
         let inner_h = self.pane_h - self.header - TERMINAL_PANEL_PADDING * 2.0;
         terminal_size_for_area(inner_w, inner_h)
     }
@@ -6292,7 +6415,7 @@ impl PaneLayout {
 fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> TerminalSize {
     let (region_w, region_h) = terminal_region_area(width, height, sidebar_width);
     terminal_size_for_area(
-        region_w - TERMINAL_PANEL_PADDING * 2.0,
+        region_w - TERMINAL_PANEL_PADDING * 2.0 - SCROLLBAR_WIDTH,
         region_h - TERMINAL_PANEL_PADDING * 2.0,
     )
 }
@@ -10671,6 +10794,8 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
             highlights,
             links_clickable,
             app.terminal_focused && app.cursor_blink_on,
+            // Single-pane view: the scrollbar always drives the one terminal.
+            true,
         ))
         .on_press(Message::BeginTerminalSelection)
         .on_release(Message::EndTerminalSelection)
@@ -11002,6 +11127,8 @@ fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) -> Element<
         // Only the focused pane shows a cursor — that's what marks it as the one
         // taking keystrokes.
         is_focused && app.terminal_focused && app.cursor_blink_on,
+        // Only the focused pane's scrollbar drives scrolling (the offset is shared).
+        is_focused,
     ))
     .on_press(Message::PaneMousePressed(index))
     .on_release(Message::EndTerminalSelection)
@@ -11109,19 +11236,24 @@ fn tab_button(
     .into()
 }
 
+#[allow(clippy::too_many_arguments)]
 fn terminal_view(
     snapshot: TerminalSnapshot,
     focused: bool,
     selection: Option<TerminalSelection>,
-    _scroll_offset: usize,
+    scroll_offset: usize,
     search_highlights: Vec<Vec<(usize, usize, bool)>>,
     links_clickable: bool,
     show_cursor: bool,
+    scrollbar_interactive: bool,
 ) -> Element<'static, Message> {
+    // Capture the counts the scrollbar needs before `snapshot.lines` is consumed.
+    let total_rows = snapshot.total_rows;
+    let viewport = snapshot.lines.len();
     // The selection is anchored in absolute scrollback rows; map it into this
     // snapshot's viewport rows (clipped to the visible window) to render it.
-    let selection = selection
-        .and_then(|sel| selection_for_viewport(sel, snapshot.first_row, snapshot.lines.len()));
+    let selection =
+        selection.and_then(|sel| selection_for_viewport(sel, snapshot.first_row, viewport));
     let lines = if snapshot.lines.is_empty() {
         column![text("not connected")
             .size(13)
@@ -11149,12 +11281,86 @@ fn terminal_view(
     };
 
     // The context menu now floats (see the layers stack in `view`), so the
-    // terminal body no longer reserves a strip for it.
-    container(container(lines).height(Fill).width(Fill))
+    // terminal body no longer reserves a strip for it. A scrollbar rides the right
+    // edge, inside the panel padding, showing (and driving) the scrollback position.
+    let body = row![
+        container(lines).height(Fill).width(Fill),
+        terminal_scrollbar(total_rows, viewport, scroll_offset, scrollbar_interactive),
+    ];
+    container(body)
         .padding(TERMINAL_PANEL_PADDING as u16)
         .height(Fill)
         .width(Fill)
         .style(move |_theme| terminal_panel_style(focused))
+        .into()
+}
+
+/// Width of the terminal scrollbar gutter, in pixels.
+const SCROLLBAR_WIDTH: f32 = 12.0;
+
+/// The vertical scrollback scrollbar for the terminal body.
+///
+/// The terminal is not an iced `scrollable` (its content is a fixed viewport-sized
+/// grid; scrollback is served by re-snapshotting at a different offset), so this is
+/// a hand-built thumb. Thumb height ≈ viewport/total; its position runs bottom =
+/// newest (offset 0) to top = oldest (max offset). Interactive only on the pane
+/// that owns the scroll — dragging is wired through `scrollbar_drag_to`.
+fn terminal_scrollbar(
+    total: usize,
+    viewport: usize,
+    offset: usize,
+    interactive: bool,
+) -> Element<'static, Message> {
+    // Nothing to scroll: keep an empty gutter so the text width doesn't jump when
+    // scrollback first appears.
+    if total <= viewport || viewport == 0 {
+        return container(Space::new())
+            .width(Length::Fixed(SCROLLBAR_WIDTH))
+            .height(Fill)
+            .into();
+    }
+
+    let max_offset = total - viewport;
+    // Per-mille weights for FillPortion so the thumb tracks size+position without
+    // needing pixel heights here (the drag handler does the pixel math).
+    let thumb = (((viewport as f32 / total as f32) * 1000.0).round() as u16).clamp(48, 1000);
+    let travel = 1000u16.saturating_sub(thumb);
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let below = ((offset as f32 / max_offset as f32) * f32::from(travel)).round() as u16;
+    let above = travel.saturating_sub(below);
+
+    let thumb_bar = container(Space::new())
+        .width(Fill)
+        .height(Length::FillPortion(thumb.max(1)))
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(scrollbar_thumb_color())),
+            border: iced::border::rounded(SCROLLBAR_WIDTH / 2.0 - 2.0),
+            ..container::Style::default()
+        });
+
+    let track = column![
+        Space::new().height(Length::FillPortion(above)),
+        thumb_bar,
+        Space::new().height(Length::FillPortion(below)),
+    ]
+    .width(Length::Fixed(SCROLLBAR_WIDTH - 4.0));
+
+    let gutter = container(track)
+        .width(Length::Fixed(SCROLLBAR_WIDTH))
+        .height(Fill)
+        .align_x(Alignment::Center)
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(scrollbar_track_color())),
+            border: iced::border::rounded(SCROLLBAR_WIDTH / 2.0),
+            ..container::Style::default()
+        });
+
+    if !interactive {
+        return gutter.into();
+    }
+    mouse_area(gutter)
+        .on_press(Message::BeginScrollbarDrag)
+        .interaction(mouse::Interaction::Pointer)
         .into()
 }
 
@@ -11336,6 +11542,19 @@ fn selection_foreground() -> Color {
 fn default_foreground() -> Color {
     let (r, g, b) = active_scheme().foreground;
     Color::from_rgb8(r, g, b)
+}
+
+/// Scrollbar thumb colour: the scheme's foreground, softened so it reads as chrome
+/// rather than text (light-on-dark or dark-on-light both work out).
+fn scrollbar_thumb_color() -> Color {
+    let fg = default_foreground();
+    Color { a: 0.35, ..fg }
+}
+
+/// Scrollbar track colour: a barely-there tint over the terminal background.
+fn scrollbar_track_color() -> Color {
+    let fg = default_foreground();
+    Color { a: 0.08, ..fg }
 }
 
 /// Resolve an Adit terminal color into a concrete iced color, using `fallback`
