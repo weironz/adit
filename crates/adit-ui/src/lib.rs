@@ -4660,14 +4660,6 @@ fn open_password_reprompt(app: &mut AditApp, profile_id: ProfileId, reason: &str
     if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp) {
         return;
     }
-    // Keep the user's "remember" intent: if this profile had a stored password,
-    // the corrected one should replace it rather than silently not be saved.
-    let had_stored = app
-        .credential_store
-        .load_profile_password(profile_id)
-        .ok()
-        .flatten()
-        .is_some();
 
     let endpoint = profile.endpoint();
     app.connection_dialog = Some(ConnectionDialog {
@@ -4678,7 +4670,9 @@ fn open_password_reprompt(app: &mut AditApp, profile_id: ProfileId, reason: &str
         identity_file: profile.identity_file,
     });
     app.password.clear();
-    app.remember_connection_password = had_stored;
+    // Save by default (SecureCRT-style), same as the normal connect dialog — so a
+    // corrected password is remembered without the user re-ticking the box.
+    app.remember_connection_password = true;
     app.last_error = Some(format!("认证失败，请重新输入密码: {reason}"));
 }
 
@@ -4729,7 +4723,7 @@ fn open_connection_dialog(app: &mut AditApp) {
             app.password = password;
             app.remember_connection_password = true;
             app.last_error = None;
-            app.notice = String::from("已载入系统凭据库中的密码");
+            app.notice = String::from("已载入已保存的密码");
         }
         Ok(None) => {
             app.password.clear();
@@ -4741,7 +4735,7 @@ fn open_connection_dialog(app: &mut AditApp) {
         Err(error) => {
             app.password.clear();
             app.remember_connection_password = true;
-            app.last_error = Some(format!("读取系统凭据失败: {error}"));
+            app.last_error = Some(format!("读取已保存的密码失败: {error}"));
             app.notice = String::from("请输入本次连接的密码或 passphrase");
         }
     }
@@ -4777,7 +4771,7 @@ fn confirm_connection(app: &mut AditApp) {
                 app.rdp_frame_generation = 0;
                 app.last_error = credential_warning
                     .as_ref()
-                    .map(|error| format!("保存系统凭据失败: {error}"));
+                    .map(|error| format!("保存密码失败: {error}"));
                 app.notice = format!("RDP 会话已开始连接: {}", dialog.endpoint);
             }
             Err(error) => app.last_error = Some(error.to_string()),
@@ -4809,7 +4803,7 @@ fn confirm_connection(app: &mut AditApp) {
             app.manager.start_profile_tunnels(dialog.profile_id);
             app.last_error = credential_warning
                 .as_ref()
-                .map(|error| format!("保存系统凭据失败: {error}"));
+                .map(|error| format!("保存密码失败: {error}"));
             app.notice = if credential_warning.is_some() {
                 format!("SSH 会话已开始连接: {}；系统凭据未保存", dialog.endpoint)
             } else {
@@ -7198,12 +7192,12 @@ fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .padding([6, 8])
                 .style(text_input_style),
             checkbox(app.remember_connection_password)
-                .label("保存到系统凭据库")
+                .label("保存密码")
                 .on_toggle(Message::RememberConnectionPasswordChanged)
                 .size(14)
                 .text_size(12)
                 .spacing(8),
-            text("仅保存到系统凭据库，不写入 profiles.json")
+            text("加密保存在配置目录，可随 Dropbox 等同步到其他电脑")
                 .size(10)
                 .color(muted_text()),
             row![
@@ -10498,11 +10492,11 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     .spacing(6)
                     .into(),
                 ));
-            // Password auth: a masked field, saved to the OS credential vault on
-            // Save (never written to profiles.json).
+            // Password auth: a masked field, saved (encrypted) to credentials.json
+            // in the config dir on Save — never written to profiles.json.
             if app.profile_auth_method == AuthMethod::Password {
                 form = form.push(dialog_field(
-                    "密码（保存在系统凭据库，不写入配置文件）",
+                    "密码（加密保存，可随配置目录同步）",
                     text_input("连接密码", &app.profile_password)
                         .secure(true)
                         .on_input(Message::ProfilePasswordChanged)
@@ -10530,11 +10524,11 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 .align_y(Alignment::Center)
                 .into(),
             ));
-            // Key passphrase (masked, saved to the vault, distinct from the login
-            // password). Relevant only to key-bearing auth methods.
+            // Key passphrase (masked, encrypted in the credential store, distinct
+            // from the login password). Relevant only to key-bearing auth methods.
             if matches!(app.profile_auth_method, AuthMethod::Key | AuthMethod::Auto) {
                 form = form.push(dialog_field(
-                    "密钥 passphrase（可选，保存在系统凭据库；私钥加密时填写）",
+                    "密钥 passphrase（可选，加密保存；私钥加密时填写）",
                     text_input("私钥 passphrase", &app.profile_passphrase)
                         .secure(true)
                         .on_input(Message::ProfilePassphraseChanged)
