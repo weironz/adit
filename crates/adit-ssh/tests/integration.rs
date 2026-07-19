@@ -430,7 +430,11 @@ fn wrong_password_is_rejected() {
         Duration::from_secs(20),
         || handle.try_recv(),
         |event| match event {
-            LiveShellEvent::Error(error) => ControlFlow::Break(error),
+            // Auth failures now surface as a distinct typed event (drives the UI's
+            // password re-prompt); treat it like the error it is here.
+            LiveShellEvent::Error(error) | LiveShellEvent::AuthRejected(error) => {
+                ControlFlow::Break(error)
+            }
             LiveShellEvent::Closed => ControlFlow::Break(String::from("closed")),
             _ => ControlFlow::Continue(()),
         },
@@ -743,7 +747,11 @@ fn encrypted_key_wrong_passphrase_gives_a_clear_error() {
         Duration::from_secs(20),
         || handle.try_recv(),
         |event| match event {
-            LiveShellEvent::Error(error) => ControlFlow::Break(error),
+            // Auth failures now surface as a distinct typed event (drives the UI's
+            // password re-prompt); treat it like the error it is here.
+            LiveShellEvent::Error(error) | LiveShellEvent::AuthRejected(error) => {
+                ControlFlow::Break(error)
+            }
             LiveShellEvent::Closed => ControlFlow::Break(String::from("closed")),
             _ => ControlFlow::Continue(()),
         },

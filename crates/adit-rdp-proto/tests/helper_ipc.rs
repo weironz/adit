@@ -57,6 +57,8 @@ fn helper_reports_error_on_unreachable_host() {
         }
     }
     let _ = child.kill();
+    // Reap the child so it doesn't linger as a zombie (kill alone doesn't wait).
+    let _ = child.wait();
 
     assert!(saw_error, "helper should report a connection error");
     assert!(saw_closed, "helper should close the session");
