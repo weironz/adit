@@ -22,14 +22,17 @@ name = "adit-rdp-host"
 path = "src/main.rs"
 
 [features]
-# Core (connect + render + input + resize) ships by default. Clipboard and audio
-# are opt-in while they're brought up: `clipboard` needs Windows message-pump
-# wiring; `sound` pulls native Opus (libopus_sys) which needs a CMake toolchain.
+# Core (connect + render + input + resize) ships by default.
 default = []
-# Bidirectional clipboard (CLIPRDR). Pulls in the native OS clipboard backend.
-clipboard = ["dep:ironrdp-cliprdr", "dep:ironrdp-cliprdr-native"]
-# Server audio playback (RDPSND) through cpal.
+# Server audio playback (RDPSND) through cpal. Off by default because it pulls
+# native Opus (libopus_sys), which needs a CMake toolchain.
 sound = ["dep:ironrdp-rdpsnd", "dep:ironrdp-rdpsnd-native"]
+
+# NOTE: there is deliberately no `clipboard` feature. One used to be declared here
+# pointing at a `clipboard` module that was never written, so `--features clipboard`
+# simply failed to compile. CLIPRDR's native backend also wants a Windows message
+# pump, which this helper — a windowless background process — does not have, so
+# wiring it up is a design task, not a flag. Tracked as "RDP clipboard".
 
 [dependencies]
 adit-rdp-proto = { path = "../adit-rdp-proto" }
@@ -47,8 +50,6 @@ ironrdp-egfx = "0.3"
 ironrdp-async = "0.10"
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", features = ["rustls"] }
-ironrdp-cliprdr = { version = "0.7", optional = true }
-ironrdp-cliprdr-native = { version = "0.7", optional = true }
 ironrdp-rdpsnd = { version = "0.9", optional = true }
 ironrdp-rdpsnd-native = { version = "0.7", optional = true }
 

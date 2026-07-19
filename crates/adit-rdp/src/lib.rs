@@ -15,8 +15,6 @@
 use ironrdp_connector::{Config as ConnectorConfig, Credentials, DesktopSize};
 use thiserror::Error;
 
-#[cfg(feature = "clipboard")]
-mod clipboard;
 mod egfx;
 mod host;
 mod input;

@@ -2470,6 +2470,22 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_input = input;
         }
         Message::KeyboardInput(event) => {
+            // Alt+R / Alt+I jump to the toolbar's host box and the sidebar filter —
+            // the two shortcuts those placeholders advertise. Both take focus away
+            // from the terminal so the typed text lands in the box, not the session.
+            if alt_shortcut(&event, 'r') {
+                app.terminal_focused = false;
+                return focus_host_input();
+            }
+            if alt_shortcut(&event, 'i') {
+                // Filtering is pointless with the sidebar hidden; reveal it first.
+                if !app.sidebar_visible {
+                    app.sidebar_visible = true;
+                    sync_terminal_size(app);
+                }
+                app.terminal_focused = false;
+                return focus_session_filter();
+            }
             // Alt+P opens a command-line SFTP tab for the active session
             // (SecureCRT-style), regardless of focus. This is the `sftp>` prompt,
             // not the dual-pane panel — that one has its own toolbar button.
@@ -5233,6 +5249,28 @@ fn focus_search_input() -> Task<Message> {
     ))
 }
 
+fn host_input_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("toolbar-host")
+}
+
+/// A Task that moves keyboard focus to the toolbar's host box (Alt+R).
+fn focus_host_input() -> Task<Message> {
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
+        host_input_id(),
+    ))
+}
+
+fn session_filter_id() -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::new("sidebar-filter")
+}
+
+/// A Task that moves keyboard focus to the sidebar's filter box (Alt+I).
+fn focus_session_filter() -> Task<Message> {
+    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
+        session_filter_id(),
+    ))
+}
+
 /// The shared id of the in-place rename text input (only one folder or session
 /// is ever renamed at a time).
 fn rename_input_id() -> iced::advanced::widget::Id {
@@ -7050,6 +7088,7 @@ fn toolbar(app: &AditApp) -> Element<'_, Message> {
             tool_toggle_button(">_", app.command_window_open, Message::ToggleCommandWindow),
             tool_separator(),
             text_input("Enter host <Alt+R>", &app.profile_host)
+                .id(host_input_id())
                 .on_input(Message::ProfileHostChanged)
                 .on_submit(Message::ConnectSelectedProfile)
                 .padding([4, 8])
@@ -9782,6 +9821,7 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .padding([2, 8])
         .style(|_theme| sidebar_header_style()),
         text_input("Filter by group/session name <Alt+I>", &app.session_filter)
+            .id(session_filter_id())
             .on_input(Message::SessionFilterChanged)
             .padding([4, 6])
             .style(toolbar_input_style),

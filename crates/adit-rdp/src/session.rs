@@ -208,13 +208,8 @@ async fn connect(
         )));
     }
 
-    // Clipboard (CLIPRDR) via the native OS backend.
-    #[cfg(feature = "clipboard")]
-    if request.enable_clipboard {
-        if let Some(channel) = crate::clipboard::build_channel() {
-            connector.attach_static_channel(channel);
-        }
-    }
+    // No CLIPRDR channel: RDP clipboard is not implemented (see Cargo.toml).
+    // `request.enable_clipboard` is accepted on the wire but has no effect yet.
 
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector).await?;
 
@@ -362,11 +357,8 @@ async fn active_session(
                             None => Vec::new(),
                         }
                     }
-                    #[cfg(feature = "clipboard")]
-                    Some(InputEvent::ClipboardText(text)) => {
-                        crate::clipboard::on_local_copy(&mut active_stage, &text)?
-                    }
-                    #[cfg(not(feature = "clipboard"))]
+                    // Clipboard is not implemented; accept and drop so the app can
+                    // send it unconditionally once it is.
                     Some(InputEvent::ClipboardText(_)) => Vec::new(),
                     // Mouse / key / unicode all fold into fast-path events.
                     Some(other) => {

@@ -184,6 +184,8 @@ optional plaintext mode that strips escape sequences for a human-readable log.
 
 | Keys | Action |
 |---|---|
+| `Alt+R` | Jump to the toolbar's host box |
+| `Alt+I` | Jump to the sidebar filter (reveals the sidebar if hidden) |
 | `Alt+P` | Open a command-line SFTP tab for the active session |
 | `Ctrl+Shift+F` | Scrollback search (`Esc` closes) |
 | `Ctrl+Shift+C` | Copy selection (or the visible screen when nothing is selected) |
@@ -201,10 +203,6 @@ optional plaintext mode that strips escape sequences for a human-readable log.
 Verified shortcomings, so nobody has to rediscover them.
 
 ### Bugs
-- **The `clipboard` cargo feature does not compile.** `adit-rdp/src/lib.rs` declares
-  `mod clipboard` but `crates/adit-rdp/src/clipboard.rs` does not exist.
-- **Two advertised shortcuts don't exist.** The toolbar host box says `<Alt+R>` and the
-  sidebar filter says `<Alt+I>`; neither is implemented (only `Alt+P` is).
 - `ProfileStore::save_catalog` and `SettingsStore::save` are **non-atomic** plain writes
   (the *async* profile path is atomic). A crash mid-write can truncate the file.
 - `save_catalog_async` **swallows all write errors** and returns `Ok` regardless.
@@ -212,9 +210,12 @@ Verified shortcomings, so nobody has to rediscover them.
   load** (the credential store does validate).
 
 ### Not implemented
-- **RDP**: no H.264 decoder (hosts that negotiate AVC render black), no clipboard or
-  audio (both feature-gated and off), the server cursor shape isn't drawn, and updates
-  always ship the **whole** framebuffer rather than dirty rectangles.
+- **RDP**: no H.264 decoder (hosts that negotiate AVC render black), the server cursor
+  shape isn't drawn, and updates always ship the **whole** framebuffer rather than dirty
+  rectangles. **Clipboard is not implemented** and has no feature flag — CLIPRDR's native
+  backend wants a Windows message pump, which the windowless helper process doesn't have,
+  so it needs design work rather than a flag. Audio (`sound`) is implemented but off by
+  default because it pulls native Opus (needs CMake).
 - **Terminal**: no reflow on resize (narrowing permanently truncates), no combining /
   zero-width character support, no DCS/Sixel, no charset designation, no custom tab
   stops. SGR 9 strikethrough is parsed but never rendered. `TerminalChangeSet` dirty-row
