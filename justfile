@@ -85,14 +85,16 @@ bump version:
     }
     Write-Output 'bumped to {{version}}'
 
-# Build the Inno Setup installer for VERSION → target/release/adit-installer-vVERSION.exe
-installer version:
+# Depends on `dist` on purpose: ISCC packages whatever binaries it happens to find, so a
+# standalone invocation once shipped a release full of STALE binaries after the build step
+# had failed. Rebuilding first makes that impossible.
+# Build the Inno Setup installer for VERSION (rebuilds the binaries first)
+installer version: dist
     & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion={{version}}" installer\adit.iss
 
-# Cut a patch release end-to-end: gate, bump, build, installer, tag, push, GitHub
-# release, and deploy locally. Usage: `just release 0.1.55`
 # (Notes are auto-generated from commits; edit them on GitHub afterwards if needed.)
-release version: test kill (bump version) dist (installer version)
+# Cut a patch release end-to-end: gate, bump, build, package, tag, push, publish, deploy
+release version: test kill (bump version) (installer version)
     git add -A
     git commit -m "chore: release v{{version}}"
     git tag v{{version}}
