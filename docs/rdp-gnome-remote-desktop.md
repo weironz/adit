@@ -100,7 +100,23 @@ clients that don't advertise EGFX.
   `SUPPORT_DYN_VC_GFX_PROTOCOL` early-capability flag in the GCC core data — both are
   required; the flag alone or the channel alone is not enough.
 - **No H.264 decoder** in the build, so IronRDP advertises the **V8 (no-AVC)** caps
-  and GNOME falls back to **RemoteFX Progressive**, which IronRDP decodes in software.
+  and GNOME falls back to **RemoteFX Progressive**.
+- ⚠️ **`ironrdp-egfx` does NOT decode RemoteFX Progressive** — it only decodes H.264.
+  For a progressive frame it merely frame-acknowledges and hands the raw stream to
+  `GraphicsPipelineHandler::on_wire_to_surface2`. Leaving that unimplemented is why
+  the desktop rendered **solid black** while the session was otherwise healthy:
+  `on_bitmap_updated` never fired and the framebuffer stayed all-zero. `egfx.rs`
+  therefore decodes it itself with
+  [`ironrdp_graphics::progressive::ProgressiveDecoder`] (already a dependency — it
+  carries the whole codec: dwt/rlgr/srl/quant/subband), compositing the 64×64 RGBA
+  tiles at `surface_origin + tile_idx * 64`. The decoder is **stateful per
+  codec-context** (progressive frames refine earlier ones), so keep one instance for
+  the session's lifetime and drop a context only on `on_delete_encoding_context`.
+- Don't zero the framebuffer on a **same-size** `RESET_GRAPHICS`: GNOME sends it
+  immediately before repainting, so reallocating (which zeroes) flashes the surface
+  black in the gap before the first new tile. Only reallocate on an actual size change.
+- Windows hosts that DO negotiate H.264 still render black; that needs an H.264
+  decoder and is a separate piece of work.
 
 ### 4.2 Server Redirection (MS-RDPBCGR 2.2.13)
 

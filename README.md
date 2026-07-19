@@ -21,10 +21,27 @@ The workspace crates:
 - `adit-session` — session manager and per-session actor lifecycle
 - `adit-ssh` — `russh` wrapper: auth, host-key verification, PTY shell, keepalive
 - `adit-terminal` — `vte`-driven VT/ANSI grid and render-ready snapshots
-- `adit-storage` — profiles, settings, OS credential vault, log directory
+- `adit-storage` — profiles, settings, encrypted credential store, log directory
 - `adit-domain` — shared ids, errors, profile/auth models
 
+Plus two crates for RDP:
+
+- `adit-rdp-proto` — the IPC wire types (serde + bincode), shared by both sides
+- `adit-rdp` — **its own workspace** (own `Cargo.lock`, `exclude`d from the root), building the `adit-rdp-host.exe` helper
+
+**Why RDP is a separate workspace + a separate process:** IronRDP pulls `picky`, which exact-pins pre-release RustCrypto crates that conflict irreconcilably with the versions `russh` needs — two `ecdsa` versions can't coexist in one binary, and `=`-pins can't be `[patch]`ed apart. So the RDP stack is built separately and driven over stdin/stdout (length-prefixed bincode). Build it with `--manifest-path crates/adit-rdp/Cargo.toml`, never `-p`. See [`crates/adit-rdp/IRONRDP-PATCHES.md`](crates/adit-rdp/IRONRDP-PATCHES.md) and [docs/rdp-gnome-remote-desktop.md](docs/rdp-gnome-remote-desktop.md).
+
 The Windows installer is built with **Inno Setup** from [`installer/adit.iss`](installer/adit.iss) (a proper setup wizard), not a workspace crate.
+
+## Credential storage
+
+Passwords and key passphrases are stored **encrypted at rest** in `credentials.json`, next to `profiles.json` in the config directory:
+
+- **XChaCha20-Poly1305**, key derived with **Argon2id**, a fresh random nonce per write, written atomically (temp + rename).
+- The config directory is relocatable, so pointing it at a synced folder carries credentials between machines. This replaced an OS-keyring store, which was machine-local and therefore lost passwords on every other machine.
+- Secrets an older build left in the OS keyring are imported once at startup.
+
+**Security model — do not overstate this.** The KDF's only secret input is a key **built into the binary**; there is no master password (a deliberate trade-off for zero-setup syncing). That keeps credentials out of plaintext on disk, out of backups, and un-greppable — but **anyone with the file and the (open-source) key can recover every password**. It is obfuscation, not secrecy. The KDF is shaped so a real user passphrase could be mixed in later without a file-format change; only that would make it genuinely secret.
 
 ## Features
 
@@ -53,22 +70,36 @@ Run the app:
 cargo run -p adit-app
 ```
 
-Select or create a profile, optionally enter an SSH password, and connect. With an empty password Adit still tries the SSH agent and default keys under `~/.ssh`. Profiles persist to a JSON file under the platform app config directory (shown in the status bar); passwords are never written there.
+Select or create a profile, optionally enter an SSH password, and connect. With an empty password Adit still tries the SSH agent and default keys under `~/.ssh`. Profiles persist to `profiles.json` under the platform app config directory (shown in the status bar).
 
-Check, lint, and test the workspace:
+Saved passwords and key passphrases live **encrypted** in `credentials.json` in that same directory — deliberately, so pointing the config directory at a synced folder (Dropbox, etc.) carries them between machines. They are never written to `profiles.json`. See [Credential storage](#credential-storage) for the security model, which is **obfuscation, not secrecy**.
+
+Most tasks are wrapped in a [`justfile`](justfile) — run `just` to list them:
+
+```powershell
+just ci          # what CI runs: build + clippy (-D warnings) + test
+just build       # release-build the GUI app
+just dist        # app + RDP helper (both shippable binaries)
+just run         # build and launch
+just deploy      # copy fresh binaries over the installed Adit
+```
+
+Or the raw commands:
 
 ```powershell
 cargo check --workspace
-cargo clippy --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings   # CI treats warnings as errors
 cargo test --workspace
 ```
 
 Build the Windows installer (requires [Inno Setup 6](https://jrsoftware.org/isdl.php)):
 
 ```powershell
-cargo build -p adit-app --release
-& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" /DAppVersion=<version> installer\adit.iss
+just dist                  # NOTE: the RDP helper is a separate workspace — see below
+just installer <version>
 ```
+
+The `just dist` step matters: `cargo build -p adit-app` alone does **not** build `adit-rdp-host.exe`, because the RDP helper is its own workspace (see [Architecture](#architecture)). The installer bundles both binaries, so building only the app yields an installer whose RDP support is stale or missing.
 
 This produces `target\release\adit-installer-v<version>.exe` — a setup wizard that installs to `C:\Program Files\Adit` (all users, or per-user), creates shortcuts, registers an uninstaller, and closes a running instance before updating.
 
