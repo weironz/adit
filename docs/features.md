@@ -58,8 +58,8 @@ factor — OTP, verification code, token, authenticator, 2FA, Duo, PIN, YubiKey,
 or a password *change* prompt is surfaced to the user as a dialog. Dismissing it cancels
 the connect rather than silently falling through to other methods.
 
-**Host keys** are verified against `known_hosts` and classified as trusted / unknown /
-changed. An unknown key can be auto-accepted (default) or prompted; a **changed** key
+**Host keys** are verified against `known_hosts` — including **hashed** (`|1|…`) entries
+and wildcard/negated host patterns — and classified as trusted / unknown / changed. An unknown key can be auto-accepted (default) or prompted; a **changed** key
 always prompts, shows the previous fingerprint, and warns about MITM. Known hosts can be
 listed and removed from the UI.
 
@@ -67,8 +67,8 @@ listed and removed from the UI.
 
 A `vte`-driven parser over an Adit-owned grid.
 
-- **SGR**: bold, dim, italic, underline, reverse, hidden; 16 ANSI, 256-colour, and
-  24-bit truecolor (both `;` and `:` sub-parameter forms).
+- **SGR**: bold, dim, italic, underline, strikethrough, reverse, hidden; 16 ANSI,
+  256-colour, and 24-bit truecolor (both `;` and `:` sub-parameter forms).
 - **Screen control**: scroll regions (DECSTBM), alternate screen (47/1047/1049), insert
   and delete lines/characters, all erase modes, save/restore cursor.
 - **Scrollback** with a configurable limit (default 5000 lines), correctly *not* written
@@ -202,13 +202,6 @@ optional plaintext mode that strips escape sequences for a human-readable log.
 
 Verified shortcomings, so nobody has to rediscover them.
 
-### Bugs
-- `ProfileStore::save_catalog` and `SettingsStore::save` are **non-atomic** plain writes
-  (the *async* profile path is atomic). A crash mid-write can truncate the file.
-- `save_catalog_async` **swallows all write errors** and returns `Ok` regardless.
-- `profiles.json` / `settings.json` write a `version` field that is **never validated on
-  load** (the credential store does validate).
-
 ### Not implemented
 - **RDP**: no H.264 decoder (hosts that negotiate AVC render black), the server cursor
   shape isn't drawn, and updates always ship the **whole** framebuffer rather than dirty
@@ -218,23 +211,17 @@ Verified shortcomings, so nobody has to rediscover them.
   default because it pulls native Opus (needs CMake).
 - **Terminal**: no reflow on resize (narrowing permanently truncates), no combining /
   zero-width character support, no DCS/Sixel, no charset designation, no custom tab
-  stops. SGR 9 strikethrough is parsed but never rendered. `TerminalChangeSet` dirty-row
-  tracking is a stub that always reports the whole screen.
-- **known_hosts**: hashed (`|1|…`) entries and wildcard host patterns are not matched.
+  stops. `TerminalChangeSet` dirty-row tracking is a stub that always reports the whole
+  screen.
 - **MFA is shell-only.** SFTP and tunnel connections answer non-interactively with the
   stored password, so an MFA-gated host will fail those.
 - **Jump hosts reuse the target's single credential** — no per-hop authentication.
 - **SFTP shell**: no tab completion, and no history recall (the history is recorded but
   unbound).
 - stderr is merged into stdout on the shell path.
-- Keepalive is configurable for shells but hardcoded to 30 s for SFTP and tunnels.
 - SFTP transfer progress is correlated by **name**, so concurrent transfers of
   same-named files can mis-attribute progress.
 - macOS is architecturally supported but unbuilt; Windows code signing is pending.
 
 ### Cosmetic / cleanup
-- Several `Message` variants are handled but never constructed (`SelectProfile`,
-  `ActivateSession`, `MoveSelectedProfile`, `FocusTerminal`, `OpenSftp`, `OpenSearch`, …).
-- `MenuCommand::SplitPane` is handled but appears in no menu.
-- The **Tools** menu duplicates Edit/Script and has no unique command.
-- Some UI strings are English where the rest is Chinese (tunnel labels, session status).
+- `adit-ui` is a single ~12.7k-line file; navigating it is the main friction in the repo.

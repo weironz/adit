@@ -14,6 +14,12 @@ integration = []
 [dependencies]
 adit-domain.workspace = true
 bytes.workspace = true
+# Hashed known_hosts entries (`|1|salt|hash`) are HMAC-SHA1 over the host spec.
+# Without these, a hashed file matches nothing — which would make a CHANGED host
+# key look merely "unknown" and get silently trusted.
+hmac = "0.12"
+sha1 = "0.10"
+base64 = "0.22"
 portable-pty = "0.8"
 russh.workspace = true
 russh-sftp = "2.3"

@@ -8,6 +8,7 @@ use std::{
     collections::BTreeSet,
     env, fs,
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 use thiserror::Error;
 
@@ -17,6 +18,80 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("profile json failed: {0}")]
     Json(#[from] serde_json::Error),
+    #[error(
+        "{file} was written by a newer Adit (format v{found}, this build understands v{supported}); \
+         upgrade Adit rather than letting it overwrite the file"
+    )]
+    NewerFormat {
+        file: &'static str,
+        found: u16,
+        supported: u16,
+    },
+}
+
+/// Newest on-disk format each store writes and can read.
+const PROFILES_FORMAT_VERSION: u16 = 2;
+const SETTINGS_FORMAT_VERSION: u16 = 1;
+
+/// Just the `version` field, ignoring everything else in the document.
+#[derive(Deserialize)]
+struct VersionPeek {
+    #[serde(default)]
+    version: u16,
+}
+
+/// Reject a document written by a newer Adit **before** trying to parse the rest.
+///
+/// The version has to be read on its own: a newer format may rename or drop a field
+/// this build requires, so deserializing the whole document first would fail with an
+/// opaque JSON error instead of telling the user to upgrade.
+fn check_format_version(
+    content: &str,
+    file: &'static str,
+    supported: u16,
+) -> Result<(), StorageError> {
+    // A document without a readable version is treated as legacy, not as an error —
+    // that's what pre-versioning files look like.
+    let Ok(peek) = serde_json::from_str::<VersionPeek>(content) else {
+        return Ok(());
+    };
+    if peek.version > supported {
+        return Err(StorageError::NewerFormat {
+            file,
+            found: peek.version,
+            supported,
+        });
+    }
+    Ok(())
+}
+
+/// Write a file atomically: fill a sibling temp file, then rename over the target.
+///
+/// A plain `fs::write` truncates the destination first, so a crash, a full disk, or a
+/// sync client reading mid-write can leave a **truncated** config — losing every
+/// profile. Rename is atomic on both Windows and POSIX, so a reader sees either the
+/// old file or the new one.
+fn write_atomic(path: &Path, content: &str) -> Result<(), StorageError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut tmp = path.to_path_buf().into_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+
+    fs::write(&tmp, content.as_bytes())?;
+    // Windows won't rename onto an existing file, so clear the way first. A crash in
+    // this window leaves the temp file intact, which the next save overwrites.
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    match fs::rename(&tmp, path) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = fs::remove_file(&tmp);
+            Err(error.into())
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +100,9 @@ pub struct ProfileStore {
     // Lazily-spawned background writer for non-blocking saves. Shared across
     // clones so there is a single writer thread per store path.
     writer: std::sync::Arc<std::sync::OnceLock<std::sync::mpsc::Sender<String>>>,
+    // Last failure from that writer thread, for the UI to surface (see
+    // `take_write_error`). Shared with the thread and across clones.
+    write_error: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -54,6 +132,7 @@ impl ProfileStore {
         Self {
             path: path.into(),
             writer: std::sync::Arc::new(std::sync::OnceLock::new()),
+            write_error: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -81,6 +160,9 @@ impl ProfileStore {
             return Ok(ProfileCatalog::default());
         }
 
+        // Refuse a file from a newer build rather than parsing what we can and
+        // writing back a downgraded version, which would silently drop fields.
+        check_format_version(&content, "profiles.json", PROFILES_FORMAT_VERSION)?;
         let document: StoredProfiles = serde_json::from_str(&content)?;
         Ok(ProfileCatalog::new(document.groups, document.profiles))
     }
@@ -90,20 +172,28 @@ impl ProfileStore {
     }
 
     pub fn save_catalog(&self, catalog: &ProfileCatalog) -> Result<(), StorageError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        let content = self.encode(catalog)?;
+        write_atomic(&self.path, &content)
+    }
 
+    /// Serialize a catalog to the on-disk document form.
+    fn encode(&self, catalog: &ProfileCatalog) -> Result<String, StorageError> {
         let groups = normalize_groups(catalog.groups.clone(), &catalog.profiles);
         let document = StoredProfiles {
-            version: 2,
+            version: PROFILES_FORMAT_VERSION,
             groups,
             profiles: catalog.profiles.clone(),
         };
-        let content = serde_json::to_string_pretty(&document)?;
-        fs::write(&self.path, content)?;
+        Ok(serde_json::to_string_pretty(&document)?)
+    }
 
-        Ok(())
+    /// The last background-write failure, if any, taken (cleared) by the caller.
+    ///
+    /// `save_catalog_async` returns as soon as the write is queued, so a disk error
+    /// happens after it has already returned `Ok`. Without this the failure would be
+    /// invisible and the user would believe their profiles were saved.
+    pub fn take_write_error(&self) -> Option<String> {
+        self.write_error.lock().ok().and_then(|mut slot| slot.take())
     }
 
     /// Persist the catalog WITHOUT blocking the caller. Serialization runs on the
@@ -115,17 +205,12 @@ impl ProfileStore {
     /// here). Writes are coalesced (only the newest queued catalog is written) and
     /// atomic (temp file + rename), so a slow write never leaves a truncated file.
     pub fn save_catalog_async(&self, catalog: &ProfileCatalog) -> Result<(), StorageError> {
-        let groups = normalize_groups(catalog.groups.clone(), &catalog.profiles);
-        let document = StoredProfiles {
-            version: 2,
-            groups,
-            profiles: catalog.profiles.clone(),
-        };
-        let content = serde_json::to_string_pretty(&document)?;
+        let content = self.encode(catalog)?;
 
         let tx = self.writer.get_or_init(|| {
             let (tx, rx) = std::sync::mpsc::channel::<String>();
             let path = self.path.clone();
+            let error_slot = Arc::clone(&self.write_error);
             let _ = std::thread::Builder::new()
                 .name("adit-profile-writer".into())
                 .spawn(move || {
@@ -134,20 +219,22 @@ impl ProfileStore {
                         while let Ok(newer) = rx.try_recv() {
                             content = newer;
                         }
-                        if let Some(parent) = path.parent() {
-                            let _ = fs::create_dir_all(parent);
-                        }
-                        let mut tmp = path.clone().into_os_string();
-                        tmp.push(".tmp");
-                        let tmp = PathBuf::from(tmp);
-                        if fs::write(&tmp, content.as_bytes()).is_ok() {
-                            let _ = fs::rename(&tmp, &path);
+                        // Record the failure for the UI to surface — a silently
+                        // dropped save is how you lose a session list without ever
+                        // being told.
+                        if let Err(error) = write_atomic(&path, &content) {
+                            if let Ok(mut slot) = error_slot.lock() {
+                                *slot = Some(error.to_string());
+                            }
                         }
                     }
                 });
             tx
         });
-        let _ = tx.send(content);
+        // A dead writer thread must not look like a successful save either.
+        tx.send(content).map_err(|_| {
+            StorageError::Io(std::io::Error::other("profile writer thread is gone"))
+        })?;
 
         Ok(())
     }
@@ -335,23 +422,18 @@ impl SettingsStore {
             return Ok(AppSettings::default());
         }
 
+        check_format_version(&content, "settings.json", SETTINGS_FORMAT_VERSION)?;
         let document: StoredSettings = serde_json::from_str(&content)?;
         Ok(document.settings)
     }
 
     pub fn save(&self, settings: &AppSettings) -> Result<(), StorageError> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
-
         let document = StoredSettings {
-            version: 1,
+            version: SETTINGS_FORMAT_VERSION,
             settings: settings.clone(),
         };
         let content = serde_json::to_string_pretty(&document)?;
-        fs::write(&self.path, content)?;
-
-        Ok(())
+        write_atomic(&self.path, &content)
     }
 }
 
@@ -975,6 +1057,84 @@ Host db
         assert_eq!(fs::read_to_string(from.join("profiles.json")).unwrap(), "NEW");
 
         let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A unique temp path per test — these run in parallel.
+    fn temp_config_path(name: &str, file: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock should be after unix epoch")
+            .as_nanos();
+        env::temp_dir()
+            .join(format!("adit-storage-{name}-{unique}"))
+            .join(file)
+    }
+
+    /// A file from a newer Adit must be refused, not parsed and written back
+    /// downgraded — that would silently drop fields the new version added.
+    #[test]
+    fn a_newer_profiles_format_is_refused_rather_than_downgraded() {
+        let path = temp_config_path("newer-profiles", "profiles.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            r#"{"version":999,"groups":[],"profiles":[]}"#,
+        )
+        .unwrap();
+
+        match ProfileStore::new(&path).load_catalog() {
+            Err(StorageError::NewerFormat { file, found, .. }) => {
+                assert_eq!(file, "profiles.json");
+                assert_eq!(found, 999);
+            }
+            other => panic!("expected NewerFormat, got {other:?}"),
+        }
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn a_newer_settings_format_is_refused() {
+        let path = temp_config_path("newer-settings", "settings.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        // `settings` can be anything — the version guard must trip first.
+        fs::write(&path, r#"{"version":999,"settings":{}}"#).unwrap();
+
+        assert!(matches!(
+            SettingsStore::new(&path).load(),
+            Err(StorageError::NewerFormat { .. })
+        ));
+        let _ = fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    /// Saving must never leave a half-written file behind, and must not leave the
+    /// temp file lying around on success.
+    #[test]
+    fn saving_is_atomic_and_leaves_no_temp_file() {
+        let path = temp_config_path("atomic", "profiles.json");
+        let store = ProfileStore::new(&path);
+
+        store
+            .save_profiles(&[ConnectionProfile::with_group(
+                "Local", "a", "127.0.0.1", 22, "root",
+            )])
+            .expect("first save");
+        // Overwrite: the rename path has to cope with an existing destination,
+        // which is exactly where Windows differs from POSIX.
+        store
+            .save_profiles(&[
+                ConnectionProfile::with_group("Local", "a", "127.0.0.1", 22, "root"),
+                ConnectionProfile::with_group("Prod", "b", "10.0.0.1", 22, "deploy"),
+            ])
+            .expect("overwriting save");
+
+        assert_eq!(store.load_profiles().expect("load").len(), 2);
+        let mut tmp = path.clone().into_os_string();
+        tmp.push(".tmp");
+        assert!(
+            !PathBuf::from(tmp).exists(),
+            "temp file should be renamed away, not left behind"
+        );
+        let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
     #[test]

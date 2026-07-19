@@ -4,7 +4,7 @@ use adit_domain::{
 };
 use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
-    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileMove, ProfileSortKey, RdpInput,
+    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileSortKey, RdpInput,
     RdpMouseButton, SessionError, SessionManager, SessionSummary, SftpBrowser, SftpEntry,
     TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
@@ -288,7 +288,6 @@ pub enum MenuKind {
     View,
     Transfer,
     Script,
-    Tools,
     Help,
 }
 
@@ -339,12 +338,10 @@ pub enum Message {
     RdpScrolled(mouse::ScrollDelta),
     ToggleMenu(MenuKind),
     ToggleTheme,
-    OpenAppearance,
     CloseAppearance,
     FontFamilyChanged(u8),
     FontSizeStep(i32),
     ColorSchemeChanged(u8),
-    OpenOptions,
     CloseOptions,
     // Trusted-host-keys (known_hosts) management.
     CloseKnownHosts,
@@ -368,7 +365,6 @@ pub enum Message {
     OpenLogFolder,
     ToggleBroadcast,
     RunMenu(MenuCommand),
-    SelectProfile(ProfileId),
     ProfilePressed(ProfileId),
     ProfileDoubleClicked(ProfileId),
     ProfileHovered(ProfileId),
@@ -414,7 +410,6 @@ pub enum Message {
     OpenHyperlink(String),
     ConfirmOpenHyperlink,
     CancelOpenHyperlink,
-    OpenSftp,
     CloseSftp,
     OpenTunnels,
     CloseTunnels,
@@ -494,7 +489,6 @@ pub enum Message {
     NewGroupDraft,
     SaveProfile,
     DeleteSelectedProfile,
-    MoveSelectedProfile(ProfileMove),
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
     ModifiersChanged(keyboard::Modifiers),
@@ -503,7 +497,6 @@ pub enum Message {
     BeginSidebarDrag,
     SidebarDragMove(f32),
     EndSidebarDrag,
-    FocusTerminal,
     SplitPane,
     ClosePane(usize),
     FocusPane(usize),
@@ -536,7 +529,6 @@ pub enum Message {
     OpenSelectedProfile,
     ConnectSelectedProfile,
     RetryActiveSession,
-    ActivateSession(SessionId),
     TabPressed(SessionId),
     TabDragOver(SessionId),
     TabReleased,
@@ -565,7 +557,6 @@ pub enum Message {
     AddSnippet,
     DeleteSnippet(usize),
     SendSnippet(usize),
-    OpenSearch,
     CloseSearch,
     SearchQueryChanged(String),
     SearchNext,
@@ -1455,6 +1446,12 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             sync_sftp_state(app);
             // Reconcile split panes with the live session set (closed sessions,
             // an externally-activated session); refit only if the count changed.
+            // Profile saves are queued to a writer thread, so a disk failure lands
+            // long after the call returned Ok. Surface it instead of letting the
+            // user believe their sessions were saved.
+            if let Some(error) = app.profile_store.take_write_error() {
+                app.last_error = Some(format!("保存会话配置失败: {error}"));
+            }
             let panes_before = app.panes.len();
             sync_panes(app);
             if app.panes.len() != panes_before {
@@ -1550,10 +1547,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from("已切换到浅色主题")
             };
         }
-        Message::OpenAppearance => {
-            app.appearance_open = true;
-            app.active_menu = None;
-        }
         Message::CloseAppearance => {
             app.appearance_open = false;
         }
@@ -1574,10 +1567,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();
             }
-        }
-        Message::OpenOptions => {
-            app.options_open = true;
-            app.active_menu = None;
         }
         Message::CloseOptions => {
             app.options_open = false;
@@ -1697,12 +1686,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(path) = path {
                 import_securecrt(app, &path);
             }
-        }
-        Message::SelectProfile(profile_id) => {
-            select_profile(app, profile_id);
-            app.profile_context_menu = None;
-            app.group_context_menu = None;
-            close_profile_editor_if_other(app, profile_id);
         }
         Message::ProfilePressed(profile_id) => {
             select_profile(app, profile_id);
@@ -2049,13 +2032,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CancelOpenHyperlink => {
             app.pending_hyperlink = None;
-        }
-        Message::OpenSftp => {
-            if let Err(error) = app.manager.open_sftp_for_active() {
-                app.last_error = Some(format!("打开 SFTP 失败: {error}"));
-            } else {
-                app.last_error = None;
-            }
         }
         Message::CloseSftp => {
             app.manager.close_sftp();
@@ -2452,9 +2428,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::DeleteSelectedProfile => {
             delete_selected_profile(app);
         }
-        Message::MoveSelectedProfile(direction) => {
-            move_selected_profile(app, direction);
-        }
         Message::TerminalInputChanged(input) => {
             app.terminal_focused = false;
             app.command_history_pos = None;
@@ -2601,13 +2574,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::EndSidebarDrag => app.sidebar_dragging = false,
-        Message::FocusTerminal => {
-            if !app.terminal_focused {
-                app.notice = String::from("终端已聚焦，键盘输入会发送到当前会话");
-            }
-            app.terminal_focused = true;
-            app.terminal_context_menu = false;
-        }
         Message::SplitPane => {
             split_pane(app);
         }
@@ -2840,9 +2806,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RetryActiveSession => {
             retry_active_session(app);
         }
-        Message::ActivateSession(session_id) => {
-            activate_session(app, session_id);
-        }
         Message::TabPressed(session_id) => {
             // Clicking a tab activates it and arms a possible drag-reorder.
             activate_session(app, session_id);
@@ -3047,12 +3010,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 send_terminal_bytes(app, bytes);
                 app.notice = format!("已发送片段: {name}");
             }
-        }
-        Message::OpenSearch => {
-            app.search_open = true;
-            app.terminal_focused = false;
-            recompute_search(app);
-            return focus_search_input();
         }
         Message::CloseSearch => {
             app.search_open = false;
@@ -4208,26 +4165,6 @@ fn delete_selected_profile(app: &mut AditApp) {
         Err(error) => {
             app.last_error = Some(error.to_string());
         }
-    }
-}
-
-fn move_selected_profile(app: &mut AditApp, direction: ProfileMove) {
-    let Some(profile_id) = app.selected_profile else {
-        app.last_error = Some(String::from("请选择要排序的会话配置"));
-        return;
-    };
-
-    match app.manager.move_profile(profile_id, direction) {
-        Ok(()) => {
-            if persist_profiles(app) {
-                app.last_error = None;
-                app.notice = match direction {
-                    ProfileMove::Up => String::from("会话已上移"),
-                    ProfileMove::Down => String::from("会话已下移"),
-                };
-            }
-        }
-        Err(error) => app.last_error = Some(error.to_string()),
     }
 }
 
@@ -6933,7 +6870,6 @@ fn menu_bar(app: &AditApp) -> Element<'_, Message> {
             menu_button(app, MenuKind::View, "View"),
             menu_button(app, MenuKind::Transfer, "Transfer"),
             menu_button(app, MenuKind::Script, "Script"),
-            menu_button(app, MenuKind::Tools, "Tools"),
             menu_button(app, MenuKind::Help, "Help"),
             Space::new().width(Fill),
             text(app.manager.status_line()).size(11).color(muted_text()),
@@ -7018,6 +6954,7 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
         MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
         MenuKind::View => &[
             ("外观设置…", MenuCommand::Appearance),
+            ("分屏（添加窗格）", MenuCommand::SplitPane),
             ("垂直平铺（并排）", MenuCommand::TileVertical),
             ("水平平铺（上下）", MenuCommand::TileHorizontal),
             ("网格平铺", MenuCommand::TileGrid),
@@ -7035,10 +6972,6 @@ fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
             ("命令片段", MenuCommand::Snippets),
             ("日志/脚本", MenuCommand::Logging),
         ],
-        MenuKind::Tools => &[
-            ("清屏", MenuCommand::ClearTerminal),
-            ("日志", MenuCommand::Logging),
-        ],
         MenuKind::Help => &[
             ("检查更新…", MenuCommand::CheckUpdate),
             ("关于", MenuCommand::About),
@@ -7054,7 +6987,6 @@ fn menu_dropdown_offset(menu: MenuKind) -> f32 {
         MenuKind::View => 184.0,
         MenuKind::Transfer => 236.0,
         MenuKind::Script => 318.0,
-        MenuKind::Tools => 376.0,
         MenuKind::Help => 436.0,
     }
 }
@@ -11511,19 +11443,40 @@ fn terminal_line(
             // Fixed-size cell so the rendered grid exactly matches the
             // pixel→cell hit-testing used for selection (no drift). Wide glyphs
             // span two columns.
-            let glyph = container(label)
+            let cell_box = container(label)
                 .width(Length::Fixed(cell_w * ch_width as f32))
                 .height(Length::Fixed(cell_h))
                 .style(move |_theme| container::Style {
                     background: background.map(Background::Color),
                     ..container::Style::default()
                 });
+            // SGR 9: iced's text has no strikethrough, so draw a rule across the
+            // glyph's middle. Stacked so it doesn't disturb the cell's fixed size.
+            let glyph: Element<'static, Message> = if cell.strike {
+                stack![
+                    cell_box,
+                    container(
+                        container(Space::new().width(Fill).height(Length::Fixed(1.0)))
+                            .width(Fill)
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(glyph_color)),
+                                ..container::Style::default()
+                            })
+                    )
+                    .width(Length::Fixed(cell_w * ch_width as f32))
+                    .height(Length::Fixed(cell_h))
+                    .center_y(Fill),
+                ]
+                .into()
+            } else {
+                cell_box.into()
+            };
             let glyph: Element<'static, Message> = match &link_click {
                 Some(url) => mouse_area(glyph)
                     .on_press(Message::OpenHyperlink(url.clone()))
                     .interaction(mouse::Interaction::Pointer)
                     .into(),
-                None => glyph.into(),
+                None => glyph,
             };
             row_widget = row_widget.push(glyph);
 

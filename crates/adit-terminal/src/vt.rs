@@ -1088,6 +1088,7 @@ struct RunAttrs {
     underline: bool,
     italic: bool,
     dim: bool,
+    strike: bool,
 }
 
 /// Collapse a cell's pen into render-ready attributes: bold brightens the dim
@@ -1100,6 +1101,7 @@ fn resolve(cell: &Cell) -> (Color, Color, RunAttrs) {
         underline: pen.flags & UNDERLINE != 0,
         italic: pen.flags & ITALIC != 0,
         dim: pen.flags & DIM != 0,
+        strike: pen.flags & STRIKE != 0,
     };
     let reverse = pen.flags & REVERSE != 0;
     let hidden = pen.flags & HIDDEN != 0;
@@ -1156,6 +1158,7 @@ fn run_cell(
         underline: attrs.underline,
         italic: attrs.italic,
         dim: attrs.dim,
+        strike: attrs.strike,
         hyperlink,
         cursor: false,
     }

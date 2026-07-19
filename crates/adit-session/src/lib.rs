@@ -2676,7 +2676,7 @@ impl SessionManager {
                 record.summary.status.label(),
                 record.summary.endpoint
             ),
-            None => String::from("Idle"),
+            None => String::from("空闲"),
         }
     }
 }

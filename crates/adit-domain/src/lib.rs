@@ -434,10 +434,10 @@ impl SessionStatus {
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
-            Self::Connecting => "Connecting",
-            Self::Connected => "Connected",
-            Self::Disconnected => "Disconnected",
-            Self::Error => "Error",
+            Self::Connecting => "连接中",
+            Self::Connected => "已连接",
+            Self::Disconnected => "已断开",
+            Self::Error => "错误",
         }
     }
 }

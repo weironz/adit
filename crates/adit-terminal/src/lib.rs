@@ -115,6 +115,9 @@ pub struct TerminalCell {
     pub underline: bool,
     pub italic: bool,
     pub dim: bool,
+    /// SGR 9 strikethrough.
+    #[serde(default)]
+    pub strike: bool,
     /// OSC 8 hyperlink target for this run (`None` ⇒ not a link). All cells in a
     /// run share the same target — a link boundary starts a new run.
     #[serde(default)]
@@ -137,6 +140,7 @@ impl TerminalCell {
             underline: false,
             italic: false,
             dim: false,
+            strike: false,
             hyperlink: None,
             cursor: false,
         }

@@ -105,7 +105,7 @@ impl LiveShellRequest {
             known_hosts_path: default_known_hosts_path(),
             cols: 96,
             rows: 28,
-            keepalive_secs: 30,
+            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
             startup_command: String::new(),
             term: String::new(),
             connect_timeout_secs: 20,
@@ -925,6 +925,10 @@ async fn run_live_password_shell(
 /// requests default to this and adit-session overrides both with the profile's.
 const DEFAULT_JUMP_CONNECT_TIMEOUT_SECS: u64 = 30;
 
+/// Default keepalive probe interval. Shared by shell, SFTP and tunnel sessions so
+/// they age out a dead link on the same schedule.
+pub const DEFAULT_KEEPALIVE_SECS: u64 = 30;
+
 /// Resolve a connect-timeout knob to an actual deadline: 0 means "disabled", so
 /// stand in a very long sleep rather than a zero-length (instantly-firing) one.
 fn effective_timeout_secs(configured: u64) -> u64 {
@@ -1574,6 +1578,8 @@ pub struct SftpRequest {
     pub jumps: Vec<JumpHop>,
     /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
     pub connect_timeout_secs: u64,
+    /// Keepalive probe interval in seconds (0 ⇒ disabled), as for a shell session.
+    pub keepalive_secs: u64,
 }
 
 impl SftpRequest {
@@ -1593,6 +1599,7 @@ impl SftpRequest {
             known_hosts_path: default_known_hosts_path(),
             jumps: Vec::new(),
             connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
+            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
         }
     }
 }
@@ -1697,7 +1704,8 @@ async fn run_sftp_session(
 
     let config = Arc::new(client::Config {
         inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_interval: (request.keepalive_secs > 0)
+            .then(|| Duration::from_secs(request.keepalive_secs)),
         keepalive_max: 3,
         ..Default::default()
     });
@@ -2233,6 +2241,8 @@ pub struct TunnelRequest {
     pub jumps: Vec<JumpHop>,
     /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
     pub connect_timeout_secs: u64,
+    /// Keepalive probe interval in seconds (0 ⇒ disabled), as for a shell session.
+    pub keepalive_secs: u64,
 }
 
 impl TunnelRequest {
@@ -2263,6 +2273,7 @@ impl TunnelRequest {
             target_port,
             jumps: Vec::new(),
             connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
+            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
         }
     }
 }
@@ -2359,7 +2370,8 @@ async fn run_tunnel_session(
 
     let config = Arc::new(client::Config {
         inactivity_timeout: None,
-        keepalive_interval: Some(Duration::from_secs(30)),
+        keepalive_interval: (request.keepalive_secs > 0)
+            .then(|| Duration::from_secs(request.keepalive_secs)),
         keepalive_max: 3,
         ..Default::default()
     });
@@ -2977,8 +2989,88 @@ fn parse_known_host_line(line: &str) -> Option<(String, russh::keys::ssh_key::Pu
     Some((hosts.to_string(), public_key))
 }
 
+/// Whether a `known_hosts` host field matches the host we're connecting to.
+///
+/// Handles all three OpenSSH forms:
+/// * **hashed** — `|1|<b64 salt>|<b64 HMAC-SHA1(salt, host)>`, written when
+///   `HashKnownHosts yes` is set (the default on Debian/Ubuntu). Treating these as
+///   non-matching would make a **changed** key look merely unknown, and unknown keys
+///   are trusted on first use — i.e. it would silently accept a MITM.
+/// * **patterns** — comma-separated, with `*` / `?` globs.
+/// * **negations** — a matching `!pattern` vetoes the whole entry.
 fn known_host_matches(hosts: &str, host_spec: &str) -> bool {
-    hosts.split(',').any(|host| host == host_spec)
+    if let Some(rest) = hosts.strip_prefix("|1|") {
+        return hashed_host_matches(rest, host_spec);
+    }
+
+    let mut matched = false;
+    for pattern in hosts.split(',') {
+        match pattern.strip_prefix('!') {
+            // A negation that matches vetoes the entry outright.
+            Some(negated) => {
+                if host_pattern_matches(negated, host_spec) {
+                    return false;
+                }
+            }
+            None => {
+                if host_pattern_matches(pattern, host_spec) {
+                    matched = true;
+                }
+            }
+        }
+    }
+    matched
+}
+
+/// `<b64 salt>|<b64 hash>` — the body of a `|1|` hashed entry.
+fn hashed_host_matches(body: &str, host_spec: &str) -> bool {
+    use base64::Engine as _;
+    use hmac::{Hmac, Mac};
+
+    let Some((salt_b64, hash_b64)) = body.split_once('|') else {
+        return false;
+    };
+    let engine = base64::engine::general_purpose::STANDARD;
+    let (Ok(salt), Ok(expected)) = (engine.decode(salt_b64), engine.decode(hash_b64)) else {
+        return false;
+    };
+    let Ok(mut mac) = Hmac::<sha1::Sha1>::new_from_slice(&salt) else {
+        return false;
+    };
+    mac.update(host_spec.as_bytes());
+    // Constant-time compare, courtesy of `verify_slice`.
+    mac.verify_slice(&expected).is_ok()
+}
+
+/// OpenSSH host glob: `*` matches any run, `?` exactly one character.
+fn host_pattern_matches(pattern: &str, host: &str) -> bool {
+    if !pattern.contains(['*', '?']) {
+        return pattern == host;
+    }
+    let pattern: Vec<char> = pattern.chars().collect();
+    let host: Vec<char> = host.chars().collect();
+    // Iterative glob with backtracking on the last `*` — no recursion, so a
+    // pathological pattern can't blow the stack.
+    let (mut p, mut h) = (0usize, 0usize);
+    let (mut star, mut retry) = (None, 0usize);
+    while h < host.len() {
+        if p < pattern.len() && (pattern[p] == '?' || pattern[p] == host[h]) {
+            p += 1;
+            h += 1;
+        } else if p < pattern.len() && pattern[p] == '*' {
+            star = Some(p);
+            retry = h;
+            p += 1;
+        } else if let Some(s) = star {
+            // Backtrack: let the previous `*` swallow one more character.
+            p = s + 1;
+            retry += 1;
+            h = retry;
+        } else {
+            return false;
+        }
+    }
+    pattern[p..].iter().all(|c| *c == '*')
 }
 
 fn known_host_spec(host: &str, port: u16) -> String {
@@ -3118,6 +3210,62 @@ mod tests {
             .enable_all()
             .build()
             .expect("runtime")
+    }
+
+    #[test]
+    fn known_host_plain_and_port_specs_match_exactly() {
+        assert!(known_host_matches("example.com", "example.com"));
+        assert!(!known_host_matches("example.com", "evil.com"));
+        // Non-22 ports are recorded bracketed.
+        assert_eq!(known_host_spec("example.com", 2222), "[example.com]:2222");
+        assert_eq!(known_host_spec("example.com", 22), "example.com");
+        assert!(known_host_matches(
+            "[example.com]:2222",
+            "[example.com]:2222"
+        ));
+        // A comma-separated list matches on any member.
+        assert!(known_host_matches("a.example.com,b.example.com", "b.example.com"));
+    }
+
+    #[test]
+    fn known_host_wildcard_patterns_match() {
+        assert!(known_host_matches("*.example.com", "web.example.com"));
+        assert!(known_host_matches("*.example.com", "a.b.example.com"));
+        assert!(!known_host_matches("*.example.com", "example.com"));
+        assert!(known_host_matches("web?.example.com", "web1.example.com"));
+        assert!(!known_host_matches("web?.example.com", "web12.example.com"));
+        assert!(known_host_matches("10.0.0.*", "10.0.0.12"));
+        // A matching negation vetoes the whole entry.
+        assert!(!known_host_matches("*.example.com,!secret.example.com", "secret.example.com"));
+        assert!(known_host_matches("*.example.com,!secret.example.com", "web.example.com"));
+    }
+
+    /// A hashed file must still match, or a CHANGED key would be misreported as
+    /// merely unknown — and unknown keys are trusted on first use.
+    #[test]
+    fn known_host_hashed_entries_match_the_right_host() {
+        use base64::Engine as _;
+        use hmac::{Hmac, Mac};
+
+        let engine = base64::engine::general_purpose::STANDARD;
+        let salt = [7u8; 20];
+        let host = "example.com";
+
+        let mut mac = Hmac::<sha1::Sha1>::new_from_slice(&salt).unwrap();
+        mac.update(host.as_bytes());
+        let digest = mac.finalize().into_bytes();
+
+        let entry = format!(
+            "|1|{}|{}",
+            engine.encode(salt),
+            engine.encode(digest.as_slice())
+        );
+
+        assert!(known_host_matches(&entry, host));
+        assert!(!known_host_matches(&entry, "evil.com"));
+        // Malformed hashed entries must not panic or accidentally match.
+        assert!(!known_host_matches("|1|not-base64", host));
+        assert!(!known_host_matches("|1|", host));
     }
 
     #[test]
