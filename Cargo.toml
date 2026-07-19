@@ -17,7 +17,7 @@ exclude = ["crates/adit-rdp"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.54"
+version = "0.1.55"
 edition = "2021"
 authors = ["Adit"]
 license = "MIT"
