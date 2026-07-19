@@ -20,7 +20,7 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
 name = "adit-app"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "adit-storage",
  "adit-ui",
@@ -30,7 +30,7 @@ dependencies = [
 
 [[package]]
 name = "adit-domain"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "serde",
  "uuid",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "adit-rdp-proto"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "bincode",
  "image",
@@ -47,7 +47,7 @@ dependencies = [
 
 [[package]]
 name = "adit-session"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "adit-domain",
  "adit-rdp-proto",
@@ -58,7 +58,7 @@ dependencies = [
 
 [[package]]
 name = "adit-ssh"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "adit-domain",
  "bytes",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "adit-storage"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "adit-domain",
  "argon2 0.5.3",
@@ -87,7 +87,7 @@ dependencies = [
 
 [[package]]
 name = "adit-terminal"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "serde",
  "unicode-width",
@@ -96,7 +96,7 @@ dependencies = [
 
 [[package]]
 name = "adit-ui"
-version = "0.1.55"
+version = "0.1.56"
 dependencies = [
  "adit-domain",
  "adit-session",
