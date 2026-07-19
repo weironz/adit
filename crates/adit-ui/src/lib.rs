@@ -918,7 +918,9 @@ const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
-const PROFILE_ROW_HEIGHT: f32 = 36.0;
+// Single compact line (name only) — SecureCRT-style, less busy than the old
+// two-line name + user@host row.
+const PROFILE_ROW_HEIGHT: f32 = 26.0;
 // Split-pane layout.
 const PANE_GAP: f32 = 6.0;
 const PANE_HEADER_HEIGHT: f32 = 26.0;
@@ -9937,27 +9939,18 @@ fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'static, Messa
 /// A session row in rename mode: the name line becomes an editable field in place
 /// (no popup). Enter or clicking away saves; Esc reverts. No confirm/cancel buttons.
 fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -> Element<'static, Message> {
-    let endpoint = if profile.username.trim().is_empty() {
-        profile.host.clone()
-    } else {
-        format!("{}@{}", profile.username, profile.host)
-    };
     container(
         row![
             Space::new().width(Length::Fixed(4.0)),
             avatar(&profile.name),
-            column![
-                text_input("会话名称", &draft)
-                    .id(rename_input_id())
-                    .on_input(Message::ProfileNameDraftChanged)
-                    .on_submit(Message::SaveProfileRename)
-                    .padding([2, 6])
-                    .size(12)
-                    .style(text_input_style)
-                    .width(Fill),
-                text(endpoint).size(10).color(muted_text()),
-            ]
-            .spacing(0),
+            text_input("会话名称", &draft)
+                .id(rename_input_id())
+                .on_input(Message::ProfileNameDraftChanged)
+                .on_submit(Message::SaveProfileRename)
+                .padding([2, 6])
+                .size(12)
+                .style(text_input_style)
+                .width(Fill),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -10089,22 +10082,13 @@ fn tree_profile_row(
         mouse::Interaction::Idle
     };
 
-    let endpoint = if profile.username.trim().is_empty() {
-        profile.host.clone()
-    } else {
-        format!("{}@{}", profile.username, profile.host)
-    };
-
     mouse_area(
         container(
             row![
                 Space::new().width(Length::Fixed(4.0)),
                 avatar(&profile.name),
-                column![
-                    text(profile.name.clone()).size(12).color(primary_text()),
-                    text(endpoint).size(10).color(muted_text()),
-                ]
-                .spacing(0),
+                // Name only — the user@host subtitle was too busy in a long list.
+                text(profile.name.clone()).size(12).color(primary_text()),
                 Space::new().width(Fill),
             ]
             .spacing(8)
@@ -10137,9 +10121,9 @@ fn profile_drop_position(point: Point) -> ProfileDropPosition {
 /// A Termius-style round host avatar: the host's initials on a per-host color.
 fn avatar(name: &str) -> Element<'static, Message> {
     let color = avatar_color(name);
-    container(text(avatar_initials(name)).size(10).color(Color::WHITE))
-        .center_x(Length::Fixed(24.0))
-        .center_y(Length::Fixed(24.0))
+    container(text(avatar_initials(name)).size(9).color(Color::WHITE))
+        .center_x(Length::Fixed(18.0))
+        .center_y(Length::Fixed(18.0))
         .style(move |_theme| avatar_style(color))
         .into()
 }
