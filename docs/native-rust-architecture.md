@@ -1,7 +1,13 @@
 # Adit Native Rust Architecture
 
+> **Historical design document.** This is the migration plan written when Adit was a
+> prototype; the "implementation status" below is a snapshot of 2026-06-27 and is no
+> longer accurate. For the architecture **as actually built**, read
+> [architecture.md](architecture.md); for the reasoning behind the choices, read
+> [decisions.md](decisions.md). Kept for the historical record of how we got here.
+
 Date: 2026-06-27
-Status: Proposed target architecture, native prototype in progress
+Status: Proposed target architecture, native prototype in progress (superseded)
 
 Implementation status:
 

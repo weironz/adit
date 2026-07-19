@@ -1,5 +1,9 @@
 # Adit — Phase 2 Development Plan
 
+> **Backlog, not a description of the product.** Several items here have shipped
+> (MFA, ProxyJump, `.ppk` keys, host-key policy, OSC 8, RDP). For what actually
+> exists today, read [features.md](features.md).
+
 Date: 2026-07-11
 Status: Planned. Next-stage backlog after the v0.1.x feature push. Complements
 [feature-roadmap.md](feature-roadmap.md) (the living Phase A–E backlog) — this

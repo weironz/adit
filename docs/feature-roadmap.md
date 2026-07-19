@@ -1,5 +1,8 @@
 # Adit Feature Roadmap
 
+> **Backlog, not a description of the product.** For what Adit actually does today,
+> read [features.md](features.md) — many items below have since shipped.
+
 Date: 2026-06-27
 Status: Living plan. Tracks the gap between the current native prototype and a
 serious SecureCRT/Xshell-class SSH client.

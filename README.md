@@ -12,7 +12,22 @@ The app icon lives in [`assets/`](assets/) and is reproducible with `python asse
 
 ## Architecture
 
-A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`. See [docs/native-rust-architecture.md](docs/native-rust-architecture.md) for the design and [docs/feature-roadmap.md](docs/feature-roadmap.md) for the prioritized feature plan.
+A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`.
+
+**Documentation**
+
+| Doc | What it covers |
+|---|---|
+| [docs/architecture.md](docs/architecture.md) | How it's built: crates, threading, event protocols, storage, RDP subsystem |
+| [docs/features.md](docs/features.md) | Everything it does today — plus an honest list of known gaps |
+| [docs/decisions.md](docs/decisions.md) | Why it's built that way, including the decisions we reversed |
+| [CLAUDE.md](CLAUDE.md) | Traps that cost real debugging time; conventions |
+| [docs/rdp-gnome-remote-desktop.md](docs/rdp-gnome-remote-desktop.md) | GNOME Remote Desktop handover: EGFX, RDSTLS, Server Redirection |
+| [crates/adit-rdp/IRONRDP-PATCHES.md](crates/adit-rdp/IRONRDP-PATCHES.md) | The three vendored IronRDP patches and when to drop them |
+
+Backlogs (plans, not current state): [feature-roadmap.md](docs/feature-roadmap.md),
+[phase2-plan.md](docs/phase2-plan.md). The original design doc is kept at
+[native-rust-architecture.md](docs/native-rust-architecture.md) for history.
 
 The workspace crates:
 
