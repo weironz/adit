@@ -919,8 +919,8 @@ const STATUS_BAR_HEIGHT: f32 = 28.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 // Single compact line (name only) — SecureCRT-style, less busy than the old
-// two-line name + user@host row.
-const PROFILE_ROW_HEIGHT: f32 = 26.0;
+// two-line name + user@host row. Sized to give the 13px name a little breathing room.
+const PROFILE_ROW_HEIGHT: f32 = 28.0;
 // Split-pane layout.
 const PANE_GAP: f32 = 6.0;
 const PANE_HEADER_HEIGHT: f32 = 26.0;
@@ -9859,8 +9859,8 @@ fn tree_group_row(
     mouse_area(
         container(
             row![
-                text(arrow).size(11).color(muted_text()),
-                text(group_label).size(12).color(muted_text()),
+                text(arrow).size(12).color(muted_text()),
+                text(group_label).size(13).color(muted_text()),
                 Space::new().width(Fill),
                 text(profile_count.to_string()).size(10).color(muted_text()),
             ]
@@ -9948,7 +9948,7 @@ fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -> Element<'
                 .on_input(Message::ProfileNameDraftChanged)
                 .on_submit(Message::SaveProfileRename)
                 .padding([2, 6])
-                .size(12)
+                .size(13)
                 .style(text_input_style)
                 .width(Fill),
         ]
@@ -10088,7 +10088,7 @@ fn tree_profile_row(
                 Space::new().width(Length::Fixed(4.0)),
                 avatar(&profile.name),
                 // Name only — the user@host subtitle was too busy in a long list.
-                text(profile.name.clone()).size(12).color(primary_text()),
+                text(profile.name.clone()).size(13).color(primary_text()),
                 Space::new().width(Fill),
             ]
             .spacing(8)
