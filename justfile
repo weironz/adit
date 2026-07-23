@@ -48,13 +48,13 @@ clippy:
 fmt:
     cargo fmt --all
 
-# The full CI gate locally (mirrors .github/workflows/ci.yml's build job)
+# The full CI gate locally (build + clippy + test + integration-compile).
 #
-# The last step compile-checks the real-sshd integration tests. They live behind
-# `--features integration` and need Docker to RUN, so `cargo test --workspace`
-# skips them entirely — which once let an SftpCommand field change compile locally
-# yet break CI's integration job. `--no-run` catches that class of break without
-# Docker; CI still runs them for real.
+# The last step compile-checks the real-sshd integration tests: they live behind
+# `--features integration` and need Docker to RUN, so `cargo test --workspace` skips
+# them entirely — which once let an SftpCommand field change compile locally yet break
+# CI's integration job. `--no-run` catches that class of break without Docker (CI still
+# runs them for real).
 ci:
     cargo build --workspace
     cargo clippy --workspace --all-targets -- -D warnings
@@ -78,10 +78,23 @@ deploy: dist
     Write-Output 'deployed to installed Adit'
 
 # ── release ────────────────────────────────────────────────────────────
+#
+# There is deliberately no `release` recipe. Releasing is done entirely on CI and is
+# triggered MANUALLY, straight from `gh` — never from `just` — so the trigger and the
+# build aren't tangled together:
+#
+#     gh workflow run release.yml -f version=0.1.60
+#
+# That dispatches .github/workflows/release.yml, which bumps the three crate versions,
+# runs the gate, builds both binaries, packages the installer, commits+tags the bump,
+# and publishes the GitHub Release. Watch it with `gh run watch`.
+#
+# The recipes below build locally ONLY for smoke-testing — they never publish.
 
 # Bump the version across the root workspace + both RDP crates (kept in lockstep).
 # Reads/writes UTF-8 without a BOM explicitly so comments with non-ASCII (em-dashes)
 # survive the round-trip regardless of the host PowerShell's default encoding.
+# (The release workflow does its own bump on CI; this is for local testing.)
 bump version:
     #!pwsh -NoProfile
     $enc = [System.Text.UTF8Encoding]::new($false)
@@ -95,21 +108,6 @@ bump version:
 # Depends on `dist` on purpose: ISCC packages whatever binaries it happens to find, so a
 # standalone invocation once shipped a release full of STALE binaries after the build step
 # had failed. Rebuilding first makes that impossible.
-# Build the Inno Setup installer for VERSION (rebuilds the binaries first)
+# Build the Inno Setup installer for VERSION (rebuilds the binaries first, local smoke-test only)
 installer version: dist
     & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion={{version}}" installer\adit.iss
-
-# Cut a release: bump the version, commit, tag, and push. That's it — the build,
-# packaging, and GitHub Release are done ON CI (.github/workflows/release.yml,
-# tag-triggered), NOT locally, so what ships is exactly what a clean gated checkout
-# produces. Watch the run with `gh run watch` or on GitHub; the installer appears on
-# the Releases page when the workflow's gate (build + clippy + test) passes.
-#
-# Nothing is built or published here. For a local build to smoke-test before tagging,
-# use `just ci` then `just deploy`.
-release version: (bump version)
-    git add -A
-    git commit -m "chore: release v{{version}}"
-    git tag v{{version}}
-    git push origin main --tags
-    Write-Output 'pushed v{{version}} — CI (release.yml) will build, gate, and publish the release'

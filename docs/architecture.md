@@ -166,9 +166,14 @@ workspace, `crates/adit-rdp`, and `crates/adit-rdp-proto` must move together.
 CI (`.github/workflows/ci.yml`) runs build + clippy (`-D warnings`) + test on Windows,
 and a Docker-backed integration job on Linux that tests against a real `sshd`.
 
-**Releases are built on CI, not locally.** `just release <ver>` only bumps the three
-versions, commits, tags, and pushes; the tag triggers
-[`.github/workflows/release.yml`](../.github/workflows/release.yml), which re-runs the
-gate, builds both binaries, packages the installer, and publishes the GitHub Release —
-so the artifact is exactly what a clean, gated checkout produces. See
-[decisions.md #16](decisions.md#16-releases-are-patch-only-cut-on-request-and-built-on-ci--reversal).
+**Releases are built on CI, not locally, and triggered manually from `gh`:**
+
+```bash
+gh workflow run release.yml -f version=0.1.60
+```
+
+[`.github/workflows/release.yml`](../.github/workflows/release.yml) is a
+`workflow_dispatch` that bumps the three versions, runs the gate, builds both binaries,
+packages the installer, commits + tags the bump, and publishes the GitHub Release — so
+the artifact is exactly what a clean, gated checkout produces. There is no `just release`.
+See [decisions.md #16](decisions.md#16-releases-are-patch-only-cut-on-request-and-built-on-ci--reversal).

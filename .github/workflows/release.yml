@@ -1,28 +1,42 @@
 name: Release
 
-# Fires when a version tag is pushed (e.g. `v0.1.59`). The release artifact is
-# built and published HERE, on CI — never from a developer's machine — so what
-# ships is exactly what a clean, gated checkout produces. The integration tests
-# (Docker, Linux) run in ci.yml on the same commit's push to main, which precedes
-# the tag; this job is the Windows gate plus the packaging/publish step.
+# Manually triggered — Actions tab → "Release" → Run workflow, or from a shell:
+#   gh workflow run release.yml -f version=0.1.60
+#
+# The whole release happens HERE, on CI: it bumps the three crate versions, runs
+# the gate, builds both binaries, packages the installer, commits+tags the bump,
+# and publishes the GitHub Release. Nothing is built or published from a
+# developer's machine, and `just` is NOT involved in triggering it.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Patch version to release, e.g. 0.1.60 (no leading v)'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
 
-# Needed for `gh release create` to create the GitHub Release.
+# Needed to push the bump commit + tag and to create the GitHub Release.
 permissions:
   contents: write
 
 jobs:
   release:
-    name: gate · build · package · publish
+    name: bump · gate · build · package · publish
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Validate version
+        shell: bash
+        run: |
+          v='${{ github.event.inputs.version }}'
+          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version must be X.Y.Z with no leading v (got '$v')"
+            exit 1
+          fi
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -31,6 +45,18 @@ jobs:
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+
+      # Bump the root workspace + both RDP crates in lockstep. sed (not PowerShell
+      # 5.1's Set-Content) so the UTF-8 em-dashes in Cargo.toml survive — see the
+      # justfile's `bump` note. Each of the three files has exactly one top-level
+      # `version = "..."` line.
+      - name: Bump versions
+        shell: bash
+        run: |
+          v='${{ github.event.inputs.version }}'
+          for f in Cargo.toml crates/adit-rdp/Cargo.toml crates/adit-rdp-proto/Cargo.toml; do
+            sed -i -E "s/^version = \".*\"/version = \"$v\"/" "$f"
+          done
 
       # ── Gate: identical to ci.yml's build job, so a red tree never publishes ──
       - name: Build
@@ -46,30 +72,38 @@ jobs:
       - name: Build app (release)
         run: cargo build --release -p adit-app
 
-      # The RDP helper is a SEPARATE workspace (own Cargo.lock); it must be built
-      # with its own manifest, not `-p`. See crates/adit-rdp.
+      # The RDP helper is a SEPARATE workspace (own Cargo.lock); build it with its
+      # own manifest, not `-p`. See crates/adit-rdp.
       - name: Build RDP helper (release)
         run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml
+
+      # Commit the bump only now that the build succeeded and both Cargo.lock files
+      # are settled, so a failed gate leaves no tag or commit behind.
+      - name: Commit, tag, and push
+        shell: bash
+        run: |
+          v='${{ github.event.inputs.version }}'
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m "chore: release v$v"
+          git tag "v$v"
+          git push origin HEAD:main
+          git push origin "v$v"
 
       # ── Package the Inno Setup installer ──
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
 
-      - name: Derive version from tag
-        id: ver
-        shell: bash
-        # refs/tags/v0.1.59 -> 0.1.59
-        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
-
       - name: Build installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ steps.ver.outputs.version }}" installer\adit.iss'
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ github.event.inputs.version }}" installer\adit.iss'
 
       # ── Publish the GitHub Release with the installer attached ──
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "${{ github.ref_name }}"
-          "target/release/adit-installer-v${{ steps.ver.outputs.version }}.exe"
-          --title "Adit ${{ github.ref_name }}"
+          gh release create "v${{ github.event.inputs.version }}"
+          "target/release/adit-installer-v${{ github.event.inputs.version }}.exe"
+          --title "Adit v${{ github.event.inputs.version }}"
           --generate-notes

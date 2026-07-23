@@ -231,18 +231,30 @@ and `cargo clippy --all-targets` don't compile — so the local gate was green w
 not, and the local release didn't wait for CI to find out.
 
 The lesson both times: *what a developer's machine produces is not what a clean, gated
-checkout produces.* So the build and publish moved onto CI. `just release <ver>` now only
-bumps the three crate versions in lockstep, commits, tags, and pushes; the tag triggers
-[`release.yml`](../.github/workflows/release.yml), which re-runs the full gate
-(build + clippy + test), builds both binaries, installs Inno Setup, packages the
-installer, and creates the GitHub Release. A red gate produces no installer, so a release
-can no longer ship on a broken tree. `just ci` also compile-checks the integration tests
-(`--no-run`) now, so that class of break is caught locally too.
+checkout produces.* So the whole release moved onto CI, and the trigger is **manual and
+separate from `just`** — dispatched straight from `gh`:
+
+```bash
+gh workflow run release.yml -f version=0.1.60
+```
+
+[`release.yml`](../.github/workflows/release.yml) is a `workflow_dispatch`: it bumps the
+three crate versions in lockstep, runs the full gate (build + clippy + test), builds both
+binaries, installs Inno Setup, packages the installer, commits + tags the bump, and
+creates the GitHub Release. A red gate produces no installer, so a release can no longer
+ship on a broken tree. `just ci` also compile-checks the integration tests (`--no-run`)
+now, so that class of break is caught locally too.
+
+An intermediate design had `just release` push a version tag and a `tags: ['v*']` trigger
+fire the workflow. That was dropped: it tangled the local tool (`just`) up with the CI
+trigger, and a `gh workflow run` dispatch is one explicit, self-contained action with the
+version passed as an input. There is deliberately **no `just release`** recipe now.
 
 **Cost.** A release is no longer instant — it waits on a CI runner (cold cache + Inno
 Setup install ≈ several minutes). Worth it: the artifact is now reproducible and gated.
 
-**Mechanics.** [`justfile`](../justfile) wraps the local half; it pins `windows-shell` to
-`pwsh`, because Windows PowerShell 5.1's `Set-Content` defaults to ANSI and corrupted
-`Cargo.toml`'s UTF-8 during a version bump. `just installer` / `just deploy` still build
-locally for smoke-testing, but no longer publish.
+**Mechanics.** The workflow bumps versions with `sed`, not PowerShell — Windows
+PowerShell 5.1's `Set-Content` defaults to ANSI and once corrupted `Cargo.toml`'s UTF-8
+em-dashes during a bump, which is also why the [`justfile`](../justfile) pins
+`windows-shell` to `pwsh` for its local recipes. `just installer` / `just deploy` still
+build locally for smoke-testing, but no longer publish.
