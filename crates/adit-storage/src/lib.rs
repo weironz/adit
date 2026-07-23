@@ -321,6 +321,12 @@ pub struct AppSettings {
     /// key still prompts. On by default.
     #[serde(default = "default_true")]
     pub auto_accept_host_keys: bool,
+    /// Whether the one-time import of secrets from the legacy OS keyring has run.
+    /// Once true, startup skips probing the keyring for every profile — with many
+    /// profiles that was hundreds of synchronous Credential Manager lookups on
+    /// every launch, which showed as a multi-second delay before the window.
+    #[serde(default)]
+    pub keyring_migrated: bool,
 }
 
 /// A saved command snippet (a name + the command text sent to a session).
@@ -386,6 +392,7 @@ impl Default for AppSettings {
             command_window_open: false,
             command_send_immediately: false,
             auto_accept_host_keys: true,
+            keyring_migrated: false,
         }
     }
 }
@@ -1243,6 +1250,7 @@ Host db
             command_window_open: true,
             command_send_immediately: true,
             auto_accept_host_keys: false,
+            keyring_migrated: true,
         };
         store.save(&settings).expect("settings should save");
         let loaded = store.load().expect("settings should load");

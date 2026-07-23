@@ -132,6 +132,10 @@ pub struct AditApp {
     snippet_command_draft: String,
     auto_check_updates: bool,
     auto_accept_host_keys: bool,
+    /// Whether the one-time legacy-keyring import has completed (persisted). Gates
+    /// the startup keyring probe so it never runs again once done — see the boot
+    /// task and [`AppSettings::keyring_migrated`].
+    keyring_migrated: bool,
     /// The active keyboard-interactive/MFA prompt (its session + fields) mirrored
     /// into UI state, plus the in-progress answers (one per field). Kept here so
     /// the dialog's text inputs can borrow owned values that outlive a `view`.
@@ -568,6 +572,9 @@ pub enum Message {
     CheckForUpdates,
     UpdateChecked(Result<Option<UpdateInfo>, String>),
     AutoUpdateChecked(Result<Option<UpdateInfo>, String>),
+    /// The one-time legacy-keyring import finished; payload is how many secrets
+    /// were imported. Flips `keyring_migrated` so it never runs again.
+    KeyringMigrated(usize),
     ToggleAutoCheckUpdates(bool),
     ToggleAutoAcceptHostKeys(bool),
     StartUpdateDownload,
@@ -1021,6 +1028,7 @@ impl AditApp {
         let snippets = settings.snippets;
         let auto_check_updates = settings.auto_check_updates;
         let auto_accept_host_keys = settings.auto_accept_host_keys;
+        let keyring_migrated = settings.keyring_migrated;
         manager.set_auto_accept_host_keys(auto_accept_host_keys);
         let command_window_open = settings.command_window_open;
         let command_send_immediately = settings.command_send_immediately;
@@ -1056,6 +1064,7 @@ impl AditApp {
             command_window_open,
             command_send_immediately,
             auto_accept_host_keys,
+            keyring_migrated,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
@@ -1110,6 +1119,7 @@ impl AditApp {
             snippet_command_draft: String::new(),
             auto_check_updates,
             auto_accept_host_keys,
+            keyring_migrated,
             auth_prompt: None,
             auth_prompt_answers: Vec::new(),
             pending_hyperlink: None,
@@ -1213,7 +1223,10 @@ impl AditApp {
             notice: load_notice,
         };
         load_selected_profile(&mut app);
-        migrate_keyring_credentials(&mut app);
+        // Keyring migration is NOT done here: with many profiles it was hundreds
+        // of synchronous Credential Manager probes on the boot thread, delaying
+        // the window by seconds. It now runs once, off-thread, from `boot` (gated
+        // by `keyring_migrated`).
         app
     }
 }
@@ -1223,15 +1236,21 @@ impl AditApp {
 /// every saved password vanished. Cheap and idempotent: once a secret is in the
 /// file the keyring copy is ignored, and profiles with nothing stored cost a
 /// single miss each.
-fn migrate_keyring_credentials(app: &mut AditApp) {
-    let profile_ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+/// Run the one-time legacy-keyring import off the boot thread and report how many
+/// secrets were pulled in. Probing the OS keyring is blocking (a Credential
+/// Manager syscall per profile), so this happens in `spawn_blocking` rather than
+/// on the UI thread; the caller persists `keyring_migrated` once it completes so
+/// it never runs again. Returns 0 on any error or if there is nothing to do.
+async fn migrate_keyring_credentials(
+    store: CredentialStore,
+    profile_ids: Vec<ProfileId>,
+) -> usize {
     if profile_ids.is_empty() {
-        return;
+        return 0;
     }
-    let imported = app.credential_store.migrate_from_keyring(&profile_ids);
-    if imported > 0 {
-        app.notice = format!("已从系统密钥环导入 {imported} 条密码到配置目录(可随 Dropbox 同步)");
-    }
+    tokio::task::spawn_blocking(move || store.migrate_from_keyring(&profile_ids))
+        .await
+        .unwrap_or(0)
 }
 
 /// Minimum sane window dimension; anything smaller (e.g. a 0x0 saved while
@@ -1254,16 +1273,28 @@ pub fn run() -> iced::Result {
     // centered, smaller window that leaves a gap at the top.
     let settings = SettingsStore::default().load().unwrap_or_default();
     let (width, height) = sane_window_size(settings.window_width, settings.window_height);
-    // Boot: build the app and, if auto-update-check is on, fire a silent check
-    // that only surfaces the dialog when a newer version exists.
+    // Boot: build the app and fire off any startup tasks. Both are optional and
+    // run OFF the boot thread so the window appears immediately:
+    //   - a silent update check (only surfaces the dialog if a newer version exists);
+    //   - the one-time legacy-keyring import. With many profiles the import was
+    //     hundreds of synchronous Credential Manager probes, and doing it on the
+    //     boot thread delayed the window by seconds.
     let boot = || {
         let app = AditApp::default();
-        let task = if app.auto_check_updates {
-            Task::perform(check_for_update(), Message::AutoUpdateChecked)
-        } else {
-            Task::none()
-        };
-        (app, task)
+        let mut tasks: Vec<Task<Message>> = Vec::new();
+        if app.auto_check_updates {
+            tasks.push(Task::perform(check_for_update(), Message::AutoUpdateChecked));
+        }
+        if !app.keyring_migrated {
+            let store = app.credential_store.clone();
+            let profile_ids: Vec<ProfileId> =
+                app.manager.profiles().iter().map(|p| p.id).collect();
+            tasks.push(Task::perform(
+                migrate_keyring_credentials(store, profile_ids),
+                Message::KeyringMigrated,
+            ));
+        }
+        (app, Task::batch(tasks))
     };
     iced::application(boot, update, view)
         .title(app_title)
@@ -3049,6 +3080,18 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Ok(Some(info)) = result {
                 app.update_state = UpdateState::Available(info);
                 app.update_dialog_open = true;
+            }
+        }
+        Message::KeyringMigrated(imported) => {
+            // Mark it done so it never runs again; `persist_settings_if_changed`
+            // writes the flag on the next Tick.
+            app.keyring_migrated = true;
+            if imported > 0 {
+                app.notice =
+                    format!("已从系统密钥环导入 {imported} 条密码到配置目录(可随 Dropbox 同步)");
+                // A secret for the selected profile may have just arrived; refresh
+                // so the connect form reflects it.
+                load_selected_profile(app);
             }
         }
         Message::ToggleAutoCheckUpdates(enabled) => {
@@ -6712,6 +6755,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         command_window_open: app.command_window_open,
         command_send_immediately: app.command_send_immediately,
         auto_accept_host_keys: app.auto_accept_host_keys,
+        keyring_migrated: app.keyring_migrated,
     }
 }
 
