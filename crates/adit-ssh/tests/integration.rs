@@ -472,13 +472,13 @@ fn sftp_round_trips_a_file() {
     let remote = format!("/tmp/adit-it-{}.bin", unique());
 
     handle
-        .send(SftpCommand::Upload { local: local_up, remote: remote.clone() })
+        .send(SftpCommand::Upload { id: 0, local: local_up, remote: remote.clone() })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(20));
 
     let local_down = temp_path("download.bin");
     handle
-        .send(SftpCommand::Download { remote, local: local_down.clone() })
+        .send(SftpCommand::Download { id: 1, remote, local: local_down.clone() })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(20));
 
@@ -511,7 +511,7 @@ fn sftp_round_trips_a_directory_tree() {
     let name = format!("adit-it-tree-{}", unique());
     let remote = format!("/tmp/{name}");
     handle
-        .send(SftpCommand::Upload { local: tree, remote: remote.clone() })
+        .send(SftpCommand::Upload { id: 0, local: tree, remote: remote.clone() })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(30));
 
@@ -519,7 +519,7 @@ fn sftp_round_trips_a_directory_tree() {
     fs::create_dir_all(&down_root).unwrap();
     let down = down_root.join(&name);
     handle
-        .send(SftpCommand::Download { remote, local: down.clone() })
+        .send(SftpCommand::Download { id: 1, remote, local: down.clone() })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(30));
 

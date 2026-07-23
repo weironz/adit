@@ -49,10 +49,17 @@ fmt:
     cargo fmt --all
 
 # The full CI gate locally (mirrors .github/workflows/ci.yml's build job)
+#
+# The last step compile-checks the real-sshd integration tests. They live behind
+# `--features integration` and need Docker to RUN, so `cargo test --workspace`
+# skips them entirely — which once let an SftpCommand field change compile locally
+# yet break CI's integration job. `--no-run` catches that class of break without
+# Docker; CI still runs them for real.
 ci:
     cargo build --workspace
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
+    cargo test -p adit-ssh --features integration --no-run
 
 # ── run / deploy ───────────────────────────────────────────────────────
 
@@ -93,8 +100,12 @@ installer version: dist
     & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion={{version}}" installer\adit.iss
 
 # (Notes are auto-generated from commits; edit them on GitHub afterwards if needed.)
-# Cut a patch release end-to-end: gate, bump, build, package, tag, push, publish, deploy
-release version: test kill (bump version) (installer version)
+# Cut a patch release end-to-end: gate, bump, build, package, tag, push, publish, deploy.
+# Gates on the FULL `ci` recipe (not just `test`) so a feature-gated break — like an
+# integration test that doesn't compile — is caught before publishing, not after.
+# NOTE: this still publishes local artifacts without waiting for GitHub Actions to go
+# green; `ci` here is the local mirror of it (minus the Docker runtime step).
+release version: ci kill (bump version) (installer version)
     git add -A
     git commit -m "chore: release v{{version}}"
     git tag v{{version}}
