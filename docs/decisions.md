@@ -207,15 +207,42 @@ protocols. The milestone was met, and the session model generalised cleanly beca
 session is defined by its event stream rather than by SSH specifics — RDP is the only one
 that isn't a VT terminal, and it carries a separate surface.
 
-## 16. Releases are patch-only, and cut on request
+## 16. Releases are patch-only, cut on request, and built on CI — *reversal*
 
 **Decision.** Every release bumps the patch component; releases happen when asked, not
-automatically after a change. CI runs clippy with `-D warnings`.
+automatically after a change. CI runs clippy with `-D warnings`. **The shippable
+artifact is built and published by GitHub Actions on a version tag — not from a
+developer's machine.**
 
 **Why.** The project ships from one machine to one user; a stream of minor bumps conveyed
 nothing. Treating warnings as errors keeps the lint budget at zero rather than letting it
 rot.
 
-**Mechanics.** [`justfile`](../justfile) wraps the flow; it pins `windows-shell` to
+**What changed, and why.** The flow used to be fully local: `just release` ran the gate,
+built both binaries, packaged the Inno Setup installer, and `gh release create`d it — all
+on the maintainer's machine, *without waiting for GitHub Actions*. That bit us twice.
+First, a local `just dist` once crashed mid-build (a toolchain-class fault) while a
+piped-to-`grep` invocation hid the failure, and `just installer` then packaged the
+**stale** binaries left over from a prior build — v0.1.57 shipped a 0.1.56 helper. The
+immediate fix was to make `installer` depend on `dist` so packaging can't outrun a failed
+build. Then v0.1.58 shipped on a **red CI**: an `SftpCommand` field change compiled
+locally but broke the `--features integration` tests, which `cargo test --workspace`
+and `cargo clippy --all-targets` don't compile — so the local gate was green while CI was
+not, and the local release didn't wait for CI to find out.
+
+The lesson both times: *what a developer's machine produces is not what a clean, gated
+checkout produces.* So the build and publish moved onto CI. `just release <ver>` now only
+bumps the three crate versions in lockstep, commits, tags, and pushes; the tag triggers
+[`release.yml`](../.github/workflows/release.yml), which re-runs the full gate
+(build + clippy + test), builds both binaries, installs Inno Setup, packages the
+installer, and creates the GitHub Release. A red gate produces no installer, so a release
+can no longer ship on a broken tree. `just ci` also compile-checks the integration tests
+(`--no-run`) now, so that class of break is caught locally too.
+
+**Cost.** A release is no longer instant — it waits on a CI runner (cold cache + Inno
+Setup install ≈ several minutes). Worth it: the artifact is now reproducible and gated.
+
+**Mechanics.** [`justfile`](../justfile) wraps the local half; it pins `windows-shell` to
 `pwsh`, because Windows PowerShell 5.1's `Set-Content` defaults to ANSI and corrupted
-`Cargo.toml`'s UTF-8 during a version bump.
+`Cargo.toml`'s UTF-8 during a version bump. `just installer` / `just deploy` still build
+locally for smoke-testing, but no longer publish.
