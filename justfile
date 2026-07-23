@@ -99,17 +99,17 @@ bump version:
 installer version: dist
     & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion={{version}}" installer\adit.iss
 
-# (Notes are auto-generated from commits; edit them on GitHub afterwards if needed.)
-# Cut a patch release end-to-end: gate, bump, build, package, tag, push, publish, deploy.
-# Gates on the FULL `ci` recipe (not just `test`) so a feature-gated break — like an
-# integration test that doesn't compile — is caught before publishing, not after.
-# NOTE: this still publishes local artifacts without waiting for GitHub Actions to go
-# green; `ci` here is the local mirror of it (minus the Docker runtime step).
-release version: ci kill (bump version) (installer version)
+# Cut a release: bump the version, commit, tag, and push. That's it — the build,
+# packaging, and GitHub Release are done ON CI (.github/workflows/release.yml,
+# tag-triggered), NOT locally, so what ships is exactly what a clean gated checkout
+# produces. Watch the run with `gh run watch` or on GitHub; the installer appears on
+# the Releases page when the workflow's gate (build + clippy + test) passes.
+#
+# Nothing is built or published here. For a local build to smoke-test before tagging,
+# use `just ci` then `just deploy`.
+release version: (bump version)
     git add -A
     git commit -m "chore: release v{{version}}"
     git tag v{{version}}
     git push origin main --tags
-    gh release create v{{version}} target/release/adit-installer-v{{version}}.exe --title "Adit v{{version}}" --generate-notes
-    just deploy
-    Write-Output 'released v{{version}}'
+    Write-Output 'pushed v{{version}} — CI (release.yml) will build, gate, and publish the release'

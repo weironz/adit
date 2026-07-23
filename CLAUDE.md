@@ -74,9 +74,16 @@ at the widget's bounds.
 ## Conventions
 
 - **Releases are patch bumps** (`0.1.54` → `0.1.55`) and happen **only when asked**.
-  Otherwise just commit and push. `just release <ver>` does the whole flow; bump the
-  root workspace, `crates/adit-rdp/Cargo.toml`, and `crates/adit-rdp-proto/Cargo.toml`
-  together.
+  Otherwise just commit and push. **The release is built and published on CI, not
+  locally**: `just release <ver>` only bumps the version (root workspace,
+  `crates/adit-rdp/Cargo.toml`, and `crates/adit-rdp-proto/Cargo.toml`, in lockstep),
+  commits, tags, and pushes. The tag triggers
+  [`.github/workflows/release.yml`](.github/workflows/release.yml), which re-runs the
+  gate (build + clippy + test), builds both binaries, packages the Inno Setup
+  installer, and creates the GitHub Release — so what ships is exactly what a clean,
+  gated checkout produces, never a developer's local artifacts. Watch it with
+  `gh run watch`. (`just installer` / `just deploy` still build locally for
+  smoke-testing, but no longer publish.)
 - **Secrets never go in the repo.** Passwords/keys live in the encrypted credential
   store; the RDP helper takes its password over **stdin, never argv or env** (argv is
   world-readable via the process list). Test-host credentials stay out of git.
