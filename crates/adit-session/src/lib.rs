@@ -200,6 +200,10 @@ pub struct SftpBrowser {
     pub connected: bool,
     /// Transfer queue/history (most recent last).
     pub transfers: Vec<TransferItem>,
+    /// Monotonic counter handing each transfer a unique id, so progress events
+    /// correlate to the exact queue row even when two transfers share a filename
+    /// (and so a "stop" targets the right one).
+    next_transfer_id: u64,
 }
 
 /// One local-filesystem entry shown in the local pane.
@@ -214,6 +218,8 @@ pub struct LocalEntry {
 
 #[derive(Debug, Clone)]
 pub struct TransferItem {
+    /// Correlates to the `id` carried by the SFTP worker's progress/done events.
+    pub id: u64,
     pub direction: TransferDirection,
     pub name: String,
     /// Full source path.
@@ -231,8 +237,15 @@ pub struct TransferItem {
 }
 
 impl TransferItem {
-    fn new(direction: TransferDirection, name: String, source: String, dest: String) -> Self {
+    fn new(
+        id: u64,
+        direction: TransferDirection,
+        name: String,
+        source: String,
+        dest: String,
+    ) -> Self {
         Self {
+            id,
             direction,
             name,
             source,
@@ -268,6 +281,8 @@ pub enum TransferStatus {
     Active,
     Done,
     Failed,
+    /// Stopped by the user (partial output was cleaned up by the worker).
+    Cancelled,
 }
 
 pub struct SessionManager {
@@ -1935,6 +1950,7 @@ impl SessionManager {
             busy: false,
             connected: false,
             transfers: Vec::new(),
+            next_transfer_id: 0,
         });
         Ok(())
     }
@@ -2056,14 +2072,53 @@ impl SessionManager {
         }
     }
 
-    /// Drop finished (done/failed) transfers from the queue, keeping any that
-    /// are still pending or active.
+    /// Drop finished (done/failed/cancelled) transfers from the queue, keeping
+    /// any that are still pending or active.
     pub fn sftp_clear_finished(&mut self) {
         if let Some(browser) = &mut self.sftp {
             browser
                 .transfers
                 .retain(|item| matches!(item.status, TransferStatus::Pending | TransferStatus::Active));
         }
+    }
+
+    /// Stop a single transfer by id. A running transfer stops within one chunk;
+    /// a still-queued one is skipped when the worker reaches it. Either way the
+    /// worker emits a `Cancelled` event that flips the row to `Cancelled`.
+    pub fn sftp_cancel_transfer(&mut self, id: u64) {
+        if let Some(browser) = &mut self.sftp {
+            browser.handle.cancel(id);
+        }
+    }
+
+    /// Stop every transfer that is still pending or active (the "stop all"
+    /// button). Finished rows are left alone.
+    pub fn sftp_cancel_all(&mut self) {
+        if let Some(browser) = &mut self.sftp {
+            let ids: Vec<u64> = browser
+                .transfers
+                .iter()
+                .filter(|item| {
+                    matches!(item.status, TransferStatus::Pending | TransferStatus::Active)
+                })
+                .map(|item| item.id)
+                .collect();
+            for id in ids {
+                browser.handle.cancel(id);
+            }
+        }
+    }
+
+    /// Whether any transfer is still pending or active — drives whether the
+    /// "stop all" control is shown.
+    #[must_use]
+    pub fn sftp_has_active_transfers(&self) -> bool {
+        self.sftp.as_ref().is_some_and(|browser| {
+            browser
+                .transfers
+                .iter()
+                .any(|item| matches!(item.status, TransferStatus::Pending | TransferStatus::Active))
+        })
     }
 
     pub fn close_sftp(&mut self) {
@@ -2098,9 +2153,12 @@ impl SessionManager {
     /// Download a remote file into the current local pane directory.
     pub fn sftp_download(&mut self, name: &str) {
         if let Some(browser) = &mut self.sftp {
+            let id = browser.next_transfer_id;
+            browser.next_transfer_id += 1;
             let remote = join_remote(&browser.cwd, name);
             let local = browser.local_cwd.join(name);
             browser.transfers.push(TransferItem::new(
+                id,
                 TransferDirection::Download,
                 name.to_string(),
                 remote.clone(),
@@ -2108,16 +2166,19 @@ impl SessionManager {
             ));
             browser.busy = true;
             browser.status = format!("downloading {name}…");
-            let _ = browser.handle.send(SftpCommand::Download { remote, local });
+            let _ = browser.handle.send(SftpCommand::Download { id, remote, local });
         }
     }
 
     /// Upload a file from the current local pane directory to the remote pane.
     pub fn sftp_upload_local(&mut self, name: &str) {
         if let Some(browser) = &mut self.sftp {
+            let id = browser.next_transfer_id;
+            browser.next_transfer_id += 1;
             let local = browser.local_cwd.join(name);
             let remote = join_remote(&browser.cwd, name);
             browser.transfers.push(TransferItem::new(
+                id,
                 TransferDirection::Upload,
                 name.to_string(),
                 local.display().to_string(),
@@ -2125,7 +2186,7 @@ impl SessionManager {
             ));
             browser.busy = true;
             browser.status = format!("uploading {name}…");
-            let _ = browser.handle.send(SftpCommand::Upload { local, remote });
+            let _ = browser.handle.send(SftpCommand::Upload { id, local, remote });
         }
     }
 
@@ -2138,8 +2199,11 @@ impl SessionManager {
             .ok_or_else(|| SessionError::Sftp(String::from("invalid local file path")))?
             .to_string();
         let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
+        let id = browser.next_transfer_id;
+        browser.next_transfer_id += 1;
         let remote = join_remote(&browser.cwd, &name);
         browser.transfers.push(TransferItem::new(
+            id,
             TransferDirection::Upload,
             name.clone(),
             local.display().to_string(),
@@ -2148,6 +2212,7 @@ impl SessionManager {
         browser.busy = true;
         browser.status = format!("uploading {name}…");
         browser.handle.send(SftpCommand::Upload {
+            id,
             local: local.to_path_buf(),
             remote,
         })?;
@@ -2171,29 +2236,25 @@ impl SessionManager {
                         browser.busy = false;
                         browser.status = format!("{} item(s)", browser.entries.len());
                     }
-                    SftpEvent::Progress { label, done, total } => {
+                    SftpEvent::Progress { id, label, done, total } => {
                         browser.busy = true;
                         browser.status = match done.saturating_mul(100).checked_div(total) {
                             Some(percent) => format!("{label}: {percent}%"),
                             None => format!("{label}: {done} bytes"),
                         };
-                        if let Some(item) = browser.transfers.iter_mut().find(|t| {
-                            t.name == label
-                                && matches!(t.status, TransferStatus::Pending | TransferStatus::Active)
-                        }) {
+                        // Correlate by id, not name: two transfers can share a
+                        // filename and would otherwise cross-attribute progress.
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
                             item.status = TransferStatus::Active;
                             item.done = done;
                             item.total = total;
                             item.update_speed(Instant::now());
                         }
                     }
-                    SftpEvent::Done { label, bytes } => {
+                    SftpEvent::Done { id, label, bytes } => {
                         browser.busy = false;
                         browser.status = format!("{label} done ({bytes} bytes)");
-                        if let Some(item) = browser.transfers.iter_mut().find(|t| {
-                            t.name == label
-                                && matches!(t.status, TransferStatus::Pending | TransferStatus::Active)
-                        }) {
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
                             item.status = TransferStatus::Done;
                             item.done = bytes;
                             if item.total == 0 {
@@ -2203,6 +2264,18 @@ impl SessionManager {
                         }
                         // Refresh both panes — a transferred file appears on the
                         // other side.
+                        let cwd = browser.cwd.clone();
+                        let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+                        browser.local_entries = read_local_dir(&browser.local_cwd);
+                    }
+                    SftpEvent::Cancelled { id, label } => {
+                        browser.busy = false;
+                        browser.status = format!("{label} 已停止");
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
+                            item.status = TransferStatus::Cancelled;
+                        }
+                        // A partial download may have been removed and an upload's
+                        // partial file deleted remotely — refresh both panes.
                         let cwd = browser.cwd.clone();
                         let _ = browser.handle.send(SftpCommand::ListDir(cwd));
                         browser.local_entries = read_local_dir(&browser.local_cwd);

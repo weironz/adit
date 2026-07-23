@@ -106,7 +106,13 @@ sortable columns, multi-select, double-click transfer, pane-to-pane drag with a 
 ghost, right-click menus (download/upload, rename, delete, open), mkdir, inline rename,
 delete confirmation, and a transfer queue with progress, speed, and history. Dropping OS
 files onto the window uploads them to the remote cwd. **Directory trees transfer
-recursively** in both directions.
+recursively** in both directions. **Transfers can be stopped** — a per-row *停止* button
+cancels one, *全部停止* cancels every queued/running transfer at once. A running transfer
+stops within one chunk of I/O (the byte loop polls an out-of-band cancel flag, so a stop
+doesn't queue behind the transfer it's meant to interrupt); the partial file is removed
+(the local file for a download, the remote file for an upload). Each transfer carries a
+unique id, so progress is attributed to the exact queue row even when two transfers share
+a filename.
 
 **Command-line `sftp>` tab** (Alt+P, SecureCRT-style) — `ls`/`dir`, `cd`, `pwd`, `lls`,
 `lcd`, `lpwd`, `get`, `put`, `mkdir`, `rmdir`, `rm`/`del`, `rename`/`mv`, `clear`,
@@ -219,8 +225,6 @@ Verified shortcomings, so nobody has to rediscover them.
 - **SFTP shell**: no tab completion, and no history recall (the history is recorded but
   unbound).
 - stderr is merged into stdout on the shell path.
-- SFTP transfer progress is correlated by **name**, so concurrent transfers of
-  same-named files can mis-attribute progress.
 - macOS is architecturally supported but unbuilt; Windows code signing is pending.
 
 ### Cosmetic / cleanup

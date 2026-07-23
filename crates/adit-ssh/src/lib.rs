@@ -12,10 +12,11 @@ use russh::{
     ChannelMsg, Disconnect,
 };
 use std::{
+    collections::HashSet,
     env, fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{mpsc, Arc},
+    sync::{mpsc, Arc, Mutex},
     thread,
     time::Duration,
 };
@@ -1613,11 +1614,58 @@ pub struct SftpEntry {
     pub mtime: Option<u32>,
 }
 
+/// Shared set of cancelled transfer ids. Written by [`SftpHandle::cancel`] and
+/// polled by the transfer loop, so a cancel reaches an in-flight transfer even
+/// though it is blocking the (serial) command channel — the cancel can't be a
+/// command, it would just queue behind the transfer it's meant to stop.
+type CancelSet = Arc<Mutex<HashSet<u64>>>;
+
+fn is_cancelled(cancel: &CancelSet, id: u64) -> bool {
+    cancel.lock().map(|set| set.contains(&id)).unwrap_or(false)
+}
+
+/// Drop a finished transfer's id from the cancel set so it can't accumulate.
+fn forget_transfer(cancel: &CancelSet, id: u64) {
+    if let Ok(mut set) = cancel.lock() {
+        set.remove(&id);
+    }
+}
+
+/// Everything a transfer needs threaded through it: its id (for progress
+/// correlation and cancellation), the label all its progress reports under, the
+/// shared cancel set, and the event sink.
+struct TransferCtx<'a> {
+    id: u64,
+    label: &'a str,
+    cancel: &'a CancelSet,
+    events: &'a mpsc::Sender<SftpEvent>,
+}
+
+impl TransferCtx<'_> {
+    fn cancelled(&self) -> bool {
+        is_cancelled(self.cancel, self.id)
+    }
+
+    fn progress(&self, done: u64, total: u64) {
+        let _ = self.events.send(SftpEvent::Progress {
+            id: self.id,
+            label: self.label.to_string(),
+            done,
+            total,
+        });
+    }
+
+    fn status(&self, message: String) {
+        let _ = self.events.send(SftpEvent::Status(message));
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum SftpCommand {
     ListDir(String),
-    Download { remote: String, local: PathBuf },
-    Upload { local: PathBuf, remote: String },
+    /// `id` identifies the transfer for progress correlation and cancellation.
+    Download { id: u64, remote: String, local: PathBuf },
+    Upload { id: u64, local: PathBuf, remote: String },
     Mkdir(String),
     Rename { from: String, to: String },
     Remove { path: String, is_dir: bool },
@@ -1629,8 +1677,10 @@ pub enum SftpEvent {
     Status(String),
     Ready { home: String },
     Listing { path: String, entries: Vec<SftpEntry> },
-    Progress { label: String, done: u64, total: u64 },
-    Done { label: String, bytes: u64 },
+    Progress { id: u64, label: String, done: u64, total: u64 },
+    Done { id: u64, label: String, bytes: u64 },
+    /// A transfer was stopped by the user (partial output cleaned up for downloads).
+    Cancelled { id: u64, label: String },
     Error(String),
     Closed,
 }
@@ -1638,6 +1688,7 @@ pub enum SftpEvent {
 pub struct SftpHandle {
     command_tx: tokio_mpsc::UnboundedSender<SftpCommand>,
     event_rx: mpsc::Receiver<SftpEvent>,
+    cancel: CancelSet,
 }
 
 impl SftpHandle {
@@ -1645,6 +1696,15 @@ impl SftpHandle {
         self.command_tx
             .send(command)
             .map_err(|_| SshError::CommandChannelClosed)
+    }
+
+    /// Request cancellation of the transfer with this id. Takes effect whether the
+    /// transfer is already running (the byte loop notices within one chunk) or still
+    /// queued (it is skipped when the command loop reaches it).
+    pub fn cancel(&self, id: u64) {
+        if let Ok(mut set) = self.cancel.lock() {
+            set.insert(id);
+        }
     }
 
     #[must_use]
@@ -1666,6 +1726,8 @@ pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> 
 
     let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
     let (event_tx, event_rx) = mpsc::channel();
+    let cancel: CancelSet = Arc::new(Mutex::new(HashSet::new()));
+    let session_cancel = Arc::clone(&cancel);
 
     thread::Builder::new()
         .name(format!("adit-sftp-{}:{}", request.host, request.port))
@@ -1675,9 +1737,12 @@ pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> 
                 .build();
             match runtime {
                 Ok(runtime) => {
-                    if let Err(error) =
-                        runtime.block_on(run_sftp_session(request, command_rx, event_tx.clone()))
-                    {
+                    if let Err(error) = runtime.block_on(run_sftp_session(
+                        request,
+                        command_rx,
+                        event_tx.clone(),
+                        session_cancel,
+                    )) {
                         let _ = event_tx.send(SftpEvent::Error(error.to_string()));
                     }
                 }
@@ -1692,6 +1757,7 @@ pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> 
     Ok(SftpHandle {
         command_tx,
         event_rx,
+        cancel,
     })
 }
 
@@ -1699,6 +1765,7 @@ async fn run_sftp_session(
     request: SftpRequest,
     mut commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
     events: mpsc::Sender<SftpEvent>,
+    cancel: CancelSet,
 ) -> Result<(), SshError> {
     let _ = events.send(SftpEvent::Status(String::from("connecting")));
 
@@ -1773,15 +1840,31 @@ async fn run_sftp_session(
     while let Some(command) = commands.recv().await {
         match command {
             SftpCommand::ListDir(path) => list_dir(&sftp, &path, &events).await,
-            SftpCommand::Download { remote, local } => {
-                if let Err(error) = sftp_download(&sftp, &remote, &local, &events).await {
+            SftpCommand::Download { id, remote, local } => {
+                let label = remote.rsplit('/').next().unwrap_or(&remote).to_string();
+                // Cancelled while still queued behind a running transfer: skip it.
+                if is_cancelled(&cancel, id) {
+                    let _ = events.send(SftpEvent::Cancelled { id, label });
+                } else if let Err(error) =
+                    sftp_download(&sftp, id, &remote, &local, &cancel, &events).await
+                {
                     let _ = events.send(SftpEvent::Error(error.to_string()));
                 }
+                forget_transfer(&cancel, id);
             }
-            SftpCommand::Upload { local, remote } => {
-                if let Err(error) = sftp_upload(&sftp, &local, &remote, &events).await {
+            SftpCommand::Upload { id, local, remote } => {
+                let label = local
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| remote.clone());
+                if is_cancelled(&cancel, id) {
+                    let _ = events.send(SftpEvent::Cancelled { id, label });
+                } else if let Err(error) =
+                    sftp_upload(&sftp, id, &local, &remote, &cancel, &events).await
+                {
                     let _ = events.send(SftpEvent::Error(error.to_string()));
                 }
+                forget_transfer(&cancel, id);
             }
             SftpCommand::Mkdir(path) => {
                 if let Err(error) = sftp.create_dir(path.clone()).await {
@@ -1871,11 +1954,19 @@ fn is_safe_child_name(name: &str) -> bool {
 /// `local`, emitting one terminal `Done` for the transfer.
 async fn sftp_download(
     sftp: &SftpSession,
+    id: u64,
     remote: &str,
     local: &Path,
+    cancel: &CancelSet,
     events: &mpsc::Sender<SftpEvent>,
 ) -> Result<(), SshError> {
     let label = remote.rsplit('/').next().unwrap_or(remote).to_string();
+    let ctx = TransferCtx {
+        id,
+        label: &label,
+        cancel,
+        events,
+    };
     let is_dir = sftp
         .metadata(remote.to_string())
         .await
@@ -1883,15 +1974,14 @@ async fn sftp_download(
         .is_some_and(|meta| meta.is_dir());
 
     if is_dir {
-        let (bytes, skipped) = download_dir(sftp, remote, local, &label, events).await?;
-        let _ = events.send(SftpEvent::Done {
-            label: label.clone(),
-            bytes,
-        });
+        let (bytes, skipped, cancelled) = download_dir(sftp, remote, local, &ctx).await?;
+        if cancelled {
+            let _ = events.send(SftpEvent::Cancelled { id, label });
+            return Ok(());
+        }
+        let _ = events.send(SftpEvent::Done { id, label: label.clone(), bytes });
         if skipped > 0 {
-            let _ = events.send(SftpEvent::Status(format!(
-                "{label}: 下载完成，跳过 {skipped} 个无法访问的条目"
-            )));
+            ctx.status(format!("{label}: 下载完成，跳过 {skipped} 个无法访问的条目"));
         }
     } else {
         // A lone file shows a percentage, so pass its size as the grand total.
@@ -1901,8 +1991,12 @@ async fn sftp_download(
             .ok()
             .and_then(|meta| meta.size)
             .unwrap_or(0);
-        let bytes = download_file(sftp, remote, local, &label, 0, size, events).await?;
-        let _ = events.send(SftpEvent::Done { label, bytes });
+        let (bytes, cancelled) = download_file(sftp, remote, local, &ctx, 0, size).await?;
+        if cancelled {
+            let _ = events.send(SftpEvent::Cancelled { id, label });
+        } else {
+            let _ = events.send(SftpEvent::Done { id, label, bytes });
+        }
     }
     Ok(())
 }
@@ -1919,9 +2013,8 @@ async fn download_dir(
     sftp: &SftpSession,
     root_remote: &str,
     root_local: &Path,
-    top_label: &str,
-    events: &mpsc::Sender<SftpEvent>,
-) -> Result<(u64, usize), SshError> {
+    ctx: &TransferCtx<'_>,
+) -> Result<(u64, usize, bool), SshError> {
     tokio::fs::create_dir_all(root_local)
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
@@ -1930,6 +2023,9 @@ async fn download_dir(
     let mut skipped = 0usize;
     let mut stack = vec![(root_remote.to_string(), root_local.to_path_buf())];
     while let Some((remote_dir, local_dir)) = stack.pop() {
+        if ctx.cancelled() {
+            return Ok((total, skipped, true));
+        }
         let read_dir = match sftp.read_dir(remote_dir.clone()).await {
             Ok(read_dir) => read_dir,
             Err(error) => {
@@ -1937,7 +2033,7 @@ async fn download_dir(
                     // The root itself can't be listed — nothing can be downloaded.
                     return Err(SshError::Sftp(error.to_string()));
                 }
-                let _ = events.send(SftpEvent::Status(format!("跳过 {remote_dir}: {error}")));
+                ctx.status(format!("跳过 {remote_dir}: {error}"));
                 skipped += 1;
                 continue;
             }
@@ -1948,7 +2044,7 @@ async fn download_dir(
                 continue;
             }
             if !is_safe_child_name(&name) {
-                let _ = events.send(SftpEvent::Status(format!("跳过不安全的名称: {name}")));
+                ctx.status(format!("跳过不安全的名称: {name}"));
                 skipped += 1;
                 continue;
             }
@@ -1958,26 +2054,29 @@ async fn download_dir(
                 match tokio::fs::create_dir_all(&child_local).await {
                     Ok(()) => stack.push((child_remote, child_local)),
                     Err(error) => {
-                        let _ = events.send(SftpEvent::Status(format!("跳过 {name}: {error}")));
+                        ctx.status(format!("跳过 {name}: {error}"));
                         skipped += 1;
                     }
                 }
             } else {
                 // Report progress under the folder label with a running cumulative
                 // total, so an inner filename never aliases another transfer.
-                match download_file(sftp, &child_remote, &child_local, top_label, total, 0, events)
-                    .await
-                {
-                    Ok(bytes) => total += bytes,
+                match download_file(sftp, &child_remote, &child_local, ctx, total, 0).await {
+                    Ok((bytes, cancelled)) => {
+                        total += bytes;
+                        if cancelled {
+                            return Ok((total, skipped, true));
+                        }
+                    }
                     Err(error) => {
-                        let _ = events.send(SftpEvent::Status(format!("跳过 {name}: {error}")));
+                        ctx.status(format!("跳过 {name}: {error}"));
                         skipped += 1;
                     }
                 }
             }
         }
     }
-    Ok((total, skipped))
+    Ok((total, skipped, false))
 }
 
 /// Download one remote file, reporting progress under `label` with
@@ -1988,11 +2087,10 @@ async fn download_file(
     sftp: &SftpSession,
     remote: &str,
     local: &Path,
-    label: &str,
+    ctx: &TransferCtx<'_>,
     base: u64,
     grand_total: u64,
-    events: &mpsc::Sender<SftpEvent>,
-) -> Result<u64, SshError> {
+) -> Result<(u64, bool), SshError> {
     let mut remote_file = sftp
         .open(remote.to_string())
         .await
@@ -2001,45 +2099,65 @@ async fn download_file(
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
 
-    let bytes =
-        stream_copy(&mut remote_file, &mut local_file, label, base, grand_total, events).await?;
+    let (bytes, cancelled) =
+        stream_copy(&mut remote_file, &mut local_file, ctx, base, grand_total).await?;
     local_file
         .flush()
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
-    Ok(bytes)
+    // Don't leave a half-written file behind when the user stops a download.
+    if cancelled {
+        drop(local_file);
+        let _ = tokio::fs::remove_file(local).await;
+    }
+    Ok((bytes, cancelled))
 }
 
 /// Upload a local path — a single file, or a whole directory tree — to `remote`,
 /// emitting one terminal `Done` for the transfer.
 async fn sftp_upload(
     sftp: &SftpSession,
+    id: u64,
     local: &Path,
     remote: &str,
+    cancel: &CancelSet,
     events: &mpsc::Sender<SftpEvent>,
 ) -> Result<(), SshError> {
     let label = remote.rsplit('/').next().unwrap_or(remote).to_string();
+    let ctx = TransferCtx {
+        id,
+        label: &label,
+        cancel,
+        events,
+    };
     let is_dir = tokio::fs::metadata(local)
         .await
         .map(|meta| meta.is_dir())
         .unwrap_or(false);
 
     if is_dir {
-        let (bytes, skipped) = upload_dir(sftp, local, remote, &label, events).await?;
+        let (bytes, skipped, cancelled) = upload_dir(sftp, local, remote, &ctx).await?;
+        if cancelled {
+            let _ = events.send(SftpEvent::Cancelled { id, label });
+            return Ok(());
+        }
         let _ = events.send(SftpEvent::Done {
+            id,
             label: label.clone(),
             bytes,
         });
         if skipped > 0 {
-            let _ = events.send(SftpEvent::Status(format!(
-                "{label}: 上传完成，跳过 {skipped} 个无法访问的条目"
-            )));
+            ctx.status(format!("{label}: 上传完成，跳过 {skipped} 个无法访问的条目"));
         }
     } else {
         // A lone file shows a percentage, so pass its size as the grand total.
         let size = tokio::fs::metadata(local).await.map(|m| m.len()).unwrap_or(0);
-        let bytes = upload_file(sftp, local, remote, &label, 0, size, events).await?;
-        let _ = events.send(SftpEvent::Done { label, bytes });
+        let (bytes, cancelled) = upload_file(sftp, local, remote, &ctx, 0, size).await?;
+        if cancelled {
+            let _ = events.send(SftpEvent::Cancelled { id, label });
+        } else {
+            let _ = events.send(SftpEvent::Done { id, label, bytes });
+        }
     }
     Ok(())
 }
@@ -2055,13 +2173,15 @@ async fn upload_dir(
     sftp: &SftpSession,
     root_local: &Path,
     root_remote: &str,
-    top_label: &str,
-    events: &mpsc::Sender<SftpEvent>,
-) -> Result<(u64, usize), SshError> {
+    ctx: &TransferCtx<'_>,
+) -> Result<(u64, usize, bool), SshError> {
     let mut total = 0u64;
     let mut skipped = 0usize;
     let mut stack = vec![(root_local.to_path_buf(), root_remote.to_string())];
     while let Some((local_dir, remote_dir)) = stack.pop() {
+        if ctx.cancelled() {
+            return Ok((total, skipped, true));
+        }
         let is_root = remote_dir.as_str() == root_remote;
         // Create the remote dir. Tolerate "already exists" (detected by a
         // follow-up stat), but treat a genuine failure as a skip so it is not
@@ -2076,7 +2196,7 @@ async fn upload_dir(
                 if is_root {
                     return Err(SshError::Sftp(error.to_string()));
                 }
-                let _ = events.send(SftpEvent::Status(format!("跳过 {remote_dir}: {error}")));
+                ctx.status(format!("跳过 {remote_dir}: {error}"));
                 skipped += 1;
                 continue;
             }
@@ -2087,10 +2207,7 @@ async fn upload_dir(
                 if is_root {
                     return Err(SshError::LocalIo(error.to_string()));
                 }
-                let _ = events.send(SftpEvent::Status(format!(
-                    "跳过 {}: {error}",
-                    local_dir.display()
-                )));
+                ctx.status(format!("跳过 {}: {error}", local_dir.display()));
                 skipped += 1;
                 continue;
             }
@@ -2100,7 +2217,7 @@ async fn upload_dir(
                 Ok(Some(entry)) => entry,
                 Ok(None) => break,
                 Err(error) => {
-                    let _ = events.send(SftpEvent::Status(format!("跳过条目: {error}")));
+                    ctx.status(format!("跳过条目: {error}"));
                     skipped += 1;
                     break;
                 }
@@ -2118,19 +2235,22 @@ async fn upload_dir(
             } else {
                 // Report progress under the folder label with a running cumulative
                 // total, so an inner filename never aliases another transfer.
-                match upload_file(sftp, &child_local, &child_remote, top_label, total, 0, events)
-                    .await
-                {
-                    Ok(bytes) => total += bytes,
+                match upload_file(sftp, &child_local, &child_remote, ctx, total, 0).await {
+                    Ok((bytes, cancelled)) => {
+                        total += bytes;
+                        if cancelled {
+                            return Ok((total, skipped, true));
+                        }
+                    }
                     Err(error) => {
-                        let _ = events.send(SftpEvent::Status(format!("跳过 {name}: {error}")));
+                        ctx.status(format!("跳过 {name}: {error}"));
                         skipped += 1;
                     }
                 }
             }
         }
     }
-    Ok((total, skipped))
+    Ok((total, skipped, false))
 }
 
 /// Upload one local file, reporting progress under `label` with
@@ -2141,11 +2261,10 @@ async fn upload_file(
     sftp: &SftpSession,
     local: &Path,
     remote: &str,
-    label: &str,
+    ctx: &TransferCtx<'_>,
     base: u64,
     grand_total: u64,
-    events: &mpsc::Sender<SftpEvent>,
-) -> Result<u64, SshError> {
+) -> Result<(u64, bool), SshError> {
     let mut local_file = tokio::fs::File::open(local)
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
@@ -2154,34 +2273,43 @@ async fn upload_file(
         .await
         .map_err(|error| SshError::Sftp(error.to_string()))?;
 
-    let bytes =
-        stream_copy(&mut local_file, &mut remote_file, label, base, grand_total, events).await?;
+    let (bytes, cancelled) =
+        stream_copy(&mut local_file, &mut remote_file, ctx, base, grand_total).await?;
     remote_file
         .shutdown()
         .await
         .map_err(|error| SshError::Sftp(error.to_string()))?;
-    Ok(bytes)
+    // Remove the partial remote file when the user stops an upload.
+    if cancelled {
+        let _ = sftp.remove_file(remote.to_string()).await;
+    }
+    Ok((bytes, cancelled))
 }
 
 /// Copy `reader` into `writer` in chunks, emitting throttled progress events.
-/// Returns the number of bytes copied. Does NOT emit the terminal `Done` event —
+/// Returns `(bytes_copied, cancelled)`. Does NOT emit the terminal `Done` event —
 /// the caller owns that, so a recursive folder transfer reports a single
 /// completion for the whole tree rather than one per file.
 ///
-/// Progress is always reported under `label` (for a folder, the top-level folder
-/// name, never an inner filename — so it can't alias an unrelated queued
-/// transfer of the same name) with `done = base + this_file_bytes`, so a folder
-/// shows smooth cumulative progress. `grand_total` is the value put in the
-/// progress event's `total` (a single file's size for a percentage, or 0 for a
+/// The cancel flag is polled once per chunk (between a `read` and the next
+/// `write`), so a stop takes effect within one `SFTP_CHUNK` of I/O rather than
+/// waiting for the whole file — the whole reason the check lives in the byte loop
+/// and not just at the command boundary. On cancel it returns the bytes written
+/// so far and `true`; the caller cleans up any partial output.
+///
+/// Progress is always reported under the ctx's `label` (for a folder, the
+/// top-level folder name, never an inner filename — so it can't alias an
+/// unrelated queued transfer of the same name) with `done = base + this_file_bytes`,
+/// so a folder shows smooth cumulative progress. `grand_total` is the value put in
+/// the progress event's `total` (a single file's size for a percentage, or 0 for a
 /// folder where the grand total isn't known — the UI then shows bytes only).
 async fn stream_copy<R, W>(
     reader: &mut R,
     writer: &mut W,
-    label: &str,
+    ctx: &TransferCtx<'_>,
     base: u64,
     grand_total: u64,
-    events: &mpsc::Sender<SftpEvent>,
-) -> Result<u64, SshError>
+) -> Result<(u64, bool), SshError>
 where
     R: AsyncReadExt + Unpin,
     W: AsyncWriteExt + Unpin,
@@ -2189,12 +2317,11 @@ where
     let mut buffer = vec![0u8; SFTP_CHUNK];
     let mut done = 0u64;
     let mut emitted = 0u64;
-    let _ = events.send(SftpEvent::Progress {
-        label: label.to_string(),
-        done: base,
-        total: grand_total,
-    });
+    ctx.progress(base, grand_total);
     loop {
+        if ctx.cancelled() {
+            return Ok((done, true));
+        }
         let read = reader
             .read(&mut buffer)
             .await
@@ -2209,14 +2336,10 @@ where
         done += read as u64;
         if done - emitted >= SFTP_PROGRESS_STEP {
             emitted = done;
-            let _ = events.send(SftpEvent::Progress {
-                label: label.to_string(),
-                done: base + done,
-                total: grand_total,
-            });
+            ctx.progress(base + done, grand_total);
         }
     }
-    Ok(done)
+    Ok((done, false))
 }
 
 // ===== Port forwarding (SSH tunnels) =====

@@ -16,6 +16,11 @@ use adit_terminal::VtTerminal;
 
 const PROMPT: &str = "sftp> ";
 
+/// The `id` every command-line-shell transfer carries. The shell runs transfers
+/// one at a time and never cancels, so it doesn't need unique ids — its handle's
+/// cancel set is never populated, and the worker clears the id after each.
+const SHELL_TRANSFER_ID: u64 = 0;
+
 const HELP: &str = "\
 可用命令:
   ls [路径]             列出远程目录
@@ -130,7 +135,10 @@ impl SftpShell {
         terminal.feed_str("\r\n");
         self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
         self.pending = Some(Pending::Transfer);
+        // The shell runs one transfer at a time and never cancels, so a fixed id
+        // is safe: its handle's cancel set is never populated.
         let _ = self.handle.send(SftpCommand::Upload {
+            id: SHELL_TRANSFER_ID,
             local: local.to_path_buf(),
             remote,
         });
@@ -175,9 +183,16 @@ impl SftpShell {
             },
             // Per-chunk progress would fight the prompt for the line; `Done` reports.
             SftpEvent::Progress { .. } => {}
-            SftpEvent::Done { label, bytes } => {
+            SftpEvent::Done { label, bytes, .. } => {
                 self.pending = None;
                 self.writeln(terminal, &format!("{label} 完成 ({})", human_size(bytes)));
+                self.prompt(terminal);
+            }
+            // The shell never cancels its own transfers, but the variant must be
+            // handled; if one ever arrives, report it plainly.
+            SftpEvent::Cancelled { label, .. } => {
+                self.pending = None;
+                self.writeln(terminal, &format!("{label} 已停止"));
                 self.prompt(terminal);
             }
             SftpEvent::Error(error) => {
@@ -293,7 +308,7 @@ impl SftpShell {
                 };
                 self.writeln(terminal, &format!("下载 {remote} -> {}", local.display()));
                 self.pending = Some(Pending::Transfer);
-                self.send(terminal, SftpCommand::Download { remote, local });
+                self.send(terminal, SftpCommand::Download { id: SHELL_TRANSFER_ID, remote, local });
             }
             "put" => {
                 let Some(local_arg) = rest.first() else {
@@ -316,7 +331,7 @@ impl SftpShell {
                     });
                 self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
                 self.pending = Some(Pending::Transfer);
-                self.send(terminal, SftpCommand::Upload { local, remote });
+                self.send(terminal, SftpCommand::Upload { id: SHELL_TRANSFER_ID, local, remote });
             }
             "mkdir" => {
                 let Some(arg) = rest.first() else {

@@ -457,6 +457,10 @@ pub enum Message {
     SftpCancelDelete,
     SftpSort(SftpPane, SftpSortKey),
     SftpClearTransfers,
+    /// Stop a single in-flight/queued transfer by its id.
+    SftpCancelTransfer(u64),
+    /// Stop every transfer that is still pending or active.
+    SftpCancelAll,
     SftpDragEnter(SftpPane),
     SftpDragMove(SftpPane, Point),
     ToggleProfileGroup(String),
@@ -2265,6 +2269,8 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::SftpClearTransfers => app.manager.sftp_clear_finished(),
+        Message::SftpCancelTransfer(id) => app.manager.sftp_cancel_transfer(id),
+        Message::SftpCancelAll => app.manager.sftp_cancel_all(),
         Message::SftpDragEnter(pane) => app.sftp_drag_over = Some(pane),
         Message::SftpDragMove(pane, position) => {
             if app.sftp_drag.is_some() {
@@ -8980,10 +8986,12 @@ fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
     let mut done = 0usize;
     let mut failed = 0usize;
     let mut active = 0usize;
+    let mut cancelled = 0usize;
     for item in &browser.transfers {
         match item.status {
             TransferStatus::Done => done += 1,
             TransferStatus::Failed => failed += 1,
+            TransferStatus::Cancelled => cancelled += 1,
             TransferStatus::Pending | TransferStatus::Active => active += 1,
         }
     }
@@ -8991,17 +8999,29 @@ fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
     let mut clear = button(text("清空已完成").size(11))
         .padding([3, 10])
         .style(|_theme, status| secondary_button_style(status));
-    if done + failed > 0 {
+    if done + failed + cancelled > 0 {
         clear = clear.on_press(Message::SftpClearTransfers);
     }
 
+    // "Stop all" only appears while something is actually running or queued.
+    let mut controls = row![].spacing(6).align_y(Alignment::Center);
+    if active > 0 {
+        controls = controls.push(
+            button(text("全部停止").size(11))
+                .padding([3, 10])
+                .style(|_theme, status| danger_button_style(status))
+                .on_press(Message::SftpCancelAll),
+        );
+    }
+    controls = controls.push(clear);
+
     let title = row![
         text("传输队列").size(11).color(primary_text()),
-        text(format!("完成 {done} · 失败 {failed} · 进行 {active}"))
+        text(format!("完成 {done} · 失败 {failed} · 停止 {cancelled} · 进行 {active}"))
             .size(10)
             .color(muted_text()),
         Space::new().width(Fill),
-        clear,
+        controls,
     ]
     .spacing(10)
     .align_y(Alignment::Center);
@@ -9013,6 +9033,7 @@ fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Message> {
         text("进度").size(10).color(muted_text()).width(Length::Fixed(112.0)),
         text("速度").size(10).color(muted_text()).width(Length::Fixed(78.0)),
         text("状态").size(10).color(muted_text()).width(Length::Fixed(48.0)),
+        Space::new().width(Length::Fixed(44.0)),
     ]
     .spacing(8);
 
@@ -9043,7 +9064,9 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
         TransferStatus::Active => ("传输中", accent()),
         TransferStatus::Done => ("完成", Color::from_rgb8(34, 197, 94)),
         TransferStatus::Failed => ("失败", danger()),
+        TransferStatus::Cancelled => ("已停止", muted_text()),
     };
+    let stoppable = matches!(item.status, TransferStatus::Pending | TransferStatus::Active);
     // A completed transfer is always 100% — including 0-byte files, where
     // dividing by total would otherwise leave it at 0%.
     let (fraction, pct) = if matches!(item.status, TransferStatus::Done) {
@@ -9079,6 +9102,18 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
     .spacing(4)
     .align_y(Alignment::Center);
 
+    // Only a running/queued transfer can be stopped; a finished row shows a
+    // blank of the same width so every row's columns stay aligned.
+    let action: Element<'static, Message> = if stoppable {
+        button(text("停止").size(9))
+            .padding([1, 6])
+            .style(|_theme, status| danger_button_style(status))
+            .on_press(Message::SftpCancelTransfer(item.id))
+            .into()
+    } else {
+        Space::new().width(Length::Fixed(44.0)).into()
+    };
+
     row![
         row![
             text(arrow).size(10).color(muted_text()),
@@ -9097,6 +9132,7 @@ fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message> {
         container(progress).width(Length::Fixed(112.0)),
         text(speed).size(10).color(muted_text()).width(Length::Fixed(78.0)),
         text(label).size(10).color(color).width(Length::Fixed(48.0)),
+        container(action).width(Length::Fixed(44.0)),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
@@ -11963,6 +11999,18 @@ fn secondary_button_style(status: button::Status) -> button::Style {
         button::Status::Active => surface(),
     };
     base_button_style(background, primary_text(), border_color())
+}
+
+/// A restrained destructive style: danger-coloured text on a soft tinted fill,
+/// filling in on hover. Used for the transfer "stop" / "stop all" controls.
+fn danger_button_style(status: button::Status) -> button::Style {
+    let (background, text_color) = match status {
+        button::Status::Hovered => (danger(), Color::WHITE),
+        button::Status::Pressed => (danger(), Color::WHITE),
+        button::Status::Disabled => (surface_alt(), muted_text()),
+        button::Status::Active => (danger_background(), danger()),
+    };
+    base_button_style(background, text_color, danger())
 }
 
 fn method_button_style(selected: bool, status: button::Status) -> button::Style {
