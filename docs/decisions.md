@@ -23,6 +23,45 @@ WebView/IPC seam in the hot path.
 notably the terminal grid renderer and the scrollbar (see #10, #11). Every widget must
 be theme-aware manually.
 
+**Alternatives considered.** Only the web view was weighed at the time; the native
+toolkits were not compared on the record. Reviewed since, the conclusion holds:
+
+- **Slint** — the only mature Rust toolkit with official Android support (iOS in
+  progress), so it is the obvious candidate if mobile ever matters. It is still not on
+  the decision path. What it gains over `iced` is platform reach and a declarative DSL;
+  neither touches the actual bottleneck, which is data-dense desktop chrome — the
+  session tree, the sortable multi-select dual-pane browser, the drag-and-drop. Slint's
+  standard widgets cover lists and basic tables, so those would still be hand-built,
+  exactly as they are now. What Slint *preserves* — one Rust stack, one binary, no FFI
+  seam — `iced` already gives us, and it would cost a rewrite of `adit-ui` plus a GPL
+  obligation or a paid licence.
+- **Flutter + Rust** (via `flutter_rust_bridge`) — the only option generally available
+  on all five platforms today, and genuinely stronger on dense chrome: `DataTable`,
+  `Draggable`/`DragTarget`, `desktop_drop`, and hot reload instead of a recompile per
+  tweak. `xterm.dart` proves a 60fps terminal grid is achievable there. Rejected on
+  structure: it inverts the hosting relationship, demoting Rust from *the application*
+  to *a library called by the application*. Crash traces span two runtimes, logging
+  needs bridging, lifecycle is owned by Dart, and CI carries two toolchains — ongoing
+  costs, not one-off. It is also self-undermining here: Dart already has `xterm.dart`
+  and `dartssh2`, so "Flutter + Rust" tends to collapse into "Flutter", i.e. a rewrite.
+  With `adit-ui` at ~12.7k lines and RDP living in its own workspace and process
+  (see #4), that rewrite is not a UI swap.
+- **`egui`** — immediate mode. Fine for tooling, wrong for a dual-pane file manager
+  with persistent selection and drag state.
+- **`Xilem`** — the Linebender/Vello successor to Druid, and the strongest long-term
+  bet in Rust GUI. Excluded only because it is not production ready.
+- **A custom `winit` + `wgpu` renderer**, the Alacritty/WezTerm/Rio/Zed route. That
+  precedent does not transfer: those products have almost no application chrome —
+  Alacritty has no settings UI at all — whereas half of Adit is session management,
+  SFTP, and dialogs. It needs a real widget toolkit; they do not.
+
+**Revisit if** (and only if) mobile enters scope — Flutter + Rust would lead, and note
+that the mobile feature set is a strict subset regardless of toolkit, because iOS
+forbids fork/exec (no local shell) and has no serial stack; **or** Xilem reaches 1.0;
+**or** `iced` goes unmaintained *and* System76's `libcosmic` fork stalls with it.
+Infrequent `iced` releases are **not** a trigger — a slow release cadence and a dead
+project are different things.
+
 ## 2. `russh` for SSH
 
 **Decision.** Pure-Rust `russh` rather than binding libssh2/OpenSSH.
