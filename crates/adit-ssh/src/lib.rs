@@ -207,6 +207,10 @@ pub struct SharedSession {
     /// learns that the last holder is gone without polling. Never sent on; only
     /// its existence matters.
     _alive: tokio_mpsc::UnboundedSender<()>,
+    /// The connection handler's forward registry. Carried here because a remote
+    /// forward opened on this session has to reach the handler russh already
+    /// owns, and this is the only path back to it.
+    forwards: ForwardRegistry,
 }
 
 impl SharedSession {
@@ -223,6 +227,11 @@ impl SharedSession {
     /// forwarded connection rather than once.
     fn handle(&self) -> Arc<client::Handle<KnownHostsClient>> {
         Arc::clone(&self.handle)
+    }
+
+    /// The registry the connection's handler consults for `-R` forwards.
+    fn forwards(&self) -> ForwardRegistry {
+        self.forwards.clone()
     }
 
     /// Whether the underlying connection has gone away.
@@ -758,6 +767,11 @@ async fn run_live_password_shell(
     // hanging on the OS TCP timeout. A very long sleep stands in for "disabled".
     let timeout_secs = effective_timeout_secs(request.connect_timeout_secs);
 
+    // Built before the handler so a clone survives into SharedSession: once russh
+    // owns the handler, this registry is the only way a later `-R` on this
+    // connection can tell it where to pipe forwarded channels.
+    let forwards = ForwardRegistry::default();
+
     // Connect to the target — directly, or chained through jump hosts. The chain
     // (jump handles) must stay alive for the whole session, so it is bound here.
     let (mut session, _jump_handles): (
@@ -775,7 +789,8 @@ async fn run_live_password_shell(
             Some(events.clone()),
             Some(decision_rx),
         )
-        .with_auto_accept(request.auto_accept_host_keys);
+        .with_auto_accept(request.auto_accept_host_keys)
+        .with_forwards(forwards.clone());
 
         let connect = client::connect(config.clone(), (request.host.as_str(), request.port), handler);
         tokio::pin!(connect);
@@ -823,7 +838,8 @@ async fn run_live_password_shell(
             Some(events.clone()),
             Some(decision_rx),
         )
-        .with_auto_accept(request.auto_accept_host_keys);
+        .with_auto_accept(request.auto_accept_host_keys)
+        .with_forwards(forwards.clone());
 
         // A prompt path for the hops. An MFA-gated bastion challenges on the way
         // through, long before the final target's auth below gets its own
@@ -934,6 +950,7 @@ async fn run_live_password_shell(
     let _ = events.send(LiveShellEvent::SessionReady(SharedSession {
         handle: Arc::clone(&session),
         _alive: alive_tx,
+        forwards: forwards.clone(),
     }));
 
     let _ = events.send(LiveShellEvent::Status(String::from("opening pty")));
@@ -2746,30 +2763,18 @@ async fn run_tunnel_session(
         keepalive_max: 3,
         ..Default::default()
     });
-    // Remote forwards need a handler that pipes server-opened channels to a
-    // local target; local/dynamic forwards use the plain non-interactive handler.
-    let handler = if matches!(request.kind, TunnelKind::Remote) {
-        KnownHostsClient::new(
-            request.host.clone(),
-            request.port,
-            request.known_hosts_path.clone(),
-            None,
-            None,
-        )
-        .with_forward(
-            request.target_host.clone(),
-            request.target_port,
-            events.clone(),
-        )
-    } else {
-        KnownHostsClient::new(
-            request.host.clone(),
-            request.port,
-            request.known_hosts_path.clone(),
-            None,
-            None,
-        )
-    };
+    // One handler for every tunnel kind now. A remote forward registers its
+    // target in `forwards` when it starts rather than baking it into the handler
+    // here, which is what lets the shared-session path work at all.
+    let forwards = ForwardRegistry::default();
+    let handler = KnownHostsClient::new(
+        request.host.clone(),
+        request.port,
+        request.known_hosts_path.clone(),
+        None,
+        None,
+    )
+    .with_forwards(forwards.clone());
     // Connect directly, or chain through jump hosts (their handles are kept
     // alive alongside the session). The tunnel's forward handler rides the
     // final target session either way.
@@ -2812,7 +2817,7 @@ async fn run_tunnel_session(
     .await?;
 
     let session = Arc::new(session);
-    let result = run_tunnel_over(Arc::clone(&session), request, commands, events).await;
+    let result = run_tunnel_over(Arc::clone(&session), forwards, request, commands, events).await;
 
     // We dialled this connection, so we take it down with us. The shared entry
     // point below must not, which is the only difference between the two.
@@ -2835,7 +2840,9 @@ async fn run_tunnel_session_on(
     events: mpsc::Sender<TunnelEvent>,
 ) -> Result<(), SshError> {
     // Never disconnect here: the shell owns this connection and is still on it.
-    run_tunnel_over(shared.handle(), request, commands, events).await
+    // The registry comes from the shell's handler for the same reason — that
+    // handler is the one russh will hand the forwarded channels to.
+    run_tunnel_over(shared.handle(), shared.forwards(), request, commands, events).await
 }
 
 /// Serve a tunnel over `session` until it is closed.
@@ -2844,12 +2851,13 @@ async fn run_tunnel_session_on(
 /// deliberately left to the caller, because that is the only thing that differs.
 async fn run_tunnel_over(
     session: Arc<client::Handle<KnownHostsClient>>,
+    forwards: ForwardRegistry,
     request: TunnelRequest,
     mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
     events: mpsc::Sender<TunnelEvent>,
 ) -> Result<(), SshError> {
     if matches!(request.kind, TunnelKind::Remote) {
-        return run_remote_forward(session, request, commands, events).await;
+        return run_remote_forward(session, forwards, request, commands, events).await;
     }
 
     let bind = format!("{}:{}", request.bind_address, request.bind_port);
@@ -2905,14 +2913,31 @@ async fn run_tunnel_over(
 /// handler (`server_channel_open_forwarded_tcpip`).
 async fn run_remote_forward(
     session: Arc<client::Handle<KnownHostsClient>>,
+    forwards: ForwardRegistry,
     request: TunnelRequest,
     mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
     events: mpsc::Sender<TunnelEvent>,
 ) -> Result<(), SshError> {
-    session
+    // Register before asking the server to listen, not after: the first
+    // forwarded connection can arrive the moment `tcpip_forward` returns, and a
+    // channel that resolves to no target is dropped without a word.
+    forwards.register(
+        &request.bind_address,
+        request.bind_port,
+        ForwardTarget {
+            host: request.target_host.clone(),
+            port: request.target_port,
+            events: events.clone(),
+        },
+    );
+
+    if let Err(error) = session
         .tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
         .await
-        .map_err(|error| SshError::Tunnel(format!("remote forward: {error}")))?;
+    {
+        forwards.deregister(&request.bind_address, request.bind_port);
+        return Err(SshError::Tunnel(format!("remote forward: {error}")));
+    }
     let _ = events.send(TunnelEvent::Listening {
         bind: format!("远端 {}:{}", request.bind_address, request.bind_port),
     });
@@ -2924,6 +2949,10 @@ async fn run_remote_forward(
     let _ = session
         .cancel_tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
         .await;
+    // The connection outlives this tunnel whenever the tunnel was riding on the
+    // shell's, so the registration has to be withdrawn with it — otherwise a
+    // later forward on the same port would resolve to a dead target.
+    forwards.deregister(&request.bind_address, request.bind_port);
     Ok(())
 }
 
@@ -3086,6 +3115,67 @@ async fn socks5_reply<S: tokio::io::AsyncWrite + Unpin>(
         .map_err(|error| error.to_string())
 }
 
+/// Where a server-opened `forwarded-tcpip` channel gets piped, keyed by the
+/// `address:port` the server was asked to listen on.
+///
+/// A registry rather than a field fixed when the handler is built, because russh
+/// takes the handler at connect time and never hands it back. A remote forward
+/// opened later on an already-authenticated connection — the entire point of
+/// sharing one — had no way to say where its channels go, so the server listened,
+/// the UI reported success, and every forwarded connection was dropped on the
+/// floor. Keying by bind address also lets one connection carry several
+/// forwards, which a single field could not express.
+#[derive(Clone, Default)]
+struct ForwardRegistry {
+    targets: Arc<std::sync::Mutex<std::collections::HashMap<(String, u16), ForwardTarget>>>,
+}
+
+#[derive(Clone)]
+struct ForwardTarget {
+    host: String,
+    port: u16,
+    events: mpsc::Sender<TunnelEvent>,
+}
+
+impl ForwardRegistry {
+    fn register(&self, bind_address: &str, bind_port: u16, target: ForwardTarget) {
+        if let Ok(mut targets) = self.targets.lock() {
+            targets.insert((bind_address.to_string(), bind_port), target);
+        }
+    }
+
+    fn deregister(&self, bind_address: &str, bind_port: u16) {
+        if let Ok(mut targets) = self.targets.lock() {
+            targets.remove(&(bind_address.to_string(), bind_port));
+        }
+    }
+
+    /// Resolve the target for a channel the server says it opened on
+    /// `address:port`.
+    ///
+    /// The exact key is tried first, then a same-port registration, then the sole
+    /// registration if there is only one. Servers are free to report a normalised
+    /// address — asking for `localhost` or an empty string can come back as
+    /// `127.0.0.1` or `0.0.0.0` — and dropping a connection over a spelling
+    /// difference is a worse failure than resolving the only candidate there is.
+    fn resolve(&self, address: &str, port: u16) -> Option<ForwardTarget> {
+        let targets = self.targets.lock().ok()?;
+        if let Some(target) = targets.get(&(address.to_string(), port)) {
+            return Some(target.clone());
+        }
+        if let Some((_, target)) = targets
+            .iter()
+            .find(|((_, registered), _)| *registered == port)
+        {
+            return Some(target.clone());
+        }
+        if targets.len() == 1 {
+            return targets.values().next().cloned();
+        }
+        None
+    }
+}
+
 struct KnownHostsClient {
     host: String,
     port: u16,
@@ -3097,10 +3187,10 @@ struct KnownHostsClient {
     decision: Option<oneshot::Receiver<bool>>,
     /// Trust a never-seen host key automatically (record it, no prompt).
     auto_accept: bool,
-    /// For remote forwards (`-R`): the local target to pipe forwarded channels to.
-    forward_target: Option<(String, u16)>,
-    /// For remote forwards: the tunnel actor's event channel.
-    tunnel_events: Option<mpsc::Sender<TunnelEvent>>,
+    /// Where server-opened `forwarded-tcpip` channels go. Shared with whoever
+    /// owns the connection, so forwards can still be registered on it after
+    /// russh has taken this handler.
+    forwards: ForwardRegistry,
 }
 
 impl KnownHostsClient {
@@ -3118,8 +3208,7 @@ impl KnownHostsClient {
             events,
             decision,
             auto_accept: false,
-            forward_target: None,
-            tunnel_events: None,
+            forwards: ForwardRegistry::default(),
         }
     }
 
@@ -3129,16 +3218,11 @@ impl KnownHostsClient {
         self
     }
 
-    /// Configure this handler to pipe server-opened forwarded channels to a
-    /// local target (remote forward, `-R`).
-    fn with_forward(
-        mut self,
-        target_host: String,
-        target_port: u16,
-        tunnel_events: mpsc::Sender<TunnelEvent>,
-    ) -> Self {
-        self.forward_target = Some((target_host, target_port));
-        self.tunnel_events = Some(tunnel_events);
+    /// Hand this handler the registry it should consult, so the connection's
+    /// owner can keep a clone and register remote forwards after russh has taken
+    /// the handler away.
+    fn with_forwards(mut self, forwards: ForwardRegistry) -> Self {
+        self.forwards = forwards;
         self
     }
 
@@ -3168,14 +3252,19 @@ impl client::Handler for KnownHostsClient {
     async fn server_channel_open_forwarded_tcpip(
         &mut self,
         channel: russh::Channel<client::Msg>,
-        _connected_address: &str,
-        _connected_port: u32,
+        connected_address: &str,
+        connected_port: u32,
         originator_address: &str,
         originator_port: u32,
         _session: &mut client::Session,
     ) -> Result<(), Self::Error> {
-        if let (Some((host, port)), Some(events)) =
-            (self.forward_target.clone(), self.tunnel_events.clone())
+        // Which forward this channel belongs to. Previously this was whatever
+        // single target the handler was built with, so a forward opened on a
+        // shared connection — where the handler belongs to the shell — matched
+        // nothing and the channel was silently dropped.
+        if let Some(ForwardTarget { host, port, events }) = self
+            .forwards
+            .resolve(connected_address, u16::try_from(connected_port).unwrap_or_default())
         {
             let origin = format!("{originator_address}:{originator_port}");
             let _ = events.send(TunnelEvent::Opened {

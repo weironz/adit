@@ -29,9 +29,9 @@ use std::{fs, thread};
 
 use adit_ssh::{
     spawn_password_shell, spawn_sftp_session, spawn_sftp_session_on, spawn_tunnel_session,
-    AuthOptions, JumpHop, LiveShellCommand, LiveShellEvent, LiveShellHandle, LiveShellRequest,
-    SftpCommand, SftpEvent, SftpHandle, SftpRequest, SharedSession, TunnelEvent, TunnelKind,
-    TunnelRequest,
+    spawn_tunnel_session_on, AuthOptions, JumpHop, LiveShellCommand, LiveShellEvent,
+    LiveShellHandle, LiveShellRequest, SftpCommand, SftpEvent, SftpHandle, SftpRequest,
+    SharedSession, TunnelEvent, TunnelKind, TunnelRequest,
 };
 
 const IMAGE: &str = "adit-test-sshd:latest";
@@ -432,6 +432,84 @@ fn wait_for_session(handle: &LiveShellHandle, timeout: Duration) -> SharedSessio
         },
     )
     .expect("the shell should publish its authenticated session")
+}
+
+/// A local listener that greets every connection, as the service a remote
+/// forward publishes back to the server. Returns its port and the greeting.
+///
+/// It serves repeatedly rather than once because the probe retries while the
+/// forward is still being wired up.
+fn greeting_listener() -> (u16, String) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the local target");
+    let port = listener.local_addr().expect("local_addr").port();
+    let greeting = format!("ADIT-REMOTE-{}", unique());
+    let sent = greeting.clone();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut stream) => {
+                    let _ = stream.write_all(format!("{sent}\n").as_bytes());
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    (port, greeting)
+}
+
+/// A `-R` request pointing the container's `remote_port` at a local `target_port`.
+fn remote_forward_request(server: &TestServer, remote_port: u16, target_port: u16) -> TunnelRequest {
+    let mut request = TunnelRequest::new(
+        "127.0.0.1",
+        server.port,
+        USER,
+        PASS,
+        TunnelKind::Remote,
+        // Where sshd listens, inside the container...
+        "127.0.0.1",
+        remote_port,
+        // ...and what this client dials when the server forwards a connection.
+        "127.0.0.1",
+        target_port,
+    );
+    request.known_hosts_path = temp_known_hosts();
+    request
+}
+
+fn wait_tunnel_listening(handle: &adit_ssh::TunnelHandle, timeout: Duration) {
+    let listening = pump_until(
+        timeout,
+        || handle.try_recv(),
+        |event| match event {
+            TunnelEvent::Listening { .. } => ControlFlow::Break(true),
+            TunnelEvent::Error(error) => panic!("tunnel error: {error}"),
+            TunnelEvent::Stopped => ControlFlow::Break(false),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(listening, Some(true), "the server should accept the remote forward");
+}
+
+/// Dial the container's forwarded port from inside the container, which is the
+/// only place it exists. Returns whether the greeting came back, and what did.
+///
+/// `Listening` proves only that sshd accepted the request; the forwarded channel
+/// can still resolve to no target on the client and be dropped without a word,
+/// which is exactly how this failed on a shared connection.
+fn probe_forward_from_inside(server: &TestServer, remote_port: u16, greeting: &str) -> (bool, String) {
+    let mut got = String::new();
+    let reached = wait_until(Duration::from_secs(20), || {
+        got = docker(&[
+            "exec",
+            &server.id,
+            "sh",
+            "-c",
+            &format!("nc -w 5 127.0.0.1 {remote_port} < /dev/null || true"),
+        ])
+        .unwrap_or_default();
+        got.contains(greeting)
+    });
+    (reached, got)
 }
 
 /// Poll `check` until it holds, or the timeout elapses.
@@ -961,74 +1039,60 @@ fn the_connection_outlives_the_shell_and_dies_with_the_last_user() {
 fn remote_forward_lets_the_server_reach_a_local_listener() {
     let server = TestServer::start();
 
-    // The service being published back to the server. `-R` is the direction
-    // where the *server* opens the channel, so unlike `-L` it needs a live
-    // client-side handler to pipe into — nothing else in this file covers it.
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the local target");
-    let target_port = listener.local_addr().expect("local_addr").port();
-    let greeting = format!("ADIT-REMOTE-{}", unique());
-    let sent = greeting.clone();
-    thread::spawn(move || {
-        // Serves every connection, not just the first: the probe below retries
-        // while the forward is still being wired up.
-        for stream in listener.incoming() {
-            match stream {
-                Ok(mut stream) => {
-                    let _ = stream.write_all(format!("{sent}\n").as_bytes());
-                }
-                Err(_) => break,
-            }
-        }
-    });
-
+    // `-R` is the direction where the *server* opens the channel, so unlike `-L`
+    // it needs a live client-side handler to pipe into.
+    let (target_port, greeting) = greeting_listener();
     // Any port will do — the container belongs to this test alone.
     let remote_port: u16 = 18022;
-    let mut request = TunnelRequest::new(
-        "127.0.0.1",
-        server.port,
-        USER,
-        PASS,
-        TunnelKind::Remote,
-        // Where sshd listens, inside the container...
-        "127.0.0.1",
-        remote_port,
-        // ...and what this client dials when the server forwards a connection.
-        "127.0.0.1",
-        target_port,
-    );
-    request.known_hosts_path = temp_known_hosts();
-    let handle = spawn_tunnel_session(request).expect("spawn tunnel");
 
-    let listening = pump_until(
-        Duration::from_secs(20),
-        || handle.try_recv(),
-        |event| match event {
-            TunnelEvent::Listening { .. } => ControlFlow::Break(true),
-            TunnelEvent::Error(error) => panic!("tunnel error: {error}"),
-            TunnelEvent::Stopped => ControlFlow::Break(false),
-            _ => ControlFlow::Continue(()),
-        },
-    );
-    assert_eq!(listening, Some(true), "the server should accept the remote forward");
+    let handle = spawn_tunnel_session(remote_forward_request(&server, remote_port, target_port))
+        .expect("spawn tunnel");
+    wait_tunnel_listening(&handle, Duration::from_secs(20));
 
-    // Reaching it from inside the container is the whole point. `Listening`
-    // alone proves only that sshd accepted the request — the forwarded channel
-    // can still land nowhere, which is precisely how this fails silently.
-    let mut got = String::new();
-    let reached = wait_until(Duration::from_secs(20), || {
-        let port = remote_port.to_string();
-        got = docker(&[
-            "exec",
-            &server.id,
-            "sh",
-            "-c",
-            &format!("nc -w 5 127.0.0.1 {port} < /dev/null || true"),
-        ])
-        .unwrap_or_default();
-        got.contains(&greeting)
-    });
+    let (reached, got) = probe_forward_from_inside(&server, remote_port, &greeting);
     assert!(
         reached,
         "expected the local listener's greeting back through the remote forward, got: {got:?}"
     );
+}
+
+#[test]
+fn remote_forward_works_on_the_shells_connection() {
+    let server = TestServer::start();
+    let mut request = LiveShellRequest::new("127.0.0.1", server.port, USER, PASS);
+    request.known_hosts_path = temp_known_hosts();
+    request.auto_accept_host_keys = true;
+
+    let shell = spawn_password_shell(request).expect("spawn shell");
+    let shared = wait_for_session(&shell, Duration::from_secs(20));
+
+    let (target_port, greeting) = greeting_listener();
+    let remote_port: u16 = 18023;
+    let handle = spawn_tunnel_session_on(
+        shared.clone(),
+        remote_forward_request(&server, remote_port, target_port),
+    )
+    .expect("spawn the remote forward on the shared session");
+    wait_tunnel_listening(&handle, Duration::from_secs(20));
+
+    // This is the assertion the sibling test above cannot make. `-R` on a shared
+    // connection used to reach exactly this far and no further: sshd listened,
+    // Listening was reported, the UI showed a working forward — and every
+    // forwarded channel was dropped, because the target was baked into the
+    // handler at construction and the handler here belongs to the shell.
+    let (reached, got) = probe_forward_from_inside(&server, remote_port, &greeting);
+    assert!(
+        reached,
+        "a remote forward on the shell's connection must reach the local target, got: {got:?}"
+    );
+
+    // And it rode on the shell's connection rather than dialling its own.
+    assert_eq!(
+        server.established_connections(),
+        1,
+        "the forward must ride on the shell's connection"
+    );
+
+    drop(handle);
+    let _ = shell.send(LiveShellCommand::Disconnect);
 }
