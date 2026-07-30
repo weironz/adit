@@ -141,7 +141,7 @@ jobs:
           done
 
   package-linux:
-    name: package · deb installs and runs clean (linux)
+    name: package · deb + rpm install and run clean (linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -234,15 +234,80 @@ jobs:
             fi
           '
 
-      - name: Package startup log
+      # Same staging tree, second package format. RPM generates its own Requires
+      # by scanning the ELF, so unlike the .deb only the dlopened library has to
+      # be named by hand — the rest is derived and cannot drift.
+      - name: Build the .rpm
+        run: |
+          sudo apt-get install -y --no-install-recommends rpm
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+
+          cat > adit.spec <<SPEC
+          %global debug_package %{nil}
+          Name:      adit
+          Version:   $version
+          Release:   1
+          Summary:   SSH / SFTP / RDP terminal client
+          License:   MIT
+          BuildArch: x86_64
+          # winit dlopens this, so it is in no ELF header and the automatic
+          # dependency scan cannot see it.
+          Requires:  libxkbcommon-x11
+
+          %description
+          A native terminal client with session groups, tabs, split panes,
+          SFTP transfer and port forwarding.
+
+          %install
+          mkdir -p %{buildroot}
+          cp -a %{_sourcedir}/pkgroot/usr %{buildroot}/
+
+          %files
+          /usr/bin/adit
+          /usr/share/applications/adit.desktop
+          /usr/share/icons/hicolor/256x256/apps/adit.png
+          SPEC
+
+          rpmbuild -bb \
+            --define "_topdir $PWD/rpmbuild" \
+            --define "_sourcedir $PWD" \
+            adit.spec
+          rpm -qpR rpmbuild/RPMS/x86_64/adit-*.rpm
+
+      # Fedora rather than Ubuntu, so this also exercises whether a binary built
+      # on the Ubuntu runner is usable elsewhere at all — it carries that image's
+      # glibc floor, which is the thing most likely to bite on older RPM distros.
+      - name: Install and run the rpm in a clean container
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w fedora:latest bash -eu -c '
+            dnf -y -q install ./rpmbuild/RPMS/x86_64/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
+            xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/rpm-smoke.log 2>&1 &
+            pid=$!
+            sleep 25
+            if kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" 2>/dev/null || true
+              echo "installed adit stayed up on Fedora"
+            else
+              echo "::error::the installed adit exited on its own on Fedora"
+              exit 1
+            fi
+          '
+
+      - name: Package startup logs
         if: always()
-        run: cat pkg-smoke.log 2>/dev/null || echo '(not produced)'
+        run: |
+          for log in pkg-smoke.log rpm-smoke.log; do
+            echo "===== $log ====="
+            cat "$log" 2>/dev/null || echo '(not produced)'
+          done
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: adit-deb
-          path: adit_*_amd64.deb
+          name: adit-linux-packages
+          path: |
+            adit_*_amd64.deb
+            rpmbuild/RPMS/x86_64/adit-*.rpm
           if-no-files-found: warn
 
   package-macos:
