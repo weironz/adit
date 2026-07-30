@@ -115,6 +115,29 @@ struct SessionRecord {
     shared_session: Option<SharedSession>,
 }
 
+/// Open SFTP for `record`, riding on its SSH connection when that is still up.
+///
+/// SFTP is just another channel, so reusing the connection means the server
+/// authenticates once. Dialling separately re-runs the whole auth chain, which
+/// an MFA host answers by demanding a second one-time code — and then rejecting
+/// it, because it is one-time. That is why MFA hosts fail SFTP today.
+///
+/// Falls back to dialling when there is nothing to ride on: the shell has
+/// already exited, or this was never an SSH session.
+fn open_sftp_for(
+    record: &SessionRecord,
+    request: SftpRequest,
+) -> Result<SftpHandle, SessionError> {
+    match record
+        .shared_session
+        .clone()
+        .filter(|session| !session.is_closed())
+    {
+        Some(shared) => Ok(adit_ssh::spawn_sftp_session_on(shared)?),
+        None => Ok(adit_ssh::spawn_sftp_session(request)?),
+    }
+}
+
 impl SessionRecord {
     /// True for a native RDP session (graphical surface, not a VT terminal).
     fn is_rdp(&self) -> bool {
@@ -1851,7 +1874,7 @@ impl SessionManager {
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
         request.connect_timeout_secs = self.connect_timeout_secs;
-        let handle = adit_ssh::spawn_sftp_session(request)?;
+        let handle = open_sftp_for(record, request)?;
 
         let session_id = SessionId::new();
         let title = format!("SFTP-{}", profile.name);
@@ -1947,7 +1970,7 @@ impl SessionManager {
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
         request.connect_timeout_secs = self.connect_timeout_secs;
-        let handle = adit_ssh::spawn_sftp_session(request)?;
+        let handle = open_sftp_for(record, request)?;
 
         let local_cwd = default_local_dir();
         let local_entries = read_local_dir(&local_cwd);
