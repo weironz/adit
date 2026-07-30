@@ -176,11 +176,13 @@ jobs:
 
       # Unsigned and un-notarised — Gatekeeper blocks a double-click, so the
       # filename says so rather than letting someone find that out by
-      # downloading it.
+      # downloading it. Globbed over the architecture rather than spelled out:
+      # the script names the dmg after the arch it was built on, and that naming
+      # rule must live in one place.
       - name: Attach to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release upload "v${{ github.event.inputs.version }}"
-          "adit_${{ github.event.inputs.version }}_unsigned.dmg"
+          adit_${{ github.event.inputs.version }}_*_unsigned.dmg
           --clobber

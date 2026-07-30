@@ -9,6 +9,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  # ci.yml itself was once committed with CRLF despite .gitattributes asking for
+  # LF, and nothing noticed until a release failed: the release job's `git add`
+  # restaged it normalised, so the release commit carried a workflow file and the
+  # push was rejected for lacking `workflows` permission. The cause was invisible
+  # in every diff — only the stored bytes were wrong.
+  #
+  # `--renormalize` re-applies the .gitattributes filters to every tracked file.
+  # Anything that shows up as a change is stored differently from what the repo
+  # declares. Linux only: the runner's checkout is a byte-for-byte copy of the
+  # blobs there, whereas a Windows runner may have core.autocrlf rewriting the
+  # working tree, which would make this compare the wrong two things.
+  line-endings:
+    name: line endings · stored as .gitattributes declares
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Every tracked file must match .gitattributes
+        run: |
+          git add --renormalize .
+          if ! git diff --cached --quiet; then
+            echo '::error::these files are stored with line endings that contradict .gitattributes — re-save them as LF and commit'
+            git diff --cached --name-only
+            exit 1
+          fi
+          echo 'every tracked file is stored as .gitattributes declares'
+
   build:
     name: build · clippy · test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -164,8 +191,8 @@ jobs:
       - name: Build the app
         run: cargo build --release -p adit-app --locked
 
-          installer/build-linux-packages.sh
-      # release.yml runs too — the dependency lists must not exist twice.
+      # The same script release.yml runs — the dependency lists must not exist
+      # twice.
       - name: Build the packages
         run: |
           sudo apt-get install -y --no-install-recommends rpm

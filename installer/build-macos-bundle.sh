@@ -10,11 +10,12 @@
 #
 # Produces, in the working directory:
 #   Adit.app/
-#   adit_<version>_unsigned.dmg
+#   adit_<version>_<arch>_unsigned.dmg
 #
 # NEITHER IS SIGNED OR NOTARISED. Both need an Apple Developer account and
 # certificates, and until those exist Gatekeeper refuses to open the app by
-# double-click — users have to right-click and choose Open the first time.
+# double-click. Right-click → Open no longer reliably works either; the
+# dependable route is `xattr -dr com.apple.quarantine /Applications/Adit.app`.
 
 set -euo pipefail
 
@@ -24,6 +25,15 @@ version="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
 [[ -n "$version" ]] || { echo "cannot determine version" >&2; exit 1; }
 binary=target/release/adit-app
 app=Adit.app
+
+# GitHub's macOS runners are Apple Silicon, so an unlabelled dmg looks universal
+# while being arm64-only — an Intel Mac downloads it and gets "cannot be opened"
+# with nothing saying why. Name the architecture the way rustdesk does.
+case "$(uname -m)" in
+  arm64 | aarch64) arch=aarch64 ;;
+  x86_64)          arch=x86_64 ;;
+  *) echo "unknown macOS architecture $(uname -m)" >&2; exit 1 ;;
+esac
 
 if [[ ! -x "$binary" ]]; then
   echo "no release binary at $binary — run cargo build --release -p adit-app first" >&2
@@ -69,4 +79,4 @@ plutil -lint "$app/Contents/Info.plist"
 test -x "$app/Contents/MacOS/adit"
 
 hdiutil create -volname Adit -srcfolder "$app" -ov -format UDZO \
-  "adit_${version}_unsigned.dmg"
+  "adit_${version}_${arch}_unsigned.dmg"
