@@ -103,6 +103,13 @@ bump version:
         $text = [regex]::Replace($text, '(?m)^version = ".*"', 'version = "{{version}}"')
         [System.IO.File]::WriteAllText((Resolve-Path $f), $text, $enc)
     }
+    # Carry both lockfiles along. Rewriting the manifests alone leaves
+    # Cargo.lock on the previous version, so the next build silently rewrites
+    # it and every checkout starts dirty — that is exactly how v0.1.59 shipped
+    # with a 0.1.58 lockfile. `-w` re-resolves only the workspace members, so
+    # it never drags third-party dependencies forward.
+    cargo update -w -q
+    cargo update -w -q --manifest-path {{rdp}}
     Write-Output 'bumped to {{version}}'
 
 # Depends on `dist` on purpose: ISCC packages whatever binaries it happens to find, so a

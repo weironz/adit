@@ -23,8 +23,11 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
+      # `--locked` fails if Cargo.lock disagrees with the manifests, instead of
+      # silently rewriting it. Without this, a version bump that forgets the
+      # lockfile only surfaces as a dirty tree on someone's next local build.
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --workspace --locked
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
