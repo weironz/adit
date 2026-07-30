@@ -195,13 +195,24 @@ pub enum LiveShellEvent {
 /// `Send + Sync` half down so a dependency bump cannot quietly remove it.
 ///
 /// Opaque on purpose: `adit-session` must not see `russh` types.
+///
+/// Holding one keeps the connection open. The thread that dialled it parks
+/// until the last holder is dropped instead of disconnecting, so closing the
+/// shell tab does not tear down an SFTP panel still using it.
 #[derive(Clone)]
-pub struct SharedSession(Arc<client::Handle<KnownHostsClient>>);
+pub struct SharedSession {
+    handle: Arc<client::Handle<KnownHostsClient>>,
+    /// Liveness token. The connection's host thread waits on the matching
+    /// receiver, which resolves only once every sender has been dropped — so it
+    /// learns that the last holder is gone without polling. Never sent on; only
+    /// its existence matters.
+    _alive: tokio_mpsc::UnboundedSender<()>,
+}
 
 impl SharedSession {
     /// Open an SFTP subsystem channel on this connection.
     async fn open_sftp(&self) -> Result<SftpSession, SshError> {
-        let channel = self.0.channel_open_session().await?;
+        let channel = self.handle.channel_open_session().await?;
         channel.request_subsystem(true, "sftp").await?;
         SftpSession::new(channel.into_stream())
             .await
@@ -211,7 +222,7 @@ impl SharedSession {
     /// Whether the underlying connection has gone away.
     #[must_use]
     pub fn is_closed(&self) -> bool {
-        self.0.is_closed()
+        self.handle.is_closed()
     }
 }
 
@@ -219,7 +230,7 @@ impl std::fmt::Debug for SharedSession {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("SharedSession")
-            .field("closed", &self.0.is_closed())
+            .field("closed", &self.handle.is_closed())
             .finish()
     }
 }
@@ -893,9 +904,13 @@ async fn run_live_password_shell(
     // and re-running the whole auth chain — an MFA host would demand a second
     // one-time code and reject it.
     let session = Arc::new(session);
-    let _ = events.send(LiveShellEvent::SessionReady(SharedSession(Arc::clone(
-        &session,
-    ))));
+    // `alive_tx` is handed out and never kept here, so the receiver below closes
+    // as soon as the last holder drops — or immediately, if nobody took one.
+    let (alive_tx, mut alive_rx) = tokio_mpsc::unbounded_channel::<()>();
+    let _ = events.send(LiveShellEvent::SessionReady(SharedSession {
+        handle: Arc::clone(&session),
+        _alive: alive_tx,
+    }));
 
     let _ = events.send(LiveShellEvent::Status(String::from("opening pty")));
     let term = if request.term.trim().is_empty() {
@@ -971,6 +986,15 @@ async fn run_live_password_shell(
     }
 
     let _ = channel.close().await;
+
+    // The shell is done, but SFTP or a tunnel may still be riding on this
+    // connection — and the runtime driving it lives on this thread, so both
+    // disconnecting and simply returning would kill them. Wait for the last
+    // `SharedSession` to drop first. `recv` resolves to `None` only when every
+    // sender is gone, so an unused connection falls through immediately and a
+    // used one waits without polling.
+    let _ = alive_rx.recv().await;
+
     let _ = session
         .disconnect(Disconnect::ByApplication, "session closed", "en")
         .await;

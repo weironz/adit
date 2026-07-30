@@ -2514,6 +2514,13 @@ impl SessionManager {
                     }
                     LiveShellEvent::Closed => {
                         closed = true;
+                        // Release our claim on the connection. Holding it keeps
+                        // the connection open, and this record outlives the
+                        // shell so `Enter` can reconnect — without this an
+                        // `exit` would leave the SSH connection established.
+                        // Anything still using it (an SFTP panel) holds its own
+                        // claim and keeps it alive on its own.
+                        record.shared_session = None;
                         record.pending_auth_prompt = None;
                         let can_retry = auto_reconnect
                             && record
