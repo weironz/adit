@@ -86,6 +86,45 @@ impl Cell {
     }
 }
 
+/// One grid row. `wrapped` means the text ran off the right margin and continues
+/// on the next row — a *soft* wrap, as opposed to a real newline.
+///
+/// Nothing else can recover that distinction after the fact, and without it
+/// reflow is impossible: a 120-character echo on an 80-column screen and two
+/// separate 60-character echoes both look like two rows, and only the first may
+/// be rejoined when the width changes.
+///
+/// `Deref` to the cell slice keeps every `grid[row][col]`, `.len()`, and slice
+/// site working unchanged.
+#[derive(Debug, Clone)]
+struct Row {
+    cells: Vec<Cell>,
+    wrapped: bool,
+}
+
+impl Row {
+    fn blank(cols: usize, bg: Color) -> Self {
+        Self {
+            cells: vec![Cell::blank(bg); cols],
+            wrapped: false,
+        }
+    }
+}
+
+impl std::ops::Deref for Row {
+    type Target = [Cell];
+
+    fn deref(&self) -> &[Cell] {
+        &self.cells
+    }
+}
+
+impl std::ops::DerefMut for Row {
+    fn deref_mut(&mut self) -> &mut [Cell] {
+        &mut self.cells
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct SavedCursor {
     row: usize,
@@ -97,7 +136,7 @@ struct SavedCursor {
 /// The primary-screen state stashed while the alternate screen is active.
 #[derive(Debug, Clone)]
 struct AltSaved {
-    grid: Vec<Vec<Cell>>,
+    grid: Vec<Row>,
     cursor_row: usize,
     cursor_col: usize,
     pen: Pen,
@@ -113,8 +152,8 @@ struct AltSaved {
 struct TermState {
     cols: usize,
     rows: usize,
-    grid: Vec<Vec<Cell>>,
-    scrollback: VecDeque<Vec<Cell>>,
+    grid: Vec<Row>,
+    scrollback: VecDeque<Row>,
     cursor_row: usize,
     cursor_col: usize,
     pen: Pen,
@@ -197,6 +236,12 @@ impl TermState {
         if self.pending_wrap {
             self.pending_wrap = false;
             if self.autowrap {
+                // Mark the row we are leaving as soft-wrapped BEFORE feeding:
+                // `line_feed` may scroll, handing this row to scrollback, and the
+                // flag has to travel with it. These two blocks are the only soft
+                // wraps in the emulator — a real LF must never set the flag, or
+                // reflow would glue unrelated lines together.
+                self.mark_wrapped();
                 self.cursor_col = 0;
                 self.line_feed();
             }
@@ -205,6 +250,7 @@ impl TermState {
         if width == 2 && self.cursor_col + 1 >= self.cols {
             // A wide glyph cannot straddle the right margin.
             if self.autowrap {
+                self.mark_wrapped();
                 self.cursor_col = 0;
                 self.line_feed();
             } else {
@@ -320,7 +366,95 @@ impl TermState {
         }
     }
 
-    fn push_scrollback(&mut self, row: Vec<Cell>) {
+    /// Record that the cursor's row continues onto the next one.
+    fn mark_wrapped(&mut self) {
+        if let Some(row) = self.grid.get_mut(self.cursor_row) {
+            row.wrapped = true;
+        }
+    }
+
+    /// Rebuild scrollback + screen for a new column count by re-wrapping every
+    /// logical line.
+    ///
+    /// Rows keep whatever width they were written at, so scrollback captured on
+    /// a 200-column screen still re-wraps correctly after several resizes — the
+    /// history is never clipped down to the narrowest width it has ever seen.
+    fn reflow(&mut self, cols: usize, rows: usize) {
+        let (lines, cursor) = self.logical_lines();
+        let (mut all, (cursor_row, cursor_col)) = rewrap(&lines, cols, cursor);
+
+        // The screen is the tail; everything above becomes scrollback. The
+        // cursor is clamped into that window rather than the window moved to
+        // chase it: after a re-wrap the cursor is at the end of the output
+        // anyway, and following it would scroll away what the user was reading.
+        let screen_start = all.len().saturating_sub(rows);
+        let mut grid = all.split_off(screen_start);
+        while grid.len() < rows {
+            grid.push(Row::blank(cols, Color::Default));
+        }
+
+        self.grid = grid;
+        self.scrollback = VecDeque::from(all);
+        // Re-wrapping narrower turns one row into several, so the history can
+        // cross the limit even though no new output arrived.
+        let limit = scrollback_limit();
+        while self.scrollback.len() > limit {
+            self.scrollback.pop_front();
+        }
+
+        self.cursor_row = cursor_row.saturating_sub(screen_start).min(rows - 1);
+        self.cursor_col = cursor_col.min(cols - 1);
+    }
+
+    /// Join scrollback + screen into logical lines, and locate the cursor inside
+    /// them as `(line index, cell offset)`.
+    ///
+    /// Wide-glyph spacers are dropped: they are re-derived when the line is
+    /// re-wrapped, and carrying them would double-count columns. Trailing blanks
+    /// are trimmed from a row that ended in a real newline, but never from a
+    /// soft-wrapped one — that row is full by definition, and trimming it would
+    /// pull the continuation up against the wrong column.
+    fn logical_lines(&self) -> (Vec<Vec<Cell>>, (usize, usize)) {
+        let mut lines: Vec<Vec<Cell>> = Vec::new();
+        let mut current: Vec<Cell> = Vec::new();
+        let mut cursor = (0usize, 0usize);
+
+        let split = self.scrollback.len();
+        let cursor_abs = split + self.cursor_row;
+
+        for abs in 0..split + self.grid.len() {
+            let row = if abs < split {
+                &self.scrollback[abs]
+            } else {
+                &self.grid[abs - split]
+            };
+
+            if abs == cursor_abs {
+                let upto = self.cursor_col.min(row.cells.len());
+                let before = row.cells[..upto].iter().filter(|c| !c.spacer).count();
+                cursor = (lines.len(), current.len() + before);
+            }
+
+            let keep = if row.wrapped {
+                row.cells.len()
+            } else {
+                content_len(&row.cells)
+            };
+            current.extend(row.cells[..keep].iter().filter(|c| !c.spacer).copied());
+
+            if !row.wrapped {
+                lines.push(std::mem::take(&mut current));
+            }
+        }
+        // A trailing soft-wrapped row leaves an unclosed line; an empty terminal
+        // still has one (blank) line.
+        if !current.is_empty() || lines.is_empty() {
+            lines.push(current);
+        }
+        (lines, cursor)
+    }
+
+    fn push_scrollback(&mut self, row: Row) {
         while self.scrollback.len() >= scrollback_limit() {
             self.scrollback.pop_front();
         }
@@ -442,7 +576,7 @@ impl TermState {
         let row = self.cursor_row;
         let col = self.cursor_col;
         let n = n.min(self.cols - col);
-        let line = &mut self.grid[row];
+        let line = &mut self.grid[row].cells;
         for _ in 0..n {
             line.pop();
             line.insert(col, Cell::blank(bg));
@@ -455,7 +589,7 @@ impl TermState {
         let row = self.cursor_row;
         let col = self.cursor_col;
         let n = n.min(self.cols - col);
-        let line = &mut self.grid[row];
+        let line = &mut self.grid[row].cells;
         for _ in 0..n {
             line.remove(col);
             line.push(Cell::blank(bg));
@@ -765,6 +899,24 @@ impl TermState {
         if cols == self.cols && rows == self.rows {
             return;
         }
+
+        // A width change re-wraps every logical line, so primary-screen history
+        // has to be rebuilt. A height-only change wraps nothing, so it keeps the
+        // cheaper path below that just moves rows between screen and scrollback.
+        //
+        // The alternate screen never reflows: it belongs to a full-screen app
+        // that redraws itself at the new size, and joining its rows would splice
+        // together unrelated parts of a TUI.
+        if cols != self.cols && self.alt.is_none() {
+            self.reflow(cols, rows);
+            self.cols = cols;
+            self.rows = rows;
+            self.scroll_top = 0;
+            self.scroll_bottom = rows - 1;
+            self.pending_wrap = false;
+            return;
+        }
+
         let old_rows = self.rows;
         // When shrinking, keep the window of rows ending at (and including) the
         // cursor so the prompt and recent output stay on screen; growing keeps
@@ -789,7 +941,7 @@ impl TermState {
             // app that redraws itself — its rows must never reach scrollback.
             // Carried rows keep their old width; `resize_grid` would clip them
             // to the new one, losing the very columns a reflow needs later.
-            let carried: Vec<Vec<Cell>> = self.grid.drain(..src_start).collect();
+            let carried: Vec<Row> = self.grid.drain(..src_start).collect();
             for row in carried {
                 self.push_scrollback(row);
             }
@@ -1039,17 +1191,72 @@ impl TerminalCore for VtTerminal {
 
 // --- free helpers -----------------------------------------------------------
 
-fn blank_row(cols: usize, bg: Color) -> Vec<Cell> {
-    vec![Cell::blank(bg); cols]
+/// Length of `cells` ignoring trailing blanks. A blank carrying a background
+/// colour counts as content, so a coloured run is not silently trimmed away.
+fn content_len(cells: &[Cell]) -> usize {
+    cells
+        .iter()
+        .rposition(|cell| cell.ch != ' ' || cell.pen.bg != Color::Default)
+        .map_or(0, |index| index + 1)
 }
 
-fn blank_grid(cols: usize, rows: usize) -> Vec<Vec<Cell>> {
+/// Re-wrap logical lines to `cols`, returning the rows and the cursor's new
+/// `(row, col)` within them.
+fn rewrap(lines: &[Vec<Cell>], cols: usize, cursor: (usize, usize)) -> (Vec<Row>, (usize, usize)) {
+    let mut rows: Vec<Row> = Vec::new();
+    let mut cursor_out = (0usize, 0usize);
+
+    for (index, line) in lines.iter().enumerate() {
+        let mut row = Row::blank(cols, Color::Default);
+        let mut col = 0usize;
+
+        for (offset, cell) in line.iter().enumerate() {
+            // A wide glyph claims two columns — except on a one-column screen,
+            // where no pair can fit; draw it narrow rather than panicking on the
+            // spacer write or dropping the character outright.
+            let width = if cell.ch.width().unwrap_or(1) == 2 && cols >= 2 {
+                2
+            } else {
+                1
+            };
+            if col + width > cols {
+                row.wrapped = true;
+                rows.push(std::mem::replace(&mut row, Row::blank(cols, Color::Default)));
+                col = 0;
+            }
+            if index == cursor.0 && offset == cursor.1 {
+                cursor_out = (rows.len(), col);
+            }
+            row.cells[col] = *cell;
+            if width == 2 {
+                let mut spacer = *cell;
+                spacer.ch = ' ';
+                spacer.spacer = true;
+                row.cells[col + 1] = spacer;
+            }
+            col += width;
+        }
+
+        // The cursor legitimately sits one past the last cell, at end of line.
+        if index == cursor.0 && cursor.1 >= line.len() {
+            cursor_out = (rows.len(), col.min(cols.saturating_sub(1)));
+        }
+        rows.push(row);
+    }
+    (rows, cursor_out)
+}
+
+fn blank_row(cols: usize, bg: Color) -> Row {
+    Row::blank(cols, bg)
+}
+
+fn blank_grid(cols: usize, rows: usize) -> Vec<Row> {
     vec![blank_row(cols, Color::Default); rows]
 }
 
 /// Copy `min(old_rows, rows)` rows from `old` (starting at `src_start`) into a
 /// fresh `cols`x`rows` grid anchored at the top, clamping each row to `cols`.
-fn resize_grid(old: &[Vec<Cell>], cols: usize, rows: usize, src_start: usize) -> Vec<Vec<Cell>> {
+fn resize_grid(old: &[Row], cols: usize, rows: usize, src_start: usize) -> Vec<Row> {
     let copy = old.len().min(rows);
     let mut grid = blank_grid(cols, rows);
     for i in 0..copy {
@@ -1057,6 +1264,9 @@ fn resize_grid(old: &[Vec<Cell>], cols: usize, rows: usize, src_start: usize) ->
         let dst = &mut grid[i];
         let width = cols.min(src.len());
         dst[..width].copy_from_slice(&src[..width]);
+        // A row clipped at the new width no longer continues anywhere, so the
+        // soft-wrap flag would be a lie. Only a row that survived intact keeps it.
+        dst.wrapped = src.wrapped && width == src.len();
     }
     grid
 }
@@ -1458,6 +1668,82 @@ mod tests {
             .collect::<Vec<_>>()
             .join("|");
         assert!(!text.contains("alt"), "alt-screen rows leaked: {text}");
+    }
+
+    /// Every row of a snapshot, trailing padding removed, concatenated — so a
+    /// re-wrapped line reads back as the text that produced it.
+    fn joined(snap: &TerminalSnapshot) -> String {
+        (0..snap.lines.len())
+            .map(|row| line_text(snap, row).trim_end().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn narrowing_rewraps_instead_of_truncating() {
+        let mut t = term(10, 4);
+        t.feed_str("abcdefgh");
+        t.resize(TerminalSize::new(4, 4));
+
+        // Every character survives, re-wrapped at the new width — the old code
+        // clipped this to "abcd" and lost the rest for good. The re-wrap needs
+        // more rows than the screen holds, so the first one is in scrollback;
+        // the viewport has to reach past the screen to see it.
+        let snap = t.snapshot(Viewport::tail(8));
+        let text = joined(&snap);
+        assert!(text.contains("abcdefgh"), "content lost: {text:?}");
+    }
+
+    #[test]
+    fn widening_rejoins_a_soft_wrapped_line() {
+        let mut t = term(4, 4);
+        t.feed_str("abcdefgh");
+        // Wrapped across two rows at 4 columns; at 10 it is one line again.
+        t.resize(TerminalSize::new(10, 4));
+
+        let snap = t.snapshot(Viewport::tail(4));
+        assert_eq!(line_text(&snap, 0).trim_end(), "abcdefgh");
+    }
+
+    #[test]
+    fn reflow_does_not_join_across_a_real_newline() {
+        let mut t = term(4, 4);
+        t.feed_str("ab\r\ncd");
+        // Both rows fit their width, so neither is soft-wrapped. Widening must
+        // keep them apart — joining here is the failure the `wrapped` flag exists
+        // to prevent.
+        t.resize(TerminalSize::new(10, 4));
+
+        let snap = t.snapshot(Viewport::tail(4));
+        assert_eq!(line_text(&snap, 0).trim_end(), "ab");
+        assert_eq!(line_text(&snap, 1).trim_end(), "cd");
+    }
+
+    #[test]
+    fn reflow_keeps_wide_glyphs_whole() {
+        let mut t = term(6, 4);
+        t.feed_str("中文字");
+        t.resize(TerminalSize::new(4, 4));
+
+        // A double-width glyph may never be split across the wrap, and its
+        // spacer column must follow it to the new position.
+        let snap = t.snapshot(Viewport::tail(8));
+        let text = joined(&snap);
+        assert!(
+            text.contains('中') && text.contains('文') && text.contains('字'),
+            "glyph lost: {text:?}"
+        );
+    }
+
+    #[test]
+    fn reflow_leaves_the_alternate_screen_alone() {
+        let mut t = term(8, 4);
+        t.feed_str("\x1b[?1049h");
+        t.feed_str("abcdefgh");
+        // A full-screen app redraws at the new size; joining its rows would
+        // splice unrelated parts of a TUI together.
+        t.resize(TerminalSize::new(4, 4));
+        let snap = t.snapshot(Viewport::tail(4));
+        assert_eq!(line_text(&snap, 0).trim_end(), "abcd");
     }
 
     #[test]
