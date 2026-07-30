@@ -11,7 +11,7 @@ pub use adit_domain::JumpHop as ProfileJumpHop;
 use adit_ssh::{
     AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand, LiveShellEvent,
     LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle,
-    SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent, TunnelRequest,
+    SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent, TunnelHandle, TunnelRequest,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
@@ -135,6 +135,24 @@ fn open_sftp_for(
     {
         Some(shared) => Ok(adit_ssh::spawn_sftp_session_on(shared)?),
         None => Ok(adit_ssh::spawn_sftp_session(request)?),
+    }
+}
+
+/// Start a tunnel for `record`, riding on its SSH connection when that is still
+/// up. Same reasoning as [`open_sftp_for`] — and it matters more here, because a
+/// profile can start several tunnels at once, each of which would otherwise be
+/// its own connection and its own MFA challenge.
+fn open_tunnel_for(
+    record: &SessionRecord,
+    request: TunnelRequest,
+) -> Result<TunnelHandle, SessionError> {
+    match record
+        .shared_session
+        .clone()
+        .filter(|session| !session.is_closed())
+    {
+        Some(shared) => Ok(adit_ssh::spawn_tunnel_session_on(shared, request)?),
+        None => Ok(adit_ssh::spawn_tunnel_session(request)?),
     }
 }
 
@@ -1736,7 +1754,7 @@ impl SessionManager {
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
         request.connect_timeout_secs = self.connect_timeout_secs;
-        let handle = adit_ssh::spawn_tunnel_session(request)?;
+        let handle = open_tunnel_for(record, request)?;
 
         let id = self.next_tunnel_id;
         self.next_tunnel_id += 1;

@@ -219,6 +219,12 @@ impl SharedSession {
             .map_err(|error| SshError::Sftp(error.to_string()))
     }
 
+    /// The connection itself, for the tunnel paths, which open a channel per
+    /// forwarded connection rather than once.
+    fn handle(&self) -> Arc<client::Handle<KnownHostsClient>> {
+        Arc::clone(&self.handle)
+    }
+
     /// Whether the underlying connection has gone away.
     #[must_use]
     pub fn is_closed(&self) -> bool {
@@ -2595,6 +2601,59 @@ impl TunnelHandle {
     }
 }
 
+/// Start a tunnel on a connection that is already authenticated, instead of
+/// dialling a second one. See [`spawn_sftp_session_on`] for the lifetime note:
+/// the connection is driven by the runtime that created it.
+pub fn spawn_tunnel_session_on(
+    shared: SharedSession,
+    request: TunnelRequest,
+) -> Result<TunnelHandle, SshError> {
+    if request.bind_port == 0 {
+        return Err(SshError::InvalidPort);
+    }
+    if matches!(request.kind, TunnelKind::Local) && request.target_host.trim().is_empty() {
+        return Err(SshError::Tunnel(String::from(
+            "本地转发需要填写目标主机",
+        )));
+    }
+
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel();
+
+    thread::Builder::new()
+        .name(format!(
+            "adit-tunnel-{}:{}",
+            request.bind_address, request.bind_port
+        ))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => {
+                    if let Err(error) = runtime.block_on(run_tunnel_session_on(
+                        shared,
+                        request,
+                        command_rx,
+                        event_tx.clone(),
+                    )) {
+                        let _ = event_tx.send(TunnelEvent::Error(error.to_string()));
+                    }
+                }
+                Err(error) => {
+                    let _ = event_tx.send(TunnelEvent::Error(error.to_string()));
+                }
+            }
+            let _ = event_tx.send(TunnelEvent::Closed { peer: String::new() });
+        })
+        .map_err(|error| SshError::Runtime(error.to_string()))?;
+
+    Ok(TunnelHandle {
+        command_tx,
+        event_rx,
+    })
+}
+
 pub fn spawn_tunnel_session(request: TunnelRequest) -> Result<TunnelHandle, SshError> {
     if request.host.trim().is_empty() {
         return Err(SshError::EmptyHost);
@@ -2647,7 +2706,7 @@ pub fn spawn_tunnel_session(request: TunnelRequest) -> Result<TunnelHandle, SshE
 
 async fn run_tunnel_session(
     request: TunnelRequest,
-    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
+    commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
     events: mpsc::Sender<TunnelEvent>,
 ) -> Result<(), SshError> {
     let _ = events.send(TunnelEvent::Status(String::from("connecting")));
@@ -2720,6 +2779,43 @@ async fn run_tunnel_session(
     )
     .await?;
 
+    let session = Arc::new(session);
+    let result = run_tunnel_over(Arc::clone(&session), request, commands, events).await;
+
+    // We dialled this connection, so we take it down with us. The shared entry
+    // point below must not, which is the only difference between the two.
+    let _ = session
+        .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
+        .await;
+    result
+}
+
+/// Run a tunnel over a connection the caller has already authenticated.
+///
+/// Same reasoning as SFTP: a tunnel is just more channels, so riding on the
+/// connection means the server authenticates once. Dialling per tunnel re-runs
+/// the auth chain each time — an MFA host would demand a fresh one-time code for
+/// every tunnel and reject them.
+async fn run_tunnel_session_on(
+    shared: SharedSession,
+    request: TunnelRequest,
+    commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
+    events: mpsc::Sender<TunnelEvent>,
+) -> Result<(), SshError> {
+    // Never disconnect here: the shell owns this connection and is still on it.
+    run_tunnel_over(shared.handle(), request, commands, events).await
+}
+
+/// Serve a tunnel over `session` until it is closed.
+///
+/// Shared by both entry points. What happens to the *connection* afterwards is
+/// deliberately left to the caller, because that is the only thing that differs.
+async fn run_tunnel_over(
+    session: Arc<client::Handle<KnownHostsClient>>,
+    request: TunnelRequest,
+    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
+    events: mpsc::Sender<TunnelEvent>,
+) -> Result<(), SshError> {
     if matches!(request.kind, TunnelKind::Remote) {
         return run_remote_forward(session, request, commands, events).await;
     }
@@ -2730,7 +2826,6 @@ async fn run_tunnel_session(
         .map_err(|error| SshError::Tunnel(format!("bind {bind}: {error}")))?;
     let _ = events.send(TunnelEvent::Listening { bind });
 
-    let session = Arc::new(session);
     let kind = request.kind;
     let target_host = request.target_host.clone();
     let target_port = request.target_port;
@@ -2770,9 +2865,6 @@ async fn run_tunnel_session(
         }
     }
 
-    let _ = session
-        .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
-        .await;
     Ok(())
 }
 
@@ -2780,7 +2872,7 @@ async fn run_tunnel_session(
 /// incoming connections arrive as forwarded channels handled by the connection
 /// handler (`server_channel_open_forwarded_tcpip`).
 async fn run_remote_forward(
-    session: client::Handle<KnownHostsClient>,
+    session: Arc<client::Handle<KnownHostsClient>>,
     request: TunnelRequest,
     mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
     events: mpsc::Sender<TunnelEvent>,
@@ -2799,9 +2891,6 @@ async fn run_remote_forward(
 
     let _ = session
         .cancel_tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
-        .await;
-    let _ = session
-        .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
         .await;
     Ok(())
 }
