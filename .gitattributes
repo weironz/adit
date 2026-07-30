@@ -6,7 +6,15 @@
 *.rs text eol=lf
 *.toml text eol=lf
 
-# The test sshd image + its config must stay LF; a CRLF sshd_config breaks sshd.
+# CRLF in these breaks something at runtime rather than merely looking wrong: a
+# CRLF sshd_config breaks sshd, and a CRLF shebang sends the kernel looking for
+# an interpreter named "bash\r". Neither is hypothetical — the packaging scripts
+# run on the Linux and macOS runners, and a workflow file stored with CRLF cost a
+# release when the release job restaged it normalised and the push was rejected
+# for touching .github without permission. `* text=auto` above already normalises
+# all of them; saying so explicitly is what keeps a later .gitattributes edit from
+# quietly reclassifying them.
+*.sh text eol=lf
 docker/test-sshd/Dockerfile text eol=lf
 docker/test-sshd/sshd_config text eol=lf
 .github/** text eol=lf
