@@ -11,7 +11,7 @@ pub use adit_domain::JumpHop as ProfileJumpHop;
 use adit_ssh::{
     AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand, LiveShellEvent,
     LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle,
-    SftpRequest, SshError, TunnelCommand, TunnelEvent, TunnelRequest,
+    SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent, TunnelRequest,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
@@ -107,6 +107,12 @@ struct SessionRecord {
     /// [`SessionManager::take_auth_rejection`] and re-opens the password dialog.
     auth_rejected: Option<String>,
     reconnect: Option<ReconnectState>,
+    /// The authenticated SSH connection behind this session, once the handshake
+    /// finishes. Held so SFTP and tunnels can open channels on it instead of
+    /// dialling their own — an MFA host would demand a fresh one-time code for
+    /// each of those, and reject it. `None` for local shells, serial, and RDP,
+    /// which have no SSH connection to share.
+    shared_session: Option<SharedSession>,
 }
 
 impl SessionRecord {
@@ -837,6 +843,7 @@ impl SessionManager {
                 pending_host_key: None,
                 pending_auth_prompt: None,
                 auth_rejected: None,
+                shared_session: None,
                 reconnect: None,
             },
         );
@@ -941,6 +948,7 @@ impl SessionManager {
                 pending_host_key: None,
                 pending_auth_prompt: None,
                 auth_rejected: None,
+                shared_session: None,
                 reconnect,
             },
         );
@@ -1096,6 +1104,7 @@ impl SessionManager {
                 pending_host_key: None,
                 pending_auth_prompt: None,
                 auth_rejected: None,
+                shared_session: None,
                 reconnect: None,
             },
         );
@@ -1160,6 +1169,7 @@ impl SessionManager {
                 pending_host_key: None,
                 pending_auth_prompt: None,
                 auth_rejected: None,
+                shared_session: None,
                 reconnect: None,
             },
         );
@@ -1866,6 +1876,7 @@ impl SessionManager {
                 pending_host_key: None,
                 pending_auth_prompt: None,
                 auth_rejected: None,
+                shared_session: None,
                 reconnect: None,
             },
         );
@@ -2474,6 +2485,9 @@ impl SessionManager {
                             record.log = None;
                             record.terminal.append_status("session log write failed; logging off");
                         }
+                    }
+                    LiveShellEvent::SessionReady(shared) => {
+                        record.shared_session = Some(shared);
                     }
                     LiveShellEvent::Error(error) => {
                         record.terminal.append_status(format!(

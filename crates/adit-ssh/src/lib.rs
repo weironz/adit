@@ -175,6 +175,53 @@ pub enum LiveShellEvent {
     /// interactive, e.g. an MFA/OTP code). Answer with
     /// [`LiveShellCommand::AuthResponses`].
     AuthPrompt(AuthPromptRequest),
+    /// Authentication succeeded and the connection can now carry more channels.
+    /// Emitted once, before the shell opens. Hold it to run SFTP and tunnels
+    /// over this connection instead of dialling (and authenticating) again.
+    SessionReady(SharedSession),
+}
+
+/// An authenticated SSH connection that further channels can ride on.
+///
+/// SFTP and port forwarding are just channels. Opening them here instead of
+/// dialling a second connection means the server authenticates once — which is
+/// what makes MFA work at all, since a one-time code is one-time and a host that
+/// demands a fresh one per connection rejects the second and the third.
+///
+/// Sharing is sound because every `channel_open_*` in `russh` takes `&self` and
+/// waits on a receiver it creates per call; only authentication takes `&mut`,
+/// draining the single shared reply stream, and that is finished before this
+/// value exists. `tests::session_handle_is_shareable_across_tasks` pins the
+/// `Send + Sync` half down so a dependency bump cannot quietly remove it.
+///
+/// Opaque on purpose: `adit-session` must not see `russh` types.
+#[derive(Clone)]
+pub struct SharedSession(Arc<client::Handle<KnownHostsClient>>);
+
+impl SharedSession {
+    /// Open an SFTP subsystem channel on this connection.
+    async fn open_sftp(&self) -> Result<SftpSession, SshError> {
+        let channel = self.0.channel_open_session().await?;
+        channel.request_subsystem(true, "sftp").await?;
+        SftpSession::new(channel.into_stream())
+            .await
+            .map_err(|error| SshError::Sftp(error.to_string()))
+    }
+
+    /// Whether the underlying connection has gone away.
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+}
+
+impl std::fmt::Debug for SharedSession {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SharedSession")
+            .field("closed", &self.0.is_closed())
+            .finish()
+    }
 }
 
 /// A keyboard-interactive challenge from the server that Adit can't auto-answer
@@ -839,6 +886,16 @@ async fn run_live_password_shell(
             }
         }
     }
+
+    // Authentication is over, so the exclusive borrow is finished and everything
+    // below only opens channels (`&self`). Share the connection now, before the
+    // shell opens, so SFTP and tunnels can ride on it rather than dialling again
+    // and re-running the whole auth chain — an MFA host would demand a second
+    // one-time code and reject it.
+    let session = Arc::new(session);
+    let _ = events.send(LiveShellEvent::SessionReady(SharedSession(Arc::clone(
+        &session,
+    ))));
 
     let _ = events.send(LiveShellEvent::Status(String::from("opening pty")));
     let term = if request.term.trim().is_empty() {
@@ -1713,6 +1770,50 @@ impl SftpHandle {
     }
 }
 
+/// Open SFTP on a connection that is already authenticated, instead of dialling
+/// a second one.
+///
+/// The connection is driven by whichever runtime created it (the shell's), so
+/// this SFTP session ends when that one does — which is the intended meaning of
+/// riding on it. Use [`spawn_sftp_session`] when there is no session to ride on.
+pub fn spawn_sftp_session_on(shared: SharedSession) -> Result<SftpHandle, SshError> {
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel();
+    let cancel: CancelSet = Arc::new(Mutex::new(HashSet::new()));
+    let session_cancel = Arc::clone(&cancel);
+
+    thread::Builder::new()
+        .name(String::from("adit-sftp-shared"))
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build();
+            match runtime {
+                Ok(runtime) => {
+                    if let Err(error) = runtime.block_on(run_sftp_session_on(
+                        shared,
+                        command_rx,
+                        event_tx.clone(),
+                        session_cancel,
+                    )) {
+                        let _ = event_tx.send(SftpEvent::Error(error.to_string()));
+                    }
+                }
+                Err(error) => {
+                    let _ = event_tx.send(SftpEvent::Error(error.to_string()));
+                }
+            }
+            let _ = event_tx.send(SftpEvent::Closed);
+        })
+        .map_err(|error| SshError::Runtime(error.to_string()))?;
+
+    Ok(SftpHandle {
+        command_tx,
+        event_rx,
+        cancel,
+    })
+}
+
 pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> {
     if request.host.trim().is_empty() {
         return Err(SshError::EmptyHost);
@@ -1763,7 +1864,7 @@ pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> 
 
 async fn run_sftp_session(
     request: SftpRequest,
-    mut commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
+    commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
     events: mpsc::Sender<SftpEvent>,
     cancel: CancelSet,
 ) -> Result<(), SshError> {
@@ -1833,6 +1934,46 @@ async fn run_sftp_session(
         .await
         .map_err(|error| SshError::Sftp(error.to_string()))?;
 
+    run_sftp_commands(sftp, commands, events, cancel).await;
+
+    // We dialled this connection, so we own it and take it down with us.
+    let _ = session
+        .disconnect(Disconnect::ByApplication, "sftp session closed", "en")
+        .await;
+    Ok(())
+}
+
+/// Run SFTP over a connection the caller has already authenticated.
+///
+/// This is the whole point of [`SharedSession`]: SFTP is just another channel,
+/// so the server authenticates once. Dialling separately re-runs the auth chain,
+/// and an MFA host answers that by demanding a second one-time code — which is
+/// one-time, so it rejects it.
+async fn run_sftp_session_on(
+    shared: SharedSession,
+    commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
+    events: mpsc::Sender<SftpEvent>,
+    cancel: CancelSet,
+) -> Result<(), SshError> {
+    let _ = events.send(SftpEvent::Status(String::from("attaching to the session")));
+    let sftp = shared.open_sftp().await?;
+    run_sftp_commands(sftp, commands, events, cancel).await;
+    // Dropping `shared` only releases our reference. Never disconnect here — the
+    // shell owns this connection and is still using it.
+    Ok(())
+}
+
+/// Serve SFTP commands until the peer disconnects, then close our channel.
+///
+/// Shared by both entry points. What happens to the *connection* afterwards is
+/// deliberately left to the caller, because that is the only thing that differs:
+/// a connection we dialled gets disconnected, one we are riding on must not be.
+async fn run_sftp_commands(
+    sftp: SftpSession,
+    mut commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
+    events: mpsc::Sender<SftpEvent>,
+    cancel: CancelSet,
+) {
     let home = sftp.canonicalize(".").await.unwrap_or_else(|_| String::from("/"));
     let _ = events.send(SftpEvent::Ready { home: home.clone() });
     list_dir(&sftp, &home, &events).await;
@@ -1891,10 +2032,6 @@ async fn run_sftp_session(
     }
 
     let _ = sftp.close().await;
-    let _ = session
-        .disconnect(Disconnect::ByApplication, "sftp session closed", "en")
-        .await;
-    Ok(())
 }
 
 async fn list_dir(sftp: &SftpSession, path: &str, events: &mpsc::Sender<SftpEvent>) {
