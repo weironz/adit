@@ -101,28 +101,44 @@ jobs:
       # on a machine that built the binary happily. A GUI app has no run-and-exit
       # mode, so the test is that it is *still alive* after being given time to
       # get a window open. Exiting on its own means it crashed.
+      # Run twice. The first pass is the real assertion: whatever renderer iced
+      # picks, the app has to come up. The second forces Vulkan, because iced
+      # falls back to the tiny-skia software renderer silently — so a green first
+      # pass alone cannot tell "wgpu works" from "wgpu failed and nobody
+      # noticed", and wgpu is what ships.
       - name: Launch headless
         env:
           RUST_BACKTRACE: '1'
         run: |
-          xvfb-run -a --server-args='-screen 0 1280x800x24' \
-            target/debug/adit-app > smoke.log 2>&1 &
-          pid=$!
-          sleep 25
-          if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null || true
-            echo "adit-app was still running after 25s; startup is clean"
-          else
-            echo "::error::adit-app exited on its own during startup"
-            exit 1
-          fi
+          launch() {
+            local label="$1" log="$2"
+            xvfb-run -a --server-args='-screen 0 1280x800x24' \
+              target/debug/adit-app > "$log" 2>&1 &
+            local pid=$!
+            sleep 25
+            if kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" 2>/dev/null || true
+              echo "$label: still up after 25s"
+            else
+              echo "::error::$label: adit-app exited on its own during startup"
+              return 1
+            fi
+          }
 
-      # Always shown: on success it records which wgpu backend was picked, which
-      # is the difference between "ran on lavapipe" and "silently fell back to
-      # the tiny-skia software renderer".
-      - name: Startup log
+          status=0
+          launch 'default renderer' smoke-default.log || status=1
+          WGPU_BACKEND=vulkan launch 'forced Vulkan' smoke-vulkan.log || status=1
+          exit $status
+
+      # Always shown, including on failure — the panic or adapter error lands
+      # here, not in the step above.
+      - name: Startup logs
         if: always()
-        run: cat smoke.log || true
+        run: |
+          for log in smoke-default.log smoke-vulkan.log; do
+            echo "===== $log ====="
+            cat "$log" 2>/dev/null || echo '(not produced)'
+          done
 
   integration:
     name: integration · real sshd (docker)
