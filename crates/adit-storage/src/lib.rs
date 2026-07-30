@@ -348,8 +348,12 @@ fn default_true() -> bool {
     true
 }
 
+/// Off by default. A dropped session is usually a deliberate `reboot` or an
+/// `exit`, and retrying buries the terminal under a status line per attempt for
+/// something the user already knows about. `Enter` on a dead session reconnects
+/// on demand, which is the case that actually wants a retry.
 fn default_auto_reconnect() -> bool {
-    true
+    false
 }
 
 fn default_sidebar_width() -> f32 {
@@ -372,7 +376,7 @@ impl Default for AppSettings {
             collapsed_groups: Vec::new(),
             window_width: 1360.0,
             window_height: 860.0,
-            auto_reconnect: true,
+            auto_reconnect: default_auto_reconnect(),
             sidebar_width: default_sidebar_width(),
             sidebar_visible: default_sidebar_visible(),
             font_family: String::new(),

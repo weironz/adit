@@ -355,7 +355,9 @@ impl SessionManager {
             profiles,
             sessions: HashMap::new(),
             active_session: None,
-            auto_reconnect: true,
+            // Off unless the stored setting turns it on; see
+            // `adit_storage::default_auto_reconnect` for why.
+            auto_reconnect: false,
             connect_timeout_secs: 20,
             order: Vec::new(),
             default_size: TerminalSize::default(),
