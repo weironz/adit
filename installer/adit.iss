@@ -20,6 +20,15 @@
 #ifndef Arch
   #define Arch "x64"
 #endif
+; Where cargo left the binaries, relative to each target dir. A native build
+; uses "release"; cross-compiling puts them under the triple, so building the
+; arm64 installer on an x64 machine needs
+; /DBuildDir=aarch64-pc-windows-msvc\release. CI builds arm64 natively and
+; leaves this alone — packaging binaries of the wrong architecture is exactly
+; the failure this define exists to make impossible to do by accident.
+#ifndef BuildDir
+  #define BuildDir "release"
+#endif
 #define AppName "Adit"
 #define AppExe "Adit.exe"
 #define AppPublisher "weironz"
@@ -81,11 +90,11 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
-Source: "..\target\release\adit-app.exe"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
+Source: "..\target\{#BuildDir}\adit-app.exe"; DestDir: "{app}"; DestName: "{#AppExe}"; Flags: ignoreversion
 ; The native RDP client runs as a separate helper process (IronRDP can't share
 ; a Cargo.lock with the main app's russh), built from its own workspace. Adit
 ; locates it next to adit.exe.
-Source: "..\crates\adit-rdp\target\release\adit-rdp-host.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\crates\adit-rdp\target\{#BuildDir}\adit-rdp-host.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

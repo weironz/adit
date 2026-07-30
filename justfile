@@ -13,6 +13,9 @@ set windows-shell := ["pwsh", "-NoProfile", "-Command"]
 # it must be built with its own manifest, not `-p`.
 rdp := "crates/adit-rdp/Cargo.toml"
 
+# Windows on ARM. Needs `rustup target add aarch64-pc-windows-msvc` once.
+arm := "aarch64-pc-windows-msvc"
+
 # Show the recipe list
 default:
     @just --list
@@ -29,6 +32,23 @@ helper:
 
 # Release-build both shippable binaries
 dist: build helper
+
+# The arm64 recipes below cross-compile. CI builds arm64 NATIVELY on a
+# windows-11-arm runner, and that is the path proven to work: the RDP helper
+# exact-pins RustCrypto crates and carries three vendored IronRDP patches, none
+# of which has been tried as a cross-build. If `helper-arm64` fails here that is
+# the likely reason, and it says nothing about whether the release will build.
+
+# Cross-compile the GUI app for Windows on ARM
+build-arm64:
+    cargo build --release -p adit-app --target {{arm}}
+
+# Cross-compile the RDP helper for Windows on ARM
+helper-arm64:
+    cargo build --release --manifest-path {{rdp}} --target {{arm}}
+
+# Cross-compile both shippable binaries for Windows on ARM
+dist-arm64: build-arm64 helper-arm64
 
 # Debug-build the whole workspace
 build-debug:
@@ -118,3 +138,11 @@ bump version:
 # Build the Inno Setup installer for VERSION (rebuilds the binaries first, local smoke-test only)
 installer version: dist
     & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion={{version}}" installer\adit.iss
+
+# /DBuildDir is what keeps this honest. Without it ISCC would package whatever
+# sits in target\release — on an x64 machine that is the x64 build, and the
+# result would be an installer labelled arm64 containing binaries that are not.
+
+# Build the Windows-on-ARM installer for VERSION (cross-compiles first, local smoke-test only)
+installer-arm64 version: dist-arm64
+    & "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" "/DAppVersion={{version}}" "/DArch=arm64" "/DBuildDir={{arm}}\release" installer\adit.iss
