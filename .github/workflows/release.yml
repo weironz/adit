@@ -85,7 +85,13 @@ jobs:
           v='${{ github.event.inputs.version }}'
           git config user.name  'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add -A
+          # Only what the bump touches. `git add -A` once swept in an unrelated
+          # line-ending normalisation of ci.yml, and the push was rejected —
+          # the release token deliberately has no `workflows` permission. A
+          # release commit has no business carrying anything but the bump.
+          git add Cargo.toml Cargo.lock \
+                  crates/adit-rdp/Cargo.toml crates/adit-rdp/Cargo.lock \
+                  crates/adit-rdp-proto/Cargo.toml
           git commit -m "chore: release v$v"
           git tag "v$v"
           git push origin HEAD:main
