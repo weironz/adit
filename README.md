@@ -118,7 +118,7 @@ The `just dist` step matters: `cargo build -p adit-app` alone does **not** build
 
 This produces `target\release\adit-installer-v<version>.exe` — a setup wizard that installs to `C:\Program Files\Adit` (all users, or per-user), creates shortcuts, registers an uninstaller, and closes a running instance before updating.
 
-Adding `/DArch=arm64` to the `ISCC.exe` call builds the Windows-on-ARM installer, `adit-installer-v<version>-arm64.exe`, from natively-built arm64 binaries. Only that one carries the architecture in its name: the x64 installer keeps the name it has always had, so that in-app updates from versions before 0.1.61 keep resolving to the build they are already running. Releases carry both, plus `.deb` and `.rpm` for x86_64 and aarch64 Linux and an unsigned `.dmg` for each macOS architecture.
+Adding `/DArch=arm64` to the `ISCC.exe` call builds the Windows-on-ARM installer, `adit-installer-v<version>_arm64.exe`, from natively-built arm64 binaries. Only that one carries the architecture in its name: the x64 installer keeps the name it has always had, so that in-app updates from versions before 0.1.61 keep resolving to the build they are already running. Releases carry both, plus `.deb` and `.rpm` for x86_64 and aarch64 Linux and an unsigned `.dmg` for each macOS architecture.
 
 ## Roadmap
 

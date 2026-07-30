@@ -17,6 +17,13 @@
 ; installer keeps the name it has always had, because updaters shipped before
 ; 0.1.61 take the first .exe on the release and must keep landing on the build
 ; they are already running. See pick_installer_asset in crates/adit-ui.
+;
+; The separator is an underscore, and that is load-bearing: the GitHub API
+; returns a release's assets sorted BY NAME, not by upload order, and '-' (0x2D)
+; sorts before '.' (0x2E) — so `...-arm64.exe` came first and every old updater
+; on an x64 machine was handed the arm64 build, which refuses to run there.
+; '_' (0x5F) sorts after '.', putting the x64 installer first. v0.1.61 shipped
+; with the wrong separator; its asset was renamed by hand.
 #ifndef Arch
   #define Arch "x64"
 #endif
@@ -69,7 +76,7 @@ UninstallDisplayName={#AppName}
 SetupIconFile=..\crates\adit-app\assets\icon.ico
 OutputDir=..\target\release
 #if Arch == "arm64"
-OutputBaseFilename=adit-installer-v{#AppVersion}-arm64
+OutputBaseFilename=adit-installer-v{#AppVersion}_arm64
 #else
 OutputBaseFilename=adit-installer-v{#AppVersion}
 #endif

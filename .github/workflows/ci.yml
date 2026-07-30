@@ -371,7 +371,7 @@ jobs:
         if: always()
         with:
           name: adit-installer-aarch64
-          path: target/release/adit-installer-*-arm64.exe
+          path: target/release/adit-installer-*_arm64.exe
           if-no-files-found: warn
 
   integration:

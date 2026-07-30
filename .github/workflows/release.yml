@@ -116,9 +116,12 @@ jobs:
 
   # Windows-on-ARM, built natively rather than cross-compiled: the RDP helper
   # pins RustCrypto crates exactly and carries three vendored IronRDP patches,
-  # and a native build on this runner is what CI proves works. It attaches after
-  # the x64 installer is already on the release, which is load-bearing — updaters
-  # older than 0.1.61 take the first .exe they find, so x64 has to be first.
+  # and a native build on this runner is what CI proves works.
+  #
+  # Upload order is NOT what keeps updaters older than 0.1.61 off this asset —
+  # the API returns a release's assets sorted by name, whenever each arrived.
+  # The underscore in `_arm64` is what does it, by sorting after the '.' in the
+  # x64 installer's name. See installer/adit.iss.
   windows-arm64:
     name: windows · installer (aarch64)
     needs: release
@@ -148,7 +151,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release upload "v${{ github.event.inputs.version }}"
-          "target/release/adit-installer-v${{ github.event.inputs.version }}-arm64.exe"
+          "target/release/adit-installer-v${{ github.event.inputs.version }}_arm64.exe"
           --clobber
 
   # The jobs below attach to the release the Windows job already published,

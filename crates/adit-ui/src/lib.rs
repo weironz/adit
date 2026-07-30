@@ -3138,7 +3138,12 @@ fn download_installer_blocking(url: &str, name: &str) -> Result<String, String> 
 /// architecture in its name — the x64 installer deliberately kept the name it has
 /// always had, so that updaters older than this function, which took the first
 /// `.exe` in the list, keep resolving to the build they are already running.
-/// release.yml uploads x64 before arm64 to hold that ordering up.
+///
+/// What holds that ordering up is the underscore in `_arm64`, not upload order:
+/// GitHub returns a release's assets sorted by name. v0.1.61 shipped the arm64
+/// installer as `-arm64.exe`, and since `-` sorts before `.` it came first, so
+/// every old updater on an x64 machine was offered a build that refuses to run
+/// there. `_` sorts after `.`. `installer_asset_ordering_favours_x64` pins it.
 ///
 /// Falls back to any `.exe` rather than refusing to update, so a future release
 /// that renames things degrades to the old behaviour instead of stranding
@@ -11840,7 +11845,7 @@ mod tests {
         let assets = serde_json::json!([
             {"name": "adit_0.1.61_amd64.deb", "browser_download_url": "https://x/deb"},
             {"name": "adit-installer-v0.1.61.exe", "browser_download_url": "https://x/x64"},
-            {"name": "adit-installer-v0.1.61-arm64.exe", "browser_download_url": "https://x/arm"},
+            {"name": "adit-installer-v0.1.61_arm64.exe", "browser_download_url": "https://x/arm"},
         ]);
         let assets = assets.as_array().unwrap();
 
@@ -11884,6 +11889,27 @@ mod tests {
         // Nothing installable at all is None, not a blank URL that would 404.
         let none = serde_json::json!([{"name": "notes.txt", "browser_download_url": "https://x/t"}]);
         assert!(pick_installer_asset(none.as_array().unwrap(), "x86_64").is_none());
+    }
+
+    /// The naming rule that protects updaters shipped before `pick_installer_asset`
+    /// existed. They take the first `.exe` GitHub lists, and GitHub lists a
+    /// release's assets sorted by name — so the x64 installer has to sort first.
+    ///
+    /// v0.1.61 shipped `-arm64.exe`, and `-` (0x2D) sorts before `.` (0x2E), so
+    /// the arm64 build came first and every old updater on an x64 machine was
+    /// offered an installer that refuses to run there. `_` (0x5F) sorts after.
+    #[test]
+    fn installer_asset_ordering_favours_x64() {
+        let x64 = "adit-installer-v0.1.62.exe";
+        let arm = "adit-installer-v0.1.62_arm64.exe";
+        assert!(x64 < arm, "the x64 installer must sort before {arm}");
+        // The mistake this guards against, stated so it cannot creep back.
+        assert!(
+            "adit-installer-v0.1.62-arm64.exe" < x64,
+            "a '-' separator sorts the arm64 build first — that is the bug"
+        );
+        // And the arch-aware path still recognises the underscore spelling.
+        assert!(arm.contains("arm64"));
     }
 
     #[test]
