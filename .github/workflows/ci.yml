@@ -164,53 +164,12 @@ jobs:
       - name: Build the app
         run: cargo build --release -p adit-app --locked
 
-      # Hand-assembled rather than via cargo-deb: the dependency list is the
-      # interesting part and it is worth stating explicitly, with the reason each
-      # entry is there. The verification step below is what proves it right.
-      - name: Assemble the .deb
+          installer/build-linux-packages.sh
+      # release.yml runs too — the dependency lists must not exist twice.
+      - name: Build the packages
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          root=pkgroot
-          mkdir -p "$root/DEBIAN" "$root/usr/bin" \
-                   "$root/usr/share/applications" \
-                   "$root/usr/share/icons/hicolor/256x256/apps"
-
-          install -m755 target/release/adit-app "$root/usr/bin/adit"
-          install -m644 assets/icon.png "$root/usr/share/icons/hicolor/256x256/apps/adit.png"
-
-          cat > "$root/usr/share/applications/adit.desktop" <<'DESKTOP'
-          [Desktop Entry]
-          Type=Application
-          Name=Adit
-          Comment=SSH / SFTP / RDP terminal client
-          Exec=adit
-          Icon=adit
-          Terminal=false
-          Categories=Network;RemoteAccess;
-          DESKTOP
-
-          # libxkbcommon-x11-0 is dlopened by winit, so it appears in no ELF
-          # header and no automatic tool would find it — the smoke job caught it
-          # only by running the binary. The rest back rfd (GTK), keyring (D-Bus),
-          # winit (X11/Wayland) and wgpu (Vulkan loader). The `|` alternatives
-          # cover Ubuntu 24.04's t64 library renaming.
-          cat > "$root/DEBIAN/control" <<CONTROL
-          Package: adit
-          Version: $version
-          Section: net
-          Priority: optional
-          Architecture: amd64
-          Maintainer: Adit <noreply@example.com>
-          Depends: libxkbcommon0, libxkbcommon-x11-0, libwayland-client0,
-           libx11-6, libxcursor1, libxrandr2, libxi6,
-           libgtk-3-0t64 | libgtk-3-0, libdbus-1-3, libvulkan1
-          Description: SSH / SFTP / RDP terminal client
-           A native terminal client with session groups, tabs, split panes,
-           SFTP transfer and port forwarding.
-          CONTROL
-
-          dpkg-deb --build --root-owner-group "$root" "adit_${version}_amd64.deb"
-          dpkg-deb --info "adit_${version}_amd64.deb"
+          sudo apt-get install -y --no-install-recommends rpm
+          installer/build-linux-packages.sh
 
       # The real test. Installing into a bare ubuntu image means apt has to
       # satisfy Depends on its own, with none of the -dev packages the build
@@ -233,46 +192,6 @@ jobs:
               exit 1
             fi
           '
-
-      # Same staging tree, second package format. RPM generates its own Requires
-      # by scanning the ELF, so unlike the .deb only the dlopened library has to
-      # be named by hand — the rest is derived and cannot drift.
-      - name: Build the .rpm
-        run: |
-          sudo apt-get install -y --no-install-recommends rpm
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-
-          cat > adit.spec <<SPEC
-          %global debug_package %{nil}
-          Name:      adit
-          Version:   $version
-          Release:   1
-          Summary:   SSH / SFTP / RDP terminal client
-          License:   MIT
-          BuildArch: x86_64
-          # winit dlopens this, so it is in no ELF header and the automatic
-          # dependency scan cannot see it.
-          Requires:  libxkbcommon-x11
-
-          %description
-          A native terminal client with session groups, tabs, split panes,
-          SFTP transfer and port forwarding.
-
-          %install
-          mkdir -p %{buildroot}
-          cp -a %{_sourcedir}/pkgroot/usr %{buildroot}/
-
-          %files
-          /usr/bin/adit
-          /usr/share/applications/adit.desktop
-          /usr/share/icons/hicolor/256x256/apps/adit.png
-          SPEC
-
-          rpmbuild -bb \
-            --define "_topdir $PWD/rpmbuild" \
-            --define "_sourcedir $PWD" \
-            adit.spec
-          rpm -qpR rpmbuild/RPMS/x86_64/adit-*.rpm
 
       # Fedora rather than Ubuntu, so this also exercises whether a binary built
       # on the Ubuntu runner is usable elsewhere at all — it carries that image's
@@ -325,47 +244,9 @@ jobs:
       - name: Build the app
         run: cargo build --release -p adit-app --locked
 
-      - name: Assemble Adit.app
+      - name: Build the bundle
         run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          app=Adit.app
-
-          # macOS wants an .icns; build one from the single PNG we ship.
-          mkdir -p adit.iconset
-          for size in 16 32 128 256 512; do
-            sips -z $size $size assets/icon.png \
-              --out "adit.iconset/icon_${size}x${size}.png" >/dev/null
-            sips -z $((size*2)) $((size*2)) assets/icon.png \
-              --out "adit.iconset/icon_${size}x${size}@2x.png" >/dev/null
-          done
-          iconutil -c icns adit.iconset -o adit.icns
-
-          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
-          cp target/release/adit-app "$app/Contents/MacOS/adit"
-          chmod +x "$app/Contents/MacOS/adit"
-          cp adit.icns "$app/Contents/Resources/adit.icns"
-
-          cat > "$app/Contents/Info.plist" <<PLIST
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>CFBundleName</key><string>Adit</string>
-            <key>CFBundleDisplayName</key><string>Adit</string>
-            <key>CFBundleIdentifier</key><string>com.github.weironz.adit</string>
-            <key>CFBundleExecutable</key><string>adit</string>
-            <key>CFBundleIconFile</key><string>adit.icns</string>
-            <key>CFBundlePackageType</key><string>APPL</string>
-            <key>CFBundleShortVersionString</key><string>$version</string>
-            <key>CFBundleVersion</key><string>$version</string>
-            <key>LSMinimumSystemVersion</key><string>11.0</string>
-            <key>NSHighResolutionCapable</key><true/>
-          </dict>
-          </plist>
-          PLIST
-
-          plutil -lint "$app/Contents/Info.plist"
-          test -x "$app/Contents/MacOS/adit"
+          installer/build-macos-bundle.sh
 
       # GitHub's macOS runners have no dependable window session, so this may
       # well fail for reasons that say nothing about the app. Kept as a hard
@@ -390,17 +271,6 @@ jobs:
       - name: Startup log
         if: always()
         run: cat macos-smoke.log 2>/dev/null || echo '(not produced)'
-
-      # Unsigned and un-notarised: both need an Apple Developer account and
-      # certificates that CI does not have. Gatekeeper will refuse to open this
-      # by double-click until that exists, so it is a build artifact, not a
-      # release artifact.
-      - name: Build the dmg
-        if: always()
-        run: |
-          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
-          hdiutil create -volname Adit -srcfolder Adit.app -ov -format UDZO \
-            "adit_${version}_unsigned.dmg"
 
       - uses: actions/upload-artifact@v4
         if: always()

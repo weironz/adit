@@ -107,3 +107,74 @@ jobs:
           "target/release/adit-installer-v${{ github.event.inputs.version }}.exe"
           --title "Adit v${{ github.event.inputs.version }}"
           --generate-notes
+
+  # Both jobs below attach to the release the Windows job already published,
+  # rather than being folded into it. That ordering is deliberate: if a
+  # non-Windows package breaks, the release still exists with its installer and
+  # the missing asset can be uploaded afterwards, instead of a packaging bug
+  # taking the whole release down. They check out the tag, so they build exactly
+  # what was published rather than whatever main has drifted to since.
+  linux-packages:
+    name: linux · deb + rpm
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ github.event.inputs.version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config rpm \
+            libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libgtk-3-dev libdbus-1-dev
+
+      - name: Build
+        run: cargo build --release -p adit-app --locked
+
+      - name: Package
+        run: installer/build-linux-packages.sh "${{ github.event.inputs.version }}"
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "v${{ github.event.inputs.version }}"
+          "adit_${{ github.event.inputs.version }}_amd64.deb"
+          "rpmbuild/RPMS/x86_64/adit-${{ github.event.inputs.version }}-1.x86_64.rpm"
+          --clobber
+
+  macos-bundle:
+    name: macos · dmg (unsigned)
+    needs: release
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ github.event.inputs.version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --release -p adit-app --locked
+
+      - name: Package
+        run: installer/build-macos-bundle.sh "${{ github.event.inputs.version }}"
+
+      # Unsigned and un-notarised — Gatekeeper blocks a double-click, so the
+      # filename says so rather than letting someone find that out by
+      # downloading it.
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "v${{ github.event.inputs.version }}"
+          "adit_${{ github.event.inputs.version }}_unsigned.dmg"
+          --clobber
