@@ -8,9 +8,9 @@
 #
 #   usage: installer/build-linux-packages.sh 0.1.60
 #
-# Produces, in the working directory:
-#   adit_<version>_amd64.deb
-#   rpmbuild/RPMS/x86_64/adit-<version>-1.x86_64.rpm
+# Produces, in the working directory, for the architecture it is running on:
+#   adit_<version>_<amd64|arm64>.deb
+#   rpmbuild/RPMS/<x86_64|aarch64>/adit-<version>-1.<x86_64|aarch64>.rpm
 
 set -euo pipefail
 
@@ -20,6 +20,15 @@ version="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
 [[ -n "$version" ]] || { echo "cannot determine version" >&2; exit 1; }
 binary=target/release/adit-app
 root=pkgroot
+
+# dpkg and rpm disagree on what to call the same machine, and neither uses
+# uname's name for arm64. Both spellings are needed, so derive them together
+# rather than letting a caller pass one and get the other wrong.
+case "$(uname -m)" in
+  x86_64)  deb_arch=amd64; rpm_arch=x86_64 ;;
+  aarch64) deb_arch=arm64; rpm_arch=aarch64 ;;
+  *) echo "unsupported architecture $(uname -m)" >&2; exit 1 ;;
+esac
 
 if [[ ! -x "$binary" ]]; then
   echo "no release binary at $binary — run cargo build --release -p adit-app first" >&2
@@ -54,7 +63,7 @@ Package: adit
 Version: $version
 Section: net
 Priority: optional
-Architecture: amd64
+Architecture: $deb_arch
 Maintainer: Adit <noreply@example.com>
 Depends: libxkbcommon0, libxkbcommon-x11-0, libwayland-client0,
  libx11-6, libxcursor1, libxrandr2, libxi6,
@@ -64,8 +73,8 @@ Description: SSH / SFTP / RDP terminal client
  SFTP transfer and port forwarding.
 CONTROL
 
-dpkg-deb --build --root-owner-group "$root" "adit_${version}_amd64.deb"
-dpkg-deb --info "adit_${version}_amd64.deb"
+dpkg-deb --build --root-owner-group "$root" "adit_${version}_${deb_arch}.deb"
+dpkg-deb --info "adit_${version}_${deb_arch}.deb"
 
 # RPM derives Requires by scanning the ELF, which is worth very little here:
 # winit reaches the X11 stack through x11-dl, so libX11, libXcursor, libXrandr
@@ -80,7 +89,7 @@ Version:   $version
 Release:   1
 Summary:   SSH / SFTP / RDP terminal client
 License:   MIT
-BuildArch: x86_64
+BuildArch: $rpm_arch
 Requires:  libxkbcommon, libxkbcommon-x11, libwayland-client
 Requires:  libX11, libXcursor, libXrandr, libXi
 Requires:  gtk3, dbus-libs, vulkan-loader
@@ -103,4 +112,4 @@ rpmbuild -bb \
   --define "_topdir $PWD/rpmbuild" \
   --define "_sourcedir $PWD" \
   adit.spec
-rpm -qpR rpmbuild/RPMS/x86_64/adit-*.rpm
+rpm -qpR "rpmbuild/RPMS/$rpm_arch/adit-"*.rpm

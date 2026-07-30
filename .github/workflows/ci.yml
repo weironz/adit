@@ -44,9 +44,18 @@ jobs:
       # honest, since nothing else verifies that Adit even compiles there.
       # Independent reporting on purpose — while those two are being brought up, a
       # Linux failure must not hide a macOS one.
+      #
+      # The arm64 runners are what make a dual-architecture release checkable at
+      # all. macOS has no Intel entry because every macOS runner is Apple Silicon
+      # now; the Intel build is cross-compiled in the packaging job instead.
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
+        os:
+          - windows-latest     # x86_64
+          - windows-11-arm     # aarch64
+          - ubuntu-latest      # x86_64
+          - ubuntu-24.04-arm   # aarch64
+          - macos-latest       # aarch64
     steps:
       - uses: actions/checkout@v4
 
@@ -85,8 +94,12 @@ jobs:
       # The RDP helper is excluded from the workspace (IronRDP's dependency pins
       # cannot coexist with russh's), so nothing above touches it — until now it
       # was built only at release time, where a break lands too late to be cheap.
-      # Windows only: it ships as adit-rdp-host.exe and has never been tried on
-      # another target.
+      # Windows only: it ships as adit-rdp-host.exe. Whether it builds for arm64
+      # at all is the open question behind a Windows arm64 release — IronRDP
+      # carries three vendored patches and exact-pinned RustCrypto crates, none
+      # of which has ever seen that target. This step on windows-11-arm is the
+      # answer; until it is green there is no arm64 installer, because shipping
+      # one whose RDP silently does not work is worse than not shipping it.
       - name: Build the RDP helper
         if: runner.os == 'Windows'
         run: cargo build --manifest-path crates/adit-rdp/Cargo.toml --locked
@@ -168,8 +181,16 @@ jobs:
           done
 
   package-linux:
-    name: package · deb + rpm install and run clean (linux)
-    runs-on: ubuntu-latest
+    name: package · deb + rpm install and run clean (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
     steps:
       - uses: actions/checkout@v4
 
@@ -207,7 +228,7 @@ jobs:
           docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -eu -c '
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -qq
-            apt-get install -y -qq ./adit_*_amd64.deb xvfb >/dev/null
+            apt-get install -y -qq ./adit_*.deb xvfb >/dev/null
             xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/pkg-smoke.log 2>&1 &
             pid=$!
             sleep 25
@@ -226,7 +247,7 @@ jobs:
       - name: Install and run the rpm in a clean container
         run: |
           docker run --rm -v "$PWD:/w" -w /w fedora:latest bash -eu -c '
-            dnf -y -q install ./rpmbuild/RPMS/x86_64/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
+            dnf -y -q install ./rpmbuild/RPMS/${{ matrix.arch }}/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
             xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/rpm-smoke.log 2>&1 &
             pid=$!
             sleep 25
@@ -250,10 +271,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: adit-linux-packages
+          name: adit-linux-packages-${{ matrix.arch }}
           path: |
-            adit_*_amd64.deb
-            rpmbuild/RPMS/x86_64/adit-*.rpm
+            adit_*.deb
+            rpmbuild/RPMS/*/adit-*.rpm
           if-no-files-found: warn
 
   package-macos:
@@ -269,10 +290,17 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build the app
-        run: cargo build --release -p adit-app --locked
-
-      - name: Build the bundle
         run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release -p adit-app --locked --target x86_64-apple-darwin
+          cargo build --release -p adit-app --locked
+
+      # Intel first and native last, so the Adit.app left on disk for the launch
+      # check below is the one this runner can actually execute — the runners are
+      # Apple Silicon and Rosetta is not guaranteed to be installed on them.
+      - name: Build the bundles
+        run: |
+          installer/build-macos-bundle.sh '' x86_64-apple-darwin
           installer/build-macos-bundle.sh
 
       # GitHub's macOS runners have no dependable window session, so this may

@@ -121,9 +121,17 @@ jobs:
   # taking the whole release down. They check out the tag, so they build exactly
   # what was published rather than whatever main has drifted to since.
   linux-packages:
-    name: linux · deb + rpm
+    name: linux · deb + rpm (${{ matrix.arch }})
     needs: release
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
     steps:
       - uses: actions/checkout@v4
         with:
@@ -152,8 +160,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: >-
           gh release upload "v${{ github.event.inputs.version }}"
-          "adit_${{ github.event.inputs.version }}_amd64.deb"
-          "rpmbuild/RPMS/x86_64/adit-${{ github.event.inputs.version }}-1.x86_64.rpm"
+          adit_${{ github.event.inputs.version }}_*.deb
+          rpmbuild/RPMS/${{ matrix.arch }}/adit-${{ github.event.inputs.version }}-1.*.rpm
           --clobber
 
   macos-bundle:
@@ -168,11 +176,19 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Both architectures from this one Apple Silicon runner: every macOS runner
+      # image is arm64 now, and Apple's clang cross-compiles to Intel happily, so
+      # this does not depend on an Intel image continuing to be offered.
       - name: Build
-        run: cargo build --release -p adit-app --locked
+        run: |
+          rustup target add x86_64-apple-darwin
+          cargo build --release -p adit-app --locked --target x86_64-apple-darwin
+          cargo build --release -p adit-app --locked
 
       - name: Package
-        run: installer/build-macos-bundle.sh "${{ github.event.inputs.version }}"
+        run: |
+          installer/build-macos-bundle.sh "${{ github.event.inputs.version }}" x86_64-apple-darwin
+          installer/build-macos-bundle.sh "${{ github.event.inputs.version }}"
 
       # Unsigned and un-notarised — Gatekeeper blocks a double-click, so the
       # filename says so rather than letting someone find that out by

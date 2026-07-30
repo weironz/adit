@@ -6,7 +6,7 @@
 # Shared by ci.yml and release.yml so the bundle layout and Info.plist live in
 # one place rather than being copied between workflows.
 #
-#   usage: installer/build-macos-bundle.sh 0.1.60
+#   usage: installer/build-macos-bundle.sh 0.1.60 [rust-target-triple]
 #
 # Produces, in the working directory:
 #   Adit.app/
@@ -21,24 +21,36 @@ set -euo pipefail
 
 # Defaults to the workspace version; release.yml passes it explicitly so the
 # package matches the tag even before the bump is committed.
-version="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
+# Empty and unset both fall back, so a caller that only wants to pass the target
+# triple can leave the version as ''.
+version="${1:-}"
+[[ -n "$version" ]] || version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 [[ -n "$version" ]] || { echo "cannot determine version" >&2; exit 1; }
-binary=target/release/adit-app
 app=Adit.app
 
-# GitHub's macOS runners are Apple Silicon, so an unlabelled dmg looks universal
-# while being arm64-only — an Intel Mac downloads it and gets "cannot be opened"
-# with nothing saying why. Name the architecture the way rustdesk does.
-case "$(uname -m)" in
-  arm64 | aarch64) arch=aarch64 ;;
-  x86_64)          arch=x86_64 ;;
-  *) echo "unknown macOS architecture $(uname -m)" >&2; exit 1 ;;
-esac
+# Optional second argument: a Rust target triple, which is how the Intel dmg
+# gets built. GitHub's macOS runners are all Apple Silicon now, but Apple's
+# clang targets either architecture from either host, so cross-compiling beats
+# depending on an Intel runner image continuing to exist.
+target="${2:-}"
+binary="target/${target:+$target/}release/adit-app"
 
 if [[ ! -x "$binary" ]]; then
-  echo "no release binary at $binary — run cargo build --release -p adit-app first" >&2
+  echo "no release binary at $binary — run" >&2
+  echo "  cargo build --release -p adit-app${target:+ --target $target}" >&2
   exit 1
 fi
+
+# Take the architecture from the binary rather than from uname or from the
+# triple above. The dmg used to carry no architecture at all while being
+# arm64-only, so an Intel Mac downloaded it and got an unexplained refusal to
+# open; labelling it from the bytes it actually ships makes that mismatch
+# impossible rather than merely unlikely.
+case "$(lipo -archs "$binary")" in
+  arm64)  arch=aarch64 ;;
+  x86_64) arch=x86_64 ;;
+  *) echo "unexpected architecture '$(lipo -archs "$binary")' in $binary" >&2; exit 1 ;;
+esac
 
 # macOS wants an .icns; render one from the single PNG we ship.
 rm -rf adit.iconset "$app"
