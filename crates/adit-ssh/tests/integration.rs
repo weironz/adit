@@ -17,7 +17,7 @@
 //! test on a random published port, and removes it on drop.
 #![cfg(feature = "integration")]
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::ops::ControlFlow;
 use std::path::PathBuf;
@@ -28,9 +28,10 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, thread};
 
 use adit_ssh::{
-    spawn_password_shell, spawn_sftp_session, spawn_tunnel_session, AuthOptions, JumpHop,
-    LiveShellCommand, LiveShellEvent, LiveShellRequest, SftpCommand, SftpEvent, SftpRequest,
-    TunnelEvent, TunnelKind, TunnelRequest,
+    spawn_password_shell, spawn_sftp_session, spawn_sftp_session_on, spawn_tunnel_session,
+    AuthOptions, JumpHop, LiveShellCommand, LiveShellEvent, LiveShellHandle, LiveShellRequest,
+    SftpCommand, SftpEvent, SftpHandle, SftpRequest, SharedSession, TunnelEvent, TunnelKind,
+    TunnelRequest,
 };
 
 const IMAGE: &str = "adit-test-sshd:latest";
@@ -249,6 +250,23 @@ impl TestServer {
         .expect("fix authorized_keys perms on target");
     }
 
+    /// Established TCP connections to this container's sshd, counted from
+    /// *inside* the container.
+    ///
+    /// The client cannot tell one connection from two — both look identical from
+    /// its side, which is exactly why a second dial went unnoticed until an MFA
+    /// host started demanding a second one-time code. The server is the only
+    /// vantage point from which "SFTP rode on the shell's connection" and
+    /// "nothing was left behind" can be asserted at all.
+    fn established_connections(&self) -> usize {
+        let out = docker(&["exec", &self.id, "netstat", "-tn"]).unwrap_or_else(|error| {
+            panic!("could not count connections inside the test container: {error}")
+        });
+        out.lines()
+            .filter(|line| line.contains("ESTABLISHED") && line.contains(":2222"))
+            .count()
+    }
+
     /// Wait until the sshd inside the container answers with an SSH banner.
     fn wait_ready(&self, timeout: Duration) {
         let deadline = Instant::now() + timeout;
@@ -367,6 +385,78 @@ fn wait_sftp_done(handle: &adit_ssh::SftpHandle, timeout: Duration) {
         },
     );
     assert_eq!(done, Some(true), "sftp transfer did not complete in time");
+}
+
+/// Pump SFTP events until the session reports itself ready.
+fn wait_sftp_ready(handle: &SftpHandle, timeout: Duration) {
+    let ready = pump_until(
+        timeout,
+        || handle.try_recv(),
+        |event| match event {
+            SftpEvent::Ready { .. } => ControlFlow::Break(true),
+            SftpEvent::Error(error) => panic!("sftp error: {error}"),
+            SftpEvent::Closed => ControlFlow::Break(false),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(ready, Some(true), "sftp session should become ready");
+}
+
+/// Wait for the shell to publish the connection it just authenticated.
+fn wait_for_session(handle: &LiveShellHandle, timeout: Duration) -> SharedSession {
+    pump_until(
+        timeout,
+        || handle.try_recv(),
+        |event| match event {
+            LiveShellEvent::SessionReady(shared) => ControlFlow::Break(shared),
+            LiveShellEvent::Error(error) | LiveShellEvent::AuthRejected(error) => {
+                panic!("ssh error before the session was ready: {error}")
+            }
+            LiveShellEvent::Closed => panic!("the shell closed before publishing a session"),
+            _ => ControlFlow::Continue(()),
+        },
+    )
+    .expect("the shell should publish its authenticated session")
+}
+
+/// Poll `check` until it holds, or the timeout elapses.
+fn wait_until(timeout: Duration, mut check: impl FnMut() -> bool) -> bool {
+    let deadline = Instant::now() + timeout;
+    while Instant::now() < deadline {
+        if check() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    false
+}
+
+/// Upload a distinctive payload and download it back, asserting it survives.
+///
+/// A channel that opens is not a subsystem that works, and every bug this file
+/// is guarding against leaves the former looking fine.
+fn assert_sftp_round_trip(handle: &SftpHandle, tag: &str) {
+    let content = format!("adit {tag} {}\n", unique()).into_bytes();
+    let local_up = temp_path("up.bin");
+    fs::write(&local_up, &content).unwrap();
+    let remote = format!("/tmp/adit-it-{}.bin", unique());
+
+    handle
+        .send(SftpCommand::Upload { id: 0, local: local_up, remote: remote.clone() })
+        .unwrap();
+    wait_sftp_done(handle, Duration::from_secs(20));
+
+    let local_down = temp_path("down.bin");
+    handle
+        .send(SftpCommand::Download { id: 1, remote, local: local_down.clone() })
+        .unwrap();
+    wait_sftp_done(handle, Duration::from_secs(20));
+
+    assert_eq!(
+        fs::read(&local_down).unwrap(),
+        content,
+        "{tag}: bytes must survive the round trip"
+    );
 }
 
 // ===== tests =================================================================
@@ -760,5 +850,176 @@ fn encrypted_key_wrong_passphrase_gives_a_clear_error() {
     assert!(
         message.to_lowercase().contains("passphrase"),
         "expected a passphrase error, got: {message}"
+    );
+}
+
+// ===== the shared connection =================================================
+//
+// SFTP and tunnels moved onto the shell's already-authenticated connection so an
+// MFA host is asked for one one-time code instead of one per surface. Every
+// failure mode of that change is invisible from the client: a second dial works
+// fine against a password host, and a connection left behind produces no error
+// and no UI change. So these assert from inside the container.
+
+#[test]
+fn sftp_rides_on_the_shells_connection() {
+    let server = TestServer::start();
+    let mut request = LiveShellRequest::new("127.0.0.1", server.port, USER, PASS);
+    request.known_hosts_path = temp_known_hosts();
+    request.auto_accept_host_keys = true;
+
+    let shell = spawn_password_shell(request).expect("spawn shell");
+    let shared = wait_for_session(&shell, Duration::from_secs(20));
+    assert_eq!(
+        server.established_connections(),
+        1,
+        "the shell alone should be a single connection"
+    );
+
+    let sftp = spawn_sftp_session_on(shared.clone()).expect("spawn sftp on the shared session");
+    wait_sftp_ready(&sftp, Duration::from_secs(20));
+    assert_sftp_round_trip(&sftp, "shared-session");
+
+    // The payload. Everything above passes just as well if SFTP quietly dialled
+    // its own connection — only the count can tell, and on an MFA host that
+    // second connection is what demands a second one-time code and gets refused.
+    assert_eq!(
+        server.established_connections(),
+        1,
+        "SFTP must ride on the shell's connection instead of opening a second one"
+    );
+
+    let _ = sftp.send(SftpCommand::Disconnect);
+    let _ = shell.send(LiveShellCommand::Disconnect);
+}
+
+#[test]
+fn the_connection_outlives_the_shell_and_dies_with_the_last_user() {
+    let server = TestServer::start();
+    let mut request = LiveShellRequest::new("127.0.0.1", server.port, USER, PASS);
+    request.known_hosts_path = temp_known_hosts();
+    request.auto_accept_host_keys = true;
+    // Ends the remote shell on its own, so the exit status below is a real
+    // observable rather than something this test has to infer from silence.
+    request.startup_command = String::from("exit");
+
+    let shell = spawn_password_shell(request).expect("spawn shell");
+    // Emitted before the shell channel opens, so it arrives even though the
+    // shell is on its way out.
+    let shared = wait_for_session(&shell, Duration::from_secs(20));
+    let sftp = spawn_sftp_session_on(shared.clone()).expect("spawn sftp on the shared session");
+    wait_sftp_ready(&sftp, Duration::from_secs(20));
+
+    let exited = pump_until(
+        Duration::from_secs(20),
+        || shell.try_recv(),
+        |event| match event {
+            LiveShellEvent::Status(status) if status.contains("exit status") => {
+                ControlFlow::Break(true)
+            }
+            LiveShellEvent::Error(error) => panic!("ssh error: {error}"),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(exited, Some(true), "the remote shell should have exited");
+    // NB: LiveShellEvent::Closed deliberately cannot arrive yet — the shell
+    // thread is parked waiting for the last SharedSession to drop, and only
+    // emits Closed after that. Waiting for it here would deadlock this test.
+
+    assert!(
+        !shared.is_closed(),
+        "closing the shell must not tear down the connection an SFTP panel is still using"
+    );
+    // "Not closed" is easy to satisfy by accident; a transfer is not.
+    assert_sftp_round_trip(&sftp, "after-the-shell-exited");
+    assert_eq!(server.established_connections(), 1, "the connection should still be up");
+
+    // Now let go of every user of it.
+    let _ = sftp.send(SftpCommand::Disconnect);
+    drop(sftp);
+    drop(shared);
+
+    // A leak here is completely silent on the client — no error, no UI change,
+    // just a connection the server keeps until it times out. This assertion is
+    // the only thing standing between that and a release.
+    assert!(
+        wait_until(Duration::from_secs(20), || server.established_connections() == 0),
+        "the connection must be torn down once nothing is using it"
+    );
+}
+
+#[test]
+fn remote_forward_lets_the_server_reach_a_local_listener() {
+    let server = TestServer::start();
+
+    // The service being published back to the server. `-R` is the direction
+    // where the *server* opens the channel, so unlike `-L` it needs a live
+    // client-side handler to pipe into — nothing else in this file covers it.
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind the local target");
+    let target_port = listener.local_addr().expect("local_addr").port();
+    let greeting = format!("ADIT-REMOTE-{}", unique());
+    let sent = greeting.clone();
+    thread::spawn(move || {
+        // Serves every connection, not just the first: the probe below retries
+        // while the forward is still being wired up.
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut stream) => {
+                    let _ = stream.write_all(format!("{sent}\n").as_bytes());
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    // Any port will do — the container belongs to this test alone.
+    let remote_port: u16 = 18022;
+    let mut request = TunnelRequest::new(
+        "127.0.0.1",
+        server.port,
+        USER,
+        PASS,
+        TunnelKind::Remote,
+        // Where sshd listens, inside the container...
+        "127.0.0.1",
+        remote_port,
+        // ...and what this client dials when the server forwards a connection.
+        "127.0.0.1",
+        target_port,
+    );
+    request.known_hosts_path = temp_known_hosts();
+    let handle = spawn_tunnel_session(request).expect("spawn tunnel");
+
+    let listening = pump_until(
+        Duration::from_secs(20),
+        || handle.try_recv(),
+        |event| match event {
+            TunnelEvent::Listening { .. } => ControlFlow::Break(true),
+            TunnelEvent::Error(error) => panic!("tunnel error: {error}"),
+            TunnelEvent::Stopped => ControlFlow::Break(false),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(listening, Some(true), "the server should accept the remote forward");
+
+    // Reaching it from inside the container is the whole point. `Listening`
+    // alone proves only that sshd accepted the request — the forwarded channel
+    // can still land nowhere, which is precisely how this fails silently.
+    let mut got = String::new();
+    let reached = wait_until(Duration::from_secs(20), || {
+        let port = remote_port.to_string();
+        got = docker(&[
+            "exec",
+            &server.id,
+            "sh",
+            "-c",
+            &format!("nc -w 5 127.0.0.1 {port} < /dev/null || true"),
+        ])
+        .unwrap_or_default();
+        got.contains(&greeting)
+    });
+    assert!(
+        reached,
+        "expected the local listener's greeting back through the remote forward, got: {got:?}"
     );
 }
