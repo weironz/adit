@@ -3326,6 +3326,19 @@ fn platform_config_dir() -> PathBuf {
 mod tests {
     use super::*;
     use russh::client::Handler as _;
+
+    /// An authenticated session must be shareable across tasks for SFTP and
+    /// tunnels to ride on the shell's connection instead of dialling their own —
+    /// which is what makes one MFA prompt cover all of them. `channel_open_*`
+    /// take `&self` and wait on a per-call receiver, so only authentication
+    /// (`&mut self`, draining the single reply stream) needs exclusivity.
+    /// This asserts the `Arc` half of that at compile time.
+    #[test]
+    fn session_handle_is_shareable_across_tasks() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<russh::client::Handle<KnownHostsClient>>();
+        assert_send_sync::<std::sync::Arc<russh::client::Handle<KnownHostsClient>>>();
+    }
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn current_thread_rt() -> tokio::runtime::Runtime {
