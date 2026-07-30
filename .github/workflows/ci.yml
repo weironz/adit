@@ -79,12 +79,16 @@ jobs:
       # Same set the build job installs, plus a virtual X server to open a window
       # on and Mesa's software Vulkan (lavapipe) so wgpu has an adapter to pick —
       # CI runners have no GPU.
+      #
+      # libxkbcommon-x11-0 is a *runtime* dependency, not a build one: winit
+      # dlopens it, so the build job compiles happily without it and the app then
+      # panics on startup. It has to be declared by any Linux package we ship.
       - name: Install system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             pkg-config \
-            libxkbcommon-dev libwayland-dev \
+            libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
             libgtk-3-dev libdbus-1-dev \
             xvfb mesa-vulkan-drivers libgl1-mesa-dri
