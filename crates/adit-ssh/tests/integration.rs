@@ -267,6 +267,21 @@ impl TestServer {
             .count()
     }
 
+    /// Everything sshd has logged.
+    ///
+    /// Not `docker(&["logs", ..])`: sshd runs with `-e` so it logs to *stderr*,
+    /// and `docker logs` relays each stream to its own, so the stdout that
+    /// helper returns is always empty. Both are merged here.
+    fn logs(&self) -> String {
+        let output = Command::new("docker")
+            .args(["logs", &self.id])
+            .output()
+            .expect("docker logs");
+        let mut merged = String::from_utf8_lossy(&output.stdout).into_owned();
+        merged.push_str(&String::from_utf8_lossy(&output.stderr));
+        merged
+    }
+
     /// Wait until the sshd inside the container answers with an SSH banner.
     fn wait_ready(&self, timeout: Duration) {
         let deadline = Instant::now() + timeout;
@@ -281,7 +296,7 @@ impl TestServer {
         panic!(
             "sshd never became ready on port {} (logs: {})",
             self.port,
-            docker(&["logs", &self.id]).unwrap_or_default()
+            self.logs()
         );
     }
 }
@@ -899,32 +914,26 @@ fn the_connection_outlives_the_shell_and_dies_with_the_last_user() {
     let mut request = LiveShellRequest::new("127.0.0.1", server.port, USER, PASS);
     request.known_hosts_path = temp_known_hosts();
     request.auto_accept_host_keys = true;
-    // Ends the remote shell on its own, so the exit status below is a real
-    // observable rather than something this test has to infer from silence.
-    request.startup_command = String::from("exit");
 
     let shell = spawn_password_shell(request).expect("spawn shell");
-    // Emitted before the shell channel opens, so it arrives even though the
-    // shell is on its way out.
     let shared = wait_for_session(&shell, Duration::from_secs(20));
     let sftp = spawn_sftp_session_on(shared.clone()).expect("spawn sftp on the shared session");
     wait_sftp_ready(&sftp, Duration::from_secs(20));
 
-    let exited = pump_until(
-        Duration::from_secs(20),
-        || shell.try_recv(),
-        |event| match event {
-            LiveShellEvent::Status(status) if status.contains("exit status") => {
-                ControlFlow::Break(true)
-            }
-            LiveShellEvent::Error(error) => panic!("ssh error: {error}"),
-            _ => ControlFlow::Continue(()),
-        },
+    // Close the shell tab, and take sshd's word for it rather than a client
+    // event. Neither client-side signal works here: ExitStatus races Eof, so
+    // whichever lands first ends the read loop and the other is never reported;
+    // and LiveShellEvent::Closed is emitted only after the shell thread parks
+    // for the last SharedSession — which this test is still holding, so waiting
+    // for it would deadlock.
+    let _ = shell.send(LiveShellCommand::Disconnect);
+    assert!(
+        wait_until(Duration::from_secs(20), || server
+            .logs()
+            .contains("Close session")),
+        "sshd should report the shell's session channel closed; logs:\n{}",
+        server.logs()
     );
-    assert_eq!(exited, Some(true), "the remote shell should have exited");
-    // NB: LiveShellEvent::Closed deliberately cannot arrive yet — the shell
-    // thread is parked waiting for the last SharedSession to drop, and only
-    // emits Closed after that. Waiting for it here would deadlock this test.
 
     assert!(
         !shared.is_closed(),
