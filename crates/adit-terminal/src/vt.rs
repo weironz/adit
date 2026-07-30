@@ -778,7 +778,26 @@ impl TermState {
                 .min(old_rows - rows)
         };
 
-        self.grid = resize_grid(&self.grid, cols, rows, src_start);
+        if self.alt.is_none() {
+            // Rows a shrink pushes off the top are real output — move them into
+            // scrollback instead of dropping them, which is what this did before
+            // and is how narrowing the window silently ate history. Collect
+            // before pushing: `drain` borrows the grid, `push_scrollback`
+            // borrows all of `self`.
+            //
+            // Excluded on the alternate screen, which belongs to a full-screen
+            // app that redraws itself — its rows must never reach scrollback.
+            // Carried rows keep their old width; `resize_grid` would clip them
+            // to the new one, losing the very columns a reflow needs later.
+            let carried: Vec<Vec<Cell>> = self.grid.drain(..src_start).collect();
+            for row in carried {
+                self.push_scrollback(row);
+            }
+            // The carried rows are gone from the front, so the copy starts at 0.
+            self.grid = resize_grid(&self.grid, cols, rows, 0);
+        } else {
+            self.grid = resize_grid(&self.grid, cols, rows, src_start);
+        }
         if let Some(alt) = &mut self.alt {
             alt.grid = resize_grid(&alt.grid, cols, rows, 0);
             alt.cursor_row = alt.cursor_row.min(rows - 1);
@@ -1402,6 +1421,43 @@ mod tests {
         // A taller viewport reveals the scrolled-off line.
         let full = t.snapshot(Viewport::tail(3));
         assert_eq!(line_text(&full, 0).trim_end(), "one");
+    }
+
+    #[test]
+    fn shrinking_rows_carries_the_top_into_scrollback() {
+        let mut t = term(10, 4);
+        t.feed_str("one\r\ntwo\r\nthree\r\nfour");
+        t.resize(TerminalSize::new(10, 2));
+
+        // The window ending at the cursor stays on screen...
+        let visible = t.snapshot(Viewport::tail(2));
+        assert_eq!(line_text(&visible, 0).trim_end(), "three");
+        assert_eq!(line_text(&visible, 1).trim_end(), "four");
+
+        // ...and the rows it displaced are in scrollback, not discarded.
+        let full = t.snapshot(Viewport::tail(4));
+        assert_eq!(line_text(&full, 0).trim_end(), "one");
+        assert_eq!(line_text(&full, 1).trim_end(), "two");
+    }
+
+    #[test]
+    fn shrinking_the_alternate_screen_does_not_touch_scrollback() {
+        let mut t = term(10, 4);
+        t.feed_str("kept\r\n");
+        // Enter the alternate screen (1049) and fill it.
+        t.feed_str("\x1b[?1049h");
+        t.feed_str("alt1\r\nalter2\r\naltr3\r\naltr4");
+        t.resize(TerminalSize::new(10, 2));
+
+        // A full-screen app redraws itself, so its rows must never become
+        // history — scrollback still holds only what the primary screen wrote.
+        t.feed_str("\x1b[?1049l");
+        let full = t.snapshot(Viewport::tail(4));
+        let text = (0..4)
+            .map(|row| line_text(&full, row))
+            .collect::<Vec<_>>()
+            .join("|");
+        assert!(!text.contains("alt"), "alt-screen rows leaked: {text}");
     }
 
     #[test]
