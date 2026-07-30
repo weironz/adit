@@ -6470,6 +6470,16 @@ fn sync_terminal_size(app: &mut AditApp) {
         return;
     }
 
+    // A width change reflows the grid, which renumbers every absolute scrollback
+    // row. The selection is anchored in that numbering and the scroll offset is
+    // counted against the old row total, so both would keep rendering happily
+    // while pointing at different text. Drop them rather than leave them subtly
+    // wrong; a height change re-wraps nothing and leaves the numbering intact.
+    if target.cols != app.terminal_size.cols {
+        app.terminal_selection = None;
+        app.terminal_scroll_offset = 0;
+    }
+
     app.terminal_size = target;
 
     if app.panes.is_empty() {

@@ -215,10 +215,17 @@ Verified shortcomings, so nobody has to rediscover them.
   backend wants a Windows message pump, which the windowless helper process doesn't have,
   so it needs design work rather than a flag. Audio (`sound`) is implemented but off by
   default because it pulls native Opus (needs CMake).
-- **Terminal**: no reflow on resize (narrowing permanently truncates), no combining /
-  zero-width character support, no DCS/Sixel, no charset designation, no custom tab
-  stops. `TerminalChangeSet` dirty-row tracking is a stub that always reports the whole
-  screen.
+- **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
+  designation, no custom tab stops. `TerminalChangeSet` dirty-row tracking is a stub
+  that always reports the whole screen.
+- **Resizing while the alternate screen is active** clips the stashed primary screen at
+  the bottom, so leaving a full-screen app after shrinking the window loses the rows
+  underneath it. The primary screen's own resize path no longer loses anything —
+  narrowing reflows and shrinking the height moves rows into scrollback — but the
+  stashed copy still goes through the old clipping code.
+- **A reflow drops the selection and returns to the bottom** of the scrollback.
+  Re-wrapping renumbers every absolute row and both are anchored in that numbering;
+  keeping them would mean mapping the anchors through the logical lines.
 - **MFA is shell-only.** SFTP and tunnel connections answer non-interactively with the
   stored password, so an MFA-gated host will fail those.
 - **Jump hosts reuse the target's single credential** — no per-hop authentication.
