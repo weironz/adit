@@ -114,7 +114,44 @@ jobs:
           --title "Adit v${{ github.event.inputs.version }}"
           --generate-notes
 
-  # Both jobs below attach to the release the Windows job already published,
+  # Windows-on-ARM, built natively rather than cross-compiled: the RDP helper
+  # pins RustCrypto crates exactly and carries three vendored IronRDP patches,
+  # and a native build on this runner is what CI proves works. It attaches after
+  # the x64 installer is already on the release, which is load-bearing — updaters
+  # older than 0.1.61 take the first .exe they find, so x64 has to be first.
+  windows-arm64:
+    name: windows · installer (aarch64)
+    needs: release
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ github.event.inputs.version }}
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build app (release)
+        run: cargo build --release -p adit-app --locked
+
+      - name: Build RDP helper (release)
+        run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ github.event.inputs.version }}" "/DArch=arm64" installer\adit.iss'
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release upload "v${{ github.event.inputs.version }}"
+          "target/release/adit-installer-v${{ github.event.inputs.version }}-arm64.exe"
+          --clobber
+
+  # The jobs below attach to the release the Windows job already published,
   # rather than being folded into it. That ordering is deliberate: if a
   # non-Windows package breaks, the release still exists with its installer and
   # the missing asset can be uploaded afterwards, instead of a packaging bug

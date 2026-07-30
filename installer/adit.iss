@@ -12,6 +12,14 @@
 #ifndef AppVersion
   #define AppVersion "0.0.0"
 #endif
+; /DArch=arm64 builds the Windows-on-ARM installer from natively-built arm64
+; binaries. Only that one carries the architecture in its filename; the x64
+; installer keeps the name it has always had, because updaters shipped before
+; 0.1.61 take the first .exe on the release and must keep landing on the build
+; they are already running. See pick_installer_asset in crates/adit-ui.
+#ifndef Arch
+  #define Arch "x64"
+#endif
 #define AppName "Adit"
 #define AppExe "Adit.exe"
 #define AppPublisher "weironz"
@@ -37,12 +45,25 @@ DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
+; The arm64 installer refuses to run on x64 outright — there is no sense in
+; letting it. The x64 one keeps allowing arm64, where Windows emulates it; that
+; is what every Windows-on-ARM user has been running until now, and it stays the
+; fallback for anyone who downloads the wrong file.
+#if Arch == "arm64"
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#else
 ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 SetupIconFile=..\crates\adit-app\assets\icon.ico
 OutputDir=..\target\release
+#if Arch == "arm64"
+OutputBaseFilename=adit-installer-v{#AppVersion}-arm64
+#else
 OutputBaseFilename=adit-installer-v{#AppVersion}
+#endif
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

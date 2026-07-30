@@ -334,6 +334,46 @@ jobs:
           path: adit_*_unsigned.dmg
           if-no-files-found: warn
 
+  # The Windows installer has never been built by CI — it was only ever produced
+  # at release time, where a broken .iss fails the release itself. Only arm64 is
+  # checked here: it is the new path, and it is the one whose binaries and Inno
+  # directives have never shipped. x64 takes the `#else` branch that every
+  # previous release used verbatim. Pushes only, since this is a release build
+  # and doubling it on every PR buys nothing.
+  package-windows-arm64:
+    name: package · installer builds (aarch64)
+    if: github.event_name == 'push'
+    runs-on: windows-11-arm
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build the app
+        run: cargo build --release -p adit-app --locked
+
+      - name: Build the RDP helper
+        run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      # No /DAppVersion: the version is irrelevant to whether this packages, and
+      # the default keeps the artifact obviously not a release build.
+      - name: Build the installer
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DArch=arm64" installer\adit.iss'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adit-installer-aarch64
+          path: target/release/adit-installer-*-arm64.exe
+          if-no-files-found: warn
+
   integration:
     name: integration · real sshd (docker)
     runs-on: ubuntu-latest

@@ -118,8 +118,10 @@ The `just dist` step matters: `cargo build -p adit-app` alone does **not** build
 
 This produces `target\release\adit-installer-v<version>.exe` — a setup wizard that installs to `C:\Program Files\Adit` (all users, or per-user), creates shortcuts, registers an uninstaller, and closes a running instance before updating.
 
+Adding `/DArch=arm64` to the `ISCC.exe` call builds the Windows-on-ARM installer, `adit-installer-v<version>-arm64.exe`, from natively-built arm64 binaries. Only that one carries the architecture in its name: the x64 installer keeps the name it has always had, so that in-app updates from versions before 0.1.61 keep resolving to the build they are already running. Releases carry both, plus `.deb` and `.rpm` for x86_64 and aarch64 Linux and an unsigned `.dmg` for each macOS architecture.
+
 ## Roadmap
 
 Most of the phased plan is implemented — SSH/SFTP/tunnels, four protocols, split panes, broadcast, fonts/schemes, scrollback search, mouse passthrough, bracketed paste, `~/.ssh/config` import, in-app updates, and the Inno Setup installer.
 
-Still open: jump host / `ProxyJump`, command snippets, tab rename, code signing, CI, and macOS packaging. See [docs/feature-roadmap.md](docs/feature-roadmap.md) for the full status.
+Still open: command snippets, tab rename, and code signing — the macOS `.dmg` and the Linux packages are unsigned, and Gatekeeper blocks the former until the quarantine flag is cleared by hand. See [docs/feature-roadmap.md](docs/feature-roadmap.md) for the full status.

@@ -3047,22 +3047,10 @@ fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> {
         return Ok(None);
     }
 
-    // Pick the Windows installer asset (the .exe).
-    let asset = json["assets"].as_array().and_then(|assets| {
-        assets
-            .iter()
-            .find(|asset| asset["name"].as_str().is_some_and(|n| n.ends_with(".exe")))
-    });
-    let (installer_url, installer_name) = match asset {
-        Some(asset) => (
-            asset["browser_download_url"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string(),
-            asset["name"].as_str().unwrap_or_default().to_string(),
-        ),
-        None => (String::new(), String::new()),
-    };
+    let (installer_url, installer_name) = json["assets"]
+        .as_array()
+        .and_then(|assets| pick_installer_asset(assets, std::env::consts::ARCH))
+        .unwrap_or_default();
 
     Ok(Some(UpdateInfo {
         tag,
@@ -3141,6 +3129,47 @@ fn download_installer_blocking(url: &str, name: &str) -> Result<String, String> 
 }
 
 /// Compare a `vX.Y.Z` (or `X.Y.Z`) tag against the current version.
+/// Pick the Windows installer matching `arch` (as in [`std::env::consts::ARCH`]),
+/// returning `(download_url, file_name)`.
+///
+/// Releases carry two installers now, and they are not interchangeable: handing
+/// an x86_64 machine the arm64 build leaves it with nothing that runs at all.
+/// Matching on the name is enough because only the arm64 asset carries an
+/// architecture in its name — the x64 installer deliberately kept the name it has
+/// always had, so that updaters older than this function, which took the first
+/// `.exe` in the list, keep resolving to the build they are already running.
+/// release.yml uploads x64 before arm64 to hold that ordering up.
+///
+/// Falls back to any `.exe` rather than refusing to update, so a future release
+/// that renames things degrades to the old behaviour instead of stranding
+/// everyone on their current version.
+fn pick_installer_asset(assets: &[serde_json::Value], arch: &str) -> Option<(String, String)> {
+    let want_arm = arch == "aarch64";
+    let mut fallback: Option<(String, String)> = None;
+
+    for asset in assets {
+        let Some(name) = asset["name"].as_str() else {
+            continue;
+        };
+        if !name.ends_with(".exe") {
+            continue;
+        }
+        let found = (
+            asset["browser_download_url"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string(),
+            name.to_string(),
+        );
+        if (name.contains("arm64") || name.contains("aarch64")) == want_arm {
+            return Some(found);
+        }
+        fallback.get_or_insert(found);
+    }
+
+    fallback
+}
+
 fn version_is_newer(latest: &str, current: &str) -> bool {
     parse_semver(latest) > parse_semver(current)
 }
@@ -11804,6 +11833,57 @@ mod tests {
         assert_eq!(rdp_scancode_for_code(Code::NumpadDivide), Some((0x35, true)));
         // Unmapped keys yield None (e.g. PrintScreen's multi-byte sequence).
         assert_eq!(rdp_scancode_for_code(Code::PrintScreen), None);
+    }
+
+    #[test]
+    fn installer_asset_is_picked_by_architecture() {
+        let assets = serde_json::json!([
+            {"name": "adit_0.1.61_amd64.deb", "browser_download_url": "https://x/deb"},
+            {"name": "adit-installer-v0.1.61.exe", "browser_download_url": "https://x/x64"},
+            {"name": "adit-installer-v0.1.61-arm64.exe", "browser_download_url": "https://x/arm"},
+        ]);
+        let assets = assets.as_array().unwrap();
+
+        // Each architecture gets its own build, not merely the first .exe listed.
+        assert_eq!(
+            pick_installer_asset(assets, "x86_64").unwrap().0,
+            "https://x/x64"
+        );
+        assert_eq!(
+            pick_installer_asset(assets, "aarch64").unwrap().0,
+            "https://x/arm"
+        );
+
+        // Order must not decide it: arm64 first still resolves x86_64 correctly.
+        let reversed = serde_json::json!([
+            {"name": "adit-installer-v0.1.61-arm64.exe", "browser_download_url": "https://x/arm"},
+            {"name": "adit-installer-v0.1.61.exe", "browser_download_url": "https://x/x64"},
+        ]);
+        assert_eq!(
+            pick_installer_asset(reversed.as_array().unwrap(), "x86_64")
+                .unwrap()
+                .0,
+            "https://x/x64"
+        );
+
+        // A release with only the old single installer still updates an x64
+        // machine, and leaves an arm64 one the emulated build rather than nothing.
+        let legacy = serde_json::json!([
+            {"name": "adit-installer-v0.1.60.exe", "browser_download_url": "https://x/only"},
+        ]);
+        let legacy = legacy.as_array().unwrap();
+        assert_eq!(
+            pick_installer_asset(legacy, "x86_64").unwrap().0,
+            "https://x/only"
+        );
+        assert_eq!(
+            pick_installer_asset(legacy, "aarch64").unwrap().0,
+            "https://x/only"
+        );
+
+        // Nothing installable at all is None, not a blank URL that would 404.
+        let none = serde_json::json!([{"name": "notes.txt", "browser_download_url": "https://x/t"}]);
+        assert!(pick_installer_asset(none.as_array().unwrap(), "x86_64").is_none());
     }
 
     #[test]
