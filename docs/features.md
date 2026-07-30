@@ -226,12 +226,12 @@ Verified shortcomings, so nobody has to rediscover them.
 - **A reflow drops the selection and returns to the bottom** of the scrollback.
   Re-wrapping renumbers every absolute row and both are anchored in that numbering;
   keeping them would mean mapping the anchors through the logical lines.
-- **MFA does not cover jump hosts.** Each hop authenticates non-interactively with the
-  stored password, so an MFA-gated bastion still fails. SFTP and tunnels no longer do:
-  they open channels on the shell's existing connection, so the server authenticates
-  once. They fall back to dialling their own connection when there is no live session to
-  ride on — and that fallback is still non-interactive, so opening SFTP against an
-  MFA host *after* its shell has exited fails.
+- **MFA does not cover the dial fallback.** SFTP and tunnels open channels on the
+  shell's existing connection, so the server authenticates once and the shell's prompt
+  covers everything — jump hosts included, since each hop is offered the same prompt
+  channel. When there is no live session to ride on they dial their own connection
+  instead, and *that* path is still non-interactive: opening SFTP against an MFA host
+  after its shell has already exited fails.
 - **Jump hosts reuse the target's single credential** — no per-hop authentication.
 - **SFTP shell**: no tab completion, and no history recall (the history is recorded but
   unbound).

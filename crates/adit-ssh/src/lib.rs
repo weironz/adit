@@ -825,6 +825,15 @@ async fn run_live_password_shell(
         )
         .with_auto_accept(request.auto_accept_host_keys);
 
+        // A prompt path for the hops. An MFA-gated bastion challenges on the way
+        // through, long before the final target's auth below gets its own
+        // channel — the two phases are sequential, so each owning one is simpler
+        // than threading a single one across the connect block's borrow.
+        let (kbd_tx, kbd_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
+        let mut interactive = InteractiveKbd {
+            events: &events,
+            responses: kbd_rx,
+        };
         let connect = connect_through_jumps(
             &request.jumps,
             &request.auth,
@@ -834,6 +843,7 @@ async fn run_live_password_shell(
             final_handler,
             &config,
             &request.known_hosts_path,
+            Some(&mut interactive),
         );
         tokio::pin!(connect);
         let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
@@ -851,10 +861,18 @@ async fn run_live_password_shell(
                             let _ = tx.send(accept);
                         }
                     }
+                    // A hop can challenge for an MFA code mid-chain; without
+                    // this the answer would be dropped and the handshake would
+                    // sit until the deadline.
+                    Some(LiveShellCommand::AuthResponses(answers)) => {
+                        let _ = kbd_tx.send(answers);
+                    }
                     Some(LiveShellCommand::Disconnect) | None => {
                         if let Some(tx) = decision_tx.take() {
                             let _ = tx.send(false);
                         }
+                        // Cancel any pending hop prompt (empty answer ⇒ cancel).
+                        let _ = kbd_tx.send(Vec::new());
                         return Ok(());
                     }
                     Some(_) => {}
@@ -870,7 +888,7 @@ async fn run_live_password_shell(
     // borrow of `session` is released before the shell is opened below.
     {
         let (kbd_tx, kbd_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
-        let interactive = InteractiveKbd {
+        let mut interactive = InteractiveKbd {
             events: &events,
             responses: kbd_rx,
         };
@@ -880,7 +898,7 @@ async fn run_live_password_shell(
             &request.password,
             &request.auth,
             Some(&events),
-            Some(interactive),
+            Some(&mut interactive),
         );
         tokio::pin!(auth);
         loop {
@@ -1052,6 +1070,9 @@ async fn connect_through_jumps(
     final_handler: KnownHostsClient,
     config: &Arc<client::Config>,
     known_hosts_path: &Path,
+    // Offered to every hop: an MFA-gated bastion challenges on the way through,
+    // and answering only at the final target would never reach it.
+    mut interactive: Option<&mut InteractiveKbd<'_>>,
 ) -> Result<
     (
         client::Handle<KnownHostsClient>,
@@ -1093,7 +1114,8 @@ async fn connect_through_jumps(
             hop_password,
             hop_auth,
             None,
-            None,
+            // Reborrow so the next hop still gets it.
+            interactive.as_deref_mut(),
         )
         .await?;
         hops.push(session);
@@ -1127,7 +1149,9 @@ async fn authenticate_with_available_methods(
     password: &str,
     auth: &AuthOptions,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
-    interactive: Option<InteractiveKbd<'_>>,
+    // Borrowed, not owned, so a jump-host chain can offer the same channel to
+    // every hop instead of the last one silently losing it.
+    interactive: Option<&mut InteractiveKbd<'_>>,
 ) -> Result<(), SshError> {
     let mut attempted = false;
 
@@ -1309,7 +1333,7 @@ async fn authenticate_password_or_keyboard_interactive(
     username: &str,
     password: &str,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
-    mut interactive: Option<InteractiveKbd<'_>>,
+    mut interactive: Option<&mut InteractiveKbd<'_>>,
 ) -> Result<bool, SshError> {
     let auth = session
         .authenticate_password(username.to_owned(), password.to_owned())
@@ -1352,7 +1376,7 @@ async fn authenticate_password_or_keyboard_interactive(
                     &prompts,
                     password,
                     events,
-                    interactive.as_mut(),
+                    interactive.as_deref_mut(),
                 )
                 .await?;
 
@@ -1941,6 +1965,10 @@ async fn run_sftp_session(
                 final_handler,
                 &config,
                 &request.known_hosts_path,
+                // No prompt path here: these dial their own connection and
+                // authenticate non-interactively. They only reach this code when
+                // there is no live session to ride on.
+                None,
             ),
         )
         .await
@@ -2762,6 +2790,10 @@ async fn run_tunnel_session(
                 handler,
                 &config,
                 &request.known_hosts_path,
+                // No prompt path here: these dial their own connection and
+                // authenticate non-interactively. They only reach this code when
+                // there is no live session to ride on.
+                None,
             ),
         )
         .await
