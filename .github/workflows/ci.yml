@@ -64,6 +64,62 @@ jobs:
         if: runner.os == 'Windows'
         run: cargo build --manifest-path crates/adit-rdp/Cargo.toml --locked
 
+  smoke:
+    name: smoke · launches headless (linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      # Same set the build job installs, plus a virtual X server to open a window
+      # on and Mesa's software Vulkan (lavapipe) so wgpu has an adapter to pick —
+      # CI runners have no GPU.
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            pkg-config \
+            libxkbcommon-dev libwayland-dev \
+            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+            libgtk-3-dev libdbus-1-dev \
+            xvfb mesa-vulkan-drivers libgl1-mesa-dri
+
+      - name: Build the app
+        run: cargo build -p adit-app --locked
+
+      # Compiling proves nothing about starting up: adapter selection, window
+      # creation and font loading all happen at runtime, and all three can fail
+      # on a machine that built the binary happily. A GUI app has no run-and-exit
+      # mode, so the test is that it is *still alive* after being given time to
+      # get a window open. Exiting on its own means it crashed.
+      - name: Launch headless
+        env:
+          RUST_BACKTRACE: '1'
+        run: |
+          xvfb-run -a --server-args='-screen 0 1280x800x24' \
+            target/debug/adit-app > smoke.log 2>&1 &
+          pid=$!
+          sleep 25
+          if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            echo "adit-app was still running after 25s; startup is clean"
+          else
+            echo "::error::adit-app exited on its own during startup"
+            exit 1
+          fi
+
+      # Always shown: on success it records which wgpu backend was picked, which
+      # is the difference between "ran on lavapipe" and "silently fell back to
+      # the tiny-skia software renderer".
+      - name: Startup log
+        if: always()
+        run: cat smoke.log || true
+
   integration:
     name: integration · real sshd (docker)
     runs-on: ubuntu-latest
