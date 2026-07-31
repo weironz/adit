@@ -1,6 +1,8 @@
 # Keyword highlighting — design
 
-Status: **proposed, not built.** A plan, not current state.
+Status: **built.** Kept because the reasoning outlived the plan — and because two
+of its conclusions turned out to be wrong, which is recorded below rather than
+quietly edited away.
 
 Colour terminal output locally, by pattern, without the server's help. SecureCRT
 calls this Keyword Highlighting; MobaXterm ships something similar. For a client
@@ -80,12 +82,17 @@ user-orderable: "first rule wins" is predictable, "most specific wins" is not.
 
 ## What does not ship
 
-**Syntax highlighting.** Not "colour this `.env` like an `.env` file". A terminal
-sees a byte stream with no file type; inferring one from `cat foo.env` means
-parsing the command line, tracking shell state, and being wrong the moment
-anyone pipes something. `bat` already exists for people who can install it.
-Keyword rules are context-free by construction — that is the feature, not a
-shortfall of it.
+**Per-language syntax highlighting.** Not "colour this `.env` like an `.env`
+file". A terminal sees a byte stream with no file type; inferring one from
+`cat foo.env` means parsing the command line, tracking shell state, and being
+wrong the moment anyone pipes something.
+
+> **Corrected.** This section originally rejected syntax highlighting outright,
+> and that was too broad. A screenshot of MobaXterm colouring `cat test.py` —
+> keywords, strings, comments — showed the middle path this argument had missed:
+> a *language-agnostic* rule set is context-free, fits the engine unchanged, and
+> gets most of the way there. `code-string`, `code-keyword` and `code-number`
+> ship because of it. What stays rejected is only the per-language half.
 
 **The alternate screen.** `vim`, `less`, `htop` and `tmux` paint every cell
 themselves and own their layout. Local highlighting there is noise at best and
@@ -119,7 +126,21 @@ Only patterns that are context-free *and* rarely coincidental qualify:
 | IPv4 | `\b\d{1,3}(\.\d{1,3}){3}\b` | Structurally distinctive, and useful in exactly the sessions Adit is for |
 | URLs | `\bhttps?://\S+` | Already special-cased for hyperlinks elsewhere |
 
-**Shipped but off by default:**
+> **Corrected twice over.** The set is nine now, all of them on, and the entry
+> below was the load-bearing mistake. Anchoring the comment pattern to
+> line-start defeats both objections it was rejected for — a root prompt has
+> `root@host:/path` in front of its `#`, and `+++`/`---` are not `#` at all —
+> and neither was re-examined once written down. The rules also needed a
+> *scope*: colouring only where a `#` sits reads as a stray fragment, which no
+> amount of tuning the colour fixes. iTerm2 splits its highlight trigger into
+> "text" and "line" for exactly that reason.
+>
+> They ship on because the user asked for them on, having seen both. The cost is
+> real and stated where the rule is defined: `if`, `for` and `else` are ordinary
+> English, so prose in log output picks up colour. The dialog is how anyone who
+> minds turns that one off.
+
+**Originally shipped off by default:**
 
 - `#` comments. Lovely on `cat somefile`; wrong on a log line containing a `#`,
   on `+++`/`---` in a diff, and on a root prompt.
