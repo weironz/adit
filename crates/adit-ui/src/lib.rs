@@ -239,6 +239,8 @@ pub struct AditApp {
     main_view: MainView,
     /// How the host manager lays its entries out.
     host_layout: HostLayout,
+    /// Hosts most recently connected to, newest first.
+    recent_hosts: Vec<ProfileId>,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -817,6 +819,7 @@ impl AditApp {
         });
         let dark_mode = resolve_dark(theme_mode);
         let host_layout = settings.host_layout;
+        let recent_hosts = settings.recent_hosts;
         // Clamp away a bad persisted size (e.g. a 0x0 written while minimized) so
         // the window is never created invisible; the file then self-heals on the
         // next Tick because the clamped value differs from `persisted_settings`.
@@ -866,6 +869,7 @@ impl AditApp {
             dark_mode,
             theme_mode: Some(theme_mode),
             host_layout,
+            recent_hosts: recent_hosts.clone(),
             collapsed_groups: collapsed_groups.iter().cloned().collect(),
             window_width: raw_window_width,
             window_height: raw_window_height,
@@ -1007,6 +1011,7 @@ impl AditApp {
             // session running there is nothing for the terminal view to show.
             main_view: MainView::Hosts,
             host_layout,
+            recent_hosts,
             dark_mode,
             theme_mode,
             font_family,
@@ -4478,10 +4483,26 @@ fn open_selected_mock_tab(app: &mut AditApp) {
 /// Connect to a profile directly (used by double-click). Uses a stored password
 /// when present; for key/agent/auto auth it connects with no password; only
 /// password auth without a stored secret falls back to the connection dialog.
+/// How many hosts the "recent" band keeps. Enough to fill a row of cards
+/// without the band turning into a second copy of the whole list.
+const RECENT_HOSTS_MAX: usize = 6;
+
+/// Move `profile_id` to the front of the recent list.
+///
+/// Called where a connection is actually attempted, so every route in — a card,
+/// the tree, the dialog, the toolbar — passes through it without any of them
+/// needing to know the list exists.
+fn remember_recent_host(app: &mut AditApp, profile_id: ProfileId) {
+    app.recent_hosts.retain(|id| *id != profile_id);
+    app.recent_hosts.insert(0, profile_id);
+    app.recent_hosts.truncate(RECENT_HOSTS_MAX);
+}
+
 fn connect_profile(app: &mut AditApp) {
     let Some(profile_id) = save_profile_from_form(app, false) else {
         return;
     };
+    remember_recent_host(app, profile_id);
     let Some(profile) = app.manager.profile(profile_id).cloned() else {
         app.last_error = Some(String::from("请选择要连接的会话配置"));
         return;
@@ -6362,6 +6383,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         dark_mode: app.dark_mode,
         theme_mode: Some(app.theme_mode),
         host_layout: app.host_layout,
+        recent_hosts: app.recent_hosts.clone(),
         // BTreeSet iterates sorted, so the snapshot is order-stable.
         collapsed_groups: app.collapsed_groups.iter().cloned().collect(),
         window_width: app.window_width,
@@ -9649,6 +9671,42 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         HostLayout::Grid => 18,
         HostLayout::List | HostLayout::Tree => 10,
     });
+
+    // Above the bands, and only when nothing is being searched for: a "recent"
+    // shortcut is for reaching a host without looking, and a filtered list is
+    // already the result of looking.
+    //
+    // Skipped for the tree, which is the session manager itself — a band of
+    // duplicates above it would fight the hierarchy it exists to show.
+    if filter.is_empty() && layout != HostLayout::Tree {
+        let recent: Vec<&ConnectionProfile> = app
+            .recent_hosts
+            .iter()
+            .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
+            .collect();
+        if !recent.is_empty() {
+            let count = recent.len();
+            let entries = match layout {
+                HostLayout::Grid => wrap_rows(
+                    recent
+                        .into_iter()
+                        .map(|profile| host_card(app, profile))
+                        .collect(),
+                    3,
+                ),
+                _ => recent
+                    .into_iter()
+                    .fold(column![].spacing(2), |rows, profile| {
+                        rows.push(host_row(app, profile, 0.0))
+                    })
+                    .into(),
+            };
+            body = body.push(
+                column![host_section_header(String::from("最近连接"), count), entries]
+                    .spacing(10),
+            );
+        }
+    }
 
     if bands.is_empty() {
         body = body.push(

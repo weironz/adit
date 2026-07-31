@@ -2,7 +2,7 @@ mod credentials;
 
 pub use credentials::{CredentialError, CredentialStore};
 
-use adit_domain::ConnectionProfile;
+use adit_domain::{ConnectionProfile, ProfileId};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -264,6 +264,14 @@ pub struct AppSettings {
     /// How the host manager lays its entries out.
     #[serde(default)]
     pub host_layout: HostLayout,
+    /// Hosts most recently connected to, newest first, capped by the UI.
+    ///
+    /// Ids rather than a timestamp on the profile: "recent" is a fact about how
+    /// this person works, not a property of the host, and keeping it here means
+    /// connecting does not rewrite profiles.json. The order is the answer the
+    /// list needs, so there is nothing to sort at render time either.
+    #[serde(default)]
+    pub recent_hosts: Vec<ProfileId>,
     #[serde(default)]
     pub collapsed_groups: Vec<String>,
     pub window_width: f32,
@@ -397,6 +405,7 @@ impl Default for AppSettings {
             dark_mode: true,
             theme_mode: None,
             host_layout: HostLayout::Grid,
+            recent_hosts: Vec::new(),
             collapsed_groups: Vec::new(),
             window_width: 1360.0,
             window_height: 860.0,
@@ -1282,6 +1291,7 @@ Host db
             dark_mode: true,
             theme_mode: Some(ThemeMode::System),
             host_layout: HostLayout::Tree,
+            recent_hosts: Vec::new(),
             collapsed_groups: vec![String::from("Lab"), String::from("Prod")],
             window_width: 1500.0,
             window_height: 900.0,
