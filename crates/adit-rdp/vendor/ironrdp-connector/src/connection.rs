@@ -789,7 +789,13 @@ fn respond_to_connect_time_autodetect(
     }
 }
 
-#[expect(single_use_lifetimes)] // anonymous lifetimes in `impl Trait` are unstable
+// ADIT PATCH: was `#[expect(...)]`. `expect` warns when its lint does NOT
+// fire, and `single_use_lifetimes` is allow-by-default — upstream turns it on
+// through a workspace lint table this vendored copy does not inherit, so the
+// expectation can never be fulfilled here and every build reported it.
+// `allow` is a no-op while the lint is off and still suppresses it if Adit
+// ever turns it on.
+#[allow(single_use_lifetimes)] // anonymous lifetimes in `impl Trait` are unstable
 fn create_gcc_blocks<'a>(
     config: &Config,
     selected_protocol: nego::SecurityProtocol,

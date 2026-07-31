@@ -40,7 +40,7 @@ in `Cargo.toml`. Only **three** sites differ from crates.io `ironrdp-connector`
 grep -rn "ADIT PATCH" crates/adit-rdp/vendor/
 ```
 
-All three are in `src/connection.rs`:
+All four are in `src/connection.rs`:
 
 1. **RDSTLS on redirect** (`ConnectionInitiationSendRequest`). When the config
    carries a routing token (i.e. we're following a GNOME handover), request
@@ -63,8 +63,17 @@ All three are in `src/connection.rs`:
    master). Skipping the channel goes straight to licensing. We lose optional
    network auto-detect / UDP multitransport / heartbeat, which Adit doesn't use.
 
-> Keeping the diff to three marked sites in one file is deliberate: re-vendoring a
-> newer `ironrdp-connector` is a 3-hunk reapply, and each patch is independently
+4. **`expect` → `allow` on `single_use_lifetimes`** (`create_gcc_blocks`). Not a
+   behaviour change — a build-noise one. `#[expect(lint)]` warns when its lint does
+   *not* fire, `single_use_lifetimes` is allow-by-default, and upstream turns it on
+   through a workspace lint table this vendored copy does not inherit. The
+   expectation was therefore unfulfillable here and every single build of the RDP
+   helper reported it. `allow` is a no-op while the lint is off and still
+   suppresses it if Adit ever turns it on. Drop this the moment the vendored crate
+   is built under a lint table that enables the lint.
+
+> Keeping the diff to four marked sites in one file is deliberate: re-vendoring a
+> newer `ironrdp-connector` is a 4-hunk reapply, and each patch is independently
 > removable as upstream closes the gap.
 
 ## Re-vendoring checklist
