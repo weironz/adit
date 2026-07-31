@@ -47,20 +47,25 @@ pub(super) struct HighlightRule {
     enabled: bool,
 }
 
-struct RuleSpec {
-    /// Names the rule for the tests below, and from step 2 for the settings UI.
-    /// Nothing in the shipping build reads it yet — but the alternative is
-    /// identifying rules by index, which would make every assertion in this file
-    /// unreadable to keep a field honest.
-    #[cfg_attr(not(test), allow(dead_code))]
-    id: &'static str,
+pub(super) struct RuleSpec {
+    /// Stable key for persistence and for the settings UI. Deliberately not the
+    /// index: reordering the list must not silently repoint someone's saved
+    /// preference at a different rule.
+    pub(super) id: &'static str,
+    /// What the settings dialog calls it.
+    pub(super) label: &'static str,
     pattern: &'static str,
     /// A normal ANSI slot (1–6), never a bright one (9–14): bright is what made
     /// the first cut of this feature shout over the text it was annotating.
-    ansi: u8,
+    pub(super) ansi: u8,
     scope: Scope,
     /// On for everyone, or shipped and waiting to be switched on.
-    enabled: bool,
+    pub(super) enabled: bool,
+}
+
+/// The shipped rules, for the settings dialog to list.
+pub(super) fn rules() -> &'static [RuleSpec] {
+    DEFAULT_RULES
 }
 
 /// The shipped rules, in precedence order — first match on a column wins.
@@ -82,12 +87,12 @@ const DEFAULT_RULES: &[RuleSpec] = &[
     //
     // Off by default all the same: a Markdown heading is a false positive, and a
     // whole-line colour is a loud way to be wrong.
-    RuleSpec { id: "comment-hash", pattern: r"^\s*#", ansi: 2, scope: Scope::Line, enabled: false },
-    RuleSpec { id: "comment-slash", pattern: r"^\s*//", ansi: 2, scope: Scope::Line, enabled: false },
-    RuleSpec { id: "error", pattern: r"\b(?:ERROR|FATAL|CRITICAL)\b", ansi: 1, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "warning", pattern: r"\b(?:WARN|WARNING)\b", ansi: 3, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "ipv4", pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b", ansi: 6, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "url", pattern: r"\bhttps?://\S+", ansi: 4, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "comment-hash", label: "# 注释整行", pattern: r"^\s*#", ansi: 2, scope: Scope::Line, enabled: false },
+    RuleSpec { id: "comment-slash", label: "// 注释整行", pattern: r"^\s*//", ansi: 2, scope: Scope::Line, enabled: false },
+    RuleSpec { id: "error", label: "错误关键字", pattern: r"\b(?:ERROR|FATAL|CRITICAL)\b", ansi: 1, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "warning", label: "警告关键字", pattern: r"\b(?:WARN|WARNING)\b", ansi: 3, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "ipv4", label: "IP 地址", pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b", ansi: 6, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "url", label: "网址", pattern: r"\bhttps?://\S+", ansi: 4, scope: Scope::Match, enabled: true },
 ];
 
 /// The compiled rule set. Built once and reused — compiling per frame would put
@@ -98,6 +103,17 @@ pub(super) struct Highlighter {
 
 impl Default for Highlighter {
     fn default() -> Self {
+        Self::with_overrides(&std::collections::BTreeMap::new())
+    }
+}
+
+impl Highlighter {
+    /// Build the rule set, with `overrides` flipping individual rules by id.
+    ///
+    /// Only deviations from the shipped defaults are stored, so changing a
+    /// default later still reaches everyone who never touched that rule — which
+    /// a saved copy of the whole set would quietly prevent.
+    pub(super) fn with_overrides(overrides: &std::collections::BTreeMap<String, bool>) -> Self {
         Self {
             rules: DEFAULT_RULES
                 .iter()
@@ -108,22 +124,42 @@ impl Default for Highlighter {
                         .expect("built-in highlight pattern must compile"),
                     scope: spec.scope,
                     color: TermColor::Indexed(spec.ansi),
-                    enabled: spec.enabled,
+                    enabled: overrides
+                        .get(spec.id)
+                        .copied()
+                        .unwrap_or(spec.enabled),
                 })
                 .collect(),
         }
     }
 }
 
-/// The process-wide rule set.
+/// The rule set the renderer consults.
 ///
-/// A global while the rules are hardcoded, which they are for as long as there
-/// is no settings surface to change them from. Step 2 of the design moves them
-/// into the profile store, at which point this becomes app state and the call
-/// site passes a reference instead.
-pub(super) fn highlighter() -> &'static Highlighter {
-    static HIGHLIGHTER: std::sync::OnceLock<Highlighter> = std::sync::OnceLock::new();
-    HIGHLIGHTER.get_or_init(Highlighter::default)
+/// A global for the same reason the font and palette are: the row renderer is a
+/// free function with no path back to app state. Behind a lock rather than a
+/// `OnceLock` because settings can change it while sessions are open.
+fn active() -> &'static std::sync::RwLock<Highlighter> {
+    static ACTIVE: std::sync::OnceLock<std::sync::RwLock<Highlighter>> =
+        std::sync::OnceLock::new();
+    ACTIVE.get_or_init(|| std::sync::RwLock::new(Highlighter::default()))
+}
+
+/// Spans for one row. Taken under a read lock — tens of rows per frame, and the
+/// write only happens when settings are applied.
+pub(super) fn spans_for(line: &TerminalLine) -> Vec<(usize, usize, TermColor)> {
+    active()
+        .read()
+        .map(|highlighter| highlighter.spans(line))
+        .unwrap_or_default()
+}
+
+/// Rebuild the active rule set. Recompiles the patterns, which is why it is
+/// called when settings are applied and never from the render path.
+pub(super) fn apply_overrides(overrides: &std::collections::BTreeMap<String, bool>) {
+    if let Ok(mut active) = active().write() {
+        *active = Highlighter::with_overrides(overrides);
+    }
 }
 
 impl Highlighter {
@@ -339,15 +375,30 @@ mod tests {
         assert_eq!(off, ["comment-hash", "comment-slash"]);
     }
 
-    /// A rule set with the comment presets switched on, as a user would.
+    /// A rule set with the comment presets switched on, by the same path the
+    /// settings dialog uses.
     fn with_comments() -> Highlighter {
-        let mut highlighter = Highlighter::default();
-        for (rule, spec) in highlighter.rules.iter_mut().zip(DEFAULT_RULES) {
-            if spec.id.starts_with("comment-") {
-                rule.enabled = true;
-            }
-        }
-        highlighter
+        let overrides = DEFAULT_RULES
+            .iter()
+            .filter(|spec| spec.id.starts_with("comment-"))
+            .map(|spec| (spec.id.to_string(), true))
+            .collect();
+        Highlighter::with_overrides(&overrides)
+    }
+
+    #[test]
+    fn an_override_only_moves_the_rule_it_names() {
+        let overrides = [(String::from("comment-hash"), true)].into_iter().collect();
+        let highlighter = Highlighter::with_overrides(&overrides);
+        let on: Vec<_> = highlighter
+            .rules
+            .iter()
+            .zip(DEFAULT_RULES)
+            .filter(|(rule, _)| rule.enabled)
+            .map(|(_, spec)| spec.id)
+            .collect();
+        // comment-slash stays off; the four defaults stay on.
+        assert_eq!(on, ["comment-hash", "error", "warning", "ipv4", "url"]);
     }
 
     #[test]

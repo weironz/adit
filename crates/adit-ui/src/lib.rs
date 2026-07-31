@@ -68,7 +68,10 @@ static TERM_SCHEME: AtomicU8 = AtomicU8::new(0);
 fn is_dark() -> bool {
     DARK_MODE.load(Ordering::Relaxed)
 }
-use std::{collections::BTreeSet, time::Duration};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    time::Duration,
+};
 use unicode_width::UnicodeWidthChar;
 
 pub struct AditApp {
@@ -236,6 +239,9 @@ pub struct AditApp {
     font_family: String,
     font_size: f32,
     color_scheme: String,
+    /// Highlight rules the user has moved off their shipped default, by id.
+    /// Only the deviations — see `AppSettings::highlight_rules`.
+    highlight_rules: BTreeMap<String, bool>,
     appearance_open: bool,
     update_dialog_open: bool,
     update_state: UpdateState,
@@ -357,6 +363,8 @@ pub enum Message {
     FontFamilyChanged(u8),
     FontSizeStep(i32),
     ColorSchemeChanged(u8),
+    /// Flip one keyword-highlight rule, by its stable id.
+    HighlightRuleToggled(&'static str),
     CloseOptions,
     // Trusted-host-keys (known_hosts) management.
     CloseKnownHosts,
@@ -801,6 +809,11 @@ impl AditApp {
         let font_family = settings.font_family;
         let font_size = settings.font_size.clamp(MIN_FONT_SIZE as f32, MAX_FONT_SIZE as f32);
         let color_scheme = settings.color_scheme;
+        let highlight_rules = settings.highlight_rules;
+        // Into the renderer's global before the first frame. Only a toggle
+        // rebuilds it after this — never `view`, which runs every frame and
+        // would be recompiling regexes for nothing.
+        highlight::apply_overrides(&highlight_rules);
         let log_dir = settings.log_dir;
         let log_name_pattern = settings.log_name_pattern;
         let auto_log_on_connect = settings.auto_log_on_connect;
@@ -837,6 +850,7 @@ impl AditApp {
             font_family: font_family.clone(),
             font_size,
             color_scheme: color_scheme.clone(),
+            highlight_rules: highlight_rules.clone(),
             log_dir: log_dir.clone(),
             log_name_pattern: log_name_pattern.clone(),
             auto_log_on_connect,
@@ -968,6 +982,7 @@ impl AditApp {
             font_family,
             font_size,
             color_scheme,
+            highlight_rules,
             appearance_open: false,
             update_dialog_open: false,
             update_state: UpdateState::Idle,
@@ -1389,6 +1404,24 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();
             }
+        }
+        Message::HighlightRuleToggled(id) => {
+            let shipped = highlight::rules()
+                .iter()
+                .find(|spec| spec.id == id)
+                .is_some_and(|spec| spec.enabled);
+            let now_on = !app.highlight_rules.get(id).copied().unwrap_or(shipped);
+            if now_on == shipped {
+                // Back at the shipped value, so stop recording an opinion about
+                // it — otherwise a later correction to that default would never
+                // reach anyone who had ever toggled the rule twice.
+                app.highlight_rules.remove(id);
+            } else {
+                app.highlight_rules.insert(id.to_string(), now_on);
+            }
+            // Rebuilds the rule set, patterns and all. Cheap here and never on
+            // the render path.
+            highlight::apply_overrides(&app.highlight_rules);
         }
         Message::CloseOptions => {
             app.options_open = false;
@@ -6267,6 +6300,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         font_family: app.font_family.clone(),
         font_size: app.font_size,
         color_scheme: app.color_scheme.clone(),
+        highlight_rules: app.highlight_rules.clone(),
         log_dir: app.log_dir.clone(),
         log_name_pattern: app.log_name_pattern.clone(),
         auto_log_on_connect: app.auto_log_on_connect,
@@ -7185,6 +7219,46 @@ fn appearance_scheme_button(index: usize, current: u8) -> Element<'static, Messa
     .into()
 }
 
+fn appearance_highlight_button(
+    spec: &'static highlight::RuleSpec,
+    on: bool,
+) -> Element<'static, Message> {
+    // The swatch is the rule's own colour resolved through the active scheme, so
+    // the dialog shows what the rule will actually look like rather than a
+    // stand-in.
+    let swatch = container(Space::new())
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(palette_color(spec.ansi))),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    button(
+        row![
+            text(if on { "✓" } else { " " }).size(12).width(Length::Fixed(12.0)),
+            swatch,
+            text(spec.label).size(12),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([5, 10])
+    .width(Length::Fixed(150.0))
+    .style(move |_theme, status| {
+        if on {
+            primary_button_style(status)
+        } else {
+            secondary_button_style(status)
+        }
+    })
+    .on_press(Message::HighlightRuleToggled(spec.id))
+    .into()
+}
+
 /// Chunk a flat list of built widgets into rows of `per_row`.
 fn wrap_rows(mut buttons: Vec<Element<'static, Message>>, per_row: usize) -> Element<'static, Message> {
     let mut rows = column![].spacing(8);
@@ -7209,6 +7283,17 @@ fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .collect();
     let scheme_buttons: Vec<Element<'static, Message>> = (0..COLOR_SCHEMES.len())
         .map(|i| appearance_scheme_button(i, current_scheme))
+        .collect();
+    let highlight_buttons: Vec<Element<'static, Message>> = highlight::rules()
+        .iter()
+        .map(|spec| {
+            let on = app
+                .highlight_rules
+                .get(spec.id)
+                .copied()
+                .unwrap_or(spec.enabled);
+            appearance_highlight_button(spec, on)
+        })
         .collect();
 
     let size_row = row![
@@ -7290,6 +7375,11 @@ fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             size_row,
             text("配色方案").size(12).color(muted_text()),
             wrap_rows(scheme_buttons, 3),
+            text("输出高亮").size(12).color(muted_text()),
+            text("仅对服务端未着色的文本生效，全屏程序（vim、less 等）中不启用")
+                .size(11)
+                .color(muted_text()),
+            wrap_rows(highlight_buttons, 3),
             text("预览").size(12).color(muted_text()),
             preview,
             row![
@@ -10832,7 +10922,7 @@ fn terminal_view(
                 let keywords = if alt_screen {
                     Vec::new()
                 } else {
-                    highlight::highlighter().spans(&line)
+                    highlight::spans_for(&line)
                 };
                 column.push(terminal_line(
                     line,

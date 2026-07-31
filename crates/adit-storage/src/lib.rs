@@ -5,7 +5,7 @@ pub use credentials::{CredentialError, CredentialStore};
 use adit_domain::ConnectionProfile;
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
@@ -271,6 +271,15 @@ pub struct AppSettings {
     /// falls back to the default palette).
     #[serde(default)]
     pub color_scheme: String,
+    /// Keyword-highlight rules the user has moved off their shipped default,
+    /// keyed by rule id — e.g. `{"comment-hash": true}`.
+    ///
+    /// Only the deviations, never the whole set: saving every rule would pin
+    /// each user to the defaults in force the day they first saved, so a later
+    /// correction to a shipped rule would never reach anyone who had opened the
+    /// dialog once.
+    #[serde(default)]
+    pub highlight_rules: BTreeMap<String, bool>,
     /// Session-log folder; empty ⇒ [`default_log_dir`].
     #[serde(default)]
     pub log_dir: String,
@@ -382,6 +391,7 @@ impl Default for AppSettings {
             font_family: String::new(),
             font_size: default_font_size(),
             color_scheme: String::new(),
+            highlight_rules: BTreeMap::new(),
             log_dir: String::new(),
             log_name_pattern: String::new(),
             auto_log_on_connect: false,
@@ -1236,6 +1246,7 @@ Host db
             sidebar_visible: false,
             font_family: String::from("Consolas"),
             font_size: 15.0,
+            highlight_rules: [(String::from("comment-hash"), true)].into_iter().collect(),
             color_scheme: String::from("Dracula"),
             log_dir: String::from("D:/logs"),
             log_name_pattern: String::from("%N-%Y%M%D.log"),
