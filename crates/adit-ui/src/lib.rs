@@ -10953,10 +10953,10 @@ fn terminal_line(
     row_index: usize,
     selection: Option<TerminalSelection>,
     search: &[(usize, usize, bool)],
-    // Keyword-highlight spans for this row, as `(start_col, end_col, colour)`.
+    // Keyword-highlight spans for this row, as `(start_col, end_col, ansi)`.
     // Already restricted to cells the server left uncoloured — see
     // `highlight::Highlighter::spans`.
-    keywords: &[(usize, usize, iced::Color)],
+    keywords: &[(usize, usize, TermColor)],
     links_clickable: bool,
     show_cursor: bool,
 ) -> Element<'static, Message> {
@@ -11042,7 +11042,11 @@ fn terminal_line(
                 // Last before the cell's own colour, so selection, search and
                 // OSC 8 links all outrank a local rule. `spans` has already
                 // guaranteed this cell had no colour of the server's to lose.
-                color
+                //
+                // Resolved through the scheme like every other colour on screen,
+                // rather than being a fixed RGB — that is what keeps a highlight
+                // looking like part of the terminal instead of shouting over it.
+                term_color(color, fg)
             } else {
                 fg
             };

@@ -20,7 +20,14 @@ use unicode_width::UnicodeWidthChar;
 /// One highlighting rule: a pattern, and the colour its matches take.
 pub(super) struct HighlightRule {
     pattern: Regex,
-    color: iced::Color,
+    /// An ANSI palette index, not an RGB value.
+    ///
+    /// Hardcoded RGB was the first cut and it looked wrong beside real output:
+    /// every other colour on screen comes from the scheme's 16-colour palette,
+    /// so four off-palette hues read as garish intrusions rather than as part of
+    /// the terminal. Going through the palette also makes a highlight follow
+    /// whatever scheme the user picked instead of fighting it.
+    color: TermColor,
     enabled: bool,
 }
 
@@ -36,11 +43,13 @@ pub(super) struct HighlightRule {
 /// The ids exist so a rule can be named without quoting its pattern; nothing
 /// reads them at runtime yet, which is why they live here rather than on
 /// [`HighlightRule`].
-const DEFAULT_RULES: &[(&str, &str, (u8, u8, u8))] = &[
-    ("error", r"\b(?:ERROR|FATAL|CRITICAL)\b", (0xE0, 0x5A, 0x5A)),
-    ("warning", r"\b(?:WARN|WARNING)\b", (0xE0, 0xB0, 0x40)),
-    ("ipv4", r"\b\d{1,3}(?:\.\d{1,3}){3}\b", (0x66, 0xC0, 0xC8)),
-    ("url", r"\bhttps?://\S+", (0x6E, 0x9E, 0xE8)),
+/// The normal ANSI slots (1–6), never the bright ones (9–14): bright is what
+/// made the first cut of this feature shout over the text it was annotating.
+const DEFAULT_RULES: &[(&str, &str, u8)] = &[
+    ("error", r"\b(?:ERROR|FATAL|CRITICAL)\b", 1),
+    ("warning", r"\b(?:WARN|WARNING)\b", 3),
+    ("ipv4", r"\b\d{1,3}(?:\.\d{1,3}){3}\b", 6),
+    ("url", r"\bhttps?://\S+", 4),
 ];
 
 /// The compiled rule set. Built once and reused — compiling per frame would put
@@ -54,12 +63,12 @@ impl Default for Highlighter {
         Self {
             rules: DEFAULT_RULES
                 .iter()
-                .map(|(_, pattern, (r, g, b))| HighlightRule {
+                .map(|(_, pattern, ansi)| HighlightRule {
                     // Compile-time constants exercised by the tests below, so a
                     // failure is a build mistake rather than bad user input.
                     pattern: Regex::new(pattern)
                         .expect("built-in highlight pattern must compile"),
-                    color: iced::Color::from_rgb8(*r, *g, *b),
+                    color: TermColor::Indexed(*ansi),
                     enabled: true,
                 })
                 .collect(),
@@ -83,13 +92,13 @@ impl Highlighter {
     ///
     /// Empty for a line the server coloured throughout, which is the common case
     /// on exactly the output this feature exists to leave alone.
-    pub(super) fn spans(&self, line: &TerminalLine) -> Vec<(usize, usize, iced::Color)> {
+    pub(super) fn spans(&self, line: &TerminalLine) -> Vec<(usize, usize, TermColor)> {
         let map = ColumnMap::of(line);
         if map.text.is_empty() || !map.any_paintable {
             return Vec::new();
         }
 
-        let mut spans: Vec<(usize, usize, iced::Color)> = Vec::new();
+        let mut spans: Vec<(usize, usize, TermColor)> = Vec::new();
         for rule in self.rules.iter().filter(|rule| rule.enabled) {
             for hit in rule.pattern.find_iter(&map.text) {
                 // A match can straddle coloured and uncoloured text — a URL
