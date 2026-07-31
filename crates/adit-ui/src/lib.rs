@@ -241,6 +241,9 @@ pub struct AditApp {
     host_layout: HostLayout,
     /// Hosts most recently connected to, newest first.
     recent_hosts: Vec<ProfileId>,
+    /// Group the host manager has been opened into; `None` is the top level.
+    /// Deliberately not persisted — where you were browsing is not a setting.
+    hosts_group: Option<String>,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -376,6 +379,8 @@ pub enum Message {
     ShowMainView(MainView),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
+    /// Descend into a group in the host manager, or return to the top level.
+    OpenHostGroup(Option<String>),
     /// Connect to a host from its card in the host manager.
     ConnectHostCard(ProfileId),
     OpenAppearance,
@@ -1012,6 +1017,7 @@ impl AditApp {
             main_view: MainView::Hosts,
             host_layout,
             recent_hosts,
+            hosts_group: None,
             dark_mode,
             theme_mode,
             font_family,
@@ -1465,6 +1471,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::HostLayoutChanged(layout) => {
             app.host_layout = layout;
+        }
+        Message::OpenHostGroup(group) => {
+            app.hosts_group = group;
         }
         Message::ShowMainView(view) => {
             app.main_view = view;
@@ -9624,6 +9633,83 @@ fn host_layout_button(current: HostLayout, target: HostLayout, label: &'static s
         .into()
 }
 
+/// A group, as a card you can open. Counts hosts rather than listing them: the
+/// point of the top level is to fit on one screen.
+fn group_card(name: String, count: usize) -> Element<'static, Message> {
+    let opened = name.clone();
+    let tile = container(text("▤").size(15).color(Color::WHITE))
+        .width(Length::Fixed(34.0))
+        .height(Length::Fixed(34.0))
+        .center_x(Length::Fixed(34.0))
+        .center_y(Length::Fixed(34.0))
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(accent())),
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+
+    button(
+        row![
+            tile,
+            column![
+                text(name).size(13).color(primary_text()),
+                text(format!("{count} 台主机")).size(11).color(muted_text()),
+            ]
+            .spacing(3),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fixed(HOST_CARD_WIDTH))
+    .padding(10)
+    .style(|_theme, status| button::Style {
+        background: Some(Background::Color(match status {
+            button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
+            _ => app_background(),
+        })),
+        text_color: primary_text(),
+        border: Border {
+            color: border_color(),
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..button::Style::default()
+    })
+    .on_press(Message::OpenHostGroup(Some(opened)))
+    .into()
+}
+
+/// A titled run of hosts, drawn the way the current layout draws hosts.
+fn host_band(
+    app: &AditApp,
+    layout: HostLayout,
+    title: String,
+    hosts: Vec<&ConnectionProfile>,
+) -> Element<'static, Message> {
+    let count = hosts.len();
+    let entries: Element<'static, Message> = match layout {
+        HostLayout::Grid => wrap_rows(
+            hosts
+                .into_iter()
+                .map(|profile| host_card(app, profile))
+                .collect(),
+            3,
+        ),
+        _ => hosts
+            .into_iter()
+            .fold(column![].spacing(2), |rows, profile| {
+                rows.push(host_row(app, profile, 0.0))
+            })
+            .into(),
+    };
+    column![host_section_header(title, count), entries]
+        .spacing(10)
+        .into()
+}
+
 /// The host manager: search at the top, then one band per group.
 fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     let filter = app.session_filter.trim().to_ascii_lowercase();
@@ -9650,21 +9736,35 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(6);
 
-    let visible: Vec<&ConnectionProfile> = profiles
+    let searching = !filter.is_empty();
+    let matching: Vec<&ConnectionProfile> = profiles
         .iter()
         .filter(|profile| matches(profile))
         .collect();
 
-    // Grouped in the order the sidebar already uses, so the two views cannot
-    // disagree about where a host lives. Collected into bands first, because all
-    // three layouts want the same bands and differ only in what they do with
-    // them.
-    let mut bands: Vec<(String, Vec<&ConnectionProfile>)> = Vec::new();
-    for profile in visible {
-        match bands.last_mut() {
-            Some((group, hosts)) if group == &profile.group => hosts.push(profile),
-            _ => bands.push((profile.group.clone(), vec![profile])),
-        }
+    // Where you are, and the way back out. Searching and the tree both ignore
+    // the current group, so neither claims to be somewhere it is not.
+    let inside = (!searching && layout != HostLayout::Tree)
+        .then(|| app.hosts_group.clone())
+        .flatten();
+    let mut crumbs = row![button(
+        text("全部主机")
+            .size(12)
+            .color(if inside.is_some() { accent() } else { primary_text() })
+    )
+    .padding(0)
+    .style(|_theme, _status| button::Style {
+        background: None,
+        text_color: primary_text(),
+        ..button::Style::default()
+    })
+    .on_press(Message::OpenHostGroup(None))]
+    .spacing(6)
+    .align_y(Alignment::Center);
+    if let Some(group) = &inside {
+        crumbs = crumbs
+            .push(text("/").size(12).color(muted_text()))
+            .push(text(group.clone()).size(12).color(primary_text()));
     }
 
     let mut body = column![].spacing(match layout {
@@ -9672,95 +9772,93 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         HostLayout::List | HostLayout::Tree => 10,
     });
 
-    // Above the bands, and only when nothing is being searched for: a "recent"
-    // shortcut is for reaching a host without looking, and a filtered list is
-    // already the result of looking.
-    //
-    // Skipped for the tree, which is the session manager itself — a band of
-    // duplicates above it would fight the hierarchy it exists to show.
-    if filter.is_empty() && layout != HostLayout::Tree {
+    if layout == HostLayout::Tree {
+        // The session manager's own tree, not a copy of it. Everything it can do
+        // — collapse, drag to reorder, right-click, filter — comes along, and
+        // there is only one implementation to keep correct.
+        //
+        // Its right-click menu anchors off SidebarCursorMoved, whose coordinates
+        // are relative to whatever wraps the tree. That is the sidebar's width
+        // over there and the full pane here, so the menu lands in the right
+        // place only because the same mouse_area wraps it in both. Worth knowing
+        // before either wrapper changes.
+        body = body.push(mouse_area(session_tree(app)).on_move(Message::SidebarCursorMoved));
+    } else if searching {
+        // A search is asked of everything, not of the group you happen to be
+        // standing in — the alternative is a list that looks empty because of a
+        // location the search box says nothing about.
+        body = if matching.is_empty() {
+            body.push(text("没有匹配的主机").size(13).color(muted_text()))
+        } else {
+            body.push(host_band(
+                app,
+                layout,
+                String::from("搜索结果"),
+                matching,
+            ))
+        };
+    } else if let Some(group) = inside.clone() {
+        let hosts: Vec<&ConnectionProfile> = matching
+            .into_iter()
+            .filter(|profile| profile.group == group)
+            .collect();
+        body = if hosts.is_empty() {
+            body.push(text("这个分组还没有主机").size(13).color(muted_text()))
+        } else {
+            body.push(host_band(app, layout, group, hosts))
+        };
+    } else {
+        // Reaching for a recent host is what you do instead of looking, so it
+        // sits above everything and disappears the moment you start looking.
         let recent: Vec<&ConnectionProfile> = app
             .recent_hosts
             .iter()
             .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
             .collect();
         if !recent.is_empty() {
-            let count = recent.len();
-            let entries = match layout {
-                HostLayout::Grid => wrap_rows(
-                    recent
-                        .into_iter()
-                        .map(|profile| host_card(app, profile))
-                        .collect(),
-                    3,
-                ),
-                _ => recent
-                    .into_iter()
-                    .fold(column![].spacing(2), |rows, profile| {
-                        rows.push(host_row(app, profile, 0.0))
-                    })
-                    .into(),
-            };
+            body = body.push(host_band(app, layout, String::from("最近连接"), recent));
+        }
+
+        // Groups are cards to open rather than bands to scroll past: the top
+        // level should fit on a screen however many hosts are behind it.
+        let mut groups: Vec<(String, usize)> = Vec::new();
+        for profile in matching.iter().filter(|p| !p.group.trim().is_empty()) {
+            match groups.last_mut() {
+                Some((name, count)) if name == &profile.group => *count += 1,
+                _ => groups.push((profile.group.clone(), 1)),
+            }
+        }
+        if !groups.is_empty() {
+            let count = groups.len();
+            let cards = groups
+                .into_iter()
+                .map(|(name, hosts)| group_card(name, hosts))
+                .collect();
             body = body.push(
-                column![host_section_header(String::from("最近连接"), count), entries]
-                    .spacing(10),
+                column![
+                    host_section_header(String::from("分组"), count),
+                    wrap_rows(cards, 3)
+                ]
+                .spacing(10),
             );
         }
-    }
 
-    if bands.is_empty() {
-        body = body.push(
-            text(if filter.is_empty() {
-                "还没有会话配置"
-            } else {
-                "没有匹配的主机"
-            })
-            .size(13)
-            .color(muted_text()),
-        );
-    } else {
-        match layout {
-            HostLayout::Grid => {
-                for (group, hosts) in bands {
-                    let count = hosts.len();
-                    let cards = hosts
-                        .into_iter()
-                        .map(|profile| host_card(app, profile))
-                        .collect();
-                    body = body.push(
-                        column![host_section_header(group, count), wrap_rows(cards, 3)].spacing(10),
-                    );
-                }
-            }
-            // One flat run of rows. The group is deliberately not repeated: the
-            // point of this layout is density, and a heading every second row
-            // costs more vertical space than it explains.
-            HostLayout::List => {
-                for (_, hosts) in bands {
-                    for profile in hosts {
-                        body = body.push(host_row(app, profile, 0.0));
-                    }
-                }
-            }
-            // The session manager's own tree, not a copy of it. Everything it
-            // can do — collapse, drag to reorder, right-click, filter — comes
-            // along, and there is only one implementation to keep correct.
-            //
-            // Its right-click menu anchors off SidebarCursorMoved, whose
-            // coordinates are relative to whatever wraps the tree. That is the
-            // sidebar's width over there and the full pane here, so the menu
-            // lands in the right place only because the same mouse_area wraps it
-            // in both. Worth knowing before either wrapper changes.
-            HostLayout::Tree => {
-                body = body.push(
-                    mouse_area(session_tree(app)).on_move(Message::SidebarCursorMoved),
-                );
-            }
+        // Everything not in a group. Named 主机 rather than "ungrouped" because
+        // for anyone who never made a group it is simply the list.
+        let loose: Vec<&ConnectionProfile> = matching
+            .into_iter()
+            .filter(|profile| profile.group.trim().is_empty())
+            .collect();
+        if !loose.is_empty() {
+            body = body.push(host_band(app, layout, String::from("主机"), loose));
+        } else if app.manager.profiles().is_empty() {
+            body = body.push(text("还没有会话配置").size(13).color(muted_text()));
         }
     }
 
     container(
         column![
+            crumbs,
             row![search, switcher].spacing(10).align_y(Alignment::Center),
             scrollable(body).height(Fill),
         ]
