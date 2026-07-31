@@ -6481,8 +6481,12 @@ fn view(app: &AditApp) -> Element<'_, Message> {
 
     // The rail is outside the switch on purpose: it is what stays put when a
     // host is opened, so getting back to the list never means closing a session.
-    let body = match app.main_view {
-        MainView::Hosts => row![hosts_view(app)],
+    // The rail is the host manager's own chrome, not the window's. Beside the
+    // session tree it was a second column of navigation for a screen already
+    // showing one, so the terminal view drops it; the tree's header carries the
+    // way back.
+    let main = match app.main_view {
+        MainView::Hosts => row![nav_rail(app), hosts_view(app)],
         MainView::Terminal => {
             if app.sidebar_visible {
                 row![sidebar(app), sidebar_divider(), workspace(app)]
@@ -6490,11 +6494,9 @@ fn view(app: &AditApp) -> Element<'_, Message> {
                 row![workspace(app)]
             }
         }
-    };
-    let main = row![nav_rail(app)]
-        .push(body.height(Fill).width(Fill))
-        .height(Fill)
-        .width(Fill);
+    }
+    .height(Fill)
+    .width(Fill);
 
     let layout = column![menu_bar(app)]
         .push(toolbar(app))
@@ -9790,11 +9792,28 @@ fn group_card(name: String, count: usize) -> Element<'static, Message> {
     .into()
 }
 
+/// How many cards fit across, from the window width.
+///
+/// Was hard-coded to three, which left two thirds of a wide window empty. iced
+/// gives a view function no measured width, but the window's own is already
+/// tracked, and the rail and padding around the grid are fixed — so this is
+/// arithmetic rather than a guess.
+fn host_columns(app: &AditApp) -> usize {
+    let rail = if app.main_view == MainView::Hosts {
+        NAV_RAIL_WIDTH
+    } else {
+        0.0
+    };
+    let available = app.window_width - rail - 40.0;
+    ((available / (HOST_CARD_WIDTH + 8.0)).floor() as usize).clamp(1, 8)
+}
+
 /// A titled run of hosts, drawn the way the current layout draws hosts.
 fn host_band(
     app: &AditApp,
     icon: Option<&'static str>,
     layout: HostLayout,
+    columns: usize,
     title: String,
     hosts: Vec<&ConnectionProfile>,
     online: &std::collections::HashSet<ProfileId>,
@@ -9810,7 +9829,7 @@ fn host_band(
                 .into_iter()
                 .map(|profile| host_card(app, profile, online.contains(&profile.id)))
                 .collect(),
-            3,
+            columns,
         ),
         _ => hosts
             .into_iter()
@@ -9850,6 +9869,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(6);
 
+    let columns = host_columns(app);
     let online = connected_profiles(app);
     let searching = !filter.is_empty();
     let matching: Vec<&ConnectionProfile> = profiles
@@ -9905,7 +9925,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         body = if matching.is_empty() {
             body.push(text("没有匹配的主机").size(13).color(muted_text()))
         } else {
-            body.push(host_band(app, None, layout, String::from("搜索结果"), matching, &online))
+            body.push(host_band(app, None, layout, columns, String::from("搜索结果"), matching, &online))
         };
     } else if let Some(group) = inside.clone() {
         let hosts: Vec<&ConnectionProfile> = matching
@@ -9915,7 +9935,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         body = if hosts.is_empty() {
             body.push(text("这个分组还没有主机").size(13).color(muted_text()))
         } else {
-            body.push(host_band(app, None, layout, group, hosts, &online))
+            body.push(host_band(app, None, layout, columns, group, hosts, &online))
         };
     } else {
         // Reaching for a recent host is what you do instead of looking, so it
@@ -9926,7 +9946,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
             .collect();
         if !recent.is_empty() {
-            body = body.push(host_band(app, Some("◷"), layout, String::from("最近连接"), recent, &online));
+            body = body.push(host_band(app, Some("◷"), layout, columns, String::from("最近连接"), recent, &online));
         }
 
         // Groups are cards to open rather than bands to scroll past: the top
@@ -9952,7 +9972,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             body = body.push(
                 column![
                     host_section_header(None, String::from("分组"), count, 0),
-                    wrap_rows(cards, 3)
+                    wrap_rows(cards, columns)
                 ]
                 .spacing(10),
             );
@@ -9966,7 +9986,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         // and not one host on it. Groups are a shortcut into the list, so the
         // list has to be there to be shortcut into.
         if !matching.is_empty() {
-            body = body.push(host_band(app, None, layout, String::from("主机"), matching, &online));
+            body = body.push(host_band(app, None, layout, columns, String::from("主机"), matching, &online));
         } else {
             body = body.push(text("还没有会话配置").size(13).color(muted_text()));
         }
@@ -10147,6 +10167,11 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
                 Space::new().width(Fill),
                 // Just the essentials on the right (SecureCRT-style): new session
                 // and a button to hide the whole panel.
+                sidebar_tool_button(
+                    "▦",
+                    "返回主机列表",
+                    Message::ShowMainView(MainView::Hosts),
+                ),
                 sidebar_tool_button("⊕", "新建会话", Message::NewProfileDraft),
                 sidebar_tool_button("«", "隐藏会话栏", Message::ToggleSidebar),
             ]
