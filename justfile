@@ -106,10 +106,10 @@ deploy: dist
 # look-tweak-look loop, so the shell should come back instead of blocking until
 # Adit is closed.
 
-# Replace the installed Adit with a fresh build and start it again
-restart: dist kill deploy
+# Build, replace the installed Adit, and launch it — the whole edit-and-look loop
+app: dist kill deploy
     Start-Process "$env:LOCALAPPDATA\Programs\Adit\Adit.exe"
-    Write-Output 'restarted'
+    Write-Output 'launched'
 
 # ── release ────────────────────────────────────────────────────────────
 #
