@@ -9630,7 +9630,12 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
 
 /// A section heading with the count on the right, the way the reference client
 /// labels each band of its host list.
-fn host_section_header(title: String, count: usize, online: usize) -> Element<'static, Message> {
+fn host_section_header(
+    icon: Option<&'static str>,
+    title: String,
+    count: usize,
+    online: usize,
+) -> Element<'static, Message> {
     let pill = |label: String, color: Color| {
         container(text(label).size(11).color(color))
             .padding([2, 8])
@@ -9643,10 +9648,18 @@ fn host_section_header(title: String, count: usize, online: usize) -> Element<'s
                 ..container::Style::default()
             })
     };
-    let mut header = row![
-        text(title).size(13).color(primary_text()),
-        Space::new().width(Fill),
-    ];
+    // Bold and dark: these separate one band from the next, and at the same
+    // weight as the host names under them they stop doing that.
+    let mut header = row![].spacing(6).align_y(Alignment::Center);
+    if let Some(icon) = icon {
+        header = header.push(text(icon).size(12).color(muted_text()));
+    }
+    header = header
+        .push(text(title).size(13).color(primary_text()).font(Font {
+            weight: Weight::Bold,
+            ..Font::DEFAULT
+        }))
+        .push(Space::new().width(Fill));
     if online > 0 {
         header = header.push(pill(format!("{online} 个在线"), success()));
     }
@@ -9780,6 +9793,7 @@ fn group_card(name: String, count: usize) -> Element<'static, Message> {
 /// A titled run of hosts, drawn the way the current layout draws hosts.
 fn host_band(
     app: &AditApp,
+    icon: Option<&'static str>,
     layout: HostLayout,
     title: String,
     hosts: Vec<&ConnectionProfile>,
@@ -9805,7 +9819,7 @@ fn host_band(
             })
             .into(),
     };
-    column![host_section_header(title, count, up), entries]
+    column![host_section_header(icon, title, count, up), entries]
         .spacing(10)
         .into()
 }
@@ -9891,7 +9905,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         body = if matching.is_empty() {
             body.push(text("没有匹配的主机").size(13).color(muted_text()))
         } else {
-            body.push(host_band(app, layout, String::from("搜索结果"), matching, &online))
+            body.push(host_band(app, None, layout, String::from("搜索结果"), matching, &online))
         };
     } else if let Some(group) = inside.clone() {
         let hosts: Vec<&ConnectionProfile> = matching
@@ -9901,7 +9915,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         body = if hosts.is_empty() {
             body.push(text("这个分组还没有主机").size(13).color(muted_text()))
         } else {
-            body.push(host_band(app, layout, group, hosts, &online))
+            body.push(host_band(app, None, layout, group, hosts, &online))
         };
     } else {
         // Reaching for a recent host is what you do instead of looking, so it
@@ -9912,7 +9926,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
             .collect();
         if !recent.is_empty() {
-            body = body.push(host_band(app, layout, String::from("最近连接"), recent, &online));
+            body = body.push(host_band(app, Some("◷"), layout, String::from("最近连接"), recent, &online));
         }
 
         // Groups are cards to open rather than bands to scroll past: the top
@@ -9932,7 +9946,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 .collect();
             body = body.push(
                 column![
-                    host_section_header(String::from("分组"), count, 0),
+                    host_section_header(None, String::from("分组"), count, 0),
                     wrap_rows(cards, 3)
                 ]
                 .spacing(10),
@@ -9946,7 +9960,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .filter(|profile| profile.group.trim().is_empty())
             .collect();
         if !loose.is_empty() {
-            body = body.push(host_band(app, layout, String::from("主机"), loose, &online));
+            body = body.push(host_band(app, None, layout, String::from("主机"), loose, &online));
         } else if app.manager.profiles().is_empty() {
             body = body.push(text("还没有会话配置").size(13).color(muted_text()));
         }
