@@ -9482,21 +9482,55 @@ fn nav_rail(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
+/// Profiles with a session that is up right now.
+///
+/// Built once per render and handed down, rather than each card scanning the
+/// session list — with a hundred hosts and a dozen sessions that is the
+/// difference between one pass and a hundred.
+fn connected_profiles(app: &AditApp) -> std::collections::HashSet<ProfileId> {
+    app.manager
+        .sessions()
+        .into_iter()
+        .filter(|session| session.status == SessionStatus::Connected)
+        .map(|session| session.profile_id)
+        .collect()
+}
+
+/// The glyph on a host's tile.
+///
+/// The protocol, not the operating system. The reference client shows an OS
+/// logo, but Adit never asks which OS a host runs, and guessing from its name
+/// would be wrong often enough to be worse than nothing. The protocol is
+/// something a profile actually knows, and it is what changes when opening it.
+fn protocol_glyph(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::Ssh => "\u{25b8}",
+        Protocol::LocalShell => "\u{25a3}",
+        Protocol::Serial => "\u{2325}",
+        Protocol::Rdp => "\u{25a4}",
+    }
+}
+
+/// A small filled dot, for "this host has a session up".
+fn online_dot() -> Element<'static, Message> {
+    container(Space::new())
+        .width(Length::Fixed(7.0))
+        .height(Length::Fixed(7.0))
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(success())),
+            border: Border {
+                radius: 999.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
 /// One host, as a card: an accent tile, the name, and `user@host` beneath it.
-fn host_card(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
+fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Element<'static, Message> {
     let tile_color = profile_accent(app, profile.id).unwrap_or_else(accent);
-    let tile = container(
-        text(
-            profile
-                .name
-                .chars()
-                .next()
-                .map(|c| c.to_uppercase().to_string())
-                .unwrap_or_else(|| String::from("?")),
-        )
-        .size(15)
-        .color(Color::WHITE),
-    )
+    let tile = container(text(protocol_glyph(profile.protocol)).size(15).color(Color::WHITE))
     .width(Length::Fixed(34.0))
     .height(Length::Fixed(34.0))
     .center_x(Length::Fixed(34.0))
@@ -9520,7 +9554,15 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Mes
         row![
             tile,
             column![
-                text(profile.name.clone()).size(13).color(primary_text()),
+                {
+                    let mut title = row![text(profile.name.clone()).size(13).color(primary_text())]
+                        .spacing(6)
+                        .align_y(Alignment::Center);
+                    if online {
+                        title = title.push(online_dot());
+                    }
+                    title
+                },
                 text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
             ]
             .spacing(3),
@@ -9549,11 +9591,9 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Mes
 
 /// A section heading with the count on the right, the way the reference client
 /// labels each band of its host list.
-fn host_section_header(title: String, count: usize) -> Element<'static, Message> {
-    row![
-        text(title).size(13).color(primary_text()),
-        Space::new().width(Fill),
-        container(text(format!("{count} 台")).size(11).color(muted_text()))
+fn host_section_header(title: String, count: usize, online: usize) -> Element<'static, Message> {
+    let pill = |label: String, color: Color| {
+        container(text(label).size(11).color(color))
             .padding([2, 8])
             .style(|_theme| container::Style {
                 background: Some(Background::Color(surface_alt())),
@@ -9562,16 +9602,32 @@ fn host_section_header(title: String, count: usize) -> Element<'static, Message>
                     ..Border::default()
                 },
                 ..container::Style::default()
-            }),
-    ]
-    .align_y(Alignment::Center)
-    .into()
+            })
+    };
+    let mut header = row![
+        text(title).size(13).color(primary_text()),
+        Space::new().width(Fill),
+    ];
+    if online > 0 {
+        header = header.push(pill(format!("{online} 个在线"), success()));
+    }
+    header
+        .push(pill(format!("{count} 台"), muted_text()))
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// One host as a full-width row — the shape List and Tree share, differing only
 /// in how far it is indented.
-fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32) -> Element<'static, Message> {
-    let dot_color = profile_accent(app, profile.id).unwrap_or_else(accent);
+fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, online: bool) -> Element<'static, Message> {
+    // The accent while idle, the success colour while a session is up: one mark
+    // doing both jobs keeps the row from growing a second column of dots.
+    let dot_color = if online {
+        success()
+    } else {
+        profile_accent(app, profile.id).unwrap_or_else(accent)
+    };
     let dot = container(Space::new())
         .width(Length::Fixed(8.0))
         .height(Length::Fixed(8.0))
@@ -9688,24 +9744,29 @@ fn host_band(
     layout: HostLayout,
     title: String,
     hosts: Vec<&ConnectionProfile>,
+    online: &std::collections::HashSet<ProfileId>,
 ) -> Element<'static, Message> {
     let count = hosts.len();
+    let up = hosts
+        .iter()
+        .filter(|profile| online.contains(&profile.id))
+        .count();
     let entries: Element<'static, Message> = match layout {
         HostLayout::Grid => wrap_rows(
             hosts
                 .into_iter()
-                .map(|profile| host_card(app, profile))
+                .map(|profile| host_card(app, profile, online.contains(&profile.id)))
                 .collect(),
             3,
         ),
         _ => hosts
             .into_iter()
             .fold(column![].spacing(2), |rows, profile| {
-                rows.push(host_row(app, profile, 0.0))
+                rows.push(host_row(app, profile, 0.0, online.contains(&profile.id)))
             })
             .into(),
     };
-    column![host_section_header(title, count), entries]
+    column![host_section_header(title, count, up), entries]
         .spacing(10)
         .into()
 }
@@ -9736,6 +9797,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(6);
 
+    let online = connected_profiles(app);
     let searching = !filter.is_empty();
     let matching: Vec<&ConnectionProfile> = profiles
         .iter()
@@ -9790,12 +9852,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         body = if matching.is_empty() {
             body.push(text("没有匹配的主机").size(13).color(muted_text()))
         } else {
-            body.push(host_band(
-                app,
-                layout,
-                String::from("搜索结果"),
-                matching,
-            ))
+            body.push(host_band(app, layout, String::from("搜索结果"), matching, &online))
         };
     } else if let Some(group) = inside.clone() {
         let hosts: Vec<&ConnectionProfile> = matching
@@ -9805,7 +9862,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         body = if hosts.is_empty() {
             body.push(text("这个分组还没有主机").size(13).color(muted_text()))
         } else {
-            body.push(host_band(app, layout, group, hosts))
+            body.push(host_band(app, layout, group, hosts, &online))
         };
     } else {
         // Reaching for a recent host is what you do instead of looking, so it
@@ -9816,7 +9873,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
             .collect();
         if !recent.is_empty() {
-            body = body.push(host_band(app, layout, String::from("最近连接"), recent));
+            body = body.push(host_band(app, layout, String::from("最近连接"), recent, &online));
         }
 
         // Groups are cards to open rather than bands to scroll past: the top
@@ -9836,7 +9893,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 .collect();
             body = body.push(
                 column![
-                    host_section_header(String::from("分组"), count),
+                    host_section_header(String::from("分组"), count, 0),
                     wrap_rows(cards, 3)
                 ]
                 .spacing(10),
@@ -9850,7 +9907,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .filter(|profile| profile.group.trim().is_empty())
             .collect();
         if !loose.is_empty() {
-            body = body.push(host_band(app, layout, String::from("主机"), loose));
+            body = body.push(host_band(app, layout, String::from("主机"), loose, &online));
         } else if app.manager.profiles().is_empty() {
             body = body.push(text("还没有会话配置").size(13).color(muted_text()));
         }
@@ -9859,7 +9916,20 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     container(
         column![
             crumbs,
-            row![search, switcher].spacing(10).align_y(Alignment::Center),
+            // Search, then the shapes, then the one action. No tag filter or
+            // multi-select alongside them: the reference client has both, Adit
+            // has neither tags nor a bulk operation to select for, and a control
+            // that opens onto nothing is worse than its absence.
+            row![
+                search,
+                switcher,
+                button(text("+ 新建主机").size(12))
+                    .padding([6, 14])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::NewProfileDraft),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
             scrollable(body).height(Fill),
         ]
         .spacing(16),
@@ -12043,6 +12113,12 @@ fn accent_soft() -> Color {
 
 fn danger() -> Color {
     Color::from_rgb8(229, 72, 77)
+}
+
+/// "This is up." Distinct from `accent()`, which marks the selected thing —
+/// a host can be both, and one colour could not say so.
+fn success() -> Color {
+    pick(Color::from_rgb8(22, 143, 92), Color::from_rgb8(63, 185, 122))
 }
 
 fn danger_background() -> Color {
