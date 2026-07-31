@@ -17,9 +17,25 @@ use adit_terminal::{Color as TermColor, TerminalLine};
 use regex::Regex;
 use unicode_width::UnicodeWidthChar;
 
+/// How much of the line a match colours.
+///
+/// iTerm2 splits its highlight trigger into exactly these two actions, and the
+/// distinction turns out to matter more than the colour does: a comment coloured
+/// only where its `#` sits reads as a stray fragment, while the same comment
+/// coloured end to end reads as one thing. No amount of tuning the palette
+/// substitutes for picking the right one.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum Scope {
+    /// Colour the matched text only.
+    Match,
+    /// Colour the whole line the match appears on.
+    Line,
+}
+
 /// One highlighting rule: a pattern, and the colour its matches take.
 pub(super) struct HighlightRule {
     pattern: Regex,
+    scope: Scope,
     /// An ANSI palette index, not an RGB value.
     ///
     /// Hardcoded RGB was the first cut and it looked wrong beside real output:
@@ -31,25 +47,47 @@ pub(super) struct HighlightRule {
     enabled: bool,
 }
 
-/// The shipped defaults, as `(id, pattern, rgb)`.
+struct RuleSpec {
+    /// Names the rule for the tests below, and from step 2 for the settings UI.
+    /// Nothing in the shipping build reads it yet — but the alternative is
+    /// identifying rules by index, which would make every assertion in this file
+    /// unreadable to keep a field honest.
+    #[cfg_attr(not(test), allow(dead_code))]
+    id: &'static str,
+    pattern: &'static str,
+    /// A normal ANSI slot (1–6), never a bright one (9–14): bright is what made
+    /// the first cut of this feature shout over the text it was annotating.
+    ansi: u8,
+    scope: Scope,
+    /// On for everyone, or shipped and waiting to be switched on.
+    enabled: bool,
+}
+
+/// The shipped rules, in precedence order — first match on a column wins.
 ///
-/// Deliberately four. A default is on for everyone, so a wrong one is a bug
-/// shipped to every user — and the tempting patterns are the dangerous ones: a
-/// `#`-comment rule misfires on diff markers and root prompts, and a `$`-prefix
-/// rule shreds a bcrypt hash into differently coloured fragments. Those ship
-/// later as presets that are off by default. Everything here is context-free and
-/// rarely coincidental.
+/// The comment rules come first on purpose. In a comment line the comment colour
+/// should carry the whole line, including any URL inside it; putting `url` first
+/// would punch a differently coloured hole through the middle of it.
 ///
-/// The ids exist so a rule can be named without quoting its pattern; nothing
-/// reads them at runtime yet, which is why they live here rather than on
-/// [`HighlightRule`].
-/// The normal ANSI slots (1–6), never the bright ones (9–14): bright is what
-/// made the first cut of this feature shout over the text it was annotating.
-const DEFAULT_RULES: &[(&str, &str, u8)] = &[
-    ("error", r"\b(?:ERROR|FATAL|CRITICAL)\b", 1),
-    ("warning", r"\b(?:WARN|WARNING)\b", 3),
-    ("ipv4", r"\b\d{1,3}(?:\.\d{1,3}){3}\b", 6),
-    ("url", r"\bhttps?://\S+", 4),
+/// Four are on by default. A default is on for everyone, so a wrong one is a bug
+/// shipped to every user, and everything enabled here is context-free and rarely
+/// coincidental.
+const DEFAULT_RULES: &[RuleSpec] = &[
+    // Anchored to the start of the line, and that anchoring is what makes the
+    // rule safe enough to ship at all. `docs/keyword-highlighting.md` rejected a
+    // comment rule outright for misfiring on root prompts and diff markers — but
+    // a prompt has `root@host:/path` before its `#`, and `+++`/`---` are not `#`
+    // at all, so neither matches once the pattern demands line-start. The
+    // objection was to an unanchored rule; it was never examined.
+    //
+    // Off by default all the same: a Markdown heading is a false positive, and a
+    // whole-line colour is a loud way to be wrong.
+    RuleSpec { id: "comment-hash", pattern: r"^\s*#", ansi: 2, scope: Scope::Line, enabled: false },
+    RuleSpec { id: "comment-slash", pattern: r"^\s*//", ansi: 2, scope: Scope::Line, enabled: false },
+    RuleSpec { id: "error", pattern: r"\b(?:ERROR|FATAL|CRITICAL)\b", ansi: 1, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "warning", pattern: r"\b(?:WARN|WARNING)\b", ansi: 3, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "ipv4", pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b", ansi: 6, scope: Scope::Match, enabled: true },
+    RuleSpec { id: "url", pattern: r"\bhttps?://\S+", ansi: 4, scope: Scope::Match, enabled: true },
 ];
 
 /// The compiled rule set. Built once and reused — compiling per frame would put
@@ -63,13 +101,14 @@ impl Default for Highlighter {
         Self {
             rules: DEFAULT_RULES
                 .iter()
-                .map(|(_, pattern, ansi)| HighlightRule {
+                .map(|spec| HighlightRule {
                     // Compile-time constants exercised by the tests below, so a
                     // failure is a build mistake rather than bad user input.
-                    pattern: Regex::new(pattern)
+                    pattern: Regex::new(spec.pattern)
                         .expect("built-in highlight pattern must compile"),
-                    color: TermColor::Indexed(*ansi),
-                    enabled: true,
+                    scope: spec.scope,
+                    color: TermColor::Indexed(spec.ansi),
+                    enabled: spec.enabled,
                 })
                 .collect(),
         }
@@ -100,16 +139,28 @@ impl Highlighter {
 
         let mut spans: Vec<(usize, usize, TermColor)> = Vec::new();
         for rule in self.rules.iter().filter(|rule| rule.enabled) {
-            for hit in rule.pattern.find_iter(&map.text) {
-                // A match can straddle coloured and uncoloured text — a URL
-                // printed inside an already-red error line, say. Emit the runs
-                // the server left alone rather than dropping the match whole.
-                for (start, end) in map.paintable_runs(hit.start(), hit.end()) {
-                    // First rule in list order wins. Predictable beats "most
-                    // specific", which nobody can predict from a settings list.
-                    if !spans.iter().any(|(s, e, _)| start < *e && *s < end) {
-                        spans.push((start, end, rule.color));
+            // A match can straddle coloured and uncoloured text — a URL printed
+            // inside an already-red error line, say. Either way only the runs the
+            // server left alone are emitted, rather than dropping the match whole.
+            let ranges: Vec<(usize, usize)> = match rule.scope {
+                Scope::Line => {
+                    if rule.pattern.is_match(&map.text) {
+                        map.paintable_runs(0, map.text.len())
+                    } else {
+                        Vec::new()
                     }
+                }
+                Scope::Match => rule
+                    .pattern
+                    .find_iter(&map.text)
+                    .flat_map(|hit| map.paintable_runs(hit.start(), hit.end()))
+                    .collect(),
+            };
+            for (start, end) in ranges {
+                // First rule in list order wins. Predictable beats "most
+                // specific", which nobody can predict from a settings list.
+                if !spans.iter().any(|(s, e, _)| start < *e && *s < end) {
+                    spans.push((start, end, rule.color));
                 }
             }
         }
@@ -272,9 +323,72 @@ mod tests {
         // patterns are exactly the dangerous ones (a `#` rule misfires on diff
         // markers and root prompts; a `$` rule shreds a bcrypt hash). Anything
         // new belongs in the off-by-default presets until it has earned better.
-        let ids: Vec<_> = DEFAULT_RULES.iter().map(|(id, ..)| *id).collect();
-        assert_eq!(ids, ["error", "warning", "ipv4", "url"]);
-        assert_eq!(Highlighter::default().rules.len(), DEFAULT_RULES.len());
+        let on: Vec<_> = DEFAULT_RULES
+            .iter()
+            .filter(|spec| spec.enabled)
+            .map(|spec| spec.id)
+            .collect();
+        assert_eq!(on, ["error", "warning", "ipv4", "url"]);
+        // The comment rules ship switched off. Turning one on by default is a
+        // decision about everyone's screen, not a tweak.
+        let off: Vec<_> = DEFAULT_RULES
+            .iter()
+            .filter(|spec| !spec.enabled)
+            .map(|spec| spec.id)
+            .collect();
+        assert_eq!(off, ["comment-hash", "comment-slash"]);
+    }
+
+    /// A rule set with the comment presets switched on, as a user would.
+    fn with_comments() -> Highlighter {
+        let mut highlighter = Highlighter::default();
+        for (rule, spec) in highlighter.rules.iter_mut().zip(DEFAULT_RULES) {
+            if spec.id.starts_with("comment-") {
+                rule.enabled = true;
+            }
+        }
+        highlighter
+    }
+
+    #[test]
+    fn a_line_scoped_rule_colours_the_whole_line() {
+        // The point of Scope::Line: colouring only where the `#` sits is what
+        // made this read as a stray fragment next to other clients.
+        let text = "  # Passwords must be encoded using MD5";
+        let line = TerminalLine::plain(text);
+        let spans = with_comments().spans(&line);
+        assert_eq!(spans.len(), 1);
+        // Computed, not written out: a hand-counted column is a magic number
+        // that is wrong the first time and silently right afterwards.
+        assert_eq!((spans[0].0, spans[0].1), (0, text.chars().count()));
+    }
+
+    #[test]
+    fn a_comment_carries_its_line_through_a_url() {
+        // The comment rules precede `url` so a comment stays one colour end to
+        // end. Ordered the other way this line would come back in three pieces.
+        let line = TerminalLine::plain("# see https://example.com/x for more");
+        let spans = with_comments().spans(&line);
+        assert_eq!(spans.len(), 1, "expected one unbroken span, got {spans:?}");
+    }
+
+    #[test]
+    fn a_prompt_is_not_a_comment() {
+        // Anchoring to line-start is what makes the comment rule shippable: a
+        // prompt's `#` has the user, host and path in front of it.
+        let line = TerminalLine::plain("root@node72:/data/traefik# cat .env");
+        assert!(with_comments().spans(&line).is_empty());
+    }
+
+    #[test]
+    fn diff_markers_are_not_comments() {
+        for text in ["+++ b/src/lib.rs", "--- a/src/lib.rs", "+added", "-removed"] {
+            let line = TerminalLine::plain(text);
+            assert!(
+                with_comments().spans(&line).is_empty(),
+                "{text} should not read as a comment"
+            );
+        }
     }
 
     #[test]
