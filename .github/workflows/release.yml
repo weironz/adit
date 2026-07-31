@@ -59,9 +59,11 @@ jobs:
           done
 
       # ── Gate: identical to ci.yml's build job, so a red tree never publishes ──
-      - name: Build
-        run: cargo build --workspace
-
+      #
+      # No separate `cargo build --workspace`: clippy compiles every target it
+      # checks, so that step was doing the same work twice. The timings said so —
+      # the build took 218s and the clippy after it only 91s, which is the shape
+      # of an already-warm dependency graph rather than a second full compile.
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -134,6 +136,14 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # These three attach-to-the-release jobs had no cache at all, so each one
+      # rebuilt every dependency from scratch — this job's two release builds ran
+      # 569s between them. The version bump changes Cargo.lock, so the exact key
+      # never hits on a release, but rust-cache's prefix restore-keys still land
+      # the dependency graph and only the workspace crates recompile.
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Build app (release)
         run: cargo build --release -p adit-app --locked
 
@@ -180,6 +190,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -215,6 +228,9 @@ jobs:
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
 
       # Both architectures from this one Apple Silicon runner: every macOS runner
       # image is arm64 now, and Apple's clang cross-compiles to Intel happily, so
