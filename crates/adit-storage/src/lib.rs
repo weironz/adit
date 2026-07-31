@@ -261,6 +261,9 @@ pub struct AppSettings {
     /// theme before this field existed keeps the theme they picked.
     #[serde(default)]
     pub theme_mode: Option<ThemeMode>,
+    /// How the host manager lays its entries out.
+    #[serde(default)]
+    pub host_layout: HostLayout,
     #[serde(default)]
     pub collapsed_groups: Vec<String>,
     pub window_width: f32,
@@ -393,6 +396,7 @@ impl Default for AppSettings {
             // Dark-first, matching the Termius-style look.
             dark_mode: true,
             theme_mode: None,
+            host_layout: HostLayout::Grid,
             collapsed_groups: Vec::new(),
             window_width: 1360.0,
             window_height: 860.0,
@@ -433,6 +437,20 @@ pub enum ThemeMode {
     /// next launch.
     System,
     Dark,
+}
+
+/// How the host manager lays its entries out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum HostLayout {
+    /// Cards, several to a row. Roomy, and the easiest to scan by name.
+    #[default]
+    Grid,
+    /// One full-width row per host. The densest, for long lists.
+    List,
+    /// Group headings with their hosts indented beneath, so the hierarchy is
+    /// visible rather than implied by ordering.
+    Tree,
 }
 
 /// JSON-backed store for [`AppSettings`], saved next to the profile store.
@@ -1263,6 +1281,7 @@ Host db
         let settings = AppSettings {
             dark_mode: true,
             theme_mode: Some(ThemeMode::System),
+            host_layout: HostLayout::Tree,
             collapsed_groups: vec![String::from("Lab"), String::from("Prod")],
             window_width: 1500.0,
             window_height: 900.0,

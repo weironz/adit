@@ -9,7 +9,7 @@ use adit_session::{
     TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
 use adit_storage::{
-    AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet, ThemeMode,
+    AppSettings, CredentialStore, ProfileCatalog, ProfileStore, HostLayout, SettingsStore, Snippet, ThemeMode,
 };
 use adit_terminal::{
     Color as TermColor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot, Viewport,
@@ -237,6 +237,8 @@ pub struct AditApp {
     context_menu_pos: Point,
     /// Which top-level view fills the area beside the nav rail.
     main_view: MainView,
+    /// How the host manager lays its entries out.
+    host_layout: HostLayout,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -370,6 +372,8 @@ pub enum Message {
     ColorSchemeChanged(u8),
     /// Switch the top-level view beside the nav rail.
     ShowMainView(MainView),
+    /// Switch how the host manager lays its entries out.
+    HostLayoutChanged(HostLayout),
     /// Connect to a host from its card in the host manager.
     ConnectHostCard(ProfileId),
     OpenAppearance,
@@ -812,6 +816,7 @@ impl AditApp {
             ThemeMode::Light
         });
         let dark_mode = resolve_dark(theme_mode);
+        let host_layout = settings.host_layout;
         // Clamp away a bad persisted size (e.g. a 0x0 written while minimized) so
         // the window is never created invisible; the file then self-heals on the
         // next Tick because the clamped value differs from `persisted_settings`.
@@ -860,6 +865,7 @@ impl AditApp {
         let persisted_settings = AppSettings {
             dark_mode,
             theme_mode: Some(theme_mode),
+            host_layout,
             collapsed_groups: collapsed_groups.iter().cloned().collect(),
             window_width: raw_window_width,
             window_height: raw_window_height,
@@ -1000,6 +1006,7 @@ impl AditApp {
             // Opens on the host list rather than an empty terminal: with no
             // session running there is nothing for the terminal view to show.
             main_view: MainView::Hosts,
+            host_layout,
             dark_mode,
             theme_mode,
             font_family,
@@ -1450,6 +1457,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();
             }
+        }
+        Message::HostLayoutChanged(layout) => {
+            app.host_layout = layout;
         }
         Message::ShowMainView(view) => {
             app.main_view = view;
@@ -6351,6 +6361,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
     AppSettings {
         dark_mode: app.dark_mode,
         theme_mode: Some(app.theme_mode),
+        host_layout: app.host_layout,
         // BTreeSet iterates sorted, so the snapshot is order-stable.
         collapsed_groups: app.collapsed_groups.iter().cloned().collect(),
         window_width: app.window_width,
@@ -9526,6 +9537,71 @@ fn host_section_header(title: String, count: usize) -> Element<'static, Message>
     .into()
 }
 
+/// One host as a full-width row — the shape List and Tree share, differing only
+/// in how far it is indented.
+fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32) -> Element<'static, Message> {
+    let dot_color = profile_accent(app, profile.id).unwrap_or_else(accent);
+    let dot = container(Space::new())
+        .width(Length::Fixed(8.0))
+        .height(Length::Fixed(8.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(dot_color)),
+            border: Border {
+                radius: 999.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    let subtitle = if profile.username.trim().is_empty() {
+        profile.host.clone()
+    } else {
+        format!("{}@{}", profile.username, profile.host)
+    };
+
+    button(
+        row![
+            Space::new().width(Length::Fixed(indent)),
+            dot,
+            text(profile.name.clone()).size(13).color(primary_text()),
+            Space::new().width(Fill),
+            text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .width(Fill)
+    .padding([7, 10])
+    .style(|_theme, status| button::Style {
+        background: Some(Background::Color(match status {
+            button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
+            _ => Color::TRANSPARENT,
+        })),
+        text_color: primary_text(),
+        border: Border {
+            radius: RADIUS_SM.into(),
+            ..Border::default()
+        },
+        ..button::Style::default()
+    })
+    .on_press(Message::ConnectHostCard(profile.id))
+    .into()
+}
+
+fn host_layout_button(current: HostLayout, target: HostLayout, label: &'static str) -> Element<'static, Message> {
+    let selected = current == target;
+    button(text(label).size(12))
+        .padding([5, 12])
+        .style(move |_theme, status| {
+            if selected {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::HostLayoutChanged(target))
+        .into()
+}
+
 /// The host manager: search at the top, then one band per group.
 fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     let filter = app.session_filter.trim().to_ascii_lowercase();
@@ -9544,43 +9620,96 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         .padding(9)
         .size(13);
 
-    // Grouped in the order the sidebar already uses, so the two views agree
-    // about where a host lives.
-    let mut body = column![].spacing(18);
-    let mut group: Option<String> = None;
-    let mut cards: Vec<Element<'static, Message>> = Vec::new();
-    let mut pending: Option<String> = None;
+    let layout = app.host_layout;
+    let switcher = row![
+        host_layout_button(layout, HostLayout::Grid, "网格"),
+        host_layout_button(layout, HostLayout::List, "列表"),
+        host_layout_button(layout, HostLayout::Tree, "树形"),
+    ]
+    .spacing(6);
 
-    for profile in profiles.iter().filter(|profile| matches(profile)) {
-        if group.as_deref() != Some(profile.group.as_str()) {
-            if let Some(title) = pending.take() {
-                let count = cards.len();
-                body = body.push(
-                    column![host_section_header(title, count), wrap_rows(std::mem::take(&mut cards), 3)]
-                        .spacing(10),
-                );
-            }
-            group = Some(profile.group.clone());
-            pending = Some(profile.group.clone());
+    let visible: Vec<&ConnectionProfile> = profiles
+        .iter()
+        .filter(|profile| matches(profile))
+        .collect();
+
+    // Grouped in the order the sidebar already uses, so the two views cannot
+    // disagree about where a host lives. Collected into bands first, because all
+    // three layouts want the same bands and differ only in what they do with
+    // them.
+    let mut bands: Vec<(String, Vec<&ConnectionProfile>)> = Vec::new();
+    for profile in visible {
+        match bands.last_mut() {
+            Some((group, hosts)) if group == &profile.group => hosts.push(profile),
+            _ => bands.push((profile.group.clone(), vec![profile])),
         }
-        cards.push(host_card(app, profile));
-    }
-    if let Some(title) = pending.take() {
-        let count = cards.len();
-        body = body.push(
-            column![host_section_header(title, count), wrap_rows(cards, 3)].spacing(10),
-        );
-    } else if filter.is_empty() {
-        body = body.push(text("还没有会话配置").size(13).color(muted_text()));
-    } else {
-        body = body.push(text("没有匹配的主机").size(13).color(muted_text()));
     }
 
-    container(column![search, scrollable(body).height(Fill)].spacing(16))
-        .width(Fill)
-        .height(Fill)
-        .padding(20)
-        .into()
+    let mut body = column![].spacing(match layout {
+        HostLayout::Grid => 18,
+        HostLayout::List | HostLayout::Tree => 10,
+    });
+
+    if bands.is_empty() {
+        body = body.push(
+            text(if filter.is_empty() {
+                "还没有会话配置"
+            } else {
+                "没有匹配的主机"
+            })
+            .size(13)
+            .color(muted_text()),
+        );
+    } else {
+        match layout {
+            HostLayout::Grid => {
+                for (group, hosts) in bands {
+                    let count = hosts.len();
+                    let cards = hosts
+                        .into_iter()
+                        .map(|profile| host_card(app, profile))
+                        .collect();
+                    body = body.push(
+                        column![host_section_header(group, count), wrap_rows(cards, 3)].spacing(10),
+                    );
+                }
+            }
+            // One flat run of rows. The group is deliberately not repeated: the
+            // point of this layout is density, and a heading every second row
+            // costs more vertical space than it explains.
+            HostLayout::List => {
+                for (_, hosts) in bands {
+                    for profile in hosts {
+                        body = body.push(host_row(app, profile, 0.0));
+                    }
+                }
+            }
+            // Headings with their hosts indented under them, so the hierarchy is
+            // visible rather than implied by the order.
+            HostLayout::Tree => {
+                for (group, hosts) in bands {
+                    let count = hosts.len();
+                    let mut band = column![host_section_header(group, count)].spacing(2);
+                    for profile in hosts {
+                        band = band.push(host_row(app, profile, 14.0));
+                    }
+                    body = body.push(band);
+                }
+            }
+        }
+    }
+
+    container(
+        column![
+            row![search, switcher].spacing(10).align_y(Alignment::Center),
+            scrollable(body).height(Fill),
+        ]
+        .spacing(16),
+    )
+    .width(Fill)
+    .height(Fill)
+    .padding(20)
+    .into()
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
