@@ -1008,6 +1008,12 @@ impl SessionManager {
         }
     }
 
+    pub fn set_profile_icon(&mut self, profile_id: ProfileId, icon: String) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.icon = icon;
+        }
+    }
+
     /// Rename a profile in place (just its display name). Open auto-titled tabs
     /// follow the new name, exactly like `update_profile` does.
     pub fn rename_profile(

@@ -83,6 +83,13 @@ pub struct ConnectionProfile {
     /// [`Environment::Custom`]; ignored otherwise.
     #[serde(default)]
     pub accent_color: Option<String>,
+    /// Preset icon key for the host manager, or empty for "work it out".
+    ///
+    /// A key, not a path or a colour: the presets are a presentation concern and
+    /// live in the UI, so a profile that names one stays valid when the artwork
+    /// behind it changes.
+    #[serde(default)]
+    pub icon: String,
     /// Short tab badge (e.g. `PROD`). Empty/None ⇒ the environment's own label.
     #[serde(default)]
     pub label: Option<String>,
@@ -259,6 +266,7 @@ impl ConnectionProfile {
     ) -> Self {
         Self {
             id: ProfileId::new(),
+            icon: String::new(),
             group: group.into(),
             name: name.into(),
             host: host.into(),

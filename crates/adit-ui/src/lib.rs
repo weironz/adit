@@ -128,6 +128,8 @@ pub struct AditApp {
     /// profiles.json. Distinct from `profile_password`.
     profile_passphrase: String,
     profile_protocol: Protocol,
+    /// Preset icon key being edited; empty means "work it out".
+    profile_icon: String,
     profile_identity_file: String,
     profile_startup_command: String,
     /// Jump-host chain as an editable OpenSSH-style spec (`user@host:port`,
@@ -520,6 +522,8 @@ pub enum Message {
     ProfilePasswordChanged(String),
     ProfilePassphraseChanged(String),
     ProfileProtocolChanged(Protocol),
+    /// Pick a preset icon for the profile being edited (empty clears it).
+    ProfileIconChanged(&'static str),
     ProfileIdentityFileChanged(String),
     PickIdentityFile,
     IdentityFilePicked(Option<std::path::PathBuf>),
@@ -939,6 +943,7 @@ impl AditApp {
             profile_password: String::new(),
             profile_passphrase: String::new(),
             profile_protocol: Protocol::Ssh,
+            profile_icon: String::new(),
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
             profile_jumps: String::new(),
@@ -2267,6 +2272,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfilePassphraseChanged(value) => {
             app.terminal_focused = false;
             app.profile_passphrase = value;
+        }
+        Message::ProfileIconChanged(icon) => {
+            app.terminal_focused = false;
+            app.profile_icon = icon.to_string();
         }
         Message::ProfileProtocolChanged(protocol) => {
             app.terminal_focused = false;
@@ -3674,6 +3683,7 @@ fn load_selected_profile(app: &mut AditApp) {
         app.profile_auth_method = profile.auth_method;
         app.profile_identity_file = profile.identity_file;
         app.profile_protocol = profile.protocol;
+        app.profile_icon = profile.icon.clone();
         app.profile_startup_command = profile.startup_command;
         app.profile_jumps = jumps_to_spec(&profile.jumps);
         app.profile_terminal_type = profile.terminal_type;
@@ -4057,6 +4067,8 @@ fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<Profil
             if let Some(profile_id) = app.selected_profile {
                 app.manager
                     .set_profile_protocol(profile_id, app.profile_protocol);
+                app.manager
+                    .set_profile_icon(profile_id, app.profile_icon.clone());
                 app.manager.set_profile_startup_command(
                     profile_id,
                     app.profile_startup_command.clone(),
@@ -9523,6 +9535,55 @@ fn nav_rail(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
+/// One preset a profile's tile can use.
+struct HostIcon {
+    /// What a profile stores. The artwork behind it can change without
+    /// invalidating anyone's choice.
+    key: &'static str,
+    label: &'static str,
+    glyph: &'static str,
+    rgb: (u8, u8, u8),
+}
+
+/// The icons a profile can carry.
+///
+/// Glyphs and brand-ish colours rather than real logos: shipping a
+/// distribution's artwork means shipping its trademark, and the colour does most
+/// of the recognising anyway — an orange tile in a wall of grey ones reads as
+/// Ubuntu long before its shape does.
+const HOST_ICONS: &[HostIcon] = &[
+    HostIcon { key: "ubuntu", label: "Ubuntu", glyph: "\u{25c9}", rgb: (233, 84, 32) },
+    HostIcon { key: "debian", label: "Debian", glyph: "\u{25c8}", rgb: (215, 10, 83) },
+    HostIcon { key: "redhat", label: "RHEL", glyph: "\u{25b3}", rgb: (238, 0, 0) },
+    HostIcon { key: "alpine", label: "Alpine", glyph: "\u{25b2}", rgb: (13, 89, 126) },
+    HostIcon { key: "windows", label: "Windows", glyph: "\u{25a6}", rgb: (0, 120, 212) },
+    HostIcon { key: "server", label: "服务器", glyph: "\u{25a4}", rgb: (90, 100, 120) },
+    HostIcon { key: "network", label: "网络", glyph: "\u{21c4}", rgb: (16, 138, 122) },
+    HostIcon { key: "database", label: "数据库", glyph: "\u{25ab}", rgb: (52, 92, 168) },
+    HostIcon { key: "container", label: "容器", glyph: "\u{25a7}", rgb: (36, 150, 237) },
+];
+
+/// The glyph and colour a profile's tile shows.
+///
+/// An unset icon falls back to the protocol and the profile's accent, which is
+/// what every profile did before the field existed — so nothing needed migrating
+/// and nothing looks different until someone chooses.
+fn host_icon(app: &AditApp, profile: &ConnectionProfile) -> (&'static str, Color) {
+    HOST_ICONS
+        .iter()
+        .find(|icon| icon.key == profile.icon)
+        .map(|icon| {
+            let (r, g, b) = icon.rgb;
+            (icon.glyph, Color::from_rgb8(r, g, b))
+        })
+        .unwrap_or_else(|| {
+            (
+                protocol_glyph(profile.protocol),
+                profile_accent(app, profile.id).unwrap_or_else(accent),
+            )
+        })
+}
+
 /// Profiles with a session that is up right now.
 ///
 /// Built once per render and handed down, rather than each card scanning the
@@ -9570,8 +9631,8 @@ fn online_dot() -> Element<'static, Message> {
 
 /// One host, as a card: an accent tile, the name, and `user@host` beneath it.
 fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Element<'static, Message> {
-    let tile_color = profile_accent(app, profile.id).unwrap_or_else(accent);
-    let tile = container(text(protocol_glyph(profile.protocol)).size(15).color(Color::WHITE))
+    let (glyph, tile_color) = host_icon(app, profile);
+    let tile = container(text(glyph).size(15).color(Color::WHITE))
     .width(Length::Fixed(34.0))
     .height(Length::Fixed(34.0))
     .center_x(Length::Fixed(34.0))
@@ -9680,7 +9741,7 @@ fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, online: boo
     let dot_color = if online {
         success()
     } else {
-        profile_accent(app, profile.id).unwrap_or_else(accent)
+        host_icon(app, profile).1
     };
     let dot = container(Space::new())
         .width(Length::Fixed(8.0))
@@ -10804,6 +10865,26 @@ fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
             .spacing(6)
             .into(),
         ),
+        dialog_field(
+            "图标",
+            HOST_ICONS
+                .iter()
+                .fold(
+                    row![icon_button(app, "", "自动", "\u{25cb}", muted_text())].spacing(6),
+                    |buttons, icon| {
+                        let (r, g, b) = icon.rgb;
+                        buttons.push(icon_button(
+                            app,
+                            icon.key,
+                            icon.label,
+                            icon.glyph,
+                            Color::from_rgb8(r, g, b),
+                        ))
+                    },
+                )
+                .wrap()
+                .into(),
+        ),
         row![
             dialog_field(
                 "分组",
@@ -11126,6 +11207,27 @@ fn environment_button(app: &AditApp, environment: Environment) -> Element<'stati
         })
         .on_press(Message::ProfileEnvironmentChanged(environment))
         .into()
+}
+
+/// One choice in the icon picker: the glyph in its own colour, so the row shows
+/// what each will look like rather than naming it.
+fn icon_button(
+    app: &AditApp,
+    key: &'static str,
+    label: &'static str,
+    glyph: &'static str,
+    color: Color,
+) -> Element<'static, Message> {
+    let selected = app.profile_icon == key;
+    button(
+        row![text(glyph).size(12).color(color), text(label).size(11)]
+            .spacing(5)
+            .align_y(Alignment::Center),
+    )
+    .padding([4, 8])
+    .style(move |_theme, status| method_button_style(selected, status))
+    .on_press(Message::ProfileIconChanged(key))
+    .into()
 }
 
 fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'static, Message> {
