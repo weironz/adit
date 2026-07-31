@@ -9424,48 +9424,81 @@ pub enum MainView {
     Terminal,
 }
 
-const NAV_RAIL_WIDTH: f32 = 64.0;
+const NAV_RAIL_WIDTH: f32 = 156.0;
 const HOST_CARD_WIDTH: f32 = 260.0;
 
 /// The always-present left rail. It stays put when a host is opened, which is
 /// the whole point: switching back to the host list must not mean closing what
 /// is running.
+///
+/// Below the two views it lists things Adit already does but kept behind menus —
+/// tunnels, snippets, known hosts, logging. They open the same dialogs the menu
+/// bar opens; the rail is a second way in, not a second implementation.
 fn nav_rail(app: &AditApp) -> Element<'_, Message> {
-    let entry = |glyph: &'static str, label: &'static str, target: MainView| {
-        let active = app.main_view == target;
+    // Views highlight when they are the one on screen. Dialog entries never do:
+    // they open something and close again, so a persistent highlight would be
+    // claiming a state that does not exist.
+    let entry = |glyph: &'static str, label: &'static str, active: bool, message: Message| {
         button(
-            column![text(glyph).size(15), text(label).size(10)]
-                .spacing(3)
-                .align_x(Alignment::Center),
+            row![
+                text(glyph).size(14).width(Length::Fixed(18.0)),
+                text(label).size(12),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
         )
         .width(Fill)
-        .padding([7, 0])
-        .style(move |_theme, status| {
-            if active {
-                primary_button_style(status)
+        .padding([7, 10])
+        .style(move |_theme, status| button::Style {
+            background: Some(Background::Color(if active {
+                accent_soft()
             } else {
-                secondary_button_style(status)
-            }
+                match status {
+                    button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
+                    _ => Color::TRANSPARENT,
+                }
+            })),
+            text_color: if active { accent() } else { primary_text() },
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..button::Style::default()
         })
-        .on_press(Message::ShowMainView(target))
+        .on_press(message)
+    };
+
+    let view_entry = |glyph, label, target: MainView| {
+        entry(
+            glyph,
+            label,
+            app.main_view == target,
+            Message::ShowMainView(target),
+        )
+    };
+    let tool = |glyph, label, command: MenuCommand| {
+        entry(glyph, label, false, Message::RunMenu(command))
     };
 
     container(
         column![
-            entry("▦", "主机", MainView::Hosts),
-            entry("▶", "终端", MainView::Terminal),
+            container(text("Adit").size(15).color(primary_text())).padding([6, 10]),
+            view_entry("\u{25a6}", "主机", MainView::Hosts),
+            view_entry("\u{25b8}", "终端", MainView::Terminal),
+            container(Space::new().height(Length::Fixed(1.0)).width(Fill))
+                .padding([6, 8])
+                .style(|_theme| container::Style {
+                    background: Some(Background::Color(border_color())),
+                    ..container::Style::default()
+                }),
+            tool("\u{21c4}", "端口转发", MenuCommand::Tunnels),
+            tool("\u{2318}", "脚本", MenuCommand::Snippets),
+            tool("\u{2713}", "已知主机", MenuCommand::KnownHosts),
+            tool("\u{25a4}", "日志", MenuCommand::Logging),
             Space::new().height(Fill),
-            button(
-                column![text("⚙").size(15), text("设置").size(10)]
-                    .spacing(3)
-                    .align_x(Alignment::Center),
-            )
-            .width(Fill)
-            .padding([7, 0])
-            .style(|_theme, status| secondary_button_style(status))
-            .on_press(Message::OpenAppearance),
+            entry("\u{2699}", "设置", false, Message::RunMenu(MenuCommand::Options)),
         ]
-        .spacing(4)
+        .spacing(2)
         .padding(6),
     )
     .width(Length::Fixed(NAV_RAIL_WIDTH))
