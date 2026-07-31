@@ -9930,12 +9930,17 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         }
 
         // Groups are cards to open rather than bands to scroll past: the top
-        // level should fit on a screen however many hosts are behind it.
+        // level should stay readable however many hosts are behind it.
+        //
+        // Counted by name rather than by walking runs of neighbours. The sort
+        // order does not promise that a group's hosts are adjacent, and on a
+        // real catalogue — 151 hosts across five groups — assuming they were
+        // turns five cards into dozens of duplicates.
         let mut groups: Vec<(String, usize)> = Vec::new();
         for profile in matching.iter().filter(|p| !p.group.trim().is_empty()) {
-            match groups.last_mut() {
-                Some((name, count)) if name == &profile.group => *count += 1,
-                _ => groups.push((profile.group.clone(), 1)),
+            match groups.iter_mut().find(|(name, _)| name == &profile.group) {
+                Some((_, count)) => *count += 1,
+                None => groups.push((profile.group.clone(), 1)),
             }
         }
         if !groups.is_empty() {
@@ -9953,15 +9958,16 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             );
         }
 
-        // Everything not in a group. Named 主机 rather than "ungrouped" because
-        // for anyone who never made a group it is simply the list.
-        let loose: Vec<&ConnectionProfile> = matching
-            .into_iter()
-            .filter(|profile| profile.group.trim().is_empty())
-            .collect();
-        if !loose.is_empty() {
-            body = body.push(host_band(app, None, layout, String::from("主机"), loose, &online));
-        } else if app.manager.profiles().is_empty() {
+        // Every host, not only the ones outside a group.
+        //
+        // Ungrouped-only was the first cut and it read fine against three hosts,
+        // one of them loose. Against a real catalogue where every host lives in
+        // a group it collapses to nothing, leaving a first screen of five cards
+        // and not one host on it. Groups are a shortcut into the list, so the
+        // list has to be there to be shortcut into.
+        if !matching.is_empty() {
+            body = body.push(host_band(app, None, layout, String::from("主机"), matching, &online));
+        } else {
             body = body.push(text("还没有会话配置").size(13).color(muted_text()));
         }
     }
