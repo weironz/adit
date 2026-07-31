@@ -9684,17 +9684,19 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                     }
                 }
             }
-            // Headings with their hosts indented under them, so the hierarchy is
-            // visible rather than implied by the order.
+            // The session manager's own tree, not a copy of it. Everything it
+            // can do — collapse, drag to reorder, right-click, filter — comes
+            // along, and there is only one implementation to keep correct.
+            //
+            // Its right-click menu anchors off SidebarCursorMoved, whose
+            // coordinates are relative to whatever wraps the tree. That is the
+            // sidebar's width over there and the full pane here, so the menu
+            // lands in the right place only because the same mouse_area wraps it
+            // in both. Worth knowing before either wrapper changes.
             HostLayout::Tree => {
-                for (group, hosts) in bands {
-                    let count = hosts.len();
-                    let mut band = column![host_section_header(group, count)].spacing(2);
-                    for profile in hosts {
-                        band = band.push(host_row(app, profile, 14.0));
-                    }
-                    body = body.push(band);
-                }
+                body = body.push(
+                    mouse_area(session_tree(app)).on_move(Message::SidebarCursorMoved),
+                );
             }
         }
     }
@@ -9712,7 +9714,13 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
-fn sidebar(app: &AditApp) -> Element<'_, Message> {
+/// The session tree itself, without the panel around it.
+///
+/// Extracted so the host manager's tree layout *is* this tree rather than a
+/// second one that resembles it. Collapsing, drag-reordering, context menus and
+/// filtering all live in here; a reimplementation would begin without them and
+/// then drift.
+fn session_tree(app: &AditApp) -> Element<'_, Message> {
     let mut sorted_profiles = app.manager.profiles().to_vec();
     sorted_profiles.sort_by(profile_sidebar_order);
 
@@ -9822,6 +9830,10 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
         ));
     }
 
+    profiles.into()
+}
+
+fn sidebar(app: &AditApp) -> Element<'_, Message> {
     let error = app
         .last_error
         .as_ref()
@@ -9864,7 +9876,7 @@ fn sidebar(app: &AditApp) -> Element<'_, Message> {
             .on_input(Message::SessionFilterChanged)
             .padding([4, 6])
             .style(toolbar_input_style),
-        scrollable(profiles).height(Fill),
+        scrollable(session_tree(app)).height(Fill),
     ]
     .spacing(0)
     .height(Fill)
