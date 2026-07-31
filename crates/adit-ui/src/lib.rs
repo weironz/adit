@@ -235,6 +235,8 @@ pub struct AditApp {
     sidebar_dragging: bool,
     cursor_pos: Point,
     context_menu_pos: Point,
+    /// Which top-level view fills the area beside the nav rail.
+    main_view: MainView,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -366,6 +368,11 @@ pub enum Message {
     FontFamilyChanged(u8),
     FontSizeStep(i32),
     ColorSchemeChanged(u8),
+    /// Switch the top-level view beside the nav rail.
+    ShowMainView(MainView),
+    /// Connect to a host from its card in the host manager.
+    ConnectHostCard(ProfileId),
+    OpenAppearance,
     /// Flip one keyword-highlight rule, by its stable id.
     HighlightRuleToggled(&'static str),
     CloseOptions,
@@ -990,6 +997,9 @@ impl AditApp {
             sidebar_dragging: false,
             cursor_pos: Point::ORIGIN,
             context_menu_pos: Point::ORIGIN,
+            // Opens on the host list rather than an empty terminal: with no
+            // session running there is nothing for the terminal view to show.
+            main_view: MainView::Hosts,
             dark_mode,
             theme_mode,
             font_family,
@@ -1440,6 +1450,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();
             }
+        }
+        Message::ShowMainView(view) => {
+            app.main_view = view;
+            // The terminal only takes keystrokes while it is the thing on
+            // screen; leaving focus behind would send typing into a hidden pane.
+            app.terminal_focused = matches!(view, MainView::Terminal);
+        }
+        Message::ConnectHostCard(profile_id) => {
+            select_profile(app, profile_id);
+            open_connection_dialog(app);
+            app.main_view = MainView::Terminal;
+        }
+        Message::OpenAppearance => {
+            app.appearance_open = true;
         }
         Message::HighlightRuleToggled(id) => {
             let shipped = highlight::rules()
@@ -6407,13 +6431,22 @@ fn view(app: &AditApp) -> Element<'_, Message> {
     );
     TERM_SCHEME.store(color_scheme_index(&app.color_scheme), Ordering::Relaxed);
 
-    let main = if app.sidebar_visible {
-        row![sidebar(app), sidebar_divider(), workspace(app)]
-    } else {
-        row![workspace(app)]
-    }
-    .height(Fill)
-    .width(Fill);
+    // The rail is outside the switch on purpose: it is what stays put when a
+    // host is opened, so getting back to the list never means closing a session.
+    let body = match app.main_view {
+        MainView::Hosts => row![hosts_view(app)],
+        MainView::Terminal => {
+            if app.sidebar_visible {
+                row![sidebar(app), sidebar_divider(), workspace(app)]
+            } else {
+                row![workspace(app)]
+            }
+        }
+    };
+    let main = row![nav_rail(app)]
+        .push(body.height(Fill).width(Fill))
+        .height(Fill)
+        .width(Fill);
 
     let layout = column![menu_bar(app)]
         .push(toolbar(app))
@@ -9336,6 +9369,218 @@ fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.environment == app.profile_environment
         && profile.accent_color.as_deref().unwrap_or_default() == app.profile_accent_color.trim()
         && profile.label.as_deref().unwrap_or_default() == app.profile_label.trim()
+}
+
+/// Which top-level view fills the area beside the nav rail.
+///
+/// Public only because `Message` is, and it rides inside one of its variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainView {
+    /// The card-based host manager.
+    Hosts,
+    /// Session tabs and the terminal.
+    Terminal,
+}
+
+const NAV_RAIL_WIDTH: f32 = 64.0;
+const HOST_CARD_WIDTH: f32 = 260.0;
+
+/// The always-present left rail. It stays put when a host is opened, which is
+/// the whole point: switching back to the host list must not mean closing what
+/// is running.
+fn nav_rail(app: &AditApp) -> Element<'_, Message> {
+    let entry = |glyph: &'static str, label: &'static str, target: MainView| {
+        let active = app.main_view == target;
+        button(
+            column![text(glyph).size(15), text(label).size(10)]
+                .spacing(3)
+                .align_x(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([7, 0])
+        .style(move |_theme, status| {
+            if active {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::ShowMainView(target))
+    };
+
+    container(
+        column![
+            entry("▦", "主机", MainView::Hosts),
+            entry("▶", "终端", MainView::Terminal),
+            Space::new().height(Fill),
+            button(
+                column![text("⚙").size(15), text("设置").size(10)]
+                    .spacing(3)
+                    .align_x(Alignment::Center),
+            )
+            .width(Fill)
+            .padding([7, 0])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::OpenAppearance),
+        ]
+        .spacing(4)
+        .padding(6),
+    )
+    .width(Length::Fixed(NAV_RAIL_WIDTH))
+    .height(Fill)
+    .style(|_theme| container::Style {
+        background: Some(Background::Color(surface_alt())),
+        border: Border {
+            color: border_color(),
+            width: 1.0,
+            radius: 0.0.into(),
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
+/// One host, as a card: an accent tile, the name, and `user@host` beneath it.
+fn host_card(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
+    let tile_color = profile_accent(app, profile.id).unwrap_or_else(accent);
+    let tile = container(
+        text(
+            profile
+                .name
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| String::from("?")),
+        )
+        .size(15)
+        .color(Color::WHITE),
+    )
+    .width(Length::Fixed(34.0))
+    .height(Length::Fixed(34.0))
+    .center_x(Length::Fixed(34.0))
+    .center_y(Length::Fixed(34.0))
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(tile_color)),
+        border: Border {
+            radius: RADIUS_SM.into(),
+            ..Border::default()
+        },
+        ..container::Style::default()
+    });
+
+    let subtitle = if profile.username.trim().is_empty() {
+        profile.host.clone()
+    } else {
+        format!("{}@{}", profile.username, profile.host)
+    };
+
+    button(
+        row![
+            tile,
+            column![
+                text(profile.name.clone()).size(13).color(primary_text()),
+                text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
+            ]
+            .spacing(3),
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .width(Length::Fixed(HOST_CARD_WIDTH))
+    .padding(10)
+    .style(|_theme, status| button::Style {
+        background: Some(Background::Color(match status {
+            button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
+            _ => app_background(),
+        })),
+        text_color: primary_text(),
+        border: Border {
+            color: border_color(),
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..button::Style::default()
+    })
+    .on_press(Message::ConnectHostCard(profile.id))
+    .into()
+}
+
+/// A section heading with the count on the right, the way the reference client
+/// labels each band of its host list.
+fn host_section_header(title: String, count: usize) -> Element<'static, Message> {
+    row![
+        text(title).size(13).color(primary_text()),
+        Space::new().width(Fill),
+        container(text(format!("{count} 台")).size(11).color(muted_text()))
+            .padding([2, 8])
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(surface_alt())),
+                border: Border {
+                    radius: 999.0.into(),
+                    ..Border::default()
+                },
+                ..container::Style::default()
+            }),
+    ]
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// The host manager: search at the top, then one band per group.
+fn hosts_view(app: &AditApp) -> Element<'_, Message> {
+    let filter = app.session_filter.trim().to_ascii_lowercase();
+    let mut profiles = app.manager.profiles().to_vec();
+    profiles.sort_by(profile_sidebar_order);
+    let matches = |profile: &ConnectionProfile| {
+        filter.is_empty()
+            || profile.name.to_ascii_lowercase().contains(&filter)
+            || profile.host.to_ascii_lowercase().contains(&filter)
+            || profile.username.to_ascii_lowercase().contains(&filter)
+    };
+
+    let search = text_input("搜索主机、地址或用户名…", &app.session_filter)
+        .id(session_filter_id())
+        .on_input(Message::SessionFilterChanged)
+        .padding(9)
+        .size(13);
+
+    // Grouped in the order the sidebar already uses, so the two views agree
+    // about where a host lives.
+    let mut body = column![].spacing(18);
+    let mut group: Option<String> = None;
+    let mut cards: Vec<Element<'static, Message>> = Vec::new();
+    let mut pending: Option<String> = None;
+
+    for profile in profiles.iter().filter(|profile| matches(profile)) {
+        if group.as_deref() != Some(profile.group.as_str()) {
+            if let Some(title) = pending.take() {
+                let count = cards.len();
+                body = body.push(
+                    column![host_section_header(title, count), wrap_rows(std::mem::take(&mut cards), 3)]
+                        .spacing(10),
+                );
+            }
+            group = Some(profile.group.clone());
+            pending = Some(profile.group.clone());
+        }
+        cards.push(host_card(app, profile));
+    }
+    if let Some(title) = pending.take() {
+        let count = cards.len();
+        body = body.push(
+            column![host_section_header(title, count), wrap_rows(cards, 3)].spacing(10),
+        );
+    } else if filter.is_empty() {
+        body = body.push(text("还没有会话配置").size(13).color(muted_text()));
+    } else {
+        body = body.push(text("没有匹配的主机").size(13).color(muted_text()));
+    }
+
+    container(column![search, scrollable(body).height(Fill)].spacing(16))
+        .width(Fill)
+        .height(Fill)
+        .padding(20)
+        .into()
 }
 
 fn sidebar(app: &AditApp) -> Element<'_, Message> {
