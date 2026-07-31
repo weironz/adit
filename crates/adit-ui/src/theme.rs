@@ -54,23 +54,36 @@ pub(super) const COLOR_SCHEMES: &[ColorScheme] = &[
         background: (20, 21, 28),
         foreground: (220, 226, 235),
         selection: (22, 92, 84),
+        // Was the stock xterm palette — (205,0,0), (0,205,0), (0,0,238) and the
+        // rest, pure primaries at full saturation. Someone gave this scheme a
+        // modern background and foreground and left the 1980s sixteen in place,
+        // which is why it alone looked harsh: nano paints a comment with ANSI 1
+        // and got fire-engine red, and (0,0,238) blue is close to unreadable on
+        // a background this dark. Every other scheme in this file already ships
+        // desaturated values; this one was the odd one out.
+        //
+        // Hues stay where they were, because `ls --color` and every other tool
+        // encode meaning in them — blue still has to read as "directory". Only
+        // saturation and lightness move. Normal and bright stay far enough apart
+        // to remain distinguishable, and slot 0 is lifted off pure black so text
+        // printed in it is still visible against this background.
         ansi: [
-            (0, 0, 0),
-            (205, 0, 0),
-            (0, 205, 0),
-            (205, 205, 0),
-            (0, 0, 238),
-            (205, 0, 205),
-            (0, 205, 205),
-            (229, 229, 229),
-            (127, 127, 127),
-            (255, 0, 0),
-            (0, 255, 0),
-            (255, 255, 0),
-            (92, 92, 255),
-            (255, 0, 255),
-            (0, 255, 255),
-            (255, 255, 255),
+            (38, 40, 49),
+            (224, 108, 117),
+            (152, 195, 121),
+            (229, 192, 123),
+            (97, 175, 239),
+            (198, 120, 221),
+            (86, 182, 194),
+            (190, 197, 209),
+            (95, 102, 117),
+            (240, 139, 146),
+            (177, 213, 152),
+            (240, 212, 158),
+            (137, 196, 244),
+            (216, 155, 233),
+            (125, 205, 214),
+            (238, 243, 249),
         ],
     },
     ColorScheme {
