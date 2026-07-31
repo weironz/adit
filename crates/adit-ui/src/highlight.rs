@@ -87,12 +87,35 @@ const DEFAULT_RULES: &[RuleSpec] = &[
     //
     // Off by default all the same: a Markdown heading is a false positive, and a
     // whole-line colour is a loud way to be wrong.
-    RuleSpec { id: "comment-hash", label: "# 注释整行", pattern: r"^\s*#", ansi: 2, scope: Scope::Line, enabled: false },
-    RuleSpec { id: "comment-slash", label: "// 注释整行", pattern: r"^\s*//", ansi: 2, scope: Scope::Line, enabled: false },
+    RuleSpec { id: "comment-hash", label: "# 注释整行", pattern: r"^\s*#", ansi: 2, scope: Scope::Line, enabled: true },
+    RuleSpec { id: "comment-slash", label: "// 注释整行", pattern: r"^\s*//", ansi: 2, scope: Scope::Line, enabled: true },
+    // Before the keyword and number rules, and that ordering is the rule: first
+    // match wins, so a string swallows whatever is quoted inside it. Otherwise
+    // `print("if you see this")` comes back with `if` painted as a keyword.
+    //
+    // Double quotes only. A single-quote pattern would treat the apostrophe in
+    // "don't" as an opening quote and paint the rest of the sentence, and log
+    // output is full of English prose.
+    RuleSpec { id: "code-string", label: "字符串", pattern: "\"[^\"]*\"", ansi: 3, scope: Scope::Match, enabled: true },
     RuleSpec { id: "error", label: "错误关键字", pattern: r"\b(?:ERROR|FATAL|CRITICAL)\b", ansi: 1, scope: Scope::Match, enabled: true },
     RuleSpec { id: "warning", label: "警告关键字", pattern: r"\b(?:WARN|WARNING)\b", ansi: 3, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "ipv4", label: "IP 地址", pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b", ansi: 6, scope: Scope::Match, enabled: true },
     RuleSpec { id: "url", label: "网址", pattern: r"\bhttps?://\S+", ansi: 4, scope: Scope::Match, enabled: true },
+    // Before the number rule, so an address stays one thing instead of four.
+    RuleSpec { id: "ipv4", label: "IP 地址", pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b", ansi: 6, scope: Scope::Match, enabled: true },
+    // Language-agnostic on purpose: a terminal has a byte stream, not a file
+    // type, so this is the union of what shows up across languages rather than
+    // any one grammar. The cost is that `if`, `for` and `else` are also ordinary
+    // English, so prose in log output picks up colour — which is why this stays
+    // a switch rather than something baked in.
+    RuleSpec {
+        id: "code-keyword",
+        label: "代码关键字",
+        pattern: r"\b(?:def|class|import|from|return|if|elif|else|for|while|break|continue|try|except|finally|catch|switch|case|func|function|fn|var|let|const|struct|impl|pub|static|void|async|await|yield|export|lambda|None|True|False|null|nil|true|false)\b",
+        ansi: 5,
+        scope: Scope::Match,
+        enabled: true,
+    },
+    RuleSpec { id: "code-number", label: "数字", pattern: r"\b\d+(?:\.\d+)?\b", ansi: 6, scope: Scope::Match, enabled: true },
 ];
 
 /// The compiled rule set. Built once and reused — compiling per frame would put
@@ -359,46 +382,54 @@ mod tests {
         // patterns are exactly the dangerous ones (a `#` rule misfires on diff
         // markers and root prompts; a `$` rule shreds a bcrypt hash). Anything
         // new belongs in the off-by-default presets until it has earned better.
-        let on: Vec<_> = DEFAULT_RULES
-            .iter()
-            .filter(|spec| spec.enabled)
-            .map(|spec| spec.id)
-            .collect();
-        assert_eq!(on, ["error", "warning", "ipv4", "url"]);
-        // The comment rules ship switched off. Turning one on by default is a
-        // decision about everyone's screen, not a tweak.
-        let off: Vec<_> = DEFAULT_RULES
-            .iter()
-            .filter(|spec| !spec.enabled)
-            .map(|spec| spec.id)
-            .collect();
-        assert_eq!(off, ["comment-hash", "comment-slash"]);
-    }
-
-    /// A rule set with the comment presets switched on, by the same path the
-    /// settings dialog uses.
-    fn with_comments() -> Highlighter {
-        let overrides = DEFAULT_RULES
-            .iter()
-            .filter(|spec| spec.id.starts_with("comment-"))
-            .map(|spec| (spec.id.to_string(), true))
-            .collect();
-        Highlighter::with_overrides(&overrides)
+        // Order is load-bearing, not cosmetic — first match on a column wins.
+        // Comments before everything so a comment owns its line; `code-string`
+        // before `code-keyword` so a quoted `if` stays a string; `ipv4` before
+        // `code-number` so an address is one span and not four.
+        let ids: Vec<_> = DEFAULT_RULES.iter().map(|spec| spec.id).collect();
+        assert_eq!(
+            ids,
+            [
+                "comment-hash",
+                "comment-slash",
+                "code-string",
+                "error",
+                "warning",
+                "url",
+                "ipv4",
+                "code-keyword",
+                "code-number",
+            ]
+        );
+        assert!(
+            DEFAULT_RULES.iter().all(|spec| spec.enabled),
+            "all rules ship on; the dialog is how anyone turns one off"
+        );
     }
 
     #[test]
     fn an_override_only_moves_the_rule_it_names() {
-        let overrides = [(String::from("comment-hash"), true)].into_iter().collect();
+        // Everything ships on, so an override is how a rule gets turned off —
+        // and it must not disturb its neighbours on the way.
+        let overrides = [(String::from("code-number"), false)].into_iter().collect();
         let highlighter = Highlighter::with_overrides(&overrides);
-        let on: Vec<_> = highlighter
+        let off: Vec<_> = highlighter
             .rules
             .iter()
             .zip(DEFAULT_RULES)
-            .filter(|(rule, _)| rule.enabled)
+            .filter(|(rule, _)| !rule.enabled)
             .map(|(_, spec)| spec.id)
             .collect();
-        // comment-slash stays off; the four defaults stay on.
-        assert_eq!(on, ["comment-hash", "error", "warning", "ipv4", "url"]);
+        assert_eq!(off, ["code-number"]);
+    }
+
+    #[test]
+    fn a_quoted_keyword_stays_a_string() {
+        // `code-string` precedes `code-keyword`, so the whole literal is one
+        // span. Ordered the other way this line comes back in three pieces.
+        let line = TerminalLine::plain("print(\"if you see this\")");
+        let spans = spans_of(&line);
+        assert_eq!(spans, vec![(6, 23)], "expected one string span, got {spans:?}");
     }
 
     #[test]
@@ -407,7 +438,7 @@ mod tests {
         // made this read as a stray fragment next to other clients.
         let text = "  # Passwords must be encoded using MD5";
         let line = TerminalLine::plain(text);
-        let spans = with_comments().spans(&line);
+        let spans = spans_of(&line);
         assert_eq!(spans.len(), 1);
         // Computed, not written out: a hand-counted column is a magic number
         // that is wrong the first time and silently right afterwards.
@@ -419,7 +450,7 @@ mod tests {
         // The comment rules precede `url` so a comment stays one colour end to
         // end. Ordered the other way this line would come back in three pieces.
         let line = TerminalLine::plain("# see https://example.com/x for more");
-        let spans = with_comments().spans(&line);
+        let spans = spans_of(&line);
         assert_eq!(spans.len(), 1, "expected one unbroken span, got {spans:?}");
     }
 
@@ -428,7 +459,7 @@ mod tests {
         // Anchoring to line-start is what makes the comment rule shippable: a
         // prompt's `#` has the user, host and path in front of it.
         let line = TerminalLine::plain("root@node72:/data/traefik# cat .env");
-        assert!(with_comments().spans(&line).is_empty());
+        assert!(spans_of(&line).is_empty());
     }
 
     #[test]
@@ -436,7 +467,7 @@ mod tests {
         for text in ["+++ b/src/lib.rs", "--- a/src/lib.rs", "+added", "-removed"] {
             let line = TerminalLine::plain(text);
             assert!(
-                with_comments().spans(&line).is_empty(),
+                spans_of(&line).is_empty(),
                 "{text} should not read as a comment"
             );
         }
