@@ -97,6 +97,20 @@ deploy: dist
     Copy-Item 'crates/adit-rdp/target/release/adit-rdp-host.exe' "$env:LOCALAPPDATA\Programs\Adit\adit-rdp-host.exe" -Force
     Write-Output 'deployed to installed Adit'
 
+# `dist` comes before `kill` deliberately: the build is the slow part, so doing
+# it first keeps Adit usable until the moment its exe is actually replaced.
+# `deploy` then finds `dist` already satisfied and only copies — and without
+# `kill` in between, that copy fails on a locked exe.
+#
+# Start-Process rather than `&`, unlike `run`: this recipe exists for a
+# look-tweak-look loop, so the shell should come back instead of blocking until
+# Adit is closed.
+
+# Replace the installed Adit with a fresh build and start it again
+restart: dist kill deploy
+    Start-Process "$env:LOCALAPPDATA\Programs\Adit\Adit.exe"
+    Write-Output 'restarted'
+
 # ── release ────────────────────────────────────────────────────────────
 #
 # There is deliberately no `release` recipe. Releasing is done entirely on CI and is
