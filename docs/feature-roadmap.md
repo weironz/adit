@@ -87,6 +87,11 @@ A "serious" client should not silently trust new hosts or drop on idle.
   an always-visible amber `广播 ×N` badge in the status bar showing the reach so
   it is never silently left on. Still open: command history on the quick-connect
   bar.
+- **B7. Keyword highlighting.** Colour output locally by pattern, the way
+  SecureCRT does, for text the server sent uncoloured. Designed but not built —
+  [keyword-highlighting.md](keyword-highlighting.md) covers the scope, and in
+  particular what it deliberately does *not* do (no syntax highlighting, nothing
+  on the alternate screen, and never repainting a cell the server coloured).
 
 ## Phase C — File transfer & tunnels
 
