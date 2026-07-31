@@ -250,7 +250,17 @@ impl Default for ProfileStore {
 /// but is not a connection profile or a secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
+    /// Resolved light/dark, kept in step with [`Self::theme_mode`].
+    ///
+    /// Retained after `theme_mode` superseded it so settings written by a newer
+    /// build still load in an older one — a downgrade reads this and ignores the
+    /// field it does not know about.
     pub dark_mode: bool,
+    /// The user's actual preference. `None` means it was never chosen, in which
+    /// case [`Self::dark_mode`] stands in — that is how anyone who picked a
+    /// theme before this field existed keeps the theme they picked.
+    #[serde(default)]
+    pub theme_mode: Option<ThemeMode>,
     #[serde(default)]
     pub collapsed_groups: Vec<String>,
     pub window_width: f32,
@@ -382,6 +392,7 @@ impl Default for AppSettings {
         Self {
             // Dark-first, matching the Termius-style look.
             dark_mode: true,
+            theme_mode: None,
             collapsed_groups: Vec::new(),
             window_width: 1360.0,
             window_height: 860.0,
@@ -409,6 +420,19 @@ impl Default for AppSettings {
             keyring_migrated: false,
         }
     }
+}
+
+/// Which theme the user asked for, as opposed to which one is showing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Light,
+    /// Whatever the OS is set to, resolved when settings load and when the mode
+    /// changes — not per frame, which would put a registry read on the render
+    /// path. Changing the OS theme with Adit open therefore takes effect at the
+    /// next launch.
+    System,
+    Dark,
 }
 
 /// JSON-backed store for [`AppSettings`], saved next to the profile store.
@@ -1238,6 +1262,7 @@ Host db
 
         let settings = AppSettings {
             dark_mode: true,
+            theme_mode: Some(ThemeMode::System),
             collapsed_groups: vec![String::from("Lab"), String::from("Prod")],
             window_width: 1500.0,
             window_height: 900.0,

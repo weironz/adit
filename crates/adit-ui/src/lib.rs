@@ -9,7 +9,7 @@ use adit_session::{
     TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
 use adit_storage::{
-    AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
+    AppSettings, CredentialStore, ProfileCatalog, ProfileStore, SettingsStore, Snippet, ThemeMode,
 };
 use adit_terminal::{
     Color as TermColor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot, Viewport,
@@ -235,7 +235,10 @@ pub struct AditApp {
     sidebar_dragging: bool,
     cursor_pos: Point,
     context_menu_pos: Point,
+    /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
+    /// What the user asked for, which is not the same thing under `System`.
+    theme_mode: ThemeMode,
     font_family: String,
     font_size: f32,
     color_scheme: String,
@@ -793,7 +796,15 @@ impl AditApp {
         // auto-reconnect).
         let settings_store = SettingsStore::default();
         let settings = settings_store.load().unwrap_or_default();
-        let dark_mode = settings.dark_mode;
+        // A settings file written before `theme_mode` existed still carries the
+        // boolean, so anyone who had picked a theme keeps it instead of being
+        // silently moved onto the system's.
+        let theme_mode = settings.theme_mode.unwrap_or(if settings.dark_mode {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        });
+        let dark_mode = resolve_dark(theme_mode);
         // Clamp away a bad persisted size (e.g. a 0x0 written while minimized) so
         // the window is never created invisible; the file then self-heals on the
         // next Tick because the clamped value differs from `persisted_settings`.
@@ -841,6 +852,7 @@ impl AditApp {
         // corrective write, while a valid size stays untouched.
         let persisted_settings = AppSettings {
             dark_mode,
+            theme_mode: Some(theme_mode),
             collapsed_groups: collapsed_groups.iter().cloned().collect(),
             window_width: raw_window_width,
             window_height: raw_window_height,
@@ -979,6 +991,7 @@ impl AditApp {
             cursor_pos: Point::ORIGIN,
             context_menu_pos: Point::ORIGIN,
             dark_mode,
+            theme_mode,
             font_family,
             font_size,
             color_scheme,
@@ -1120,6 +1133,21 @@ fn app_icon() -> Option<window::Icon> {
 
 fn app_title(app: &AditApp) -> String {
     format!("Adit - {}", app.manager.status_line())
+}
+
+/// Resolve a preference into the theme actually shown.
+///
+/// `System` asks the OS, and falls back to dark if it declines to say — Adit's
+/// terminal is dark, so that is the answer that looks least like a bug.
+///
+/// Called when settings load and when the mode changes, never per frame: on
+/// Windows this reads the registry, and the render path is no place for that.
+fn resolve_dark(mode: ThemeMode) -> bool {
+    match mode {
+        ThemeMode::Light => false,
+        ThemeMode::Dark => true,
+        ThemeMode::System => !matches!(dark_light::detect(), Ok(dark_light::Mode::Light)),
+    }
 }
 
 fn app_theme(app: &AditApp) -> Theme {
@@ -1377,12 +1405,20 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             sync_terminal_size(app);
         }
         Message::ToggleTheme => {
-            app.dark_mode = !app.dark_mode;
-            app.notice = if app.dark_mode {
-                String::from("已切换到深色主题")
-            } else {
-                String::from("已切换到浅色主题")
+            // One control, three states. Ordered so the two explicit choices sit
+            // next to each other and "follow the system" is the third stop
+            // rather than something you pass through every time you flip.
+            app.theme_mode = match app.theme_mode {
+                ThemeMode::Light => ThemeMode::Dark,
+                ThemeMode::Dark => ThemeMode::System,
+                ThemeMode::System => ThemeMode::Light,
             };
+            app.dark_mode = resolve_dark(app.theme_mode);
+            app.notice = String::from(match app.theme_mode {
+                ThemeMode::Light => "已切换到浅色主题",
+                ThemeMode::Dark => "已切换到深色主题",
+                ThemeMode::System => "已切换到跟随系统",
+            });
         }
         Message::CloseAppearance => {
             app.appearance_open = false;
@@ -6290,6 +6326,7 @@ fn sync_panes(app: &mut AditApp) {
 fn current_settings(app: &AditApp) -> AppSettings {
     AppSettings {
         dark_mode: app.dark_mode,
+        theme_mode: Some(app.theme_mode),
         // BTreeSet iterates sorted, so the snapshot is order-stable.
         collapsed_groups: app.collapsed_groups.iter().cloned().collect(),
         window_width: app.window_width,

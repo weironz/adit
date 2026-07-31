@@ -10,6 +10,10 @@ adit-domain.workspace = true
 adit-session.workspace = true
 adit-storage.workspace = true
 adit-terminal.workspace = true
+# "Follow the system theme" needs the OS's own setting, and every platform
+# exposes it differently — the registry on Windows, defaults on macOS, a portal
+# or GTK setting on Linux.
+dark-light = "2"
 iced.workspace = true
 # Keyword highlighting runs user-supplied patterns on the render path. `regex`
 # has no backtracking, so a pathological pattern costs linear time rather than
