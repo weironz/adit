@@ -11,6 +11,10 @@ adit-session.workspace = true
 adit-storage.workspace = true
 adit-terminal.workspace = true
 iced.workspace = true
+# Keyword highlighting runs user-supplied patterns on the render path. `regex`
+# has no backtracking, so a pathological pattern costs linear time rather than
+# hanging the UI thread — which on Windows surfaces only as "Not Responding".
+regex = "1"
 rfd = "0.15"
 serde_json.workspace = true
 unicode-width = "0.2"

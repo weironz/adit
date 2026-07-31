@@ -892,6 +892,9 @@ impl TermState {
             cursor_row: cursor_abs.saturating_sub(first),
             cursor_col: self.cursor_col,
             cursor_visible: self.cursor_visible,
+            // `alt` holds the stashed primary screen while the alternate one is
+            // in front, so its presence *is* the flag.
+            alt_screen: self.alt.is_some(),
         }
     }
 

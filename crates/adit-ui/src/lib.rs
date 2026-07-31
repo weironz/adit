@@ -45,6 +45,7 @@ pub enum SftpSortKey {
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
+mod highlight;
 mod input;
 mod terminal_text;
 mod theme;
@@ -10809,6 +10810,7 @@ fn terminal_view(
     // snapshot's viewport rows (clipped to the visible window) to render it.
     let selection =
         selection.and_then(|sel| selection_for_viewport(sel, snapshot.first_row, viewport));
+    let alt_screen = snapshot.alt_screen;
     let lines = if snapshot.lines.is_empty() {
         column![text("not connected")
             .size(13)
@@ -10824,11 +10826,20 @@ fn terminal_view(
                     .get(row_index)
                     .map(Vec::as_slice)
                     .unwrap_or(&[]);
+                // Suppressed wholesale on the alternate screen: vim, less, htop
+                // and tmux paint every cell themselves, so a rule firing inside
+                // one of their status lines is noise at best.
+                let keywords = if alt_screen {
+                    Vec::new()
+                } else {
+                    highlight::highlighter().spans(&line)
+                };
                 column.push(terminal_line(
                     line,
                     row_index,
                     selection,
                     highlights,
+                    &keywords,
                     links_clickable,
                     show_cursor,
                 ))
@@ -10942,6 +10953,10 @@ fn terminal_line(
     row_index: usize,
     selection: Option<TerminalSelection>,
     search: &[(usize, usize, bool)],
+    // Keyword-highlight spans for this row, as `(start_col, end_col, colour)`.
+    // Already restricted to cells the server left uncoloured — see
+    // `highlight::Highlighter::spans`.
+    keywords: &[(usize, usize, iced::Color)],
     links_clickable: bool,
     show_cursor: bool,
 ) -> Element<'static, Message> {
@@ -11001,6 +11016,9 @@ fn terminal_line(
             let search_hit = search
                 .iter()
                 .find_map(|(start, end, current)| (col >= *start && col < *end).then_some(*current));
+            let keyword_hit = keywords
+                .iter()
+                .find_map(|(start, end, color)| (col >= *start && col < *end).then_some(*color));
 
             // The text cursor is a reverse-video block on its own cell: the glyph
             // takes the background colour and vice-versa, so it reads correctly in
@@ -11020,6 +11038,11 @@ fn terminal_line(
                 }
             } else if is_link {
                 hyperlink_color()
+            } else if let Some(color) = keyword_hit {
+                // Last before the cell's own colour, so selection, search and
+                // OSC 8 links all outrank a local rule. `spans` has already
+                // guaranteed this cell had no colour of the server's to lose.
+                color
             } else {
                 fg
             };
@@ -12178,6 +12201,7 @@ mod tests {
             cursor_row: 0,
             cursor_col: 0,
             cursor_visible: true,
+            alt_screen: false,
         };
         let selection = TerminalSelection {
             start: TerminalPoint { row: 0, col: 2 },
@@ -12205,6 +12229,7 @@ mod tests {
             cursor_row: 0,
             cursor_col: 0,
             cursor_visible: true,
+            alt_screen: false,
         };
         // Absolute rows 100..=102 are the three visible lines.
         let selection = TerminalSelection {

@@ -178,6 +178,15 @@ pub struct TerminalSnapshot {
     pub cursor_row: usize,
     pub cursor_col: usize,
     pub cursor_visible: bool,
+    /// The alternate screen is active — a full-screen application (vim, less,
+    /// htop, tmux) owns every cell on it.
+    ///
+    /// Exposed for the renderer's benefit rather than the emulator's: local
+    /// keyword highlighting switches itself off here, because those applications
+    /// paint their own layout and a rule firing inside one of their status lines
+    /// is noise at best. `#[serde(default)]` so older persisted snapshots load.
+    #[serde(default)]
+    pub alt_screen: bool,
 }
 
 impl TerminalSnapshot {
@@ -192,6 +201,7 @@ impl TerminalSnapshot {
             cursor_row: 0,
             cursor_col: 0,
             cursor_visible: false,
+            alt_screen: false,
         }
     }
 }

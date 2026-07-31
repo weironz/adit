@@ -106,6 +106,7 @@ dependencies = [
  "adit-storage",
  "adit-terminal",
  "iced",
+ "regex",
  "rfd",
  "serde_json",
  "time",
