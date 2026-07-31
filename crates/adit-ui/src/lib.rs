@@ -2835,6 +2835,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                             let (rw, rh) = rdp_viewport_size(app);
                             match app.manager.open_live_rdp_session(profile_id, password, rw, rh) {
                                 Ok(_) => {
+                                    remember_recent_host(app, profile_id);
                                     app.rdp_target_size = (rw > 0).then_some((rw, rh));
                                     app.terminal_focused = true;
                                     app.rdp_frame_generation = 0;
@@ -4498,9 +4499,12 @@ const RECENT_HOSTS_MAX: usize = 6;
 
 /// Move `profile_id` to the front of the recent list.
 ///
-/// Called where a connection is actually attempted, so every route in — a card,
-/// the tree, the dialog, the toolbar — passes through it without any of them
-/// needing to know the list exists.
+/// Called wherever a session actually opens, which is more places than it looks.
+/// `connect_profile` is only the direct route: SSH and RDP fall through to the
+/// password dialog and the session opens from *its* handler, which
+/// `connect_profile` never returns to. Recording in one place read as obviously
+/// sufficient and left the band permanently empty for SSH — the protocol nearly
+/// every host uses.
 fn remember_recent_host(app: &mut AditApp, profile_id: ProfileId) {
     app.recent_hosts.retain(|id| *id != profile_id);
     app.recent_hosts.insert(0, profile_id);
@@ -4721,6 +4725,7 @@ fn confirm_connection(app: &mut AditApp) {
             .open_live_rdp_session(dialog.profile_id, app.password.clone(), rw, rh)
         {
             Ok(_) => {
+                remember_recent_host(app, dialog.profile_id);
                 app.rdp_target_size = (rw > 0).then_some((rw, rh));
                 app.connection_dialog = None;
                 app.password.clear();
@@ -4750,6 +4755,7 @@ fn confirm_connection(app: &mut AditApp) {
         .open_live_ssh_session(dialog.profile_id, app.password.clone(), passphrase)
     {
         Ok(_) => {
+            remember_recent_host(app, dialog.profile_id);
             app.connection_dialog = None;
             app.password.clear();
             app.remember_connection_password = false;
