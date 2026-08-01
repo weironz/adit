@@ -378,8 +378,6 @@ pub enum Message {
     ShowMainView(MainView),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
-    /// Connect to a host from its card in the host manager.
-    ConnectHostCard(ProfileId),
     OpenAppearance,
     /// Flip one keyword-highlight rule, by its stable id.
     HighlightRuleToggled(&'static str),
@@ -1477,11 +1475,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // screen; leaving focus behind would send typing into a hidden pane.
             app.terminal_focused = matches!(view, MainView::Terminal);
         }
-        Message::ConnectHostCard(profile_id) => {
-            select_profile(app, profile_id);
-            open_connection_dialog(app);
-            app.main_view = MainView::Terminal;
-        }
         Message::OpenAppearance => {
             app.appearance_open = true;
         }
@@ -1653,6 +1646,11 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_editor = None;
             // Double-click connects immediately, like SecureCRT/Xshell — only
             // fall back to the dialog when a password is genuinely required.
+            //
+            // And it leaves the host grid, which shares the tab bar with the
+            // sessions: connecting from there and staying put would leave the
+            // new session running behind a list of hosts.
+            app.main_view = MainView::Terminal;
             connect_profile(app);
         }
         Message::ProfileHovered(profile_id) => {
@@ -9573,7 +9571,10 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
         format!("{}@{}", profile.username, profile.host)
     };
 
-    button(
+    let profile_id = profile.id;
+    let dragging = app.dragged_profile == Some(profile_id);
+    mouse_area(
+        container(
         row![
             tile,
             column![
@@ -9595,20 +9596,32 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
     )
     .width(Fill)
     .padding(10)
-    .style(|_theme, status| button::Style {
-        background: Some(Background::Color(match status {
-            button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
-            _ => app_background(),
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(if dragging {
+            panel_background_hover()
+        } else {
+            app_background()
         })),
-        text_color: primary_text(),
+        text_color: Some(primary_text()),
         border: Border {
-            color: border_color(),
+            color: if dragging { accent() } else { border_color() },
             width: 1.0,
             radius: RADIUS_SM.into(),
         },
-        ..button::Style::default()
-    })
-    .on_press(Message::ConnectHostCard(profile.id))
+        ..container::Style::default()
+    }),
+    )
+    // The same press/move/release the tree uses, so one drag implementation
+    // serves both views. Press arms rather than acts, which is what makes a drag
+    // possible at all — and why a single click selects here and a double click
+    // connects, exactly as in the tree.
+    .on_press(Message::ProfilePressed(profile_id))
+    .on_release(Message::ProfileDropped(profile_id))
+    .on_double_click(Message::ProfileDoubleClicked(profile_id))
+    .on_right_press(Message::ShowProfileContextMenu(profile_id))
+    .on_enter(Message::ProfileHovered(profile_id))
+    .on_move(move |point| Message::ProfileDragOver(profile_id, profile_drop_position(point)))
+    .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
 }
 
@@ -9619,6 +9632,12 @@ fn host_section_header(
     title: String,
     count: usize,
     online: usize,
+    // The group this band is, when it is one. A real group heading doubles as
+    // the drop target for "put this host in that group" — the same
+    // `ProfileDroppedOnGroup` the sidebar's folder rows use, so dragging behaves
+    // the same in both views and there is one implementation of it. `None` for
+    // 最近连接, 搜索结果 and 主机, which are not groups a host can move into.
+    drop_group: Option<String>,
 ) -> Element<'static, Message> {
     let pill = |label: String, color: Color| {
         container(text(label).size(11).color(color))
@@ -9647,10 +9666,19 @@ fn host_section_header(
     if online > 0 {
         header = header.push(pill(format!("{online} 个在线"), success()));
     }
-    header
+    let header = header
         .push(pill(format!("{count} 台"), muted_text()))
         .spacing(8)
-        .align_y(Alignment::Center)
+        .align_y(Alignment::Center);
+
+    let Some(group) = drop_group else {
+        return header.into();
+    };
+    let (enter, hover, release) = (group.clone(), group.clone(), group);
+    mouse_area(container(header).width(Fill).padding([2, 0]))
+        .on_enter(Message::ProfileDragOverGroup(enter))
+        .on_move(move |_| Message::ProfileDragOverGroup(hover.clone()))
+        .on_release(Message::ProfileDroppedOnGroup(release))
         .into()
 }
 
@@ -9681,32 +9709,43 @@ fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, online: boo
         format!("{}@{}", profile.username, profile.host)
     };
 
-    button(
-        row![
-            Space::new().width(Length::Fixed(indent)),
-            dot,
-            text(profile.name.clone()).size(13).color(primary_text()),
-            Space::new().width(Fill),
-            text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center),
+    let profile_id = profile.id;
+    let dragging = app.dragged_profile == Some(profile_id);
+    mouse_area(
+        container(
+            row![
+                Space::new().width(Length::Fixed(indent)),
+                dot,
+                text(profile.name.clone()).size(13).color(primary_text()),
+                Space::new().width(Fill),
+                text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([7, 10])
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if dragging {
+                panel_background_hover()
+            } else {
+                Color::TRANSPARENT
+            })),
+            text_color: Some(primary_text()),
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        }),
     )
-    .width(Fill)
-    .padding([7, 10])
-    .style(|_theme, status| button::Style {
-        background: Some(Background::Color(match status {
-            button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
-            _ => Color::TRANSPARENT,
-        })),
-        text_color: primary_text(),
-        border: Border {
-            radius: RADIUS_SM.into(),
-            ..Border::default()
-        },
-        ..button::Style::default()
-    })
-    .on_press(Message::ConnectHostCard(profile.id))
+    .on_press(Message::ProfilePressed(profile_id))
+    .on_release(Message::ProfileDropped(profile_id))
+    .on_double_click(Message::ProfileDoubleClicked(profile_id))
+    .on_right_press(Message::ShowProfileContextMenu(profile_id))
+    .on_enter(Message::ProfileHovered(profile_id))
+    .on_move(move |point| Message::ProfileDragOver(profile_id, profile_drop_position(point)))
+    .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
 }
 
@@ -9743,11 +9782,18 @@ fn host_columns(app: &AditApp) -> usize {
 }
 
 /// A titled run of hosts, drawn the way the current layout draws hosts.
-fn host_band(
-    app: &AditApp,
-    icon: Option<&'static str>,
+/// The part of a band's appearance that is the same for every band on screen.
+/// Bundled so the call sites read as "this band, drawn like the others".
+struct BandStyle {
     layout: HostLayout,
     columns: usize,
+}
+
+fn host_band(
+    app: &AditApp,
+    style: &BandStyle,
+    icon: Option<&'static str>,
+    drop_group: Option<String>,
     title: String,
     hosts: Vec<&ConnectionProfile>,
     online: &std::collections::HashSet<ProfileId>,
@@ -9757,6 +9803,7 @@ fn host_band(
         .iter()
         .filter(|profile| online.contains(&profile.id))
         .count();
+    let (layout, columns) = (style.layout, style.columns);
     let entries: Element<'static, Message> = match layout {
         HostLayout::Grid => wrap_cards(
             hosts
@@ -9772,7 +9819,7 @@ fn host_band(
             })
             .into(),
     };
-    column![host_section_header(icon, title, count, up), entries]
+    column![host_section_header(icon, title, count, up, drop_group), entries]
         .spacing(10)
         .into()
 }
@@ -9804,7 +9851,10 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(6);
 
-    let columns = host_columns(app);
+    let style = BandStyle {
+        layout,
+        columns: host_columns(app),
+    };
     let online = connected_profiles(app);
     let searching = !filter.is_empty();
     let matching: Vec<&ConnectionProfile> = profiles
@@ -9835,9 +9885,9 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         // A search is asked of everything, so its answer is one list.
         body = body.push(host_band(
             app,
+            &style,
             None,
-            layout,
-            columns,
+            None,
             String::from("搜索结果"),
             matching,
             &online,
@@ -9853,9 +9903,9 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         if !recent.is_empty() {
             body = body.push(host_band(
                 app,
+                &style,
                 Some("◷"),
-                layout,
-                columns,
+                None,
                 String::from("最近连接"),
                 recent,
                 &online,
@@ -9878,16 +9928,20 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             }
         }
         for (group, hosts) in bands {
-            body = body.push(host_band(app, None, layout, columns, group, hosts, &online));
+            // The one band that is a real group, so the one that accepts a drop.
+            let target = Some(group.clone());
+            body = body.push(host_band(
+                app, &style, None, target, group, hosts, &online,
+            ));
         }
         // Named 主机 rather than "ungrouped": for anyone who never made a group
         // that band is simply the list. Omitted when everything is grouped.
         if !loose.is_empty() {
             body = body.push(host_band(
                 app,
+                &style,
                 None,
-                layout,
-                columns,
+                None,
                 String::from("主机"),
                 loose,
                 &online,
