@@ -243,9 +243,6 @@ pub struct AditApp {
     host_layout: HostLayout,
     /// Hosts most recently connected to, newest first.
     recent_hosts: Vec<ProfileId>,
-    /// Group the host manager has been opened into; `None` is the top level.
-    /// Deliberately not persisted — where you were browsing is not a setting.
-    hosts_group: Option<String>,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -381,8 +378,6 @@ pub enum Message {
     ShowMainView(MainView),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
-    /// Descend into a group in the host manager, or return to the top level.
-    OpenHostGroup(Option<String>),
     /// Connect to a host from its card in the host manager.
     ConnectHostCard(ProfileId),
     OpenAppearance,
@@ -1022,7 +1017,6 @@ impl AditApp {
             main_view: MainView::Hosts,
             host_layout,
             recent_hosts,
-            hosts_group: None,
             dark_mode,
             theme_mode,
             font_family,
@@ -1476,9 +1470,6 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::HostLayoutChanged(layout) => {
             app.host_layout = layout;
-        }
-        Message::OpenHostGroup(group) => {
-            app.hosts_group = group;
         }
         Message::ShowMainView(view) => {
             app.main_view = view;
@@ -2758,6 +2749,10 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::TabPressed(session_id) => {
             // Clicking a tab activates it and arms a possible drag-reorder.
+            // It also leaves the host list, which shares this tab bar — without
+            // that the grid would stay on screen with a session selected behind
+            // it, and the two would disagree about what is in front.
+            app.main_view = MainView::Terminal;
             activate_session(app, session_id);
             app.dragged_tab = Some(session_id);
         }
@@ -6493,19 +6488,10 @@ fn view(app: &AditApp) -> Element<'_, Message> {
 
     // The rail is outside the switch on purpose: it is what stays put when a
     // host is opened, so getting back to the list never means closing a session.
-    // The rail is the host manager's own chrome, not the window's. Beside the
-    // session tree it was a second column of navigation for a screen already
-    // showing one, so the terminal view drops it; the tree's header carries the
-    // way back.
-    let main = match app.main_view {
-        MainView::Hosts => row![nav_rail(app), hosts_view(app)],
-        MainView::Terminal => {
-            if app.sidebar_visible {
-                row![sidebar(app), sidebar_divider(), workspace(app)]
-            } else {
-                row![workspace(app)]
-            }
-        }
+    let main = if app.sidebar_visible {
+        row![sidebar(app), sidebar_divider(), workspace(app)]
+    } else {
+        row![workspace(app)]
     }
     .height(Fill)
     .width(Fill);
@@ -7389,6 +7375,28 @@ fn appearance_highlight_button(
     })
     .on_press(Message::HighlightRuleToggled(spec.id))
     .into()
+}
+
+/// Chunk stretchable cards into rows of `per_row`, padding the last row.
+///
+/// Cards fill their share of the row, which is what removes the dead strip a
+/// fixed width left down the right of a wide window. The padding matters for the
+/// same reason in reverse: without it a final row of one card would stretch that
+/// card across the whole pane.
+fn wrap_cards(mut cards: Vec<Element<'static, Message>>, per_row: usize) -> Element<'static, Message> {
+    let mut rows = column![].spacing(8);
+    while !cards.is_empty() {
+        let take = cards.len().min(per_row);
+        let mut r = row![].spacing(8);
+        for element in cards.drain(0..take) {
+            r = r.push(element);
+        }
+        for _ in take..per_row {
+            r = r.push(Space::new().width(Fill));
+        }
+        rows = rows.push(r);
+    }
+    rows.into()
 }
 
 /// Chunk a flat list of built widgets into rows of `per_row`.
@@ -9447,93 +9455,6 @@ pub enum MainView {
 const NAV_RAIL_WIDTH: f32 = 156.0;
 const HOST_CARD_WIDTH: f32 = 260.0;
 
-/// The always-present left rail. It stays put when a host is opened, which is
-/// the whole point: switching back to the host list must not mean closing what
-/// is running.
-///
-/// Below the two views it lists things Adit already does but kept behind menus —
-/// tunnels, snippets, known hosts, logging. They open the same dialogs the menu
-/// bar opens; the rail is a second way in, not a second implementation.
-fn nav_rail(app: &AditApp) -> Element<'_, Message> {
-    // Views highlight when they are the one on screen. Dialog entries never do:
-    // they open something and close again, so a persistent highlight would be
-    // claiming a state that does not exist.
-    let entry = |glyph: &'static str, label: &'static str, active: bool, message: Message| {
-        button(
-            row![
-                text(glyph).size(14).width(Length::Fixed(18.0)),
-                text(label).size(12),
-            ]
-            .spacing(8)
-            .align_y(Alignment::Center),
-        )
-        .width(Fill)
-        .padding([7, 10])
-        .style(move |_theme, status| button::Style {
-            background: Some(Background::Color(if active {
-                accent_soft()
-            } else {
-                match status {
-                    button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
-                    _ => Color::TRANSPARENT,
-                }
-            })),
-            text_color: if active { accent() } else { primary_text() },
-            border: Border {
-                radius: RADIUS_SM.into(),
-                ..Border::default()
-            },
-            ..button::Style::default()
-        })
-        .on_press(message)
-    };
-
-    let view_entry = |glyph, label, target: MainView| {
-        entry(
-            glyph,
-            label,
-            app.main_view == target,
-            Message::ShowMainView(target),
-        )
-    };
-    let tool = |glyph, label, command: MenuCommand| {
-        entry(glyph, label, false, Message::RunMenu(command))
-    };
-
-    container(
-        column![
-            container(text("Adit").size(15).color(primary_text())).padding([6, 10]),
-            view_entry("\u{25a6}", "主机", MainView::Hosts),
-            view_entry("\u{25b8}", "终端", MainView::Terminal),
-            container(Space::new().height(Length::Fixed(1.0)).width(Fill))
-                .padding([6, 8])
-                .style(|_theme| container::Style {
-                    background: Some(Background::Color(border_color())),
-                    ..container::Style::default()
-                }),
-            tool("\u{21c4}", "端口转发", MenuCommand::Tunnels),
-            tool("\u{2318}", "脚本", MenuCommand::Snippets),
-            tool("\u{2713}", "已知主机", MenuCommand::KnownHosts),
-            tool("\u{25a4}", "日志", MenuCommand::Logging),
-            Space::new().height(Fill),
-            entry("\u{2699}", "设置", false, Message::RunMenu(MenuCommand::Options)),
-        ]
-        .spacing(2)
-        .padding(6),
-    )
-    .width(Length::Fixed(NAV_RAIL_WIDTH))
-    .height(Fill)
-    .style(|_theme| container::Style {
-        background: Some(Background::Color(surface_alt())),
-        border: Border {
-            color: border_color(),
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..container::Style::default()
-    })
-    .into()
-}
 
 /// One preset a profile's tile can use.
 struct HostIcon {
@@ -9672,7 +9593,7 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
         .spacing(10)
         .align_y(Alignment::Center),
     )
-    .width(Length::Fixed(HOST_CARD_WIDTH))
+    .width(Fill)
     .padding(10)
     .style(|_theme, status| button::Style {
         background: Some(Background::Color(match status {
@@ -9804,54 +9725,6 @@ fn host_layout_button(current: HostLayout, target: HostLayout, label: &'static s
         .into()
 }
 
-/// A group, as a card you can open. Counts hosts rather than listing them: the
-/// point of the top level is to fit on one screen.
-fn group_card(name: String, count: usize) -> Element<'static, Message> {
-    let opened = name.clone();
-    let tile = container(text("▤").size(15).color(Color::WHITE))
-        .width(Length::Fixed(34.0))
-        .height(Length::Fixed(34.0))
-        .center_x(Length::Fixed(34.0))
-        .center_y(Length::Fixed(34.0))
-        .style(|_theme| container::Style {
-            background: Some(Background::Color(accent())),
-            border: Border {
-                radius: RADIUS_SM.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        });
-
-    button(
-        row![
-            tile,
-            column![
-                text(name).size(13).color(primary_text()),
-                text(format!("{count} 台主机")).size(11).color(muted_text()),
-            ]
-            .spacing(3),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fixed(HOST_CARD_WIDTH))
-    .padding(10)
-    .style(|_theme, status| button::Style {
-        background: Some(Background::Color(match status {
-            button::Status::Hovered | button::Status::Pressed => panel_background_hover(),
-            _ => app_background(),
-        })),
-        text_color: primary_text(),
-        border: Border {
-            color: border_color(),
-            width: 1.0,
-            radius: RADIUS_SM.into(),
-        },
-        ..button::Style::default()
-    })
-    .on_press(Message::OpenHostGroup(Some(opened)))
-    .into()
-}
 
 /// How many cards fit across, from the window width.
 ///
@@ -9885,7 +9758,7 @@ fn host_band(
         .filter(|profile| online.contains(&profile.id))
         .count();
     let entries: Element<'static, Message> = match layout {
-        HostLayout::Grid => wrap_rows(
+        HostLayout::Grid => wrap_cards(
             hosts
                 .into_iter()
                 .map(|profile| host_card(app, profile, online.contains(&profile.id)))
@@ -9923,10 +9796,11 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         .size(13);
 
     let layout = app.host_layout;
+    // Grid and list. Tree was a third option that reproduced the sidebar, and
+    // the sidebar does it better because doing it is all the sidebar does.
     let switcher = row![
         host_layout_button(layout, HostLayout::Grid, "网格"),
         host_layout_button(layout, HostLayout::List, "列表"),
-        host_layout_button(layout, HostLayout::Tree, "树形"),
     ]
     .spacing(6);
 
@@ -9938,124 +9812,54 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         .filter(|profile| matches(profile))
         .collect();
 
-    // Where you are, and the way back out. Searching and the tree both ignore
-    // the current group, so neither claims to be somewhere it is not.
-    let inside = (!searching && layout != HostLayout::Tree)
-        .then(|| app.hosts_group.clone())
-        .flatten();
-    let mut crumbs = row![button(
-        text("全部主机")
-            .size(12)
-            .color(if inside.is_some() { accent() } else { primary_text() })
-    )
-    .padding(0)
-    .style(|_theme, _status| button::Style {
-        background: None,
-        text_color: primary_text(),
-        ..button::Style::default()
-    })
-    .on_press(Message::OpenHostGroup(None))]
-    .spacing(6)
-    .align_y(Alignment::Center);
-    if let Some(group) = &inside {
-        crumbs = crumbs
-            .push(text("/").size(12).color(muted_text()))
-            .push(text(group.clone()).size(12).color(primary_text()));
-    }
-
     let mut body = column![].spacing(match layout {
         HostLayout::Grid => 18,
         HostLayout::List | HostLayout::Tree => 10,
     });
 
-    if layout == HostLayout::Tree {
-        // The session manager's own tree, not a copy of it. Everything it can do
-        // — collapse, drag to reorder, right-click, filter — comes along, and
-        // there is only one implementation to keep correct.
-        //
-        // Its right-click menu anchors off SidebarCursorMoved, whose coordinates
-        // are relative to whatever wraps the tree. That is the sidebar's width
-        // over there and the full pane here, so the menu lands in the right
-        // place only because the same mouse_area wraps it in both. Worth knowing
-        // before either wrapper changes.
-        body = body.push(mouse_area(session_tree(app)).on_move(Message::SidebarCursorMoved));
-    } else if searching {
-        // A search is asked of everything, not of the group you happen to be
-        // standing in — the alternative is a list that looks empty because of a
-        // location the search box says nothing about.
-        body = if matching.is_empty() {
-            body.push(text("没有匹配的主机").size(13).color(muted_text()))
-        } else {
-            body.push(host_band(app, None, layout, columns, String::from("搜索结果"), matching, &online))
-        };
-    } else if let Some(group) = inside.clone() {
-        let hosts: Vec<&ConnectionProfile> = matching
-            .into_iter()
-            .filter(|profile| profile.group == group)
-            .collect();
-        body = if hosts.is_empty() {
-            body.push(text("这个分组还没有主机").size(13).color(muted_text()))
-        } else {
-            body.push(host_band(app, None, layout, columns, group, hosts, &online))
-        };
+    // One flat list, with no group bands and nothing to drill into. The sidebar
+    // tree already shows the hierarchy; a second copy here meant two things to
+    // keep right and a mode to be in. Seeing every host at once is what the tree
+    // is bad at, and the only reason to have a grid at all.
+    if matching.is_empty() {
+        body = body.push(
+            text(if searching {
+                "没有匹配的主机"
+            } else {
+                "还没有会话配置"
+            })
+            .size(13)
+            .color(muted_text()),
+        );
     } else {
         // Reaching for a recent host is what you do instead of looking, so it
-        // sits above everything and disappears the moment you start looking.
-        let recent: Vec<&ConnectionProfile> = app
-            .recent_hosts
-            .iter()
-            .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
-            .collect();
-        if !recent.is_empty() {
-            body = body.push(host_band(app, Some("◷"), layout, columns, String::from("最近连接"), recent, &online));
-        }
-
-        // Groups are cards to open rather than bands to scroll past: the top
-        // level should stay readable however many hosts are behind it.
-        //
-        // Counted by name rather than by walking runs of neighbours. The sort
-        // order does not promise that a group's hosts are adjacent, and on a
-        // real catalogue — 151 hosts across five groups — assuming they were
-        // turns five cards into dozens of duplicates.
-        let mut groups: Vec<(String, usize)> = Vec::new();
-        for profile in matching.iter().filter(|p| !p.group.trim().is_empty()) {
-            match groups.iter_mut().find(|(name, _)| name == &profile.group) {
-                Some((_, count)) => *count += 1,
-                None => groups.push((profile.group.clone(), 1)),
+        // disappears the moment you start looking.
+        if !searching {
+            let recent: Vec<&ConnectionProfile> = app
+                .recent_hosts
+                .iter()
+                .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
+                .collect();
+            if !recent.is_empty() {
+                body = body.push(host_band(
+                    app,
+                    Some("◷"),
+                    layout,
+                    columns,
+                    String::from("最近连接"),
+                    recent,
+                    &online,
+                ));
             }
         }
-        if !groups.is_empty() {
-            let count = groups.len();
-            let cards = groups
-                .into_iter()
-                .map(|(name, hosts)| group_card(name, hosts))
-                .collect();
-            body = body.push(
-                column![
-                    host_section_header(None, String::from("分组"), count, 0),
-                    wrap_rows(cards, columns)
-                ]
-                .spacing(10),
-            );
-        }
-
-        // Every host, not only the ones outside a group.
-        //
-        // Ungrouped-only was the first cut and it read fine against three hosts,
-        // one of them loose. Against a real catalogue where every host lives in
-        // a group it collapses to nothing, leaving a first screen of five cards
-        // and not one host on it. Groups are a shortcut into the list, so the
-        // list has to be there to be shortcut into.
-        if !matching.is_empty() {
-            body = body.push(host_band(app, None, layout, columns, String::from("主机"), matching, &online));
-        } else {
-            body = body.push(text("还没有会话配置").size(13).color(muted_text()));
-        }
+        let title = String::from(if searching { "搜索结果" } else { "主机" });
+        body = body.push(host_band(
+            app, None, layout, columns, title, matching, &online,
+        ));
     }
 
     container(
         column![
-            crumbs,
             // Search, then the shapes, then the one action. No tag filter or
             // multi-select alongside them: the reference client has both, Adit
             // has neither tags nor a bulk operation to select for, and a control
@@ -11240,12 +11044,38 @@ fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'static, Messag
         .into()
 }
 
+/// The pinned first tab. The host list is a tab rather than a view behind its
+/// own rail: tabs already exist, everyone knows what they do, and a second
+/// navigation surface for one more destination was never worth it.
+fn hosts_tab_button(active: bool) -> Element<'static, Message> {
+    button(
+        row![text("\u{25a6}").size(12), text("主机").size(12)]
+            .spacing(6)
+            .align_y(Alignment::Center),
+    )
+    .height(TAB_BAR_HEIGHT)
+    .padding([0, 12])
+    .style(move |_theme, status| {
+        if active {
+            primary_button_style(status)
+        } else {
+            secondary_button_style(status)
+        }
+    })
+    .on_press(Message::ShowMainView(MainView::Hosts))
+    .into()
+}
+
 fn workspace(app: &AditApp) -> Element<'_, Message> {
     let tabs = app
         .manager
         .sessions()
         .into_iter()
-        .fold(row![].spacing(2).height(TAB_BAR_HEIGHT), |tabs, session| {
+        .fold(
+            row![hosts_tab_button(app.main_view == MainView::Hosts)]
+                .spacing(2)
+                .height(TAB_BAR_HEIGHT),
+            |tabs, session| {
             let accent = profile_accent(app, session.profile_id);
             let badge = profile_badge(app, session.profile_id);
             tabs.push(tab_button(
@@ -11254,12 +11084,15 @@ fn workspace(app: &AditApp) -> Element<'_, Message> {
                 app.dragged_tab,
                 accent,
                 badge,
-            ))
-        });
+                ))
+            },
+        );
 
     // Split panes: 2–4 tiled sessions. Otherwise the single-pane view, left
     // byte-for-byte as before (it is the well-tested selection/hit-test path).
-    let body: Element<'_, Message> = if app.panes.len() >= 2 {
+    let body: Element<'_, Message> = if app.main_view == MainView::Hosts {
+        hosts_view(app)
+    } else if app.panes.len() >= 2 {
         tiled_workspace_body(app)
     } else if app.manager.active_is_rdp() {
         rdp_surface_view(app)
