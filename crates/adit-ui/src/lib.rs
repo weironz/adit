@@ -1659,6 +1659,14 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // row, so seed the insertion line here too (defaults to "before").
             if let Some(dragged) = app.dragged_profile {
                 if dragged != profile_id {
+                    // Crossing onto a *different* row is itself proof of a real
+                    // drag, so it arms the move. The grid has no equivalent of
+                    // SidebarCursorMoved's dead-zone check — its coordinates are
+                    // the sidebar's — and without this the drop was computed,
+                    // shown, and then discarded on release for want of a flag.
+                    // Jitter inside one row cannot trip it: that row is the one
+                    // being dragged, and this arm never runs for it.
+                    app.profile_drag_active = true;
                     app.profile_drop = Some(ProfileDrop::Beside {
                         profile_id,
                         position: ProfileDropPosition::Before,
@@ -1678,6 +1686,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // half, below it in its bottom half.
             if let Some(dragged) = app.dragged_profile {
                 if dragged != profile_id {
+                    app.profile_drag_active = true;
                     app.profile_drop = Some(ProfileDrop::Beside {
                         profile_id,
                         position,
@@ -1704,6 +1713,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ProfileDragOverGroup(group) => {
             if app.dragged_profile.is_some() {
                 // A session dragged onto a folder header drops *into* the folder.
+                app.profile_drag_active = true;
                 app.group_drop_target = Some(group.clone());
                 app.profile_drop = Some(ProfileDrop::IntoGroup(group));
             } else if let Some(source) = app.dragged_group.clone() {
