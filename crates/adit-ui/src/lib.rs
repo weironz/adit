@@ -9781,6 +9781,69 @@ fn host_columns(app: &AditApp) -> usize {
     ((available / (HOST_CARD_WIDTH + 8.0)).floor() as usize).clamp(1, 8)
 }
 
+/// A group, as a card. Collapsed by nature: the point of the band is to show
+/// that a group exists and how big it is, not to spill it across the screen.
+///
+/// Clicking toggles the same `collapsed_groups` the sidebar tree uses, so a
+/// group folded here is folded there too — that is what "aligned with the
+/// session manager" has to mean if it means anything.
+///
+/// The same press/enter/release the sidebar's folder rows carry, so a host
+/// dragged onto it lands in the group.
+fn group_card(name: String, count: usize, expanded: bool, targeted: bool) -> Element<'static, Message> {
+    let (press, enter, hover, release) =
+        (name.clone(), name.clone(), name.clone(), name.clone());
+    let tile = container(text(if expanded { "\u{25be}" } else { "\u{25b8}" }).size(15).color(Color::WHITE))
+        .width(Length::Fixed(34.0))
+        .height(Length::Fixed(34.0))
+        .center_x(Length::Fixed(34.0))
+        .center_y(Length::Fixed(34.0))
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(accent())),
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+
+    mouse_area(
+        container(
+            row![
+                tile,
+                column![
+                    text(name).size(13).color(primary_text()),
+                    text(format!("{count} 台主机")).size(11).color(muted_text()),
+                ]
+                .spacing(3),
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding(10)
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if targeted {
+                panel_background_hover()
+            } else {
+                app_background()
+            })),
+            text_color: Some(primary_text()),
+            border: Border {
+                color: if targeted { accent() } else { border_color() },
+                width: 1.0,
+                radius: RADIUS_SM.into(),
+            },
+            ..container::Style::default()
+        }),
+    )
+    .on_press(Message::GroupPressed(press))
+    .on_enter(Message::ProfileDragOverGroup(enter))
+    .on_move(move |_| Message::ProfileDragOverGroup(hover.clone()))
+    .on_release(Message::ProfileDroppedOnGroup(release))
+    .into()
+}
+
 /// A titled run of hosts, drawn the way the current layout draws hosts.
 /// The part of a band's appearance that is the same for every band on screen.
 /// Bundled so the call sites read as "this band, drawn like the others".
@@ -9927,8 +9990,38 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 None => bands.push((profile.group.clone(), vec![profile])),
             }
         }
+        // Groups are cards, folded. A band shows that a group exists and how big
+        // it is; spilling every group across the screen is what the sidebar tree
+        // is for, and what a grid of 151 hosts becomes unreadable doing.
+        if !bands.is_empty() {
+            let cards = bands
+                .iter()
+                .map(|(group, hosts)| {
+                    group_card(
+                        group.clone(),
+                        hosts.len(),
+                        !app.collapsed_groups.contains(group),
+                        app.profile_drop == Some(ProfileDrop::IntoGroup(group.clone())),
+                    )
+                })
+                .collect();
+            body = body.push(
+                column![
+                    host_section_header(None, String::from("分组"), bands.len(), 0, None),
+                    wrap_cards(cards, style.columns)
+                ]
+                .spacing(10),
+            );
+        }
+
+        // An expanded group opens beneath the cards. `collapsed_groups` is the
+        // sidebar's own set, so folding a group here folds it there — which is
+        // the only reading of "aligned with the session manager" that survives
+        // someone using both.
         for (group, hosts) in bands {
-            // The one band that is a real group, so the one that accepts a drop.
+            if app.collapsed_groups.contains(&group) {
+                continue;
+            }
             let target = Some(group.clone());
             body = body.push(host_band(
                 app, &style, None, target, group, hosts, &online,
