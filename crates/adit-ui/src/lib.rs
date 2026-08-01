@@ -9559,7 +9559,14 @@ fn online_dot() -> Element<'static, Message> {
 }
 
 /// One host, as a card: an accent tile, the name, and `user@host` beneath it.
-fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Element<'static, Message> {
+fn host_card(
+    app: &AditApp,
+    profile: &ConnectionProfile,
+    online: bool,
+    // Cards stretch, so their width is not a constant and the midpoint the drop
+    // test needs cannot be one either.
+    card_width: f32,
+) -> Element<'static, Message> {
     let (glyph, tile_color) = host_icon(app, profile);
     let tile = container(text(glyph).size(15).color(Color::WHITE))
     .width(Length::Fixed(34.0))
@@ -9583,6 +9590,11 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
 
     let profile_id = profile.id;
     let dragging = app.dragged_profile == Some(profile_id);
+    // Whether the dragged card would land on this one.
+    let incoming = matches!(
+        &app.profile_drop,
+        Some(ProfileDrop::Beside { profile_id: target, .. }) if *target == profile_id
+    );
     mouse_area(
         container(
         row![
@@ -9613,9 +9625,16 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
             app_background()
         })),
         text_color: Some(primary_text()),
+        // A thicker accent edge on the target says where the card will land.
+        // Without it the drag read as inert even while it worked: the move
+        // happened, and nothing on screen had said it would.
         border: Border {
-            color: if dragging { accent() } else { border_color() },
-            width: 1.0,
+            color: if dragging || incoming {
+                accent()
+            } else {
+                border_color()
+            },
+            width: if incoming { 2.5 } else { 1.0 },
             radius: RADIUS_SM.into(),
         },
         ..container::Style::default()
@@ -9630,7 +9649,18 @@ fn host_card(app: &AditApp, profile: &ConnectionProfile, online: bool) -> Elemen
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
     .on_enter(Message::ProfileHovered(profile_id))
-    .on_move(move |point| Message::ProfileDragOver(profile_id, profile_drop_position(point)))
+    // Left half or right half, not top or bottom. `profile_drop_position` splits
+    // on Y because the tree stacks its rows; a grid puts them side by side, so
+    // asking which vertical half the cursor is in answers a question nobody
+    // asked and drops the card somewhere unrelated to where it was let go.
+    .on_move(move |point| {
+        let position = if point.x < card_width / 2.0 {
+            ProfileDropPosition::Before
+        } else {
+            ProfileDropPosition::After
+        };
+        Message::ProfileDragOver(profile_id, position)
+    })
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
 }
@@ -9878,13 +9908,21 @@ fn host_band(
         .count();
     let (layout, columns) = (style.layout, style.columns);
     let entries: Element<'static, Message> = match layout {
-        HostLayout::Grid => wrap_cards(
-            hosts
-                .into_iter()
-                .map(|profile| host_card(app, profile, online.contains(&profile.id)))
-                .collect(),
-            columns,
-        ),
+        HostLayout::Grid => {
+            // The same arithmetic wrap_cards lays them out with, so the midpoint
+            // a card tests against is the midpoint it actually has.
+            let card_width =
+                ((app.window_width - app.sidebar_width - 56.0) / columns as f32 - 8.0).max(80.0);
+            wrap_cards(
+                hosts
+                    .into_iter()
+                    .map(|profile| {
+                        host_card(app, profile, online.contains(&profile.id), card_width)
+                    })
+                    .collect(),
+                columns,
+            )
+        }
         _ => hosts
             .into_iter()
             .fold(column![].spacing(2), |rows, profile| {
