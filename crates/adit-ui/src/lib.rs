@@ -9817,10 +9817,10 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         HostLayout::List | HostLayout::Tree => 10,
     });
 
-    // One flat list, with no group bands and nothing to drill into. The sidebar
-    // tree already shows the hierarchy; a second copy here meant two things to
-    // keep right and a mode to be in. Seeing every host at once is what the tree
-    // is bad at, and the only reason to have a grid at all.
+    // One band per group, in the order and grouping the sidebar tree uses, so
+    // the two views cannot disagree about where a host lives. Bands rather than
+    // cards you open: the tree is right there for drilling in, and the reason to
+    // have a grid at all is seeing hosts without drilling.
     if matching.is_empty() {
         body = body.push(
             text(if searching {
@@ -9831,31 +9831,68 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .size(13)
             .color(muted_text()),
         );
+    } else if searching {
+        // A search is asked of everything, so its answer is one list.
+        body = body.push(host_band(
+            app,
+            None,
+            layout,
+            columns,
+            String::from("搜索结果"),
+            matching,
+            &online,
+        ));
     } else {
         // Reaching for a recent host is what you do instead of looking, so it
         // disappears the moment you start looking.
-        if !searching {
-            let recent: Vec<&ConnectionProfile> = app
-                .recent_hosts
-                .iter()
-                .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
-                .collect();
-            if !recent.is_empty() {
-                body = body.push(host_band(
-                    app,
-                    Some("◷"),
-                    layout,
-                    columns,
-                    String::from("最近连接"),
-                    recent,
-                    &online,
-                ));
+        let recent: Vec<&ConnectionProfile> = app
+            .recent_hosts
+            .iter()
+            .filter_map(|id| profiles.iter().find(|profile| profile.id == *id))
+            .collect();
+        if !recent.is_empty() {
+            body = body.push(host_band(
+                app,
+                Some("◷"),
+                layout,
+                columns,
+                String::from("最近连接"),
+                recent,
+                &online,
+            ));
+        }
+
+        // Counted by name, not by walking runs of neighbours: nothing promises a
+        // group's hosts are adjacent after sorting, and assuming they were turned
+        // five groups into dozens on a real catalogue.
+        let mut bands: Vec<(String, Vec<&ConnectionProfile>)> = Vec::new();
+        let mut loose: Vec<&ConnectionProfile> = Vec::new();
+        for profile in matching {
+            if profile.group.trim().is_empty() {
+                loose.push(profile);
+                continue;
+            }
+            match bands.iter_mut().find(|(name, _)| name == &profile.group) {
+                Some((_, hosts)) => hosts.push(profile),
+                None => bands.push((profile.group.clone(), vec![profile])),
             }
         }
-        let title = String::from(if searching { "搜索结果" } else { "主机" });
-        body = body.push(host_band(
-            app, None, layout, columns, title, matching, &online,
-        ));
+        for (group, hosts) in bands {
+            body = body.push(host_band(app, None, layout, columns, group, hosts, &online));
+        }
+        // Named 主机 rather than "ungrouped": for anyone who never made a group
+        // that band is simply the list. Omitted when everything is grouped.
+        if !loose.is_empty() {
+            body = body.push(host_band(
+                app,
+                None,
+                layout,
+                columns,
+                String::from("主机"),
+                loose,
+                &online,
+            ));
+        }
     }
 
     container(
