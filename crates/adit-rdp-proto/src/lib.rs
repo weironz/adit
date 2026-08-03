@@ -147,3 +147,56 @@ pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<Option<T>
         bincode::deserialize(&buf).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Some(msg))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The clipboard split (app owns the Windows clipboard, helper owns CLIPRDR)
+    /// puts arbitrary user text on this pipe in both directions, so the framing
+    /// has to survive whatever ends up on someone's clipboard.
+    #[test]
+    fn clipboard_text_survives_the_pipe_in_both_directions() {
+        let text = "行 1\r\nline 2\ttabbed\u{0}emoji 🦀";
+
+        let mut pipe = Vec::new();
+        write_msg(
+            &mut pipe,
+            &ClientMsg::Input(InputEvent::ClipboardText(text.to_owned())),
+        )
+        .expect("write app → helper");
+        write_msg(&mut pipe, &HostMsg::ClipboardText(text.to_owned()))
+            .expect("write helper → app");
+
+        let mut cursor = io::Cursor::new(pipe);
+        let inbound: ClientMsg = read_msg(&mut cursor)
+            .expect("read app → helper")
+            .expect("a message");
+        let outbound: HostMsg = read_msg(&mut cursor)
+            .expect("read helper → app")
+            .expect("a message");
+
+        match inbound {
+            ClientMsg::Input(InputEvent::ClipboardText(got)) => assert_eq!(got, text),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        match outbound {
+            HostMsg::ClipboardText(got) => assert_eq!(got, text),
+            other => panic!("unexpected message: {other:?}"),
+        }
+        // Nothing left over: the two messages framed exactly.
+        assert!(read_msg::<_, HostMsg>(&mut cursor)
+            .expect("clean end of stream")
+            .is_none());
+    }
+
+    #[test]
+    fn an_empty_clipboard_offer_round_trips() {
+        let mut pipe = Vec::new();
+        write_msg(&mut pipe, &HostMsg::ClipboardText(String::new())).expect("write");
+        let msg: HostMsg = read_msg(&mut io::Cursor::new(pipe))
+            .expect("read")
+            .expect("a message");
+        assert!(matches!(msg, HostMsg::ClipboardText(text) if text.is_empty()));
+    }
+}

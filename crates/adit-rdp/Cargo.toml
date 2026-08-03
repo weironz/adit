@@ -28,11 +28,13 @@ default = []
 # native Opus (libopus_sys), which needs a CMake toolchain.
 sound = ["dep:ironrdp-rdpsnd", "dep:ironrdp-rdpsnd-native"]
 
-# NOTE: there is deliberately no `clipboard` feature. One used to be declared here
-# pointing at a `clipboard` module that was never written, so `--features clipboard`
-# simply failed to compile. CLIPRDR's native backend also wants a Windows message
-# pump, which this helper — a windowless background process — does not have, so
-# wiring it up is a design task, not a flag. Tracked as "RDP clipboard".
+# NOTE: there is deliberately no `clipboard` feature — CLIPRDR ships unconditionally
+# and is gated at runtime by `ConnectRequest::enable_clipboard`. It costs nothing to
+# link: `ironrdp-cliprdr` is pure protocol code with no OS dependency, because we do
+# NOT use `ironrdp-cliprdr-native`. That crate's Windows backend owns the real system
+# clipboard and therefore needs a window and a message pump, which this windowless
+# helper does not have. Instead the GUI app owns the Windows clipboard and this helper
+# only speaks the wire protocol; see the module docs in `src/clipboard.rs`.
 
 [dependencies]
 adit-rdp-proto = { path = "../adit-rdp-proto" }
@@ -41,6 +43,7 @@ ironrdp-core = { version = "0.2", features = ["alloc"] }
 ironrdp-pdu = "0.9"
 ironrdp-svc = "0.8"
 ironrdp-dvc = "0.8"
+ironrdp-cliprdr = "0.7"
 ironrdp-connector = "0.10"
 ironrdp-session = "0.11"
 ironrdp-graphics = "0.9"

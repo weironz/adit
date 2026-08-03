@@ -228,6 +228,13 @@ pub struct AditApp {
     // cache must be invalidated — otherwise we'd render one host's frame under
     // another's tab (and could get stuck if the generations happened to match).
     rdp_frame_session: Option<SessionId>,
+    // RDP clipboard: only this process has a Windows clipboard (the helper is
+    // windowless), so local→remote means polling it while an RDP tab is up.
+    // `rdp_clipboard_offered` is the last text handed to the helper — it stops
+    // the poll from re-offering the same thing, and, because inbound remote text
+    // is recorded here too, stops a remote copy from bouncing straight back.
+    rdp_clipboard_offered: Option<String>,
+    rdp_clipboard_ticks: u8,
     // Latest keyboard modifier state, so wheel handling can tell a plain scroll
     // from a Ctrl+wheel zoom.
     modifiers: keyboard::Modifiers,
@@ -593,6 +600,8 @@ pub enum Message {
     CopyTerminalSelection,
     PasteIntoTerminal,
     ClipboardPasted(Option<String>),
+    /// The local clipboard, sampled for the active RDP session's remote.
+    RdpClipboardPolled(Option<String>),
     TerminalJumpToBottom,
     OpenSelectedProfile,
     ConnectSelectedProfile,
@@ -763,6 +772,12 @@ const PROFILE_ROW_HEIGHT: f32 = 28.0;
 const PANE_GAP: f32 = 6.0;
 const PANE_HEADER_HEIGHT: f32 = 26.0;
 const MAX_PANES: usize = 6;
+
+/// Sample the local clipboard for the remote desktop every Nth 100 ms `Tick`.
+/// Windows has no cheap "did the clipboard change" signal available to us here,
+/// so this is a poll; 500 ms is fast enough that copy-then-paste feels instant
+/// and slow enough not to contend with other apps for the clipboard.
+const RDP_CLIPBOARD_POLL_TICKS: u8 = 5;
 
 impl Default for AditApp {
     fn default() -> Self {
@@ -1041,6 +1056,8 @@ impl AditApp {
             rdp_surface_size: None,
             rdp_target_size: None,
             rdp_frame_session: None,
+            rdp_clipboard_offered: None,
+            rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),
             window_width,
             window_height,
@@ -1397,6 +1414,35 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 sync_terminal_size(app);
             }
             persist_settings_if_changed(app);
+
+            // RDP clipboard bridge: the helper is a windowless process, so only
+            // this one has a Windows clipboard. Remote copies land here...
+            if let Some(text) = app.manager.take_rdp_clipboard() {
+                // Record it as already-offered so the poll below doesn't bounce
+                // the remote's own text straight back at it.
+                app.rdp_clipboard_offered = Some(text.clone());
+                return clipboard::write(text);
+            }
+            // ...and the local clipboard is sampled for the remote. Only while an
+            // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
+            // opens the system clipboard, and doing that ten times a second would
+            // fight every other app on the machine for it.
+            if app.manager.active_is_rdp() {
+                app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
+                if app.rdp_clipboard_ticks.is_multiple_of(RDP_CLIPBOARD_POLL_TICKS) {
+                    return clipboard::read().map(Message::RdpClipboardPolled);
+                }
+            }
+        }
+        Message::RdpClipboardPolled(contents) => {
+            // Offer only what actually changed: the poll fires on a timer, and
+            // the offer costs a FormatList on the RDP wire.
+            if let Some(text) = contents.filter(|text| !text.is_empty()) {
+                if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
+                    app.rdp_clipboard_offered = Some(text.clone());
+                    app.manager.offer_clipboard_to_active_rdp(text);
+                }
+            }
         }
         Message::RdpTick => {
             // The cached frame belongs to one session; if the active session
@@ -2567,8 +2613,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            // RDP: keys go to the remote desktop as scancodes, not VT bytes.
-            // (Clipboard copy/paste will ride the RDP clipboard channel later.)
+            // RDP: keys go to the remote desktop as scancodes, not VT bytes —
+            // including Ctrl+C/Ctrl+V, which the remote handles itself. The two
+            // clipboards are kept in sync out of band, on the Tick above.
             if app.manager.active_is_rdp() {
                 if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
                     app.manager.send_rdp_input_to_active(RdpInput::Key {

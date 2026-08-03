@@ -25,6 +25,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc as tokio_mpsc;
 
+use crate::clipboard::{self, SharedClipboard};
 use crate::egfx::{self, EgfxHandler, SharedEgfx};
 use crate::{build_connector_config, input::map_input, RdpError};
 
@@ -58,6 +59,10 @@ pub(crate) async fn run_session(
         "starting RDP session"
     );
     let shared_egfx = egfx::new_shared();
+    // Clipboard state outlives a single CLIPRDR channel on purpose: a GNOME
+    // system-mode handover redirects and rebuilds the channel, and the text the
+    // user copied did not change under them.
+    let shared_clipboard = clipboard::new_shared();
     let mut routing_token: Option<Vec<u8>> = None;
     // One-time credentials for the RDSTLS handover auth, populated on a redirect.
     let mut rdstls_creds: Option<crate::rdstls::RdstlsCreds> = None;
@@ -70,8 +75,13 @@ pub(crate) async fn run_session(
         // futures borrowing `request` / `routing_token` are dropped before we may
         // reassign those on a redirect.
         let (connection_result, framed) = {
-            let connect_fut =
-                connect(&request, &shared_egfx, routing_token.as_deref(), rdstls_creds.as_ref());
+            let connect_fut = connect(
+                &request,
+                &shared_egfx,
+                &shared_clipboard,
+                routing_token.as_deref(),
+                rdstls_creds.as_ref(),
+            );
             tokio::pin!(connect_fut);
             let deadline = tokio::time::sleep(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS));
             tokio::pin!(deadline);
@@ -116,9 +126,16 @@ pub(crate) async fn run_session(
             }
         }
 
-        match active_session(framed, connection_result, &mut input_rx, &host_tx, &shared_egfx)
-            .await
-            .map_err(|e| RdpError::Session(e.to_string()))?
+        match active_session(
+            framed,
+            connection_result,
+            &mut input_rx,
+            &host_tx,
+            &shared_egfx,
+            &shared_clipboard,
+        )
+        .await
+        .map_err(|e| RdpError::Session(e.to_string()))?
         {
             None => return Ok(()),
             Some(redir) => {
@@ -170,6 +187,7 @@ pub(crate) async fn run_session(
 async fn connect(
     request: &ConnectRequest,
     shared_egfx: &SharedEgfx,
+    shared_clipboard: &SharedClipboard,
     routing_token: Option<&[u8]>,
     rdstls_creds: Option<&crate::rdstls::RdstlsCreds>,
 ) -> Result<(ConnectionResult, UpgradedFramed), ironrdp_connector::ConnectorError> {
@@ -194,9 +212,9 @@ async fn connect(
     let drdynvc = DrdynvcClient::new()
         .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())))
         .with_dynamic_channel(egfx_client);
-    // `mut` is always needed for the `&mut connector` borrows in `connect_begin` /
-    // `mark_as_upgraded`; the feature blocks below may also reassign it.
-    #[allow(unused_mut)]
+    // `mut` for the `&mut connector` borrows in `connect_begin` /
+    // `mark_as_upgraded`, and for the optional-channel blocks below, which
+    // consume and re-assign it.
     let mut connector = ClientConnector::new(config, client_addr).with_static_channel(drdynvc);
 
     // Audio (RDPSND) via cpal.
@@ -208,8 +226,14 @@ async fn connect(
         )));
     }
 
-    // No CLIPRDR channel: RDP clipboard is not implemented (see Cargo.toml).
-    // `request.enable_clipboard` is accepted on the wire but has no effect yet.
+    // Clipboard (CLIPRDR). The backend here is a pure protocol adapter — the GUI
+    // app owns the real Windows clipboard, because this helper is windowless and
+    // has no message pump. See `clipboard.rs`.
+    if request.enable_clipboard {
+        connector = connector.with_static_channel(ironrdp_cliprdr::CliprdrClient::new(Box::new(
+            crate::clipboard::AditCliprdrBackend::new(Arc::clone(shared_clipboard)),
+        )));
+    }
 
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector).await?;
 
@@ -274,6 +298,7 @@ async fn active_session(
     input_rx: &mut tokio_mpsc::UnboundedReceiver<InputEvent>,
     host_tx: &std_mpsc::Sender<HostMsg>,
     egfx: &SharedEgfx,
+    clip: &SharedClipboard,
 ) -> Result<Option<crate::redirect::Redirection>, ironrdp_session::SessionError> {
     let (mut reader, mut writer) = split_tokio_framed(framed);
 
@@ -357,9 +382,16 @@ async fn active_session(
                             None => Vec::new(),
                         }
                     }
-                    // Clipboard is not implemented; accept and drop so the app can
-                    // send it unconditionally once it is.
-                    Some(InputEvent::ClipboardText(_)) => Vec::new(),
+                    // The GUI owns the real Windows clipboard and hands us
+                    // freshly-copied text; we only advertise it to the remote
+                    // (CLIPRDR delay-rendering), so nothing crosses the wire
+                    // until something over there actually pastes. The advertise
+                    // itself is emitted by the clipboard pump below. With the
+                    // channel disabled it just overwrites a string and stops there.
+                    Some(InputEvent::ClipboardText(text)) => {
+                        clipboard::offer_local_text(clip, text);
+                        Vec::new()
+                    }
                     // Mouse / key / unicode all fold into fast-path events.
                     Some(other) => {
                         let events = map_input(&mut input_db, &other);
@@ -467,6 +499,23 @@ async fn active_session(
                 // Multitransport (UDP) and auto-detect are advisory; ignore.
                 _ => {}
             }
+        }
+
+        // CLIPRDR work the backend queued while it ran inside `process` above (it
+        // is borrowed by the processor there and can reach neither the channel
+        // nor the socket), plus anything a local copy just enqueued. Emitted
+        // after this iteration's response frames so the wire ordering stays sane.
+        match clipboard::pump(clip, &mut active_stage, host_tx) {
+            Some(frames) => {
+                for frame in frames {
+                    writer
+                        .write_all(&frame)
+                        .await
+                        .map_err(|e| ironrdp_session::custom_err!("write clipboard frame", e))?;
+                }
+            }
+            // The app stopped listening; end the session.
+            None => break 'session,
         }
 
         // Emit the legacy DecodedImage only for legacy-bitmap servers. Once the

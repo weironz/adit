@@ -298,7 +298,11 @@ unless `RUST_LOG` is set. It never logs the password (only `pw_len`).
 
 ## 9. Deferred (next RDP increment)
 
-Clipboard (CLIPRDR), audio (RDPSND — needs a CMake/Opus toolchain), multi-monitor, real
-server-cursor shape, and dirty-rect frame delivery (currently full-frame tiles).
-Clipboard/sound are behind `adit-rdp` cargo features, OFF by default. Tracked as backlog
-item #52.
+Audio (RDPSND — needs a CMake/Opus toolchain), multi-monitor, real server-cursor shape,
+and dirty-rect frame delivery (currently full-frame tiles). `sound` is an `adit-rdp`
+cargo feature, OFF by default. Tracked as backlog item #52.
+
+Clipboard (CLIPRDR) **is done** — text both ways, on by default, no cargo feature; it is
+gated at runtime by `ConnectRequest::enable_clipboard`. See
+[features.md](features.md#clipboard-cliprdr) for why the helper does not own the Windows
+clipboard itself.
