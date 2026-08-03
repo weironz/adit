@@ -252,6 +252,10 @@ pub struct AditApp {
     /// The cursor within the host pane, for the drag ghost — pane-relative, the
     /// way `sftp_drag_cursor` is, because the ghost is positioned with spacers.
     hosts_cursor: Option<Point>,
+    /// Each card's slot index, animated. Reordering used to be instantaneous,
+    /// which is not perceptible as motion: the cards were simply somewhere else
+    /// the next frame and nothing said they had moved.
+    card_slots: std::collections::HashMap<ProfileId, iced::animation::Animation<f32>>,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -1048,6 +1052,7 @@ impl AditApp {
             grid_order,
             drag_from_grid: false,
             hosts_cursor: None,
+            card_slots: std::collections::HashMap::new(),
             dark_mode,
             theme_mode,
             font_family,
@@ -1229,6 +1234,12 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     // pinning the app at 60 fps just because a background RDP tab is open.
     if app.manager.active_rdp_live() {
         subs.push(window::frames().map(|_| Message::RdpTick));
+    }
+    // Cards easing to new positions need a frame each; the 100 ms Tick would
+    // render the move as three steps. Only while something is actually moving,
+    // so an idle grid costs nothing.
+    if cards_are_moving(app) {
+        subs.push(window::frames().map(|_| Message::Tick));
     }
     // Blink the text cursor only where one is actually drawn — a focused terminal
     // tab. Otherwise this would wake the app twice a second to redraw nothing.
@@ -1723,6 +1734,7 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         position: ProfileDropPosition::Before,
                     });
                     app.group_drop_target = None;
+                    retarget_card_slots(app);
                 }
             }
         }
@@ -1738,11 +1750,22 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(dragged) = app.dragged_profile {
                 if dragged != profile_id {
                     app.profile_drag_active = true;
+                    let changed = app.profile_drop
+                        != Some(ProfileDrop::Beside {
+                            profile_id,
+                            position,
+                        });
                     app.profile_drop = Some(ProfileDrop::Beside {
                         profile_id,
                         position,
                     });
                     app.group_drop_target = None;
+                    // Only on a real change: retargeting every mouse-move would
+                    // restart the ease from the current point each frame, which
+                    // is a card that never arrives.
+                    if changed {
+                        retarget_card_slots(app);
+                    }
                 }
             }
         }
@@ -3530,6 +3553,9 @@ fn place_ungrouped_at(
 /// A plain click leaves `profile_drop` unset, so nothing moves.
 fn finish_profile_drag(app: &mut AditApp) {
     app.profile_drag_origin = None;
+    // Settle whatever is mid-flight into its final slot, after the commit below
+    // has decided what that is.
+    let settle = app.dragged_profile.is_some();
     let was_active = app.profile_drag_active;
     app.profile_drag_active = false;
     let Some(source_id) = app.dragged_profile.take() else {
@@ -3541,6 +3567,9 @@ fn finish_profile_drag(app: &mut AditApp) {
     app.group_drop_target = None;
     // A press without a real drag (e.g. a click or double-click) never moves.
     if !was_active {
+        if settle {
+            retarget_card_slots(app);
+        }
         return;
     }
 
@@ -3561,6 +3590,7 @@ fn finish_profile_drag(app: &mut AditApp) {
         }) if app.drag_from_grid && profile_id != source_id => {
             reorder_grid(app, source_id, profile_id, position);
             app.selected_profile = Some(source_id);
+            retarget_card_slots(app);
             persist_settings_if_changed(app);
             return;
         }
@@ -3593,6 +3623,7 @@ fn finish_profile_drag(app: &mut AditApp) {
         _ => return,
     };
 
+    retarget_card_slots(app);
     match result {
         Ok(()) => {
             app.selected_profile = Some(source_id);
@@ -9965,6 +9996,51 @@ struct BandStyle {
     columns: usize,
 }
 
+/// Whether any card is still easing towards its slot.
+fn cards_are_moving(app: &AditApp) -> bool {
+    let now = Instant::now();
+    app.card_slots
+        .values()
+        .any(|animation| animation.is_animating(now))
+}
+
+/// Point every card at the slot it now occupies, easing from wherever it was.
+///
+/// Called when the drop target changes and when a drag ends, so the animation
+/// covers both the shuffle during a drag and the settle after one.
+fn retarget_card_slots(app: &mut AditApp) {
+    let now = Instant::now();
+    let order: Vec<ProfileId> = grid_ordered_profiles(app)
+        .into_iter()
+        .map(|profile| profile.id)
+        .collect();
+    // Bands are laid out independently, so a card's index within its own band is
+    // what its position is drawn from — not its index in the whole catalogue.
+    let mut per_group: std::collections::HashMap<String, f32> =
+        std::collections::HashMap::new();
+    let hosts: Vec<(ProfileId, String)> = order
+        .iter()
+        .filter_map(|id| {
+            app.manager
+                .profile(*id)
+                .map(|profile| (*id, profile.group.clone()))
+        })
+        .collect();
+    for (id, group) in hosts {
+        let slot = per_group.entry(group).or_insert(0.0);
+        let target = *slot;
+        *slot += 1.0;
+        app.card_slots
+            .entry(id)
+            .and_modify(|animation| animation.go_mut(target, now))
+            .or_insert_with(|| {
+                iced::animation::Animation::new(target)
+                    .quick()
+                    .easing(iced::animation::Easing::EaseOut)
+            });
+    }
+}
+
 /// Lay a band out as it will look once the drag lands: the travelling card is
 /// pulled from where it was and put where it would go, and everything between
 /// the two shifts by one.
@@ -10029,11 +10105,35 @@ fn host_band(
             // a card tests against is the midpoint it actually has.
             let card_width =
                 ((app.window_width - app.sidebar_width - 56.0) / columns as f32 - 8.0).max(80.0);
+            // Each card is nudged by how far its animated slot still is from the
+            // slot it is being drawn in, so a reorder eases across instead of
+            // teleporting. `wrap_cards` keeps doing the layout; the offset only
+            // borrows the card back towards where it was.
+            let now = Instant::now();
+            let step = card_width + 8.0;
             wrap_cards(
                 slots
                     .into_iter()
-                    .map(|profile| {
-                        host_card(app, profile, online.contains(&profile.id), card_width)
+                    .enumerate()
+                    .map(|(index, profile)| {
+                        let card =
+                            host_card(app, profile, online.contains(&profile.id), card_width);
+                        let Some(animation) = app.card_slots.get(&profile.id) else {
+                            return card;
+                        };
+                        let drawn = animation.interpolate_with(|slot| slot, now);
+                        let offset = (drawn - index as f32) * step;
+                        // Only while it matters. A settled card must lay out
+                        // exactly as it did before any of this existed.
+                        if offset.abs() < 0.5 {
+                            return card;
+                        }
+                        row![
+                            Space::new().width(Length::Fixed(offset.max(0.0))),
+                            card,
+                            Space::new().width(Length::Fixed((-offset).max(0.0))),
+                        ]
+                        .into()
                     })
                     .collect(),
                 columns,
