@@ -71,5 +71,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # identical to upstream otherwise. Full rationale + re-vendoring steps in
 # IRONRDP-PATCHES.md; each hunk is tagged `ADIT PATCH` in
 # vendor/ironrdp-connector/src/connection.rs.
+[dev-dependencies]
+# Only for the offline progressive replay: a decoded frame has to be LOOKED at.
+image = { version = "0.25", default-features = false, features = ["png"] }
+
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
+# Vendored + patched ironrdp-graphics (crates.io 0.9.0 + one marked hunk):
+# RemoteFX Progressive treats a tile `quality` of 0xFF as an index into
+# quantProgVals, but MS-RDPRFX 2.2.4.3.6 defines it as "losslessly encoded, no
+# progressive quantization". Windows sends 0xFF with numProgQuant 0, so every
+# tile failed to decode and the desktop rendered as coloured garbage.
+ironrdp-graphics = { path = "vendor/ironrdp-graphics" }

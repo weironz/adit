@@ -30,6 +30,28 @@ crates.io connector.
 | `rdstls.rs` | The **RDSTLS** security exchange (recv Capabilities → send password AuthReq → recv AuthRsp), ported from FreeRDP `rdstls.c`. Runs on the TLS stream before MCS. | IronRDP implements RDSTLS (only the `SecurityProtocol::RDSTLS` flag exists today). |
 | `session.rs` `run_session` | Reconnect loop that follows a redirection: carries the routing token, builds the one-time RDSTLS creds, and reconnects. | Same as `redirect.rs`. |
 
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/`
+
+Pulled in via `[patch.crates-io] ironrdp-graphics = { path = "vendor/ironrdp-graphics" }`.
+Two `ADIT PATCH` hunks in `src/progressive.rs`, both about **RemoteFX Progressive
+as Windows encodes it**. Upstream's decoder was written against GNOME Remote
+Desktop and xrdp, which use the simpler tile mode; a Windows host exercises the
+true progressive path (TILE_FIRST + TILE_UPGRADE) and hit both bugs at once.
+
+| Hunk | Bug | Symptom |
+|------|-----|---------|
+| `dequantize_component_ccq` | Shift was `quant - 1`; MS-RDPRFX 3.1.8.1.4 and FreeRDP's `rfx_quantization_decode_block` use `quant - 6`. | Every coefficient 32x too large, all three planes clamped past the YCbCr→RGB limits: the whole desktop rendered as flat black/red/yellow/white. |
+| TILE_FIRST / TILE_UPGRADE quant lookup | `quality == 0xFF` was treated as an index into `quantProgVals`; MS-RDPRFX 2.2.4.3.6 defines it as "losslessly encoded, no progressive quantization". Windows sends it with `numProgQuant` 0. | `quant index 255 exceeds table length 0`; every refinement frame dropped. |
+
+Both were found by capturing the real stream rather than by reading the spec at
+the symptom: `egfx.rs` writes `progressive-N.bin` under `%APPDATA%\Adit` when
+`ADIT_RDP_DUMP=1`, and `tests/progressive_dump.rs` replays a capture offline and
+renders it to PNG. That loop is what turned "the picture is wrong" into a
+one-line diff, twice. Keep it.
+
+The crate carries its own `[workspace]` table so `cargo test` can be run inside
+it — one hunk changes an upstream test's expected values.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
 Pulled in via `[patch.crates-io] ironrdp-connector = { path = "vendor/ironrdp-connector" }`

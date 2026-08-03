@@ -25,6 +25,20 @@ use ironrdp_graphics::progressive::ProgressiveDecoder;
 /// Match the framebuffer clamp on the app side.
 const MAX_DIMENSION: u32 = 8192;
 
+/// How many progressive streams to write out before giving up, when dumping is
+/// switched on with `ADIT_RDP_DUMP=1`.
+///
+/// Successes are captured too, not just failures. A stream that decodes is
+/// usually the one carrying the SYNC + CONTEXT blocks that establish the codec
+/// context, and without it a captured failure cannot be replayed at all — every
+/// later frame references a context that a fresh decoder has never seen. That is
+/// exactly what happened the first time this was used: only failures were kept,
+/// and the capture turned out to be unreplayable on its own.
+///
+/// Off unless asked for: a capture is a picture of the user's desktop, so it is
+/// opt-in rather than something a bad connection scatters across their disk.
+const MAX_DUMPS: u32 = 8;
+
 /// RemoteFX Progressive tile edge, in pixels (MS-RDPRFX): tiles are 64×64.
 const TILE: usize = 64;
 
@@ -85,6 +99,8 @@ pub(crate) struct EgfxHandler {
     /// RemoteFX Progressive decoder, keyed internally by codec-context id. Kept
     /// across frames (progressive frames refine earlier ones).
     progressive: ProgressiveDecoder,
+    /// How many failing streams have been written out so far.
+    dumps: u32,
 }
 
 impl EgfxHandler {
@@ -93,6 +109,41 @@ impl EgfxHandler {
             shared,
             surfaces: HashMap::new(),
             progressive: ProgressiveDecoder::new(),
+            dumps: 0,
+        }
+    }
+
+    /// Write a progressive stream next to the helper's log, in arrival order, so
+    /// the sequence can be replayed offline. Best-effort in every respect: a
+    /// diagnostic must never take down a session that is otherwise working.
+    fn dump_stream(&mut self, pdu: &WireToSurface2Pdu, sw: u16, sh: u16, outcome: &str) {
+        if self.dumps >= MAX_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
+            return;
+        }
+        let Some(base) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let dir = base.join("Adit");
+        let index = self.dumps;
+        self.dumps += 1;
+        // The sidecar carries what the bytes alone cannot: which context they
+        // belong to, the surface they were sized against, and which error they
+        // produced — all of which the parse has to be read against.
+        let meta = format!(
+            "outcome={outcome}
+codec_context_id={}
+surface={sw}x{sh}
+bytes={}
+",
+            pdu.codec_context_id,
+            pdu.bitmap_data.len(),
+        );
+        let stream = dir.join(format!("progressive-{index}.bin"));
+        let sidecar = dir.join(format!("progressive-{index}.txt"));
+        if std::fs::write(&stream, &pdu.bitmap_data).is_ok()
+            && std::fs::write(&sidecar, meta).is_ok()
+        {
+            tracing::warn!("wrote progressive stream to {}", stream.display());
         }
     }
 
@@ -209,9 +260,11 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 Ok(tiles) => tiles,
                 Err(error) => {
                     tracing::warn!("EGFX progressive decode failed: {error}");
+                    self.dump_stream(pdu, sw, sh, &error.to_string());
                     return;
                 }
             };
+        self.dump_stream(pdu, sw, sh, "ok");
         if tiles.is_empty() {
             return;
         }

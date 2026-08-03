@@ -2,6 +2,10 @@
 /target
 # adit-rdp is a separate (nested) workspace with its own target dir.
 crates/adit-rdp/target/
+# So is each vendored crate: they carry a `[workspace]` table so their own tests
+# can be run in place, which gives each one a target dir that the root `/target`
+# rule (anchored at the repo root) does not cover.
+crates/adit-rdp/vendor/*/target/
 
 # Session logs
 logs
