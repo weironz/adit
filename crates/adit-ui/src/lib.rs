@@ -249,6 +249,9 @@ pub struct AditApp {
     /// Whether the drag in flight started on a grid card. Decides which order a
     /// `Beside` drop edits: the grid's own, or the tree's shared one.
     drag_from_grid: bool,
+    /// The cursor within the host pane, for the drag ghost — pane-relative, the
+    /// way `sftp_drag_cursor` is, because the ghost is positioned with spacers.
+    hosts_cursor: Option<Point>,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -414,6 +417,8 @@ pub enum Message {
     /// A press on a grid card: the same arming as ProfilePressed, remembered as
     /// grid-originated so the drop edits the grid's order.
     GridProfilePressed(ProfileId),
+    /// The cursor moved inside the host pane (feeds the drag ghost).
+    HostsCursorMoved(Point),
     ProfileDoubleClicked(ProfileId),
     ProfileHovered(ProfileId),
     ProfileHoverExited(ProfileId),
@@ -831,7 +836,21 @@ impl AditApp {
         let dark_mode = resolve_dark(theme_mode);
         let host_layout = settings.host_layout;
         let recent_hosts = settings.recent_hosts;
-        let grid_order = settings.grid_order;
+        let grid_order = {
+            let mut order = settings.grid_order;
+            if order.is_empty() {
+                // Seeded from the tree's order on first run, so the two views
+                // start identical and then never move together again. Without
+                // the seed an empty grid order mirrors the tree live, and the
+                // first tree drag "leaks" into a grid that was supposed to be
+                // independent — which is indistinguishable from the bug this
+                // feature exists to end.
+                let mut seeded = manager.profiles().to_vec();
+                seeded.sort_by(profile_sidebar_order);
+                order = seeded.into_iter().map(|profile| profile.id).collect();
+            }
+            order
+        };
         // Clamp away a bad persisted size (e.g. a 0x0 written while minimized) so
         // the window is never created invisible; the file then self-heals on the
         // next Tick because the clamped value differs from `persisted_settings`.
@@ -1028,6 +1047,7 @@ impl AditApp {
             recent_hosts,
             grid_order,
             drag_from_grid: false,
+            hosts_cursor: None,
             dark_mode,
             theme_mode,
             font_family,
@@ -1628,6 +1648,9 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 import_securecrt(app, &path);
             }
         }
+        Message::HostsCursorMoved(point) => {
+            app.hosts_cursor = Some(point);
+        }
         Message::GridProfilePressed(profile_id) => {
             // Same arming as ProfilePressed — selection, drag state, origin
             // point — with the origin remembered as the grid.
@@ -1724,13 +1747,13 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ProfileDragOverTop => {
-            if app.dragged_profile.is_some() {
+            if app.dragged_profile.is_some() && !app.drag_from_grid {
                 app.profile_drop = Some(ProfileDrop::TopLevel);
                 app.group_drop_target = None;
             }
         }
         Message::ProfileDragOverBottom => {
-            if app.dragged_profile.is_some() {
+            if app.dragged_profile.is_some() && !app.drag_from_grid {
                 app.profile_drop = Some(ProfileDrop::BottomLevel);
                 app.group_drop_target = None;
             }
@@ -3523,8 +3546,8 @@ fn finish_profile_drag(app: &mut AditApp) {
 
     let result = match drop {
         Some(ProfileDrop::IntoGroup(group)) => app.manager.move_profile_to_group(source_id, group),
-        Some(ProfileDrop::TopLevel) => place_ungrouped_at(app, source_id, 0),
-        Some(ProfileDrop::BottomLevel) => {
+        Some(ProfileDrop::TopLevel) if !app.drag_from_grid => place_ungrouped_at(app, source_id, 0),
+        Some(ProfileDrop::BottomLevel) if !app.drag_from_grid => {
             let len = top_level_entries(app, source_id).len();
             place_ungrouped_at(app, source_id, len)
         }
@@ -9610,6 +9633,14 @@ fn host_card(
     card_width: f32,
 ) -> Element<'static, Message> {
     let (glyph, tile_color) = host_icon(app, profile);
+    // The source fades while its ghost travels — the ghost is the thing being
+    // moved, and a second highlighted copy sitting in place reads as two cards.
+    let dragging = app.dragged_profile == Some(profile.id);
+    let tile_color = if dragging {
+        Color { a: 0.35, ..tile_color }
+    } else {
+        tile_color
+    };
     let tile = container(text(glyph).size(15).color(Color::WHITE))
     .width(Length::Fixed(34.0))
     .height(Length::Fixed(34.0))
@@ -9978,6 +10009,47 @@ fn host_band(
 }
 
 /// The host manager: search at the top, then one band per group.
+/// The card that follows the cursor during a grid drag — the same pattern as
+/// the SFTP pane's `drag_ghost`, positioned with leading spacers from
+/// pane-relative coordinates. Offset from the hotspot so the pointer keeps
+/// feeding the card underneath, not the ghost.
+fn host_drag_ghost(
+    app: &AditApp,
+    profile: &ConnectionProfile,
+    position: Point,
+) -> Element<'static, Message> {
+    let (glyph, tile_color) = host_icon(app, profile);
+    let tile = container(text(glyph).size(13).color(Color::WHITE))
+        .width(Length::Fixed(26.0))
+        .height(Length::Fixed(26.0))
+        .center_x(Length::Fixed(26.0))
+        .center_y(Length::Fixed(26.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(tile_color)),
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    column![
+        Space::new().height(Length::Fixed((position.y + 14.0).max(0.0))),
+        row![
+            Space::new().width(Length::Fixed((position.x + 16.0).max(0.0))),
+            container(
+                row![tile, text(profile.name.clone()).size(12).color(primary_text())]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+            )
+            .padding([6, 12])
+            .style(|_theme| drag_ghost_style()),
+        ],
+    ]
+    .width(Fill)
+    .height(Fill)
+    .into()
+}
+
 /// The grid's ordering: the saved arrangement first, then anything it has never
 /// heard of, in the sidebar's order.
 ///
@@ -10168,7 +10240,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
-    container(
+    let pane: Element<'_, Message> = container(
         column![
             // Search, then the shapes, then the one action. No tag filter or
             // multi-select alongside them: the reference client has both, Adit
@@ -10191,7 +10263,28 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .height(Fill)
     .padding(20)
-    .into()
+    .into();
+
+    // Track the cursor for the drag ghost. Tracked always rather than only
+    // mid-drag, so the ghost's first frame appears where the drag began instead
+    // of wherever the ghost last was.
+    let pane: Element<'_, Message> =
+        mouse_area(pane).on_move(Message::HostsCursorMoved).into();
+
+    // The ghost rides above the pane while a card drag is live. Nothing in it
+    // handles events, so the cards underneath keep receiving enter/move — the
+    // ghost is presentation, and the drop logic never touches it.
+    if app.drag_from_grid && app.profile_drag_active {
+        if let (Some(id), Some(position)) = (app.dragged_profile, app.hosts_cursor) {
+            if let Some(profile) = app.manager.profile(id).cloned() {
+                return stack![pane, host_drag_ghost(app, &profile, position)]
+                    .width(Fill)
+                    .height(Fill)
+                    .into();
+            }
+        }
+    }
+    pane
 }
 
 /// The session tree itself, without the panel around it.
@@ -10236,8 +10329,10 @@ fn session_tree(app: &AditApp) -> Element<'_, Message> {
     entries.sort_by_key(|(key, _)| *key);
 
     // A real drag exposes drop zones at the very top and very bottom so a session
-    // can be pulled out of any folder to the top level.
-    if app.profile_drag_active {
+    // can be pulled out of any folder to the top level. Tree drags only: these
+    // reorder the tree, and a drag that started on a grid card has no business
+    // sprouting tree furniture in a panel it is not interacting with.
+    if app.profile_drag_active && !app.drag_from_grid {
         profiles = profiles.push(top_level_drop_zone(
             app.profile_drop == Some(ProfileDrop::TopLevel),
         ));
@@ -10304,7 +10399,7 @@ fn session_tree(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
-    if app.profile_drag_active {
+    if app.profile_drag_active && !app.drag_from_grid {
         profiles = profiles.push(bottom_level_drop_zone(
             app.profile_drop == Some(ProfileDrop::BottomLevel),
         ));
@@ -12999,6 +13094,110 @@ mod tests {
     /// v0.1.61 shipped `-arm64.exe`, and `-` (0x2D) sorts before `.` (0x2E), so
     /// the arm64 build came first and every old updater on an x64 machine was
     /// offered an installer that refuses to run there. `_` (0x5F) sorts after.
+    /// An app with a deterministic three-host catalogue and both stores pointed
+    /// at a scratch directory, so a test drag can never touch the real
+    /// profiles.json or settings.json on the machine running the tests.
+    #[allow(clippy::field_reassign_with_default)]
+    fn drag_test_app() -> AditApp {
+        let scratch = std::env::temp_dir().join(format!(
+            "adit-drag-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default(),
+        ));
+        let mut app = AditApp::default();
+        app.profile_store = ProfileStore::new(scratch.join("profiles.json"));
+        app.settings_store = SettingsStore::new(scratch.join("settings.json"));
+        app.manager = SessionManager::with_profiles(vec![
+            ConnectionProfile::with_group("g", "a", "10.0.0.1", 22, "root"),
+            ConnectionProfile::with_group("g", "b", "10.0.0.2", 22, "root"),
+            ConnectionProfile::with_group("g", "c", "10.0.0.3", 22, "root"),
+        ]);
+        app.grid_order.clear();
+        app.recent_hosts.clear();
+        app
+    }
+
+    fn sidebar_names(app: &AditApp) -> Vec<String> {
+        let mut profiles = app.manager.profiles().to_vec();
+        profiles.sort_by(profile_sidebar_order);
+        profiles.into_iter().map(|profile| profile.name).collect()
+    }
+
+    fn grid_names(app: &AditApp) -> Vec<String> {
+        grid_ordered_profiles(app)
+            .into_iter()
+            .map(|profile| profile.name)
+            .collect()
+    }
+
+    /// The full message sequence the widgets emit for one drag, in order: the
+    /// press on the source, the enter + move over the target, the target's
+    /// release, and the global release that always follows it.
+    fn drive_drag(app: &mut AditApp, press: fn(ProfileId) -> Message, source: usize, target: usize) {
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        let _ = update(app, press(ids[source]));
+        let _ = update(app, Message::ProfileHovered(ids[target]));
+        let _ = update(
+            app,
+            Message::ProfileDragOver(ids[target], ProfileDropPosition::After),
+        );
+        let _ = update(app, Message::ProfileDropped(ids[target]));
+        let _ = update(app, Message::CancelProfileDrag);
+    }
+
+    #[test]
+    fn a_grid_drag_moves_the_grid_and_not_the_tree() {
+        let mut app = drag_test_app();
+        drive_drag(&mut app, Message::GridProfilePressed, 0, 2);
+        assert_eq!(grid_names(&app), ["b", "c", "a"], "the grid must reorder");
+        assert_eq!(
+            sidebar_names(&app),
+            ["a", "b", "c"],
+            "the tree must not move when the drag started on a card"
+        );
+    }
+
+    #[test]
+    fn a_tree_drag_moves_the_tree_and_not_the_grid() {
+        let mut app = drag_test_app();
+        // Startup seeds the grid's order from the tree (the test helper builds
+        // its catalogue after init, so seed the same way init does).
+        app.grid_order = app.manager.profiles().iter().map(|p| p.id).collect();
+        drive_drag(&mut app, Message::ProfilePressed, 0, 2);
+        assert_eq!(
+            sidebar_names(&app),
+            ["b", "c", "a"],
+            "the tree must reorder"
+        );
+        // The whole point of the seed: the grid holds the arrangement it had,
+        // and a tree drag cannot leak into it — not even the first one.
+        assert_eq!(grid_names(&app), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn sidebar_drop_zones_do_not_commit_a_grid_drag() {
+        // A grid drag released over the sidebar's top-level zone used to fall
+        // through to the tree path and yank the host out of its group.
+        let mut app = drag_test_app();
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        let _ = update(&mut app, Message::GridProfilePressed(ids[0]));
+        let _ = update(&mut app, Message::ProfileDragOverTop);
+        let _ = update(&mut app, Message::CancelProfileDrag);
+        assert_eq!(
+            sidebar_names(&app),
+            ["a", "b", "c"],
+            "a grid drag must never commit through the tree's own drop zones"
+        );
+        assert_eq!(
+            app.manager.profiles().iter().filter(|p| p.group == "g").count(),
+            3,
+            "and it must not ungroup anything"
+        );
+    }
+
     #[test]
     fn installer_asset_ordering_favours_x64() {
         let x64 = "adit-installer-v0.1.62.exe";
