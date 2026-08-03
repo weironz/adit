@@ -349,6 +349,11 @@ pub struct SessionManager {
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
+    /// Text a remote desktop copied, waiting for the UI to put it on the real
+    /// Windows clipboard (only the UI process has one). Held here rather than
+    /// per session because the system clipboard is itself a single slot: the
+    /// most recent remote copy wins, exactly as it would between two local apps.
+    pending_rdp_clipboard: Option<String>,
 }
 
 /// A live port-forwarding tunnel and its observable state.
@@ -412,6 +417,7 @@ impl SessionManager {
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
+            pending_rdp_clipboard: None,
         }
     }
 
@@ -1120,7 +1126,10 @@ impl SessionManager {
             domain,
             width,
             height,
-            enable_clipboard: false,
+            // Clipboard redirection on by default, matching mstsc. Local text is
+            // only *advertised* to the remote; it crosses the wire when something
+            // over there pastes, and only text — no images, no files.
+            enable_clipboard: true,
             enable_audio: false,
         };
 
@@ -1504,6 +1513,20 @@ impl SessionManager {
     /// Resize the active RDP desktop to a pixel size. A no-op for non-RDP sessions.
     pub fn resize_active_rdp(&self, width: u16, height: u16) {
         self.send_rdp_input_to_active(RdpInput::Resize { width, height });
+    }
+
+    /// Offer locally-copied text to the active RDP session's remote clipboard.
+    /// Only the format offer crosses the RDP wire here; the text itself is sent
+    /// on when the remote actually pastes. A no-op for non-RDP sessions.
+    pub fn offer_clipboard_to_active_rdp(&self, text: String) {
+        self.send_rdp_input_to_active(RdpInput::ClipboardText(text));
+    }
+
+    /// Take text a remote desktop copied, for the UI to put on the real Windows
+    /// clipboard. Returns `None` when nothing new arrived.
+    #[must_use]
+    pub fn take_rdp_clipboard(&mut self) -> Option<String> {
+        self.pending_rdp_clipboard.take()
     }
 
     /// Whether the active session is a native RDP session (graphical surface).
@@ -2625,7 +2648,13 @@ impl SessionManager {
                     RdpClientEvent::Connected { .. } => {
                         record.summary.status = SessionStatus::Connected;
                     }
-                    RdpClientEvent::Resized { .. } | RdpClientEvent::ClipboardText(_) => {}
+                    RdpClientEvent::Resized { .. } => {}
+                    // The helper has no Windows clipboard of its own (it is a
+                    // windowless process with no message pump), so remote copies
+                    // arrive here as text and the UI process owns the paste.
+                    RdpClientEvent::ClipboardText(text) => {
+                        self.pending_rdp_clipboard = Some(text);
+                    }
                     RdpClientEvent::Error(message) => {
                         record.summary.status = SessionStatus::Error;
                         record

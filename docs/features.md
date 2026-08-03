@@ -152,6 +152,36 @@ See [rdp-gnome-remote-desktop.md](rdp-gnome-remote-desktop.md).
 The framebuffer is sampled per vsync frame, but only while an RDP tab is *active*, so a
 background RDP session doesn't pin the app at 60 fps.
 
+### Clipboard (CLIPRDR)
+
+**Text copies both ways**, on by default. Copy in the remote desktop and it lands on the
+Windows clipboard; copy locally and it pastes into the remote.
+
+The design is worth knowing, because the obvious one doesn't work here. IronRDP's
+`cliprdr-native` backend owns the real system clipboard and therefore needs a window and
+a `WM_CLIPBOARDUPDATE` message pump — which the windowless helper process does not have.
+So responsibilities are split instead: **the helper speaks CLIPRDR on the RDP wire and
+nothing else, and the GUI app owns the actual Windows clipboard.** The app is a real
+windowed `iced` process, so it reads and writes the clipboard natively and ships text
+across the existing helper IPC (`InputEvent::ClipboardText` in, `HostMsg::ClipboardText`
+out). `crates/adit-rdp/src/clipboard.rs` is then a pure protocol adapter with no OS
+dependency at all — and its whole state machine is unit-tested without a live host.
+
+Consequences of that split:
+
+- **Text only.** `CF_UNICODETEXT` is advertised; `CF_TEXT` / `CF_OEMTEXT` are accepted
+  inbound. **Images and file copy-paste are out of scope** — files need a staging
+  directory, chunked `FileContents` streaming and clipboard locking, none of which the
+  helper IPC carries.
+- **Local → remote is delay-rendered**, like mstsc: only the format list is advertised,
+  and the text crosses the wire when something on the remote actually pastes.
+- **Remote → local is eager**: the moment the remote advertises text we fetch it, because
+  the app can't answer Windows' synchronous "give me the clipboard" across an async IPC
+  hop. Transfers are capped at 8 MiB in either direction.
+- The local clipboard is **polled every 500 ms**, and only while an RDP tab is in front —
+  Windows exposes no clipboard-change signal to a process that isn't listening for one.
+  So a local copy reaches the remote within about half a second, not instantly.
+
 ## Credentials & security
 
 Passwords and key passphrases are stored **encrypted** in `credentials.json` in the
@@ -211,10 +241,9 @@ Verified shortcomings, so nobody has to rediscover them.
 ### Not implemented
 - **RDP**: no H.264 decoder (hosts that negotiate AVC render black), the server cursor
   shape isn't drawn, and updates always ship the **whole** framebuffer rather than dirty
-  rectangles. **Clipboard is not implemented** and has no feature flag — CLIPRDR's native
-  backend wants a Windows message pump, which the windowless helper process doesn't have,
-  so it needs design work rather than a flag. Audio (`sound`) is implemented but off by
-  default because it pulls native Opus (needs CMake).
+  rectangles. The clipboard is **text only** — no images, no file copy-paste (see
+  [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
+  because it pulls native Opus (needs CMake).
 - **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
   designation, no custom tab stops. `TerminalChangeSet` dirty-row tracking is a stub
   that always reports the whole screen.
@@ -236,7 +265,9 @@ Verified shortcomings, so nobody has to rediscover them.
 - **SFTP shell**: no tab completion, and no history recall (the history is recorded but
   unbound).
 - stderr is merged into stdout on the shell path.
-- macOS is architecturally supported but unbuilt; Windows code signing is pending.
+- macOS ships since v0.1.62 — CI builds and publishes both Apple Silicon and Intel dmgs
+  — but they are **unsigned**, as is the Windows installer; code signing is pending on
+  both platforms. The RDP helper is Windows-only, so macOS builds are SSH/SFTP only.
 
 ### Cosmetic / cleanup
 - `adit-ui` is a single ~12.7k-line file; navigating it is the main friction in the repo.
