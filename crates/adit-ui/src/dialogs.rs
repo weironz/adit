@@ -1,0 +1,1643 @@
+use super::*;
+use iced::widget::column;
+
+pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let Some(dialog) = app.connection_dialog.as_ref() else {
+        return Space::new().width(Fill).height(Fill).into();
+    };
+
+    // The dialog is shared by SSH and RDP; label it by the profile's protocol.
+    let protocol = app
+        .manager
+        .profile(dialog.profile_id)
+        .map(|p| p.protocol)
+        .unwrap_or(Protocol::Ssh);
+    let is_rdp = protocol == Protocol::Rdp;
+
+    let auth_hint = if is_rdp {
+        "密码认证：请输入远程桌面 (RDP) 登录密码"
+    } else {
+        match dialog.auth_method {
+            AuthMethod::Auto => "自动认证：密码可选，会先尝试密码、agent 和默认密钥",
+            AuthMethod::Password => "密码认证：请输入 SSH 密码",
+            AuthMethod::Key => "密钥认证：passphrase 建议在会话设置里保存；未保存时可在此临时输入",
+            AuthMethod::Agent => "Agent 认证：通常不需要密码",
+        }
+    };
+    let dialog_title = if is_rdp { "连接 RDP" } else { "连接 SSH" };
+
+    let mut details = column![
+        row![
+            text(dialog_title).size(16).color(primary_text()),
+            Space::new().width(Fill),
+            button("×")
+                .width(Length::Fixed(26.0))
+                .height(Length::Fixed(24.0))
+                .padding(0)
+                .style(|_theme, status| close_button_style(status))
+                .on_press(Message::CancelConnection),
+        ]
+        .align_y(Alignment::Center),
+        text(dialog.title.clone()).size(13).color(primary_text()),
+        text(dialog.endpoint.clone()).size(12).color(muted_text()),
+        text(auth_hint).size(11).color(muted_text()),
+    ]
+    .spacing(6);
+
+    if !dialog.identity_file.trim().is_empty() {
+        details = details.push(
+            text(format!("Identity: {}", dialog.identity_file))
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+
+    let panel = container(
+        column![
+            details,
+            text_input("Password / passphrase", &app.password)
+                .secure(true)
+                .on_input(Message::ConnectionPasswordChanged)
+                .on_submit(Message::ConfirmConnection)
+                .padding([6, 8])
+                .style(text_input_style),
+            checkbox(app.remember_connection_password)
+                .label("保存密码")
+                .on_toggle(Message::RememberConnectionPasswordChanged)
+                .size(14)
+                .text_size(12)
+                .spacing(8),
+            text("加密保存在配置目录，可随 Dropbox 等同步到其他电脑")
+                .size(10)
+                .color(muted_text()),
+            row![
+                button("取消")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelConnection),
+                button("连接")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmConnection),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(430.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+pub(crate) fn host_key_dialog_overlay(
+    session_id: SessionId,
+    prompt: &HostKeyPromptInfo,
+) -> Element<'static, Message> {
+    let changed = prompt.previous_fingerprint.is_some();
+    let title = if changed {
+        "⚠ 主机密钥已变更"
+    } else {
+        "确认主机密钥"
+    };
+    let title_color = if changed { danger() } else { primary_text() };
+
+    let mut details = column![
+        text(title).size(16).color(title_color),
+        text(format!("{}:{}", prompt.host, prompt.port))
+            .size(13)
+            .color(primary_text()),
+        text(format!("密钥类型: {}", prompt.key_type))
+            .size(11)
+            .color(muted_text()),
+        text("SHA256 指纹").size(11).color(muted_text()),
+        text(prompt.fingerprint.clone())
+            .size(12)
+            .font(Font::MONOSPACE)
+            .color(primary_text()),
+    ]
+    .spacing(6);
+
+    if let Some(previous) = &prompt.previous_fingerprint {
+        details = details
+            .push(text("此前记录的指纹").size(11).color(muted_text()))
+            .push(
+                text(previous.clone())
+                    .size(12)
+                    .font(Font::MONOSPACE)
+                    .color(danger()),
+            )
+            .push(
+                text("密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。")
+                    .size(11)
+                    .color(danger()),
+            );
+    } else {
+        details = details.push(
+            text("首次连接此主机。请通过其它可信渠道核对指纹后再信任。")
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+
+    let accept_label = if changed {
+        "更新并继续"
+    } else {
+        "信任并继续"
+    };
+
+    let panel = container(
+        column![
+            details,
+            row![
+                button("拒绝")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::RespondHostKey {
+                        session_id,
+                        accept: false
+                    }),
+                button(text(accept_label))
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::RespondHostKey {
+                        session_id,
+                        accept: true
+                    }),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(460.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Mirror the session manager's pending interactive-auth prompt into UI state,
+/// (re)sizing the answer buffer when a new prompt (or round) appears and clearing
+/// it once the prompt is gone.
+pub(crate) fn sync_auth_prompt(app: &mut AditApp) {
+    match app.manager.pending_auth_prompt() {
+        Some((session_id, prompt)) => {
+            let is_new = app.auth_prompt.as_ref().map(|(id, _)| *id) != Some(session_id)
+                || app.auth_prompt_answers.len() != prompt.prompts.len();
+            if is_new {
+                app.auth_prompt_answers = vec![String::new(); prompt.prompts.len()];
+            }
+            app.auth_prompt = Some((session_id, prompt));
+        }
+        None => {
+            if app.auth_prompt.is_some() {
+                app.auth_prompt = None;
+                app.auth_prompt_answers.clear();
+            }
+        }
+    }
+}
+
+/// Modal for keyboard-interactive / MFA challenges: one input per server field
+/// (masked unless the server asks for echo), answered by the user at connect time.
+pub(crate) fn auth_prompt_dialog_overlay<'a>(
+    session_id: SessionId,
+    prompt: &'a AuthPromptInfo,
+    answers: &'a [String],
+) -> Element<'a, Message> {
+    let mut body = column![text("需要交互式验证").size(16).color(primary_text())].spacing(8);
+
+    if !prompt.name.trim().is_empty() {
+        body = body.push(text(prompt.name.clone()).size(12).color(primary_text()));
+    }
+    if !prompt.instructions.trim().is_empty() {
+        body = body.push(
+            text(prompt.instructions.clone())
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+
+    let last = prompt.prompts.len().saturating_sub(1);
+    for (index, field) in prompt.prompts.iter().enumerate() {
+        let value = answers.get(index).map(String::as_str).unwrap_or("");
+        let label = if field.prompt.trim().is_empty() {
+            String::from("请输入")
+        } else {
+            field.prompt.clone()
+        };
+        let mut input = text_input("", value)
+            .on_input(move |value| Message::AuthPromptInput { index, value })
+            .padding([6, 8])
+            .style(text_input_style)
+            .width(Fill);
+        // Only the last field submits on Enter, so a multi-field round isn't sent
+        // prematurely with later fields still blank.
+        if index == last {
+            input = input.on_submit(Message::SubmitAuthPrompt { session_id });
+        }
+        if !field.echo {
+            input = input.secure(true);
+        }
+        body = body.push(column![text(label).size(11).color(muted_text()), input].spacing(4));
+    }
+
+    let panel = container(
+        column![
+            body,
+            row![
+                button("取消")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelAuthPrompt { session_id }),
+                button("确定")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::SubmitAuthPrompt { session_id }),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(420.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Confirm-before-open for a terminal hyperlink: shows the **real** destination
+/// (the URL came from remote output) before launching the browser.
+pub(crate) fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> {
+    let panel = container(
+        column![
+            text("打开链接？").size(16).color(primary_text()),
+            text("此链接来自终端输出，请确认目标地址后再打开：")
+                .size(11)
+                .color(muted_text()),
+            container(
+                text(url.to_string())
+                    .size(12)
+                    .font(Font::MONOSPACE)
+                    .color(primary_text()),
+            )
+            .padding([6, 8])
+            .width(Fill)
+            .style(|_theme| connection_dialog_style()),
+            row![
+                button("取消")
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelOpenHyperlink),
+                button(text("打开").size(13))
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmOpenHyperlink),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(480.0))
+    .padding(14)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+pub(crate) fn add_tunnel(app: &mut AditApp) {
+    let bind_port: u16 = match app.tunnel_bind_port.trim().parse() {
+        Ok(port) if port > 0 => port,
+        _ => {
+            app.last_error = Some(String::from("请输入有效的本地端口"));
+            return;
+        }
+    };
+    let (target_host, target_port) = match app.tunnel_kind {
+        TunnelKind::Local | TunnelKind::Remote => {
+            let host = app.tunnel_target_host.trim().to_string();
+            if host.is_empty() {
+                app.last_error = Some(String::from("该转发需要填写目标主机"));
+                return;
+            }
+            match app.tunnel_target_port.trim().parse::<u16>() {
+                Ok(port) if port > 0 => (host, port),
+                _ => {
+                    app.last_error = Some(String::from("请输入有效的目标端口"));
+                    return;
+                }
+            }
+        }
+        TunnelKind::Dynamic => (String::new(), 0),
+    };
+
+    let bind_address = {
+        let trimmed = app.tunnel_bind_addr.trim();
+        if trimmed.is_empty() {
+            String::from("127.0.0.1")
+        } else {
+            trimmed.to_string()
+        }
+    };
+
+    match app.manager.open_tunnel(
+        app.tunnel_kind,
+        bind_address.clone(),
+        bind_port,
+        target_host.clone(),
+        target_port,
+    ) {
+        Ok(()) => {
+            app.last_error = None;
+            app.notice = String::from("已创建端口转发");
+            // Persist to the active profile so it auto-starts on the next connect.
+            if app.tunnel_save {
+                if let Some(profile_id) = app.manager.active_session_summary().map(|s| s.profile_id)
+                {
+                    app.manager.add_profile_tunnel(
+                        profile_id,
+                        TunnelDef {
+                            kind: app.tunnel_kind,
+                            bind_address,
+                            bind_port,
+                            target_host,
+                            target_port,
+                        },
+                    );
+                    persist_profiles(app);
+                }
+            }
+            app.tunnel_bind_port.clear();
+            app.tunnel_target_host.clear();
+            app.tunnel_target_port.clear();
+        }
+        Err(error) => app.last_error = Some(format!("端口转发失败: {error}")),
+    }
+}
+
+pub(crate) fn about_dialog_overlay() -> Element<'static, Message> {
+    let version = env!("CARGO_PKG_VERSION");
+    let card = container(
+        column![
+            row![
+                text("Adit").size(20).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseAbout),
+            ]
+            .align_y(Alignment::Center),
+            text(format!("版本 v{version}")).size(13).color(accent()),
+            text("原生 Rust 桌面 SSH 终端").size(13).color(primary_text()),
+            text("iced · russh · vte 终端核心 — 无 WebView，无 JavaScript")
+                .size(12)
+                .color(muted_text()),
+            text("github.com/weironz/adit").size(12).color(muted_text()),
+            row![
+                Space::new().width(Fill),
+                button(text("确定").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::CloseAbout),
+            ],
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(380.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// A single font-family choice button (label rendered in that very font).
+pub(crate) fn appearance_font_button(index: usize, current: u8) -> Element<'static, Message> {
+    let (label, family) = FONT_PRESETS[index];
+    let selected = index as u8 == current;
+    let font = match family {
+        Some(name) => Font::with_name(name),
+        None => Font::MONOSPACE,
+    };
+    button(text(label).size(12).font(font))
+        .padding([5, 10])
+        .width(Length::Fixed(134.0))
+        .style(move |_theme, status| {
+            if selected {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::FontFamilyChanged(index as u8))
+        .into()
+}
+
+/// A color-scheme choice button: a background swatch plus the scheme name.
+pub(crate) fn appearance_scheme_button(index: usize, current: u8) -> Element<'static, Message> {
+    let scheme = &COLOR_SCHEMES[index];
+    let selected = index as u8 == current;
+    let (br, bg, bb) = scheme.background;
+    let (fr, fg, fb) = scheme.ansi[2];
+    let swatch = container(Space::new())
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(Color::from_rgb8(br, bg, bb))),
+            border: Border {
+                color: Color::from_rgb8(fr, fg, fb),
+                width: 1.5,
+                radius: 3.0.into(),
+            },
+            ..container::Style::default()
+        });
+    button(
+        row![swatch, text(scheme.name).size(12)]
+            .spacing(8)
+            .align_y(Alignment::Center),
+    )
+    .padding([5, 10])
+    .width(Length::Fixed(150.0))
+    .style(move |_theme, status| {
+        if selected {
+            primary_button_style(status)
+        } else {
+            secondary_button_style(status)
+        }
+    })
+    .on_press(Message::ColorSchemeChanged(index as u8))
+    .into()
+}
+
+pub(crate) fn appearance_highlight_button(
+    spec: &'static highlight::RuleSpec,
+    on: bool,
+) -> Element<'static, Message> {
+    // The swatch is the rule's own colour resolved through the active scheme, so
+    // the dialog shows what the rule will actually look like rather than a
+    // stand-in.
+    let swatch = container(Space::new())
+        .width(Length::Fixed(14.0))
+        .height(Length::Fixed(14.0))
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(palette_color(spec.ansi))),
+            border: Border {
+                radius: 3.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        });
+    button(
+        row![
+            text(if on { "✓" } else { " " }).size(12).width(Length::Fixed(12.0)),
+            swatch,
+            text(spec.label).size(12),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([5, 10])
+    .width(Length::Fixed(150.0))
+    .style(move |_theme, status| {
+        if on {
+            primary_button_style(status)
+        } else {
+            secondary_button_style(status)
+        }
+    })
+    .on_press(Message::HighlightRuleToggled(spec.id))
+    .into()
+}
+
+/// Chunk stretchable cards into rows of `per_row`, padding the last row.
+///
+/// Cards fill their share of the row, which is what removes the dead strip a
+/// fixed width left down the right of a wide window. The padding matters for the
+/// same reason in reverse: without it a final row of one card would stretch that
+/// card across the whole pane.
+pub(crate) fn wrap_cards(mut cards: Vec<Element<'static, Message>>, per_row: usize) -> Element<'static, Message> {
+    let mut rows = column![].spacing(8);
+    while !cards.is_empty() {
+        let take = cards.len().min(per_row);
+        let mut r = row![].spacing(8);
+        for element in cards.drain(0..take) {
+            r = r.push(element);
+        }
+        for _ in take..per_row {
+            r = r.push(Space::new().width(Fill));
+        }
+        rows = rows.push(r);
+    }
+    rows.into()
+}
+
+/// Chunk a flat list of built widgets into rows of `per_row`.
+pub(crate) fn wrap_rows(mut buttons: Vec<Element<'static, Message>>, per_row: usize) -> Element<'static, Message> {
+    let mut rows = column![].spacing(8);
+    while !buttons.is_empty() {
+        let take = buttons.len().min(per_row);
+        let mut r = row![].spacing(8);
+        for element in buttons.drain(0..take) {
+            r = r.push(element);
+        }
+        rows = rows.push(r);
+    }
+    rows.into()
+}
+
+pub(crate) fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let current_font = font_preset_index(&app.font_family);
+    let current_scheme = color_scheme_index(&app.color_scheme);
+    let size = app.font_size as i32;
+
+    let font_buttons: Vec<Element<'static, Message>> = (0..FONT_PRESETS.len())
+        .map(|i| appearance_font_button(i, current_font))
+        .collect();
+    let scheme_buttons: Vec<Element<'static, Message>> = (0..COLOR_SCHEMES.len())
+        .map(|i| appearance_scheme_button(i, current_scheme))
+        .collect();
+    let highlight_buttons: Vec<Element<'static, Message>> = highlight::rules()
+        .iter()
+        .map(|spec| {
+            let on = app
+                .highlight_rules
+                .get(spec.id)
+                .copied()
+                .unwrap_or(spec.enabled);
+            appearance_highlight_button(spec, on)
+        })
+        .collect();
+
+    let size_row = row![
+        text("字号")
+            .size(12)
+            .color(muted_text())
+            .width(Length::Fixed(52.0)),
+        button(text("−").size(15))
+            .width(Length::Fixed(32.0))
+            .padding([2, 0])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::FontSizeStep(-1)),
+        container(text(format!("{size} px")).size(13).color(primary_text()))
+            .width(Length::Fixed(56.0))
+            .center_x(Length::Fixed(56.0)),
+        button(text("＋").size(15))
+            .width(Length::Fixed(32.0))
+            .padding([2, 0])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::FontSizeStep(1)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    // Live preview — the static appearance is already set for this frame, so the
+    // sample renders in exactly the chosen font + palette.
+    let swatches = (0..16).fold(row![].spacing(2), |r, i| {
+        r.push(
+            container(Space::new())
+                .width(Length::Fixed(13.0))
+                .height(Length::Fixed(13.0))
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(palette_color(i))),
+                    border: Border {
+                        radius: 2.0.into(),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                }),
+        )
+    });
+    let preview = container(
+        column![
+            text("adit@host:~/project$  ls -la  AaBbCc 0123")
+                .size(term_font_size())
+                .font(term_font())
+                .color(default_foreground()),
+            swatches,
+        ]
+        .spacing(8),
+    )
+    .width(Fill)
+    .padding(12)
+    .style(|_theme| container::Style {
+        background: Some(Background::Color(terminal_background())),
+        border: Border {
+            color: border_color(),
+            width: 1.0,
+            radius: RADIUS_SM.into(),
+        },
+        ..container::Style::default()
+    });
+
+    let card = container(
+        column![
+            row![
+                text("外观设置").size(18).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseAppearance),
+            ]
+            .align_y(Alignment::Center),
+            text("字体").size(12).color(muted_text()),
+            wrap_rows(font_buttons, 3),
+            size_row,
+            text("配色方案").size(12).color(muted_text()),
+            wrap_rows(scheme_buttons, 3),
+            text("输出高亮").size(12).color(muted_text()),
+            text("仅对服务端未着色的文本生效，全屏程序（vim、less 等）中不启用")
+                .size(11)
+                .color(muted_text()),
+            wrap_rows(highlight_buttons, 3),
+            text("预览").size(12).color(muted_text()),
+            preview,
+            row![
+                Space::new().width(Fill),
+                button(text("完成").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::CloseAppearance),
+            ],
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(520.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let current = env!("CARGO_PKG_VERSION");
+
+    let body: Element<'_, Message> = match &app.update_state {
+        UpdateState::Idle | UpdateState::Checking => {
+            column![text("正在检查更新…").size(13).color(primary_text())].into()
+        }
+        UpdateState::UpToDate => column![
+            text(format!("已是最新版本（v{current}）"))
+                .size(13)
+                .color(primary_text()),
+        ]
+        .into(),
+        UpdateState::Available(info) => {
+            let mut col = column![
+                text(format!("发现新版本 {}", info.tag))
+                    .size(15)
+                    .color(accent()),
+                text(format!("当前版本 v{current}"))
+                    .size(12)
+                    .color(muted_text()),
+            ]
+            .spacing(6);
+            if !info.notes_url.is_empty() {
+                col = col.push(
+                    button(text("查看发布说明").size(12))
+                        .padding([3, 0])
+                        .style(|_theme, _status| {
+                            base_button_style(transparent(), accent(), transparent())
+                        })
+                        .on_press(Message::OpenReleaseNotes(info.notes_url.clone())),
+                );
+            }
+            let action = if info.installer_url.is_empty() {
+                text("该版本暂无 Windows 安装包")
+                    .size(12)
+                    .color(muted_text())
+                    .into()
+            } else {
+                let btn: Element<'_, Message> = button(text("下载并更新").size(12))
+                    .padding([6, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::StartUpdateDownload)
+                    .into();
+                btn
+            };
+            col.push(Space::new().height(Length::Fixed(4.0)))
+                .push(action)
+                .into()
+        }
+        UpdateState::Downloading => column![
+            text("正在下载安装包…").size(13).color(primary_text()),
+            text("完成后会自动启动安装程序")
+                .size(11)
+                .color(muted_text()),
+        ]
+        .spacing(6)
+        .into(),
+        UpdateState::Launched => column![
+            text("正在后台安装更新…").size(13).color(primary_text()),
+            text("无需操作，安装完成后 Adit 会自动关闭并重启（可能需要确认一次 UAC）")
+                .size(11)
+                .color(muted_text()),
+        ]
+        .spacing(6)
+        .into(),
+        UpdateState::Error(error) => column![
+            text("检查/更新失败").size(13).color(danger()),
+            text(error.clone()).size(11).color(muted_text()),
+            button(text("重试").size(12))
+                .padding([5, 16])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CheckForUpdates),
+        ]
+        .spacing(8)
+        .into(),
+    };
+
+    let card = container(
+        column![
+            row![
+                text("检查更新").size(18).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseUpdateDialog),
+            ]
+            .align_y(Alignment::Center),
+            body,
+            row![
+                Space::new().width(Fill),
+                button(text("关闭").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CloseUpdateDialog),
+            ],
+        ]
+        .spacing(16),
+    )
+    .width(Length::Fixed(420.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Small dialog to rename the active session's tab.
+pub(crate) fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
+    let card = container(
+        column![
+            text("重命名标签").size(16).color(primary_text()),
+            text_input("标签名称", &app.session_rename_draft)
+                .on_input(Message::SessionRenameChanged)
+                .on_submit(Message::ConfirmRenameSession)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+            row![
+                Space::new().width(Fill),
+                button(text("取消").size(12))
+                    .padding([5, 16])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelRenameSession),
+                button(text("确定").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmRenameSession),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(380.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Command-snippets panel: list saved commands (send / delete) + an add form.
+pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
+    let header = row![
+        text("命令片段").size(16).color(primary_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseSnippets),
+    ]
+    .align_y(Alignment::Center);
+
+    let mut list = column![].spacing(6);
+    if app.snippets.is_empty() {
+        list = list.push(
+            text("还没有片段。在下方添加常用命令，一键发送到当前终端。")
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+    for (index, snippet) in app.snippets.iter().enumerate() {
+        list = list.push(
+            container(
+                row![
+                    column![
+                        text(snippet.name.clone()).size(12).color(primary_text()),
+                        text(snippet.command.clone()).size(11).color(muted_text()),
+                    ]
+                    .spacing(1)
+                    .width(Fill),
+                    button(text("发送").size(11))
+                        .padding([4, 12])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::SendSnippet(index)),
+                    button(text("删除").size(11))
+                        .padding([4, 10])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::DeleteSnippet(index)),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([4, 6])
+            .style(|_theme| sftp_pane_style()),
+        );
+    }
+
+    let form = column![
+        text("新增片段").size(12).color(muted_text()),
+        text_input("名称（可选）", &app.snippet_name_draft)
+            .on_input(Message::SnippetNameChanged)
+            .padding([5, 8])
+            .style(text_input_style)
+            .width(Fill),
+        row![
+            text_input("命令，如 tail -f /var/log/syslog", &app.snippet_command_draft)
+                .on_input(Message::SnippetCommandChanged)
+                .on_submit(Message::AddSnippet)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+            button(text("添加").size(12))
+                .padding([5, 16])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::AddSnippet),
+        ]
+        .spacing(8),
+    ]
+    .spacing(6);
+
+    let card = container(
+        column![
+            header,
+            scrollable(list).height(Length::Fixed(240.0)),
+            form,
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fixed(560.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// Confirmation dialog shown before pasting multi-line clipboard text.
+pub(crate) fn paste_confirm_overlay(app: &AditApp) -> Element<'_, Message> {
+    let contents = app.pending_paste.as_deref().unwrap_or_default();
+    let line_count = contents.lines().count().max(1);
+    let preview: String = contents.lines().take(8).collect::<Vec<_>>().join("\n");
+    let preview = if preview.chars().count() > 400 {
+        format!("{}…", preview.chars().take(400).collect::<String>())
+    } else {
+        preview
+    };
+
+    let card = container(
+        column![
+            text("确认粘贴").size(16).color(primary_text()),
+            text(format!("将向当前终端粘贴 {line_count} 行内容："))
+                .size(12)
+                .color(muted_text()),
+            container(
+                scrollable(text(preview).size(12).font(Font::MONOSPACE).color(primary_text()))
+                    .height(Length::Fixed(140.0))
+            )
+            .width(Fill)
+            .padding(10)
+            .style(|_theme| container::Style {
+                background: Some(Background::Color(terminal_background())),
+                border: border(RADIUS_SM, 1.0, border_color()),
+                ..container::Style::default()
+            }),
+            row![
+                Space::new().width(Fill),
+                button(text("取消").size(12))
+                    .padding([5, 16])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::CancelPaste),
+                button(text("粘贴").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::ConfirmPaste),
+            ]
+            .spacing(8),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(480.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+/// A read-only path row: label + monospace path + an 打开 button.
+pub(crate) fn options_path_row<'a>(
+    label: &'a str,
+    path: String,
+    open: Option<Message>,
+) -> Element<'a, Message> {
+    let mut row = row![
+        text(label)
+            .size(11)
+            .color(muted_text())
+            .width(Length::Fixed(96.0)),
+        container(text(path).size(12).font(Font::MONOSPACE).color(primary_text()))
+            .width(Fill),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if let Some(message) = open {
+        row = row.push(
+            button(text("打开").size(11))
+                .padding([3, 12])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(message),
+        );
+    }
+    row.into()
+}
+
+/// The trusted-host-keys (known_hosts) management dialog: list each pinned
+/// `host → key type · SHA256 fingerprint` and forget individual entries.
+pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
+    let header = row![
+        text("受信主机密钥").size(15).color(primary_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseKnownHosts),
+    ]
+    .align_y(Alignment::Center);
+
+    let mut list = column![].spacing(4).width(Fill);
+    if app.known_hosts.is_empty() {
+        list = list.push(
+            text("尚无受信主机密钥（首次连接会自动信任并记录）")
+                .size(12)
+                .color(muted_text()),
+        );
+    } else {
+        for entry in &app.known_hosts {
+            let host = entry.host.clone();
+            let fingerprint = entry.fingerprint.clone();
+            list = list.push(
+                container(
+                    row![
+                        column![
+                            text(entry.host.clone()).size(12).color(primary_text()),
+                            text(format!("{} · {}", entry.key_type, entry.fingerprint))
+                                .size(10)
+                                .font(Font::MONOSPACE)
+                                .color(muted_text()),
+                        ]
+                        .spacing(1)
+                        .width(Fill),
+                        button(text("删除").size(11))
+                            .padding([3, 10])
+                            .style(|_theme, status| close_button_style(status))
+                            .on_press(Message::RemoveKnownHost(host, fingerprint)),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .padding([4, 6])
+                .style(|_theme| sftp_row_highlight(false)),
+            );
+        }
+    }
+
+    let body = column![
+        header,
+        text(known_hosts_path().display().to_string())
+            .size(10)
+            .font(Font::MONOSPACE)
+            .color(muted_text()),
+        text("删除某台主机后，下次连接会重新记录其密钥；密钥被更改（可能的中间人）时仍会拦截。")
+            .size(11)
+            .color(muted_text()),
+        scrollable(list).height(Length::Fixed(360.0)),
+    ]
+    .spacing(10);
+
+    let card = container(body)
+        .width(Length::Fixed(560.0))
+        .padding(18)
+        .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+pub(crate) fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let config_dir = &app.config_dir;
+    // The env override, if set, wins over the UI, so hide the change controls.
+    let overridden = std::env::var_os("ADIT_CONFIG_DIR")
+        .is_some_and(|value| !value.is_empty());
+    let is_custom = app.config_dir_custom;
+
+    // The config-folder row: the current path, an "open" button, and (unless the
+    // env override is in force) "change" / "reset to default" buttons.
+    let mut config_dir_row = row![
+        text("配置目录")
+            .size(11)
+            .color(muted_text())
+            .width(Length::Fixed(96.0)),
+        container(
+            text(config_dir.display().to_string())
+                .size(12)
+                .font(Font::MONOSPACE)
+                .color(primary_text())
+        )
+        .width(Fill),
+        button(text("打开").size(11))
+            .padding([3, 12])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::OpenConfigFolder),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+    if !overridden {
+        config_dir_row = config_dir_row.push(
+            button(text("更改…").size(11))
+                .padding([3, 12])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::PickConfigDir),
+        );
+        if is_custom {
+            config_dir_row = config_dir_row.push(
+                button(text("恢复默认").size(11))
+                    .padding([3, 12])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::ResetConfigDir),
+            );
+        }
+    }
+
+    let config_note = if overridden {
+        "由环境变量 ADIT_CONFIG_DIR 指定（重启生效）"
+    } else {
+        "指向 Dropbox 等同步盘可在多台机器间同步会话配置（密码仍保存在各机器本地凭据库）。更改后重启 Adit 生效。"
+    };
+
+    let mut config_section = column![
+        text("配置目录").size(13).color(primary_text()),
+        config_dir_row,
+        options_path_row(
+            "会话配置",
+            config_dir.join("profiles.json").display().to_string(),
+            None,
+        ),
+        options_path_row(
+            "应用设置",
+            config_dir.join("settings.json").display().to_string(),
+            None,
+        ),
+        text(config_note).size(11).color(muted_text()),
+    ]
+    .spacing(8);
+
+    if let Some(pending) = &app.pending_config_dir {
+        config_section = config_section.push(
+            text(format!("重启后生效: {}", pending.display()))
+                .size(11)
+                .color(accent()),
+        );
+    }
+
+    config_section = config_section
+        .push(
+            row![
+                text("连接超时（秒，0 = 不限）")
+                    .size(12)
+                    .color(muted_text())
+                    .width(Length::Fixed(180.0)),
+                text_input("20", &app.connect_timeout_secs.to_string())
+                    .on_input(Message::ConnectTimeoutChanged)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Length::Fixed(80.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .push(
+            row![
+                text("滚动历史行数")
+                    .size(12)
+                    .color(muted_text())
+                    .width(Length::Fixed(180.0)),
+                text_input("5000", &app.scrollback_lines.to_string())
+                    .on_input(Message::ScrollbackLinesChanged)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Length::Fixed(80.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .push(
+            checkbox(app.auto_check_updates)
+                .label("启动时自动检查更新")
+                .on_toggle(Message::ToggleAutoCheckUpdates)
+                .size(16)
+                .text_size(12),
+        )
+        .push(
+            checkbox(app.auto_accept_host_keys)
+                .label("自动信任新主机密钥（不逐个弹窗确认）")
+                .on_toggle(Message::ToggleAutoAcceptHostKeys)
+                .size(16)
+                .text_size(12),
+        );
+
+    // Live preview of the rendered log filename for the active (or a sample)
+    // session.
+    let sample = app
+        .manager
+        .active_session_summary()
+        .map(|summary| (summary.title, summary.endpoint))
+        .unwrap_or_else(|| (String::from("web01"), String::from("root@10.0.0.5:22")));
+    let preview_name = render_log_name(&effective_log_pattern(app), &sample.0, &sample.1);
+    let preview_path = effective_log_dir(app).join(&preview_name);
+
+    let log_section = column![
+        text("会话日志").size(13).color(primary_text()),
+        column![
+            text("日志目录（留空 = 配置目录下的 logs）")
+                .size(11)
+                .color(muted_text()),
+            row![
+                text_input(
+                    &app.config_dir.join("logs").display().to_string(),
+                    &app.log_dir,
+                )
+                .on_input(Message::LogDirChanged)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+                button(text("浏览…").size(11))
+                    .padding([5, 12])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::PickLogDir),
+                button(text("打开").size(11))
+                    .padding([5, 12])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::OpenLogFolder),
+            ]
+            .spacing(8),
+        ]
+        .spacing(3),
+        column![
+            text("日志文件名（留空 = 默认）").size(11).color(muted_text()),
+            text_input(DEFAULT_LOG_PATTERN, &app.log_name_pattern)
+                .on_input(Message::LogNamePatternChanged)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+        ]
+        .spacing(3),
+        text("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒")
+            .size(11)
+            .color(muted_text()),
+        options_path_row("预览", preview_path.display().to_string(), None),
+        checkbox(app.auto_log_on_connect)
+            .label("连接后自动开始记录日志")
+            .on_toggle(Message::ToggleAutoLog)
+            .size(16)
+            .text_size(12),
+        checkbox(app.log_plaintext)
+            .label("记录为纯文本（去除颜色/转义码，便于阅读和 grep）")
+            .on_toggle(Message::ToggleLogPlaintext)
+            .size(16)
+            .text_size(12),
+    ]
+    .spacing(8);
+
+    let mouse_section = column![
+        text("终端复制 / 粘贴（PuTTY 风格）")
+            .size(13)
+            .color(primary_text()),
+        checkbox(app.copy_on_select)
+            .label("选中内容即复制到剪贴板")
+            .on_toggle(Message::ToggleCopyOnSelect)
+            .size(16)
+            .text_size(12),
+        checkbox(app.right_click_paste)
+            .label("右键直接粘贴（不弹出菜单）")
+            .on_toggle(Message::ToggleRightClickPaste)
+            .size(16)
+            .text_size(12),
+        checkbox(app.confirm_multiline_paste)
+            .label("粘贴多行内容前先确认")
+            .on_toggle(Message::ToggleConfirmMultilinePaste)
+            .size(16)
+            .text_size(12),
+        text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。")
+            .size(11)
+            .color(muted_text()),
+    ]
+    .spacing(8);
+
+    let divider = || {
+        container(Space::new().height(Length::Fixed(1.0)).width(Fill)).style(|_theme| {
+            container::Style {
+                background: Some(Background::Color(border_color())),
+                ..container::Style::default()
+            }
+        })
+    };
+
+    let card = container(
+        column![
+            row![
+                text("选项").size(18).color(primary_text()),
+                Space::new().width(Fill),
+                button("×")
+                    .width(Length::Fixed(26.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseOptions),
+            ]
+            .align_y(Alignment::Center),
+            config_section,
+            divider(),
+            log_section,
+            divider(),
+            mouse_section,
+            row![
+                Space::new().width(Fill),
+                button(text("完成").size(12))
+                    .padding([5, 18])
+                    .style(|_theme, status| primary_button_style(status))
+                    .on_press(Message::CloseOptions),
+            ],
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fixed(560.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(card)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
+    let endpoint = app
+        .manager
+        .active_session_summary()
+        .map(|summary| summary.endpoint)
+        .unwrap_or_default();
+
+    let header = row![
+        text("端口转发").size(15).color(primary_text()),
+        text(endpoint).size(11).color(muted_text()),
+        Space::new().width(Fill),
+        button("×")
+            .width(Length::Fixed(26.0))
+            .height(Length::Fixed(24.0))
+            .padding(0)
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::CloseTunnels),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let kind_row = row![
+        text("类型").size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        tunnel_kind_button("本地转发 -L", TunnelKind::Local, app.tunnel_kind),
+        tunnel_kind_button("动态 SOCKS -D", TunnelKind::Dynamic, app.tunnel_kind),
+        tunnel_kind_button("远程转发 -R", TunnelKind::Remote, app.tunnel_kind),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let hint = match app.tunnel_kind {
+        TunnelKind::Local => "本机端口 → 经 SSH 服务器 → 目标地址（访问服务器能到达的内网服务）",
+        TunnelKind::Dynamic => "本机启动 SOCKS5 代理，应用挂上后所有流量走服务器出口",
+        TunnelKind::Remote => "服务器监听端口 → 经 SSH 隧道 → 本机目标地址（把本地服务暴露给远端网络）",
+    };
+
+    let bind_label = if app.tunnel_kind == TunnelKind::Remote {
+        "远端"
+    } else {
+        "本地"
+    };
+    let bind_placeholder = if app.tunnel_kind == TunnelKind::Remote {
+        "127.0.0.1（远端绑定，0.0.0.0 对外）"
+    } else {
+        "127.0.0.1"
+    };
+
+    let bind_row = row![
+        text(bind_label).size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        text_input(bind_placeholder, &app.tunnel_bind_addr)
+            .on_input(Message::TunnelBindAddrChanged)
+            .padding([4, 8])
+            .style(text_input_style)
+            .width(Length::Fixed(150.0)),
+        text(":").size(12).color(muted_text()),
+        text_input("端口", &app.tunnel_bind_port)
+            .on_input(Message::TunnelBindPortChanged)
+            .on_submit(Message::AddTunnel)
+            .padding([4, 8])
+            .style(text_input_style)
+            .width(Length::Fixed(90.0)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let mut form = column![kind_row, text(hint).size(10).color(muted_text()), bind_row].spacing(8);
+
+    if app.tunnel_kind != TunnelKind::Dynamic {
+        let target_label = if app.tunnel_kind == TunnelKind::Remote {
+            "本地"
+        } else {
+            "目标"
+        };
+        form = form.push(
+            row![
+                text(target_label).size(12).color(muted_text()).width(Length::Fixed(52.0)),
+                text_input("目标主机（如 10.0.0.5）", &app.tunnel_target_host)
+                    .on_input(Message::TunnelTargetHostChanged)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Fill),
+                text(":").size(12).color(muted_text()),
+                text_input("端口", &app.tunnel_target_port)
+                    .on_input(Message::TunnelTargetPortChanged)
+                    .on_submit(Message::AddTunnel)
+                    .padding([4, 8])
+                    .style(text_input_style)
+                    .width(Length::Fixed(90.0)),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        );
+    }
+
+    form = form.push(
+        row![
+            checkbox(app.tunnel_save)
+                .label("保存到会话配置（连接时自动开启）")
+                .on_toggle(Message::ToggleTunnelSave)
+                .size(15)
+                .text_size(11),
+            Space::new().width(Fill),
+            button(text("添加转发").size(12))
+                .padding([5, 16])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::AddTunnel),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    );
+
+    let tunnels = app.manager.tunnels();
+    let mut list = column![].spacing(2);
+    if tunnels.is_empty() {
+        list = list.push(text("（暂无转发）").size(11).color(muted_text()));
+    } else {
+        for tunnel in tunnels {
+            list = list.push(tunnel_row(tunnel));
+        }
+    }
+
+    // Saved (auto-start) definitions for the active profile.
+    let saved: Vec<TunnelDef> = app
+        .manager
+        .active_session_summary()
+        .and_then(|summary| {
+            app.manager
+                .profile(summary.profile_id)
+                .map(|profile| profile.tunnels.clone())
+        })
+        .unwrap_or_default();
+    let mut saved_list = column![].spacing(2);
+    if saved.is_empty() {
+        saved_list = saved_list.push(text("（无）").size(11).color(muted_text()));
+    } else {
+        for (index, def) in saved.iter().enumerate() {
+            saved_list = saved_list.push(saved_tunnel_row(index, def));
+        }
+    }
+
+    let content = column![
+        header,
+        container(form)
+            .padding(12)
+            .width(Fill)
+            .style(|_theme| sftp_pane_style()),
+        text("已保存（连接时自动开启）").size(12).color(primary_text()),
+        container(saved_list)
+            .padding(8)
+            .width(Fill)
+            .style(|_theme| sftp_list_inner_style()),
+        text("活动转发").size(12).color(primary_text()),
+        container(scrollable(list).height(Fill))
+            .height(Fill)
+            .padding(6)
+            .style(|_theme| sftp_list_inner_style()),
+    ]
+    .spacing(10);
+
+    let panel = container(content)
+        .width(Fill)
+        .height(Fill)
+        .padding(16)
+        .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .padding(48)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}
+
+pub(crate) fn tunnel_kind_button(
+    label: &'static str,
+    kind: TunnelKind,
+    current: TunnelKind,
+) -> Element<'static, Message> {
+    let selected = kind == current;
+    button(text(label).size(12))
+        .padding([5, 14])
+        .style(move |_theme, status| {
+            if selected {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::TunnelKindChanged(kind))
+        .into()
+}
+
+pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
+    let kind = match tunnel.kind {
+        TunnelKind::Local => "L",
+        TunnelKind::Dynamic => "D",
+        TunnelKind::Remote => "R",
+    };
+    let route = match tunnel.kind {
+        TunnelKind::Local => format!("{} → {}", tunnel.bind, tunnel.target),
+        TunnelKind::Dynamic => format!("{}  (SOCKS5)", tunnel.bind),
+        TunnelKind::Remote => format!("远端 {} → 本地 {}", tunnel.bind, tunnel.target),
+    };
+    let status_color = if tunnel.error.is_some() {
+        danger()
+    } else if tunnel.listening {
+        Color::from_rgb8(34, 197, 94)
+    } else {
+        muted_text()
+    };
+
+    container(
+        row![
+            text(kind).size(11).color(accent()).width(Length::Fixed(18.0)),
+            text(route).size(12).color(primary_text()).width(Fill),
+            text(format!("活动 {}", tunnel.active))
+                .size(10)
+                .color(muted_text())
+                .width(Length::Fixed(60.0)),
+            text(tunnel.status.clone())
+                .size(10)
+                .color(status_color)
+                .width(Length::Fixed(190.0)),
+            button(text("关闭").size(11))
+                .padding([3, 10])
+                .style(|_theme, status| close_button_style(status))
+                .on_press(Message::CloseTunnel(tunnel.id)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([4, 8])
+    .into()
+}
+
+pub(crate) fn saved_tunnel_row(index: usize, def: &TunnelDef) -> Element<'static, Message> {
+    let label = match def.kind {
+        TunnelKind::Local => format!(
+            "L  {}:{} → {}:{}",
+            def.bind_address, def.bind_port, def.target_host, def.target_port
+        ),
+        TunnelKind::Dynamic => format!("D  {}:{}  (SOCKS5)", def.bind_address, def.bind_port),
+        TunnelKind::Remote => format!(
+            "R  远端 {}:{} → 本地 {}:{}",
+            def.bind_address, def.bind_port, def.target_host, def.target_port
+        ),
+    };
+    row![
+        text(label).size(11).color(primary_text()).width(Fill),
+        button(text("删除").size(11))
+            .padding([3, 10])
+            .style(|_theme, status| close_button_style(status))
+            .on_press(Message::RemoveSavedTunnel(index)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .padding([2, 8])
+    .into()
+}
