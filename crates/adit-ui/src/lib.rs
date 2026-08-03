@@ -9527,6 +9527,11 @@ pub enum MainView {
 
 const NAV_RAIL_WIDTH: f32 = 156.0;
 const HOST_CARD_WIDTH: f32 = 260.0;
+/// Card and row heights, for the gap a drag opens. Matched to what those two
+/// build out to — a gap of the wrong size makes the whole band jump as the
+/// cursor crosses into it.
+const HOST_CARD_HEIGHT: f32 = 54.0;
+const HOST_ROW_HEIGHT: f32 = 31.0;
 
 
 /// One preset a profile's tile can use.
@@ -9965,6 +9970,74 @@ struct BandStyle {
     columns: usize,
 }
 
+/// One position in a band: a card, or the space a dragged card will drop into.
+enum BandSlot<'a> {
+    Card(&'a ConnectionProfile),
+    Gap,
+}
+
+/// Lay a band out for the drag in flight: the dragged card leaves its old
+/// position, and a gap opens where it would land.
+///
+/// This is the whole "make way" effect. iced has no tween, but the layout is
+/// rebuilt every frame, so moving the gap as the target changes makes the cards
+/// after it step aside — the motion is real even though no animation drives it.
+///
+/// The card is removed from wherever it was, not just from the target's band:
+/// it is in flight, and leaving a copy behind while its ghost follows the cursor
+/// reads as two of the same host.
+fn band_slots<'a>(app: &AditApp, hosts: Vec<&'a ConnectionProfile>) -> Vec<BandSlot<'a>> {
+    let live = app.drag_from_grid && app.profile_drag_active;
+    let Some(dragged) = app.dragged_profile.filter(|_| live) else {
+        return hosts.into_iter().map(BandSlot::Card).collect();
+    };
+
+    let mut slots: Vec<BandSlot<'a>> = hosts
+        .into_iter()
+        .filter(|profile| profile.id != dragged)
+        .map(BandSlot::Card)
+        .collect();
+
+    // The gap only opens in the band holding the target; the others just lose
+    // the travelling card if it came from them.
+    if let Some(ProfileDrop::Beside {
+        profile_id: target,
+        position,
+    }) = app.profile_drop
+    {
+        if let Some(at) = slots
+            .iter()
+            .position(|slot| matches!(slot, BandSlot::Card(profile) if profile.id == target))
+        {
+            let index = if position == ProfileDropPosition::After {
+                at + 1
+            } else {
+                at
+            };
+            slots.insert(index, BandSlot::Gap);
+        }
+    }
+    slots
+}
+
+/// The opened slot itself: an accent-tinted outline the size of what will land
+/// in it, so the space reads as reserved rather than as something missing.
+fn host_gap(height: f32) -> Element<'static, Message> {
+    container(Space::new())
+        .width(Fill)
+        .height(Length::Fixed(height))
+        .style(|_theme| container::Style {
+            background: Some(Background::Color(accent_soft())),
+            border: Border {
+                color: accent(),
+                width: 1.5,
+                radius: RADIUS_SM.into(),
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
 fn host_band(
     app: &AditApp,
     style: &BandStyle,
@@ -9980,6 +10053,7 @@ fn host_band(
         .filter(|profile| online.contains(&profile.id))
         .count();
     let (layout, columns) = (style.layout, style.columns);
+    let slots = band_slots(app, hosts);
     let entries: Element<'static, Message> = match layout {
         HostLayout::Grid => {
             // The same arithmetic wrap_cards lays them out with, so the midpoint
@@ -9987,19 +10061,25 @@ fn host_band(
             let card_width =
                 ((app.window_width - app.sidebar_width - 56.0) / columns as f32 - 8.0).max(80.0);
             wrap_cards(
-                hosts
+                slots
                     .into_iter()
-                    .map(|profile| {
-                        host_card(app, profile, online.contains(&profile.id), card_width)
+                    .map(|slot| match slot {
+                        BandSlot::Card(profile) => {
+                            host_card(app, profile, online.contains(&profile.id), card_width)
+                        }
+                        BandSlot::Gap => host_gap(HOST_CARD_HEIGHT),
                     })
                     .collect(),
                 columns,
             )
         }
-        _ => hosts
+        _ => slots
             .into_iter()
-            .fold(column![].spacing(2), |rows, profile| {
-                rows.push(host_row(app, profile, 0.0, online.contains(&profile.id)))
+            .fold(column![].spacing(2), |rows, slot| match slot {
+                BandSlot::Card(profile) => {
+                    rows.push(host_row(app, profile, 0.0, online.contains(&profile.id)))
+                }
+                BandSlot::Gap => rows.push(host_gap(HOST_ROW_HEIGHT)),
             })
             .into(),
     };
@@ -13175,6 +13255,56 @@ mod tests {
         // The whole point of the seed: the grid holds the arrangement it had,
         // and a tree drag cannot leak into it — not even the first one.
         assert_eq!(grid_names(&app), ["a", "b", "c"]);
+    }
+
+    /// Slot shape mid-drag, as `"a"` for a card and `"_"` for the opened gap.
+    fn slot_shape(app: &AditApp) -> String {
+        // The grid's own order, which is what the grid renders — reading the
+        // tree's here would have asserted the wrong view's state entirely.
+        let ordered = grid_ordered_profiles(app);
+        let hosts: Vec<&ConnectionProfile> = ordered.iter().collect();
+        band_slots(app, hosts)
+            .into_iter()
+            .map(|slot| match slot {
+                BandSlot::Card(profile) => profile.name.clone(),
+                BandSlot::Gap => String::from("_"),
+            })
+            .collect::<Vec<_>>()
+            .join("")
+    }
+
+    #[test]
+    fn a_drag_lifts_the_card_and_opens_a_gap() {
+        let mut app = drag_test_app();
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        assert_eq!(slot_shape(&app), "abc", "no drag, no gap");
+
+        let _ = update(&mut app, Message::GridProfilePressed(ids[0]));
+        let _ = update(&mut app, Message::ProfileHovered(ids[2]));
+        // `a` has left its place and the gap sits before `c`, so `b` has moved up.
+        assert_eq!(slot_shape(&app), "b_c");
+
+        let _ = update(
+            &mut app,
+            Message::ProfileDragOver(ids[2], ProfileDropPosition::After),
+        );
+        // Crossing c's midpoint moves the gap past it; nothing else jumps.
+        assert_eq!(slot_shape(&app), "bc_");
+
+        let _ = update(&mut app, Message::CancelProfileDrag);
+        assert_eq!(slot_shape(&app), "bca", "the gap closes once the drag ends");
+    }
+
+    #[test]
+    fn a_tree_drag_does_not_disturb_the_grid_layout() {
+        // Only a grid drag reshapes the grid. A tree drag must leave every card
+        // exactly where it is, gap included — that is, no gap at all.
+        let mut app = drag_test_app();
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        let _ = update(&mut app, Message::ProfilePressed(ids[0]));
+        let _ = update(&mut app, Message::ProfileHovered(ids[2]));
+        assert_eq!(slot_shape(&app), "abc");
+        let _ = update(&mut app, Message::CancelProfileDrag);
     }
 
     #[test]
