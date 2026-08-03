@@ -7,7 +7,7 @@
 //! insert/delete, the alternate screen, and device-status replies.
 
 use crate::{
-    Color, TerminalCell, TerminalChangeSet, TerminalCore, TerminalLine, TerminalSize,
+    Color, LogicalAnchor, TerminalCell, TerminalChangeSet, TerminalCore, TerminalLine, TerminalSize,
     TerminalSnapshot, Viewport,
 };
 use std::collections::VecDeque;
@@ -417,30 +417,16 @@ impl TermState {
     fn logical_lines(&self) -> (Vec<Vec<Cell>>, (usize, usize)) {
         let mut lines: Vec<Vec<Cell>> = Vec::new();
         let mut current: Vec<Cell> = Vec::new();
-        let mut cursor = (0usize, 0usize);
 
-        let split = self.scrollback.len();
-        let cursor_abs = split + self.cursor_row;
+        // The cursor is located by the same walk every other anchor uses. Doing
+        // it here by hand instead would let the two drift apart, and then a
+        // selection anchored before a reflow would come back on a different line
+        // from the cursor that reflow placed.
+        let cursor = self.logical_anchor(self.scrollback.len() + self.cursor_row, self.cursor_col);
 
-        for abs in 0..split + self.grid.len() {
-            let row = if abs < split {
-                &self.scrollback[abs]
-            } else {
-                &self.grid[abs - split]
-            };
-
-            if abs == cursor_abs {
-                let upto = self.cursor_col.min(row.cells.len());
-                let before = row.cells[..upto].iter().filter(|c| !c.spacer).count();
-                cursor = (lines.len(), current.len() + before);
-            }
-
-            let keep = if row.wrapped {
-                row.cells.len()
-            } else {
-                content_len(&row.cells)
-            };
-            current.extend(row.cells[..keep].iter().filter(|c| !c.spacer).copied());
+        for abs in 0..self.total_rows() {
+            let row = self.row_at(abs);
+            current.extend(row.cells[..logical_keep(row)].iter().filter(|c| !c.spacer).copied());
 
             if !row.wrapped {
                 lines.push(std::mem::take(&mut current));
@@ -451,7 +437,102 @@ impl TermState {
         if !current.is_empty() || lines.is_empty() {
             lines.push(current);
         }
-        (lines, cursor)
+        (lines, (cursor.line, cursor.offset))
+    }
+
+    /// Rows in the buffer: scrollback followed by the screen.
+    fn total_rows(&self) -> usize {
+        self.scrollback.len() + self.grid.len()
+    }
+
+    /// The row at an absolute (scrollback + screen) index.
+    ///
+    /// # Panics
+    /// If `abs >= self.total_rows()`.
+    fn row_at(&self, abs: usize) -> &Row {
+        let split = self.scrollback.len();
+        if abs < split {
+            &self.scrollback[abs]
+        } else {
+            &self.grid[abs - split]
+        }
+    }
+
+    /// Anchor an absolute `(row, col)` to the logical line it falls in.
+    ///
+    /// The walk must stay identical to [`Self::logical_lines`]' — an anchor is
+    /// only worth anything if it names the same line the reflow will rebuild.
+    fn logical_anchor(&self, row: usize, col: usize) -> LogicalAnchor {
+        let total = self.total_rows();
+        let target = row.min(total.saturating_sub(1));
+        let mut line = 0usize;
+        let mut base = 0usize;
+
+        for abs in 0..total {
+            let current = self.row_at(abs);
+            if abs == target {
+                // Columns strictly before `col`, so an exclusive endpoint (which
+                // is how a selection's end column is read) stays exclusive.
+                let upto = col.min(current.cells.len());
+                let before = current.cells[..upto].iter().filter(|c| !c.spacer).count();
+                return LogicalAnchor {
+                    line,
+                    offset: base + before,
+                };
+            }
+            base += logical_len(current);
+            if !current.wrapped {
+                line += 1;
+                base = 0;
+            }
+        }
+
+        LogicalAnchor { line, offset: base }
+    }
+
+    /// Resolve a [`LogicalAnchor`] back to an absolute `(row, col)` at the
+    /// current width.
+    ///
+    /// Clamps instead of failing. An offset past the end of its line lands just
+    /// after the last cell; a line index that no longer exists — re-wrapping
+    /// narrower can push the oldest lines past the scrollback limit, which
+    /// renumbers everything that survives — lands on the last row.
+    fn resolve_anchor(&self, anchor: LogicalAnchor) -> (usize, usize) {
+        let total = self.total_rows();
+        if total == 0 {
+            return (0, 0);
+        }
+        let mut line = 0usize;
+        let mut base = 0usize;
+
+        for abs in 0..total {
+            let current = self.row_at(abs);
+            let len = logical_len(current);
+            if line == anchor.line {
+                let wanted = anchor.offset.saturating_sub(base);
+                if wanted < len {
+                    let col = current
+                        .cells
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, cell)| !cell.spacer)
+                        .nth(wanted)
+                        .map_or(0, |(col, _)| col);
+                    return (abs, col);
+                }
+                if !current.wrapped {
+                    // Last row of the line: the anchor sits at or past its end.
+                    return (abs, content_len(&current.cells).min(current.cells.len()));
+                }
+            }
+            base += len;
+            if !current.wrapped {
+                line += 1;
+                base = 0;
+            }
+        }
+
+        (total - 1, 0)
     }
 
     fn push_scrollback(&mut self, row: Row) {
@@ -870,11 +951,7 @@ impl TermState {
 
         let mut lines = Vec::with_capacity(end - first);
         for abs in first..end {
-            let row: &[Cell] = if abs < self.scrollback.len() {
-                &self.scrollback[abs]
-            } else {
-                &self.grid[abs - self.scrollback.len()]
-            };
+            let row = self.row_at(abs);
             let cursor = if self.cursor_visible && abs == cursor_abs {
                 Some(self.cursor_col)
             } else {
@@ -903,72 +980,75 @@ impl TermState {
             return;
         }
 
-        // A width change re-wraps every logical line, so primary-screen history
-        // has to be rebuilt. A height-only change wraps nothing, so it keeps the
-        // cheaper path below that just moves rows between screen and scrollback.
-        //
-        // The alternate screen never reflows: it belongs to a full-screen app
-        // that redraws itself at the new size, and joining its rows would splice
-        // together unrelated parts of a TUI.
-        if cols != self.cols && self.alt.is_none() {
-            self.reflow(cols, rows);
-            self.cols = cols;
-            self.rows = rows;
-            self.scroll_top = 0;
-            self.scroll_bottom = rows - 1;
-            self.pending_wrap = false;
-            return;
-        }
+        // The alternate screen never reflows and its rows must never reach
+        // scrollback: it belongs to a full-screen app that redraws itself at the
+        // new size, and joining its rows would splice together unrelated parts
+        // of a TUI. The primary screen STASHED behind it is the opposite case —
+        // ordinary shell output that owns this terminal's scrollback — so it
+        // takes exactly the same lossless path the live primary does. Running it
+        // through `resize_grid` instead is how shrinking the window inside vim
+        // used to eat the primary rows underneath.
+        if let Some(mut alt) = self.alt.take() {
+            let alt_src_start = shrink_start(self.cursor_row, self.rows, rows);
+            let alt_cursor = (self.cursor_row, self.cursor_col);
 
-        let old_rows = self.rows;
-        // When shrinking, keep the window of rows ending at (and including) the
-        // cursor so the prompt and recent output stay on screen; growing keeps
-        // content anchored at the top and pads blank rows at the bottom.
-        let src_start = if rows >= old_rows {
-            0
-        } else {
-            (self.cursor_row + 1)
-                .min(old_rows)
-                .saturating_sub(rows)
-                .min(old_rows - rows)
-        };
-
-        if self.alt.is_none() {
-            // Rows a shrink pushes off the top are real output — move them into
-            // scrollback instead of dropping them, which is what this did before
-            // and is how narrowing the window silently ate history. Collect
-            // before pushing: `drain` borrows the grid, `push_scrollback`
-            // borrows all of `self`.
-            //
-            // Excluded on the alternate screen, which belongs to a full-screen
-            // app that redraws itself — its rows must never reach scrollback.
-            // Carried rows keep their old width; `resize_grid` would clip them
-            // to the new one, losing the very columns a reflow needs later.
-            let carried: Vec<Row> = self.grid.drain(..src_start).collect();
-            for row in carried {
-                self.push_scrollback(row);
-            }
-            // The carried rows are gone from the front, so the copy starts at 0.
-            self.grid = resize_grid(&self.grid, cols, rows, 0);
-        } else {
-            self.grid = resize_grid(&self.grid, cols, rows, src_start);
-        }
-        if let Some(alt) = &mut self.alt {
-            alt.grid = resize_grid(&alt.grid, cols, rows, 0);
-            alt.cursor_row = alt.cursor_row.min(rows - 1);
-            alt.cursor_col = alt.cursor_col.min(cols - 1);
+            // Swap the stashed primary in, resize it as a primary screen, swap back.
+            let alt_grid = std::mem::replace(&mut self.grid, std::mem::take(&mut alt.grid));
+            self.cursor_row = alt.cursor_row;
+            self.cursor_col = alt.cursor_col;
+            self.resize_primary(cols, rows);
+            alt.grid = std::mem::replace(&mut self.grid, alt_grid);
+            alt.cursor_row = self.cursor_row;
+            alt.cursor_col = self.cursor_col;
             alt.scroll_top = alt.scroll_top.min(rows - 1);
             alt.scroll_bottom = rows - 1;
-        }
 
-        self.cursor_row = self.cursor_row.saturating_sub(src_start).min(rows - 1);
-        self.cursor_col = self.cursor_col.min(cols - 1);
+            self.grid = resize_grid(&self.grid, cols, rows, alt_src_start);
+            self.cursor_row = alt_cursor.0.saturating_sub(alt_src_start).min(rows - 1);
+            self.cursor_col = alt_cursor.1.min(cols - 1);
+            self.alt = Some(alt);
+        } else {
+            self.resize_primary(cols, rows);
+        }
 
         self.cols = cols;
         self.rows = rows;
         self.scroll_top = 0;
         self.scroll_bottom = rows - 1;
         self.pending_wrap = false;
+    }
+
+    /// Resize the primary screen — `self.grid` plus `self.scrollback` — without
+    /// losing content: a width change re-wraps every logical line, and a height
+    /// shrink moves the rows it pushes off the top into scrollback.
+    ///
+    /// Reads `self.cols`/`self.rows` as the OLD size and deliberately does not
+    /// update them: the alternate-screen path above runs this over the stashed
+    /// primary grid and still has its own screen to resize at the old size after.
+    fn resize_primary(&mut self, cols: usize, rows: usize) {
+        // A width change re-wraps every logical line, so the history has to be
+        // rebuilt. A height-only change wraps nothing, so it takes the cheaper
+        // path that just moves rows between screen and scrollback.
+        if cols != self.cols {
+            self.reflow(cols, rows);
+            return;
+        }
+
+        let src_start = shrink_start(self.cursor_row, self.rows, rows);
+        // Rows a shrink pushes off the top are real output — move them into
+        // scrollback instead of dropping them, which is what this did before and
+        // is how narrowing the window silently ate history. Collect before
+        // pushing: `drain` borrows the grid, `push_scrollback` borrows all of
+        // `self`. Carried rows keep their old width; `resize_grid` would clip
+        // them to the new one, losing the very columns a reflow needs later.
+        let carried: Vec<Row> = self.grid.drain(..src_start.min(self.grid.len())).collect();
+        for row in carried {
+            self.push_scrollback(row);
+        }
+        // The carried rows are gone from the front, so the copy starts at 0.
+        self.grid = resize_grid(&self.grid, cols, rows, 0);
+        self.cursor_row = self.cursor_row.saturating_sub(src_start).min(rows - 1);
+        self.cursor_col = self.cursor_col.min(cols - 1);
     }
 }
 
@@ -1173,6 +1253,21 @@ impl VtTerminal {
     pub fn mouse_sgr(&self) -> bool {
         self.state.mouse_sgr
     }
+
+    /// Anchor an absolute `(row, col)` to the logical line it falls in, so it
+    /// can be found again after a resize re-wraps the buffer. See
+    /// [`LogicalAnchor`].
+    #[must_use]
+    pub fn logical_anchor(&self, row: usize, col: usize) -> LogicalAnchor {
+        self.state.logical_anchor(row, col)
+    }
+
+    /// Resolve a [`LogicalAnchor`] back to an absolute `(row, col)` at the
+    /// current width.
+    #[must_use]
+    pub fn resolve_anchor(&self, anchor: LogicalAnchor) -> (usize, usize) {
+        self.state.resolve_anchor(anchor)
+    }
 }
 
 impl TerminalCore for VtTerminal {
@@ -1201,6 +1296,28 @@ fn content_len(cells: &[Cell]) -> usize {
         .iter()
         .rposition(|cell| cell.ch != ' ' || cell.pen.bg != Color::Default)
         .map_or(0, |index| index + 1)
+}
+
+/// How much of a row belongs to its logical line. Trailing blanks are trimmed
+/// from a row that ended in a real newline, but never from a soft-wrapped one —
+/// that row is full by definition, and trimming it would pull the continuation
+/// up against the wrong column.
+fn logical_keep(row: &Row) -> usize {
+    if row.wrapped {
+        row.cells.len()
+    } else {
+        content_len(&row.cells)
+    }
+}
+
+/// How many cells a row contributes to its logical line. Wide-glyph spacers are
+/// dropped: they are re-derived when the line is re-wrapped, and carrying them
+/// would double-count columns.
+fn logical_len(row: &Row) -> usize {
+    row.cells[..logical_keep(row)]
+        .iter()
+        .filter(|cell| !cell.spacer)
+        .count()
 }
 
 /// Re-wrap logical lines to `cols`, returning the rows and the cursor's new
@@ -1247,6 +1364,21 @@ fn rewrap(lines: &[Vec<Cell>], cols: usize, cursor: (usize, usize)) -> (Vec<Row>
         rows.push(row);
     }
     (rows, cursor_out)
+}
+
+/// The first row a height change keeps. Shrinking keeps the window of `rows`
+/// rows ending at (and including) the cursor, so the prompt and recent output
+/// stay on screen; growing keeps content anchored at the top (`0`) and pads
+/// blank rows at the bottom.
+fn shrink_start(cursor_row: usize, old_rows: usize, rows: usize) -> usize {
+    if rows >= old_rows {
+        0
+    } else {
+        (cursor_row + 1)
+            .min(old_rows)
+            .saturating_sub(rows)
+            .min(old_rows - rows)
+    }
 }
 
 fn blank_row(cols: usize, bg: Color) -> Row {
@@ -1747,6 +1879,184 @@ mod tests {
         t.resize(TerminalSize::new(4, 4));
         let snap = t.snapshot(Viewport::tail(4));
         assert_eq!(line_text(&snap, 0).trim_end(), "abcd");
+    }
+
+    // --- logical-line anchors across a reflow --------------------------------
+
+    /// The whole buffer (scrollback + screen) as one string, rows separated by
+    /// `|` — enough to assert that nothing was clipped away.
+    fn whole_buffer(t: &VtTerminal) -> String {
+        let total = t.snapshot(Viewport::tail(1)).total_rows;
+        let snap = t.snapshot(Viewport {
+            first_row: 0,
+            height: total,
+        });
+        (0..snap.lines.len())
+            .map(|row| line_text(&snap, row).trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("|")
+    }
+
+    /// One absolute buffer row as text, spacers dropped.
+    fn row_text(t: &VtTerminal, row: usize) -> String {
+        t.state
+            .row_at(row)
+            .cells
+            .iter()
+            .filter(|cell| !cell.spacer)
+            .map(|cell| cell.ch)
+            .collect::<String>()
+            .trim_end()
+            .to_string()
+    }
+
+    /// The character in the absolute buffer CELL at `(row, col)` — column space,
+    /// so a wide glyph's spacer occupies its own column, exactly as a selection
+    /// anchor sees it.
+    fn cell_at(t: &VtTerminal, row: usize, col: usize) -> char {
+        t.state.row_at(row).cells[col].ch
+    }
+
+    /// Text of the half-open absolute span `[start, end)` — the convention the
+    /// UI's selection uses (its end column is exclusive).
+    fn span_text(t: &VtTerminal, start: (usize, usize), end: (usize, usize)) -> String {
+        let mut out = String::new();
+        for row in start.0..=end.0 {
+            let cells = &t.state.row_at(row).cells;
+            let lo = if row == start.0 { start.1 } else { 0 }.min(cells.len());
+            let hi = if row == end.0 { end.1 } else { cells.len() }
+                .min(cells.len())
+                .max(lo);
+            out.extend(cells[lo..hi].iter().filter(|c| !c.spacer).map(|c| c.ch));
+        }
+        out
+    }
+
+    #[test]
+    fn a_selection_anchor_survives_a_narrowing_reflow() {
+        let mut t = term(20, 4);
+        t.feed_str("0123456789abcdefghij\r\nsecond\r\n");
+        // "cdef" — absolute row 0, columns 12..16.
+        assert_eq!(span_text(&t, (0, 12), (0, 16)), "cdef");
+        let start = t.logical_anchor(0, 12);
+        let end = t.logical_anchor(0, 16);
+
+        t.resize(TerminalSize::new(10, 4));
+
+        let start = t.resolve_anchor(start);
+        let end = t.resolve_anchor(end);
+        // The row it lived on split in two, so the anchor moved with the text.
+        assert_ne!(start, (0, 12), "the reflow was expected to renumber this row");
+        assert_eq!(cell_at(&t, start.0, start.1), 'c');
+        assert_eq!(span_text(&t, start, end), "cdef");
+    }
+
+    #[test]
+    fn a_selection_anchor_survives_a_widening_reflow() {
+        let mut t = term(10, 4);
+        t.feed_str("0123456789abcdefghij\r\nsecond\r\n");
+        // Soft-wrapped at 10 columns: "cdef" is on the continuation row.
+        assert_eq!(span_text(&t, (1, 2), (1, 6)), "cdef");
+        let start = t.logical_anchor(1, 2);
+        let end = t.logical_anchor(1, 6);
+
+        t.resize(TerminalSize::new(20, 4));
+
+        let start = t.resolve_anchor(start);
+        let end = t.resolve_anchor(end);
+        assert_ne!(start, (1, 2), "the reflow was expected to renumber this row");
+        assert_eq!(span_text(&t, start, end), "cdef");
+    }
+
+    #[test]
+    fn a_scroll_position_survives_a_reflow_in_both_directions() {
+        let mut t = term(20, 4);
+        // Lines longer than any of the widths under test, so every re-wrap
+        // really does renumber the rows — with lines that fit at all three, the
+        // absolute row number happens to survive and the test proves nothing.
+        for i in 0..30 {
+            t.feed_str(&format!("line-{i:02}{}\r\n", "-".repeat(17)));
+        }
+        // Row 20 is where the viewport is parked: the first row of line 10,
+        // which takes two rows at 20 columns.
+        assert!(row_text(&t, 20).starts_with("line-10"));
+        let top = t.logical_anchor(20, 0);
+
+        t.resize(TerminalSize::new(8, 4));
+        let (row, _) = t.resolve_anchor(top);
+        assert_ne!(row, 20, "the reflow was expected to renumber this row");
+        assert!(
+            row_text(&t, row).starts_with("line-10"),
+            "narrowed to: {:?}",
+            row_text(&t, row)
+        );
+
+        t.resize(TerminalSize::new(40, 4));
+        let (row, _) = t.resolve_anchor(top);
+        assert_ne!(row, 20, "the reflow was expected to renumber this row");
+        assert!(
+            row_text(&t, row).starts_with("line-10"),
+            "widened to: {:?}",
+            row_text(&t, row)
+        );
+    }
+
+    #[test]
+    fn an_anchor_next_to_a_wide_glyph_survives_a_reflow() {
+        let mut t = term(8, 4);
+        // a b 中(2,3) 文(4,5) c d — the wide glyphs each own two columns.
+        t.feed_str("ab中文cd\r\n");
+        assert_eq!(cell_at(&t, 0, 4), '文');
+        assert_eq!(cell_at(&t, 0, 6), 'c');
+
+        let wide = t.logical_anchor(0, 4);
+        let after = t.logical_anchor(0, 6);
+
+        // At 4 columns "ab中" fills the row and 文 cannot straddle the margin,
+        // so it starts the continuation row.
+        t.resize(TerminalSize::new(4, 4));
+
+        let wide = t.resolve_anchor(wide);
+        let after = t.resolve_anchor(after);
+        assert_eq!(cell_at(&t, wide.0, wide.1), '文');
+        assert_eq!(cell_at(&t, after.0, after.1), 'c');
+        assert_eq!(span_text(&t, wide, after), "文");
+    }
+
+    #[test]
+    fn shrinking_inside_the_alternate_screen_keeps_the_stashed_primary_rows() {
+        let mut t = term(20, 6);
+        t.feed_str("row0\r\nrow1\r\nrow2\r\nrow3\r\nrow4\r\n");
+        t.feed_str("\x1b[?1049h");
+        t.feed_str("a full-screen app");
+        // Shrinking used to clip the stashed primary at the bottom, so the rows
+        // the app was covering never came back.
+        t.resize(TerminalSize::new(20, 3));
+        t.feed_str("\x1b[?1049l");
+
+        let text = whole_buffer(&t);
+        for i in 0..5 {
+            assert!(text.contains(&format!("row{i}")), "row{i} lost: {text:?}");
+        }
+        assert!(!text.contains("full-screen"), "alt rows leaked: {text:?}");
+    }
+
+    #[test]
+    fn narrowing_inside_the_alternate_screen_reflows_the_stashed_primary() {
+        let mut t = term(20, 4);
+        t.feed_str("0123456789abcdefghij\r\n");
+        t.feed_str("\x1b[?1049h");
+        t.feed_str("app");
+        // The alternate screen must not reflow, but the primary behind it must —
+        // clipping it to 10 columns threw away the second half of the line.
+        t.resize(TerminalSize::new(10, 4));
+        t.feed_str("\x1b[?1049l");
+
+        let text = whole_buffer(&t).replace('|', "");
+        assert!(
+            text.contains("0123456789abcdefghij"),
+            "stashed primary clipped: {text:?}"
+        );
     }
 
     #[test]

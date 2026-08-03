@@ -12,7 +12,8 @@ use adit_storage::{
     AppSettings, CredentialStore, ProfileCatalog, ProfileStore, HostLayout, SettingsStore, Snippet, ThemeMode,
 };
 use adit_terminal::{
-    Color as TermColor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot, Viewport,
+    Color as TermColor, LogicalAnchor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot,
+    Viewport,
 };
 use iced::font::Weight;
 use iced::keyboard::{self, key::Named, Key};
@@ -6266,13 +6267,12 @@ fn sync_terminal_size(app: &mut AditApp) {
 
     // A width change reflows the grid, which renumbers every absolute scrollback
     // row. The selection is anchored in that numbering and the scroll offset is
-    // counted against the old row total, so both would keep rendering happily
-    // while pointing at different text. Drop them rather than leave them subtly
-    // wrong; a height change re-wraps nothing and leaves the numbering intact.
-    if target.cols != app.terminal_size.cols {
-        app.terminal_selection = None;
-        app.terminal_scroll_offset = 0;
-    }
+    // counted against the old row total, so both would point at different text
+    // afterwards. Anchor them to logical lines — the pre-wrap unit, which a
+    // re-wrap preserves — and resolve them back once the resize has landed. A
+    // height change re-wraps nothing and leaves the numbering intact.
+    let reflowing = target.cols != app.terminal_size.cols;
+    let anchors = reflowing.then(|| capture_reflow_anchors(app));
 
     app.terminal_size = target;
 
@@ -6288,6 +6288,53 @@ fn sync_terminal_size(app: &mut AditApp) {
                 app.last_error = Some(error.to_string());
             }
         }
+    }
+
+    if let Some(anchors) = anchors {
+        restore_reflow_anchors(app, &anchors);
+    }
+}
+
+/// The selection ends and the scrolled-to top row, anchored to logical lines so
+/// they survive the re-wrap a width change triggers. The top row goes last, so
+/// the two halves stay in step with `restore_reflow_anchors`.
+fn capture_reflow_anchors(app: &AditApp) -> Vec<LogicalAnchor> {
+    let mut points = Vec::with_capacity(3);
+    if let Some(selection) = app.terminal_selection {
+        points.push((selection.start.row, selection.start.col));
+        points.push((selection.end.row, selection.end.col));
+    }
+    points.push((viewport_first_row(app), 0));
+    app.manager.anchor_active_points(&points)
+}
+
+/// Put the selection and the scroll position back on the text they were on,
+/// at the rows the re-wrap moved it to.
+fn restore_reflow_anchors(app: &mut AditApp, anchors: &[LogicalAnchor]) {
+    let resolved = app.manager.resolve_active_anchors(anchors);
+    let Some((&(top_row, _), ends)) = resolved.split_last() else {
+        return;
+    };
+
+    if let (Some(selection), [(start_row, start_col), (end_row, end_col)]) =
+        (&mut app.terminal_selection, ends)
+    {
+        selection.start = TerminalPoint {
+            row: *start_row,
+            col: *start_col,
+        };
+        selection.end = TerminalPoint {
+            row: *end_row,
+            col: *end_col,
+        };
+    }
+
+    // Offset 0 means "follow the output", not "the row that happened to be at the
+    // top" — re-deriving one there would unpin the view from the newest line.
+    if app.terminal_scroll_offset > 0 {
+        // The offset counts rows up from the bottom, and the re-wrap changed the
+        // total, so it has to be re-derived from the row rather than kept.
+        app.terminal_scroll_offset = max_terminal_scroll_offset(app).saturating_sub(top_row);
     }
 }
 

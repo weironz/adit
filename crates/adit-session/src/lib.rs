@@ -19,7 +19,9 @@ pub use adit_ssh::{AuthPromptField, AuthPromptRequest as AuthPromptInfo};
 pub use adit_ssh::{
     known_hosts_path, list_known_hosts, remove_known_host, KnownHostEntry, SftpEntry, TunnelKind,
 };
-use adit_terminal::{TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal};
+use adit_terminal::{
+    LogicalAnchor, TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal,
+};
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufWriter, Write};
@@ -2764,6 +2766,41 @@ impl SessionManager {
             .and_then(|session_id| self.sessions.get(&session_id))
             .map(|record| record.terminal.snapshot(viewport))
             .unwrap_or_else(|| TerminalSnapshot::empty(Default::default()))
+    }
+
+    /// Anchor absolute `(row, col)` points of the active terminal to its logical
+    /// lines, so a caller can find them again after a resize re-wraps the buffer.
+    ///
+    /// Paired with [`Self::resolve_active_anchors`] around a resize; see
+    /// [`LogicalAnchor`] for why absolute rows alone are not enough.
+    #[must_use]
+    pub fn anchor_active_points(&self, points: &[(usize, usize)]) -> Vec<LogicalAnchor> {
+        let Some(record) = self
+            .active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+        else {
+            return Vec::new();
+        };
+        points
+            .iter()
+            .map(|&(row, col)| record.terminal.logical_anchor(row, col))
+            .collect()
+    }
+
+    /// Resolve anchors from [`Self::anchor_active_points`] back to absolute
+    /// `(row, col)` at the active terminal's current width.
+    #[must_use]
+    pub fn resolve_active_anchors(&self, anchors: &[LogicalAnchor]) -> Vec<(usize, usize)> {
+        let Some(record) = self
+            .active_session
+            .and_then(|session_id| self.sessions.get(&session_id))
+        else {
+            return Vec::new();
+        };
+        anchors
+            .iter()
+            .map(|&anchor| record.terminal.resolve_anchor(anchor))
+            .collect()
     }
 
     /// Snapshot of a specific session (used to render split-pane views, which

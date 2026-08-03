@@ -85,9 +85,20 @@ A `vte`-driven parser over an Adit-owned grid.
 - **Device reports**: DSR cursor position and DA (identifies as VT102-class); replies are
   written straight back to the PTY.
 
+**Resizing loses nothing.** Narrowing re-wraps every logical line instead of clipping it,
+shrinking the height moves the rows it pushes off the top into scrollback, and the
+primary screen stashed behind an active alternate screen takes that same path — so
+leaving `vim` after shrinking the window still finds the rows underneath. The alternate
+screen itself deliberately never reflows: a full-screen app redraws at the new size, and
+joining its rows would splice unrelated parts of a TUI together.
+
 **Selection** is anchored in absolute scrollback rows: single-click drag, double-click
 word, triple-click line. It survives scrolling, and dragging past the pane edge
 auto-scrolls while extending. Copy-on-select and right-click-paste are both optional.
+A re-wrap renumbers every absolute row, so a width change re-anchors the selection and
+the scroll position to **logical lines** — the pre-wrap unit, which re-wrapping preserves
+— and resolves them back at the new width; both stay on the text they were on (one edge
+remains, see [Known gaps](#known-gaps)).
 
 **Scrollback search** (Ctrl+Shift+F) highlights all matches, steps with wraparound,
 auto-scrolls to the current hit, and shows an `n/total` counter.
@@ -218,14 +229,13 @@ Verified shortcomings, so nobody has to rediscover them.
 - **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
   designation, no custom tab stops. `TerminalChangeSet` dirty-row tracking is a stub
   that always reports the whole screen.
-- **Resizing while the alternate screen is active** clips the stashed primary screen at
-  the bottom, so leaving a full-screen app after shrinking the window loses the rows
-  underneath it. The primary screen's own resize path no longer loses anything —
-  narrowing reflows and shrinking the height moves rows into scrollback — but the
-  stashed copy still goes through the old clipping code.
-- **A reflow drops the selection and returns to the bottom** of the scrollback.
-  Re-wrapping renumbers every absolute row and both are anchored in that numbering;
-  keeping them would mean mapping the anchors through the logical lines.
+- **A reflow keeps the selection and the scroll position**, with one edge left open:
+  both are mapped through the logical lines (see [Terminal](#terminal)), and a logical
+  line is identified by its index from the oldest line still held. Re-wrapping narrower
+  turns one row into several, so a buffer already at the scrollback limit drops its
+  oldest lines and renumbers everything that survives — an anchor taken before such a
+  resize then resolves to the last row instead of its own text. Only bites a full
+  scrollback (default 5000 lines) being narrowed.
 - **MFA does not cover the dial fallback.** SFTP and tunnels open channels on the
   shell's existing connection, so the server authenticates once and the shell's prompt
   covers everything — jump hosts included, since each hop is offered the same prompt
@@ -236,7 +246,8 @@ Verified shortcomings, so nobody has to rediscover them.
 - **SFTP shell**: no tab completion, and no history recall (the history is recorded but
   unbound).
 - stderr is merged into stdout on the shell path.
-- macOS is architecturally supported but unbuilt; Windows code signing is pending.
+- Windows code signing is pending. (macOS has been built and shipped as dual-architecture
+  dmgs by CI since v0.1.62.)
 
 ### Cosmetic / cleanup
 - `adit-ui` is a single ~12.7k-line file; navigating it is the main friction in the repo.

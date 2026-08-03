@@ -71,6 +71,13 @@ reporting must send viewport cells to the remote app. A drag that leaves the wid
 is tracked via the runtime's global `CursorMoved`, since `mouse_area::on_move` stops
 at the widget's bounds.
 
+A **reflow renumbers every absolute row**, so a width change re-anchors the selection
+and the scroll position through `adit_terminal::LogicalAnchor` — the pre-wrap logical
+line, which re-wrapping is what preserves. `TermState::logical_anchor` must walk the
+buffer exactly the way `logical_lines` does (that's why `logical_lines` locates the
+cursor by calling it); if the two ever disagree about where a logical line starts, an
+anchor comes back on a different line from the text it named.
+
 ## Conventions
 
 - **Releases are patch bumps** (`0.1.54` → `0.1.55`) and happen **only when asked**.

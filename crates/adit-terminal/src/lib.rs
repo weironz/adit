@@ -90,6 +90,28 @@ impl Viewport {
     }
 }
 
+/// A buffer position anchored to a *logical* line — the pre-wrap unit — rather
+/// than to an absolute scrollback row.
+///
+/// Absolute rows are the right anchor for a selection or a scroll position while
+/// the width is stable: they survive scrolling, which viewport rows do not. But a
+/// re-wrap renumbers every absolute row, so an anchor that was correct at 120
+/// columns points at unrelated text at 80. A logical line is exactly what
+/// re-wrapping preserves — it only ever changes how many screen rows it occupies
+/// — so `(line, offset)` names the same character at any width.
+///
+/// Take one with [`VtTerminal::logical_anchor`] before a resize and resolve it
+/// with [`VtTerminal::resolve_anchor`] after.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LogicalAnchor {
+    /// Logical line index, counted from the oldest line still in scrollback.
+    pub line: usize,
+    /// Cell offset within that logical line. Wide-glyph spacer columns are not
+    /// counted: they are re-derived when the line is re-wrapped, so including
+    /// them would make the offset depend on the width it was taken at.
+    pub offset: usize,
+}
+
 /// A terminal color. `Default` defers to the renderer's theme; `Indexed` is an
 /// xterm 256-color palette slot (0-15 are the named ANSI colors); `Rgb` is a
 /// direct truecolor value.
