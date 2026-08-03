@@ -272,6 +272,17 @@ pub struct AppSettings {
     /// list needs, so there is nothing to sort at render time either.
     #[serde(default)]
     pub recent_hosts: Vec<ProfileId>,
+    /// The host grid's own ordering; ids absent here render after the ordered
+    /// ones, in the sidebar's order.
+    ///
+    /// Separate from the profiles' `sort_order` on purpose. The tree and the
+    /// grid are different geometries — a linear order folded into rows is not
+    /// the order anyone curated in a vertical list — and sharing one meant a
+    /// casual drag in the grid silently rearranging a tree that took years to
+    /// settle. Group *membership* stays shared: which group a host is in is
+    /// data; where it sits within a view is presentation.
+    #[serde(default)]
+    pub grid_order: Vec<ProfileId>,
     #[serde(default)]
     pub collapsed_groups: Vec<String>,
     pub window_width: f32,
@@ -406,6 +417,7 @@ impl Default for AppSettings {
             theme_mode: None,
             host_layout: HostLayout::Grid,
             recent_hosts: Vec::new(),
+            grid_order: Vec::new(),
             collapsed_groups: Vec::new(),
             window_width: 1360.0,
             window_height: 860.0,
@@ -1292,6 +1304,7 @@ Host db
             theme_mode: Some(ThemeMode::System),
             host_layout: HostLayout::Tree,
             recent_hosts: Vec::new(),
+            grid_order: Vec::new(),
             collapsed_groups: vec![String::from("Lab"), String::from("Prod")],
             window_width: 1500.0,
             window_height: 900.0,

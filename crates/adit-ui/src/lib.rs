@@ -243,6 +243,12 @@ pub struct AditApp {
     host_layout: HostLayout,
     /// Hosts most recently connected to, newest first.
     recent_hosts: Vec<ProfileId>,
+    /// The grid's own ordering — see `AppSettings::grid_order` for why it is
+    /// not the tree's.
+    grid_order: Vec<ProfileId>,
+    /// Whether the drag in flight started on a grid card. Decides which order a
+    /// `Beside` drop edits: the grid's own, or the tree's shared one.
+    drag_from_grid: bool,
     /// What is on screen, resolved from [`Self::theme_mode`].
     dark_mode: bool,
     /// What the user asked for, which is not the same thing under `System`.
@@ -405,6 +411,9 @@ pub enum Message {
     ToggleBroadcast,
     RunMenu(MenuCommand),
     ProfilePressed(ProfileId),
+    /// A press on a grid card: the same arming as ProfilePressed, remembered as
+    /// grid-originated so the drop edits the grid's order.
+    GridProfilePressed(ProfileId),
     ProfileDoubleClicked(ProfileId),
     ProfileHovered(ProfileId),
     ProfileHoverExited(ProfileId),
@@ -822,6 +831,7 @@ impl AditApp {
         let dark_mode = resolve_dark(theme_mode);
         let host_layout = settings.host_layout;
         let recent_hosts = settings.recent_hosts;
+        let grid_order = settings.grid_order;
         // Clamp away a bad persisted size (e.g. a 0x0 written while minimized) so
         // the window is never created invisible; the file then self-heals on the
         // next Tick because the clamped value differs from `persisted_settings`.
@@ -872,6 +882,7 @@ impl AditApp {
             theme_mode: Some(theme_mode),
             host_layout,
             recent_hosts: recent_hosts.clone(),
+            grid_order: grid_order.clone(),
             collapsed_groups: collapsed_groups.iter().cloned().collect(),
             window_width: raw_window_width,
             window_height: raw_window_height,
@@ -1015,6 +1026,8 @@ impl AditApp {
             main_view: MainView::Hosts,
             host_layout,
             recent_hosts,
+            grid_order,
+            drag_from_grid: false,
             dark_mode,
             theme_mode,
             font_family,
@@ -1615,9 +1628,24 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 import_securecrt(app, &path);
             }
         }
+        Message::GridProfilePressed(profile_id) => {
+            // Same arming as ProfilePressed — selection, drag state, origin
+            // point — with the origin remembered as the grid.
+            select_profile(app, profile_id);
+            app.dragged_profile = Some(profile_id);
+            app.drag_from_grid = true;
+            app.profile_drop = None;
+            app.profile_drag_active = false;
+            app.profile_drag_origin = Some(Point::new(
+                app.cursor_pos.x,
+                app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
+            ));
+            app.group_drop_target = None;
+        }
         Message::ProfilePressed(profile_id) => {
             select_profile(app, profile_id);
             app.dragged_profile = Some(profile_id);
+            app.drag_from_grid = false;
             app.profile_drop = None;
             app.profile_drag_active = false;
             // Record the press point; the drag only "activates" once the pointer
@@ -3499,6 +3527,19 @@ fn finish_profile_drag(app: &mut AditApp) {
         Some(ProfileDrop::BottomLevel) => {
             let len = top_level_entries(app, source_id).len();
             place_ungrouped_at(app, source_id, len)
+        }
+        // A grid drag edits the grid's order and stops there. Which group a
+        // host is in stays shared — that is data — but where it sits in a view
+        // is that view's business, and a casual drag here must not rearrange a
+        // tree somebody curated.
+        Some(ProfileDrop::Beside {
+            profile_id,
+            position,
+        }) if app.drag_from_grid && profile_id != source_id => {
+            reorder_grid(app, source_id, profile_id, position);
+            app.selected_profile = Some(source_id);
+            persist_settings_if_changed(app);
+            return;
         }
         Some(ProfileDrop::Beside {
             profile_id,
@@ -6414,6 +6455,7 @@ fn current_settings(app: &AditApp) -> AppSettings {
         theme_mode: Some(app.theme_mode),
         host_layout: app.host_layout,
         recent_hosts: app.recent_hosts.clone(),
+        grid_order: app.grid_order.clone(),
         // BTreeSet iterates sorted, so the snapshot is order-stable.
         collapsed_groups: app.collapsed_groups.iter().cloned().collect(),
         window_width: app.window_width,
@@ -9644,7 +9686,7 @@ fn host_card(
     // serves both views. Press arms rather than acts, which is what makes a drag
     // possible at all — and why a single click selects here and a double click
     // connects, exactly as in the tree.
-    .on_press(Message::ProfilePressed(profile_id))
+    .on_press(Message::GridProfilePressed(profile_id))
     .on_release(Message::ProfileDropped(profile_id))
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
@@ -9779,7 +9821,7 @@ fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, online: boo
             ..container::Style::default()
         }),
     )
-    .on_press(Message::ProfilePressed(profile_id))
+    .on_press(Message::GridProfilePressed(profile_id))
     .on_release(Message::ProfileDropped(profile_id))
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
@@ -9936,10 +9978,46 @@ fn host_band(
 }
 
 /// The host manager: search at the top, then one band per group.
-fn hosts_view(app: &AditApp) -> Element<'_, Message> {
-    let filter = app.session_filter.trim().to_ascii_lowercase();
+/// The grid's ordering: the saved arrangement first, then anything it has never
+/// heard of, in the sidebar's order.
+///
+/// Ids that no longer resolve are simply skipped rather than pruned here — this
+/// runs per render, and the stored list self-corrects on the next reorder.
+fn grid_ordered_profiles(app: &AditApp) -> Vec<ConnectionProfile> {
     let mut profiles = app.manager.profiles().to_vec();
     profiles.sort_by(profile_sidebar_order);
+    let mut ordered: Vec<ConnectionProfile> = Vec::with_capacity(profiles.len());
+    for id in &app.grid_order {
+        if let Some(at) = profiles.iter().position(|profile| profile.id == *id) {
+            ordered.push(profiles.remove(at));
+        }
+    }
+    ordered.extend(profiles);
+    ordered
+}
+
+/// Commit a grid-originated drop: `source` lands beside `target` in the grid's
+/// own order, and nothing else moves — the tree never hears about it.
+fn reorder_grid(app: &mut AditApp, source: ProfileId, target: ProfileId, position: ProfileDropPosition) {
+    let mut order: Vec<ProfileId> = grid_ordered_profiles(app)
+        .iter()
+        .map(|profile| profile.id)
+        .collect();
+    order.retain(|id| *id != source);
+    let Some(mut at) = order.iter().position(|id| *id == target) else {
+        return;
+    };
+    if position == ProfileDropPosition::After {
+        at += 1;
+    }
+    order.insert(at, source);
+    app.grid_order = order;
+    app.notice = String::from("已调整网格排序");
+}
+
+fn hosts_view(app: &AditApp) -> Element<'_, Message> {
+    let filter = app.session_filter.trim().to_ascii_lowercase();
+    let profiles = grid_ordered_profiles(app);
     let matches = |profile: &ConnectionProfile| {
         filter.is_empty()
             || profile.name.to_ascii_lowercase().contains(&filter)
