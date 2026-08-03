@@ -423,6 +423,10 @@ pub enum Message {
     GridProfilePressed(ProfileId),
     /// The cursor moved inside the host pane (feeds the drag ghost).
     HostsCursorMoved(Point),
+    /// Grid-side hover/drag-over. Split from the tree's pair so each view can
+    /// only arm and retarget drags that started in it.
+    GridProfileHovered(ProfileId),
+    GridProfileDragOver(ProfileId, ProfileDropPosition),
     ProfileDoubleClicked(ProfileId),
     ProfileHovered(ProfileId),
     ProfileHoverExited(ProfileId),
@@ -1717,24 +1721,19 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileHovered(profile_id) => {
             app.hovered_profile = Some(profile_id);
-            // on_enter fires (not on_move) on the frame the cursor crosses into a
-            // row, so seed the insertion line here too (defaults to "before").
-            if let Some(dragged) = app.dragged_profile {
-                if dragged != profile_id {
-                    // Crossing onto a *different* row is itself proof of a real
-                    // drag, so it arms the move. The grid has no equivalent of
-                    // SidebarCursorMoved's dead-zone check — its coordinates are
-                    // the sidebar's — and without this the drop was computed,
-                    // shown, and then discarded on release for want of a flag.
-                    // Jitter inside one row cannot trip it: that row is the one
-                    // being dragged, and this arm never runs for it.
-                    app.profile_drag_active = true;
-                    app.profile_drop = Some(ProfileDrop::Beside {
-                        profile_id,
-                        position: ProfileDropPosition::Before,
-                    });
-                    app.group_drop_target = None;
-                    retarget_card_slots(app);
+            // Tree rows arm tree drags only. A grid drag passing over the
+            // sidebar must not retarget its drop onto a tree position — that is
+            // the other half of keeping the two orderings apart.
+            if !app.drag_from_grid {
+                if let Some(dragged) = app.dragged_profile {
+                    if dragged != profile_id {
+                        app.profile_drag_active = true;
+                        app.profile_drop = Some(ProfileDrop::Beside {
+                            profile_id,
+                            position: ProfileDropPosition::Before,
+                        });
+                        app.group_drop_target = None;
+                    }
                 }
             }
         }
@@ -1745,26 +1744,56 @@ fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileDragOver(profile_id, position) => {
             app.hovered_profile = Some(profile_id);
-            // The insertion line follows the cursor: above the row in its top
-            // half, below it in its bottom half.
-            if let Some(dragged) = app.dragged_profile {
-                if dragged != profile_id {
-                    app.profile_drag_active = true;
-                    let changed = app.profile_drop
-                        != Some(ProfileDrop::Beside {
+            if !app.drag_from_grid {
+                if let Some(dragged) = app.dragged_profile {
+                    if dragged != profile_id {
+                        app.profile_drag_active = true;
+                        app.profile_drop = Some(ProfileDrop::Beside {
                             profile_id,
                             position,
                         });
-                    app.profile_drop = Some(ProfileDrop::Beside {
-                        profile_id,
-                        position,
-                    });
-                    app.group_drop_target = None;
-                    // Only on a real change: retargeting every mouse-move would
-                    // restart the ease from the current point each frame, which
-                    // is a card that never arrives.
-                    if changed {
-                        retarget_card_slots(app);
+                        app.group_drop_target = None;
+                    }
+                }
+            }
+        }
+        Message::GridProfileHovered(profile_id) => {
+            app.hovered_profile = Some(profile_id);
+            if app.drag_from_grid {
+                if let Some(dragged) = app.dragged_profile {
+                    if dragged != profile_id {
+                        app.profile_drag_active = true;
+                        let drop = ProfileDrop::Beside {
+                            profile_id,
+                            position: ProfileDropPosition::Before,
+                        };
+                        // Only on a real change: retargeting every frame
+                        // restarts the ease from wherever the card currently
+                        // is, which is a card that never arrives.
+                        if app.profile_drop.as_ref() != Some(&drop) {
+                            app.profile_drop = Some(drop);
+                            app.group_drop_target = None;
+                            retarget_card_slots(app);
+                        }
+                    }
+                }
+            }
+        }
+        Message::GridProfileDragOver(profile_id, position) => {
+            app.hovered_profile = Some(profile_id);
+            if app.drag_from_grid {
+                if let Some(dragged) = app.dragged_profile {
+                    if dragged != profile_id {
+                        app.profile_drag_active = true;
+                        let drop = ProfileDrop::Beside {
+                            profile_id,
+                            position,
+                        };
+                        if app.profile_drop.as_ref() != Some(&drop) {
+                            app.profile_drop = Some(drop);
+                            app.group_drop_target = None;
+                            retarget_card_slots(app);
+                        }
                     }
                 }
             }
@@ -9558,6 +9587,9 @@ pub enum MainView {
 
 const NAV_RAIL_WIDTH: f32 = 156.0;
 const HOST_CARD_WIDTH: f32 = 260.0;
+/// What a grid card builds out to (10px padding around a 34px tile), for the
+/// absolute layout the animated bands use.
+const HOST_CARD_HEIGHT: f32 = 54.0;
 
 
 /// One preset a profile's tile can use.
@@ -9752,7 +9784,7 @@ fn host_card(
     .on_release(Message::ProfileDropped(profile_id))
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
-    .on_enter(Message::ProfileHovered(profile_id))
+    .on_enter(Message::GridProfileHovered(profile_id))
     // Left half or right half, not top or bottom. `profile_drop_position` splits
     // on Y because the tree stacks its rows; a grid puts them side by side, so
     // asking which vertical half the cursor is in answers a question nobody
@@ -9763,7 +9795,7 @@ fn host_card(
         } else {
             ProfileDropPosition::After
         };
-        Message::ProfileDragOver(profile_id, position)
+        Message::GridProfileDragOver(profile_id, position)
     })
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
@@ -9887,8 +9919,8 @@ fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, online: boo
     .on_release(Message::ProfileDropped(profile_id))
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
-    .on_enter(Message::ProfileHovered(profile_id))
-    .on_move(move |point| Message::ProfileDragOver(profile_id, profile_drop_position(point)))
+    .on_enter(Message::GridProfileHovered(profile_id))
+    .on_move(move |point| Message::GridProfileDragOver(profile_id, profile_drop_position(point)))
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
 }
@@ -9989,6 +10021,19 @@ fn group_card(name: String, count: usize, expanded: bool, targeted: bool) -> Ele
 }
 
 /// A titled run of hosts, drawn the way the current layout draws hosts.
+/// What a band is, which decides what it can do.
+///
+/// Group bands take drops on their heading and animate reorders; the ungrouped
+/// band animates but is no drop target (not a place, just the absence of one);
+/// recent and search are projections of other state, so their cards neither
+/// animate nor accept drops — reordering a projection means nothing.
+enum BandKind {
+    Group(String),
+    Ungrouped,
+    Recent,
+    Search,
+}
+
 /// The part of a band's appearance that is the same for every band on screen.
 /// Bundled so the call sites read as "this band, drawn like the others".
 struct BandStyle {
@@ -10010,10 +10055,35 @@ fn cards_are_moving(app: &AditApp) -> bool {
 /// covers both the shuffle during a drag and the settle after one.
 fn retarget_card_slots(app: &mut AditApp) {
     let now = Instant::now();
-    let order: Vec<ProfileId> = grid_ordered_profiles(app)
+    let mut order: Vec<ProfileId> = grid_ordered_profiles(app)
         .into_iter()
         .map(|profile| profile.id)
         .collect();
+    // Mid-drag, aim at the arrangement being PREVIEWED, not the committed one.
+    // The drawn slots come from the preview; easing towards the committed order
+    // parks every card between origin and target one slot off, which piles some
+    // cards up and leaves a blank strip where the others were.
+    if app.drag_from_grid && app.profile_drag_active {
+        if let (
+            Some(dragged),
+            Some(ProfileDrop::Beside {
+                profile_id: target,
+                position,
+            }),
+        ) = (app.dragged_profile, &app.profile_drop)
+        {
+            let (target, position) = (*target, *position);
+            if dragged != target {
+                order.retain(|id| *id != dragged);
+                if let Some(mut at) = order.iter().position(|id| *id == target) {
+                    if position == ProfileDropPosition::After {
+                        at += 1;
+                    }
+                    order.insert(at, dragged);
+                }
+            }
+        }
+    }
     // Bands are laid out independently, so a card's index within its own band is
     // what its position is drawn from — not its index in the whole catalogue.
     let mut per_group: std::collections::HashMap<String, f32> =
@@ -10087,11 +10157,18 @@ fn host_band(
     app: &AditApp,
     style: &BandStyle,
     icon: Option<&'static str>,
-    drop_group: Option<String>,
+    kind: BandKind,
     title: String,
     hosts: Vec<&ConnectionProfile>,
     online: &std::collections::HashSet<ProfileId>,
 ) -> Element<'static, Message> {
+    // A group heading doubles as the drop target for "put this host in that
+    // group" — the same ProfileDroppedOnGroup the sidebar's folder rows use.
+    let drop_group = match &kind {
+        BandKind::Group(name) => Some(name.clone()),
+        _ => None,
+    };
+    let animated = matches!(kind, BandKind::Group(_) | BandKind::Ungrouped);
     let count = hosts.len();
     let up = hosts
         .iter()
@@ -10105,39 +10182,77 @@ fn host_band(
             // a card tests against is the midpoint it actually has.
             let card_width =
                 ((app.window_width - app.sidebar_width - 56.0) / columns as f32 - 8.0).max(80.0);
-            // Each card is nudged by how far its animated slot still is from the
-            // slot it is being drawn in, so a reorder eases across instead of
-            // teleporting. `wrap_cards` keeps doing the layout; the offset only
-            // borrows the card back towards where it was.
-            let now = Instant::now();
-            let step = card_width + 8.0;
-            wrap_cards(
-                slots
-                    .into_iter()
-                    .enumerate()
-                    .map(|(index, profile)| {
-                        let card =
-                            host_card(app, profile, online.contains(&profile.id), card_width);
-                        let Some(animation) = app.card_slots.get(&profile.id) else {
-                            return card;
-                        };
-                        let drawn = animation.interpolate_with(|slot| slot, now);
-                        let offset = (drawn - index as f32) * step;
-                        // Only while it matters. A settled card must lay out
-                        // exactly as it did before any of this existed.
-                        if offset.abs() < 0.5 {
-                            return card;
-                        }
-                        row![
-                            Space::new().width(Length::Fixed(offset.max(0.0))),
-                            card,
-                            Space::new().width(Length::Fixed((-offset).max(0.0))),
+            if animated {
+                // Absolute positions in a stack, not flowing cells. A flowing
+                // layout cannot draw a card outside its own cell, so an animated
+                // offset either collapsed the card to nothing or pushed it out
+                // of sight — the blank strips mid-drag. Here every card is
+                // placed at its interpolated position and simply glides, row
+                // wraps included.
+                let n = slots.len();
+                let step_x = card_width + 8.0;
+                let step_y = HOST_CARD_HEIGHT + 8.0;
+                let rows = n.div_ceil(columns.max(1));
+                let band_height = (rows as f32 * step_y - 8.0).max(0.0);
+                let place = |slot: usize| -> (f32, f32) {
+                    let slot = slot.min(n.saturating_sub(1));
+                    let row = (slot / columns.max(1)) as f32;
+                    let column = (slot % columns.max(1)) as f32;
+                    (column * step_x, row * step_y)
+                };
+                let now = Instant::now();
+                // The base layer sizes the stack. iced's Stack takes its size
+                // from its first child and lays the rest out inside it — without
+                // this spacer the first CARD becomes the base, every later layer
+                // is confined to one card's bounds, and the positioning spacers
+                // push them all out of sight (a band of 21 rendering one card).
+                let mut layers = iced::widget::stack![
+                    Space::new().width(Fill).height(Length::Fixed(band_height))
+                ];
+                for (index, profile) in slots.iter().enumerate() {
+                    let drawn = app
+                        .card_slots
+                        .get(&profile.id)
+                        .map(|animation| animation.interpolate_with(|slot| slot, now))
+                        .unwrap_or(index as f32)
+                        .clamp(0.0, n.saturating_sub(1) as f32);
+                    // Interpolate between the two neighbouring slot positions,
+                    // so a card crossing a row boundary glides diagonally
+                    // instead of teleporting to the far edge.
+                    let base = drawn.floor();
+                    let frac = drawn - base;
+                    let (x0, y0) = place(base as usize);
+                    let (x1, y1) = place(base as usize + 1);
+                    let (x, y) = (x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac);
+                    let card =
+                        host_card(app, profile, online.contains(&profile.id), card_width);
+                    layers = layers.push(
+                        column![
+                            Space::new().height(Length::Fixed(y)),
+                            row![
+                                Space::new().width(Length::Fixed(x)),
+                                container(card).width(Length::Fixed(card_width)),
+                            ],
                         ]
-                        .into()
-                    })
-                    .collect(),
-                columns,
-            )
+                        .width(Fill)
+                        .height(Fill),
+                    );
+                }
+                container(layers)
+                    .width(Fill)
+                    .height(Length::Fixed(band_height))
+                    .into()
+            } else {
+                wrap_cards(
+                    slots
+                        .into_iter()
+                        .map(|profile| {
+                            host_card(app, profile, online.contains(&profile.id), card_width)
+                        })
+                        .collect(),
+                    columns,
+                )
+            }
         }
         _ => slots
             .into_iter()
@@ -10291,7 +10406,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             app,
             &style,
             None,
-            None,
+            BandKind::Search,
             String::from("搜索结果"),
             matching,
             &online,
@@ -10309,7 +10424,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 app,
                 &style,
                 Some("◷"),
-                None,
+                BandKind::Recent,
                 String::from("最近连接"),
                 recent,
                 &online,
@@ -10363,9 +10478,9 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             if app.collapsed_groups.contains(&group) {
                 continue;
             }
-            let target = Some(group.clone());
+            let kind = BandKind::Group(group.clone());
             body = body.push(host_band(
-                app, &style, None, target, group, hosts, &online,
+                app, &style, None, kind, group, hosts, &online,
             ));
         }
         // Named 主机 rather than "ungrouped": for anyone who never made a group
@@ -10375,7 +10490,7 @@ fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 app,
                 &style,
                 None,
-                None,
+                BandKind::Ungrouped,
                 String::from("主机"),
                 loose,
                 &online,
@@ -10791,7 +10906,10 @@ fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'s
     let row = tree_profile_row(profile.clone(), selected, hovered, false);
 
     // An insertion line above or below this row when it is the drop target.
-    let (before, after) = if !app.profile_drag_active {
+    // Never for a grid drag: the drop data is shared state, and the profile it
+    // names has a row here too — without this gate the tree draws furniture for
+    // a drag that has nothing to do with it.
+    let (before, after) = if !app.profile_drag_active || app.drag_from_grid {
         (false, false)
     } else {
         match &app.profile_drop {
@@ -13278,15 +13396,26 @@ mod tests {
 
     /// The full message sequence the widgets emit for one drag, in order: the
     /// press on the source, the enter + move over the target, the target's
-    /// release, and the global release that always follows it.
-    fn drive_drag(app: &mut AditApp, press: fn(ProfileId) -> Message, source: usize, target: usize) {
+    /// release, and the global release that always follows it. Each view emits
+    /// its own hover/drag-over pair, so the test drives whichever pair the drag
+    /// origin would.
+    fn drive_drag(app: &mut AditApp, from_grid: bool, source: usize, target: usize) {
         let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
-        let _ = update(app, press(ids[source]));
-        let _ = update(app, Message::ProfileHovered(ids[target]));
-        let _ = update(
-            app,
-            Message::ProfileDragOver(ids[target], ProfileDropPosition::After),
-        );
+        if from_grid {
+            let _ = update(app, Message::GridProfilePressed(ids[source]));
+            let _ = update(app, Message::GridProfileHovered(ids[target]));
+            let _ = update(
+                app,
+                Message::GridProfileDragOver(ids[target], ProfileDropPosition::After),
+            );
+        } else {
+            let _ = update(app, Message::ProfilePressed(ids[source]));
+            let _ = update(app, Message::ProfileHovered(ids[target]));
+            let _ = update(
+                app,
+                Message::ProfileDragOver(ids[target], ProfileDropPosition::After),
+            );
+        }
         let _ = update(app, Message::ProfileDropped(ids[target]));
         let _ = update(app, Message::CancelProfileDrag);
     }
@@ -13294,7 +13423,7 @@ mod tests {
     #[test]
     fn a_grid_drag_moves_the_grid_and_not_the_tree() {
         let mut app = drag_test_app();
-        drive_drag(&mut app, Message::GridProfilePressed, 0, 2);
+        drive_drag(&mut app, true, 0, 2);
         assert_eq!(grid_names(&app), ["b", "c", "a"], "the grid must reorder");
         assert_eq!(
             sidebar_names(&app),
@@ -13309,7 +13438,7 @@ mod tests {
         // Startup seeds the grid's order from the tree (the test helper builds
         // its catalogue after init, so seed the same way init does).
         app.grid_order = app.manager.profiles().iter().map(|p| p.id).collect();
-        drive_drag(&mut app, Message::ProfilePressed, 0, 2);
+        drive_drag(&mut app, false, 0, 2);
         assert_eq!(
             sidebar_names(&app),
             ["b", "c", "a"],
@@ -13341,13 +13470,13 @@ mod tests {
         assert_eq!(slot_shape(&app), "abc", "at rest");
 
         let _ = update(&mut app, Message::GridProfilePressed(ids[0]));
-        let _ = update(&mut app, Message::ProfileHovered(ids[2]));
+        let _ = update(&mut app, Message::GridProfileHovered(ids[2]));
         // `a` has moved to just before `c`, so `b` shifted up to fill its place.
         assert_eq!(slot_shape(&app), "bac");
 
         let _ = update(
             &mut app,
-            Message::ProfileDragOver(ids[2], ProfileDropPosition::After),
+            Message::GridProfileDragOver(ids[2], ProfileDropPosition::After),
         );
         // Crossing c's midpoint carries `a` past it; nothing else jumps.
         assert_eq!(slot_shape(&app), "bca");
