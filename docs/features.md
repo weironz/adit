@@ -166,7 +166,11 @@ background RDP session doesn't pin the app at 60 fps.
 ### Clipboard (CLIPRDR)
 
 **Text copies both ways**, on by default. Copy in the remote desktop and it lands on the
-Windows clipboard; copy locally and it pastes into the remote.
+Windows clipboard; copy locally and it pastes into the remote. **选项 → RDP 会话共享剪贴板**
+turns it off; it is the one setting that hands local data to a remote machine, so it has
+to be refusable. The flag is negotiated during the handshake, so it applies to the next
+connection — but switching it off also stops the local poll and drops whatever the poll
+had already captured, so nothing stays queued for the next remote that asks.
 
 The design is worth knowing, because the obvious one doesn't work here. IronRDP's
 `cliprdr-native` backend owns the real system clipboard and therefore needs a window and

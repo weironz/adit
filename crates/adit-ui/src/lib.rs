@@ -173,6 +173,7 @@ pub struct AditApp {
     snippet_command_draft: String,
     auto_check_updates: bool,
     auto_accept_host_keys: bool,
+    rdp_clipboard: bool,
     /// Whether the one-time legacy-keyring import has completed (persisted). Gates
     /// the startup keyring probe so it never runs again once done — see the boot
     /// task and [`AppSettings::keyring_migrated`].
@@ -670,6 +671,7 @@ pub enum Message {
     KeyringMigrated(usize),
     ToggleAutoCheckUpdates(bool),
     ToggleAutoAcceptHostKeys(bool),
+    ToggleRdpClipboard(bool),
     StartUpdateDownload,
     UpdateDownloaded(Result<String, String>),
     CloseUpdateDialog,
@@ -933,8 +935,10 @@ impl AditApp {
         let snippets = settings.snippets;
         let auto_check_updates = settings.auto_check_updates;
         let auto_accept_host_keys = settings.auto_accept_host_keys;
+        let rdp_clipboard = settings.rdp_clipboard;
         let keyring_migrated = settings.keyring_migrated;
         manager.set_auto_accept_host_keys(auto_accept_host_keys);
+        manager.set_rdp_clipboard(rdp_clipboard);
         let command_window_open = settings.command_window_open;
         let command_send_immediately = settings.command_send_immediately;
 
@@ -974,6 +978,7 @@ impl AditApp {
             command_window_open,
             command_send_immediately,
             auto_accept_host_keys,
+            rdp_clipboard,
             keyring_migrated,
         };
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
@@ -1030,6 +1035,7 @@ impl AditApp {
             snippet_command_draft: String::new(),
             auto_check_updates,
             auto_accept_host_keys,
+            rdp_clipboard,
             keyring_migrated,
             auth_prompt: None,
             auth_prompt_answers: Vec::new(),
@@ -1513,6 +1519,31 @@ mod tests {
     /// at a scratch directory, so a test drag can never touch the real
     /// profiles.json or settings.json on the machine running the tests.
     #[allow(clippy::field_reassign_with_default)]
+    /// Switching RDP clipboard sharing off has to cut the flow that is already
+    /// running, not just the next connection. The poll captures local text into
+    /// `rdp_clipboard_offered`; leaving it there would keep the last thing
+    /// copied queued for whatever remote asks next, so the setting would read
+    /// as off while still handing data over.
+    #[test]
+    fn turning_the_rdp_clipboard_off_drops_what_was_already_captured() {
+        let mut app = drag_test_app();
+        app.rdp_clipboard = true;
+        app.rdp_clipboard_offered = Some(String::from("a password, probably"));
+
+        let _ = update(&mut app, Message::ToggleRdpClipboard(false));
+
+        assert!(!app.rdp_clipboard);
+        assert_eq!(app.rdp_clipboard_offered, None);
+    }
+
+    /// And the default stays on, matching mstsc: a toggle nobody asked for is
+    /// not an excuse to change what happens out of the box.
+    #[test]
+    fn the_rdp_clipboard_defaults_to_on() {
+        assert!(AppSettings::default().rdp_clipboard);
+        assert!(drag_test_app().rdp_clipboard);
+    }
+
     fn drag_test_app() -> AditApp {
         let scratch = std::env::temp_dir().join(format!(
             "adit-drag-test-{}-{}",
@@ -1522,14 +1553,16 @@ mod tests {
                 .map(|d| d.as_nanos())
                 .unwrap_or_default(),
         ));
-        let mut app = AditApp::default();
-        app.profile_store = ProfileStore::new(scratch.join("profiles.json"));
-        app.settings_store = SettingsStore::new(scratch.join("settings.json"));
-        app.manager = SessionManager::with_profiles(vec![
-            ConnectionProfile::with_group("g", "a", "10.0.0.1", 22, "root"),
-            ConnectionProfile::with_group("g", "b", "10.0.0.2", 22, "root"),
-            ConnectionProfile::with_group("g", "c", "10.0.0.3", 22, "root"),
-        ]);
+        let mut app = AditApp {
+            profile_store: ProfileStore::new(scratch.join("profiles.json")),
+            settings_store: SettingsStore::new(scratch.join("settings.json")),
+            manager: SessionManager::with_profiles(vec![
+                ConnectionProfile::with_group("g", "a", "10.0.0.1", 22, "root"),
+                ConnectionProfile::with_group("g", "b", "10.0.0.2", 22, "root"),
+                ConnectionProfile::with_group("g", "c", "10.0.0.3", 22, "root"),
+            ]),
+            ..AditApp::default()
+        };
         app.grid_order.clear();
         app.recent_hosts.clear();
         app

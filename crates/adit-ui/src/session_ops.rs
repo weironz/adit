@@ -1998,6 +1998,7 @@ pub(crate) fn current_settings(app: &AditApp) -> AppSettings {
         command_window_open: app.command_window_open,
         command_send_immediately: app.command_send_immediately,
         auto_accept_host_keys: app.auto_accept_host_keys,
+        rdp_clipboard: app.rdp_clipboard,
         keyring_migrated: app.keyring_migrated,
     }
 }

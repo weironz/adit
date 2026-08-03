@@ -26,7 +26,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
 
             // RDP clipboard bridge: the helper is a windowless process, so only
             // this one has a Windows clipboard. Remote copies land here...
-            if let Some(text) = app.manager.take_rdp_clipboard() {
+            if let Some(text) = app.manager.take_rdp_clipboard().filter(|_| app.rdp_clipboard) {
                 // Record it as already-offered so the poll below doesn't bounce
                 // the remote's own text straight back at it.
                 app.rdp_clipboard_offered = Some(text.clone());
@@ -36,7 +36,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
             // opens the system clipboard, and doing that ten times a second would
             // fight every other app on the machine for it.
-            if app.manager.active_is_rdp() {
+            if app.rdp_clipboard && app.manager.active_is_rdp() {
                 app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
                 if app.rdp_clipboard_ticks.is_multiple_of(RDP_CLIPBOARD_POLL_TICKS) {
                     return clipboard::read().map(Message::RdpClipboardPolled);
@@ -1781,6 +1781,21 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from("已开启：自动信任新主机密钥")
             } else {
                 String::from("已关闭：新主机密钥将逐个确认")
+            };
+        }
+        Message::ToggleRdpClipboard(enabled) => {
+            app.rdp_clipboard = enabled;
+            app.manager.set_rdp_clipboard(enabled);
+            // Turning it off must also drop what the poll already captured,
+            // otherwise the last thing copied stays queued for the next remote
+            // that asks — the setting would read as off while still leaking.
+            if !enabled {
+                app.rdp_clipboard_offered = None;
+            }
+            app.notice = if enabled {
+                String::from("已开启：RDP 共享剪贴板（下次连接生效）")
+            } else {
+                String::from("已关闭：RDP 不再共享剪贴板（下次连接生效）")
             };
         }
         Message::StartUpdateDownload => {

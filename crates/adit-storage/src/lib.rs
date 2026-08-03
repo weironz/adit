@@ -362,6 +362,12 @@ pub struct AppSettings {
     /// key still prompts. On by default.
     #[serde(default = "default_true")]
     pub auto_accept_host_keys: bool,
+    /// Redirect the clipboard to and from an RDP desktop. On by default, which
+    /// is what mstsc and every mainstream client do — but it is the one setting
+    /// that hands local data to a remote machine, so it has to be refusable.
+    /// Local text is only *advertised*; it crosses when the remote pastes.
+    #[serde(default = "default_true")]
+    pub rdp_clipboard: bool,
     /// Whether the one-time import of secrets from the legacy OS keyring has run.
     /// Once true, startup skips probing the keyring for every profile — with many
     /// profiles that was hundreds of synchronous Credential Manager lookups on
@@ -442,6 +448,7 @@ impl Default for AppSettings {
             command_window_open: false,
             command_send_immediately: false,
             auto_accept_host_keys: true,
+            rdp_clipboard: true,
             keyring_migrated: false,
         }
     }
@@ -1302,6 +1309,9 @@ Host db
         let settings = AppSettings {
             dark_mode: true,
             theme_mode: Some(ThemeMode::System),
+            // Deliberately the non-default value, so the round-trip proves the
+            // field is actually persisted and not just defaulted back on load.
+            rdp_clipboard: false,
             host_layout: HostLayout::Tree,
             recent_hosts: Vec::new(),
             grid_order: Vec::new(),

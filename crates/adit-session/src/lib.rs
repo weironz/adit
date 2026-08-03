@@ -348,6 +348,8 @@ pub struct SessionManager {
     default_size: TerminalSize,
     /// Trust a new host key automatically (no prompt) when connecting.
     auto_accept_host_keys: bool,
+    /// Share the clipboard with an RDP desktop.
+    rdp_clipboard: bool,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
@@ -416,6 +418,7 @@ impl SessionManager {
             order: Vec::new(),
             default_size: TerminalSize::default(),
             auto_accept_host_keys: true,
+            rdp_clipboard: true,
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
@@ -431,6 +434,12 @@ impl SessionManager {
     }
 
     /// Trust a new host key automatically on connect instead of prompting.
+    /// Takes effect on the next RDP connection: the flag is negotiated during
+    /// the handshake, so a live session keeps whatever it was opened with.
+    pub fn set_rdp_clipboard(&mut self, enabled: bool) {
+        self.rdp_clipboard = enabled;
+    }
+
     pub fn set_auto_accept_host_keys(&mut self, auto_accept: bool) {
         self.auto_accept_host_keys = auto_accept;
     }
@@ -1128,10 +1137,12 @@ impl SessionManager {
             domain,
             width,
             height,
-            // Clipboard redirection on by default, matching mstsc. Local text is
-            // only *advertised* to the remote; it crosses the wire when something
-            // over there pastes, and only text — no images, no files.
-            enable_clipboard: true,
+            // Clipboard redirection, on by default and matching mstsc. Local
+            // text is only *advertised* to the remote; it crosses the wire when
+            // something over there pastes, and only text — no images, no files.
+            // Refusable all the same: it is the one setting that hands local
+            // data to a remote machine.
+            enable_clipboard: self.rdp_clipboard,
             enable_audio: false,
         };
 

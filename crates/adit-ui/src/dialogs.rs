@@ -1242,6 +1242,13 @@ pub(crate) fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .on_toggle(Message::ToggleAutoAcceptHostKeys)
                 .size(16)
                 .text_size(12),
+        )
+        .push(
+            checkbox(app.rdp_clipboard)
+                .label("RDP 会话共享剪贴板（仅文本，下次连接生效）")
+                .on_toggle(Message::ToggleRdpClipboard)
+                .size(16)
+                .text_size(12),
         );
 
     // Live preview of the rendered log filename for the active (or a sample)
