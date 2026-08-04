@@ -306,6 +306,9 @@ async fn active_session(
     // Size the app last knows about; an EGFX reset to a different size sends a
     // Resized before the next tile.
     let mut egfx_size = (desktop_size.width, desktop_size.height);
+    // A resize requested before the DisplayControl channel is up would be
+    // silently dropped; park it here and retry once the channel connects.
+    let mut pending_resize: Option<(u32, u32)> = None;
     let mut image = DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
     let activation_factory = connection_result.activation_factory;
     // Server Redirection PDUs arrive on the I/O channel; we intercept them before
@@ -376,10 +379,20 @@ async fn active_session(
                         let (w, h) = MonitorLayoutEntry::adjust_display_size(
                             u32::from(width), u32::from(height));
                         match active_stage.encode_resize(w, h, None, None) {
-                            Some(frame_res) => vec![ActiveStageOutput::ResponseFrame(frame_res?)],
-                            // No DisplayControl acknowledgement yet; ignore until the
-                            // channel is ready rather than tearing down the session.
-                            None => Vec::new(),
+                            Some(frame_res) => {
+                                pending_resize = None;
+                                vec![ActiveStageOutput::ResponseFrame(frame_res?)]
+                            }
+                            // DisplayControl not connected yet. Park the request
+                            // and retry each loop turn: dropping it silently left
+                            // the desktop at its connect-time size for the rest of
+                            // the session whenever the window was resized in the
+                            // first seconds (the app-side dedupe records the
+                            // request as sent and never repeats it).
+                            None => {
+                                pending_resize = Some((w, h));
+                                Vec::new()
+                            }
                         }
                     }
                     // The GUI owns the real Windows clipboard and hands us
@@ -481,14 +494,21 @@ async fn active_session(
                             );
                             active_stage.set_share_id(share_id);
                             active_stage.set_enable_server_pointer(enable_server_pointer);
-                            if host_tx
-                                .send(HostMsg::Resized {
-                                    width: desktop_size.width,
-                                    height: desktop_size.height,
-                                })
-                                .is_err()
-                            {
-                                break 'session; // app stopped listening
+                            // Only when the desktop actually changed size: the
+                            // app repaints from a fresh surface on Resized, so an
+                            // unconditional send here blacked the pane on every
+                            // deactivation-reactivation until the next repaint.
+                            if (desktop_size.width, desktop_size.height) != egfx_size {
+                                egfx_size = (desktop_size.width, desktop_size.height);
+                                if host_tx
+                                    .send(HostMsg::Resized {
+                                        width: desktop_size.width,
+                                        height: desktop_size.height,
+                                    })
+                                    .is_err()
+                                {
+                                    break 'session; // app stopped listening
+                                }
                             }
                             break 'activation;
                         }
@@ -527,6 +547,17 @@ async fn active_session(
         if dirty && !egfx_active && host_tx.send(full_frame_tile(&image)).is_err() {
             // The app stopped listening; end the session.
             break 'session;
+        }
+
+        // Retry a parked resize now that more channels may have connected.
+        if let Some((w, h)) = pending_resize {
+            if let Some(frame_res) = active_stage.encode_resize(w, h, None, None) {
+                pending_resize = None;
+                writer
+                    .write_all(&frame_res?)
+                    .await
+                    .map_err(|e| ironrdp_session::custom_err!("write resize frame", e))?;
+            }
         }
 
         // EGFX graphics (GNOME RDP / modern Windows) are composited into the shared

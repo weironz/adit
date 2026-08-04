@@ -96,7 +96,11 @@ pub(crate) fn build_connector_config(
         platform: MajorPlatformType::WINDOWS,
         hardware_id: None,
         request_data,
-        autologon: false,
+        // INFO_AUTOLOGON, exactly as mstsc sets it whenever a password is
+        // supplied: without it NLA authenticates the CONNECTION but Windows
+        // still parks the user at the interactive LogonUI to type the same
+        // password again.
+        autologon: !request.password.is_empty(),
         enable_audio_playback: request.enable_audio,
         // Deliver the pointer as separate updates (not composited into the image);
         // the app shows the OS cursor, so we avoid a laggy composited second

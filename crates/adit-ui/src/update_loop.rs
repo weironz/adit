@@ -1210,29 +1210,51 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            if !app.terminal_focused {
-                return Task::none();
-            }
-
-            // A dead session: Enter reconnects (SecureCRT-style) instead of going
-            // nowhere. Checked before the RDP branch so a disconnected RDP tab
-            // reconnects too, rather than firing a scancode at a closed helper.
-            if is_enter_key(&event) && active_session_is_dead(app) {
-                reconnect_active_session(app);
-                return Task::none();
-            }
-
             // RDP: keys go to the remote desktop as scancodes, not VT bytes —
             // including Ctrl+C/Ctrl+V, which the remote handles itself. The two
             // clipboards are kept in sync out of band, on the Tick above.
-            if app.manager.active_is_rdp() {
+            //
+            // Deliberately ABOVE the `terminal_focused` gate: mouse input to
+            // the surface was never gated on that flag, and half the UI clears
+            // it (every dialog field, the filter box, the hosts view), so keys
+            // silently died while clicks kept landing — "can click the logon
+            // screen but can't type into it". A focused local text field still
+            // wins: its captured events never reach this handler at all.
+            if app.manager.active_is_rdp() && app.main_view == MainView::Terminal {
+                // A dead session: Enter reconnects (SecureCRT-style) rather
+                // than firing a scancode at a closed helper.
+                if is_enter_key(&event) && active_session_is_dead(app) {
+                    reconnect_active_session(app);
+                    return Task::none();
+                }
                 if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode,
                         extended,
                         pressed,
                     });
+                } else if let keyboard::Event::KeyPressed { text: Some(text), .. } = &event {
+                    // Unmapped physical key (remapped layouts, some IME setups
+                    // report Unidentified): fall back to the Unicode input
+                    // path instead of dropping the keystroke on the floor.
+                    for ch in text.chars() {
+                        app.manager
+                            .send_rdp_input_to_active(RdpInput::Unicode { ch, pressed: true });
+                        app.manager
+                            .send_rdp_input_to_active(RdpInput::Unicode { ch, pressed: false });
+                    }
                 }
+                return Task::none();
+            }
+
+            if !app.terminal_focused {
+                return Task::none();
+            }
+
+            // A dead session: Enter reconnects (SecureCRT-style) instead of going
+            // nowhere.
+            if is_enter_key(&event) && active_session_is_dead(app) {
+                reconnect_active_session(app);
                 return Task::none();
             }
 
@@ -1262,13 +1284,25 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 send_terminal_bytes(app, bytes);
             }
         }
-        Message::WindowResized { width, height } => {
+        Message::WindowResized { width, height, window } => {
             // Minimizing reports a 0x0 size on Windows; ignore it so we never
             // persist (and later restore) an invisible window.
             if width >= MIN_WINDOW_DIM && height >= MIN_WINDOW_DIM {
                 app.window_width = width;
                 app.window_height = height;
                 sync_terminal_size(app);
+                // Re-probe the display scale: the window may have moved to a
+                // monitor with a different DPI, and the RDP viewport request
+                // is in physical pixels.
+                return window::scale_factor(window).map(Message::DisplayScale);
+            }
+        }
+        Message::DisplayScale(scale) => {
+            if (scale - app.display_scale).abs() > f32::EPSILON && scale > 0.1 {
+                app.display_scale = scale;
+                // The physical-pixel viewport changed even though the logical
+                // window did not.
+                maybe_resize_active_rdp(app);
             }
         }
         Message::ToggleSidebar => {

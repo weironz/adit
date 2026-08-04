@@ -57,7 +57,11 @@ impl EgfxFrame {
         self.width = width;
         self.height = height;
         self.rgba = vec![0u8; usize::from(width) * usize::from(height) * 4];
-        self.dirty = true;
+        // Deliberately NOT dirty: this buffer is all black until content
+        // lands. Publishing it at allocation time flashed a full black frame
+        // on every graphics reset; the first composited EndFrame after the
+        // resize is the correct first publish (and carries the new size).
+        self.dirty = false;
     }
 }
 

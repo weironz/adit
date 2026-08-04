@@ -1459,8 +1459,21 @@ pub(crate) fn terminal_region_area(width: f32, height: f32, sidebar_width: f32) 
 /// clamped to sane bounds. Returns 0×0 when there's no room yet (caller falls
 /// back to the helper's default).
 pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
-    let sidebar = if app.sidebar_visible { app.sidebar_width } else { 0.0 };
+    // The divider sits between the sidebar and the workspace and is not part
+    // of either; forgetting it made the frame ~5 logical px wider than the
+    // pane, so ContentFit had to downscale by ~0.997 — enough to shimmer text.
+    let sidebar = if app.sidebar_visible {
+        app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
+    } else {
+        0.0
+    };
     let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar);
+    // PHYSICAL pixels: the window lays out in logical points, but the remote
+    // desktop is a pixel grid. Requesting logical sizes meant a 125%-DPI
+    // display got a 1524x920 desktop stretched over ~1905x1150 device pixels —
+    // never 1:1, so text was resampled no matter what the codec did.
+    let scale = app.display_scale.max(0.1);
+    let (w, h) = (w * scale, h * scale);
     // Round down to a multiple of 4 — some RDP servers reject odd/non-aligned
     // desktop dimensions.
     let align4 = |v: f32| ((v.round() as i32).clamp(0, 8192) as u16) & !3;

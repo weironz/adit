@@ -259,6 +259,9 @@ pub struct AditApp {
     // the poll from re-offering the same thing, and, because inbound remote text
     // is recorded here too, stops a remote copy from bouncing straight back.
     rdp_clipboard_offered: Option<String>,
+    /// Device pixels per logical point of the window's display. Drives the
+    /// RDP viewport request (physical pixels) and the 1:1 presentation.
+    display_scale: f32,
     rdp_clipboard_ticks: u8,
     // Latest keyboard modifier state, so wheel handling can tell a plain scroll
     // from a Ctrl+wheel zoom.
@@ -592,7 +595,9 @@ pub enum Message {
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
     ModifiersChanged(keyboard::Modifiers),
-    WindowResized { width: f32, height: f32 },
+    WindowResized { width: f32, height: f32, window: window::Id },
+    /// The window's display scale factor (device pixels per logical point).
+    DisplayScale(f32),
     ToggleSidebar,
     BeginSidebarDrag,
     SidebarDragMove(f32),
@@ -1087,6 +1092,7 @@ impl AditApp {
             rdp_target_size: None,
             rdp_frame_session: None,
             rdp_clipboard_offered: None,
+            display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),
             window_width,
@@ -1387,7 +1393,7 @@ fn sidebar_drag_event(
 fn runtime_event(
     event: event::Event,
     status: event::Status,
-    _window: window::Id,
+    window: window::Id,
 ) -> Option<Message> {
     match event {
         // Track modifier state unconditionally so Ctrl+wheel zoom works even
@@ -1402,6 +1408,7 @@ fn runtime_event(
         | event::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized {
             width: size.width,
             height: size.height,
+            window,
         }),
         // Window-absolute cursor for context-menu anchoring (the tab strip has no
         // local move tracker of its own).

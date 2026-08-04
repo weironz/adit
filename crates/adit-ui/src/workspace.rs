@@ -96,6 +96,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let handle = app.rdp_image.clone();
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
 
+    let display_scale = app.display_scale.max(0.1);
     let surface = iced::widget::responsive(move |area| {
         let Some(handle) = handle.clone() else {
             return container(text("正在连接 RDP…").size(14).color(muted_text()))
@@ -104,22 +105,42 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
                 .into();
         };
 
+        // 1:1 presentation: the frame is `sw x sh` DEVICE pixels (the viewport
+        // was requested in physical pixels), so its logical size is the frame
+        // divided by the display scale — then the compositor's DPI scaling
+        // lands every frame pixel on exactly one device pixel and Nearest
+        // never resamples. `Fill` + Contain instead scaled by the pane ratio
+        // AND the DPI, which is why text stayed soft no matter how cleanly
+        // the codec decoded. During a resize renegotiation the sizes disagree
+        // for a moment; the Fill fallback bounds that transient with Contain.
+        let dw = f32::from(sw) / display_scale;
+        let dh = f32::from(sh) / display_scale;
+        let fits = dw <= area.width + 0.5 && dh <= area.height + 0.5;
         let picture = iced::widget::image(handle)
-            .width(Fill)
-            .height(Fill)
-            // The remote desktop is sized to this viewport (see `rdp_viewport_size`),
-            // so it maps ~1:1; nearest-neighbour keeps text crisp and avoids the
-            // blur that bilinear scaling of a fixed 1280×720 surface produced.
             .filter_method(iced::widget::image::FilterMethod::Nearest)
             .content_fit(iced::ContentFit::Contain);
+        let picture = if sw > 0 && fits {
+            picture.width(Length::Fixed(dw)).height(Length::Fixed(dh))
+        } else {
+            picture.width(Fill).height(Fill)
+        };
 
         mouse_area(picture)
             .on_move(move |p| {
-                // Map the widget-local cursor to remote pixels, undoing the
-                // `Contain` letterbox (centred, uniform scale). Guard against a
-                // zero surface or a zero-area transition frame (would divide by 0).
+                // Map the widget-local cursor to remote pixels. In the 1:1
+                // case that is a pure scale; in the transient fitted case,
+                // undo the Contain letterbox. Guard against a zero surface or
+                // a zero-area transition frame (would divide by 0).
                 if sw == 0 || sh == 0 || area.width <= 0.0 || area.height <= 0.0 {
                     return Message::RdpPointerMoved(Point::ORIGIN);
+                }
+                let dw = f32::from(sw) / display_scale;
+                let dh = f32::from(sh) / display_scale;
+                let fits = dw <= area.width + 0.5 && dh <= area.height + 0.5;
+                if fits {
+                    let x = (p.x * display_scale).clamp(0.0, f32::from(sw) - 1.0);
+                    let y = (p.y * display_scale).clamp(0.0, f32::from(sh) - 1.0);
+                    return Message::RdpPointerMoved(Point::new(x, y));
                 }
                 let scale = (area.width / f32::from(sw)).min(area.height / f32::from(sh));
                 let dw = f32::from(sw) * scale;

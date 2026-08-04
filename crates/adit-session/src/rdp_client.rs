@@ -345,9 +345,20 @@ fn wire_up(
                     }
                     Ok(Some(HostMsg::Resized { width, height })) => {
                         if let Ok(mut s) = reader_surface.lock() {
-                            let generation = s.generation.wrapping_add(1);
-                            *s = Surface::new(width, height);
-                            s.generation = generation;
+                            // Carry the old pixels into the new surface (top-left
+                            // intersection): a zeroed buffer here painted the
+                            // whole pane black for the frames between the resize
+                            // and the first full frame at the new size.
+                            let old = std::mem::replace(&mut *s, Surface::new(width, height));
+                            let copy_w = usize::from(old.width.min(width)) * 4;
+                            let copy_h = usize::from(old.height.min(height));
+                            for row in 0..copy_h {
+                                let src = row * usize::from(old.width) * 4;
+                                let dst = row * usize::from(width) * 4;
+                                s.rgba[dst..dst + copy_w]
+                                    .copy_from_slice(&old.rgba[src..src + copy_w]);
+                            }
+                            s.generation = old.generation.wrapping_add(1);
                         }
                         let _ = event_tx.send(RdpClientEvent::Resized { width, height });
                     }
