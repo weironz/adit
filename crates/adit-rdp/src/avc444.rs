@@ -178,18 +178,28 @@ impl Avc444State {
         pass: Pass,
         touched: &mut Vec<(usize, usize, usize, usize)>,
     ) -> Result<(), String> {
-        // AVC-format NALs (4-byte big-endian length prefix) → Annex B.
+        // ironrdp-egfx's docs claim the wire carries AVC-format NALs (4-byte
+        // big-endian length prefixes); a live Windows capture refutes that —
+        // the data opens with an Annex-B start code, and reading it as a
+        // length made every frame die with "NAL length exceeds stream"
+        // (FreeRDP likewise hands the buffer to its decoders untouched).
+        // Accept both: pass Annex-B through, convert prefixes if they ever
+        // really appear.
         annex_b.clear();
         let mut data = view.data;
-        while data.len() >= 4 {
-            let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
-            data = &data[4..];
-            if len > data.len() {
-                return Err("NAL length exceeds stream".to_owned());
+        if data.starts_with(&[0, 0, 0, 1]) || data.starts_with(&[0, 0, 1]) {
+            annex_b.extend_from_slice(data);
+        } else {
+            while data.len() >= 4 {
+                let len = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) as usize;
+                data = &data[4..];
+                if len > data.len() {
+                    return Err("NAL length exceeds stream".to_owned());
+                }
+                annex_b.extend_from_slice(&[0, 0, 0, 1]);
+                annex_b.extend_from_slice(&data[..len]);
+                data = &data[len..];
             }
-            annex_b.extend_from_slice(&[0, 0, 0, 1]);
-            annex_b.extend_from_slice(&data[..len]);
-            data = &data[len..];
         }
 
         let Some(frame) = decoder.decode(annex_b).map_err(|e| e.to_string())? else {
