@@ -202,6 +202,8 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
     fn on_surface_deleted(&mut self, surface_id: u16) {
         self.surfaces.remove(&surface_id);
+        // Progressive tile state is per-surface; it dies with the surface.
+        self.progressive.delete_surface(surface_id);
     }
 
     /// `WireToSurface1` path (uncompressed / H.264): IronRDP hands us already-decoded
@@ -235,7 +237,8 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 let src = row * tw * 4;
                 frame.rgba[dst..dst + tw * 4].copy_from_slice(&update.data[src..src + tw * 4]);
             }
-            frame.dirty = true;
+            // Not marked dirty: presents happen on `on_frame_complete`, so a
+            // multi-PDU frame reaches the screen whole (see on_wire_to_surface2).
         }
     }
 
@@ -255,7 +258,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
         let tiles =
             match self
                 .progressive
-                .decode_bitmap(pdu.codec_context_id, sw, sh, &pdu.bitmap_data)
+                .decode_bitmap(pdu.surface_id, sw, sh, &pdu.bitmap_data)
             {
                 Ok(tiles) => tiles,
                 Err(error) => {
@@ -275,7 +278,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 let py = oy as usize + usize::from(tile.y_idx) * TILE;
                 Self::blit_tile(&mut frame, px, py, &tile.pixels);
             }
-            frame.dirty = true;
+            // Deliberately NOT marked dirty here: presents are frame-atomic.
+            // A frame's PDUs are decoded back-to-back inside one process()
+            // call, but the session loop samples the framebuffer once per
+            // transport read — marking dirty per PDU let it emit a frame
+            // mid-composite, flashing the blurry base pass of a progressive
+            // sequence before its refinements landed. `on_frame_complete`
+            // (the EndFrame handler) is the present point.
         }
     }
 

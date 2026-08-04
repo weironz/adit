@@ -51,7 +51,10 @@ fn a_captured_stream_decodes() {
     let mut decoded_any = false;
 
     for path in &dumps {
-        // The context id lives in the sidecar; the stream alone does not carry it.
+        // Context ids from the sidecar are for the log only: decoder state is
+        // keyed per surface now (Windows mints a fresh codecContextId per
+        // sequence while difference tiles reference the surface state), and a
+        // capture is a single surface.
         let context_id = std::fs::read_to_string(path.with_extension("txt"))
             .ok()
             .and_then(|meta| {
@@ -65,7 +68,7 @@ fn a_captured_stream_decodes() {
             .unwrap_or(1);
         let data = std::fs::read(path).expect("read dump");
 
-        match decoder.decode_bitmap(context_id, w, h, &data) {
+        match decoder.decode_bitmap(0, w, h, &data) {
             Ok(tiles) => {
                 decoded_any = true;
                 println!(

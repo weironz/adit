@@ -76,7 +76,7 @@ pub fn decode_first_pass(
     // Step 2: LL3 differential decoding (reverse delta encoding on last subband)
     crate::subband_reconstruction::decode(&mut coefficients[ll3_offset(use_reduce_extrapolate)..]);
 
-    // Step 3: Base dequantization (shift left by quant - 1)
+    // Step 3: Base dequantization (shift left by quant - 6; see the ADIT PATCH there)
     dequantize_component_ccq(coefficients, base_quant, use_reduce_extrapolate);
 
     // Step 4: Progressive dequantization (shift left by BitPos)
@@ -109,6 +109,7 @@ pub fn decode_first_pass(
 pub fn decode_upgrade_pass(
     srl_data: &[u8],
     raw_data: &[u8],
+    base_quant: &ComponentCodecQuant,
     prev_prog_quant: &ComponentCodecQuant,
     curr_prog_quant: &ComponentCodecQuant,
     use_reduce_extrapolate: bool,
@@ -120,6 +121,17 @@ pub fn decode_upgrade_pass(
 
     let bands = get_band_layout(use_reduce_extrapolate);
 
+    // ADIT PATCH: one SRL cursor and one raw cursor for the WHOLE component.
+    //
+    // Both refinement streams are continuous bitstreams spanning all ten
+    // bands. The old code rebuilt both readers inside the band loop, so only
+    // the first refined band read real data and every band after it re-read
+    // the stream head as garbage — visible as refinement passes that added
+    // noise instead of detail. FreeRDP keeps one persistent upgrade state per
+    // component for exactly this reason.
+    let mut srl = srl::SrlDecoder::new(srl_data);
+    let mut raw_reader = RawBitReader::new(raw_data);
+
     for (band_idx, band) in bands.iter().enumerate() {
         let prev_bit_pos = prev_prog_quant.for_band(band_idx);
         let curr_bit_pos = curr_prog_quant.for_band(band_idx);
@@ -130,33 +142,43 @@ pub fn decode_upgrade_pass(
             continue;
         }
 
-        // Count zero-DAS positions in this band (for SRL decode)
-        let zero_count = band_zero_count(sign, band);
-
-        // SRL decode for zero-DAS positions
-        let srl_values = srl::decode_srl(srl_data, zero_count, num_bits);
-
-        // Apply upgrade values to this band
-        let mut srl_idx = 0;
-        let mut raw_reader = RawBitReader::new(raw_data);
+        // ADIT PATCH: refinement bits land at the stored coefficient scale.
+        //
+        // The first pass leaves each coefficient at
+        // `value << ((base_quant - 6) + bit_pos)` (base dequantization plus
+        // progressive dequantization). An upgrade therefore has to shift its
+        // bits by the CURRENT bit position PLUS the base-quant factor —
+        // FreeRDP computes `shift = quant + progQuant - 1` in its x32
+        // fixed-point domain, which is `(quant - 6) + bitPos` in ours.
+        // Shifting by `curr_bit_pos` alone (the old code) made every
+        // contribution 2^(quant-6) too small on bands quantized above 6.
+        let shift = i32::from(curr_bit_pos) + i32::from(base_quant.for_band(band_idx).saturating_sub(6));
+        let is_ll3 = band_idx == 9;
 
         for i in 0..band.count() {
             let coeff_idx = band.offset + i;
-            let is_ll3 = band_idx == 9;
 
-            if sign[coeff_idx] == SIGN_ZERO {
+            // ADIT PATCH: LL3 reads EVERY coefficient from the raw stream.
+            //
+            // FreeRDP's upgrade state sets nonLL = FALSE for LL3: no SRL, no
+            // DAS consultation, unconditional add. Routing LL3's zero-DAS
+            // coefficients through SRL (the old code) desynchronized both
+            // streams for the rest of the component.
+            if is_ll3 {
+                let raw_mag = raw_reader.read_bits(u32::from(num_bits));
+                if raw_mag != 0 {
+                    let mag_i32 = i32::try_from(raw_mag).unwrap_or(i32::MAX);
+                    coefficients[coeff_idx] =
+                        clamp_i16(i32::from(coefficients[coeff_idx]) + (mag_i32 << shift));
+                }
+            } else if sign[coeff_idx] == SIGN_ZERO {
                 // Zero-DAS: get value from SRL stream
-                let value = if srl_idx < srl_values.len() {
-                    srl_values[srl_idx]
-                } else {
-                    0
-                };
-                srl_idx += 1;
-
+                let value = srl.read(num_bits);
                 if value != 0 {
                     // Coefficient transitions from zero to non-zero
-                    let shifted = i32::from(value) << i32::from(curr_bit_pos);
-                    coefficients[coeff_idx] = clamp_i16(shifted);
+                    let shifted = i32::from(value) << shift;
+                    coefficients[coeff_idx] =
+                        clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
                     sign[coeff_idx] = if value > 0 { SIGN_POSITIVE } else { SIGN_NEGATIVE };
                 }
             } else {
@@ -166,13 +188,15 @@ pub fn decode_upgrade_pass(
                 if raw_mag != 0 {
                     // raw_mag fits in i32 (at most 2^15 from bit stream)
                     let mag_i32 = i32::try_from(raw_mag).unwrap_or(i32::MAX);
-                    let shifted = mag_i32 << i32::from(curr_bit_pos);
-                    if is_ll3 || sign[coeff_idx] == SIGN_POSITIVE {
-                        // LL3 is always positive; positive DAS adds
-                        coefficients[coeff_idx] = clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
+                    let shifted = mag_i32 << shift;
+                    if sign[coeff_idx] == SIGN_POSITIVE {
+                        // Positive DAS adds
+                        coefficients[coeff_idx] =
+                            clamp_i16(i32::from(coefficients[coeff_idx]) + shifted);
                     } else {
                         // Negative DAS subtracts
-                        coefficients[coeff_idx] = clamp_i16(i32::from(coefficients[coeff_idx]) - shifted);
+                        coefficients[coeff_idx] =
+                            clamp_i16(i32::from(coefficients[coeff_idx]) - shifted);
                     }
                 }
             }
@@ -752,23 +776,46 @@ impl TileState {
         quant_idx: [u8; 3],
         quality: u8,
         use_reduce_extrapolate: bool,
+        is_difference: bool,
     ) -> Result<(), RlgrError> {
         self.pass = 1;
         self.quality = quality;
         self.quant_idx = quant_idx;
         self.use_reduce_extrapolate = use_reduce_extrapolate;
-        self.is_difference = false;
+        self.is_difference = is_difference;
         self.prog_quant = prog_quants;
 
         for c in 0..3 {
+            // ADIT PATCH: honor the tile's difference flag.
+            //
+            // A TILE_FIRST/TILE_SIMPLE with flags bit 0 set carries a DELTA
+            // against the tile's accumulated coefficients, not a fresh image
+            // (MS-RDPRFX; FreeRDP progressive_rfx_dwt_2d_decode: non-diff
+            // `memcpy(current, buffer)`, diff `add_16s_inplace(buffer,
+            // current)`). Decoding the delta as an absolute image produced
+            // washed-out gray rectangles over exactly the flagged tiles of a
+            // captured Windows stream. The accumulation domain is the
+            // DEQUANTIZED one — FreeRDP adds after its shifts — and RLGR
+            // always fills the whole 4096-entry buffer, so the delta needs a
+            // scratch buffer either way. The sign/DAS state is rewritten from
+            // THIS pass's values in both cases, matching FreeRDP's
+            // unconditional `CopyMemory(sign, buffer)`.
+            let mut delta = [0i16; COEFFICIENTS_PER_COMPONENT];
             decode_first_pass(
                 component_data[c],
                 base_quants[c],
                 &prog_quants[c],
                 use_reduce_extrapolate,
-                &mut self.coefficients[c],
+                &mut delta,
                 &mut self.sign[c],
             )?;
+            if is_difference {
+                for (acc, d) in self.coefficients[c].iter_mut().zip(delta.iter()) {
+                    *acc = acc.saturating_add(*d);
+                }
+            } else {
+                self.coefficients[c] = delta;
+            }
         }
 
         Ok(())
@@ -787,6 +834,7 @@ impl TileState {
         &mut self,
         srl_data: [&[u8]; 3],
         raw_data: [&[u8]; 3],
+        base_quants: [&ComponentCodecQuant; 3],
         prog_quants: [ComponentCodecQuant; 3],
         quality: u8,
     ) {
@@ -796,6 +844,7 @@ impl TileState {
             decode_upgrade_pass(
                 srl_data[c],
                 raw_data[c],
+                base_quants[c],
                 &prev_prog_quant[c],
                 &prog_quants[c],
                 self.use_reduce_extrapolate,
@@ -1055,7 +1104,16 @@ struct ProgressiveContext {
 /// }
 /// ```
 pub struct ProgressiveDecoder {
-    contexts: BTreeMap<u32, ProgressiveContext>,
+    // ADIT PATCH: keyed by SURFACE id, not codecContextId.
+    //
+    // FreeRDP keeps all progressive tile state per surfaceId and ignores
+    // codecContextId in the decode path entirely (the field exists for
+    // RDPGFX_DELETE_ENCODING_CONTEXT, which FreeRDP no-ops). Windows mints a
+    // fresh codecContextId for each new progressive sequence and encodes
+    // difference tiles against the SURFACE's accumulated coefficients —
+    // keying by context id orphaned that state, so every new sequence started
+    // from zeroed tiles and every difference tile decoded against nothing.
+    contexts: BTreeMap<u16, ProgressiveContext>,
 }
 
 impl ProgressiveDecoder {
@@ -1072,13 +1130,14 @@ impl ProgressiveDecoder {
     /// returns RGBA pixel data for each tile that was updated.
     ///
     /// # Arguments
-    /// - `codec_context_id`: context ID from the WireToSurface2Pdu
+    /// - `surface_id`: the surface this stream belongs to (state is
+    ///   per-surface — see the field docs on [`ProgressiveDecoder`])
     /// - `surface_width`: surface width in pixels (for tile grid sizing)
     /// - `surface_height`: surface height in pixels
     /// - `bitmap_data`: raw progressive block stream from the PDU
     pub fn decode_bitmap(
         &mut self,
-        codec_context_id: u32,
+        surface_id: u16,
         surface_width: u16,
         surface_height: u16,
         bitmap_data: &[u8],
@@ -1088,49 +1147,28 @@ impl ProgressiveDecoder {
         let blocks = decode_progressive_stream(bitmap_data)?;
 
         // Extract the band-layout flag from the CONTEXT block when present.
-        // Per MS-RDPEGFX 2.2.4.2 the SYNC + CONTEXT blocks establish a codec
-        // context once (keyed by `codec_context_id`) and are not required to be
-        // repeated on subsequent frames that reference the same context.
-        // Real-world servers (xrdp, GNOME Remote Desktop) omit the CONTEXT
-        // block on every frame after the first one that established the
-        // context. The strict requirement rejected each of those frames with
-        // `MissingBlock("CONTEXT")`, freezing the image on the coarse first
-        // pass.
         //
-        // Fall back to the value stored when the context was first created.
-        // Only error when neither source is available, i.e. the very first
-        // frame for a context arrived without a CONTEXT block.
+        // SYNC + CONTEXT are sent once per connection; every later stream —
+        // whatever codecContextId it carries — relies on the sticky value.
+        // With per-surface state the flag simply lives on the surface; the
+        // any-surface fallback covers a second surface appearing after the
+        // first one's CONTEXT (the flag is a connection-level codec setting).
+        // Only error when no CONTEXT block has ever been seen at all.
         let use_reduce_extrapolate = match blocks.iter().find_map(|block| match block {
             ProgressiveBlock::Context(ctx) => Some(ctx.uses_reduce_extrapolate()),
             _ => None,
         }) {
             Some(v) => v,
-            // ADIT PATCH: inherit the flag across context ids, not just within one.
-            //
-            // Windows sends SYNC + CONTEXT once per connection and then starts
-            // each new progressive sequence under a fresh `codecContextId`
-            // without repeating them — captured frames run ctx 1 as
-            // TILE_FIRST/UPGRADE/UPGRADE, then ctx 2 as another full
-            // TILE_FIRST/UPGRADE/UPGRADE, CONTEXT block nowhere in sight. The
-            // by-id lookup then failed and every frame of every later sequence
-            // was dropped, so the desktop stopped updating.
-            //
-            // `use_reduce_extrapolate` is a property of the codec configuration
-            // for the connection, not of one sequence — FreeRDP keeps a single
-            // progressive configuration per connection and does not key it on
-            // `codecContextId` at all (that field exists for
-            // RDPGFX_DELETE_ENCODING_CONTEXT). So fall back to any established
-            // context, and only fail when none has ever been established.
             None => self
                 .contexts
-                .get(&codec_context_id)
+                .get(&surface_id)
                 .or_else(|| self.contexts.values().next())
                 .map(|c| c.surface.use_reduce_extrapolate)
                 .ok_or(ProgressiveDecodeError::MissingBlock("CONTEXT"))?,
         };
 
-        // Get or create the context for this codec_context_id
-        let context = match self.contexts.entry(codec_context_id) {
+        // Get or create this surface's state
+        let context = match self.contexts.entry(surface_id) {
             Entry::Occupied(e) => e.into_mut(),
             Entry::Vacant(e) => {
                 let surface = SurfaceTiles::new(surface_width, surface_height, use_reduce_extrapolate)?;
@@ -1176,8 +1214,18 @@ impl ProgressiveDecoder {
     /// Delete a codec context, freeing its tile state.
     ///
     /// Called when the server sends RDPGFX_DELETE_ENCODING_CONTEXT.
-    pub fn delete_context(&mut self, codec_context_id: u32) {
-        self.contexts.remove(&codec_context_id);
+    /// ADIT PATCH: deliberately a no-op, matching FreeRDP.
+    ///
+    /// State is per surface now, and difference tiles in later sequences
+    /// reference it; destroying it on RDPGFX_DELETE_ENCODING_CONTEXT would
+    /// re-introduce exactly the orphaned-state bug the keying change fixed.
+    /// FreeRDP's handler for this PDU touches nothing either. Surface state
+    /// goes away with the surface (`delete_surface`) or `reset`.
+    pub fn delete_context(&mut self, _codec_context_id: u32) {}
+
+    /// Drop a surface's accumulated tile state.
+    pub fn delete_surface(&mut self, surface_id: u16) {
+        self.contexts.remove(&surface_id);
     }
 
     /// Reset all contexts (e.g., on EGFX channel reset).
@@ -1229,6 +1277,8 @@ fn decode_tile_block(
                 [tile.quant_idx_y, tile.quant_idx_cb, tile.quant_idx_cr],
                 0xFF, // full quality
                 use_reduce_extrapolate,
+                // ADIT PATCH: TILE_SIMPLE carries the difference flag too.
+                tile.flags & 1 != 0,
             )?;
 
             let mut pixels = vec![0u8; 64 * 64 * 4];
@@ -1297,6 +1347,8 @@ fn decode_tile_block(
                 [tile.quant_idx_y, tile.quant_idx_cb, tile.quant_idx_cr],
                 tile.quality,
                 use_reduce_extrapolate,
+                // ADIT PATCH: honor the difference flag (bit 0) — see decode_first.
+                tile.flags & 1 != 0,
             )?;
 
             let mut pixels = vec![0u8; 64 * 64 * 4];
@@ -1316,6 +1368,18 @@ fn decode_tile_block(
             // If this tile hasn't had a first pass, skip the upgrade
             if tile_state.pass == 0 {
                 return Ok(Vec::new());
+            }
+
+            // Base quant lookup: the upgrade shift needs the same base tables
+            // the first pass dequantized with (see decode_upgrade_pass).
+            let q_y = usize::from(tile.quant_idx_y);
+            let q_cb = usize::from(tile.quant_idx_cb);
+            let q_cr = usize::from(tile.quant_idx_cr);
+            if q_y >= quant_vals.len() || q_cb >= quant_vals.len() || q_cr >= quant_vals.len() {
+                return Err(ProgressiveDecodeError::InvalidQuantIndex {
+                    index: q_y.max(q_cb).max(q_cr),
+                    table_len: quant_vals.len(),
+                });
             }
 
             // ADIT PATCH: `quality` is not always an index.
@@ -1355,6 +1419,7 @@ fn decode_tile_block(
             tile_state.decode_upgrade(
                 [tile.y_srl_data, tile.cb_srl_data, tile.cr_srl_data],
                 [tile.y_raw_data, tile.cb_raw_data, tile.cr_raw_data],
+                [&quant_vals[q_y], &quant_vals[q_cb], &quant_vals[q_cr]],
                 [pq.y_quant, pq.cb_quant, pq.cr_quant],
                 tile.quality,
             );
@@ -1602,6 +1667,20 @@ mod tests {
         decode_upgrade_pass(
             &srl_data,
             &raw_data,
+            // Base quant of 6 -> zero extra scale, keeping the assertions below
+            // about pure bit-position arithmetic valid.
+            &ComponentCodecQuant {
+                ll3: 6,
+                hl3: 6,
+                lh3: 6,
+                hh3: 6,
+                hl2: 6,
+                lh2: 6,
+                hh2: 6,
+                hl1: 6,
+                lh1: 6,
+                hh1: 6,
+            },
             &prev_prog_quant,
             &curr_prog_quant,
             false,
@@ -1629,6 +1708,152 @@ mod tests {
         assert_eq!(surface.tiles_wide, 30);
         assert_eq!(surface.tiles_high, 17);
         assert!(surface.use_reduce_extrapolate);
+    }
+
+    /// The SRL stream spans all bands of a component; its adaptive state and
+    /// bit cursor must survive from one band's reads into the next. A decoder
+    /// that restarts per band re-reads the stream head: for this hand-built
+    /// stream (+1 then -2, num_bits=2) a restart would yield +1 twice.
+    #[test]
+    fn srl_state_persists_across_reads() {
+        // Value 1: escape '1', k=0 count bits none, sign '0', quotient '1',
+        //          remainder '1'  -> +1   (bits: 1 0 1 1)
+        // Value 2: escape '1', sign '1', quotient '01', remainder '0' -> -2
+        //          (bits: 1 1 0 1 0)
+        let data = [0b1011_1101, 0b0000_0000];
+        let mut decoder = crate::srl::SrlDecoder::new(&data);
+        assert_eq!(decoder.read(2), 1);
+        assert_eq!(decoder.read(2), -2, "the cursor went back to the stream head");
+    }
+
+    /// A TILE_FIRST with the difference flag carries a delta against the
+    /// tile's accumulated coefficients (MS-RDPRFX / FreeRDP add_16s_inplace);
+    /// decoding it as an absolute image is what rendered flat gray rectangles
+    /// over the flagged tiles of a captured Windows stream.
+    #[test]
+    fn a_difference_first_pass_accumulates() {
+        // Quant 6 everywhere = zero base shift; lossless prog = zero bit-pos
+        // shift. The decoded values then equal the RLGR-coded ones exactly.
+        let quant = ComponentCodecQuant {
+            ll3: 6,
+            hl3: 6,
+            lh3: 6,
+            hh3: 6,
+            hl2: 6,
+            lh2: 6,
+            hh2: 6,
+            hl1: 6,
+            lh1: 6,
+            hh1: 6,
+        };
+        let mut absolute = [0i16; COEFFICIENTS_PER_COMPONENT];
+        absolute[0] = 5; // HL1 band, clear of the LL3 differential region
+        let mut delta = [0i16; COEFFICIENTS_PER_COMPONENT];
+        delta[0] = 3;
+        let mut buffer = vec![0u8; 8192];
+        let n = crate::rlgr::encode(EntropyAlgorithm::Rlgr1, &absolute, &mut buffer).expect("encode");
+        let absolute = buffer[..n].to_vec();
+        let n = crate::rlgr::encode(EntropyAlgorithm::Rlgr1, &delta, &mut buffer).expect("encode");
+        let delta = buffer[..n].to_vec();
+
+        let mut tile = TileState::new();
+        tile.decode_first(
+            [&absolute, &absolute, &absolute],
+            [&quant, &quant, &quant],
+            [ComponentCodecQuant::LOSSLESS; 3],
+            [0, 0, 0],
+            0xFF,
+            false,
+            false,
+        )
+        .expect("absolute pass");
+        assert_eq!(tile.coefficients[0][0], 5);
+
+        tile.decode_first(
+            [&delta, &delta, &delta],
+            [&quant, &quant, &quant],
+            [ComponentCodecQuant::LOSSLESS; 3],
+            [0, 0, 0],
+            0xFF,
+            false,
+            true, // difference tile
+        )
+        .expect("difference pass");
+        assert_eq!(
+            tile.coefficients[0][0],
+            8,
+            "a difference pass must accumulate, not overwrite"
+        );
+        assert!(tile.is_difference);
+    }
+
+    /// Refinement bits land at the stored coefficient scale: the first pass
+    /// leaves `value << ((quant-6) + bit_pos)`, so an upgrade's bits carry
+    /// `<< ((quant-6) + curr_bit_pos)` — FreeRDP's `quant + prog - 1` in its
+    /// x32 domain. Shifting by the bit position alone loses the base factor.
+    #[test]
+    fn upgrade_bits_land_at_base_scale() {
+        // HL1 quant 8 -> base shift 2. First pass at bit-pos 1 stores
+        // 5 << (2 + 1) = 40; the upgrade to bit-pos 0 sends the withheld bit
+        // (1) which must add 1 << (0 + 2) = 4.
+        let quant = ComponentCodecQuant {
+            ll3: 6,
+            hl3: 6,
+            lh3: 6,
+            hh3: 6,
+            hl2: 6,
+            lh2: 6,
+            hh2: 6,
+            hl1: 8,
+            lh1: 6,
+            hh1: 6,
+        };
+        let first_prog = ComponentCodecQuant {
+            ll3: 0,
+            hl3: 0,
+            lh3: 0,
+            hh3: 0,
+            hl2: 0,
+            lh2: 0,
+            hh2: 0,
+            hl1: 1,
+            lh1: 0,
+            hh1: 0,
+        };
+        let mut coded = [0i16; COEFFICIENTS_PER_COMPONENT];
+        coded[0] = 5;
+        let mut buffer = vec![0u8; 8192];
+        let n = crate::rlgr::encode(EntropyAlgorithm::Rlgr1, &coded, &mut buffer).expect("encode");
+        let coded = buffer[..n].to_vec();
+
+        let mut tile = TileState::new();
+        tile.decode_first(
+            [&coded, &coded, &coded],
+            [&quant, &quant, &quant],
+            [first_prog; 3],
+            [0, 0, 0],
+            0,
+            false,
+            false,
+        )
+        .expect("first pass");
+        assert_eq!(tile.coefficients[0][0], 40);
+
+        // One raw bit per HL1 coefficient; coefficient 0 gets a 1-bit.
+        let mut raw = vec![0u8; 128]; // 1024 coefficients / 8 bits
+        raw[0] = 0b1000_0000;
+        tile.decode_upgrade(
+            [&[], &[], &[]],
+            [&raw, &raw, &raw],
+            [&quant, &quant, &quant],
+            [ComponentCodecQuant::LOSSLESS; 3],
+            0xFF,
+        );
+        assert_eq!(
+            tile.coefficients[0][0],
+            44,
+            "the upgrade bit must land at the base-quant scale"
+        );
     }
 
     #[test]

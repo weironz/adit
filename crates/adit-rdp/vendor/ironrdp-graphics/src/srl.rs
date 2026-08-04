@@ -8,84 +8,80 @@
 //! adaptive K parameter controlling zero-run lengths, followed by unary-coded
 //! magnitudes with sign bits.
 
-/// Decode SRL data for a set of zero-valued (DAS=0) coefficient positions.
+/// Streaming SRL decoder whose adaptation state survives across reads.
 ///
-/// `data` is the SRL byte stream (terminated by a 0x00 sentinel).
-/// `num_values` is the number of coefficients to decode.
-/// `num_bits` is the bit width for each magnitude value.
-///
-/// Returns a vector of decoded signed coefficient values. Zero entries
-/// mean the coefficient remains zero after this upgrade pass.
-pub fn decode_srl(data: &[u8], num_values: usize, num_bits: u8) -> Vec<i16> {
-    if num_values == 0 || data.is_empty() {
-        return vec![0; num_values];
+/// ADIT PATCH: this struct replaces a per-call `decode_srl` as the decode-side
+/// entry point. The SRL stream inside a TILE_UPGRADE is ONE continuous
+/// bitstream per component, spanning all ten sub-bands — the adaptive `kp`,
+/// the pending zero-run, and the bit cursor all carry across band boundaries
+/// (FreeRDP holds them in `RFX_PROGRESSIVE_UPGRADE_STATE` for the lifetime of
+/// the component). Restarting the stream per band — what the old call shape
+/// did — reads the first band correctly and then re-reads the stream head as
+/// garbage for every band after it.
+pub struct SrlDecoder<'a> {
+    reader: BitReader<'a>,
+    kp: u32,
+    /// Zeros still owed from the current zero-run.
+    nz: u32,
+}
+
+impl<'a> SrlDecoder<'a> {
+    pub fn new(data: &'a [u8]) -> Self {
+        Self {
+            reader: BitReader::new(data),
+            kp: 0,
+            nz: 0,
+        }
     }
 
-    let mut output = vec![0i16; num_values];
-    let mut reader = BitReader::new(data);
-    let mut kp: u32 = 0;
-    let mut out_idx = 0;
-    let mut nz: u32 = 0; // remaining zeros in current run
+    /// Decode the next value. `num_bits` is this band's magnitude width and
+    /// may differ from the previous read's — the adaptation state persists
+    /// regardless.
+    pub fn read(&mut self, num_bits: u8) -> i16 {
+        let k = self.kp >> 3;
 
-    while out_idx < num_values {
-        let k = kp >> 3;
-
-        if nz > 0 {
+        if self.nz > 0 {
             // Still emitting zeros from a previous run
-            nz -= 1;
-            output[out_idx] = 0;
-            out_idx += 1;
-            continue;
+            self.nz -= 1;
+            return 0;
         }
 
         // Zero-run mode: chunk_size = 1 << k (1 when k=0).
-        // read_bits(0) returns 0, so k=0 degenerates to single-zero runs.
-        {
-            let bit = reader.read_bit();
-            if !bit {
-                nz = 1u32.checked_shl(k).unwrap_or(0);
-                kp = kp.saturating_add(4).min(80);
-                nz -= 1;
-                output[out_idx] = 0;
-                out_idx += 1;
-                continue;
-            }
-            let zeros = reader.read_bits(k);
-            if zeros > 0 {
-                nz = zeros;
-                nz -= 1;
-                output[out_idx] = 0;
-                out_idx += 1;
-                continue;
-            }
-            // Fall through to unary mode (no more zeros)
+        let bit = self.reader.read_bit();
+        if !bit {
+            self.nz = 1u32.checked_shl(k).unwrap_or(0);
+            self.kp = self.kp.saturating_add(4).min(80);
+            self.nz -= 1;
+            return 0;
+        }
+        let zeros = self.reader.read_bits(k);
+        if zeros > 0 {
+            self.nz = zeros;
+            self.nz -= 1;
+            return 0;
         }
 
         // Unary mode: decode a non-zero magnitude
-        kp = kp.saturating_sub(6);
+        self.kp = self.kp.saturating_sub(6);
 
         if num_bits == 0 {
             // No bits to decode, just emit +/-1 from sign bit
-            let sign = reader.read_bit();
-            output[out_idx] = if sign { -1 } else { 1 };
-            out_idx += 1;
-            continue;
+            let sign = self.reader.read_bit();
+            return if sign { -1 } else { 1 };
         }
 
         // Read sign bit
-        let sign = reader.read_bit();
+        let sign = self.reader.read_bit();
 
         if num_bits == 1 {
-            output[out_idx] = if sign { -1 } else { 1 };
-            out_idx += 1;
-            continue;
+            return if sign { -1 } else { 1 };
         }
 
         // Decode unary quotient: count 0-bits before the terminating 1-bit.
         // magnitude = (quotient << extra_bits) | remainder.
         let mut quotient: u32 = 0;
         loop {
-            let bit = reader.read_bit();
+            let bit = self.reader.read_bit();
             if bit || quotient >= 0x8000 {
                 break;
             }
@@ -94,18 +90,25 @@ pub fn decode_srl(data: &[u8], num_values: usize, num_bits: u8) -> Vec<i16> {
 
         let extra_bits = u32::from(num_bits).saturating_sub(1);
         let magnitude = if extra_bits > 0 && extra_bits < 16 {
-            let remainder = reader.read_bits(extra_bits);
+            let remainder = self.reader.read_bits(extra_bits);
             (quotient << extra_bits) | remainder
         } else {
             quotient
         };
 
         let value = i16::try_from(magnitude.min(0x7FFF)).unwrap_or(i16::MAX);
-        output[out_idx] = if sign { -value } else { value };
-        out_idx += 1;
+        if sign { -value } else { value }
     }
+}
 
-    output
+/// Decode SRL data for a set of zero-valued (DAS=0) coefficient positions.
+///
+/// One-shot wrapper over [`SrlDecoder`], kept for the encoder round-trip
+/// tests. The decode path proper must NOT use this per band — see the
+/// [`SrlDecoder`] docs for why.
+pub fn decode_srl(data: &[u8], num_values: usize, num_bits: u8) -> Vec<i16> {
+    let mut decoder = SrlDecoder::new(data);
+    (0..num_values).map(|_| decoder.read(num_bits)).collect()
 }
 
 /// Encode coefficient magnitudes using the SRL algorithm.
