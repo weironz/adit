@@ -238,6 +238,11 @@ pub(crate) struct EgfxHandler {
     ops_logged: u32,
     /// How many ClearCodec streams have been written out.
     clear_dumps: u32,
+    /// AVC444 recombination state: two H.264 decoders plus per-surface
+    /// YUV 4:4:4 planes. `None` when decoder construction failed, in which
+    /// case V10+ capabilities are not advertised and the server never sends
+    /// AVC444.
+    avc444: Option<crate::avc444::Avc444State>,
     /// Counters for the one-off diagnostics above.
     unhandled_logged: u32,
     frames_seen: u32,
@@ -259,6 +264,13 @@ impl EgfxHandler {
             dumps: 0,
             composited: false,
             clear: ClearCodecDecoder::new(),
+            avc444: match crate::avc444::Avc444State::new() {
+                Ok(state) => Some(state),
+                Err(error) => {
+                    tracing::warn!(error, "AVC444 decoders unavailable; not advertising V10 caps");
+                    None
+                }
+            },
             rfx: HashMap::new(),
             ops_logged: 0,
             clear_dumps: 0,
@@ -377,6 +389,59 @@ bytes={}
         let sidecar = dir.join(format!("clear-{index:03}.txt"));
         if std::fs::write(&stream, &pdu.bitmap_data).is_ok() {
             let _ = std::fs::write(&sidecar, meta);
+        }
+    }
+
+    /// WireToSurface1 with AVC444: recombine the two 4:2:0 views into the
+    /// per-surface 4:4:4 planes and blit the touched regions (see `avc444`).
+    fn decode_avc444(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
+        use ironrdp_core::Decode as _;
+
+        let Some((sw, sh, ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.width, s.height, s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let Some(state) = self.avc444.as_mut() else {
+            // Can only happen if the server ignores our caps: we advertise
+            // V10+ only while the decoders exist.
+            if self.unhandled_logged < 20 {
+                self.unhandled_logged += 1;
+                tracing::warn!("AVC444 PDU but no decoder; frame dropped");
+            }
+            return;
+        };
+        let mut cursor = ironrdp_core::ReadCursor::new(&pdu.bitmap_data);
+        let stream = match ironrdp_egfx::pdu::Avc444BitmapStream::decode(&mut cursor) {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::warn!(%error, "AVC444 stream parse failed");
+                return;
+            }
+        };
+        match state.decode(pdu.surface_id, sw, sh, pdu.codec_id, &stream) {
+            Ok(regions) => {
+                if regions.is_empty() {
+                    return;
+                }
+                if let Ok(mut frame) = self.shared.lock() {
+                    for region in &regions {
+                        trace_paint("avc444", ox as usize + region.x, oy as usize + region.y, region.w, region.h);
+                        Self::blit_rect(
+                            &mut frame,
+                            ox as usize + region.x,
+                            oy as usize + region.y,
+                            region.w,
+                            region.h,
+                            &region.rgba,
+                        );
+                    }
+                    self.composited = true;
+                }
+            }
+            Err(error) => tracing::warn!(error, "AVC444 decode failed"),
         }
     }
 
@@ -550,25 +615,30 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
-    /// Advertise AVC420 (V8.1) but deliberately NOT V10.7.
-    ///
-    /// The trait default adds V10.7 when a decoder is present, and on V10+
-    /// capability sets AVC444 is implied enabled — Windows then prefers it.
-    /// But ironrdp-egfx 0.3 implements only AVC420; AVC444 PDUs are forwarded
-    /// to `on_unhandled_pdu`, so advertising V10.7 turns a working session
-    /// into undecoded rectangles. V8.1 with `AVC420_ENABLED` pins the server
-    /// to the one AVC codec the pipeline actually decodes, and V8 stays as
-    /// the no-AVC fallback the tile path serves.
+    /// Advertise V10.7 (AVC444, decoded by our avc444 module), V8.1 with
+    /// AVC420 (decoded upstream), and V8 as the no-AVC fallback the tile
+    /// path serves. ironrdp-egfx 0.3 forwards AVC444 PDUs to
+    /// `on_unhandled_pdu`, which is where the avc444 module picks them up.
     fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
-        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitySet};
-        vec![
-            CapabilitySet::V8_1 {
-                flags: CapabilitiesV81Flags::AVC420_ENABLED | CapabilitiesV81Flags::SMALL_CACHE,
-            },
-            CapabilitySet::V8 {
-                flags: CapabilitiesV8Flags::SMALL_CACHE,
-            },
-        ]
+        use ironrdp_egfx::pdu::{
+            CapabilitiesV107Flags, CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitySet,
+        };
+        let mut caps = Vec::with_capacity(3);
+        // V10.7 implies AVC444, which the avc444 module decodes. Only offered
+        // while its decoders exist — advertising it without them turns the
+        // desktop into undecoded rectangles.
+        if self.avc444.is_some() {
+            caps.push(CapabilitySet::V10_7 {
+                flags: CapabilitiesV107Flags::SMALL_CACHE,
+            });
+        }
+        caps.push(CapabilitySet::V8_1 {
+            flags: CapabilitiesV81Flags::AVC420_ENABLED | CapabilitiesV81Flags::SMALL_CACHE,
+        });
+        caps.push(CapabilitySet::V8 {
+            flags: CapabilitiesV8Flags::SMALL_CACHE,
+        });
+        caps
     }
 
     /// Always logged: which capability set the server actually confirmed is
@@ -580,6 +650,11 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
+        // AVC444 recombination state describes surfaces that are going away;
+        // fresh decoders avoid refining against a dead reference chain.
+        if let Some(state) = self.avc444.as_mut() {
+            state.reset();
+        }
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;
         if let Ok(mut frame) = self.shared.lock() {
@@ -616,9 +691,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
     fn on_surface_deleted(&mut self, surface_id: u16) {
         tracing::info!(id = surface_id, "surface deleted");
         self.surfaces.remove(&surface_id);
-        // Progressive and classic-RFX state are per-surface; they die with it.
+        // Progressive, classic-RFX and AVC444 state are per-surface; they die
+        // with it.
         self.progressive.delete_surface(surface_id);
         self.rfx.remove(&surface_id);
+        if let Some(state) = self.avc444.as_mut() {
+            state.delete_surface(surface_id);
+        }
     }
 
     /// `WireToSurface1` path (uncompressed / H.264): IronRDP hands us already-decoded
@@ -984,6 +1063,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
             match pdu.codec_id {
                 Codec1Type::ClearCodec => return self.decode_clear_codec(pdu),
                 Codec1Type::RemoteFx => return self.decode_classic_rfx(pdu),
+                Codec1Type::Avc444 | Codec1Type::Avc444v2 => return self.decode_avc444(pdu),
                 _ => {}
             }
         }

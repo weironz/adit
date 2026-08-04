@@ -16,6 +16,7 @@ use ironrdp_connector::{Config as ConnectorConfig, Credentials, DesktopSize};
 use thiserror::Error;
 
 mod clipboard;
+mod avc444;
 mod egfx;
 mod host;
 mod input;

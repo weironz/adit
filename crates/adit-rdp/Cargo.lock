@@ -35,6 +35,7 @@ dependencies = [
  "ironrdp-svc",
  "ironrdp-tls",
  "ironrdp-tokio",
+ "openh264",
  "smallvec",
  "sspi",
  "thiserror 2.0.18",

@@ -55,6 +55,9 @@ ironrdp-displaycontrol = "0.8"
 # for a Windows Media Foundation implementation of the same `H264Decoder`
 # trait if hardware decode is wanted.
 ironrdp-egfx = { version = "0.3", features = ["openh264-bundled"] }
+# Direct dependency for the AVC444 module: the auxiliary chroma view needs the
+# raw YUV planes, which ironrdp-egfx's RGBA-only decoder trait cannot expose.
+openh264 = "0.9"
 ironrdp-async = "0.10"
 ironrdp-tokio = { version = "0.10", features = ["reqwest"] }
 ironrdp-tls = { version = "0.2", features = ["rustls"] }
