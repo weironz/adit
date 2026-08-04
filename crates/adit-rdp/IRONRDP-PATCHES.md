@@ -33,10 +33,10 @@ crates.io connector.
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/`
 
 Pulled in via `[patch.crates-io] ironrdp-graphics = { path = "vendor/ironrdp-graphics" }`.
-Eight `ADIT PATCH` hunks across `src/progressive.rs` and `src/srl.rs`, both about **RemoteFX Progressive
+A set of `ADIT PATCH` hunks across `src/progressive.rs` and `src/srl.rs`, all about **RemoteFX Progressive
 as Windows encodes it**. Upstream's decoder was written against GNOME Remote
 Desktop and xrdp, which use the simpler tile mode; a Windows host exercises the
-true progressive path (TILE_FIRST + TILE_UPGRADE) and hit both bugs at once.
+true progressive path (TILE_FIRST + TILE_UPGRADE) and hit all of these.
 
 | Hunk | Bug | Symptom |
 |------|-----|---------|
@@ -47,12 +47,22 @@ true progressive path (TILE_FIRST + TILE_UPGRADE) and hit both bugs at once.
 | Difference flag | TILE_FIRST/TILE_SIMPLE `flags` bit 0 was parsed and never honored — `decode_first` always overwrote. Per FreeRDP (`add_16s_inplace`) a flagged tile's delta accumulates onto the tile's coefficients, in the dequantized domain. | The 26 flagged tiles of a captured frame rendered as flat gray rectangles punched into the image. |
 | Upgrade stream cursors | The SRL and raw refinement streams are ONE continuous bitstream per component, spanning all ten bands; both readers were rebuilt inside the band loop. | Only the first refined band read real data; every later band re-read the stream head as garbage — refinements added noise instead of detail. |
 | Upgrade scale + LL3 | Refinement bits were shifted by `curr_bit_pos` alone; the stored scale is `(quant−6)+bit_pos` (FreeRDP: `quant+prog−1` in its ×32 domain). And LL3 reads every coefficient from RAW (FreeRDP `nonLL=FALSE`), never SRL. | Upgrade contributions landed up to 16× too small, and LL3's SRL detour desynchronized both streams. |
+| Upgrade with no first pass | The upgrade path bailed with `Ok(Vec::new())` when the tile had never had a first pass — nothing painted, nothing logged, server counts the region as drawn. FreeRDP decodes unconditionally (`tile->pass++`). Now decoded, occurrences counted in `DecodedRegion::upgrades_without_base`. | A cell reached that way froze for the session. (Real drop bug, though it turned out not to fire in the ghost captures.) |
+| `DecodedTile::fresh` + hybrid application | Region rects are NOT a uniform clip mask. A FRESH pass (TILE_FIRST/TILE_SIMPLE) re-encodes the tile's *current* content and must blit **whole** — a captured stream re-encoded a whole tile icon→background under a rect overlapping it by 3px. An UPGRADE reconstructs the tile *as of its last FIRST* and must be **clipped to the rects**, else it rolls back pixels a `CacheToSurface` painted since. FreeRDP clips both; the split is ours, each half proven by its own capture. `egfx.rs` keys the blit on the flag. | Clipping fresh passes froze stale icons into the bitmap cache (duplicated-icon scroll residue); whole-blitting upgrades produced half-old half-new cells. |
 
 Both were found by capturing the real stream rather than by reading the spec at
 the symptom: `egfx.rs` writes `progressive-N.bin` under `%APPDATA%\Adit` when
 `ADIT_RDP_DUMP=1`, and `tests/progressive_dump.rs` replays a capture offline and
 renders it to PNG. That loop is what turned "the picture is wrong" into a
 one-line diff, twice. Keep it.
+
+The strongest form of that loop is `tests/merged_dump.rs` with
+`ADIT_MERGE_LOG`: it replays a whole session from the helper's own paint
+trace — progressive and ClearCodec dumps in log order, solid fills from their
+logged colour, and both bitmap-cache ops as real canvas copies. On the capture
+that settled the hybrid-application question it matched the live framebuffer
+to 99.7%, which is what made it possible to prove a fix on a captured session
+*before* deploying it. Keep that one too.
 
 The crate carries its own `[workspace]` table so `cargo test` can be run inside
 it — one hunk changes an upstream test's expected values.
