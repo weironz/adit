@@ -23,7 +23,11 @@ use ironrdp_egfx::pdu::{
     CacheToSurfacePdu, DeleteEncodingContextPdu, SolidFillPdu, SurfaceToCachePdu,
     SurfaceToSurfacePdu, WireToSurface2Pdu,
 };
+use ironrdp_graphics::clearcodec::ClearCodecDecoder;
+use ironrdp_graphics::image_processing::PixelFormat as GfxPixelFormat;
 use ironrdp_graphics::progressive::ProgressiveDecoder;
+use ironrdp_session::image::DecodedImage;
+use ironrdp_session::rfx::DecodingContext as RfxDecodingContext;
 
 /// Match the framebuffer clamp on the app side.
 const MAX_DIMENSION: u32 = 8192;
@@ -180,6 +184,22 @@ pub(crate) struct EgfxHandler {
     /// contents of a text box — frozen at whatever was on screen before, which
     /// is what made a logged-in desktop render as a mosaic of stale fragments.
     cache: HashMap<u16, CachedBitmap>,
+    /// ClearCodec decoder (glyph + vBar caches are session-global state).
+    ///
+    /// The codec exists, fully implemented, in the graphics crate — the EGFX
+    /// client just never wires it: WireToSurface1 with ClearCodec lands in
+    /// `on_unhandled_pdu`. Windows encodes sharp UI content (text boxes,
+    /// glyph runs, small controls) with it, so before this was connected a
+    /// logged-in desktop rendered as fragments and the logon password box
+    /// never appeared at all.
+    clear: ClearCodecDecoder,
+    /// Classic RemoteFX (TS_RFX) decoder + scratch image, per surface.
+    ///
+    /// Same story: `ironrdp_session::rfx::DecodingContext` is a complete
+    /// decoder sitting one crate over, used only by the legacy non-EGFX path.
+    /// Thin-client-mode Windows ships whole frames as classic RemoteFX inside
+    /// WireToSurface1.
+    rfx: HashMap<u16, (RfxDecodingContext, DecodedImage)>,
     /// Counters for the one-off diagnostics above.
     unhandled_logged: u32,
     frames_seen: u32,
@@ -200,6 +220,8 @@ impl EgfxHandler {
             progressive: ProgressiveDecoder::new(),
             dumps: 0,
             composited: false,
+            clear: ClearCodecDecoder::new(),
+            rfx: HashMap::new(),
             unclipped_logged: 0,
             unhandled_logged: 0,
             frames_seen: 0,
@@ -276,6 +298,114 @@ bytes={}
         Some(out)
     }
 
+    /// WireToSurface1 with ClearCodec: decode and composite at the
+    /// destination rectangle. The decoder outputs BGRA with alpha forced to
+    /// 0xFF; the framebuffer is RGBA, so channels swap during the blit.
+    fn decode_clear_codec(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
+        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let rect = &pdu.destination_rectangle;
+        let (w, h) = (
+            rect.right.saturating_sub(rect.left),
+            rect.bottom.saturating_sub(rect.top),
+        );
+        if w == 0 || h == 0 {
+            return;
+        }
+        let mut bgra = match self.clear.decode(&pdu.bitmap_data, w, h) {
+            Ok(bgra) => bgra,
+            Err(error) => {
+                tracing::warn!("ClearCodec decode failed: {error}");
+                return;
+            }
+        };
+        for px in bgra.chunks_exact_mut(4) {
+            px.swap(0, 2); // BGRA -> RGBA
+        }
+        if let Ok(mut frame) = self.shared.lock() {
+            Self::blit_rect(
+                &mut frame,
+                ox as usize + usize::from(rect.left),
+                oy as usize + usize::from(rect.top),
+                usize::from(w),
+                usize::from(h),
+                &bgra,
+            );
+            self.composited = true;
+        }
+    }
+
+    /// WireToSurface1 with classic RemoteFX (TS_RFX): decode through the
+    /// session crate's decoder into a per-surface scratch image, then copy the
+    /// updated region across. Thin-client-mode Windows ships entire frames
+    /// this way.
+    fn decode_classic_rfx(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
+        use ironrdp_pdu::geometry::InclusiveRectangle;
+
+        let Some((sw, sh, ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.width, s.height, s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let (context, image) = self.rfx.entry(pdu.surface_id).or_insert_with(|| {
+            (
+                RfxDecodingContext::new(),
+                DecodedImage::new(GfxPixelFormat::RgbA32, sw, sh),
+            )
+        });
+        if image.width() != sw || image.height() != sh {
+            *context = RfxDecodingContext::new();
+            *image = DecodedImage::new(GfxPixelFormat::RgbA32, sw, sh);
+        }
+
+        let rect = &pdu.destination_rectangle;
+        let destination = InclusiveRectangle {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right.saturating_sub(1),
+            bottom: rect.bottom.saturating_sub(1),
+        };
+        let mut cursor = ironrdp_core::ReadCursor::new(&pdu.bitmap_data);
+        let updated = match context.decode(image, &destination, &mut cursor) {
+            Ok((_frame_id, updated)) => updated,
+            Err(error) => {
+                tracing::warn!("classic RemoteFX decode failed: {error}");
+                return;
+            }
+        };
+
+        // Copy the updated region out of the scratch image (RgbA32 == the
+        // framebuffer's byte order, so this is a straight row copy).
+        let (ux, uy) = (usize::from(updated.left), usize::from(updated.top));
+        let uw = usize::from(updated.right.saturating_sub(updated.left)) + 1;
+        let uh = usize::from(updated.bottom.saturating_sub(updated.top)) + 1;
+        let img_w = usize::from(image.width());
+        let data = image.data();
+        let mut region = Vec::with_capacity(uw * uh * 4);
+        for row in 0..uh {
+            let start = ((uy + row) * img_w + ux) * 4;
+            let Some(slice) = data.get(start..start + uw * 4) else {
+                return;
+            };
+            region.extend_from_slice(slice);
+        }
+        if let Ok(mut frame) = self.shared.lock() {
+            Self::blit_rect(
+                &mut frame,
+                ox as usize + ux,
+                oy as usize + uy,
+                uw,
+                uh,
+                &region,
+            );
+            self.composited = true;
+        }
+    }
+
     /// Blit a window of one 64x64 tile: `w x h` pixels starting at
     /// `(sub_x, sub_y)` inside the tile, landing at `(px, py)` on the frame.
     #[expect(clippy::too_many_arguments, reason = "a rectangle is six numbers")]
@@ -308,24 +438,6 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
-    /// Advertise ONLY thin-client V8.
-    ///
-    /// The default advertisement offers plain V8, under which Windows encodes
-    /// sharp UI content — text boxes, glyph runs, small controls — as
-    /// ClearCodec, which neither IronRDP nor this handler decodes: a logged-in
-    /// desktop rendered as fragments over white, and the logon password box
-    /// (a ClearCodec rect at exactly its coordinates, per the unhandled-PDU
-    /// log) never appeared at all. THIN_CLIENT tells the server to stick to
-    /// the RemoteFX Progressive + solid-fill + cache repertoire — precisely
-    /// the operations implemented (and bug-fixed) here. Costs some bandwidth
-    /// on text-heavy screens; buys a desktop with every pixel present.
-    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
-        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitySet};
-        vec![CapabilitySet::V8 {
-            flags: CapabilitiesV8Flags::SMALL_CACHE | CapabilitiesV8Flags::THIN_CLIENT,
-        }]
-    }
-
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;
@@ -360,8 +472,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
     fn on_surface_deleted(&mut self, surface_id: u16) {
         self.surfaces.remove(&surface_id);
-        // Progressive tile state is per-surface; it dies with the surface.
+        // Progressive and classic-RFX state are per-surface; they die with it.
         self.progressive.delete_surface(surface_id);
+        self.rfx.remove(&surface_id);
     }
 
     /// `WireToSurface1` path (uncompressed / H.264): IronRDP hands us already-decoded
@@ -662,10 +775,21 @@ impl GraphicsPipelineHandler for EgfxHandler {
         self.cache.remove(&pdu.cache_slot);
     }
 
-    /// Anything the pipeline did not route. Logged because an unhandled PDU is
-    /// invisible otherwise, and a payload that fails to decode takes the rest
-    /// of its frame — EndFrame included — down with it.
+    /// Anything the pipeline did not route itself. The EGFX client decodes
+    /// only uncompressed and H.264 in WireToSurface1; ClearCodec and classic
+    /// RemoteFX land here and are decoded with the implementations that
+    /// already exist one crate over. Everything else is logged, because an
+    /// unhandled PDU is invisible otherwise.
     fn on_unhandled_pdu(&mut self, pdu: &ironrdp_egfx::pdu::GfxPdu) {
+        use ironrdp_egfx::pdu::{Codec1Type, GfxPdu};
+
+        if let GfxPdu::WireToSurface1(pdu) = pdu {
+            match pdu.codec_id {
+                Codec1Type::ClearCodec => return self.decode_clear_codec(pdu),
+                Codec1Type::RemoteFx => return self.decode_classic_rfx(pdu),
+                _ => {}
+            }
+        }
         if self.unhandled_logged < 20 {
             self.unhandled_logged += 1;
             tracing::warn!("unhandled EGFX pdu: {pdu:?}");
