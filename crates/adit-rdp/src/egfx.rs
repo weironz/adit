@@ -571,6 +571,14 @@ impl GraphicsPipelineHandler for EgfxHandler {
         ]
     }
 
+    /// Always logged: which capability set the server actually confirmed is
+    /// the difference between "AVC negotiated" and "server chose the tile
+    /// path anyway", and without it that question cost a log archaeology
+    /// session to half-answer.
+    fn on_capabilities_confirmed(&mut self, caps: &ironrdp_egfx::pdu::CapabilitySet) {
+        tracing::info!(?caps, "EGFX capabilities confirmed by server");
+    }
+
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;
