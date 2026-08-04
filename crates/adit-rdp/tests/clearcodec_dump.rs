@@ -91,7 +91,24 @@ fn captured_streams_replay() {
     let mut failures = 0usize;
 
     for capture in &captures {
-        match decoder.decode(&capture.data, capture.w, capture.h) {
+        // Seed the decode with the destination, exactly as the live path does:
+        // ClearCodec's layers need not cover the tile, and what they skip keeps
+        // the surface's existing pixels. Replaying against a zeroed buffer
+        // would hide precisely the class of bug this harness exists to find.
+        let (cx, cy) = (usize::from(capture.x), usize::from(capture.y));
+        let (cw, ch) = (usize::from(capture.w), usize::from(capture.h));
+        let background = (cx + cw <= sw && cy + ch <= sh).then(|| {
+            let mut bgra = Vec::with_capacity(cw * ch * 4);
+            for row in 0..ch {
+                let start = ((cy + row) * sw + cx) * 4;
+                bgra.extend_from_slice(&surface_rgba[start..start + cw * 4]);
+            }
+            for px in bgra.chunks_exact_mut(4) {
+                px.swap(0, 2); // RGBA -> BGRA
+            }
+            bgra
+        });
+        match decoder.decode_onto(&capture.data, capture.w, capture.h, background.as_deref()) {
             Ok(mut bgra) => {
                 for px in bgra.chunks_exact_mut(4) {
                     px.swap(0, 2); // BGRA -> RGBA
@@ -108,18 +125,13 @@ fn captured_streams_replay() {
                 )
                 .expect("write tile png");
 
-                // Alpha-masked composite, matching the live path.
-                let (x, y) = (usize::from(capture.x), usize::from(capture.y));
-                let (w, h) = (usize::from(capture.w), usize::from(capture.h));
-                for row in 0..h.min(sh.saturating_sub(y)) {
-                    for col in 0..w.min(sw.saturating_sub(x)) {
-                        let src = (row * w + col) * 4;
-                        if bgra[src + 3] == 0 {
-                            continue;
-                        }
-                        let dst = ((y + row) * sw + x + col) * 4;
-                        surface_rgba[dst..dst + 4].copy_from_slice(&bgra[src..src + 4]);
-                    }
+                // Opaque composite, matching the live path: the buffer was
+                // seeded with this rectangle, so every pixel is authoritative.
+                for row in 0..ch.min(sh.saturating_sub(cy)) {
+                    let cols = cw.min(sw.saturating_sub(cx));
+                    let src = row * cw * 4;
+                    let dst = ((cy + row) * sw + cx) * 4;
+                    surface_rgba[dst..dst + cols * 4].copy_from_slice(&bgra[src..src + cols * 4]);
                 }
             }
             Err(error) => {

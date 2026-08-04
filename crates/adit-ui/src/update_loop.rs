@@ -90,6 +90,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.rdp_frame_generation = frame.generation;
                     app.rdp_frame_uploaded = Some(Instant::now());
                     app.rdp_surface_size = Some((frame.width, frame.height));
+                    dump_rdp_frame(&frame);
                     app.rdp_tiles = split_into_tiles(&frame);
                 }
             }
@@ -1923,4 +1924,35 @@ pub(crate) fn split_into_tiles(frame: &adit_session::RdpFrame) -> Vec<RdpTile> {
         }
     }
     tiles
+}
+
+/// Write the app-side desktop framebuffer to disk, under `ADIT_RDP_FRAMES`.
+///
+/// This is the one instrument that separates "the helper composited it wrong"
+/// from "the renderer displayed it wrong": the bytes here are exactly what the
+/// helper produced and exactly what the tiles are cut from. A ghost visible on
+/// screen but ABSENT from these PNGs is a presentation bug; a ghost present in
+/// them came over the wire.
+///
+/// Best-effort and opt-in — a desktop framebuffer is a picture of the user's
+/// screen, and at 8.8 MB a frame this is not something to do by default.
+fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static COUNT: AtomicU32 = AtomicU32::new(0);
+
+    let Some(dir) = std::env::var_os("ADIT_RDP_FRAMES") else {
+        return;
+    };
+    // Ring, not a prefix: the artefact worth capturing is whatever the user
+    // was looking at when they stopped, and a first-40-frames cap only ever
+    // catches the logon screen.
+    const RING: u32 = 40;
+    let index = COUNT.fetch_add(1, Ordering::Relaxed) % RING;
+    let path = std::path::PathBuf::from(dir).join(format!("frame-{index:03}.png"));
+    // PNG by hand would need an encoder here; a raw dump plus its dimensions is
+    // enough for the offline comparison and keeps this dependency-free.
+    let meta = format!("{}x{}
+", frame.width, frame.height);
+    let _ = std::fs::write(path.with_extension("txt"), meta);
+    let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
 }

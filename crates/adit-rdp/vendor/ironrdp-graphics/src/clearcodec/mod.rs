@@ -45,6 +45,37 @@ impl ClearCodecDecoder {
     /// `0xFF` unconditionally. Callers that need to preserve alpha across the
     /// network must transport it separately.
     pub fn decode(&mut self, data: &[u8], width: u16, height: u16) -> DecodeResult<Vec<u8>> {
+        self.decode_onto(data, width, height, None)
+    }
+
+    /// Decode a stream over a BGRA copy of what the destination already holds.
+    ///
+    /// ADIT PATCH: ClearCodec's layers need not cover the whole tile. The
+    /// residual, band and subcodec layers each paint a subset, and whatever
+    /// none of them touches is *supposed* to keep what the destination already
+    /// had — FreeRDP gets that for free by decoding straight into the
+    /// destination surface. Decoding into a zeroed scratch buffer instead
+    /// leaves those pixels transparent black, and then neither way of
+    /// compositing is right: blit them opaquely and they punch holes through
+    /// the desktop, skip them by alpha and the pixels underneath survive as
+    /// ghosts of whatever stood there before — doubled icons after a scroll,
+    /// frozen into the framebuffer because the server considers the region
+    /// painted and never sends it again.
+    ///
+    /// Seeding the buffer with the destination removes the choice: untouched
+    /// pixels already hold the right colour, so the caller blits opaquely and
+    /// the glyph cache stores post-composite pixels, exactly like FreeRDP's
+    /// `clear_decompress_glyph_data`.
+    ///
+    /// `background` must be `width * height * 4` bytes of BGRA; anything else
+    /// is ignored and the buffer starts zeroed, as it did before.
+    pub fn decode_onto(
+        &mut self,
+        data: &[u8],
+        width: u16,
+        height: u16,
+        background: Option<&[u8]>,
+    ) -> DecodeResult<Vec<u8>> {
         let mut src = ReadCursor::new(data);
         let stream = ClearCodecBitmapStream::decode(&mut src)?;
 
@@ -122,8 +153,12 @@ impl ClearCodecDecoder {
             ));
         }
 
-        // Decode composite payload
-        let mut output = vec![0u8; pixel_count * 4];
+        // Decode composite payload, over the destination when the caller
+        // supplied it (see `decode_onto`).
+        let mut output = match background {
+            Some(bg) if bg.len() == pixel_count * 4 => bg.to_vec(),
+            _ => vec![0u8; pixel_count * 4],
+        };
 
         if let Some(ref composite) = stream.composite {
             self.decode_composite(composite, &mut output, width, height)?;

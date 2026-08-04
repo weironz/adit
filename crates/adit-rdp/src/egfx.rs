@@ -204,6 +204,8 @@ pub(crate) struct EgfxHandler {
     /// Thin-client-mode Windows ships whole frames as classic RemoteFX inside
     /// WireToSurface1.
     rfx: HashMap<u16, (RfxDecodingContext, DecodedImage)>,
+    /// How many composition-op probe lines have been logged.
+    ops_logged: u32,
     /// How many ClearCodec streams have been written out.
     clear_dumps: u32,
     /// Counters for the one-off diagnostics above.
@@ -228,6 +230,7 @@ impl EgfxHandler {
             composited: false,
             clear: ClearCodecDecoder::new(),
             rfx: HashMap::new(),
+            ops_logged: 0,
             clear_dumps: 0,
             unclipped_logged: 0,
             unhandled_logged: 0,
@@ -287,38 +290,6 @@ bytes={}
             let dst = ((y + row) * fw + x) * 4;
             let src = row * w * 4;
             frame.rgba[dst..dst + cols * 4].copy_from_slice(&rgba[src..src + cols * 4]);
-        }
-        grow_dirty(frame, x, y, cols, rows);
-    }
-
-    /// Like [`blit_rect`], but leaves the frame untouched wherever the source
-    /// pixel is fully transparent.
-    fn blit_rect_masked(
-        frame: &mut EgfxFrame,
-        x: usize,
-        y: usize,
-        w: usize,
-        h: usize,
-        rgba: &[u8],
-    ) {
-        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
-        if x >= fw || y >= fh || w == 0 || h == 0 {
-            return;
-        }
-        let cols = w.min(fw - x);
-        let rows = h.min(fh - y);
-        if rgba.len() < (rows - 1) * w * 4 + cols * 4 {
-            return;
-        }
-        for row in 0..rows {
-            for col in 0..cols {
-                let src = (row * w + col) * 4;
-                if rgba[src + 3] == 0 {
-                    continue;
-                }
-                let dst = ((y + row) * fw + x + col) * 4;
-                frame.rgba[dst..dst + 4].copy_from_slice(&rgba[src..src + 4]);
-            }
         }
         grow_dirty(frame, x, y, cols, rows);
     }
@@ -395,7 +366,23 @@ bytes={}
         if w == 0 || h == 0 {
             return;
         }
-        let outcome = self.clear.decode(&pdu.bitmap_data, w, h);
+        // Hand the decoder the pixels already on screen, as BGRA. ClearCodec's
+        // layers need not cover the whole tile, and what they skip must keep
+        // the destination's colour — see `ClearCodecDecoder::decode_onto`.
+        let (dx, dy) = (
+            ox as usize + usize::from(rect.left),
+            oy as usize + usize::from(rect.top),
+        );
+        let background = self.shared.lock().ok().and_then(|frame| {
+            let mut rgba = Self::read_rect(&frame, dx, dy, usize::from(w), usize::from(h))?;
+            for px in rgba.chunks_exact_mut(4) {
+                px.swap(0, 2); // RGBA -> BGRA
+            }
+            Some(rgba)
+        });
+        let outcome = self
+            .clear
+            .decode_onto(&pdu.bitmap_data, w, h, background.as_deref());
         // Capture under ADIT_RDP_DUMP, successes included: the glyph and v-bar
         // caches are stateful, so a failing stream can only be replayed in the
         // order it arrived — the lesson the progressive captures already
@@ -420,24 +407,13 @@ bytes={}
             px.swap(0, 2); // BGRA -> RGBA
         }
         if let Ok(mut frame) = self.shared.lock() {
-            // Alpha-masked: a ClearCodec tile is composited from layers that
-            // need not cover it, and the decoder leaves untouched pixels fully
-            // transparent (its buffer starts zeroed and every layer writes
-            // alpha 0xFF where it paints). Blitting those as opaque black
-            // punched holes through the desktop — and the glyph cache stores
-            // the same buffer, so every later hit on it repainted the holes.
-            // FreeRDP has no holes to skip because it fills its cache slot
-            // from the composited DESTINATION surface; skipping transparent
-            // pixels reaches the same result without needing the destination
-            // at decode time.
-            Self::blit_rect_masked(
-                &mut frame,
-                ox as usize + usize::from(rect.left),
-                oy as usize + usize::from(rect.top),
-                usize::from(w),
-                usize::from(h),
-                &bgra,
-            );
+            // Opaque, because the buffer was seeded with this very rectangle:
+            // there are no untouched pixels left to decide about. The masked
+            // blit this replaces was the ghosting — it skipped every pixel the
+            // codec's layers had not covered, so the previous frame's content
+            // showed through and, since the server counts the region as
+            // painted, stayed there for good.
+            Self::blit_rect(&mut frame, dx, dy, usize::from(w), usize::from(h), &bgra);
             self.composited = true;
         }
     }
@@ -791,6 +767,17 @@ impl GraphicsPipelineHandler for EgfxHandler {
             usize::from(r.right.saturating_sub(r.left)),
             usize::from(r.bottom.saturating_sub(r.top)),
         );
+        if self.ops_logged < 60 {
+            self.ops_logged += 1;
+            tracing::info!(
+                src_left = r.left,
+                src_top = r.top,
+                w,
+                h,
+                dests = ?pdu.destination_points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+                "surface-to-surface"
+            );
+        }
         if let Ok(mut frame) = self.shared.lock() {
             // Read once, then write every destination: the regions may overlap,
             // and a straight memmove per destination would smear.
@@ -860,7 +847,16 @@ impl GraphicsPipelineHandler for EgfxHandler {
             tracing::warn!(slot = pdu.cache_slot, "cache blit for an unknown slot");
             return;
         };
+        let (ew, eh) = (entry.width, entry.height);
+        let dests: Vec<(u16, u16)> = pdu.destination_points.iter().map(|p| (p.x, p.y)).collect();
+        if self.ops_logged < 60 {
+            self.ops_logged += 1;
+            tracing::info!(slot = pdu.cache_slot, ew, eh, ?dests, "cache-to-surface");
+        }
         if let Ok(mut frame) = self.shared.lock() {
+            let Some(entry) = self.cache.get(&pdu.cache_slot) else {
+                return;
+            };
             for point in &pdu.destination_points {
                 Self::blit_rect(
                     &mut frame,
