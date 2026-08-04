@@ -381,7 +381,33 @@ impl ClearCodecDecoder {
                 }
             }
             SubcodecId::NsCodec => {
-                // Not yet implemented; encoder avoids generating NSCodec tiles.
+                // ADIT PATCH: was a silent no-op.
+                //
+                // The comment that used to sit here read "encoder avoids
+                // generating NSCodec tiles" — true of this crate's encoder,
+                // and irrelevant to Windows, which uses NSCodec subcodecs for
+                // every photographic or gradient region. The region simply
+                // went unpainted, with no error: 101 of 512 captured streams
+                // decoded "successfully" to a fully transparent tile, which is
+                // what left the desktop a mosaic of stale rectangles.
+                let bgra = crate::nscodec::decode(sub.bitmap_data, sub.width, sub.height)?;
+                let w = usize::from(sub.width);
+                let h = usize::from(sub.height);
+                if bgra.len() < w * h * 4 {
+                    return Err(invalid_field_err!("bitmapData", "NSCodec output too short"));
+                }
+                for row in 0..h {
+                    for col in 0..w {
+                        let x = usize::from(sub.x_start) + col;
+                        let y = usize::from(sub.y_start) + row;
+                        let src_idx = (row * w + col) * 4;
+                        let dst_idx = (y * sw + x) * 4;
+                        output[dst_idx] = bgra[src_idx];
+                        output[dst_idx + 1] = bgra[src_idx + 1];
+                        output[dst_idx + 2] = bgra[src_idx + 2];
+                        output[dst_idx + 3] = 0xFF;
+                    }
+                }
             }
         }
 

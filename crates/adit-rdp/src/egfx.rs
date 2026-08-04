@@ -539,51 +539,6 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
-    /// Advertise thin-client V8: RemoteFX only, no ClearCodec.
-    ///
-    /// This is an evidence-based routing decision, not a guess and not a
-    /// concession made without measuring.
-    ///
-    /// The ClearCodec path here now reports ZERO decode failures — five real
-    /// bugs were found against FreeRDP and fixed (see IRONRDP-PATCHES.md), and
-    /// the 228-failure sessions are gone. But error-free is not correct: the
-    /// decoder still produces wrong pixels silently, and four rounds of fixing
-    /// moved the artefacts around rather than removing them. Meanwhile
-    /// thin-client mode — RemoteFX Progressive plus classic RemoteFX, both of
-    /// which decode cleanly here — was verified by hand to render a full
-    /// desktop with no mosaic at all.
-    ///
-    /// So the server is asked not to use ClearCodec. The decoder stays wired
-    /// and stays fixed, so re-enabling it is deleting this function; do that
-    /// once its output can be checked against a reference rather than against
-    /// a screenshot. `tests/clearcodec_dump.rs`-style offline replay of a
-    /// capture (ADIT_RDP_DUMP=1) is the way to earn that confidence.
-    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
-        use ironrdp_egfx::pdu::{
-            CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitiesV107Flags, CapabilitySet,
-        };
-        // Capture mode: under ADIT_RDP_DUMP, advertise the FULL set so the
-        // server sends ClearCodec again and dump_clear_stream can record real
-        // streams for offline diffing. Normal launches keep thin-client, which
-        // is the verified-clean path (RemoteFX only, no ClearCodec).
-        if std::env::var_os("ADIT_RDP_DUMP").is_some() {
-            return vec![
-                CapabilitySet::V10_7 {
-                    flags: CapabilitiesV107Flags::SMALL_CACHE,
-                },
-                CapabilitySet::V8_1 {
-                    flags: CapabilitiesV81Flags::SMALL_CACHE,
-                },
-                CapabilitySet::V8 {
-                    flags: CapabilitiesV8Flags::SMALL_CACHE,
-                },
-            ];
-        }
-        vec![CapabilitySet::V8 {
-            flags: CapabilitiesV8Flags::SMALL_CACHE | CapabilitiesV8Flags::THIN_CLIENT,
-        }]
-    }
-
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;

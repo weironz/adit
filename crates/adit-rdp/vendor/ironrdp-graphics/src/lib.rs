@@ -8,6 +8,7 @@ pub mod diff;
 pub mod dwt;
 pub mod dwt_extrapolate;
 pub mod image_processing;
+pub mod nscodec;
 pub mod pointer;
 pub mod progressive;
 pub mod quantization;

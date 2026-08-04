@@ -73,6 +73,27 @@ took a logged-in desktop from "every ClearCodec region is a white rectangle"
 The crate carries its own `[workspace]` table so `cargo test` runs in place —
 one hunk corrects an upstream test that had encoded the transposed layout.
 
+### Added — `vendor/ironrdp-graphics/src/nscodec.rs` (MS-RDPNSC)
+
+**IronRDP has no NSCodec at all** — only capability-set constants naming it.
+That stayed invisible until ClearCodec was wired up, because ClearCodec can
+carry a whole region as an NSCodec *subcodec*, and that arm was a silent
+no-op whose comment read "encoder avoids generating NSCodec tiles" (true of
+IronRDP's own encoder, irrelevant to Windows). Windows uses NSCodec for every
+photographic and gradient region.
+
+In a captured session **101 of 512** ClearCodec streams carried nothing but an
+NSCodec subcodec: zero decode errors, zero pixels painted. Composited as
+opaque black that was a field of black holes; composited alpha-masked it left
+stale content — the mosaic, in both of its forms.
+
+`nscodec.rs` is a port of FreeRDP `libfreerdp/codec/nsc.c` (`nsc_stream_initialize`,
+`nsc_rle_decode`, `nsc_rle_decompress_data`, `nsc_decode`): four RLE planes
+(Y, Co, Cg, A), optional chroma subsampling, YCoCg→RGB with the colour-loss
+shift. Verified by replaying the capture: 512/512 tiles now decode fully
+opaque, and the regions that were blank come back as the article thumbnails,
+app icons and avatars they always were.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/` (ClearCodec)
 
 Three more `ADIT PATCH` hunks in `src/clearcodec/`, all cascade-limiting: the
