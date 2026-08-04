@@ -94,81 +94,87 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
 /// double-cursor; its shape is a plain arrow for now.
 pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let handle = app.rdp_image.clone();
+    let previous = app.rdp_image_prev.clone();
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
 
     let display_scale = app.display_scale.max(0.1);
-    let surface = iced::widget::responsive(move |area| {
-        let Some(handle) = handle.clone() else {
-            return container(text("正在连接 RDP…").size(14).color(muted_text()))
-                .center_x(Fill)
-                .center_y(Fill)
-                .into();
-        };
-
-        // 1:1 presentation: the frame is `sw x sh` DEVICE pixels (the viewport
-        // was requested in physical pixels), so its logical size is the frame
-        // divided by the display scale — then the compositor's DPI scaling
-        // lands every frame pixel on exactly one device pixel and Nearest
-        // never resamples. `Fill` + Contain instead scaled by the pane ratio
-        // AND the DPI, which is why text stayed soft no matter how cleanly
-        // the codec decoded. During a resize renegotiation the sizes disagree
-        // for a moment; the Fill fallback bounds that transient with Contain.
-        let dw = f32::from(sw) / display_scale;
-        let dh = f32::from(sh) / display_scale;
-        let fits = dw <= area.width + 0.5 && dh <= area.height + 0.5;
-        let picture = iced::widget::image(handle)
-            .filter_method(iced::widget::image::FilterMethod::Nearest)
-            .content_fit(iced::ContentFit::Contain);
-        let picture = if sw > 0 && fits {
-            picture.width(Length::Fixed(dw)).height(Length::Fixed(dh))
-        } else {
-            picture.width(Fill).height(Fill)
-        };
-
-        mouse_area(picture)
-            .on_move(move |p| {
-                // Map the widget-local cursor to remote pixels. In the 1:1
-                // case that is a pure scale; in the transient fitted case,
-                // undo the Contain letterbox. Guard against a zero surface or
-                // a zero-area transition frame (would divide by 0).
-                if sw == 0 || sh == 0 || area.width <= 0.0 || area.height <= 0.0 {
-                    return Message::RdpPointerMoved(Point::ORIGIN);
-                }
-                let dw = f32::from(sw) / display_scale;
-                let dh = f32::from(sh) / display_scale;
-                let fits = dw <= area.width + 0.5 && dh <= area.height + 0.5;
-                if fits {
-                    let x = (p.x * display_scale).clamp(0.0, f32::from(sw) - 1.0);
-                    let y = (p.y * display_scale).clamp(0.0, f32::from(sh) - 1.0);
-                    return Message::RdpPointerMoved(Point::new(x, y));
-                }
-                let scale = (area.width / f32::from(sw)).min(area.height / f32::from(sh));
-                let dw = f32::from(sw) * scale;
-                let dh = f32::from(sh) * scale;
-                let ox = (area.width - dw) / 2.0;
-                let oy = (area.height - dh) / 2.0;
-                let x = ((p.x - ox) / scale).clamp(0.0, f32::from(sw) - 1.0);
-                let y = ((p.y - oy) / scale).clamp(0.0, f32::from(sh) - 1.0);
-                Message::RdpPointerMoved(Point::new(x, y))
+    let Some(handle) = handle else {
+        return container(text("正在连接 RDP…").size(14).color(muted_text()))
+            .width(Fill)
+            .height(Fill)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_theme| container::Style {
+                background: Some(Color::BLACK.into()),
+                ..container::Style::default()
             })
-            .on_press(Message::RdpPressed(mouse::Button::Left))
-            .on_release(Message::RdpReleased(mouse::Button::Left))
-            .on_right_press(Message::RdpPressed(mouse::Button::Right))
-            .on_right_release(Message::RdpReleased(mouse::Button::Right))
-            .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
-            .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
-            .on_scroll(Message::RdpScrolled)
-            .into()
-    });
+            .into();
+    };
 
-    container(surface)
-        .width(Fill)
-        .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(Color::BLACK.into()),
-            ..container::Style::default()
-        })
-        .into()
+    // Fixed size, no `responsive`.
+    //
+    // The frame is `sw x sh` DEVICE pixels (the viewport is requested in
+    // physical pixels), so its logical size is that divided by the display
+    // scale — then the compositor's DPI scaling lands every frame pixel on
+    // exactly one device pixel and Nearest never resamples.
+    //
+    // `responsive` used to wrap this to obtain the pane rectangle, and it is
+    // gone deliberately: it re-runs its closure whenever layout is
+    // invalidated, and iced renders its content EMPTY for that frame — the
+    // black container showing through. Every message re-renders, so clicking
+    // (which also flips `terminal_focused`) made the flicker visibly worse.
+    // Nothing here needs the pane rectangle any more: the size comes from the
+    // frame, and the pointer map is a pure scale because `mouse_area` reports
+    // coordinates local to the image it wraps.
+    let dw = f32::from(sw).max(1.0) / display_scale;
+    let dh = f32::from(sh).max(1.0) / display_scale;
+    let picture = |handle: iced::widget::image::Handle| {
+        iced::widget::image(handle)
+            .width(Length::Fixed(dw))
+            .height(Length::Fixed(dh))
+            .filter_method(iced::widget::image::FilterMethod::Nearest)
+            .content_fit(iced::ContentFit::Fill)
+    };
+    // Previous frame underneath, current on top: identical geometry, so the
+    // only time the underlay is visible is the frame where the new upload has
+    // not landed — which is exactly the frame that used to go black.
+    let layers: Element<'_, Message> = match previous {
+        Some(previous) => iced::widget::stack![picture(previous), picture(handle)].into(),
+        None => picture(handle).into(),
+    };
+    let surface = mouse_area(layers)
+    .on_move(move |p| {
+        if sw == 0 || sh == 0 {
+            return Message::RdpPointerMoved(Point::ORIGIN);
+        }
+        let x = (p.x * display_scale).clamp(0.0, f32::from(sw) - 1.0);
+        let y = (p.y * display_scale).clamp(0.0, f32::from(sh) - 1.0);
+        Message::RdpPointerMoved(Point::new(x, y))
+    })
+    .on_press(Message::RdpPressed(mouse::Button::Left))
+    .on_release(Message::RdpReleased(mouse::Button::Left))
+    .on_right_press(Message::RdpPressed(mouse::Button::Right))
+    .on_right_release(Message::RdpReleased(mouse::Button::Right))
+    .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
+    .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
+    .on_scroll(Message::RdpScrolled);
+
+    // Centred, and scrollable when the desktop is momentarily larger than the
+    // pane (a resize renegotiation in flight): clipping a fixed-size child
+    // would otherwise hide part of it with no way to reach it.
+    container(scrollable(container(surface).center_x(Fill)).direction(
+        iced::widget::scrollable::Direction::Both {
+            vertical: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
+            horizontal: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
+        },
+    ))
+    .width(Fill)
+    .height(Fill)
+    .style(|_theme| container::Style {
+        background: Some(Color::BLACK.into()),
+        ..container::Style::default()
+    })
+    .into()
 }
 
 /// Map an iced mouse button to the RDP button set (`Other` is ignored).

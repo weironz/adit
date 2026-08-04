@@ -256,6 +256,16 @@ pub struct AditApp {
     /// When the RDP texture was last handed to the renderer (see the throttle
     /// in the frame sampler).
     rdp_frame_uploaded: Option<Instant>,
+    /// The previously uploaded desktop texture, kept as an underlay.
+    ///
+    /// iced_wgpu skips an image entirely for any frame where its upload is not
+    /// resident yet (`image/mod.rs` prepare: `if let Some(..) =
+    /// cache.upload_raster(..)`), and every `Handle::from_rgba` mints a fresh
+    /// id, so every update is a miss and every miss was a black frame. Drawing
+    /// the previous texture underneath means a not-yet-resident update falls
+    /// back to the last good picture instead of to the black container — and
+    /// because both are referenced each frame, neither is evicted.
+    rdp_image_prev: Option<iced::widget::image::Handle>,
     // RDP clipboard: only this process has a Windows clipboard (the helper is
     // windowless), so local→remote means polling it while an RDP tab is up.
     // `rdp_clipboard_offered` is the last text handed to the helper — it stops
@@ -1100,6 +1110,7 @@ impl AditApp {
             rdp_target_size: None,
             rdp_frame_session: None,
             rdp_frame_uploaded: None,
+            rdp_image_prev: None,
             rdp_clipboard_offered: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,

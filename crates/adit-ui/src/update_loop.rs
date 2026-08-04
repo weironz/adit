@@ -64,6 +64,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_frame_session = active;
                 app.rdp_frame_generation = 0;
                 app.rdp_image = None;
+                app.rdp_image_prev = None;
                 app.rdp_surface_size = None;
                 // Different session ⇒ forget the requested size so the next layout
                 // sync re-asserts the viewport for the newly-active desktop.
@@ -90,6 +91,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.rdp_frame_generation = frame.generation;
                     app.rdp_frame_uploaded = Some(Instant::now());
                     app.rdp_surface_size = Some((frame.width, frame.height));
+                    // Demote the current texture to the underlay before
+                    // replacing it, so the pane never has nothing to draw.
+                    app.rdp_image_prev = app.rdp_image.take();
                     app.rdp_image = Some(iced::widget::image::Handle::from_rgba(
                         u32::from(frame.width),
                         u32::from(frame.height),
