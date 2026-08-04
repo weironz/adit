@@ -1024,6 +1024,19 @@ pub struct DecodedTile {
     pub y_idx: u16,
     /// RGBA pixel data (64x64 = 16384 bytes).
     pub pixels: Vec<u8>,
+    /// Whether this pass re-encoded the tile's content (TILE_FIRST or
+    /// TILE_SIMPLE) rather than refining it (TILE_UPGRADE).
+    ///
+    /// ADIT PATCH: the compositor needs this to pick the blit shape. A fresh
+    /// pass reconstructs the server's *current* screen content for the whole
+    /// tile, so it must be applied whole (the region rects understate it -- a
+    /// captured stream re-encoded a whole tile under a 3px rect). An upgrade
+    /// reconstructs the tile as of its last FIRST; if a bitmap-cache blit
+    /// painted part of the tile since, applying the upgrade whole rolls those
+    /// pixels back to pre-blit content -- the half-icon residue -- so upgrades
+    /// are clipped to the region rects, which is exactly the area the server
+    /// is refining.
+    pub fresh: bool,
 }
 
 /// A dirty rectangle from a REGION block, in surface coordinates.
@@ -1344,7 +1357,7 @@ fn decode_tile_block(
             let mut pixels = vec![0u8; 64 * 64 * 4];
             tile_state.reconstruct_to_rgba(&mut pixels);
 
-            Ok(vec![DecodedTile { x_idx, y_idx, pixels }])
+            Ok(vec![DecodedTile { x_idx, y_idx, pixels, fresh: true }])
         }
 
         ProgressiveTile::First(tile) => {
@@ -1414,7 +1427,7 @@ fn decode_tile_block(
             let mut pixels = vec![0u8; 64 * 64 * 4];
             tile_state.reconstruct_to_rgba(&mut pixels);
 
-            Ok(vec![DecodedTile { x_idx, y_idx, pixels }])
+            Ok(vec![DecodedTile { x_idx, y_idx, pixels, fresh: true }])
         }
 
         ProgressiveTile::Upgrade(tile) => {
@@ -1505,7 +1518,7 @@ fn decode_tile_block(
             let mut pixels = vec![0u8; 64 * 64 * 4];
             tile_state.reconstruct_to_rgba(&mut pixels);
 
-            Ok(vec![DecodedTile { x_idx, y_idx, pixels }])
+            Ok(vec![DecodedTile { x_idx, y_idx, pixels, fresh: false }])
         }
     }
 }

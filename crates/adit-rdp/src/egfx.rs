@@ -670,40 +670,65 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
         if let Ok(mut frame) = self.shared.lock() {
             for tile in &decoded.tiles {
-                // A tile is applied WHOLE. The region rects are dirty hints,
-                // not a clip mask — a captured Windows session refutes
-                // clipping outright: one stream sends TILE_FIRST(4,7) holding
-                // an icon under rect (192,448,407x64) [tile fully inside],
-                // and two streams later a fresh TILE_FIRST(4,7) holding plain
-                // background under rect (317,448,282x64) — which overlaps the
-                // tile by THREE pixel columns. The server re-encoded the whole
-                // tile with its current content while declaring a sliver
-                // dirty; it plainly expects whole-tile application (mstsc
-                // renders the same sequence clean). Clipping kept the icon's
-                // 61 stale columns on the canvas, the next SurfaceToCache
-                // snapshotted the ghost, and CacheToSurface stamped it back
-                // across the session — the frozen scroll residue.
+                // Hybrid blit, keyed on what the pass reconstructs.
                 //
-                // The stale-cache smearing that once motivated clipping was
-                // real, but its cause was the then-broken upgrade/difference
-                // accumulation (quant shifts, diff flag, i64 YCbCr — all
-                // fixed since). With accumulation correct, the reconstructed
-                // tile IS the tile's current content, and the encoder
-                // re-encodes any tile a change touches, so whole-tile blits
-                // are exactly what the encoder models.
+                // A FRESH pass (TILE_FIRST/TILE_SIMPLE) re-encodes the tile's
+                // current screen content, so it is applied WHOLE: the region
+                // rects understate it -- a captured stream re-encoded a whole
+                // tile (icon -> background) under a rect overlapping it by 3
+                // pixel columns, and clipping to that kept 61 stale columns
+                // alive; the bitmap cache then snapshotted and re-stamped
+                // them for the rest of the session (the frozen ghosts).
+                //
+                // An UPGRADE reconstructs the tile as of its last FIRST. If a
+                // CacheToSurface blit painted part of the tile since, whole
+                // application rolls those pixels back to pre-blit content --
+                // seen live as half-old half-new cells right after the
+                // whole-tile change shipped. So upgrades are clipped to the
+                // region rects, which bound exactly the area the server is
+                // refining. (FreeRDP clips everything; the fresh/upgrade
+                // split is ours, forced by two captures disagreeing about
+                // which side lies.)
                 let tx = usize::from(tile.x_idx) * TILE;
                 let ty = usize::from(tile.y_idx) * TILE;
-                trace_paint("progressive", ox as usize + tx, oy as usize + ty, TILE, TILE);
-                Self::blit_tile_window(
-                    &mut frame,
-                    ox as usize + tx,
-                    oy as usize + ty,
-                    0,
-                    0,
-                    TILE,
-                    TILE,
-                    &tile.pixels,
-                );
+                if tile.fresh {
+                    trace_paint("progressive", ox as usize + tx, oy as usize + ty, TILE, TILE);
+                    Self::blit_tile_window(
+                        &mut frame,
+                        ox as usize + tx,
+                        oy as usize + ty,
+                        0,
+                        0,
+                        TILE,
+                        TILE,
+                        &tile.pixels,
+                    );
+                } else {
+                    for rect in &decoded.rects {
+                        let rx0 = usize::from(rect.x);
+                        let ry0 = usize::from(rect.y);
+                        let rx1 = rx0 + usize::from(rect.width);
+                        let ry1 = ry0 + usize::from(rect.height);
+                        let cx0 = tx.max(rx0);
+                        let cy0 = ty.max(ry0);
+                        let cx1 = (tx + TILE).min(rx1);
+                        let cy1 = (ty + TILE).min(ry1);
+                        if cx0 >= cx1 || cy0 >= cy1 {
+                            continue;
+                        }
+                        trace_paint("progressive-upgrade", ox as usize + cx0, oy as usize + cy0, cx1 - cx0, cy1 - cy0);
+                        Self::blit_tile_window(
+                            &mut frame,
+                            ox as usize + cx0,
+                            oy as usize + cy0,
+                            cx0 - tx,
+                            cy0 - ty,
+                            cx1 - cx0,
+                            cy1 - cy0,
+                            &tile.pixels,
+                        );
+                    }
+                }
             }
             self.composited = true;
             // Deliberately NOT marked dirty here: presents are frame-atomic.

@@ -448,10 +448,37 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                 };
                 match progressive_decoder.decode_bitmap(0, w, h, &data) {
                     Ok(decoded) => {
+                        // Hybrid rule, mirroring egfx.rs: fresh passes whole,
+                        // upgrades clipped to the region rects.
                         for tile in &decoded.tiles {
                             let tx = usize::from(tile.x_idx) * TILE;
                             let ty = usize::from(tile.y_idx) * TILE;
-                            blit_tile(&mut canvas, fw, fh, tx, ty, 0, 0, TILE, TILE, &tile.pixels);
+                            if tile.fresh {
+                                blit_tile(&mut canvas, fw, fh, tx, ty, 0, 0, TILE, TILE, &tile.pixels);
+                                continue;
+                            }
+                            for rect in &decoded.rects {
+                                let (rx0, ry0) = (usize::from(rect.x), usize::from(rect.y));
+                                let rx1 = rx0 + usize::from(rect.width);
+                                let ry1 = ry0 + usize::from(rect.height);
+                                let (cx0, cy0) = (tx.max(rx0), ty.max(ry0));
+                                let (cx1, cy1) = ((tx + TILE).min(rx1), (ty + TILE).min(ry1));
+                                if cx0 >= cx1 || cy0 >= cy1 {
+                                    continue;
+                                }
+                                blit_tile(
+                                    &mut canvas,
+                                    fw,
+                                    fh,
+                                    cx0,
+                                    cy0,
+                                    cx0 - tx,
+                                    cy0 - ty,
+                                    cx1 - cx0,
+                                    cy1 - cy0,
+                                    &tile.pixels,
+                                );
+                            }
                         }
                     }
                     Err(error) => {
