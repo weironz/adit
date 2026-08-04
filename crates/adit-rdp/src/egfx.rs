@@ -19,7 +19,10 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler, Surface};
-use ironrdp_egfx::pdu::{DeleteEncodingContextPdu, WireToSurface2Pdu};
+use ironrdp_egfx::pdu::{
+    CacheToSurfacePdu, DeleteEncodingContextPdu, SolidFillPdu, SurfaceToCachePdu,
+    SurfaceToSurfacePdu, WireToSurface2Pdu,
+};
 use ironrdp_graphics::progressive::ProgressiveDecoder;
 
 /// Match the framebuffer clamp on the app side.
@@ -144,6 +147,13 @@ fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
     });
 }
 
+/// One entry of the EGFX bitmap cache.
+struct CachedBitmap {
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+}
+
 /// A server surface: where it maps onto the output, and its size.
 struct SurfaceInfo {
     origin_x: u32,
@@ -162,6 +172,16 @@ pub(crate) struct EgfxHandler {
     progressive: ProgressiveDecoder,
     /// How many failing streams have been written out so far.
     dumps: u32,
+    /// The EGFX bitmap cache: slot -> (width, height, RGBA).
+    ///
+    /// Windows sends a region's pixels ONCE, tells the client to cache it, and
+    /// from then on says "blit slot N here" instead of re-encoding. Ignoring
+    /// those PDUs left every repeated element — window chrome, glyph runs, the
+    /// contents of a text box — frozen at whatever was on screen before, which
+    /// is what made a logged-in desktop render as a mosaic of stale fragments.
+    cache: HashMap<u16, CachedBitmap>,
+    /// How many "no rect covered this tile" warnings have been logged.
+    unclipped_logged: u32,
     /// Whether anything was composited since the last present. `EndFrame`
     /// publishes only when this is set: after a graphics reset zeroes the
     /// framebuffer, an empty frame's unconditional present would flash pure
@@ -177,6 +197,8 @@ impl EgfxHandler {
             progressive: ProgressiveDecoder::new(),
             dumps: 0,
             composited: false,
+            unclipped_logged: 0,
+            cache: HashMap::new(),
         }
     }
 
@@ -216,6 +238,39 @@ bytes={}
 
     /// Composite a 64×64 RGBA tile at output pixel (`px`, `py`), clamped to the
     /// framebuffer (edge tiles overhang a surface whose size isn't a multiple of 64).
+    /// Copy `w x h` RGBA pixels into the frame at `(x, y)`, clipped to it.
+    fn blit_rect(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize, rgba: &[u8]) {
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if x >= fw || y >= fh || w == 0 || h == 0 {
+            return;
+        }
+        let cols = w.min(fw - x);
+        let rows = h.min(fh - y);
+        if rgba.len() < (rows - 1) * w * 4 + cols * 4 {
+            return;
+        }
+        for row in 0..rows {
+            let dst = ((y + row) * fw + x) * 4;
+            let src = row * w * 4;
+            frame.rgba[dst..dst + cols * 4].copy_from_slice(&rgba[src..src + cols * 4]);
+        }
+        grow_dirty(frame, x, y, cols, rows);
+    }
+
+    /// Read `w x h` RGBA pixels out of the frame at `(x, y)`, tightly packed.
+    fn read_rect(frame: &EgfxFrame, x: usize, y: usize, w: usize, h: usize) -> Option<Vec<u8>> {
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if x + w > fw || y + h > fh || w == 0 || h == 0 {
+            return None;
+        }
+        let mut out = Vec::with_capacity(w * h * 4);
+        for row in 0..h {
+            let start = ((y + row) * fw + x) * 4;
+            out.extend_from_slice(&frame.rgba[start..start + w * 4]);
+        }
+        Some(out)
+    }
+
     /// Blit a window of one 64x64 tile: `w x h` pixels starting at
     /// `(sub_x, sub_y)` inside the tile, landing at `(px, py)` on the frame.
     #[expect(clippy::too_many_arguments, reason = "a rectangle is six numbers")]
@@ -354,6 +409,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
             return;
         }
 
+        // Borrowed out of `self` so the tile loop can log while `self.shared`
+        // is locked.
+        let mut unclipped = self.unclipped_logged;
         if let Ok(mut frame) = self.shared.lock() {
             for tile in &decoded.tiles {
                 // Surface-relative tile bounds, clipped to the region's dirty
@@ -365,6 +423,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 // in update_tiles for the same reason).
                 let tx = usize::from(tile.x_idx) * TILE;
                 let ty = usize::from(tile.y_idx) * TILE;
+                let mut clipped = 0usize;
                 for rect in &decoded.rects {
                     let rx0 = usize::from(rect.x);
                     let ry0 = usize::from(rect.y);
@@ -377,6 +436,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
                     if cx0 >= cx1 || cy0 >= cy1 {
                         continue;
                     }
+                    clipped += 1;
                     Self::blit_tile_window(
                         &mut frame,
                         ox as usize + cx0,
@@ -385,6 +445,33 @@ impl GraphicsPipelineHandler for EgfxHandler {
                         cy0 - ty,
                         cx1 - cx0,
                         cy1 - cy0,
+                        &tile.pixels,
+                    );
+                }
+                if clipped == 0 {
+                    // Fail-safe: a tile the server bothered to encode but that
+                    // no rect covers means our rect interpretation is wrong,
+                    // not that the tile is unwanted. Blit it whole rather than
+                    // drop it — dropping freezes the desktop, which is far
+                    // worse than the stale-cache edges clipping exists to
+                    // avoid. The warning says which reading is wrong.
+                    if unclipped < 8 {
+                        unclipped += 1;
+                        tracing::warn!(
+                            tile_x = tile.x_idx,
+                            tile_y = tile.y_idx,
+                            rect_count = decoded.rects.len(),
+                            "tile covered by no region rect; blitting it whole"
+                        );
+                    }
+                    Self::blit_tile_window(
+                        &mut frame,
+                        ox as usize + tx,
+                        oy as usize + ty,
+                        0,
+                        0,
+                        TILE,
+                        TILE,
                         &tile.pixels,
                     );
                 }
@@ -398,6 +485,158 @@ impl GraphicsPipelineHandler for EgfxHandler {
             // sequence before its refinements landed. `on_frame_complete`
             // (the EndFrame handler) is the present point.
         }
+        self.unclipped_logged = unclipped;
+    }
+
+    /// Fill rectangles with a solid colour (MS-RDPEGFX 2.2.2.6).
+    ///
+    /// Windows clears window backgrounds and control interiors this way rather
+    /// than encoding flat pixels. Unimplemented, those areas kept whatever was
+    /// underneath — a text box never appeared to clear, so typing looked like
+    /// it did nothing.
+    fn on_solid_fill(&mut self, pdu: &SolidFillPdu) {
+        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let c = &pdu.fill_pixel;
+        if let Ok(mut frame) = self.shared.lock() {
+            let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+            for rect in &pdu.rectangles {
+                // RDPGFX_RECT16 is exclusive: right/bottom are one-past-end.
+                let x0 = (ox as usize + usize::from(rect.left)).min(fw);
+                let y0 = (oy as usize + usize::from(rect.top)).min(fh);
+                let x1 = (ox as usize + usize::from(rect.right)).min(fw);
+                let y1 = (oy as usize + usize::from(rect.bottom)).min(fh);
+                if x0 >= x1 || y0 >= y1 {
+                    continue;
+                }
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = (y * fw + x) * 4;
+                        frame.rgba[i] = c.r;
+                        frame.rgba[i + 1] = c.g;
+                        frame.rgba[i + 2] = c.b;
+                        frame.rgba[i + 3] = 0xFF;
+                    }
+                }
+                grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
+            }
+            self.composited = true;
+        }
+    }
+
+    /// Copy a rectangle to one or more destinations (MS-RDPEGFX 2.2.2.7).
+    ///
+    /// This is how scrolling and window drags move pixels the client already
+    /// has, without re-encoding them.
+    fn on_surface_to_surface(&mut self, pdu: &SurfaceToSurfacePdu) {
+        let Some((sox, soy)) = self
+            .surfaces
+            .get(&pdu.source_surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let Some((dox, doy)) = self
+            .surfaces
+            .get(&pdu.destination_surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let r = &pdu.source_rectangle;
+        let (w, h) = (
+            usize::from(r.right.saturating_sub(r.left)),
+            usize::from(r.bottom.saturating_sub(r.top)),
+        );
+        if let Ok(mut frame) = self.shared.lock() {
+            // Read once, then write every destination: the regions may overlap,
+            // and a straight memmove per destination would smear.
+            let Some(pixels) = Self::read_rect(
+                &frame,
+                sox as usize + usize::from(r.left),
+                soy as usize + usize::from(r.top),
+                w,
+                h,
+            ) else {
+                return;
+            };
+            for point in &pdu.destination_points {
+                Self::blit_rect(
+                    &mut frame,
+                    dox as usize + usize::from(point.x),
+                    doy as usize + usize::from(point.y),
+                    w,
+                    h,
+                    &pixels,
+                );
+            }
+            self.composited = true;
+        }
+    }
+
+    /// Store a rectangle into the bitmap cache (MS-RDPEGFX 2.2.2.8).
+    fn on_surface_to_cache(&mut self, pdu: &SurfaceToCachePdu) {
+        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let r = &pdu.source_rectangle;
+        let (w, h) = (
+            r.right.saturating_sub(r.left),
+            r.bottom.saturating_sub(r.top),
+        );
+        if let Ok(frame) = self.shared.lock() {
+            if let Some(rgba) = Self::read_rect(
+                &frame,
+                ox as usize + usize::from(r.left),
+                oy as usize + usize::from(r.top),
+                usize::from(w),
+                usize::from(h),
+            ) {
+                self.cache.insert(
+                    pdu.cache_slot,
+                    CachedBitmap {
+                        width: w,
+                        height: h,
+                        rgba,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Blit a cached rectangle to one or more destinations (MS-RDPEGFX 2.2.2.9).
+    fn on_cache_to_surface(&mut self, pdu: &CacheToSurfacePdu) {
+        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let Some(entry) = self.cache.get(&pdu.cache_slot) else {
+            // A slot the server believes we hold. It will not re-send those
+            // pixels, so the area stays stale — worth knowing about.
+            tracing::debug!(slot = pdu.cache_slot, "cache blit for an unknown slot");
+            return;
+        };
+        if let Ok(mut frame) = self.shared.lock() {
+            for point in &pdu.destination_points {
+                Self::blit_rect(
+                    &mut frame,
+                    ox as usize + usize::from(point.x),
+                    oy as usize + usize::from(point.y),
+                    usize::from(entry.width),
+                    usize::from(entry.height),
+                    &entry.rgba,
+                );
+            }
+            self.composited = true;
+        }
+    }
+
+    /// Drop cache entries the server is done with (MS-RDPEGFX 2.2.2.10).
+    fn on_evict_cache_entry(&mut self, pdu: &ironrdp_egfx::pdu::EvictCacheEntryPdu) {
+        self.cache.remove(&pdu.cache_slot);
     }
 
     fn on_delete_encoding_context(&mut self, pdu: &DeleteEncodingContextPdu) {

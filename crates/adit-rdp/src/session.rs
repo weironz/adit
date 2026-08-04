@@ -310,6 +310,9 @@ async fn active_session(
     // silently dropped; park it here and retry once the channel connects.
     let mut pending_resize: Option<(u32, u32)> = None;
     let mut keys_logged = 0u32;
+    // Frame-flow probe: a frozen desktop and a healthy one look identical from
+    // outside, so record what actually reached the app.
+    let mut frames_emitted = 0u32;
     let mut image = DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
     let activation_factory = connection_result.activation_factory;
     // Server Redirection PDUs arrive on the I/O channel; we intercept them before
@@ -412,7 +415,7 @@ async fn active_session(
                         // go to the log, so "typing does nothing" can be split
                         // into UI-side loss vs server-side rejection by reading
                         // the helper log alone.
-                        if keys_logged < 8 {
+                        if keys_logged < 40 {
                             if let InputEvent::Key { scancode, extended, pressed } = &other {
                                 keys_logged += 1;
                                 tracing::info!(scancode, extended, pressed, "keyboard input reached the helper");
@@ -601,6 +604,16 @@ async fn active_session(
                 height: update.height,
                 rgba: update.rgba,
             };
+            if frames_emitted < 30 {
+                frames_emitted += 1;
+                tracing::info!(
+                    x = update.x,
+                    y = update.y,
+                    w = update.width,
+                    h = update.height,
+                    "emitted frame region"
+                );
+            }
             if host_tx.send(tile).is_err() {
                 break 'session;
             }
