@@ -339,9 +339,16 @@ codecs (Microsoft-proprietary, specced as MS-RDPEGFX / MS-RDPRFX / MS-RDPNSC) an
 screen-as-video (open ITU standards, H.264/AVC444). The industry is converging on the
 latter — one hardware-accelerated decoder instead of five interlocking software ones.
 
-**Next.** Wire AVC444 through Windows Media Foundation (system H.264 decoder: no
-third-party binaries, no royalties, hardware accelerated). AVC becomes the main road
-for Windows hosts; the tile path stays as the fallback it was always meant to be.
+**Done (2026-08-05).** AVC landed the same day this entry was written, and cheaper
+than planned: ironrdp-egfx ships a pluggable `H264Decoder` trait with a bundled
+OpenH264 implementation (AVC420), and a new `avc444.rs` decodes AVC444 — two H.264
+views recombined into per-surface YUV 4:4:4, kernels ported from FreeRDP. The
+capability ladder is V10.7 (AVC444) → V8.1 (AVC420) → V8 (tiles), the server picks.
+Windows' `AVC444ModePreferred` policy demands exactly the 444 path (it refuses an
+AVC420-only client outright — observed live). Media Foundation remains the upgrade
+route if hardware decode is ever wanted; the trait boundary makes the swap local.
+Note: desktop Windows keeps ALL AVC off by default — the tile path still serves
+every unconfigured host, which is most of them.
 
 **Revisit if** IronRDP ships its own AVC decode + the codec fixes upstream (drop the
 vendored patches), or the RustCrypto pin conflict (#4) dissolves and a single-binary
