@@ -316,7 +316,14 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                         .into(),
                 ))
                 .push(
-                    text("原生 RDP（NLA/CredSSP）。用户名可用 域\\用户 形式指定域；\
+                    // The Microsoft-account note is not trivia: NLA accepts the
+                    // email and reports success, then Windows refuses to unlock
+                    // with it and shows "用户名或密码不正确" — a connected
+                    // session that looks like a wrong password. Only the local
+                    // account name works for the logon.
+                    text("原生 RDP（NLA/CredSSP）。用户名可用 域\\用户 形式指定域。\
+                          微软账户请填本机账户名（远端 whoami 反斜杠后的那段，如 willz），\
+                          不要填邮箱——邮箱能通过认证但无法登录桌面。\
                           连接时在弹出的密码框输入密码（可勾选记住，存入系统凭据）。")
                         .size(11)
                         .color(muted_text()),
