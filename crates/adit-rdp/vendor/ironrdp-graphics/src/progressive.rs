@@ -1105,9 +1105,26 @@ impl ProgressiveDecoder {
             _ => None,
         }) {
             Some(v) => v,
+            // ADIT PATCH: inherit the flag across context ids, not just within one.
+            //
+            // Windows sends SYNC + CONTEXT once per connection and then starts
+            // each new progressive sequence under a fresh `codecContextId`
+            // without repeating them — captured frames run ctx 1 as
+            // TILE_FIRST/UPGRADE/UPGRADE, then ctx 2 as another full
+            // TILE_FIRST/UPGRADE/UPGRADE, CONTEXT block nowhere in sight. The
+            // by-id lookup then failed and every frame of every later sequence
+            // was dropped, so the desktop stopped updating.
+            //
+            // `use_reduce_extrapolate` is a property of the codec configuration
+            // for the connection, not of one sequence — FreeRDP keeps a single
+            // progressive configuration per connection and does not key it on
+            // `codecContextId` at all (that field exists for
+            // RDPGFX_DELETE_ENCODING_CONTEXT). So fall back to any established
+            // context, and only fail when none has ever been established.
             None => self
                 .contexts
                 .get(&codec_context_id)
+                .or_else(|| self.contexts.values().next())
                 .map(|c| c.surface.use_reduce_extrapolate)
                 .ok_or(ProgressiveDecodeError::MissingBlock("CONTEXT"))?,
         };
