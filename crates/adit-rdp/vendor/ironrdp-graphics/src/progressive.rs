@@ -1047,6 +1047,14 @@ pub struct DirtyRect {
 pub struct DecodedRegion {
     pub tiles: Vec<DecodedTile>,
     pub rects: Vec<DirtyRect>,
+    /// How many upgrade passes in this stream landed on a tile with no first
+    /// pass — refinements of a cell the server painted some other way, most
+    /// often with `CacheToSurface`.
+    ///
+    /// ADIT PATCH: these used to be dropped silently, which froze those cells
+    /// for the rest of the session. They are decoded now; the count is kept so
+    /// the condition stays visible rather than going back to being invisible.
+    pub upgrades_without_base: usize,
 }
 
 /// Per-axis cap on surface dimensions, in pixels.
@@ -1221,6 +1229,7 @@ impl ProgressiveDecoder {
 
         let mut decoded_tiles = Vec::new();
         let mut rects = Vec::new();
+        let mut upgrades_without_base = 0usize;
 
         // Process REGION blocks (the main content)
         for block in &blocks {
@@ -1246,6 +1255,7 @@ impl ProgressiveDecoder {
                     quant_vals,
                     prog_quant_vals,
                     use_reduce_extrapolate,
+                    &mut upgrades_without_base,
                 )?;
                 decoded_tiles.extend(tiles);
             }
@@ -1254,6 +1264,7 @@ impl ProgressiveDecoder {
         Ok(DecodedRegion {
             tiles: decoded_tiles,
             rects,
+            upgrades_without_base,
         })
     }
 
@@ -1290,6 +1301,7 @@ fn decode_tile_block(
     quant_vals: &[ComponentCodecQuant],
     prog_quant_vals: &[ironrdp_pdu::codecs::rfx::progressive::ProgressiveCodecQuant],
     use_reduce_extrapolate: bool,
+    upgrades_without_base: &mut usize,
 ) -> Result<Vec<DecodedTile>, ProgressiveDecodeError> {
     use ironrdp_pdu::codecs::rfx::progressive::ProgressiveTile;
 
@@ -1411,9 +1423,27 @@ fn decode_tile_block(
                 .get_or_create(x_idx, y_idx)
                 .ok_or(ProgressiveDecodeError::TileOutOfBounds { x_idx, y_idx })?;
 
-            // If this tile hasn't had a first pass, skip the upgrade
+            // ADIT PATCH: an upgrade with no first pass is decoded anyway.
+            //
+            // This used to `return Ok(Vec::new())` — no tile, so nothing was
+            // painted, nothing was logged, and the server counts the region as
+            // drawn and never resends it. The cell keeps whatever it held for
+            // the rest of the session.
+            //
+            // That is the whole mechanism behind frozen scroll residue.
+            // Windows fills a cell with CacheToSurface and then refines it
+            // with progressive upgrade passes; a cell reached that way has no
+            // first pass, so every refinement it was ever sent went on the
+            // floor. SurfaceToCache then saves those stale pixels back and
+            // blits them elsewhere, which is why the damage spreads and why it
+            // never heals.
+            //
+            // FreeRDP has no such guard: progressive_decompress_tile_upgrade
+            // does `tile->pass++` unconditionally and decodes against whatever
+            // the tile holds, zeroed or not. An imperfect tile converges as
+            // later passes arrive; a dropped one never recovers.
             if tile_state.pass == 0 {
-                return Ok(Vec::new());
+                *upgrades_without_base += 1;
             }
 
             // Base quant lookup: the upgrade shift needs the same base tables

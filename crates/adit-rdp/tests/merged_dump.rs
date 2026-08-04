@@ -129,7 +129,8 @@ fn a_captured_session_replays() {
     let mut progressive = ProgressiveDecoder::new();
     let mut clear = ClearCodecDecoder::new();
     let mut rgba = vec![0u8; fw * fh * 4];
-    let (mut failures, mut uncovered_tiles) = (0usize, 0usize);
+    let (mut failures, mut uncovered_tiles, mut orphan_upgrades) = (0usize, 0usize, 0usize);
+    let (mut clear_pixels, mut clear_untouched, mut clear_blank) = (0usize, 0usize, 0usize);
 
     for capture in &captures {
         let data = std::fs::read(&capture.path).expect("read stream");
@@ -143,6 +144,7 @@ fn a_captured_session_replays() {
                         continue;
                     }
                 };
+                orphan_upgrades += decoded.upgrades_without_base;
                 for tile in &decoded.tiles {
                     let (tx, ty) = (usize::from(tile.x_idx) * TILE, usize::from(tile.y_idx) * TILE);
                     let mut hits = 0usize;
@@ -202,6 +204,23 @@ fn a_captured_session_replays() {
                         continue;
                     }
                 };
+                // How much of the tile did the codec actually write? Seeded
+                // with the destination, a stream that paints nothing is
+                // indistinguishable on screen from one that paints correctly —
+                // both leave the pixels alone. Counting output pixels that
+                // still equal the seed is the only way to see under-painting.
+                if let Some(seed) = background.as_deref() {
+                    let same = bgra
+                        .chunks_exact(4)
+                        .zip(seed.chunks_exact(4))
+                        .filter(|(out, bg)| out[..3] == bg[..3])
+                        .count();
+                    clear_pixels += cwu * chu;
+                    clear_untouched += same;
+                    if same * 10 >= cwu * chu * 9 {
+                        clear_blank += 1;
+                    }
+                }
                 for px in bgra.chunks_exact_mut(4) {
                     px.swap(0, 2); // BGRA -> RGBA
                 }
@@ -222,7 +241,16 @@ fn a_captured_session_replays() {
     image::save_buffer(&out, &rgba, u32::from(w), u32::from(h), image::ColorType::Rgba8)
         .expect("write png");
     println!("composited -> {out}");
-    println!("{failures} decode failures, {uncovered_tiles} tiles no rect covered");
+    println!(
+        "{failures} decode failures, {uncovered_tiles} tiles no rect covered, \
+         {orphan_upgrades} upgrades with no first pass"
+    );
+    if clear_pixels > 0 {
+        println!(
+            "ClearCodec coverage: {:.1}% of pixels left at the seeded value,              {clear_blank} streams that painted almost nothing",
+            clear_untouched as f64 * 100.0 / clear_pixels as f64
+        );
+    }
 }
 
 /// Composite a window of one 64x64 tile at an absolute surface position.

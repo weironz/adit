@@ -652,6 +652,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 }
             };
         self.dump_stream(pdu, sw, sh, "ok");
+        if decoded.upgrades_without_base > 0 && self.unclipped_logged < 8 {
+            self.unclipped_logged += 1;
+            tracing::warn!(
+                count = decoded.upgrades_without_base,
+                "progressive upgrades refining a tile the server painted another way"
+            );
+        }
         if decoded.tiles.is_empty() {
             return;
         }
