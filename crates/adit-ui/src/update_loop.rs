@@ -1176,9 +1176,11 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             } else {
                 "已退出全屏"
             });
-            // The chrome that just appeared or vanished changes the usable
-            // area, so the remote side has to be told the new viewport.
-            sync_terminal_size(app);
+            // Deliberately NOT re-syncing the viewport here: the window has
+            // not resized yet, so this would measure the old geometry against
+            // the new chrome and ship a wrong desktop size. Changing the mode
+            // always produces a `WindowResized`, and that handler does it with
+            // the real numbers.
             return window::latest().and_then(move |id| window::set_mode(id, mode));
         }
         Message::KeyboardInput(event) => {

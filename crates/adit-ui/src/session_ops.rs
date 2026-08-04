@@ -1496,10 +1496,23 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
 /// Pixel size of the whole terminal region (the grid the panes share), i.e. the
 /// workspace minus the sidebar, top chrome, tab bar, and status bar. Pane
 /// padding/headers are *not* subtracted here — that happens per pane.
-pub(crate) fn terminal_region_area(width: f32, height: f32, sidebar_width: f32) -> (f32, f32) {
+pub(crate) fn terminal_region_area(
+    width: f32,
+    height: f32,
+    sidebar_width: f32,
+    fullscreen: bool,
+) -> (f32, f32) {
     let region_width = (width - sidebar_width).max(0.0);
-    let region_height =
-        (height - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT - TAB_BAR_HEIGHT - STATUS_BAR_HEIGHT).max(0.0);
+    // Fullscreen drops the menu bar and the toolbar; the tab strip and the
+    // status bar stay. Subtracting chrome that is not on screen makes the
+    // requested remote desktop smaller than the space it has to fill, and the
+    // remainder shows as black bars down the right and bottom edges.
+    let chrome = if fullscreen {
+        TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+    } else {
+        MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+    };
+    let region_height = (height - chrome).max(0.0);
     (region_width, region_height)
 }
 
@@ -1512,12 +1525,12 @@ pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
     // The divider sits between the sidebar and the workspace and is not part
     // of either; forgetting it made the frame ~5 logical px wider than the
     // pane, so ContentFit had to downscale by ~0.997 — enough to shimmer text.
-    let sidebar = if app.sidebar_visible {
+    let sidebar = if app.sidebar_visible && !app.fullscreen {
         app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
     } else {
         0.0
     };
-    let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar);
+    let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar, app.fullscreen);
     // PHYSICAL pixels: the window lays out in logical points, but the remote
     // desktop is a pixel grid. Requesting logical sizes meant a 125%-DPI
     // display got a 1524x920 desktop stretched over ~1905x1150 device pixels —
@@ -1629,13 +1642,17 @@ pub(crate) struct PaneLayout {
 }
 
 pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
-    let effective_sidebar = if app.sidebar_visible {
+    let effective_sidebar = if app.sidebar_visible && !app.fullscreen {
         app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
     } else {
         0.0
     };
-    let (region_w, region_h) =
-        terminal_region_area(app.window_width, app.window_height, effective_sidebar);
+    let (region_w, region_h) = terminal_region_area(
+        app.window_width,
+        app.window_height,
+        effective_sidebar,
+        app.fullscreen,
+    );
 
     let count = app.panes.len().max(1);
     let (cols, rows) = pane_grid_dims(count, app.tile_mode);
@@ -1677,8 +1694,13 @@ impl PaneLayout {
 }
 
 /// Single-pane / no-split terminal size, for the common path and the status bar.
-pub(crate) fn estimated_terminal_size(width: f32, height: f32, sidebar_width: f32) -> TerminalSize {
-    let (region_w, region_h) = terminal_region_area(width, height, sidebar_width);
+pub(crate) fn estimated_terminal_size(
+    width: f32,
+    height: f32,
+    sidebar_width: f32,
+    fullscreen: bool,
+) -> TerminalSize {
+    let (region_w, region_h) = terminal_region_area(width, height, sidebar_width, fullscreen);
     terminal_size_for_area(
         region_w - TERMINAL_PANEL_PADDING * 2.0 - SCROLLBAR_WIDTH,
         region_h - TERMINAL_PANEL_PADDING * 2.0,

@@ -1115,7 +1115,14 @@ impl AditApp {
             tunnel_save: true,
             terminal_input: String::new(),
             terminal_focused: false,
-            terminal_size: estimated_terminal_size(window_width, window_height, effective_sidebar),
+            // Startup is never fullscreen (the flag is deliberately not
+            // persisted, see `AditApp::fullscreen`).
+            terminal_size: estimated_terminal_size(
+                window_width,
+                window_height,
+                effective_sidebar,
+                false,
+            ),
             terminal_pointer: None,
             terminal_selection: None,
             terminal_selecting: false,
