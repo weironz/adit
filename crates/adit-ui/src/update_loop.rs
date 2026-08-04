@@ -1164,7 +1164,37 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             app.terminal_input = input;
         }
+        Message::ToggleFullscreen => {
+            app.fullscreen = !app.fullscreen;
+            let mode = if app.fullscreen {
+                window::Mode::Fullscreen
+            } else {
+                window::Mode::Windowed
+            };
+            app.notice = String::from(if app.fullscreen {
+                "已进入全屏 — Ctrl+Alt+Enter 退出"
+            } else {
+                "已退出全屏"
+            });
+            // The chrome that just appeared or vanished changes the usable
+            // area, so the remote side has to be told the new viewport.
+            sync_terminal_size(app);
+            return window::latest().and_then(move |id| window::set_mode(id, mode));
+        }
         Message::KeyboardInput(event) => {
+            // Fullscreen toggle first, ahead of every forwarding path: RDP
+            // sends unmatched keys straight to the remote desktop, so a
+            // shortcut checked later would never be seen locally. Ctrl+Alt+Enter
+            // is the mstsc convention, and unlike F11 it is not a key remote
+            // applications expect to receive.
+            if let keyboard::Event::KeyPressed { key, modifiers, .. } = &event {
+                if modifiers.control()
+                    && modifiers.alt()
+                    && matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter))
+                {
+                    return Task::done(Message::ToggleFullscreen);
+                }
+            }
             // Alt+R / Alt+I jump to the toolbar's host box and the sidebar filter —
             // the two shortcuts those placeholders advertise. Both take focus away
             // from the terminal so the typed text lands in the box, not the session.
@@ -1558,7 +1588,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             open_selected_mock_tab(app);
         }
         Message::ConnectSelectedProfile => {
-            open_connection_dialog(app);
+            connect_or_prompt(app);
         }
         Message::RetryActiveSession => {
             retry_active_session(app);

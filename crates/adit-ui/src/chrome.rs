@@ -12,7 +12,9 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 
     // The rail is outside the switch on purpose: it is what stays put when a
     // host is opened, so getting back to the list never means closing a session.
-    let main = if app.sidebar_visible {
+    // Fullscreen drops the sidebar too, whatever the persisted setting says:
+    // the point of the mode is that the remote desktop owns the glass.
+    let main = if app.sidebar_visible && !app.fullscreen {
         row![sidebar(app), sidebar_divider(), workspace(app)]
     } else {
         row![workspace(app)]
@@ -20,12 +22,18 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     .height(Fill)
     .width(Fill);
 
-    let layout = column![menu_bar(app)]
-        .push(toolbar(app))
-        .push(main)
-        .push(status_bar(app))
-        .height(Fill)
-        .width(Fill);
+    // The status bar survives fullscreen on purpose. It is one thin line, and
+    // it is the only thing left telling the user how to get back out.
+    let layout = if app.fullscreen {
+        column![main].push(status_bar(app))
+    } else {
+        column![menu_bar(app)]
+            .push(toolbar(app))
+            .push(main)
+            .push(status_bar(app))
+    }
+    .height(Fill)
+    .width(Fill);
 
     let base: Element<'_, Message> = container(layout)
         .style(|_theme| app_background_style())

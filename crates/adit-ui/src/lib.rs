@@ -283,6 +283,11 @@ pub struct AditApp {
     window_height: f32,
     sidebar_width: f32,
     sidebar_visible: bool,
+    /// Chrome-free presentation mode (Ctrl+Alt+Enter).
+    ///
+    /// Kept out of the persisted settings on purpose: a client that starts up
+    /// fullscreen with no menu bar gives a first-time user nothing to click.
+    fullscreen: bool,
     sidebar_dragging: bool,
     cursor_pos: Point,
     context_menu_pos: Point,
@@ -609,6 +614,7 @@ pub enum Message {
     KeyboardInput(keyboard::Event),
     ModifiersChanged(keyboard::Modifiers),
     WindowResized { width: f32, height: f32, window: window::Id },
+    ToggleFullscreen,
     /// The window's display scale factor (device pixels per logical point).
     DisplayScale(f32),
     ToggleSidebar,
@@ -1133,6 +1139,7 @@ impl AditApp {
             window_height,
             sidebar_width,
             sidebar_visible,
+            fullscreen: false,
             sidebar_dragging: false,
             cursor_pos: Point::ORIGIN,
             context_menu_pos: Point::ORIGIN,

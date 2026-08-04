@@ -8,7 +8,7 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::DeleteProfile => delete_selected_profile(app),
         MenuCommand::SortByName => sort_profiles(app, ProfileSortKey::Name),
         MenuCommand::SortByHost => sort_profiles(app, ProfileSortKey::Host),
-        MenuCommand::Connect => open_connection_dialog(app),
+        MenuCommand::Connect => connect_or_prompt(app),
         MenuCommand::Disconnect => disconnect_active(app),
         MenuCommand::OpenMockTab => open_selected_mock_tab(app),
         MenuCommand::CloseActiveTab => {

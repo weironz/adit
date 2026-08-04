@@ -235,6 +235,50 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
     app.group_context_menu = None;
 }
 
+/// Connect straight away when the profile's password is already stored,
+/// otherwise raise the dialog.
+///
+/// `connect_profile` has always been able to start an RDP or SSH session from
+/// a stored password without asking; it was simply never reachable, because
+/// `open_connection_dialog` returns early for both protocols. That early
+/// return exists to break a mutual recursion (`connect_profile` with no
+/// password called back into the dialog, which called `connect_profile`
+/// again, freezing the UI), and it is why every connect asked for a password
+/// that was already on disk.
+///
+/// Calling `connect_profile` *only* when a password exists cannot re-enter
+/// that cycle: the branch that calls back into the dialog is the no-password
+/// one. Retry deliberately keeps prompting (see `retry_active_session`) --
+/// otherwise a stored password that has gone stale could never be corrected.
+pub(crate) fn connect_or_prompt(app: &mut AditApp) {
+    let Some(profile_id) = app.selected_profile else {
+        open_connection_dialog(app);
+        return;
+    };
+    let Some(profile) = app.manager.profile(profile_id) else {
+        open_connection_dialog(app);
+        return;
+    };
+    let stored = app
+        .credential_store
+        .load_profile_password(profile_id)
+        .ok()
+        .flatten()
+        .is_some_and(|password| !password.is_empty());
+    let can_auto = match profile.protocol {
+        Protocol::Rdp => stored,
+        // A key-based SSH profile needs no password at all; a password one
+        // needs the stored secret.
+        Protocol::Ssh => stored || profile.auth_method != AuthMethod::Password,
+        _ => true,
+    };
+    if can_auto {
+        connect_profile(app);
+    } else {
+        open_connection_dialog(app);
+    }
+}
+
 pub(crate) fn confirm_connection(app: &mut AditApp) {
     let Some(dialog) = app.connection_dialog.clone() else {
         open_connection_dialog(app);
