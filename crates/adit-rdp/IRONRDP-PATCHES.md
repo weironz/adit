@@ -57,6 +57,23 @@ one-line diff, twice. Keep it.
 The crate carries its own `[workspace]` table so `cargo test` can be run inside
 it — one hunk changes an upstream test's expected values.
 
+### Known codec gap: ClearCodec — sidestepped via thin-client caps
+
+IronRDP's EGFX client decodes uncompressed and (optionally) H.264 only. Under
+plain V8 caps Windows encodes sharp UI content — text boxes, glyph runs, small
+controls — as **ClearCodec**, which was dropped silently: a logged-in desktop
+rendered as fragments, and the logon password box never appeared. `egfx.rs`
+now advertises `V8 { THIN_CLIENT | SMALL_CACHE }` (a plain trait-method
+override, no vendoring), restricting the server to Progressive + solid fill +
+bitmap cache — the repertoire implemented here.
+
+If thin-client throughput ever disappoints, the recorded options are:
+1. Implement ClearCodec (MS-RDPEGFX 3.3.8; FreeRDP `clear.c` is the reference)
+   as another vendored-crate module, like the progressive fixes above.
+2. Replace the helper's engine with FreeRDP behind the existing
+   `adit-rdp-proto` IPC — the process boundary makes the engine swappable
+   without touching the app.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
 Pulled in via `[patch.crates-io] ironrdp-connector = { path = "vendor/ironrdp-connector" }`
