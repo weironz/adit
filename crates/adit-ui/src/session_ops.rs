@@ -273,6 +273,12 @@ pub(crate) fn connect_or_prompt(app: &mut AditApp) {
         _ => true,
     };
     if can_auto {
+        // Switching to the session view is part of connecting, not a side
+        // effect of it: the RDP key path is gated on `main_view ==
+        // Terminal` while the pointer path is not, so connecting from the
+        // host grid without this produced a desktop that could be clicked
+        // but not typed into — the exact symptom that gate was added to fix.
+        app.main_view = MainView::Terminal;
         connect_profile(app);
     } else {
         open_connection_dialog(app);
