@@ -87,7 +87,21 @@ impl ClearCodecDecoder {
                     "cached glyph is smaller than the request"
                 ));
             }
-            return Ok(entry.pixels[..want * 4].to_vec());
+            // Row by row at the CACHED stride. A linear `pixels[..want * 4]`
+            // would be right only when the widths happen to match: reading a
+            // 32x32 request out of a 64-wide glyph that way returns the first
+            // 16 rows of the wider image, which rendered as displaced blocks.
+            let (cw, rw) = (usize::from(entry.width), usize::from(width));
+            let rh = usize::from(height);
+            if rw > cw {
+                return Err(invalid_field_err!("glyphIndex", "cached glyph is narrower than the request"));
+            }
+            let mut out = Vec::with_capacity(want * 4);
+            for row in 0..rh {
+                let start = (row * cw) * 4;
+                out.extend_from_slice(&entry.pixels[start..start + rw * 4]);
+            }
+            return Ok(out);
         }
 
         // Cap allocation to prevent OOM from adversarial dimensions.
