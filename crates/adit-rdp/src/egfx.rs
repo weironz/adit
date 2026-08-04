@@ -243,6 +243,10 @@ pub(crate) struct EgfxHandler {
     /// case V10+ capabilities are not advertised and the server never sends
     /// AVC444.
     avc444: Option<crate::avc444::Avc444State>,
+    /// One-shot codec announcements: which paint path this session actually
+    /// uses is a question that should cost one grep, not an inference from
+    /// negotiation lines (always logged, unlike the ADIT_RDP_DUMP traces).
+    avc444_announced: bool,
     /// Counters for the one-off diagnostics above.
     unhandled_logged: u32,
     frames_seen: u32,
@@ -274,6 +278,7 @@ impl EgfxHandler {
             rfx: HashMap::new(),
             ops_logged: 0,
             clear_dumps: 0,
+            avc444_announced: false,
             unclipped_logged: 0,
             unhandled_logged: 0,
             frames_seen: 0,
@@ -425,6 +430,10 @@ bytes={}
             Ok(regions) => {
                 if regions.is_empty() {
                     return;
+                }
+                if !self.avc444_announced {
+                    self.avc444_announced = true;
+                    tracing::info!(codec = ?pdu.codec_id, "first AVC444 frame painted; session is on the H.264 4:4:4 path");
                 }
                 if let Ok(mut frame) = self.shared.lock() {
                     for region in &regions {
