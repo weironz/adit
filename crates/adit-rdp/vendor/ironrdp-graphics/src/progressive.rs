@@ -1028,12 +1028,14 @@ pub struct DecodedTile {
 
 /// A dirty rectangle from a REGION block, in surface coordinates.
 ///
-/// ADIT PATCH: tiles are 64-aligned grid cells but the region's rects say
-/// which pixels of them this frame actually updated. FreeRDP clips every tile
-/// blit against the current region's rects (`update_tiles`); compositing whole
-/// tiles paints the encoder's tile-cache content over surface areas the frame
-/// did not touch — visible as 64px-aligned rectangles of stale image hanging
-/// off partial updates.
+/// ADIT PATCH: exposed for diagnostics and presentation — NOT for clipping
+/// tile blits. FreeRDP does clip (`update_tiles`), and this codebase used to,
+/// but a captured Windows session refuted it: the server re-encodes a whole
+/// tile with its current content while declaring only a sliver dirty (a fresh
+/// TILE_FIRST under a rect overlapping it by 3 columns), so clipping withheld
+/// real content, and the withheld pixels froze into the frame via the bitmap
+/// cache. Tiles are applied whole; these rects say where to look, not what to
+/// keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirtyRect {
     pub x: u16,

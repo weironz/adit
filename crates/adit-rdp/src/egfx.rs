@@ -663,74 +663,42 @@ impl GraphicsPipelineHandler for EgfxHandler {
             return;
         }
 
-        // Borrowed out of `self` so the tile loop can log while `self.shared`
-        // is locked.
-        let mut unclipped = self.unclipped_logged;
         if let Ok(mut frame) = self.shared.lock() {
             for tile in &decoded.tiles {
-                // Surface-relative tile bounds, clipped to the region's dirty
-                // rects. Tiles are 64-aligned cells of the encoder's tile
-                // cache; the rects say which pixels this frame actually
-                // touched. Blitting whole tiles paints cache content over
-                // areas the frame did not update — 64px-aligned rectangles of
-                // stale image hanging off every partial update (FreeRDP clips
-                // in update_tiles for the same reason).
+                // A tile is applied WHOLE. The region rects are dirty hints,
+                // not a clip mask — a captured Windows session refutes
+                // clipping outright: one stream sends TILE_FIRST(4,7) holding
+                // an icon under rect (192,448,407x64) [tile fully inside],
+                // and two streams later a fresh TILE_FIRST(4,7) holding plain
+                // background under rect (317,448,282x64) — which overlaps the
+                // tile by THREE pixel columns. The server re-encoded the whole
+                // tile with its current content while declaring a sliver
+                // dirty; it plainly expects whole-tile application (mstsc
+                // renders the same sequence clean). Clipping kept the icon's
+                // 61 stale columns on the canvas, the next SurfaceToCache
+                // snapshotted the ghost, and CacheToSurface stamped it back
+                // across the session — the frozen scroll residue.
+                //
+                // The stale-cache smearing that once motivated clipping was
+                // real, but its cause was the then-broken upgrade/difference
+                // accumulation (quant shifts, diff flag, i64 YCbCr — all
+                // fixed since). With accumulation correct, the reconstructed
+                // tile IS the tile's current content, and the encoder
+                // re-encodes any tile a change touches, so whole-tile blits
+                // are exactly what the encoder models.
                 let tx = usize::from(tile.x_idx) * TILE;
                 let ty = usize::from(tile.y_idx) * TILE;
-                let mut clipped = 0usize;
-                for rect in &decoded.rects {
-                    let rx0 = usize::from(rect.x);
-                    let ry0 = usize::from(rect.y);
-                    let rx1 = rx0 + usize::from(rect.width);
-                    let ry1 = ry0 + usize::from(rect.height);
-                    let cx0 = tx.max(rx0);
-                    let cy0 = ty.max(ry0);
-                    let cx1 = (tx + TILE).min(rx1);
-                    let cy1 = (ty + TILE).min(ry1);
-                    if cx0 >= cx1 || cy0 >= cy1 {
-                        continue;
-                    }
-                    clipped += 1;
-                    trace_paint("progressive", ox as usize + cx0, oy as usize + cy0, cx1 - cx0, cy1 - cy0);
-                    Self::blit_tile_window(
-                        &mut frame,
-                        ox as usize + cx0,
-                        oy as usize + cy0,
-                        cx0 - tx,
-                        cy0 - ty,
-                        cx1 - cx0,
-                        cy1 - cy0,
-                        &tile.pixels,
-                    );
-                }
-                if clipped == 0 {
-                    // Fail-safe: a tile the server bothered to encode but that
-                    // no rect covers means our rect interpretation is wrong,
-                    // not that the tile is unwanted. Blit it whole rather than
-                    // drop it — dropping freezes the desktop, which is far
-                    // worse than the stale-cache edges clipping exists to
-                    // avoid. The warning says which reading is wrong.
-                    if unclipped < 8 {
-                        unclipped += 1;
-                        tracing::warn!(
-                            tile_x = tile.x_idx,
-                            tile_y = tile.y_idx,
-                            rect_count = decoded.rects.len(),
-                            "tile covered by no region rect; blitting it whole"
-                        );
-                    }
-                    trace_paint("progressive-whole", ox as usize + tx, oy as usize + ty, TILE, TILE);
-                    Self::blit_tile_window(
-                        &mut frame,
-                        ox as usize + tx,
-                        oy as usize + ty,
-                        0,
-                        0,
-                        TILE,
-                        TILE,
-                        &tile.pixels,
-                    );
-                }
+                trace_paint("progressive", ox as usize + tx, oy as usize + ty, TILE, TILE);
+                Self::blit_tile_window(
+                    &mut frame,
+                    ox as usize + tx,
+                    oy as usize + ty,
+                    0,
+                    0,
+                    TILE,
+                    TILE,
+                    &tile.pixels,
+                );
             }
             self.composited = true;
             // Deliberately NOT marked dirty here: presents are frame-atomic.
@@ -741,7 +709,6 @@ impl GraphicsPipelineHandler for EgfxHandler {
             // sequence before its refinements landed. `on_frame_complete`
             // (the EndFrame handler) is the present point.
         }
-        self.unclipped_logged = unclipped;
     }
 
     /// Fill rectangles with a solid colour (MS-RDPEGFX 2.2.2.6).

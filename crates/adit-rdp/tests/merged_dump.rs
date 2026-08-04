@@ -52,7 +52,12 @@ struct Capture {
 fn a_captured_session_replays() {
     let dir = std::env::var("ADIT_MERGE_DIR").expect("ADIT_MERGE_DIR");
     let surface = std::env::var("ADIT_MERGE_SURFACE").unwrap_or_else(|_| "1908x1152".into());
-    let clip = std::env::var("ADIT_MERGE_CLIP").as_deref() != Ok("0");
+    // Whole-tile application is the live behaviour (see egfx.rs: the region
+    // rects are dirty hints, not a clip mask — a captured session's raw bytes
+    // proved a fresh full-tile re-encode arriving under a 3px rect).
+    // ADIT_MERGE_CLIP=1 reproduces the legacy clipped compositing that caused
+    // the frozen scroll residue, kept for comparison.
+    let clip = std::env::var("ADIT_MERGE_CLIP").as_deref() == Ok("1");
     let (w, h) = surface.split_once('x').expect("WIDTHxHEIGHT");
     let (w, h): (u16, u16) = (w.parse().expect("width"), h.parse().expect("height"));
     let (fw, fh) = (usize::from(w), usize::from(h));
@@ -126,6 +131,22 @@ fn a_captured_session_replays() {
         if clip { "ON" } else { "OFF" }
     );
 
+    // ADIT_MERGE_PROBE="x,y[;x,y]": whenever a progressive stream decodes a
+    // tile covering a probe point, save that tile's pixels as a PNG. This is
+    // what separates "the decoder authored the ghost" from "the compositor
+    // lost the correct pixels": the tile PNG is the decoder's output before
+    // any clipping or blitting touches it.
+    let probes: Vec<(usize, usize)> = std::env::var("ADIT_MERGE_PROBE")
+        .map(|s| {
+            s.split(';')
+                .filter_map(|p| {
+                    let (x, y) = p.split_once(',')?;
+                    Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
     let mut progressive = ProgressiveDecoder::new();
     let mut clear = ClearCodecDecoder::new();
     let mut rgba = vec![0u8; fw * fh * 4];
@@ -145,6 +166,19 @@ fn a_captured_session_replays() {
                     }
                 };
                 orphan_upgrades += decoded.upgrades_without_base;
+                for tile in &decoded.tiles {
+                    let (tx, ty) = (usize::from(tile.x_idx) * TILE, usize::from(tile.y_idx) * TILE);
+                    if probes
+                        .iter()
+                        .any(|&(px, py)| (tx..tx + TILE).contains(&px) && (ty..ty + TILE).contains(&py))
+                    {
+                        let stem = capture.path.file_stem().unwrap_or_default().to_string_lossy();
+                        let out = format!("{dir}/probe-{stem}-t{}x{}.png", tile.x_idx, tile.y_idx);
+                        image::save_buffer(&out, &tile.pixels, 64, 64, image::ColorType::Rgba8)
+                            .expect("probe png");
+                        println!("probe {out}");
+                    }
+                }
                 for tile in &decoded.tiles {
                     let (tx, ty) = (usize::from(tile.x_idx) * TILE, usize::from(tile.y_idx) * TILE);
                     let mut hits = 0usize;
