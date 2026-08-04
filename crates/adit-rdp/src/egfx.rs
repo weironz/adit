@@ -550,6 +550,27 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
+    /// Advertise AVC420 (V8.1) but deliberately NOT V10.7.
+    ///
+    /// The trait default adds V10.7 when a decoder is present, and on V10+
+    /// capability sets AVC444 is implied enabled — Windows then prefers it.
+    /// But ironrdp-egfx 0.3 implements only AVC420; AVC444 PDUs are forwarded
+    /// to `on_unhandled_pdu`, so advertising V10.7 turns a working session
+    /// into undecoded rectangles. V8.1 with `AVC420_ENABLED` pins the server
+    /// to the one AVC codec the pipeline actually decodes, and V8 stays as
+    /// the no-AVC fallback the tile path serves.
+    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
+        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitySet};
+        vec![
+            CapabilitySet::V8_1 {
+                flags: CapabilitiesV81Flags::AVC420_ENABLED | CapabilitiesV81Flags::SMALL_CACHE,
+            },
+            CapabilitySet::V8 {
+                flags: CapabilitiesV8Flags::SMALL_CACHE,
+            },
+        ]
+    }
+
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;

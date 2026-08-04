@@ -205,10 +205,25 @@ async fn connect(
     // Dynamic virtual channels: DisplayControl (dynamic resize) and the EGFX
     // graphics pipeline. Opening the EGFX channel is what signals Graphics
     // Pipeline support — servers like GNOME Remote Desktop reject clients that
-    // don't. No H.264 decoder ⇒ IronRDP advertises the V8 (no-AVC) caps and the
-    // server uses a codec we can decode.
+    // don't.
+    //
+    // With an H.264 decoder plugged in, AVC420 becomes the preferred codec:
+    // the server encodes the screen as video (the same family of path mstsc
+    // uses) instead of the RemoteFX-Progressive tile mosaic, which stays as
+    // the fallback for hosts that can't encode AVC (GPU-less VMs, xrdp,
+    // GNOME Remote Desktop without VA-API). If the decoder fails to
+    // construct, fall back to no-AVC caps rather than failing the connect —
+    // a session on the tile path beats no session.
+    let h264: Option<Box<dyn ironrdp_egfx::decode::H264Decoder>> =
+        match ironrdp_egfx::decode::OpenH264Decoder::new() {
+            Ok(decoder) => Some(Box::new(decoder)),
+            Err(error) => {
+                tracing::warn!(%error, "H.264 decoder unavailable; falling back to tile codecs");
+                None
+            }
+        };
     let egfx_client =
-        GraphicsPipelineClient::new(Box::new(EgfxHandler::new(Arc::clone(shared_egfx))), None);
+        GraphicsPipelineClient::new(Box::new(EgfxHandler::new(Arc::clone(shared_egfx))), h264);
     let drdynvc = DrdynvcClient::new()
         .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())))
         .with_dynamic_channel(egfx_client);
