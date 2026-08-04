@@ -93,12 +93,10 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
 /// cursor is shown (the server pointer isn't composited), so there's no
 /// double-cursor; its shape is a plain arrow for now.
 pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
-    let handle = app.rdp_image.clone();
-    let previous = app.rdp_image_prev.clone();
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
-
     let display_scale = app.display_scale.max(0.1);
-    let Some(handle) = handle else {
+
+    if app.rdp_tiles.is_empty() || sw == 0 || sh == 0 {
         return container(text("正在连接 RDP…").size(14).color(muted_text()))
             .width(Fill)
             .height(Fill)
@@ -109,55 +107,49 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
                 ..container::Style::default()
             })
             .into();
-    };
+    }
 
-    // Fixed size, no `responsive`.
-    //
-    // The frame is `sw x sh` DEVICE pixels (the viewport is requested in
-    // physical pixels), so its logical size is that divided by the display
-    // scale — then the compositor's DPI scaling lands every frame pixel on
-    // exactly one device pixel and Nearest never resamples.
-    //
-    // `responsive` used to wrap this to obtain the pane rectangle, and it is
-    // gone deliberately: it re-runs its closure whenever layout is
-    // invalidated, and iced renders its content EMPTY for that frame — the
-    // black container showing through. Every message re-renders, so clicking
-    // (which also flips `terminal_focused`) made the flicker visibly worse.
-    // Nothing here needs the pane rectangle any more: the size comes from the
-    // frame, and the pointer map is a pure scale because `mouse_area` reports
-    // coordinates local to the image it wraps.
-    let dw = f32::from(sw).max(1.0) / display_scale;
-    let dh = f32::from(sh).max(1.0) / display_scale;
-    let picture = |handle: iced::widget::image::Handle| {
-        iced::widget::image(handle)
-            .width(Length::Fixed(dw))
-            .height(Length::Fixed(dh))
-            .filter_method(iced::widget::image::FilterMethod::Nearest)
-            .content_fit(iced::ContentFit::Fill)
-    };
-    // Previous frame underneath, current on top: identical geometry, so the
-    // only time the underlay is visible is the frame where the new upload has
-    // not landed — which is exactly the frame that used to go black.
-    let layers: Element<'_, Message> = match previous {
-        Some(previous) => iced::widget::stack![picture(previous), picture(handle)].into(),
-        None => picture(handle).into(),
-    };
-    let surface = mouse_area(layers)
-    .on_move(move |p| {
-        if sw == 0 || sh == 0 {
-            return Message::RdpPointerMoved(Point::ORIGIN);
+    // The texture arrives as a grid of tiles, each small enough for the
+    // renderer's synchronous upload path (see `split_into_tiles`). Lay them
+    // back out edge to edge: rows of images, each sized in logical points so
+    // the compositor's DPI scaling lands every device pixel on exactly one
+    // frame pixel and Nearest never resamples.
+    let mut rows: Vec<Element<'_, Message>> = Vec::new();
+    let mut current_y: Option<u16> = None;
+    let mut row: Vec<Element<'_, Message>> = Vec::new();
+    for tile in &app.rdp_tiles {
+        if current_y != Some(tile.y) {
+            if !row.is_empty() {
+                rows.push(iced::widget::Row::with_children(std::mem::take(&mut row)).into());
+            }
+            current_y = Some(tile.y);
         }
-        let x = (p.x * display_scale).clamp(0.0, f32::from(sw) - 1.0);
-        let y = (p.y * display_scale).clamp(0.0, f32::from(sh) - 1.0);
-        Message::RdpPointerMoved(Point::new(x, y))
-    })
-    .on_press(Message::RdpPressed(mouse::Button::Left))
-    .on_release(Message::RdpReleased(mouse::Button::Left))
-    .on_right_press(Message::RdpPressed(mouse::Button::Right))
-    .on_right_release(Message::RdpReleased(mouse::Button::Right))
-    .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
-    .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
-    .on_scroll(Message::RdpScrolled);
+        row.push(
+            iced::widget::image(tile.handle.clone())
+                .width(Length::Fixed(f32::from(tile.width) / display_scale))
+                .height(Length::Fixed(f32::from(tile.height) / display_scale))
+                .filter_method(iced::widget::image::FilterMethod::Nearest)
+                .content_fit(iced::ContentFit::Fill)
+                .into(),
+        );
+    }
+    if !row.is_empty() {
+        rows.push(iced::widget::Row::with_children(row).into());
+    }
+
+    let surface = mouse_area(iced::widget::Column::with_children(rows))
+        .on_move(move |p| {
+            let x = (p.x * display_scale).clamp(0.0, f32::from(sw) - 1.0);
+            let y = (p.y * display_scale).clamp(0.0, f32::from(sh) - 1.0);
+            Message::RdpPointerMoved(Point::new(x, y))
+        })
+        .on_press(Message::RdpPressed(mouse::Button::Left))
+        .on_release(Message::RdpReleased(mouse::Button::Left))
+        .on_right_press(Message::RdpPressed(mouse::Button::Right))
+        .on_right_release(Message::RdpReleased(mouse::Button::Right))
+        .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
+        .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
+        .on_scroll(Message::RdpScrolled);
 
     // Centred, and scrollable when the desktop is momentarily larger than the
     // pane (a resize renegotiation in flight): clipping a fixed-size child

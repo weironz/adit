@@ -63,8 +63,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if active != app.rdp_frame_session {
                 app.rdp_frame_session = active;
                 app.rdp_frame_generation = 0;
-                app.rdp_image = None;
-                app.rdp_image_prev = None;
+                app.rdp_tiles.clear();
                 app.rdp_surface_size = None;
                 // Different session ⇒ forget the requested size so the next layout
                 // sync re-asserts the viewport for the newly-active desktop.
@@ -91,14 +90,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.rdp_frame_generation = frame.generation;
                     app.rdp_frame_uploaded = Some(Instant::now());
                     app.rdp_surface_size = Some((frame.width, frame.height));
-                    // Demote the current texture to the underlay before
-                    // replacing it, so the pane never has nothing to draw.
-                    app.rdp_image_prev = app.rdp_image.take();
-                    app.rdp_image = Some(iced::widget::image::Handle::from_rgba(
-                        u32::from(frame.width),
-                        u32::from(frame.height),
-                        frame.rgba,
-                    ));
+                    app.rdp_tiles = split_into_tiles(&frame);
                 }
             }
         }
@@ -1889,4 +1881,46 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
     }
 
     Task::none()
+}
+
+/// Cut a decoded desktop frame into tiles small enough that iced_wgpu uploads
+/// each one synchronously.
+///
+/// One 8.8 MB image is over the renderer's 2 MiB synchronous threshold, so it
+/// goes to an async worker and is not drawable on the frame it arrives — the
+/// renderer simply skips it (`image/mod.rs`: `if let Some(..) =
+/// cache.upload_raster(..)`, with no else) and the black container shows
+/// through. Tiles of 512x512x4 = 1 MiB each stay on the synchronous path, so
+/// every frame is complete the moment it lands: no gap to paper over, and
+/// therefore no stale underlay to ghost during scrolling or leave remnants
+/// when a window is minimised.
+pub(crate) fn split_into_tiles(frame: &adit_session::RdpFrame) -> Vec<RdpTile> {
+    let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+    if fw == 0 || fh == 0 || frame.rgba.len() < fw * fh * 4 {
+        return Vec::new();
+    }
+    let step = usize::from(RDP_TILE);
+    let mut tiles = Vec::with_capacity(fw.div_ceil(step) * fh.div_ceil(step));
+    for ty in (0..fh).step_by(step) {
+        let h = step.min(fh - ty);
+        for tx in (0..fw).step_by(step) {
+            let w = step.min(fw - tx);
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for row in 0..h {
+                let start = ((ty + row) * fw + tx) * 4;
+                rgba.extend_from_slice(&frame.rgba[start..start + w * 4]);
+            }
+            tiles.push(RdpTile {
+                y: u16::try_from(ty).unwrap_or(u16::MAX),
+                width: u16::try_from(w).unwrap_or(u16::MAX),
+                height: u16::try_from(h).unwrap_or(u16::MAX),
+                handle: iced::widget::image::Handle::from_rgba(
+                    u32::try_from(w).unwrap_or(0),
+                    u32::try_from(h).unwrap_or(0),
+                    rgba,
+                ),
+            });
+        }
+    }
+    tiles
 }

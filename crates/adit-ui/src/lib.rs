@@ -240,7 +240,6 @@ pub struct AditApp {
     // when the helper reports a new generation (`rdp_frame_generation` is the
     // generation currently uploaded). `rdp_surface_size` is the last size we told
     // the helper, so a window resize only sends a Resize when it actually changed.
-    rdp_image: Option<iced::widget::image::Handle>,
     rdp_frame_generation: u64,
     rdp_surface_size: Option<(u16, u16)>,
     // The remote desktop size we last *asked* for (viewport pixels). Sizing the
@@ -256,16 +255,17 @@ pub struct AditApp {
     /// When the RDP texture was last handed to the renderer (see the throttle
     /// in the frame sampler).
     rdp_frame_uploaded: Option<Instant>,
-    /// The previously uploaded desktop texture, kept as an underlay.
+    /// The desktop texture, split into a grid of tiles.
     ///
-    /// iced_wgpu skips an image entirely for any frame where its upload is not
-    /// resident yet (`image/mod.rs` prepare: `if let Some(..) =
-    /// cache.upload_raster(..)`), and every `Handle::from_rgba` mints a fresh
-    /// id, so every update is a miss and every miss was a black frame. Drawing
-    /// the previous texture underneath means a not-yet-resident update falls
-    /// back to the last good picture instead of to the black container — and
-    /// because both are referenced each frame, neither is evicted.
-    rdp_image_prev: Option<iced::widget::image::Handle>,
+    /// Each tile is kept under iced_wgpu's `MAX_SYNC_SIZE` (2 MiB, see
+    /// `image/cache.rs upload_raster`): under it an upload is applied
+    /// synchronously and is drawable the same frame; at or over it the upload
+    /// is handed to an async worker and the image is SKIPPED for at least one
+    /// frame, showing the black container through. A full 1908x1152 desktop is
+    /// 8.8 MB, so every single frame took the async path — that one constant
+    /// is the whole story behind the black flicker, the scroll ghosting and
+    /// the minimise remnants.
+    rdp_tiles: Vec<RdpTile>,
     // RDP clipboard: only this process has a Windows clipboard (the helper is
     // windowless), so local→remote means polling it while an RDP tab is up.
     // `rdp_clipboard_offered` is the last text handed to the helper — it stops
@@ -828,6 +828,21 @@ const RDP_CLIPBOARD_POLL_TICKS: u8 = 5;
 /// outrunning it flickers.
 const RDP_FRAME_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
 
+/// Tile edge for the desktop texture, in device pixels. 512x512x4 = 1 MiB,
+/// comfortably under iced_wgpu's 2 MiB synchronous-upload threshold.
+const RDP_TILE: u16 = 512;
+
+/// One piece of the desktop texture: where it sits and what it holds.
+#[derive(Clone)]
+pub(crate) struct RdpTile {
+    /// Row this tile belongs to, in device pixels. The horizontal position is
+    /// implied by the order within the row, so no `x` is needed.
+    pub(crate) y: u16,
+    pub(crate) width: u16,
+    pub(crate) height: u16,
+    pub(crate) handle: iced::widget::image::Handle,
+}
+
 impl Default for AditApp {
     fn default() -> Self {
         let profile_store = ProfileStore::default();
@@ -1104,13 +1119,12 @@ impl AditApp {
             terminal_click: None,
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
-            rdp_image: None,
             rdp_frame_generation: 0,
             rdp_surface_size: None,
             rdp_target_size: None,
             rdp_frame_session: None,
             rdp_frame_uploaded: None,
-            rdp_image_prev: None,
+            rdp_tiles: Vec::new(),
             rdp_clipboard_offered: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
