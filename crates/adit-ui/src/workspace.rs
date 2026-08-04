@@ -114,24 +114,41 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     // back out edge to edge: rows of images, each sized in logical points so
     // the compositor's DPI scaling lands every device pixel on exactly one
     // frame pixel and Nearest never resamples.
+    // Seams are computed from SHARED edges, never from each tile's own size.
+    //
+    // `tile_size / scale` is fractional at any non-integer display scale
+    // (512 / 1.25 = 409.6), and laying fractional boxes end to end leaves the
+    // rounding error between them — a hairline of container showing through
+    // at every row and column boundary. Rounding each cumulative edge once and
+    // taking differences means neighbours agree on their shared edge by
+    // construction, so the seams close exactly and the sizes still sum to the
+    // full surface.
+    let edge = |device: u32| (device as f32 / display_scale).round();
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
     let mut current_y: Option<u16> = None;
     let mut row: Vec<Element<'_, Message>> = Vec::new();
+    let mut device_x: u32 = 0;
+    let mut device_y: u32 = 0;
     for tile in &app.rdp_tiles {
         if current_y != Some(tile.y) {
             if !row.is_empty() {
                 rows.push(iced::widget::Row::with_children(std::mem::take(&mut row)).into());
+                device_y = u32::from(tile.y);
             }
             current_y = Some(tile.y);
+            device_x = 0;
         }
+        let next_x = device_x + u32::from(tile.width);
+        let next_y = device_y + u32::from(tile.height);
         row.push(
             iced::widget::image(tile.handle.clone())
-                .width(Length::Fixed(f32::from(tile.width) / display_scale))
-                .height(Length::Fixed(f32::from(tile.height) / display_scale))
+                .width(Length::Fixed(edge(next_x) - edge(device_x)))
+                .height(Length::Fixed(edge(next_y) - edge(device_y)))
                 .filter_method(iced::widget::image::FilterMethod::Nearest)
                 .content_fit(iced::ContentFit::Fill)
                 .into(),
         );
+        device_x = next_x;
     }
     if !row.is_empty() {
         rows.push(iced::widget::Row::with_children(row).into());
