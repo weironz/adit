@@ -73,9 +73,24 @@ pub(crate) fn build_connector_config(
         .map(|d| d.trim().to_owned())
         .filter(|d| !d.is_empty());
 
+    // A `MicrosoftAccount\` prefix is stripped before CredSSP ever sees it.
+    //
+    // The username box accepts `DOMAIN\user`, and typing the Microsoft-account
+    // form there is the obvious thing to try when Windows asks for it — but it
+    // reaches sspi's `Username::new`, which refuses a UPN paired with a domain
+    // and fails the connection outright ("invalid username", credssp.rs:104),
+    // leaving the password dialog reappearing forever. It is not needed here
+    // either way: the vendored connector adds `MicrosoftAccount` to the Client
+    // Info PDU by itself, which is the only place Windows wants it.
+    let username = request
+        .username
+        .split_once('\\')
+        .filter(|(domain, _)| domain.eq_ignore_ascii_case("MicrosoftAccount"))
+        .map_or_else(|| request.username.clone(), |(_, user)| user.to_owned());
+
     ConnectorConfig {
         credentials: Credentials::UsernamePassword {
-            username: request.username.clone(),
+            username,
             password: request.password.clone(),
         },
         domain,
