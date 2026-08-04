@@ -72,6 +72,25 @@ pub(crate) fn build_connector_config(
         .map(|d| d.trim().to_owned())
         .filter(|d| !d.is_empty());
 
+    // A Microsoft account needs the `MicrosoftAccount` domain to log on
+    // interactively. CredSSP authenticates the CONNECTION from the bare
+    // address either way, so the session comes up — but Windows then cannot
+    // match the credentials to a local account and parks the user at the lock
+    // screen to type the same password again, which is exactly what autologon
+    // exists to avoid. mstsc stores these as `MicrosoftAccount\user@host` for
+    // the same reason.
+    //
+    // Only for the consumer domains, and only when no domain was configured:
+    // an enterprise UPN like `user@corp.example.com` is a real AD identity and
+    // prefixing it would break authentication that currently works.
+    const MSA_DOMAINS: [&str; 4] = ["outlook.com", "hotmail.com", "live.com", "msn.com"];
+    let domain = domain.or_else(|| {
+        let host = request.username.rsplit_once('@')?.1.to_ascii_lowercase();
+        MSA_DOMAINS
+            .contains(&host.as_str())
+            .then(|| "MicrosoftAccount".to_owned())
+    });
+
     ConnectorConfig {
         credentials: Credentials::UsernamePassword {
             username: request.username.clone(),

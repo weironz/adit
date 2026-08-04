@@ -287,6 +287,38 @@ bytes={}
         grow_dirty(frame, x, y, cols, rows);
     }
 
+    /// Like [`blit_rect`], but leaves the frame untouched wherever the source
+    /// pixel is fully transparent.
+    fn blit_rect_masked(
+        frame: &mut EgfxFrame,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+        rgba: &[u8],
+    ) {
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if x >= fw || y >= fh || w == 0 || h == 0 {
+            return;
+        }
+        let cols = w.min(fw - x);
+        let rows = h.min(fh - y);
+        if rgba.len() < (rows - 1) * w * 4 + cols * 4 {
+            return;
+        }
+        for row in 0..rows {
+            for col in 0..cols {
+                let src = (row * w + col) * 4;
+                if rgba[src + 3] == 0 {
+                    continue;
+                }
+                let dst = ((y + row) * fw + x + col) * 4;
+                frame.rgba[dst..dst + 4].copy_from_slice(&rgba[src..src + 4]);
+            }
+        }
+        grow_dirty(frame, x, y, cols, rows);
+    }
+
     /// Read `w x h` RGBA pixels out of the frame at `(x, y)`, tightly packed.
     fn read_rect(frame: &EgfxFrame, x: usize, y: usize, w: usize, h: usize) -> Option<Vec<u8>> {
         let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
@@ -379,7 +411,17 @@ bytes={}
             px.swap(0, 2); // BGRA -> RGBA
         }
         if let Ok(mut frame) = self.shared.lock() {
-            Self::blit_rect(
+            // Alpha-masked: a ClearCodec tile is composited from layers that
+            // need not cover it, and the decoder leaves untouched pixels fully
+            // transparent (its buffer starts zeroed and every layer writes
+            // alpha 0xFF where it paints). Blitting those as opaque black
+            // punched holes through the desktop — and the glyph cache stores
+            // the same buffer, so every later hit on it repainted the holes.
+            // FreeRDP has no holes to skip because it fills its cache slot
+            // from the composited DESTINATION surface; skipping transparent
+            // pixels reaches the same result without needing the destination
+            // at decode time.
+            Self::blit_rect_masked(
                 &mut frame,
                 ox as usize + usize::from(rect.left),
                 oy as usize + usize::from(rect.top),
