@@ -107,6 +107,12 @@ anchor comes back on a different line from the text it named.
 
 ## Debugging leverage
 
+- **RDP rendering artefact? Capture once, replay offline** — do not iterate live.
+  [docs/rdp-debugging.md](docs/rdp-debugging.md) is the runbook: `ADIT_RDP_DUMP=1`
+  captures every codec stream + an uncapped paint trace, and
+  `crates/adit-rdp/tests/merged_dump.rs` re-executes the whole session from it
+  (99.7% pixel-faithful), so a fix is proven against the captured bytes before
+  it ships.
 - The RDP helper logs to `%APPDATA%\Adit\rdp-helper.log` (`RUST_LOG` overrides the
   default filter) — the GUI discards its stderr, so this is the only window into it.
 - Manual RDP harness against a real host, which can dump decoded frames to PNG:
