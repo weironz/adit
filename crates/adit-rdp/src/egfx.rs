@@ -341,7 +341,12 @@ bytes={}
         h: u16,
         outcome: &str,
     ) {
-        if self.clear_dumps >= MAX_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
+        // A much higher cap than the progressive dumps: ClearCodec streams are
+        // small and the v-bar/glyph caches only reproduce when the whole
+        // session's sequence is replayed, so a useful capture is hundreds of
+        // streams, not eight.
+        const MAX_CLEAR_DUMPS: u32 = 512;
+        if self.clear_dumps >= MAX_CLEAR_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
             return;
         }
         let Some(base) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) else {
@@ -554,7 +559,26 @@ impl GraphicsPipelineHandler for EgfxHandler {
     /// a screenshot. `tests/clearcodec_dump.rs`-style offline replay of a
     /// capture (ADIT_RDP_DUMP=1) is the way to earn that confidence.
     fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
-        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitySet};
+        use ironrdp_egfx::pdu::{
+            CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitiesV107Flags, CapabilitySet,
+        };
+        // Capture mode: under ADIT_RDP_DUMP, advertise the FULL set so the
+        // server sends ClearCodec again and dump_clear_stream can record real
+        // streams for offline diffing. Normal launches keep thin-client, which
+        // is the verified-clean path (RemoteFX only, no ClearCodec).
+        if std::env::var_os("ADIT_RDP_DUMP").is_some() {
+            return vec![
+                CapabilitySet::V10_7 {
+                    flags: CapabilitiesV107Flags::SMALL_CACHE,
+                },
+                CapabilitySet::V8_1 {
+                    flags: CapabilitiesV81Flags::SMALL_CACHE,
+                },
+                CapabilitySet::V8 {
+                    flags: CapabilitiesV8Flags::SMALL_CACHE,
+                },
+            ];
+        }
         vec![CapabilitySet::V8 {
             flags: CapabilitiesV8Flags::SMALL_CACHE | CapabilitiesV8Flags::THIN_CLIENT,
         }]
