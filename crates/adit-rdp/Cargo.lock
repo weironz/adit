@@ -15,7 +15,7 @@ dependencies = [
 
 [[package]]
 name = "adit-rdp"
-version = "0.1.63"
+version = "0.1.64"
 dependencies = [
  "adit-rdp-proto",
  "image",
@@ -46,7 +46,7 @@ dependencies = [
 
 [[package]]
 name = "adit-rdp-proto"
-version = "0.1.63"
+version = "0.1.64"
 dependencies = [
  "bincode",
  "serde",
