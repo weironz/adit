@@ -150,11 +150,21 @@ pub(crate) fn take_frame(shared: &SharedEgfx) -> Option<FrameUpdate> {
 /// cache-to-surface volume for three rounds of guessing — a counter that stops
 /// at 60 reports "60 calls" whether there were 60 or 60000.
 fn trace_paint(source: &str, x: usize, y: usize, w: usize, h: usize) {
+    trace_slot(source, None, x, y, w, h);
+}
+
+/// As [`trace_paint`], naming the cache slot the pixels came from or went to.
+///
+/// The slot is the whole point for the cache ops. A blit that draws a
+/// populated but *wrong* slot is completely silent — the code warns only when
+/// a slot is missing entirely — so the slot number is what ties a bad
+/// rectangle back to the `SurfaceToCache` that filled it.
+fn trace_slot(source: &str, slot: Option<u16>, x: usize, y: usize, w: usize, h: usize) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if !*ON.get_or_init(|| std::env::var_os("ADIT_RDP_DUMP").is_some()) {
         return;
     }
-    tracing::info!(source, x, y, w, h, "paint");
+    tracing::info!(source, slot, x, y, w, h, "paint");
 }
 
 fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
@@ -845,6 +855,14 @@ impl GraphicsPipelineHandler for EgfxHandler {
             r.right.saturating_sub(r.left),
             r.bottom.saturating_sub(r.top),
         );
+        trace_slot(
+            "surface-to-cache",
+            Some(pdu.cache_slot),
+            ox as usize + usize::from(r.left),
+            oy as usize + usize::from(r.top),
+            usize::from(w),
+            usize::from(h),
+        );
         if let Ok(frame) = self.shared.lock() {
             if let Some(rgba) = Self::read_rect(
                 &frame,
@@ -884,8 +902,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
             tracing::info!(slot = pdu.cache_slot, ew, eh, ?dests, "cache-to-surface");
         }
         for point in &pdu.destination_points {
-            trace_paint(
+            trace_slot(
                 "cache-to-surface",
+                Some(pdu.cache_slot),
                 ox as usize + usize::from(point.x),
                 oy as usize + usize::from(point.y),
                 usize::from(ew),
