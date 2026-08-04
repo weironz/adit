@@ -71,14 +71,31 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // Sample the active RDP framebuffer; rebuild the GPU image handle only
             // when the helper produced a new generation.
-            if let Some(frame) = app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation) {
-                app.rdp_frame_generation = frame.generation;
-                app.rdp_surface_size = Some((frame.width, frame.height));
-                app.rdp_image = Some(iced::widget::image::Handle::from_rgba(
-                    u32::from(frame.width),
-                    u32::from(frame.height),
-                    frame.rgba,
-                ));
+            // Throttle the GPU handle rebuild.
+            //
+            // `image::Handle::from_rgba` mints a fresh `Id` every call, and the
+            // renderer's raster cache evicts any id not hit in the current
+            // frame — so every rebuild is a cache miss that must go through
+            // iced's ASYNC image worker, and a frame that renders before the
+            // upload lands draws nothing at all, showing the black container
+            // underneath. At a 1908x1152 physical-pixel desktop that is 8.8 MB
+            // per upload; asking for one on every vsync outruns the worker and
+            // the misses show up as flicker. ~30/s keeps motion smooth and
+            // leaves the worker room to finish.
+            let due = app
+                .rdp_frame_uploaded
+                .is_none_or(|at| at.elapsed() >= RDP_FRAME_MIN_INTERVAL);
+            if due {
+                if let Some(frame) = app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation) {
+                    app.rdp_frame_generation = frame.generation;
+                    app.rdp_frame_uploaded = Some(Instant::now());
+                    app.rdp_surface_size = Some((frame.width, frame.height));
+                    app.rdp_image = Some(iced::widget::image::Handle::from_rgba(
+                        u32::from(frame.width),
+                        u32::from(frame.height),
+                        frame.rgba,
+                    ));
+                }
             }
         }
         Message::RdpPointerMoved(point) => {

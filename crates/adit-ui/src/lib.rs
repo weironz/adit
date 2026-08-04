@@ -253,6 +253,9 @@ pub struct AditApp {
     // cache must be invalidated — otherwise we'd render one host's frame under
     // another's tab (and could get stuck if the generations happened to match).
     rdp_frame_session: Option<SessionId>,
+    /// When the RDP texture was last handed to the renderer (see the throttle
+    /// in the frame sampler).
+    rdp_frame_uploaded: Option<Instant>,
     // RDP clipboard: only this process has a Windows clipboard (the helper is
     // windowless), so local→remote means polling it while an RDP tab is up.
     // `rdp_clipboard_offered` is the last text handed to the helper — it stops
@@ -810,6 +813,11 @@ const MAX_PANES: usize = 6;
 /// and slow enough not to contend with other apps for the clipboard.
 const RDP_CLIPBOARD_POLL_TICKS: u8 = 5;
 
+/// Smallest gap between RDP texture uploads. Each one is a full-surface
+/// allocation through iced's async image worker; see the sampler for why
+/// outrunning it flickers.
+const RDP_FRAME_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+
 impl Default for AditApp {
     fn default() -> Self {
         let profile_store = ProfileStore::default();
@@ -1091,6 +1099,7 @@ impl AditApp {
             rdp_surface_size: None,
             rdp_target_size: None,
             rdp_frame_session: None,
+            rdp_frame_uploaded: None,
             rdp_clipboard_offered: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
