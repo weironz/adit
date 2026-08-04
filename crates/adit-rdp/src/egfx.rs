@@ -180,6 +180,9 @@ pub(crate) struct EgfxHandler {
     /// contents of a text box — frozen at whatever was on screen before, which
     /// is what made a logged-in desktop render as a mosaic of stale fragments.
     cache: HashMap<u16, CachedBitmap>,
+    /// Counters for the one-off diagnostics above.
+    unhandled_logged: u32,
+    frames_seen: u32,
     /// How many "no rect covered this tile" warnings have been logged.
     unclipped_logged: u32,
     /// Whether anything was composited since the last present. `EndFrame`
@@ -198,6 +201,8 @@ impl EgfxHandler {
             dumps: 0,
             composited: false,
             unclipped_logged: 0,
+            unhandled_logged: 0,
+            frames_seen: 0,
             cache: HashMap::new(),
         }
     }
@@ -303,6 +308,24 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
+    /// Advertise ONLY thin-client V8.
+    ///
+    /// The default advertisement offers plain V8, under which Windows encodes
+    /// sharp UI content — text boxes, glyph runs, small controls — as
+    /// ClearCodec, which neither IronRDP nor this handler decodes: a logged-in
+    /// desktop rendered as fragments over white, and the logon password box
+    /// (a ClearCodec rect at exactly its coordinates, per the unhandled-PDU
+    /// log) never appeared at all. THIN_CLIENT tells the server to stick to
+    /// the RemoteFX Progressive + solid-fill + cache repertoire — precisely
+    /// the operations implemented (and bug-fixed) here. Costs some bandwidth
+    /// on text-heavy screens; buys a desktop with every pixel present.
+    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
+        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitySet};
+        vec![CapabilitySet::V8 {
+            flags: CapabilitiesV8Flags::SMALL_CACHE | CapabilitiesV8Flags::THIN_CLIENT,
+        }]
+    }
+
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;
@@ -616,7 +639,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
         let Some(entry) = self.cache.get(&pdu.cache_slot) else {
             // A slot the server believes we hold. It will not re-send those
             // pixels, so the area stays stale — worth knowing about.
-            tracing::debug!(slot = pdu.cache_slot, "cache blit for an unknown slot");
+            tracing::warn!(slot = pdu.cache_slot, "cache blit for an unknown slot");
             return;
         };
         if let Ok(mut frame) = self.shared.lock() {
@@ -639,6 +662,16 @@ impl GraphicsPipelineHandler for EgfxHandler {
         self.cache.remove(&pdu.cache_slot);
     }
 
+    /// Anything the pipeline did not route. Logged because an unhandled PDU is
+    /// invisible otherwise, and a payload that fails to decode takes the rest
+    /// of its frame — EndFrame included — down with it.
+    fn on_unhandled_pdu(&mut self, pdu: &ironrdp_egfx::pdu::GfxPdu) {
+        if self.unhandled_logged < 20 {
+            self.unhandled_logged += 1;
+            tracing::warn!("unhandled EGFX pdu: {pdu:?}");
+        }
+    }
+
     fn on_delete_encoding_context(&mut self, pdu: &DeleteEncodingContextPdu) {
         self.progressive.delete_context(pdu.codec_context_id);
     }
@@ -647,6 +680,10 @@ impl GraphicsPipelineHandler for EgfxHandler {
         // Present point: publish once per EndFrame, and only when the frame
         // actually painted something — the mirror half of the "no dirty per
         // PDU" rule above.
+        if self.frames_seen < 20 {
+            self.frames_seen += 1;
+            tracing::info!(composited = self.composited, "EGFX frame complete");
+        }
         if !self.composited {
             return;
         }
