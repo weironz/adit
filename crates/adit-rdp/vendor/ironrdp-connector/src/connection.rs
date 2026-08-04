@@ -1013,6 +1013,18 @@ fn create_client_info_pdu(config: &Config, client_addr: &SocketAddr) -> rdp::Cli
         }
     };
 
+    // ADIT PATCH: log the identity that actually goes on the wire for the
+    // interactive logon. CredSSP succeeding proves the credentials are valid;
+    // it says nothing about whether LogonUI accepts this *spelling* of them,
+    // and that distinction cost several rounds of inference to pin down.
+    // Never the password.
+    tracing::info!(
+        username = config.credentials.username().unwrap_or(""),
+        domain = client_info_domain.as_deref().unwrap_or(""),
+        autologon = config.autologon,
+        "client info credentials"
+    );
+
     let client_info = ClientInfo {
         credentials: Credentials {
             username: config.credentials.username().unwrap_or("").to_owned(),
