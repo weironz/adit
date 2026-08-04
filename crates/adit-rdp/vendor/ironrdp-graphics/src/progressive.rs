@@ -589,7 +589,7 @@ fn band_zero_count(sign: &[i8], band: &BandInfo) -> usize {
     clippy::cast_sign_loss,
     reason = "value is clamped to 0..255 before cast"
 )]
-fn clamp_u8(value: i32) -> u8 {
+fn clamp_u8(value: i64) -> u8 {
     value.clamp(0, 255) as u8
 }
 
@@ -895,7 +895,18 @@ impl TileState {
             let cb = i32::from(cb_buf[i]);
             let cr = i32::from(cr_buf[i]);
 
-            // ITU-R BT.601 YCbCr to RGB conversion
+            // ITU-R BT.601 YCbCr to RGB conversion.
+            //
+            // ADIT PATCH: done in i64. The coefficients are i16, so cb and cr
+            // reach +-32767, and `cb * 22554 + cr * 46802 + 32768` peaks near
+            // 2.27e9 — past i32::MAX. In a debug build that panics; in a
+            // RELEASE build it wraps silently and the green channel becomes
+            // garbage, which is what put saturated green specks over
+            // high-contrast animated content (only there, because only rapidly
+            // changing high-contrast tiles produce chroma that large). Widening
+            // the intermediate keeps extreme coefficients saturating at the
+            // clamp, which is what they should do, instead of wrapping.
+            let (y, cb, cr) = (i64::from(y), i64::from(cb), i64::from(cr));
             let r = y + ((cr * 91881 + 32768) >> 16);
             let g = y - ((cb * 22554 + cr * 46802 + 32768) >> 16);
             let b = y + ((cb * 116130 + 32768) >> 16);

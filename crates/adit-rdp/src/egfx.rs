@@ -44,7 +44,11 @@ const MAX_DIMENSION: u32 = 8192;
 ///
 /// Off unless asked for: a capture is a picture of the user's desktop, so it is
 /// opt-in rather than something a bad connection scatters across their disk.
-const MAX_DUMPS: u32 = 8;
+/// Raised from 8: eight frames were enough to find a decoder that failed
+/// outright, but an artefact that only shows on continuously animating content
+/// needs the whole sequence — progressive refinement is stateful, so a frame
+/// only means anything replayed in order after the ones before it.
+const MAX_DUMPS: u32 = 512;
 
 /// RemoteFX Progressive tile edge, in pixels (MS-RDPRFX): tiles are 64×64.
 const TILE: usize = 64;

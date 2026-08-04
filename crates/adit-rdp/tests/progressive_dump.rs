@@ -43,7 +43,16 @@ fn a_captured_stream_decodes() {
                     .is_some_and(|name| name.to_string_lossy().starts_with("progressive-"))
         })
         .collect();
-    dumps.sort();
+    // Numeric order, not lexicographic: the dumps are not zero-padded, so a
+    // path sort gives 0, 1, 10, 100, 2 ... and progressive refinement is
+    // stateful — replayed out of order the whole sequence is meaningless.
+    dumps.sort_by_key(|path| {
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.strip_prefix("progressive-"))
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(u32::MAX)
+    });
     assert!(!dumps.is_empty(), "no progressive-*.bin in {dir}");
 
     let mut decoder = ProgressiveDecoder::new();
