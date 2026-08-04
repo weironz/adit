@@ -101,6 +101,11 @@ pub(crate) struct EgfxHandler {
     progressive: ProgressiveDecoder,
     /// How many failing streams have been written out so far.
     dumps: u32,
+    /// Whether anything was composited since the last present. `EndFrame`
+    /// publishes only when this is set: after a graphics reset zeroes the
+    /// framebuffer, an empty frame's unconditional present would flash pure
+    /// black until the next real content arrived.
+    composited: bool,
 }
 
 impl EgfxHandler {
@@ -110,6 +115,7 @@ impl EgfxHandler {
             surfaces: HashMap::new(),
             progressive: ProgressiveDecoder::new(),
             dumps: 0,
+            composited: false,
         }
     }
 
@@ -149,19 +155,31 @@ bytes={}
 
     /// Composite a 64×64 RGBA tile at output pixel (`px`, `py`), clamped to the
     /// framebuffer (edge tiles overhang a surface whose size isn't a multiple of 64).
-    fn blit_tile(frame: &mut EgfxFrame, px: usize, py: usize, pixels: &[u8]) {
+    /// Blit a window of one 64x64 tile: `w x h` pixels starting at
+    /// `(sub_x, sub_y)` inside the tile, landing at `(px, py)` on the frame.
+    #[expect(clippy::too_many_arguments, reason = "a rectangle is six numbers")]
+    fn blit_tile_window(
+        frame: &mut EgfxFrame,
+        px: usize,
+        py: usize,
+        sub_x: usize,
+        sub_y: usize,
+        w: usize,
+        h: usize,
+        pixels: &[u8],
+    ) {
         if pixels.len() < TILE * TILE * 4 {
             return;
         }
         let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
-        if px >= fw || py >= fh {
+        if px >= fw || py >= fh || w == 0 {
             return;
         }
-        let cols = TILE.min(fw - px);
-        let rows = TILE.min(fh - py);
+        let cols = w.min(fw - px).min(TILE - sub_x);
+        let rows = h.min(fh - py).min(TILE - sub_y);
         for row in 0..rows {
             let dst = ((py + row) * fw + px) * 4;
-            let src = row * TILE * 4;
+            let src = ((sub_y + row) * TILE + sub_x) * 4;
             frame.rgba[dst..dst + cols * 4].copy_from_slice(&pixels[src..src + cols * 4]);
         }
     }
@@ -239,6 +257,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
             }
             // Not marked dirty: presents happen on `on_frame_complete`, so a
             // multi-PDU frame reaches the screen whole (see on_wire_to_surface2).
+            self.composited = true;
         }
     }
 
@@ -255,12 +274,12 @@ impl GraphicsPipelineHandler for EgfxHandler {
             return;
         };
 
-        let tiles =
+        let decoded =
             match self
                 .progressive
                 .decode_bitmap(pdu.surface_id, sw, sh, &pdu.bitmap_data)
             {
-                Ok(tiles) => tiles,
+                Ok(decoded) => decoded,
                 Err(error) => {
                     tracing::warn!("EGFX progressive decode failed: {error}");
                     self.dump_stream(pdu, sw, sh, &error.to_string());
@@ -268,16 +287,46 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 }
             };
         self.dump_stream(pdu, sw, sh, "ok");
-        if tiles.is_empty() {
+        if decoded.tiles.is_empty() {
             return;
         }
 
         if let Ok(mut frame) = self.shared.lock() {
-            for tile in &tiles {
-                let px = ox as usize + usize::from(tile.x_idx) * TILE;
-                let py = oy as usize + usize::from(tile.y_idx) * TILE;
-                Self::blit_tile(&mut frame, px, py, &tile.pixels);
+            for tile in &decoded.tiles {
+                // Surface-relative tile bounds, clipped to the region's dirty
+                // rects. Tiles are 64-aligned cells of the encoder's tile
+                // cache; the rects say which pixels this frame actually
+                // touched. Blitting whole tiles paints cache content over
+                // areas the frame did not update — 64px-aligned rectangles of
+                // stale image hanging off every partial update (FreeRDP clips
+                // in update_tiles for the same reason).
+                let tx = usize::from(tile.x_idx) * TILE;
+                let ty = usize::from(tile.y_idx) * TILE;
+                for rect in &decoded.rects {
+                    let rx0 = usize::from(rect.x);
+                    let ry0 = usize::from(rect.y);
+                    let rx1 = rx0 + usize::from(rect.width);
+                    let ry1 = ry0 + usize::from(rect.height);
+                    let cx0 = tx.max(rx0);
+                    let cy0 = ty.max(ry0);
+                    let cx1 = (tx + TILE).min(rx1);
+                    let cy1 = (ty + TILE).min(ry1);
+                    if cx0 >= cx1 || cy0 >= cy1 {
+                        continue;
+                    }
+                    Self::blit_tile_window(
+                        &mut frame,
+                        ox as usize + cx0,
+                        oy as usize + cy0,
+                        cx0 - tx,
+                        cy0 - ty,
+                        cx1 - cx0,
+                        cy1 - cy0,
+                        &tile.pixels,
+                    );
+                }
             }
+            self.composited = true;
             // Deliberately NOT marked dirty here: presents are frame-atomic.
             // A frame's PDUs are decoded back-to-back inside one process()
             // call, but the session loop samples the framebuffer once per
@@ -293,6 +342,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_frame_complete(&mut self, _frame_id: u32) {
+        // Present point: publish once per EndFrame, and only when the frame
+        // actually painted something — the mirror half of the "no dirty per
+        // PDU" rule above.
+        if !self.composited {
+            return;
+        }
+        self.composited = false;
         if let Ok(mut frame) = self.shared.lock() {
             frame.dirty = true;
         }

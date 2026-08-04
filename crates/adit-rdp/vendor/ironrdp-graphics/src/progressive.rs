@@ -576,6 +576,7 @@ fn ll3_offset(use_reduce_extrapolate: bool) -> usize {
 }
 
 /// Count zero-DAS positions within a band.
+#[expect(dead_code, reason = "orphaned by the persistent-cursor upgrade path; kept for reference against upstream")]
 fn band_zero_count(sign: &[i8], band: &BandInfo) -> usize {
     let start = band.offset;
     let end = start + band.count();
@@ -1014,6 +1015,29 @@ pub struct DecodedTile {
     pub pixels: Vec<u8>,
 }
 
+/// A dirty rectangle from a REGION block, in surface coordinates.
+///
+/// ADIT PATCH: tiles are 64-aligned grid cells but the region's rects say
+/// which pixels of them this frame actually updated. FreeRDP clips every tile
+/// blit against the current region's rects (`update_tiles`); compositing whole
+/// tiles paints the encoder's tile-cache content over surface areas the frame
+/// did not touch — visible as 64px-aligned rectangles of stale image hanging
+/// off partial updates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirtyRect {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+}
+
+/// Everything one progressive stream decoded to: the updated tiles plus the
+/// clip rectangles their blits must be limited to.
+pub struct DecodedRegion {
+    pub tiles: Vec<DecodedTile>,
+    pub rects: Vec<DirtyRect>,
+}
+
 /// Per-axis cap on surface dimensions, in pixels.
 ///
 /// Per MS-RDPEGFX 2.2.2.14 RDPGFX_RESET_GRAPHICS_PDU, the normative maximum
@@ -1141,7 +1165,7 @@ impl ProgressiveDecoder {
         surface_width: u16,
         surface_height: u16,
         bitmap_data: &[u8],
-    ) -> Result<Vec<DecodedTile>, ProgressiveDecodeError> {
+    ) -> Result<DecodedRegion, ProgressiveDecodeError> {
         use ironrdp_pdu::codecs::rfx::progressive::{ProgressiveBlock, decode_progressive_stream};
 
         let blocks = decode_progressive_stream(bitmap_data)?;
@@ -1185,6 +1209,7 @@ impl ProgressiveDecoder {
         context.surface.use_reduce_extrapolate = use_reduce_extrapolate;
 
         let mut decoded_tiles = Vec::new();
+        let mut rects = Vec::new();
 
         // Process REGION blocks (the main content)
         for block in &blocks {
@@ -1195,6 +1220,13 @@ impl ProgressiveDecoder {
 
             let quant_vals = &region.quant_vals;
             let prog_quant_vals = &region.quant_prog_vals;
+
+            rects.extend(region.rects.iter().map(|r| DirtyRect {
+                x: r.x,
+                y: r.y,
+                width: r.width,
+                height: r.height,
+            }));
 
             for tile_block in &region.tiles {
                 let tiles = decode_tile_block(
@@ -1208,7 +1240,10 @@ impl ProgressiveDecoder {
             }
         }
 
-        Ok(decoded_tiles)
+        Ok(DecodedRegion {
+            tiles: decoded_tiles,
+            rects,
+        })
     }
 
     /// Delete a codec context, freeing its tile state.

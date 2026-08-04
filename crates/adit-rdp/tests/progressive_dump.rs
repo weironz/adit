@@ -69,15 +69,16 @@ fn a_captured_stream_decodes() {
         let data = std::fs::read(path).expect("read dump");
 
         match decoder.decode_bitmap(0, w, h, &data) {
-            Ok(tiles) => {
+            Ok(decoded) => {
                 decoded_any = true;
                 println!(
-                    "{}: ctx {context_id}, {} bytes -> {} tiles",
+                    "{}: ctx {context_id}, {} bytes -> {} tiles, {} rects",
                     path.display(),
                     data.len(),
-                    tiles.len()
+                    decoded.tiles.len(),
+                    decoded.rects.len()
                 );
-                for tile in &tiles {
+                for tile in &decoded.tiles {
                     assert_eq!(tile.pixels.len(), 64 * 64 * 4, "tile has the wrong size");
                     blit(&mut surface_rgba, w, h, tile.x_idx, tile.y_idx, &tile.pixels);
                 }
