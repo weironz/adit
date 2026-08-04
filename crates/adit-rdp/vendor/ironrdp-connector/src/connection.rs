@@ -969,11 +969,55 @@ fn create_client_info_pdu(config: &Config, client_addr: &SocketAddr) -> rdp::Cli
         CompressionType::K8 // ignored if ClientInfoFlags::COMPRESSION is not set
     };
 
+    // ADIT PATCH: a Microsoft account needs the `MicrosoftAccount` domain in
+    // the Client Info PDU — and ONLY there.
+    //
+    // NLA and the interactive logon disagree about how to spell a Microsoft
+    // account. CredSSP authenticates `someone@outlook.com` with no domain
+    // quite happily; LogonUI does not, and parks the user at "用户名或密码不
+    // 正确" on a connection that already reported success. That combination is
+    // the giveaway: `Connected with success` in the log (so the credentials
+    // ARE valid — CredSSP checks them against the SAM) plus a logon prompt on
+    // screen. It only appears when there is no session to reconnect to, which
+    // is why it surfaced right after a reboot of a host that had worked all
+    // day.
+    //
+    // Putting `MicrosoftAccount` in `config.domain` instead is not the fix and
+    // was tried: it reaches sspi's `Username::new`, which rejects a UPN paired
+    // with a domain, and the connection then fails outright. Hence the split —
+    // `config.domain` keeps feeding CredSSP untouched.
+    //
+    // Restricted to the consumer domains Microsoft actually issues accounts
+    // on: a corporate UPN like `user@corp.local` must keep whatever domain the
+    // profile configured (usually none), and would break under a blanket
+    // "username contains @" rule.
+    let client_info_domain = match config.domain.as_deref() {
+        Some(domain) if !domain.trim().is_empty() => config.domain.clone(),
+        _ => {
+            const MICROSOFT_ACCOUNT_DOMAINS: [&str; 5] =
+                ["outlook.com", "hotmail.com", "live.com", "msn.com", "passport.com"];
+            let username = config.credentials.username().unwrap_or("");
+            let suffix = username
+                .rsplit_once('@')
+                .map(|(_, suffix)| suffix.to_ascii_lowercase());
+            match suffix {
+                Some(suffix)
+                    if MICROSOFT_ACCOUNT_DOMAINS
+                        .iter()
+                        .any(|candidate| suffix == *candidate) =>
+                {
+                    Some("MicrosoftAccount".to_owned())
+                }
+                _ => config.domain.clone(),
+            }
+        }
+    };
+
     let client_info = ClientInfo {
         credentials: Credentials {
             username: config.credentials.username().unwrap_or("").to_owned(),
             password: config.credentials.secret().to_owned(),
-            domain: config.domain.clone(),
+            domain: client_info_domain,
         },
         code_page: 0, // ignored if the keyboardLayout field of the Client Core Data is set to zero
         flags,
