@@ -139,6 +139,24 @@ pub(crate) fn take_frame(shared: &SharedEgfx) -> Option<FrameUpdate> {
 }
 
 /// Grow the frame's dirty rect to cover `w x h` pixels at `(x, y)`.
+/// Record every paint, with its source, under `ADIT_RDP_DUMP`.
+///
+/// Not a debug leftover. Now that ClearCodec decodes over the destination, an
+/// area we never painted and an area we painted wrongly look identical on
+/// screen: both keep the pixels that were already there. A complete record of
+/// what touched which rectangle is the only thing that separates them.
+///
+/// Deliberately uncapped. The capped op probes are what hid the
+/// cache-to-surface volume for three rounds of guessing — a counter that stops
+/// at 60 reports "60 calls" whether there were 60 or 60000.
+fn trace_paint(source: &str, x: usize, y: usize, w: usize, h: usize) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("ADIT_RDP_DUMP").is_some()) {
+        return;
+    }
+    tracing::info!(source, x, y, w, h, "paint");
+}
+
 fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
     if w == 0 || h == 0 {
         return;
@@ -413,6 +431,7 @@ bytes={}
             // codec's layers had not covered, so the previous frame's content
             // showed through and, since the server counts the region as
             // painted, stayed there for good.
+            trace_paint("clear", dx, dy, usize::from(w), usize::from(h));
             Self::blit_rect(&mut frame, dx, dy, usize::from(w), usize::from(h), &bgra);
             self.composited = true;
         }
@@ -589,6 +608,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 let src = row * tw * 4;
                 frame.rgba[dst..dst + tw * 4].copy_from_slice(&update.data[src..src + tw * 4]);
             }
+            trace_paint("bitmap-update", dst_x, dst_y, tw, th);
             grow_dirty(&mut frame, dst_x, dst_y, tw, th);
             // Not marked dirty: presents happen on `on_frame_complete`, so a
             // multi-PDU frame reaches the screen whole (see on_wire_to_surface2).
@@ -654,6 +674,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
                         continue;
                     }
                     clipped += 1;
+                    trace_paint("progressive", ox as usize + cx0, oy as usize + cy0, cx1 - cx0, cy1 - cy0);
                     Self::blit_tile_window(
                         &mut frame,
                         ox as usize + cx0,
@@ -681,6 +702,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
                             "tile covered by no region rect; blitting it whole"
                         );
                     }
+                    trace_paint("progressive-whole", ox as usize + tx, oy as usize + ty, TILE, TILE);
                     Self::blit_tile_window(
                         &mut frame,
                         ox as usize + tx,
@@ -737,7 +759,8 @@ impl GraphicsPipelineHandler for EgfxHandler {
                         frame.rgba[i + 3] = 0xFF;
                     }
                 }
-                grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
+                trace_paint("solid-fill", x0, y0, x1 - x0, y1 - y0);
+            grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
             }
             self.composited = true;
         }
@@ -791,6 +814,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 return;
             };
             for point in &pdu.destination_points {
+                trace_paint(
+                    "surface-to-surface",
+                    dox as usize + usize::from(point.x),
+                    doy as usize + usize::from(point.y),
+                    w,
+                    h,
+                );
                 Self::blit_rect(
                     &mut frame,
                     dox as usize + usize::from(point.x),
@@ -852,6 +882,15 @@ impl GraphicsPipelineHandler for EgfxHandler {
         if self.ops_logged < 60 {
             self.ops_logged += 1;
             tracing::info!(slot = pdu.cache_slot, ew, eh, ?dests, "cache-to-surface");
+        }
+        for point in &pdu.destination_points {
+            trace_paint(
+                "cache-to-surface",
+                ox as usize + usize::from(point.x),
+                oy as usize + usize::from(point.y),
+                usize::from(ew),
+                usize::from(eh),
+            );
         }
         if let Ok(mut frame) = self.shared.lock() {
             let Some(entry) = self.cache.get(&pdu.cache_slot) else {
