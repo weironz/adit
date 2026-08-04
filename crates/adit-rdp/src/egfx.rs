@@ -48,7 +48,9 @@ const MAX_DIMENSION: u32 = 8192;
 /// outright, but an artefact that only shows on continuously animating content
 /// needs the whole sequence — progressive refinement is stateful, so a frame
 /// only means anything replayed in order after the ones before it.
-const MAX_DUMPS: u32 = 512;
+/// Effectively uncapped: the 512 cap made a busy capture cover 24 seconds,
+/// ending right before the misbehaviour it was taken to catch.
+const MAX_DUMPS: u32 = 65536;
 
 /// RemoteFX Progressive tile edge, in pixels (MS-RDPRFX): tiles are 64×64.
 const TILE: usize = 64;
@@ -348,7 +350,7 @@ bytes={}
         // small and the v-bar/glyph caches only reproduce when the whole
         // session's sequence is replayed, so a useful capture is hundreds of
         // streams, not eight.
-        const MAX_CLEAR_DUMPS: u32 = 512;
+        const MAX_CLEAR_DUMPS: u32 = 65536;
         if self.clear_dumps >= MAX_CLEAR_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
             return;
         }
@@ -562,6 +564,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_created(&mut self, surface: &Surface) {
+        tracing::info!(id = surface.id, w = surface.width, h = surface.height, "surface created");
         self.surfaces.insert(
             surface.id,
             SurfaceInfo {
@@ -574,6 +577,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_mapped(&mut self, surface_id: u16, origin_x: u32, origin_y: u32) {
+        tracing::info!(id = surface_id, origin_x, origin_y, "surface mapped");
         if let Some(surface) = self.surfaces.get_mut(&surface_id) {
             surface.origin_x = origin_x;
             surface.origin_y = origin_y;
@@ -581,6 +585,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_deleted(&mut self, surface_id: u16) {
+        tracing::info!(id = surface_id, "surface deleted");
         self.surfaces.remove(&surface_id);
         // Progressive and classic-RFX state are per-surface; they die with it.
         self.progressive.delete_surface(surface_id);
@@ -743,7 +748,12 @@ impl GraphicsPipelineHandler for EgfxHandler {
                         frame.rgba[i + 3] = 0xFF;
                     }
                 }
-                trace_paint("solid-fill", x0, y0, x1 - x0, y1 - y0);
+                // Colour included: the offline replay must repaint these, and a
+            // skipped fill poisons every cache slot later filled from the area
+            // (the first faithful-looking sim was wrecked by exactly that).
+            if std::env::var_os("ADIT_RDP_DUMP").is_some() {
+                tracing::info!(source = "solid-fill", r = c.r, g = c.g, b = c.b, x = x0, y = y0, w = x1 - x0, h = y1 - y0, "paint");
+            }
             grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
             }
             self.composited = true;

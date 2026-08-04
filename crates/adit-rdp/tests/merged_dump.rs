@@ -36,6 +36,22 @@ use ironrdp_graphics::progressive::ProgressiveDecoder;
 
 const TILE: usize = 64;
 
+/// One canvas-mutating event reconstructed from the helper's paint trace.
+enum LogOp {
+    /// Decode `progressive-<index>.bin` and blit its tiles.
+    Progressive { index: u32 },
+    /// Decode the next ok ClearCodec dump at the logged rectangle.
+    Clear { x: usize, y: usize, w: usize, h: usize },
+    /// Copy a canvas rectangle into a cache slot.
+    Fill { slot: u16, x: usize, y: usize, w: usize, h: usize },
+    /// Blit a cache slot back onto the canvas.
+    Restore { slot: u16, x: usize, y: usize },
+    /// A solid colour fill, colour carried in the log line.
+    Solid { r: u8, g: u8, b: u8, x: usize, y: usize, w: usize, h: usize },
+    /// A paint whose pixels the capture does not carry (colourless old logs).
+    Unknown,
+}
+
 enum Stream {
     Progressive,
     Clear { x: u16, y: u16, w: u16, h: u16 },
@@ -146,6 +162,16 @@ fn a_captured_session_replays() {
                 .collect()
         })
         .unwrap_or_default();
+
+    // ADIT_MERGE_LOG=<rdp-helper.log>: replay the session from the helper's
+    // own paint trace instead of dump mtimes — including both cache ops as
+    // real canvas copies. The dump-only replay cannot predict scroll results
+    // at all: the scroll is carried by SurfaceToCache/CacheToSurface, whose
+    // pixels exist only as copies of the canvas at fill time.
+    if let Ok(log_path) = std::env::var("ADIT_MERGE_LOG") {
+        replay_from_log(&dir, &log_path, w, h, &probes);
+        return;
+    }
 
     let mut progressive = ProgressiveDecoder::new();
     let mut clear = ClearCodecDecoder::new();
@@ -284,6 +310,267 @@ fn a_captured_session_replays() {
             "ClearCodec coverage: {:.1}% of pixels left at the seeded value,              {clear_blank} streams that painted almost nothing",
             clear_untouched as f64 * 100.0 / clear_pixels as f64
         );
+    }
+}
+
+/// Replay the session from the helper's paint trace.
+///
+/// Ordering and geometry come from the log; pixel data comes from the dumps
+/// (progressive via the `wrote progressive stream` lines, ClearCodec by
+/// pairing the k-th "clear" paint with the k-th ok-outcome dump) and, for the
+/// cache ops, from the simulated canvas itself — exactly how the live helper
+/// works. Solid fills carry no pixels in the capture and are skipped, counted.
+///
+/// `ADIT_MERGE_SIM_SNAPSHOT=HH:MM:SS.mmm` saves the canvas the first time a
+/// log timestamp reaches that value — e.g. just before the fill burst, to see
+/// what the cache would have captured. Output: `merged-sim.png` plus a
+/// `sim-cell-<x>x<y>.png` crop per probe.
+fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, usize)]) {
+    let (fw, fh) = (usize::from(w), usize::from(h));
+    let log = std::fs::read_to_string(log_path).expect("read log");
+
+    // ClearCodec dumps that decoded ok in live, in index order.
+    type ClearBin = (Vec<u8>, (usize, usize, usize, usize));
+    let mut clear_bins: Vec<ClearBin> = Vec::new();
+    for index in 0..10_000u32 {
+        let path = format!("{dir}/clear-{index:03}.bin");
+        let Ok(data) = std::fs::read(&path) else { break };
+        let meta = std::fs::read_to_string(format!("{dir}/clear-{index:03}.txt")).expect("sidecar");
+        let mut rect = None;
+        let mut ok = false;
+        for line in meta.lines() {
+            if let Some(r) = line.strip_prefix("rect=") {
+                let (wh, at) = r.split_once(" at ").expect("rect format");
+                let (rw, rh) = wh.split_once('x').expect("rect wh");
+                let (rx, ry) = at.split_once(',').expect("rect at");
+                rect = Some((
+                    rx.trim().parse().expect("x"),
+                    ry.trim().parse().expect("y"),
+                    rw.trim().parse().expect("w"),
+                    rh.trim().parse().expect("h"),
+                ));
+            } else if let Some(o) = line.strip_prefix("outcome=") {
+                ok = o == "ok";
+            }
+        }
+        if ok {
+            clear_bins.push((data, rect.expect("sidecar rect")));
+        }
+    }
+
+    let mut ops: Vec<(String, LogOp)> = Vec::new();
+    for line in log.lines() {
+        let ts = line.get(11..23).unwrap_or_default().to_owned();
+        if line.contains("wrote progressive stream to") {
+            let index = line
+                .rsplit("progressive-")
+                .next()
+                .and_then(|s| s.strip_suffix(".bin"))
+                .and_then(|s| s.parse::<u32>().ok());
+            if let Some(index) = index {
+                ops.push((ts, LogOp::Progressive { index }));
+            }
+            continue;
+        }
+        let Some(rest) = line.split("paint source=\"").nth(1) else {
+            continue;
+        };
+        let Some((source, rest)) = rest.split_once('"') else {
+            continue;
+        };
+        let grab = |key: &str| {
+            rest.split(key)
+                .nth(1)
+                .and_then(|s| s.split_whitespace().next())
+                .and_then(|s| s.parse::<usize>().ok())
+        };
+        let (Some(x), Some(y), Some(gw), Some(gh)) = (grab("x="), grab("y="), grab("w="), grab("h=")) else {
+            continue;
+        };
+        let slot = grab("slot=").map(|v| u16::try_from(v).expect("slot"));
+        let op = match source {
+            "solid-fill" => match (grab("r="), grab("g="), grab("b=")) {
+                (Some(r), Some(g), Some(b)) => LogOp::Solid {
+                    r: u8::try_from(r).expect("r"),
+                    g: u8::try_from(g).expect("g"),
+                    b: u8::try_from(b).expect("b"),
+                    x,
+                    y,
+                    w: gw,
+                    h: gh,
+                },
+                _ => LogOp::Unknown,
+            },
+            "clear" => LogOp::Clear { x, y, w: gw, h: gh },
+            "surface-to-cache" => LogOp::Fill { slot: slot.expect("fill slot"), x, y, w: gw, h: gh },
+            "cache-to-surface" => LogOp::Restore { slot: slot.expect("restore slot"), x, y },
+            // The decode is driven by the WARN lines; these are the clip-era
+            // blit records and carry no pixels of their own.
+            "progressive" | "progressive-whole" => continue,
+            _ => LogOp::Unknown,
+        };
+        ops.push((ts, op));
+    }
+    println!("{} ops from the log, {} ok clear dumps", ops.len(), clear_bins.len());
+
+    let snapshot_at = std::env::var("ADIT_MERGE_SIM_SNAPSHOT").ok();
+    let mut snapshot_done = false;
+    let mut progressive_decoder = ProgressiveDecoder::new();
+    let mut clear_decoder = ClearCodecDecoder::new();
+    let mut canvas = vec![0u8; fw * fh * 4];
+    let mut slots: std::collections::HashMap<u16, (usize, usize, Vec<u8>)> =
+        std::collections::HashMap::new();
+    let mut clear_cursor = 0usize;
+    let (mut failures, mut solid_skipped, mut rect_mismatch) = (0usize, 0usize, 0usize);
+
+    for (ts, op) in &ops {
+        if let Some(at) = &snapshot_at {
+            if !snapshot_done && ts.as_str() >= at.as_str() {
+                snapshot_done = true;
+                image::save_buffer(
+                    format!("{dir}/sim-snapshot.png"),
+                    &canvas,
+                    u32::from(w),
+                    u32::from(h),
+                    image::ColorType::Rgba8,
+                )
+                .expect("snapshot png");
+                println!("snapshot at {ts} -> sim-snapshot.png");
+            }
+        }
+        match *op {
+            LogOp::Progressive { index } => {
+                let path = format!("{dir}/progressive-{index}.bin");
+                let Ok(data) = std::fs::read(&path) else {
+                    println!("missing {path}");
+                    failures += 1;
+                    continue;
+                };
+                match progressive_decoder.decode_bitmap(0, w, h, &data) {
+                    Ok(decoded) => {
+                        for tile in &decoded.tiles {
+                            let tx = usize::from(tile.x_idx) * TILE;
+                            let ty = usize::from(tile.y_idx) * TILE;
+                            blit_tile(&mut canvas, fw, fh, tx, ty, 0, 0, TILE, TILE, &tile.pixels);
+                        }
+                    }
+                    Err(error) => {
+                        failures += 1;
+                        println!("progressive-{index}: FAILED: {error}");
+                    }
+                }
+            }
+            LogOp::Clear { x, y, w: cw, h: ch } => {
+                let Some((data, rect)) = clear_bins.get(clear_cursor) else {
+                    println!("clear paint at {ts} beyond dumped streams");
+                    failures += 1;
+                    continue;
+                };
+                clear_cursor += 1;
+                if *rect != (x, y, cw, ch) {
+                    rect_mismatch += 1;
+                }
+                let background = (x + cw <= fw && y + ch <= fh).then(|| {
+                    let mut bgra = Vec::with_capacity(cw * ch * 4);
+                    for row in 0..ch {
+                        let start = ((y + row) * fw + x) * 4;
+                        bgra.extend_from_slice(&canvas[start..start + cw * 4]);
+                    }
+                    for px in bgra.chunks_exact_mut(4) {
+                        px.swap(0, 2); // RGBA -> BGRA
+                    }
+                    bgra
+                });
+                let (cw16, ch16) = (
+                    u16::try_from(cw).expect("clear w"),
+                    u16::try_from(ch).expect("clear h"),
+                );
+                match clear_decoder.decode_onto(data, cw16, ch16, background.as_deref()) {
+                    Ok(mut bgra) => {
+                        for px in bgra.chunks_exact_mut(4) {
+                            px.swap(0, 2); // BGRA -> RGBA
+                        }
+                        blit_rect(&mut canvas, fw, fh, x, y, cw, ch, &bgra);
+                    }
+                    Err(error) => {
+                        failures += 1;
+                        println!("clear at {ts}: FAILED: {error}");
+                    }
+                }
+            }
+            LogOp::Fill { slot, x, y, w: sw, h: sh } => {
+                // Mirror the live read_rect: an out-of-bounds source stores
+                // nothing at all.
+                if x + sw <= fw && y + sh <= fh && sw > 0 && sh > 0 {
+                    let mut pixels = Vec::with_capacity(sw * sh * 4);
+                    for row in 0..sh {
+                        let start = ((y + row) * fw + x) * 4;
+                        pixels.extend_from_slice(&canvas[start..start + sw * 4]);
+                    }
+                    slots.insert(slot, (sw, sh, pixels));
+                }
+            }
+            LogOp::Restore { slot, x, y } => match slots.get(&slot) {
+                Some(&(sw, sh, ref pixels)) => blit_rect(&mut canvas, fw, fh, x, y, sw, sh, pixels),
+                None => println!("restore at {ts}: slot {slot} never filled"),
+            },
+            LogOp::Solid { r, g, b, x, y, w: sw, h: sh } => {
+                let mut row = Vec::with_capacity(sw * 4);
+                for _ in 0..sw {
+                    row.extend_from_slice(&[r, g, b, 0xFF]);
+                }
+                for dy in y..(y + sh).min(fh) {
+                    let cols = sw.min(fw.saturating_sub(x));
+                    let dst = (dy * fw + x) * 4;
+                    canvas[dst..dst + cols * 4].copy_from_slice(&row[..cols * 4]);
+                }
+            }
+            LogOp::Unknown => solid_skipped += 1,
+        }
+    }
+
+    image::save_buffer(
+        format!("{dir}/merged-sim.png"),
+        &canvas,
+        u32::from(w),
+        u32::from(h),
+        image::ColorType::Rgba8,
+    )
+    .expect("sim png");
+    for &(px, py) in probes {
+        let (cx, cy) = ((px / TILE) * TILE, (py / TILE) * TILE);
+        let mut cell = Vec::with_capacity(TILE * TILE * 4);
+        for row in 0..TILE.min(fh.saturating_sub(cy)) {
+            let start = ((cy + row) * fw + cx) * 4;
+            cell.extend_from_slice(&canvas[start..start + TILE.min(fw - cx) * 4]);
+        }
+        image::save_buffer(
+            format!("{dir}/sim-cell-{cx}x{cy}.png"),
+            &cell,
+            u32::try_from(TILE.min(fw - cx)).expect("cell w"),
+            u32::try_from(TILE.min(fh.saturating_sub(cy))).expect("cell h"),
+            image::ColorType::Rgba8,
+        )
+        .expect("cell png");
+    }
+    println!(
+        "sim done -> merged-sim.png: {failures} failures, {solid_skipped} solid fills skipped, \
+         {rect_mismatch} clear rect mismatches"
+    );
+}
+
+/// Opaque rectangle blit, clamped to the canvas.
+#[allow(clippy::too_many_arguments)]
+fn blit_rect(canvas: &mut [u8], fw: usize, fh: usize, x: usize, y: usize, w: usize, h: usize, pixels: &[u8]) {
+    if x >= fw || y >= fh {
+        return;
+    }
+    let cols = w.min(fw - x);
+    let rows = h.min(fh - y);
+    for row in 0..rows {
+        let src = row * w * 4;
+        let dst = ((y + row) * fw + x) * 4;
+        canvas[dst..dst + cols * 4].copy_from_slice(&pixels[src..src + cols * 4]);
     }
 }
 
