@@ -144,7 +144,9 @@ frame-acknowledges and hands over the raw stream. With no decoder configured, se
 fall back to progressive — so leaving this unimplemented renders a **solid black desktop
 on a fully connected session**, a symptom that looks like a connection bug and isn't.
 
-**Cost.** Software decode; no H.264 path, so hosts that negotiate AVC still render black.
+**Cost.** Software decode. H.264/AVC is deliberately filtered out of the advertised
+capabilities (no decoder is wired), so servers negotiate the tile path instead of
+sending AVC we would render black. What "the tile path" grew into is decision #17.
 
 ## 8. Credentials: encrypted in the config directory, not the OS keyring — *reversal*
 
@@ -297,3 +299,50 @@ PowerShell 5.1's `Set-Content` defaults to ANSI and once corrupted `Cargo.toml`'
 em-dashes during a bump, which is also why the [`justfile`](../justfile) pins
 `windows-shell` to `pwsh` for its local recipes. `just installer` / `just deploy` still
 build locally for smoke-testing, but no longer publish.
+
+## 17. IronRDP as the RDP engine, and the tile path before H.264
+
+**Decision.** Build RDP on **IronRDP** (pure Rust) rather than binding **FreeRDP**
+(C), and ship the codec-mosaic "tile path" — RemoteFX Progressive + ClearCodec +
+NSCodec + the EGFX bitmap cache — before any H.264/AVC support.
+
+**Why IronRDP.** One language end to end, no FFI seam, no C build chain on Windows
+(FreeRDP means vcpkg/CMake plus an ffmpeg or openh264 dependency for its codecs), and
+memory safety in the one component that parses hostile network input. The helper is
+already a separate process (#4), which would also have fit a FreeRDP wrapper — the
+FFI and build-chain costs were the deciding factor, not architecture.
+
+**What it actually cost.** IronRDP's codec coverage was written against GNOME Remote
+Desktop and xrdp, not against what Windows really sends. The gap was paid down by
+hand, with a capture-driven loop, over one long campaign (2026-08): NSCodec did not
+exist upstream and was ported from FreeRDP; ClearCodec had five wire-level bugs and
+needed destination seeding; Progressive needed a dozen fixes ending in a tile
+application rule — fresh passes blit whole, upgrades clip to the region rects — that
+**no reference implementation has** (FreeRDP clips both, which is provably wrong for
+fresh passes on a Windows stream; both halves were proven from captured bytes). All
+of it is inventoried in
+[`crates/adit-rdp/IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md), and the
+forensic method is a runbook: [rdp-debugging.md](rdp-debugging.md).
+
+**The sequencing mistake, on the record.** The tile path came first because IronRDP
+ships no H.264 decoder — the day-one choice was "tile path or black screen", not
+"tile path or AVC". But with hindsight the right second step was wiring H.264, not
+polishing the tile path: Windows prefers AVC444, mstsc exercises the AVC pipeline —
+the server's best-tested path — and most of the artefact campaign happened on a
+fallback road that AVC sessions never drive. The tile work is not wasted — servers
+without hardware encoders (GNOME Remote Desktop, xrdp, GPU-less VMs) require that
+path and it is now solid — but its priority was inherited from a library limitation,
+not chosen.
+
+**Two remoting philosophies, for context.** RDP carries both: content-aware tile
+codecs (Microsoft-proprietary, specced as MS-RDPEGFX / MS-RDPRFX / MS-RDPNSC) and
+screen-as-video (open ITU standards, H.264/AVC444). The industry is converging on the
+latter — one hardware-accelerated decoder instead of five interlocking software ones.
+
+**Next.** Wire AVC444 through Windows Media Foundation (system H.264 decoder: no
+third-party binaries, no royalties, hardware accelerated). AVC becomes the main road
+for Windows hosts; the tile path stays as the fallback it was always meant to be.
+
+**Revisit if** IronRDP ships its own AVC decode + the codec fixes upstream (drop the
+vendored patches), or the RustCrypto pin conflict (#4) dissolves and a single-binary
+layout becomes possible.
