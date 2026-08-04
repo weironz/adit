@@ -75,10 +75,19 @@ impl ClearCodecDecoder {
                 .glyph_cache
                 .get(glyph_index)
                 .ok_or_else(|| invalid_field_err!("glyphIndex", "glyph cache miss on hit"))?;
-            if entry.width != width || entry.height != height {
-                return Err(invalid_field_err!("glyphIndex", "cached glyph dimensions mismatch"));
+            // ADIT PATCH: FreeRDP requires only that the request fits the
+            // cached pixel count (`nWidth * nHeight <= glyphEntry->count`), not
+            // that the dimensions match exactly — the same slot is legitimately
+            // re-read at a different aspect ratio.
+            let want = usize::from(width) * usize::from(height);
+            let have = usize::from(entry.width) * usize::from(entry.height);
+            if want > have {
+                return Err(invalid_field_err!(
+                    "glyphIndex",
+                    "cached glyph is smaller than the request"
+                ));
             }
-            return Ok(entry.pixels.clone());
+            return Ok(entry.pixels[..want * 4].to_vec());
         }
 
         // Cap allocation to prevent OOM from adversarial dimensions.
@@ -109,7 +118,11 @@ impl ClearCodecDecoder {
         // Store in glyph cache if applicable (area <= 1024 pixels)
         if stream.flags & FLAG_GLYPH_INDEX != 0 {
             if let Some(glyph_index) = stream.glyph_index {
-                if pixel_count <= 1024 {
+                // ADIT PATCH: FreeRDP caches anything up to 1024*1024 pixels.
+                // Declining at 1024 left slots the server believes are
+                // populated permanently empty, so every later hit on them
+                // missed.
+                if pixel_count <= 1024 * 1024 {
                     self.glyph_cache.store(
                         glyph_index,
                         GlyphEntry {
@@ -164,12 +177,19 @@ impl ClearCodecDecoder {
                 let band_height = band.y_end - band.y_start + 1;
                 for (col_offset, vbar) in band.vbars.iter().enumerate() {
                     let x = usize::from(band.x_start) + col_offset;
+
+                    // ADIT PATCH: resolve EVERY column, blit only the visible
+                    // ones. The v-bar caches are written by a cursor the server
+                    // and client advance in lockstep — the wire only ever names
+                    // READ indices — so skipping resolve_vbar for an
+                    // out-of-tile column silently desynchronises the cursor and
+                    // every later cache hit names a slot that was never filled.
+                    // FreeRDP guards only the blit.
+                    let full_vbar =
+                        self.resolve_vbar(vbar, band_height, band.blue_bkg, band.green_bkg, band.red_bkg)?;
                     if x >= w {
                         continue;
                     }
-
-                    let full_vbar =
-                        self.resolve_vbar(vbar, band_height, band.blue_bkg, band.green_bkg, band.red_bkg)?;
 
                     // Blit the full V-bar column into the output
                     let pixel_rows = full_vbar.pixels.len() / 3;
@@ -209,17 +229,29 @@ impl ClearCodecDecoder {
     ) -> DecodeResult<FullVBar> {
         match vbar {
             VBar::CacheHit { index } => {
-                let cached = self
-                    .vbar_cache
-                    .get_vbar(*index)
-                    .ok_or_else(|| invalid_field_err!("vbarIndex", "V-bar cache miss on hit"))?;
-                Ok(cached.clone())
+                // ADIT PATCH: a cache miss is not fatal.
+                //
+                // FreeRDP warns and substitutes background-filled dummy data of
+                // the band's height, then keeps decoding ("Empty cache index
+                // %u, filling dummy data"). Aborting the whole PDU instead is
+                // what turned one desynchronised slot into every later frame
+                // failing, so failures compounded across a session rather than
+                // healing.
+                match self.vbar_cache.get_vbar(*index) {
+                    Some(cached) => Ok(cached.clone()),
+                    None => Ok(VBarCache::background_vbar(
+                        band_height,
+                        bg_blue,
+                        bg_green,
+                        bg_red,
+                    )),
+                }
             }
             VBar::ShortCacheHit { index, y_on } => {
-                let cached_short = self
-                    .vbar_cache
-                    .get_short_vbar(*index)
-                    .ok_or_else(|| invalid_field_err!("shortVbarIndex", "short V-bar cache miss on hit"))?;
+                let Some(cached_short) = self.vbar_cache.get_short_vbar(*index) else {
+                    // Same reasoning as the full-v-bar miss above.
+                    return Ok(VBarCache::background_vbar(band_height, bg_blue, bg_green, bg_red));
+                };
                 // Create a modified short vbar with the y_on from this reference
                 let modified = ShortVBar {
                     y_on: *y_on,

@@ -44,6 +44,19 @@ pub struct VBarCache {
 }
 
 impl VBarCache {
+    /// A band-height column of the band's background colour.
+    ///
+    /// ADIT PATCH: substituted for a cache miss instead of failing the PDU,
+    /// matching FreeRDP's "filling dummy data" path.
+    pub fn background_vbar(band_height: u16, blue: u8, green: u8, red: u8) -> FullVBar {
+        let rows = usize::from(band_height);
+        let mut pixels = Vec::with_capacity(rows * 3);
+        for _ in 0..rows {
+            pixels.extend_from_slice(&[blue, green, red]);
+        }
+        FullVBar { pixels }
+    }
+
     pub fn new() -> Self {
         let mut vbar_storage = Vec::with_capacity(VBAR_CACHE_SIZE);
         vbar_storage.resize_with(VBAR_CACHE_SIZE, || None);

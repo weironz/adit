@@ -200,6 +200,8 @@ pub(crate) struct EgfxHandler {
     /// Thin-client-mode Windows ships whole frames as classic RemoteFX inside
     /// WireToSurface1.
     rfx: HashMap<u16, (RfxDecodingContext, DecodedImage)>,
+    /// How many ClearCodec streams have been written out.
+    clear_dumps: u32,
     /// Counters for the one-off diagnostics above.
     unhandled_logged: u32,
     frames_seen: u32,
@@ -222,6 +224,7 @@ impl EgfxHandler {
             composited: false,
             clear: ClearCodecDecoder::new(),
             rfx: HashMap::new(),
+            clear_dumps: 0,
             unclipped_logged: 0,
             unhandled_logged: 0,
             frames_seen: 0,
@@ -298,6 +301,43 @@ bytes={}
         Some(out)
     }
 
+    /// Write a ClearCodec stream next to the helper's log, in arrival order.
+    fn dump_clear_stream(
+        &mut self,
+        pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu,
+        w: u16,
+        h: u16,
+        outcome: &str,
+    ) {
+        if self.clear_dumps >= MAX_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
+            return;
+        }
+        let Some(base) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let dir = base.join("Adit");
+        let index = self.clear_dumps;
+        self.clear_dumps += 1;
+        let meta = format!(
+            "outcome={outcome}
+surface_id={}
+rect={}x{} at {},{}
+bytes={}
+",
+            pdu.surface_id,
+            w,
+            h,
+            pdu.destination_rectangle.left,
+            pdu.destination_rectangle.top,
+            pdu.bitmap_data.len(),
+        );
+        let stream = dir.join(format!("clear-{index:03}.bin"));
+        let sidecar = dir.join(format!("clear-{index:03}.txt"));
+        if std::fs::write(&stream, &pdu.bitmap_data).is_ok() {
+            let _ = std::fs::write(&sidecar, meta);
+        }
+    }
+
     /// WireToSurface1 with ClearCodec: decode and composite at the
     /// destination rectangle. The decoder outputs BGRA with alpha forced to
     /// 0xFF; the framebuffer is RGBA, so channels swap during the blit.
@@ -314,7 +354,21 @@ bytes={}
         if w == 0 || h == 0 {
             return;
         }
-        let mut bgra = match self.clear.decode(&pdu.bitmap_data, w, h) {
+        let outcome = self.clear.decode(&pdu.bitmap_data, w, h);
+        // Capture under ADIT_RDP_DUMP, successes included: the glyph and v-bar
+        // caches are stateful, so a failing stream can only be replayed in the
+        // order it arrived — the lesson the progressive captures already
+        // taught, where a failures-only capture turned out unreplayable.
+        self.dump_clear_stream(
+            pdu,
+            w,
+            h,
+            &match &outcome {
+                Ok(_) => "ok".to_owned(),
+                Err(error) => error.to_string(),
+            },
+        );
+        let mut bgra = match outcome {
             Ok(bgra) => bgra,
             Err(error) => {
                 tracing::warn!("ClearCodec decode failed: {error}");
@@ -438,27 +492,6 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
-    /// Advertise thin-client V8.
-    ///
-    /// This is a workaround with a measured basis, not a guess. IronRDP's
-    /// ClearCodec decoder is wired (see `decode_clear_codec`) but fails on
-    /// almost every real Windows PDU — 228 failures in one session across
-    /// five distinct checks in its v-bar, glyph and RLEX paths — leaving each
-    /// ClearCodec region a blank rectangle. THIN_CLIENT makes the server
-    /// encode with RemoteFX instead: classic RemoteFX and RemoteFX
-    /// Progressive both decode cleanly here (zero failures in the same
-    /// session), so the picture is complete rather than perforated.
-    ///
-    /// Costs some bandwidth on text-heavy screens. Revert this the moment the
-    /// ClearCodec decoder is trustworthy — the routing stays in place, so it
-    /// is a one-line change back.
-    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
-        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitySet};
-        vec![CapabilitySet::V8 {
-            flags: CapabilitiesV8Flags::SMALL_CACHE | CapabilitiesV8Flags::THIN_CLIENT,
-        }]
-    }
-
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;

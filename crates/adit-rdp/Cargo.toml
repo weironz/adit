@@ -83,3 +83,9 @@ ironrdp-connector = { path = "vendor/ironrdp-connector" }
 # progressive quantization". Windows sends 0xFF with numProgQuant 0, so every
 # tile failed to decode and the desktop rendered as coloured garbage.
 ironrdp-graphics = { path = "vendor/ironrdp-graphics" }
+# Vendored + patched ironrdp-pdu (crates.io 0.9.0 + ClearCodec hunks):
+# SHORT_VBAR_CACHE_MISS reads its two fields from transposed bit ranges, and
+# the RLEX segment parse special-cases a one-entry palette in a way FreeRDP
+# does not. Between them they rejected almost every ClearCodec PDU a real
+# Windows host sends.
+ironrdp-pdu = { path = "vendor/ironrdp-pdu" }

@@ -57,22 +57,38 @@ one-line diff, twice. Keep it.
 The crate carries its own `[workspace]` table so `cargo test` can be run inside
 it — one hunk changes an upstream test's expected values.
 
-### Known codec gap: ClearCodec — sidestepped via thin-client caps
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-pdu/`
 
-IronRDP's EGFX client decodes uncompressed and (optionally) H.264 only. Under
-plain V8 caps Windows encodes sharp UI content — text boxes, glyph runs, small
-controls — as **ClearCodec**, which was dropped silently: a logged-in desktop
-rendered as fragments, and the logon password box never appeared. `egfx.rs`
-now advertises `V8 { THIN_CLIENT | SMALL_CACHE }` (a plain trait-method
-override, no vendoring), restricting the server to Progressive + solid fill +
-bitmap cache — the repertoire implemented here.
+Pulled in via `[patch.crates-io] ironrdp-pdu = { path = "vendor/ironrdp-pdu" }`.
+Two `ADIT PATCH` hunks in `src/codecs/clearcodec/`, both about **ClearCodec as
+Windows encodes it**. Together with the three in `ironrdp-graphics` below they
+took a logged-in desktop from "every ClearCodec region is a white rectangle"
+(228 decode failures in one session) to rendering.
 
-If thin-client throughput ever disappoints, the recorded options are:
-1. Implement ClearCodec (MS-RDPEGFX 3.3.8; FreeRDP `clear.c` is the reference)
-   as another vendored-crate module, like the progressive fixes above.
-2. Replace the helper's engine with FreeRDP behind the existing
-   `adit-rdp-proto` IPC — the process boundary makes the engine swappable
-   without touching the app.
+| Hunk | Bug | Symptom |
+|------|-----|---------|
+| `bands.rs` SHORT_VBAR_CACHE_MISS | `yOn` was read from bits 13:6 and `yOff` from bits 5:0. MS-RDPEGFX 2.2.4.1.1.2.1.1.3 and FreeRDP put `yOn` in the LOW byte and `yOff` at 13:8 — transposed, and the wrong widths. Also dropped a `yOff > band_height` rejection FreeRDP does not have (it bounds the run at 52 instead). | 136 x `shortVBarYOff < shortVBarYOn`; arithmetically rejects most legal headers. |
+| `rlex.rs` one-entry palette | Special-cased `paletteCount == 1` to zero stop-index bits and one byte per segment. FreeRDP's `CLEAR_LOG2_FLOOR[0] + 1` is **1** bit, so it still reads a (packed, runLength) pair. | 16 x `suite exceeds region pixel count`, from a desynchronised segment parse in single-colour regions. |
+
+The crate carries its own `[workspace]` table so `cargo test` runs in place —
+one hunk corrects an upstream test that had encoded the transposed layout.
+
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/` (ClearCodec)
+
+Three more `ADIT PATCH` hunks in `src/clearcodec/`, all cascade-limiting: the
+v-bar caches are written by a cursor the server and client advance in lockstep
+(the wire only ever names READ indices), so anything that aborts a PDU or skips
+a column desynchronises them permanently.
+
+| Hunk | Bug |
+|------|-----|
+| `mod.rs` column loop | `resolve_vbar` was skipped for columns outside the tile, silently dropping cache writes. FreeRDP guards only the blit. |
+| `mod.rs` `resolve_vbar` | A cache miss aborted the whole PDU. FreeRDP warns and substitutes background-filled dummy data, then keeps going — so one lost slot no longer poisons every later frame. |
+| `mod.rs` glyph cache | Stored only glyphs <= 1024 px (FreeRDP: 1024x1024) and required exact dimension equality on read (FreeRDP: the request must merely fit). Both left slots the server believes populated permanently empty. |
+
+Capture harness: `ADIT_RDP_DUMP=1` also writes `clear-NNN.bin` + sidecars under
+`%APPDATA%\Adit`, successes included — the caches are stateful, so a failing
+stream replays only in arrival order.
 
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
