@@ -262,6 +262,51 @@ In rough chronological order — each wall and its root cause.
 
 ---
 
+## 6.1 Landing on the GDM greeter is not a bug
+
+**Symptom.** The handover completes, the desktop streams perfectly — and what
+it streams is GDM's login screen with a user tile, not a desktop. Windows
+hosts, by contrast, drop straight into the session.
+
+**This is protocol reality, not a missing feature.** RDP's automatic-logon
+flag (`INFO_AUTOLOGON` in the Client Info PDU, which `adit-rdp` sets whenever
+a password is supplied) is a *Windows* convention: Windows' LogonUI reads
+those credentials and signs the user in. **GDM does not read them at all.**
+No RDP client can skip the GDM greeter, `mstsc` included — there is no wire
+mechanism to do it.
+
+**Reading the log tells you which half you are in.** A clean handover looks
+like this, and means everything on the client side worked:
+
+```text
+INFO adit_rdp::session: starting RDP session host=… user=will …
+INFO connect_finalize: … Connected with success
+INFO adit_rdp::session: following RDP server redirection (RDSTLS handover) … has_token=true has_guid=true
+INFO connect_finalize: … Connected with success
+```
+
+If those four lines are present, the greeter on screen is simply what the
+remote session currently shows.
+
+**The two GNOME modes behave differently, and that is the whole story:**
+
+| Mode | What a connect gets you |
+|------|-------------------------|
+| **Remote Login** (system mode, what this document is about) | A *new* session every time ⇒ GDM first, log in there once |
+| **Desktop Sharing** (user mode) | Takes over an *already logged-in* console session ⇒ straight to the desktop |
+
+So "I want it to go straight to the desktop" is answered on the Ubuntu side
+by switching to Desktop Sharing and leaving the console logged in — not by
+anything in the client.
+
+The same rule explains a Windows symptom that looks unrelated: an existing
+session is reconnected without a logon, so a host that has been working all
+day can start demanding credentials the moment it is rebooted and there is no
+session left to reconnect to. *Have I got a session to return to?* is the
+question behind both.
+
+---
+
 ## 7. How to reproduce / smoke-test
 
 An ignored harness spawns the helper and dumps events against a real host:
