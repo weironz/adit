@@ -438,6 +438,27 @@ bytes={}
 }
 
 impl GraphicsPipelineHandler for EgfxHandler {
+    /// Advertise thin-client V8.
+    ///
+    /// This is a workaround with a measured basis, not a guess. IronRDP's
+    /// ClearCodec decoder is wired (see `decode_clear_codec`) but fails on
+    /// almost every real Windows PDU — 228 failures in one session across
+    /// five distinct checks in its v-bar, glyph and RLEX paths — leaving each
+    /// ClearCodec region a blank rectangle. THIN_CLIENT makes the server
+    /// encode with RemoteFX instead: classic RemoteFX and RemoteFX
+    /// Progressive both decode cleanly here (zero failures in the same
+    /// session), so the picture is complete rather than perforated.
+    ///
+    /// Costs some bandwidth on text-heavy screens. Revert this the moment the
+    /// ClearCodec decoder is trustworthy — the routing stays in place, so it
+    /// is a one-line change back.
+    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
+        use ironrdp_egfx::pdu::{CapabilitiesV8Flags, CapabilitySet};
+        vec![CapabilitySet::V8 {
+            flags: CapabilitiesV8Flags::SMALL_CACHE | CapabilitiesV8Flags::THIN_CLIENT,
+        }]
+    }
+
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
         let w = width.clamp(1, MAX_DIMENSION) as u16;
         let h = height.clamp(1, MAX_DIMENSION) as u16;
