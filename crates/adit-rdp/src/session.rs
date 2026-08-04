@@ -309,6 +309,7 @@ async fn active_session(
     // A resize requested before the DisplayControl channel is up would be
     // silently dropped; park it here and retry once the channel connects.
     let mut pending_resize: Option<(u32, u32)> = None;
+    let mut keys_logged = 0u32;
     let mut image = DecodedImage::new(PixelFormat::RgbA32, desktop_size.width, desktop_size.height);
     let activation_factory = connection_result.activation_factory;
     // Server Redirection PDUs arrive on the I/O channel; we intercept them before
@@ -407,6 +408,19 @@ async fn active_session(
                     }
                     // Mouse / key / unicode all fold into fast-path events.
                     Some(other) => {
+                        // Input-path probe: the first few key events per session
+                        // go to the log, so "typing does nothing" can be split
+                        // into UI-side loss vs server-side rejection by reading
+                        // the helper log alone.
+                        if keys_logged < 8 {
+                            if let InputEvent::Key { scancode, extended, pressed } = &other {
+                                keys_logged += 1;
+                                tracing::info!(scancode, extended, pressed, "keyboard input reached the helper");
+                            } else if let InputEvent::Unicode { ch, pressed } = &other {
+                                keys_logged += 1;
+                                tracing::info!(%ch, pressed, "unicode input reached the helper");
+                            }
+                        }
                         let events = map_input(&mut input_db, &other);
                         if events.is_empty() {
                             Vec::new()
@@ -563,23 +577,29 @@ async fn active_session(
         // EGFX graphics (GNOME RDP / modern Windows) are composited into the shared
         // buffer by the pipeline handler that just ran inside `process`; emit them
         // as tiles, preceded by a Resized if the graphics output size changed.
-        if let Some((width, height, rgba)) = egfx::take_frame(egfx) {
+        if let Some(update) = egfx::take_frame(egfx) {
             egfx_active = true;
-            if (width, height) != egfx_size {
-                egfx_size = (width, height);
+            if (update.surface_width, update.surface_height) != egfx_size {
+                egfx_size = (update.surface_width, update.surface_height);
                 if host_tx
-                    .send(HostMsg::Resized { width, height })
+                    .send(HostMsg::Resized {
+                        width: update.surface_width,
+                        height: update.surface_height,
+                    })
                     .is_err()
                 {
                     break 'session;
                 }
             }
+            // Only the changed region crosses the pipe: full frames are ~9 MB
+            // at high-DPI sizes, and serializing one per present was a large
+            // slice of the perceived lag.
             let tile = HostMsg::Tile {
-                x: 0,
-                y: 0,
-                width,
-                height,
-                rgba,
+                x: update.x,
+                y: update.y,
+                width: update.width,
+                height: update.height,
+                rgba: update.rgba,
             };
             if host_tx.send(tile).is_err() {
                 break 'session;

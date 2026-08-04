@@ -50,6 +50,11 @@ pub(crate) struct EgfxFrame {
     pub height: u16,
     /// Updates landed since the loop last emitted a frame.
     pub dirty: bool,
+    /// Union of the pixel rects touched since the last take (x, y, w, h).
+    /// Lets the session loop ship only the changed region instead of cloning
+    /// and piping the whole framebuffer (~9 MB per frame at 2560-class sizes)
+    /// on every present.
+    dirty_rect: Option<(usize, usize, usize, usize)>,
 }
 
 impl EgfxFrame {
@@ -57,6 +62,7 @@ impl EgfxFrame {
         self.width = width;
         self.height = height;
         self.rgba = vec![0u8; usize::from(width) * usize::from(height) * 4];
+        self.dirty_rect = None;
         // Deliberately NOT dirty: this buffer is all black until content
         // lands. Publishing it at allocation time flashed a full black frame
         // on every graphics reset; the first composited EndFrame after the
@@ -73,18 +79,69 @@ pub(crate) fn new_shared() -> SharedEgfx {
         width: 0,
         height: 0,
         dirty: false,
+        dirty_rect: None,
     }))
 }
 
 /// If a new EGFX frame is ready, return its size + a full-frame RGBA copy and
 /// clear the dirty flag. `None` when nothing changed (or EGFX isn't in use).
-pub(crate) fn take_frame(shared: &SharedEgfx) -> Option<(u16, u16, Vec<u8>)> {
+/// One published frame: the surface size, the changed region's position and
+/// size, and that region's pixels (row-major, tightly packed).
+pub(crate) struct FrameUpdate {
+    pub surface_width: u16,
+    pub surface_height: u16,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub rgba: Vec<u8>,
+}
+
+pub(crate) fn take_frame(shared: &SharedEgfx) -> Option<FrameUpdate> {
     let mut frame = shared.lock().ok()?;
     if !frame.dirty || frame.rgba.is_empty() {
         return None;
     }
     frame.dirty = false;
-    Some((frame.width, frame.height, frame.rgba.clone()))
+    let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+    // No recorded rect (defensive) -> whole surface.
+    let (x, y, w, h) = frame.dirty_rect.take().unwrap_or((0, 0, fw, fh));
+    let (x, y) = (x.min(fw), y.min(fh));
+    let (w, h) = (w.min(fw - x), h.min(fh - y));
+    if w == 0 || h == 0 {
+        return None;
+    }
+    let mut rgba = Vec::with_capacity(w * h * 4);
+    for row in 0..h {
+        let start = ((y + row) * fw + x) * 4;
+        rgba.extend_from_slice(&frame.rgba[start..start + w * 4]);
+    }
+    Some(FrameUpdate {
+        surface_width: frame.width,
+        surface_height: frame.height,
+        x: x as u16,
+        y: y as u16,
+        width: w as u16,
+        height: h as u16,
+        rgba,
+    })
+}
+
+/// Grow the frame's dirty rect to cover `w x h` pixels at `(x, y)`.
+fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    frame.dirty_rect = Some(match frame.dirty_rect {
+        None => (x, y, w, h),
+        Some((dx, dy, dw, dh)) => {
+            let x0 = dx.min(x);
+            let y0 = dy.min(y);
+            let x1 = (dx + dw).max(x + w);
+            let y1 = (dy + dh).max(y + h);
+            (x0, y0, x1 - x0, y1 - y0)
+        }
+    });
 }
 
 /// A server surface: where it maps onto the output, and its size.
@@ -186,6 +243,7 @@ bytes={}
             let src = ((sub_y + row) * TILE + sub_x) * 4;
             frame.rgba[dst..dst + cols * 4].copy_from_slice(&pixels[src..src + cols * 4]);
         }
+        grow_dirty(frame, px, py, cols, rows);
     }
 }
 
@@ -259,6 +317,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 let src = row * tw * 4;
                 frame.rgba[dst..dst + tw * 4].copy_from_slice(&update.data[src..src + tw * 4]);
             }
+            grow_dirty(&mut frame, dst_x, dst_y, tw, th);
             // Not marked dirty: presents happen on `on_frame_complete`, so a
             // multi-PDU frame reaches the screen whole (see on_wire_to_surface2).
             self.composited = true;
