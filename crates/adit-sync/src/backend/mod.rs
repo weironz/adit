@@ -5,12 +5,51 @@
 //! what gets stored all live above this layer, so adding a provider cannot get
 //! those wrong — the worst a broken backend can do is fail to sync.
 
+pub mod dropbox;
+pub mod gdrive;
 pub mod gist;
 pub mod oauth;
+pub mod onedrive;
 pub mod s3;
 pub mod webdav;
 
 use crate::SyncError;
+
+/// Which provider a built-in client id belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OAuthProvider {
+    GoogleDrive,
+    OneDrive,
+    Dropbox,
+}
+
+/// The OAuth client id to use: the user's own if they supplied one, otherwise
+/// whatever was compiled into this build.
+///
+/// Both halves earn their place. The built-in default is what makes the
+/// feature work out of the box — nobody should need a Google Cloud project to
+/// sync their session list. The override exists because a shared client id is
+/// a shared API quota: rclone ships one for Drive and is retiring it for
+/// exactly that reason, telling users to create their own. Better to have the
+/// escape hatch from the start than to add it under pressure.
+///
+/// It also means a local or forked build works: the defaults come from
+/// build-time environment variables that only the release pipeline sets, so
+/// without an override those builds would otherwise have the providers dark.
+#[must_use]
+pub fn client_id(provider: OAuthProvider, user_override: &str) -> String {
+    let trimmed = user_override.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_owned();
+    }
+    match provider {
+        OAuthProvider::GoogleDrive => option_env!("ADIT_SYNC_GOOGLE_CLIENT_ID"),
+        OAuthProvider::OneDrive => option_env!("ADIT_SYNC_ONEDRIVE_CLIENT_ID"),
+        OAuthProvider::Dropbox => option_env!("ADIT_SYNC_DROPBOX_CLIENT_ID"),
+    }
+    .unwrap_or_default()
+    .to_owned()
+}
 
 /// Timeout for a single request. Sync is a background task, but an unbounded
 /// wait would leave the status panel saying "syncing" forever.

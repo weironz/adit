@@ -38,7 +38,12 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(180);
 #[derive(Debug, Clone)]
 pub struct OAuthConfig {
     pub provider: &'static str,
-    pub client_id: &'static str,
+    /// Owned rather than `&'static str` because it is resolved at runtime:
+    /// the built-in default compiled into this build, unless the user supplied
+    /// their own. rclone's Drive backend is the cautionary tale — a shared
+    /// client id is a shared API quota, and theirs is being retired for
+    /// exactly that reason, so an override is not a nicety.
+    pub client_id: String,
     pub auth_url: &'static str,
     pub token_url: &'static str,
     pub scope: &'static str,
@@ -97,7 +102,7 @@ pub fn begin(config: OAuthConfig) -> Result<PendingAuth, SyncError> {
         "{}?response_type=code&client_id={}&redirect_uri={}&scope={}&state={}\
          &code_challenge={challenge}&code_challenge_method=S256",
         config.auth_url,
-        percent(config.client_id),
+        percent(&config.client_id),
         percent(&redirect_uri),
         percent(config.scope),
         percent(&state),
@@ -205,7 +210,7 @@ fn exchange(
     let form = [
         ("grant_type", "authorization_code"),
         ("code", code),
-        ("client_id", config.client_id),
+        ("client_id", config.client_id.as_str()),
         ("redirect_uri", redirect_uri.as_str()),
         ("code_verifier", verifier),
     ];
@@ -217,7 +222,7 @@ pub fn refresh(config: &OAuthConfig, refresh_token: &str) -> Result<Tokens, Sync
     let form = [
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
-        ("client_id", config.client_id),
+        ("client_id", config.client_id.as_str()),
     ];
     let mut tokens = post_token(config, &form)?;
     // Google and Microsoft usually omit the refresh token on a refresh; the
@@ -261,6 +266,68 @@ fn post_token(config: &OAuthConfig, form: &[(&str, &str)]) -> Result<Tokens, Syn
         // a failed sync.
         expires_at: SystemTime::now() + Duration::from_secs(parsed.expires_in.unwrap_or(3600)),
     })
+}
+
+/// A signed-in provider: the refresh token plus whatever access token is
+/// currently valid.
+///
+/// Written once here rather than three times in the backends, because the
+/// failure mode of getting it wrong is subtle — an access token that expires
+/// mid-sync surfaces as a 401 from an unrelated request, and a refresh that
+/// forgets to keep the old refresh token signs the user out days later.
+pub struct OAuthSession {
+    config: OAuthConfig,
+    refresh_token: String,
+    tokens: Option<Tokens>,
+}
+
+impl OAuthSession {
+    #[must_use]
+    pub fn new(config: OAuthConfig, refresh_token: String) -> Self {
+        Self {
+            config,
+            refresh_token,
+            tokens: None,
+        }
+    }
+
+    #[must_use]
+    pub fn provider(&self) -> &'static str {
+        self.config.provider
+    }
+
+    /// The refresh token as it now stands, for the caller to persist. A
+    /// provider that rotates it on every refresh (Dropbox can) would otherwise
+    /// leave the stored one dead.
+    #[must_use]
+    pub fn refresh_token(&self) -> &str {
+        &self.refresh_token
+    }
+
+    /// A usable access token, minted or renewed as needed.
+    pub fn access_token(&mut self) -> Result<String, SyncError> {
+        if self.refresh_token.trim().is_empty() {
+            return Err(SyncError::NotAuthenticated {
+                provider: self.config.provider.to_owned(),
+            });
+        }
+        let stale = self
+            .tokens
+            .as_ref()
+            .is_none_or(super::oauth::Tokens::is_expired);
+        if stale {
+            let fresh = refresh(&self.config, &self.refresh_token)?;
+            if let Some(rotated) = &fresh.refresh_token {
+                self.refresh_token = rotated.clone();
+            }
+            self.tokens = Some(fresh);
+        }
+        Ok(self
+            .tokens
+            .as_ref()
+            .map(|tokens| tokens.access_token.clone())
+            .unwrap_or_default())
+    }
 }
 
 /// Base64url without padding, as PKCE requires (RFC 7636 §4.2).
@@ -439,7 +506,7 @@ mod tests {
     fn a_missing_client_id_is_refused_before_opening_a_browser() {
         let config = OAuthConfig {
             provider: "Test",
-            client_id: "",
+            client_id: String::new(),
             auth_url: "https://example.com/auth",
             token_url: "https://example.com/token",
             scope: "files",
