@@ -426,6 +426,7 @@ pub enum SyncField {
     GoogleClientId,
     OneDriveClientId,
     DropboxClientId,
+    GoogleClientSecret,
 }
 
 /// What a finished sync tells the UI. Carries the merged catalog so the update

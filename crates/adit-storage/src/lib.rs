@@ -471,6 +471,15 @@ pub struct SyncSettings {
     pub onedrive_client_id: String,
     #[serde(default)]
     pub dropbox_client_id: String,
+    /// Google's client secret, when the user brings their own client id.
+    ///
+    /// Plaintext here on purpose. Google's own documentation concedes a
+    /// desktop-app secret is not confidential, rclone has shipped one in every
+    /// binary for years, and PKCE is what actually protects this flow — so
+    /// sealing it would imply a guarantee that does not exist. It stays out of
+    /// the synced document with the rest of this section regardless.
+    #[serde(default)]
+    pub google_client_secret: String,
 }
 
 fn default_s3_region() -> String {
@@ -499,6 +508,7 @@ impl Default for SyncSettings {
             google_client_id: String::new(),
             onedrive_client_id: String::new(),
             dropbox_client_id: String::new(),
+            google_client_secret: String::new(),
         }
     }
 }

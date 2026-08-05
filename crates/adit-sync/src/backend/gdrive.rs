@@ -26,10 +26,11 @@ const FILE_NAME: &str = "adit-sync.json";
 /// authorisation — without it a user who reconnects gets an access token that
 /// dies in an hour and nothing to renew it with.
 #[must_use]
-pub fn oauth_config(client_id: String) -> OAuthConfig {
+pub fn oauth_config(client_id: String, client_secret: String) -> OAuthConfig {
     OAuthConfig {
         provider: PROVIDER,
         client_id,
+        client_secret,
         auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
         token_url: "https://oauth2.googleapis.com/token",
         scope: "https://www.googleapis.com/auth/drive.file",
@@ -64,9 +65,9 @@ struct FileList {
 
 impl GoogleDriveBackend {
     #[must_use]
-    pub fn new(client_id: String, refresh_token: String) -> Self {
+    pub fn new(client_id: String, client_secret: String, refresh_token: String) -> Self {
         Self {
-            session: OAuthSession::new(oauth_config(client_id), refresh_token),
+            session: OAuthSession::new(oauth_config(client_id, client_secret), refresh_token),
             agent: agent(),
             file_id: None,
         }
@@ -208,7 +209,7 @@ mod tests {
     /// widening it would silently change what they agreed to.
     #[test]
     fn the_scope_is_limited_to_files_this_app_created() {
-        let config = oauth_config("id".to_owned());
+        let config = oauth_config("id".to_owned(), String::new());
         assert_eq!(
             config.scope, "https://www.googleapis.com/auth/drive.file",
             "must never ask for the whole drive"
@@ -220,7 +221,7 @@ mod tests {
     /// `prompt=consent` a *reconnecting* user gets none.
     #[test]
     fn the_authorize_request_asks_for_a_refresh_token_every_time() {
-        let config = oauth_config("id".to_owned());
+        let config = oauth_config("id".to_owned(), String::new());
         assert!(config
             .extra_auth_params
             .contains(&("access_type", "offline")));
@@ -229,7 +230,7 @@ mod tests {
 
     #[test]
     fn an_unconnected_account_is_caught_locally() {
-        let mut backend = GoogleDriveBackend::new("id".to_owned(), String::new());
+        let mut backend = GoogleDriveBackend::new("id".to_owned(), String::new(), String::new());
         assert!(matches!(
             backend.fetch(),
             Err(SyncError::NotAuthenticated { .. })

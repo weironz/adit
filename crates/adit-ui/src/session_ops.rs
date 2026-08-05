@@ -2076,6 +2076,21 @@ pub(crate) fn sync_client_id(app: &AditApp, provider: adit_storage::SyncProvider
     }
 }
 
+/// The OAuth client secret, for the one provider that demands one.
+#[must_use]
+pub(crate) fn sync_client_secret(app: &AditApp, provider: adit_storage::SyncProvider) -> String {
+    use adit_storage::SyncProvider;
+    use adit_sync::backend::{client_secret, OAuthProvider};
+    match provider {
+        SyncProvider::GoogleDrive => {
+            client_secret(OAuthProvider::GoogleDrive, &app.sync.google_client_secret)
+        }
+        SyncProvider::OneDrive => client_secret(OAuthProvider::OneDrive, ""),
+        SyncProvider::Dropbox => client_secret(OAuthProvider::Dropbox, ""),
+        _ => String::new(),
+    }
+}
+
 /// The authorisation to run for a provider, or `None` when this build has no
 /// client id for it and the user supplied none either.
 #[must_use]
@@ -2090,7 +2105,7 @@ pub(crate) fn sync_oauth_config(
         return None;
     }
     Some(match provider {
-        SyncProvider::GoogleDrive => gdrive::oauth_config(id),
+        SyncProvider::GoogleDrive => gdrive::oauth_config(id, sync_client_secret(app, provider)),
         SyncProvider::OneDrive => onedrive::oauth_config(id),
         SyncProvider::Dropbox => dropbox::oauth_config(id),
         _ => return None,
@@ -2165,12 +2180,15 @@ pub(crate) fn build_sync_backend(app: &AditApp) -> Option<Box<dyn adit_sync::Syn
         // its absence means "not connected yet" rather than "misconfigured".
         SyncProvider::GoogleDrive | SyncProvider::OneDrive | SyncProvider::Dropbox => {
             let id = sync_client_id(app, app.sync.provider);
+            let client_secret = sync_client_secret(app, app.sync.provider);
             if id.trim().is_empty() || secret.is_empty() {
                 return None;
             }
             Some(match app.sync.provider {
-                SyncProvider::GoogleDrive => Box::new(gdrive::GoogleDriveBackend::new(id, secret))
-                    as Box<dyn adit_sync::SyncBackend>,
+                SyncProvider::GoogleDrive => {
+                    Box::new(gdrive::GoogleDriveBackend::new(id, client_secret, secret))
+                        as Box<dyn adit_sync::SyncBackend>
+                }
                 SyncProvider::OneDrive => Box::new(onedrive::OneDriveBackend::new(id, secret))
                     as Box<dyn adit_sync::SyncBackend>,
                 _ => Box::new(dropbox::DropboxBackend::new(id, secret))

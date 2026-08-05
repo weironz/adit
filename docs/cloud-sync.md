@@ -184,10 +184,16 @@ in their browser and their data goes to *their* account. The client id
 identifies the application; the access token identifies the user, and the two
 never mix.
 
-All three are PKCE public clients: **no client secret is needed or used.**
-Google issues one for desktop app types and its own documentation concedes it
-is not confidential; sending it would add nothing but the pretence of
-protection.
+All three are PKCE public clients. Dropbox and Microsoft need **no client
+secret**, and none is sent.
+
+**Google is the exception, and its documentation is wrong about it.** The table
+for installed apps lists `client_secret` as *optional*; the token endpoint then
+answers `400 invalid_request: "client_secret is missing."` and the authorisation
+dies after the browser has already said "已授权". So a Google desktop client has
+to ship its secret, the way rclone has for years — compiled in, plainly not
+confidential, and protecting nothing that PKCE was not already protecting. Take
+the server's word over the table's.
 
 ### Google Drive
 
@@ -203,8 +209,11 @@ API 和服务 → 凭据 → 创建凭据 → OAuth 客户端 ID
    **`https://www.googleapis.com/auth/drive.file`** —— 仅本应用创建的文件，
    是能用的最小权限。
 3. **创建客户端**：Credentials → 创建凭据 → OAuth 客户端 ID，应用类型
-   **桌面应用**。拿 **客户端 ID**（形如
-   `xxx.apps.googleusercontent.com`）。**不需要客户端密钥。**
+   **桌面应用**。**客户端 ID 和客户端密钥两个都要拿**（见上文：Google 的文档说
+   密钥可选，它的服务器说不可选）。
+4. **改应用名称**：同意页上显示给用户的名字来自 OAuth consent screen 的
+   「应用名称」。若这个项目是从别的用途沿用来的，用户会看到那个旧名字在申请
+   权限 —— 一件足以让人取消授权的小事。
 
 The scope that is actually requested comes from the client — our authorize URL
 carries `scope=...drive.file`. What the console holds is the *declaration*,
@@ -243,9 +252,14 @@ Build-time environment variables, read with `option_env!` in
 
 ```
 ADIT_SYNC_GOOGLE_CLIENT_ID
+ADIT_SYNC_GOOGLE_CLIENT_SECRET
 ADIT_SYNC_ONEDRIVE_CLIENT_ID
 ADIT_SYNC_DROPBOX_CLIENT_ID
 ```
+
+Only Google has a secret, for the reason in §5. A user supplying their own
+Google client id must supply its secret too — the panel has a field for both,
+and neither needs a rebuild.
 
 Set them as CI secrets on the release workflow. A build without them leaves
 those three providers unconfigured — the panel says so rather than failing at

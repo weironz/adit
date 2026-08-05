@@ -51,6 +51,25 @@ pub fn client_id(provider: OAuthProvider, user_override: &str) -> String {
     .to_owned()
 }
 
+/// The OAuth client secret, for the one provider that insists on one.
+///
+/// Resolved exactly like [`client_id`]: the user's override wins, otherwise
+/// whatever this build was compiled with. Empty means "send none", which is
+/// correct for Dropbox and Microsoft and fatal for Google.
+#[must_use]
+pub fn client_secret(provider: OAuthProvider, user_override: &str) -> String {
+    let trimmed = user_override.trim();
+    if !trimmed.is_empty() {
+        return trimmed.to_owned();
+    }
+    match provider {
+        OAuthProvider::GoogleDrive => option_env!("ADIT_SYNC_GOOGLE_CLIENT_SECRET"),
+        OAuthProvider::OneDrive | OAuthProvider::Dropbox => None,
+    }
+    .unwrap_or_default()
+    .to_owned()
+}
+
 /// Timeout for a single request. Sync is a background task, but an unbounded
 /// wait would leave the status panel saying "syncing" forever.
 pub(crate) const TIMEOUT_SECONDS: u64 = 30;

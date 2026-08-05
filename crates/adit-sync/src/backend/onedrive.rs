@@ -25,6 +25,8 @@ pub fn oauth_config(client_id: String) -> OAuthConfig {
     OAuthConfig {
         provider: PROVIDER,
         client_id,
+        // A public client, exactly as PKCE intends.
+        client_secret: String::new(),
         auth_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
         token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
         scope: "Files.ReadWrite.AppFolder offline_access",

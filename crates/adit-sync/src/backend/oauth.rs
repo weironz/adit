@@ -10,11 +10,13 @@
 //! hands out — a fixed one would collide with whatever else is running, and
 //! providers accept any port on 127.0.0.1 for native clients.
 //!
-//! **Why no client secret.** These are public clients: whatever is compiled
+//! **About the client secret.** These are public clients: whatever is compiled
 //! into a binary the user already has is not a secret, which is the problem
-//! PKCE exists to solve. Google still issues a "secret" for desktop app types
-//! and its own documentation concedes it is not confidential; sending it would
-//! add nothing here but the pretence of protection.
+//! PKCE exists to solve. Dropbox and Microsoft agree and take none. Google's
+//! documentation calls it optional for an installed app and its token endpoint
+//! then refuses the request without one, so Google gets its "secret" sent —
+//! compiled in, not confidential, and protecting nothing PKCE was not already
+//! protecting. See `OAuthConfig::client_secret`.
 //!
 //! **What is stored.** The refresh token, in the sealed credential store, and
 //! nothing else — access tokens live in memory and are re-minted on demand.
@@ -51,6 +53,16 @@ pub struct OAuthConfig {
     /// Google needs `access_type=offline` and `prompt=consent`, or it stops
     /// returning a refresh token on repeat authorisations.
     pub extra_auth_params: &'static [(&'static str, &'static str)],
+    /// Sent with the token request when non-empty.
+    ///
+    /// PKCE exists so a public client needs no secret, and Dropbox and
+    /// Microsoft honour that. **Google does not.** Its own documentation lists
+    /// `client_secret` as *optional* for an installed app, and its token
+    /// endpoint then answers `400 invalid_request: client_secret is missing` —
+    /// the server is the authority, not the table. So a Google desktop client
+    /// ships its "secret" the way rclone has for years: compiled in, plainly
+    /// not confidential, and adding nothing PKCE was not already doing.
+    pub client_secret: String,
     /// The loopback port to listen on, when the provider will not accept an
     /// arbitrary one.
     ///
@@ -241,23 +253,32 @@ fn exchange(
     verifier: &str,
     redirect_uri: &str,
 ) -> Result<Tokens, SyncError> {
-    let form = [
+    let mut form = vec![
         ("grant_type", "authorization_code"),
         ("code", code),
         ("client_id", config.client_id.as_str()),
         ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
     ];
+    if !config.client_secret.is_empty() {
+        form.push(("client_secret", config.client_secret.as_str()));
+    }
     post_token(config, &form)
 }
 
 /// Trade a refresh token for a fresh access token.
 pub fn refresh(config: &OAuthConfig, refresh_token: &str) -> Result<Tokens, SyncError> {
-    let form = [
+    let mut form = vec![
         ("grant_type", "refresh_token"),
         ("refresh_token", refresh_token),
         ("client_id", config.client_id.as_str()),
     ];
+    // The refresh needs it too — a token request that authenticated once with
+    // a secret cannot renew without it, and that failure would land an hour
+    // later, far from anything the user just did.
+    if !config.client_secret.is_empty() {
+        form.push(("client_secret", config.client_secret.as_str()));
+    }
     let mut tokens = post_token(config, &form)?;
     // Google and Microsoft usually omit the refresh token on a refresh; the
     // old one stays valid, and dropping it would silently sign the user out at
@@ -541,6 +562,7 @@ mod tests {
         let config = OAuthConfig {
             provider: "Test",
             client_id: String::new(),
+            client_secret: String::new(),
             auth_url: "https://example.com/auth",
             token_url: "https://example.com/token",
             scope: "files",
@@ -566,6 +588,7 @@ mod tests {
         let base = OAuthConfig {
             provider: "Test",
             client_id: String::from("id"),
+            client_secret: String::new(),
             auth_url: "https://example.com/auth",
             token_url: "https://example.com/token",
             scope: "files",

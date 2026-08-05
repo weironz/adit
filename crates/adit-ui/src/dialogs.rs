@@ -1870,6 +1870,17 @@ pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                         .size(10)
                         .color(muted_text()),
                 );
+
+            // Only Google refuses the token exchange without one. Its own docs
+            // call it optional; its server does not.
+            if matches!(sync.provider, SyncProvider::GoogleDrive) {
+                body = body.push(field(
+                    "client secret",
+                    &sync.google_client_secret,
+                    "Google 桌面客户端必需，留空则用内置的",
+                    SyncField::GoogleClientSecret,
+                ));
+            }
         }
     }
 

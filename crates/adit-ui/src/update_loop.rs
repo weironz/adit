@@ -1194,6 +1194,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 SyncField::GoogleClientId => app.sync.google_client_id = value,
                 SyncField::OneDriveClientId => app.sync.onedrive_client_id = value,
                 SyncField::DropboxClientId => app.sync.dropbox_client_id = value,
+                SyncField::GoogleClientSecret => app.sync.google_client_secret = value,
             }
             persist_settings_if_changed(app);
         }
