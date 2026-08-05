@@ -122,6 +122,13 @@ fn same_catalog(a: &ProfileCatalog, b: &ProfileCatalog) -> bool {
     serde_json::to_string(a).unwrap_or_default() == serde_json::to_string(b).unwrap_or_default()
 }
 
+/// Nothing in it at all — no sessions and no groups. Both halves matter: a
+/// catalog holding only empty groups is still not something worth wiping a
+/// populated machine for.
+fn catalog_is_empty(catalog: &ProfileCatalog) -> bool {
+    catalog.profiles.is_empty() && catalog.groups.is_empty()
+}
+
 /// Run one sync to completion.
 ///
 /// `state` is read and, on success, advanced. `local` is this machine's
@@ -145,10 +152,43 @@ pub fn sync(
             None => (ProfileCatalog::default(), None),
         };
 
+        // "The provider holds nothing" is the shape of a FIRST sync, not of a
+        // remote that deleted everything — and the difference is the entire
+        // catalog. Measured against a populated ancestor, an absent document
+        // reads as "the other machine deleted all 152 sessions", that deletion
+        // propagates home, and the machine is wiped. There is no other side to
+        // have deleted anything, so the ancestor is dropped for this attempt
+        // and local is simply new.
+        //
+        // This is not hypothetical. Deleting the file from the provider's web
+        // UI — a reasonable way to say "start over" — did exactly this, and so
+        // do switching providers, signing into a different account, and any
+        // provider that answers "not found" for a reason other than absence.
+        let no_ancestor = ProfileCatalog::default();
+        let base = if fetched.is_some() {
+            &state.base
+        } else {
+            &no_ancestor
+        };
+
         // Always merged against the ancestor from BEFORE this loop started.
         // Re-reading `state` inside the loop would let a half-finished attempt
         // become the ancestor, which is the failure this whole design avoids.
-        let merged = three_way(&state.base, local, &remote_catalog);
+        let merged = three_way(base, local, &remote_catalog);
+
+        // The brake. Propagating a deletion is deliberate (see the merge
+        // rules), but a sync that empties a populated machine is a different
+        // animal: every deletion in that result came from the other side, and
+        // being wrong once is unrecoverable. Refusing costs a puzzled user;
+        // proceeding costs them everything.
+        if catalog_is_empty(&merged.catalog) && !catalog_is_empty(local) {
+            return Err(SyncError::Remote {
+                provider: backend.provider().to_owned(),
+                message: String::from(
+                    "同步结果会清空本机全部会话，已中止。请先确认云端数据是否正常。",
+                ),
+            });
+        }
 
         // Both sides already agree: record the ancestor and stop. This still
         // advances `base`, which is correct — the provider just told us what it
@@ -459,6 +499,80 @@ mod tests {
 
         assert_eq!(outcome.catalog.profiles.len(), 2);
         assert_eq!(outcome.stats.added_from_remote, 1);
+    }
+
+    /// Deleting the file from the provider's web UI is a reasonable way to say
+    /// "start over". It must not be read as "the other machine deleted every
+    /// session", which is what an absent document looks like when it is
+    /// measured against a populated ancestor — that wiped a real machine's 152
+    /// sessions and pushed the emptiness back up.
+    #[test]
+    fn deleting_the_remote_document_does_not_delete_the_sessions() {
+        let (store, _dir) = state_store();
+        let local = catalog(vec![profile("web"), profile("db")]);
+        // A previous successful sync: the ancestor knows about both.
+        store
+            .save(&SyncState {
+                base: local.clone(),
+                revision: RemoteRevision::default(),
+                last_synced_at: "then".to_owned(),
+            })
+            .expect("seed the ancestor");
+        // ...and now the provider holds nothing.
+        let mut backend = Fake::default();
+
+        let outcome = sync(
+            &mut backend,
+            &store,
+            &local,
+            &Extras::default(),
+            "willpc",
+            "now",
+        )
+        .expect("sync");
+
+        assert_eq!(outcome.catalog.profiles.len(), 2, "nothing may be dropped");
+        assert!(outcome.uploaded, "the sessions must be pushed back up");
+        assert_eq!(store.load().base.profiles.len(), 2);
+    }
+
+    /// The brake: a remote that genuinely holds an empty catalog would, by the
+    /// deletion rule, empty this machine too. That rule is right for one
+    /// session and indefensible for all of them, so it is refused instead.
+    #[test]
+    fn a_sync_that_would_empty_a_populated_machine_is_refused() {
+        let (store, _dir) = state_store();
+        let local = catalog(vec![profile("web"), profile("db")]);
+        store
+            .save(&SyncState {
+                base: local.clone(),
+                revision: RemoteRevision::default(),
+                last_synced_at: "then".to_owned(),
+            })
+            .expect("seed the ancestor");
+        let mut backend = Fake {
+            remote: Some(SyncDocument::new(
+                ProfileCatalog::default(),
+                "other".into(),
+                "now".into(),
+            )),
+            revision: 1,
+            ..Fake::default()
+        };
+
+        let error = sync(
+            &mut backend,
+            &store,
+            &local,
+            &Extras::default(),
+            "willpc",
+            "now",
+        )
+        .expect_err("must refuse");
+
+        assert!(matches!(error, SyncError::Remote { .. }));
+        assert_eq!(backend.pushes, 0, "nothing may be written on the way out");
+        assert_eq!(store.load().base.profiles.len(), 2, "ancestor stands still");
     }
 
     /// Settings and the sealed credential blob ride along whole.

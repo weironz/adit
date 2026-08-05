@@ -93,10 +93,22 @@ impl SyncBackend for DropboxBackend {
             .call()
         {
             Ok(response) => response,
-            // 409 is Dropbox's answer for `path/not_found` as well as other
-            // path problems; nothing stored yet is overwhelmingly the likely
-            // one, and it is not an error.
-            Err(ureq::Error::Status(409, _)) => return Ok(None),
+            // 409 covers Dropbox's whole `path/*` family, not just absence: a
+            // malformed path, a locked file, a restricted-content block. Only
+            // `path/not_found` means "nothing stored yet". The rest have to
+            // surface as errors, because the caller reads "nothing stored" as
+            // a remote holding no document — and against a populated ancestor
+            // that once read as every session having been deleted.
+            Err(ureq::Error::Status(409, response)) => {
+                let summary = response.into_string().unwrap_or_default();
+                if summary.contains("path/not_found") {
+                    return Ok(None);
+                }
+                return Err(SyncError::Remote {
+                    provider: PROVIDER.to_owned(),
+                    message: format!("下载失败 (409): {summary}"),
+                });
+            }
             Err(error) => return Err(remote_error(PROVIDER, error)),
         };
 

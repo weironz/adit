@@ -98,6 +98,34 @@ The read-back runs for every provider, not only the ones lacking `If-Match` —
 one extra GET is cheap next to explaining where a host went.
 `racing_writer_does_not_lose_our_work` in `orchestrate.rs` pins this.
 
+### An absent remote is not a deletion
+
+The read-back guards the *push*. It says nothing about the *fetch*, and the
+fetch had the worse bug:
+
+```
+provider holds no document  →  treated as "the remote is an empty catalog"
+                            →  three-way merge against a populated ancestor
+                            →  "the other machine deleted all 152 sessions"
+                            →  deletion propagates home, machine wiped,
+                               emptiness pushed back up
+```
+
+Deleting the file from the provider's web UI — a reasonable way to say "start
+over" — was enough to trigger it, and it destroyed a real 152-session catalog.
+So does switching providers (the new one is empty while the ancestor is not),
+signing into a different account, and any provider that answers "not found" for
+a reason other than absence.
+
+**No document means there is no other side, so nothing can have deleted
+anything.** The ancestor is dropped for that attempt and local is treated as
+new — the first-sync shape, which unions rather than deletes.
+
+Behind it sits a brake: **a sync whose result would empty a populated machine is
+refused outright.** Propagating a deletion is right for one session and
+indefensible for all of them, and being wrong once is unrecoverable. Two tests
+in `orchestrate.rs` hold both halves, and both fail if either is removed.
+
 ---
 
 ## 4. Providers
