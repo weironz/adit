@@ -19,6 +19,7 @@
 
 pub mod backend;
 pub mod merge;
+pub mod orchestrate;
 
 use adit_storage::{AppSettings, ProfileCatalog};
 use serde::{Deserialize, Serialize};
