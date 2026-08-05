@@ -51,3 +51,7 @@ serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "fs", "io-util", "net"] }
 uuid = { version = "1", features = ["serde", "v4"] }
+# Blocking HTTP for cloud sync. `SyncBackend` is a blocking trait on purpose —
+# a sync runs on its own thread like profile saves do — so a small blocking
+# client fits where an async stack would only add a runtime to bridge.
+ureq = { version = "2", features = ["tls", "json"], default-features = false }

@@ -17,6 +17,7 @@
 //! as the common ancestor. Losing that file is not fatal — the merge falls
 //! back to a union, which over-keeps rather than deletes.
 
+pub mod backend;
 pub mod merge;
 
 use adit_storage::{AppSettings, ProfileCatalog};
@@ -36,6 +37,11 @@ pub enum SyncError {
     Remote { provider: String, message: String },
     #[error("not signed in to {provider}")]
     NotAuthenticated { provider: String },
+    /// Someone else wrote between our fetch and our push. Not a failure to
+    /// report — the caller re-fetches, re-merges and retries, which is why
+    /// concurrent syncs cannot lose a session.
+    #[error("{provider} was written by another device; merging again")]
+    Conflict { provider: String },
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
