@@ -208,6 +208,10 @@ impl SyncBackend for GistBackend {
                 .unwrap_or_default(),
         })
     }
+
+    fn assigned_id(&self) -> Option<String> {
+        self.config.gist_id.clone()
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +230,23 @@ mod tests {
             backend.fetch(),
             Err(SyncError::NotAuthenticated { .. })
         ));
+    }
+
+    /// The id is reported back through the trait, which is how the caller
+    /// avoids creating a second gist on the next sync.
+    #[test]
+    fn a_configured_id_is_reported_for_persisting() {
+        let backend = GistBackend::new(GistConfig {
+            token: "token".into(),
+            gist_id: Some("abc123".into()),
+        });
+        assert_eq!(backend.assigned_id().as_deref(), Some("abc123"));
+
+        let fresh = GistBackend::new(GistConfig {
+            token: "token".into(),
+            gist_id: None,
+        });
+        assert!(fresh.assigned_id().is_none());
     }
 
     /// No gist id yet is a first sync, not an error — the push creates one.

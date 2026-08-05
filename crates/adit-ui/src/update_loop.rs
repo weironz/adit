@@ -1248,14 +1248,19 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             return Task::perform(
                 async move {
                     tokio::task::spawn_blocking(move || {
-                        adit_sync::orchestrate::sync(
+                        let result = adit_sync::orchestrate::sync(
                             backend.as_mut(),
                             &store,
                             &catalog,
                             &extras,
                             &device,
                             &now,
-                        )
+                        );
+                        // Read the id AFTER the sync: a first push is what
+                        // mints it, and the backend is dropped with this
+                        // closure, so this is the only chance to keep it.
+                        let assigned_id = backend.assigned_id();
+                        result
                         .map(|outcome| SyncReport {
                             conflicts: outcome
                                 .conflicts
@@ -1273,7 +1278,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                                 String::from("已是最新，无需上传")
                             },
                             catalog: outcome.catalog,
-                            gist_id: None,
+                            assigned_id,
                         })
                         .map_err(|error| error.to_string())
                     })
@@ -1289,7 +1294,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 Ok(report) => {
                     app.sync_status = report.summary;
                     app.sync_conflicts = report.conflicts;
-                    if let Some(id) = report.gist_id {
+                    if let Some(id) = report.assigned_id {
                         app.sync.gist_id = id;
                     }
                     // Adopt what the merge produced, then persist it the same

@@ -430,8 +430,9 @@ pub struct SyncReport {
     pub catalog: adit_storage::ProfileCatalog,
     pub conflicts: Vec<String>,
     pub summary: String,
-    /// Set when a first Gist push created one, so it can be persisted.
-    pub gist_id: Option<String>,
+    /// An id the provider minted during this sync (a freshly created Gist).
+    /// Persisted so the next sync reuses it instead of creating another.
+    pub assigned_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -172,6 +172,18 @@ pub trait SyncBackend: Send {
         document: &SyncDocument,
         expected: Option<&RemoteRevision>,
     ) -> Result<RemoteRevision, SyncError>;
+
+    /// An identifier the provider minted during a push that the caller must
+    /// persist.
+    ///
+    /// Gist is the case that needs this: with no id configured the first push
+    /// *creates* a gist, and forgetting the id it returns means the next sync
+    /// creates another one, and another, with the sessions scattered across
+    /// them. Providers addressed by a path the user typed mint nothing and
+    /// keep the default.
+    fn assigned_id(&self) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(test)]
