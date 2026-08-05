@@ -1164,6 +1164,144 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             app.terminal_input = input;
         }
+        Message::CloseSyncPanel => {
+            app.sync_open = false;
+            app.sync_secret_draft.clear();
+            persist_settings_if_changed(app);
+        }
+        Message::SyncProviderChanged(provider) => {
+            app.sync.provider = provider;
+            // The draft belongs to whichever provider was on screen; carrying
+            // it across would offer a GitHub token as an S3 secret key.
+            app.sync_secret_draft.clear();
+            app.sync_secret_saved = sync_secret_name(provider)
+                .and_then(|name| app.credential_store.load_secret(name).ok().flatten())
+                .is_some_and(|secret| !secret.is_empty());
+            app.sync_status.clear();
+            app.sync_conflicts.clear();
+            persist_settings_if_changed(app);
+        }
+        Message::SyncFieldChanged(field, value) => {
+            match field {
+                SyncField::GistId => app.sync.gist_id = value,
+                SyncField::WebDavUrl => app.sync.webdav_url = value,
+                SyncField::WebDavUsername => app.sync.webdav_username = value,
+                SyncField::S3Endpoint => app.sync.s3_endpoint = value,
+                SyncField::S3Region => app.sync.s3_region = value,
+                SyncField::S3Bucket => app.sync.s3_bucket = value,
+                SyncField::S3Key => app.sync.s3_key = value,
+                SyncField::S3AccessKey => app.sync.s3_access_key = value,
+            }
+            persist_settings_if_changed(app);
+        }
+        Message::SyncSecretChanged(value) => {
+            app.sync_secret_draft = value;
+        }
+        Message::SyncIncludeCredentialsToggled(enabled) => {
+            app.sync.include_credentials = enabled;
+            persist_settings_if_changed(app);
+        }
+        Message::SyncNow => {
+            if app.sync_busy {
+                return Task::none();
+            }
+            // A typed secret is committed here rather than on every keystroke,
+            // so a half-typed token never replaces a working one.
+            if !app.sync_secret_draft.is_empty() {
+                if let Some(name) = sync_secret_name(app.sync.provider) {
+                    if let Err(error) = app
+                        .credential_store
+                        .save_secret(name, &app.sync_secret_draft)
+                    {
+                        app.sync_status = format!("保存密钥失败: {error}");
+                        return Task::none();
+                    }
+                    app.sync_secret_saved = true;
+                    app.sync_secret_draft.clear();
+                }
+            }
+            let Some(mut backend) = build_sync_backend(app) else {
+                app.sync_status = String::from("请先填写该云服务所需的信息");
+                return Task::none();
+            };
+
+            app.sync_busy = true;
+            app.sync_status = String::from("正在同步…");
+            app.sync_conflicts.clear();
+
+            let store =
+                adit_sync::orchestrate::SyncStateStore::new(app.config_dir.join("sync-state.json"));
+            let catalog = catalog_snapshot(app);
+            let extras = adit_sync::orchestrate::Extras {
+                settings: Some(current_settings(app)),
+                credentials: app
+                    .sync
+                    .include_credentials
+                    .then(|| std::fs::read(app.credential_store.path()).ok().map(hex::encode))
+                    .flatten(),
+            };
+            let device = hostname_or_unknown();
+            let now = rfc3339_now();
+
+            // Blocking HTTP on a worker thread: the UI thread must not wait on
+            // a network round trip, and iced's runtime is what draws with it.
+            return Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        adit_sync::orchestrate::sync(
+                            backend.as_mut(),
+                            &store,
+                            &catalog,
+                            &extras,
+                            &device,
+                            &now,
+                        )
+                        .map(|outcome| SyncReport {
+                            conflicts: outcome
+                                .conflicts
+                                .iter()
+                                .map(|conflict| format!("冲突（已保留本机）: {}", conflict.name))
+                                .collect(),
+                            summary: if outcome.uploaded {
+                                format!(
+                                    "同步完成：新增 {} 项，更新 {} 项，删除 {} 项",
+                                    outcome.stats.added_from_remote,
+                                    outcome.stats.updated_from_remote,
+                                    outcome.stats.deleted
+                                )
+                            } else {
+                                String::from("已是最新，无需上传")
+                            },
+                            catalog: outcome.catalog,
+                            gist_id: None,
+                        })
+                        .map_err(|error| error.to_string())
+                    })
+                    .await
+                    .unwrap_or_else(|error| Err(error.to_string()))
+                },
+                Message::SyncFinished,
+            );
+        }
+        Message::SyncFinished(result) => {
+            app.sync_busy = false;
+            match result {
+                Ok(report) => {
+                    app.sync_status = report.summary;
+                    app.sync_conflicts = report.conflicts;
+                    if let Some(id) = report.gist_id {
+                        app.sync.gist_id = id;
+                    }
+                    // Adopt what the merge produced, then persist it the same
+                    // way any other profile change is persisted.
+                    app.groups = report.catalog.groups.clone();
+                    app.manager.replace_profiles(report.catalog.profiles.clone());
+                    persist_profiles(app);
+                    persist_settings_if_changed(app);
+                }
+                Err(error) => app.sync_status = format!("同步失败: {error}"),
+            }
+        }
         Message::ToggleFullscreen => {
             app.fullscreen = !app.fullscreen;
             let mode = if app.fullscreen {

@@ -474,6 +474,15 @@ impl SessionManager {
         }
     }
 
+    /// Replace the whole profile list, as cloud sync does after a merge.
+    ///
+    /// Live sessions are untouched: they hold their own copy of what they need
+    /// to run, and a sync that dropped a connection because the profile list
+    /// was rewritten underneath it would be indefensible.
+    pub fn replace_profiles(&mut self, profiles: Vec<ConnectionProfile>) {
+        self.profiles = profiles;
+    }
+
     #[must_use]
     pub fn profiles(&self) -> &[ConnectionProfile] {
         &self.profiles

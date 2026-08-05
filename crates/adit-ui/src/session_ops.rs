@@ -2041,9 +2041,90 @@ pub(crate) fn sync_panes(app: &mut AditApp) {
     }
 }
 
+/// Which credential-store entry holds the secret for a provider, or `None`
+/// when the provider needs no secret.
+#[must_use]
+pub(crate) fn sync_secret_name(provider: adit_storage::SyncProvider) -> Option<&'static str> {
+    use adit_storage::SyncProvider;
+    match provider {
+        SyncProvider::None => None,
+        SyncProvider::Gist => Some("sync.gist.token"),
+        SyncProvider::WebDav => Some("sync.webdav.password"),
+        SyncProvider::S3 => Some("sync.s3.secret_key"),
+    }
+}
+
+/// The catalog as it stands right now: what a sync uploads and merges against.
+#[must_use]
+pub(crate) fn catalog_snapshot(app: &AditApp) -> adit_storage::ProfileCatalog {
+    adit_storage::ProfileCatalog::new(app.groups.to_vec(), app.manager.profiles().to_vec())
+}
+
+/// This machine's name, for the "last written by" line. Cosmetic — a device
+/// name is never an identity and never decides a merge.
+#[must_use]
+pub(crate) fn hostname_or_unknown() -> String {
+    std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| String::from("unknown"))
+}
+
+#[must_use]
+pub(crate) fn rfc3339_now() -> String {
+    adit_sync::rfc3339(std::time::SystemTime::now())
+}
+
+/// Build the configured backend, or `None` when the panel is not filled in
+/// enough to try. Returning `None` rather than a half-configured backend keeps
+/// "you have not finished setting this up" separate from "the server said no".
+#[must_use]
+pub(crate) fn build_sync_backend(app: &AditApp) -> Option<Box<dyn adit_sync::SyncBackend>> {
+    use adit_storage::SyncProvider;
+    use adit_sync::backend::{gist, s3, webdav};
+
+    let secret = sync_secret_name(app.sync.provider)
+        .and_then(|name| app.credential_store.load_secret(name).ok().flatten())
+        .unwrap_or_default();
+
+    match app.sync.provider {
+        SyncProvider::None => None,
+        SyncProvider::Gist => (!secret.is_empty()).then(|| {
+            Box::new(gist::GistBackend::new(gist::GistConfig {
+                token: secret,
+                gist_id: (!app.sync.gist_id.trim().is_empty())
+                    .then(|| app.sync.gist_id.trim().to_owned()),
+            })) as Box<dyn adit_sync::SyncBackend>
+        }),
+        SyncProvider::WebDav => (!app.sync.webdav_url.trim().is_empty() && !secret.is_empty())
+            .then(|| {
+                Box::new(webdav::WebDavBackend::new(webdav::WebDavConfig {
+                    url: app.sync.webdav_url.trim().to_owned(),
+                    username: app.sync.webdav_username.clone(),
+                    password: secret,
+                })) as Box<dyn adit_sync::SyncBackend>
+            }),
+        SyncProvider::S3 => (!app.sync.s3_endpoint.trim().is_empty()
+            && !app.sync.s3_bucket.trim().is_empty()
+            && !app.sync.s3_access_key.trim().is_empty()
+            && !secret.is_empty())
+        .then(|| {
+            Box::new(s3::S3Backend::new(s3::S3Config {
+                endpoint: app.sync.s3_endpoint.trim().to_owned(),
+                region: app.sync.s3_region.clone(),
+                bucket: app.sync.s3_bucket.trim().to_owned(),
+                key: app.sync.s3_key.clone(),
+                access_key: app.sync.s3_access_key.trim().to_owned(),
+                secret_key: secret,
+                path_style: app.sync.s3_path_style,
+            })) as Box<dyn adit_sync::SyncBackend>
+        }),
+    }
+}
+
 /// Snapshot the persistable preferences from live app state.
 pub(crate) fn current_settings(app: &AditApp) -> AppSettings {
     AppSettings {
+        sync: app.sync.clone(),
         dark_mode: app.dark_mode,
         theme_mode: Some(app.theme_mode),
         host_layout: app.host_layout,

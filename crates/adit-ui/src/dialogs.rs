@@ -1648,3 +1648,217 @@ pub(crate) fn saved_tunnel_row(index: usize, def: &TunnelDef) -> Element<'static
     .padding([2, 8])
     .into()
 }
+
+/// The 同步与云 panel.
+///
+/// One provider at a time rather than a list of independently connectable
+/// services: syncing the same catalog to two places would need a merge between
+/// them as well, and every question that answers ("which one wins?") is one the
+/// user should not have to think about.
+pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    use adit_storage::SyncProvider;
+
+    let sync = &app.sync;
+
+    let provider_button = |provider: SyncProvider| {
+        let selected = sync.provider == provider;
+        button(text(provider.label()).size(12))
+            .padding([5, 12])
+            .style(move |_theme, status| {
+                if selected {
+                    primary_button_style(status)
+                } else {
+                    secondary_button_style(status)
+                }
+            })
+            .on_press(Message::SyncProviderChanged(provider))
+    };
+
+    let providers = row![
+        provider_button(SyncProvider::None),
+        provider_button(SyncProvider::Gist),
+        provider_button(SyncProvider::WebDav),
+        provider_button(SyncProvider::S3),
+    ]
+    .spacing(6);
+
+    let field = |label: &'static str, value: &str, placeholder: &'static str, which: SyncField| {
+        row![
+            text(label)
+                .size(11)
+                .color(muted_text())
+                .width(Length::Fixed(96.0)),
+            text_input(placeholder, value)
+                .on_input(move |text| Message::SyncFieldChanged(which, text))
+                .padding([5, 8])
+                .size(12)
+                .width(Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    };
+
+    // A stored secret is never read back into the box — the panel cannot show
+    // what it does not need to know. An empty box means "keep what is saved",
+    // which is why the placeholder says so.
+    let secret_field = |label: &'static str, saved: bool| {
+        let placeholder = if saved {
+            "已保存（留空则不修改）"
+        } else {
+            "必填"
+        };
+        row![
+            text(label)
+                .size(11)
+                .color(muted_text())
+                .width(Length::Fixed(96.0)),
+            text_input(placeholder, &app.sync_secret_draft)
+                .secure(true)
+                .on_input(Message::SyncSecretChanged)
+                .padding([5, 8])
+                .size(12)
+                .width(Fill),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+    };
+
+    let mut body = column![providers].spacing(10);
+
+    match sync.provider {
+        SyncProvider::None => {
+            body = body.push(
+                text("选择一个云服务后，会话、分组与设置会在多台机器间合并同步。")
+                    .size(11)
+                    .color(muted_text()),
+            );
+        }
+        SyncProvider::Gist => {
+            body = body
+                .push(secret_field("访问令牌", app.sync_secret_saved))
+                .push(field(
+                    "Gist ID",
+                    &sync.gist_id,
+                    "留空则首次同步时自动创建",
+                    SyncField::GistId,
+                ))
+                .push(
+                    text("需要一个带 gist 权限的 GitHub 个人访问令牌。GitHub 自带版本历史，可在网页端回滚。")
+                        .size(10)
+                        .color(muted_text()),
+                );
+        }
+        SyncProvider::WebDav => {
+            body = body
+                .push(field(
+                    "文件 URL",
+                    &sync.webdav_url,
+                    "https://dav.example.com/.../adit-sync.json",
+                    SyncField::WebDavUrl,
+                ))
+                .push(field(
+                    "用户名",
+                    &sync.webdav_username,
+                    "alice",
+                    SyncField::WebDavUsername,
+                ))
+                .push(secret_field("密码", app.sync_secret_saved))
+                .push(
+                    text("填到文件而不是目录。Nextcloud、坚果云、群晖均可；该方式支持并发写检测，最安全。")
+                        .size(10)
+                        .color(muted_text()),
+                );
+        }
+        SyncProvider::S3 => {
+            body = body
+                .push(field(
+                    "Endpoint",
+                    &sync.s3_endpoint,
+                    "s3.amazonaws.com / play.min.io",
+                    SyncField::S3Endpoint,
+                ))
+                .push(field("区域", &sync.s3_region, "us-east-1", SyncField::S3Region))
+                .push(field("存储桶", &sync.s3_bucket, "adit", SyncField::S3Bucket))
+                .push(field(
+                    "对象键",
+                    &sync.s3_key,
+                    "adit/adit-sync.json",
+                    SyncField::S3Key,
+                ))
+                .push(field(
+                    "Access Key",
+                    &sync.s3_access_key,
+                    "AKIA...",
+                    SyncField::S3AccessKey,
+                ))
+                .push(secret_field("Secret Key", app.sync_secret_saved))
+                .push(
+                    text("兼容 AWS S3、MinIO、Cloudflare R2、阿里云 OSS。MinIO 等自建网关需要路径风格寻址。")
+                        .size(10)
+                        .color(muted_text()),
+                );
+        }
+    }
+
+    if sync.provider != SyncProvider::None {
+        body = body.push(
+            checkbox(sync.include_credentials)
+                .label("同时同步已保存的密码（加密后上传，主密码不出本机）")
+                .on_toggle(Message::SyncIncludeCredentialsToggled)
+                .size(14)
+                .text_size(11)
+                .spacing(8),
+        );
+    }
+
+    // Status: what the last attempt did, then any sessions it could not settle.
+    if !app.sync_status.is_empty() {
+        body = body.push(
+            text(app.sync_status.clone())
+                .size(11)
+                .color(primary_text()),
+        );
+    }
+    for conflict in &app.sync_conflicts {
+        body = body.push(text(conflict.clone()).size(10).color(muted_text()));
+    }
+
+    let sync_label = if app.sync_busy { "同步中…" } else { "立即同步" };
+    let mut sync_button = button(text(sync_label).size(12))
+        .padding([6, 16])
+        .style(|_theme, status| primary_button_style(status));
+    if !app.sync_busy && sync.provider != SyncProvider::None {
+        sync_button = sync_button.on_press(Message::SyncNow);
+    }
+
+    let actions = row![
+        Space::new().width(Fill),
+        button(text("关闭").size(12))
+            .padding([6, 16])
+            .style(|_theme, status| secondary_button_style(status))
+            .on_press(Message::CloseSyncPanel),
+        sync_button,
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let panel = container(
+        column![
+            text("同步与云").size(14).color(primary_text()),
+            body,
+            actions,
+        ]
+        .spacing(14),
+    )
+    .width(Length::Fixed(520.0))
+    .padding(20)
+    .style(|_theme| connection_dialog_style());
+
+    container(panel)
+        .width(Fill)
+        .height(Fill)
+        .center_x(Fill)
+        .center_y(Fill)
+        .style(|_theme| dialog_scrim_style())
+        .into()
+}

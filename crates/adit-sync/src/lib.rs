@@ -47,6 +47,45 @@ pub enum SyncError {
     Io(#[from] std::io::Error),
 }
 
+/// `2026-08-05T02:30:00Z` from a wall clock.
+///
+/// Written out rather than adding a date library for one format, and shared
+/// with the S3 signer so there is a single civil-date implementation to be
+/// right about. Display only — nothing decides a merge from a timestamp.
+#[must_use]
+pub fn rfc3339(now: std::time::SystemTime) -> String {
+    let seconds = now
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let days = i64::try_from(seconds / 86_400).unwrap_or(0);
+    let rest = seconds % 86_400;
+    let (year, month, day) = civil_from_days(days);
+    let (h, m, sec) = (rest / 3_600, (rest % 3_600) / 60, rest % 60);
+    format!("{year:04}-{month:02}-{day:02}T{h:02}:{m:02}:{sec:02}Z")
+}
+
+/// Days since 1970-01-01 to a civil date (Howard Hinnant's `civil_from_days`:
+/// exact across the proleptic Gregorian range, no tables).
+#[must_use]
+pub fn civil_from_days(days: i64) -> (i64, u32, u32) {
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = if m <= 2 { y + 1 } else { y };
+    (
+        year,
+        u32::try_from(m).unwrap_or(1),
+        u32::try_from(d).unwrap_or(1),
+    )
+}
+
 /// The payload stored on the provider.
 ///
 /// Plain JSON on purpose: a user must be able to open their own Gist and see

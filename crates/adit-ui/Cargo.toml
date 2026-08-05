@@ -9,6 +9,8 @@ license.workspace = true
 adit-domain.workspace = true
 adit-session.workspace = true
 adit-storage.workspace = true
+adit-sync.workspace = true
+hex.workspace = true
 adit-terminal.workspace = true
 # "Follow the system theme" needs the OS's own setting, and every platform
 # exposes it differently — the registry on Windows, defaults on macOS, a portal

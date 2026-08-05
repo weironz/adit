@@ -376,6 +376,102 @@ pub struct AppSettings {
     /// every launch, which showed as a multi-second delay before the window.
     #[serde(default)]
     pub keyring_migrated: bool,
+    /// Cloud-sync configuration. Secrets are deliberately absent — they live in
+    /// the sealed credential store, because this file is itself one of the
+    /// things sync uploads.
+    #[serde(default)]
+    pub sync: SyncSettings,
+}
+
+/// Which provider cloud sync uses, and everything about it that is not a
+/// secret.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SyncProvider {
+    #[default]
+    None,
+    Gist,
+    WebDav,
+    S3,
+}
+
+impl SyncProvider {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::None => "未启用",
+            Self::Gist => "GitHub Gist",
+            Self::WebDav => "WebDAV",
+            Self::S3 => "S3 兼容存储",
+        }
+    }
+}
+
+/// Non-secret half of the sync configuration.
+///
+/// Every field here is safe to upload, which matters because this struct
+/// travels inside the synced settings. Tokens, passwords and secret keys are
+/// held by `CredentialStore::save_secret` and never appear in JSON.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SyncSettings {
+    #[serde(default)]
+    pub provider: SyncProvider,
+    /// Set on the first push so later syncs reuse the same gist instead of
+    /// creating a new one each time.
+    #[serde(default)]
+    pub gist_id: String,
+    #[serde(default)]
+    pub webdav_url: String,
+    #[serde(default)]
+    pub webdav_username: String,
+    #[serde(default)]
+    pub s3_endpoint: String,
+    #[serde(default = "default_s3_region")]
+    pub s3_region: String,
+    #[serde(default)]
+    pub s3_bucket: String,
+    #[serde(default = "default_s3_key")]
+    pub s3_key: String,
+    #[serde(default)]
+    pub s3_access_key: String,
+    /// MinIO and most self-hosted gateways need path-style addressing; AWS and
+    /// R2 do not.
+    #[serde(default = "default_true")]
+    pub s3_path_style: bool,
+    /// Whether the sealed credential file rides along. Off by default: it is
+    /// safe (ciphertext under a passphrase that never leaves the machine) but
+    /// it is the user's call, not ours.
+    #[serde(default)]
+    pub include_credentials: bool,
+    /// Sync automatically when sessions change, rather than only on demand.
+    #[serde(default)]
+    pub auto_sync: bool,
+}
+
+fn default_s3_region() -> String {
+    String::from("us-east-1")
+}
+
+fn default_s3_key() -> String {
+    String::from("adit/adit-sync.json")
+}
+
+impl Default for SyncSettings {
+    fn default() -> Self {
+        Self {
+            provider: SyncProvider::None,
+            gist_id: String::new(),
+            webdav_url: String::new(),
+            webdav_username: String::new(),
+            s3_endpoint: String::new(),
+            s3_region: default_s3_region(),
+            s3_bucket: String::new(),
+            s3_key: default_s3_key(),
+            s3_access_key: String::new(),
+            s3_path_style: true,
+            include_credentials: false,
+            auto_sync: false,
+        }
+    }
 }
 
 /// A saved command snippet (a name + the command text sent to a session).
@@ -452,6 +548,7 @@ impl Default for AppSettings {
             auto_accept_host_keys: true,
             rdp_clipboard: true,
             keyring_migrated: false,
+            sync: SyncSettings::default(),
         }
     }
 }
@@ -1309,6 +1406,7 @@ Host db
         assert_eq!(store.load().expect("default load"), AppSettings::default());
 
         let settings = AppSettings {
+            sync: SyncSettings::default(),
             dark_mode: true,
             theme_mode: Some(ThemeMode::System),
             // Deliberately the non-default value, so the round-trip proves the

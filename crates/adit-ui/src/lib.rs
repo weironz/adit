@@ -328,6 +328,25 @@ pub struct AditApp {
     known_hosts: Vec<KnownHostEntry>,
     /// The 选项 (config path + session-log) dialog.
     options_open: bool,
+    /// The 同步与云 panel.
+    sync_open: bool,
+    /// Live copy of the persisted sync configuration, edited by the panel.
+    sync: adit_storage::SyncSettings,
+    /// Whether the credential store already holds a secret for the selected
+    /// provider, so the panel can say "leave blank to keep it".
+    sync_secret_saved: bool,
+    /// Secrets are edited here rather than read back from the credential
+    /// store: a stored token shows as a placeholder, and an empty box means
+    /// "keep what is saved" rather than "clear it". Opening the panel and
+    /// closing it can therefore never silently wipe a working configuration.
+    sync_secret_draft: String,
+    /// True while a sync is in flight, so the button can say so and cannot be
+    /// pressed twice.
+    sync_busy: bool,
+    /// One line for the panel: what the last attempt did, or why it failed.
+    sync_status: String,
+    /// Sessions the last sync could not settle. Local was kept for each.
+    sync_conflicts: Vec<String>,
     /// The config folder in use this run (resolved at startup). Relocating it
     /// (e.g. onto Dropbox) takes effect on the next launch — `pending_config_dir`
     /// holds a freshly-chosen target until then.
@@ -390,7 +409,32 @@ pub enum MenuKind {
     Help,
 }
 
-#[derive(Debug, Clone, Copy)]
+/// Which text box in the sync panel changed. One message with a field tag
+/// beats eight near-identical variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncField {
+    GistId,
+    WebDavUrl,
+    WebDavUsername,
+    S3Endpoint,
+    S3Region,
+    S3Bucket,
+    S3Key,
+    S3AccessKey,
+}
+
+/// What a finished sync tells the UI. Carries the merged catalog so the update
+/// loop can save it on the UI thread, where the profile store lives.
+#[derive(Debug, Clone)]
+pub struct SyncReport {
+    pub catalog: adit_storage::ProfileCatalog,
+    pub conflicts: Vec<String>,
+    pub summary: String,
+    /// Set when a first Gist push created one, so it can be persisted.
+    pub gist_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuCommand {
     NewProfile,
     NewGroup,
@@ -418,6 +462,7 @@ pub enum MenuCommand {
     ToggleBroadcast,
     ToggleCommandWindow,
     SplitPane,
+    SyncCloud,
     ToggleSidebar,
     ToggleTheme,
     TileVertical,
@@ -617,6 +662,13 @@ pub enum Message {
     ModifiersChanged(keyboard::Modifiers),
     WindowResized { width: f32, height: f32, window: window::Id },
     ToggleFullscreen,
+    CloseSyncPanel,
+    SyncProviderChanged(adit_storage::SyncProvider),
+    SyncFieldChanged(SyncField, String),
+    SyncSecretChanged(String),
+    SyncIncludeCredentialsToggled(bool),
+    SyncNow,
+    SyncFinished(Result<SyncReport, String>),
     /// The window's display scale factor (device pixels per logical point).
     DisplayScale(f32),
     ToggleSidebar,
@@ -995,6 +1047,7 @@ impl AditApp {
         // Mirror what is on disk (raw, not clamped) so a bad size triggers one
         // corrective write, while a valid size stays untouched.
         let persisted_settings = AppSettings {
+            sync: settings.sync.clone(),
             dark_mode,
             theme_mode: Some(theme_mode),
             host_layout,
@@ -1173,6 +1226,13 @@ impl AditApp {
             known_hosts_open: false,
             known_hosts: Vec::new(),
             options_open: false,
+            sync_open: false,
+            sync: settings.sync.clone(),
+            sync_secret_saved: false,
+            sync_secret_draft: String::new(),
+            sync_busy: false,
+            sync_status: String::new(),
+            sync_conflicts: Vec::new(),
             config_dir: adit_storage::config_dir(),
             pending_config_dir: None,
             config_dir_custom: adit_storage::custom_config_dir().is_some(),

@@ -151,6 +151,24 @@ impl CredentialStore {
         self.set(&password_account(profile_id), password)
     }
 
+    /// A secret that belongs to the application rather than to a profile —
+    /// a cloud-sync token, a WebDAV password, an S3 secret key.
+    ///
+    /// Same sealed file, same Argon2id key: there is no reason for these to be
+    /// less protected than a session password, and every reason not to let
+    /// them land in `settings.json`, which syncs to the cloud by design.
+    pub fn save_secret(&self, name: &str, value: &str) -> Result<(), CredentialError> {
+        self.set(&secret_account(name), value)
+    }
+
+    pub fn load_secret(&self, name: &str) -> Result<Option<String>, CredentialError> {
+        self.get(&secret_account(name))
+    }
+
+    pub fn delete_secret(&self, name: &str) -> Result<(), CredentialError> {
+        self.remove(&secret_account(name))
+    }
+
     pub fn delete_profile_password(&self, profile_id: ProfileId) -> Result<(), CredentialError> {
         self.remove(&password_account(profile_id))
     }
@@ -279,6 +297,10 @@ impl Default for CredentialStore {
 
 fn password_account(profile_id: ProfileId) -> String {
     format!("profile:{profile_id}:password")
+}
+
+fn secret_account(name: &str) -> String {
+    format!("secret:{name}")
 }
 
 fn passphrase_account(profile_id: ProfileId) -> String {

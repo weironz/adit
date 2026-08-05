@@ -110,6 +110,9 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     if app.options_open {
         layers.push(opaque(options_dialog_overlay(app)));
     }
+    if app.sync_open {
+        layers.push(opaque(sync_dialog_overlay(app)));
+    }
     if app.known_hosts_open {
         layers.push(opaque(known_hosts_overlay(app)));
     }
@@ -202,6 +205,7 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
             ("导入 ~/.ssh/config", MenuCommand::ImportSshConfig),
             ("导入 SecureCRT 会话…", MenuCommand::ImportSecureCrt),
             ("选项 / 日志…", MenuCommand::Options),
+            ("同步与云…", MenuCommand::SyncCloud),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
         MenuKind::Session => &[
