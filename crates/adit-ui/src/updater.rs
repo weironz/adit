@@ -9,16 +9,36 @@ pub(crate) fn begin_update_check(app: &mut AditApp) -> Task<Message> {
     Task::perform(check_for_update(), Message::UpdateChecked)
 }
 
-/// Open a URL in the default browser (best-effort).
-pub(crate) fn open_url(app: &mut AditApp, url: &str) {
-    let result = if cfg!(target_os = "windows") {
-        no_window(std::process::Command::new("cmd").args(["/C", "start", "", url])).spawn()
+/// Hand a URL to the OS's default browser, receiving it as a single argv so no
+/// shell ever re-parses it.
+///
+/// The Windows arm used to be `cmd /C start "" <url>`, and that silently
+/// truncates any URL at its first `&`: Rust quotes an argument only when it
+/// contains whitespace, so a percent-encoded URL reaches cmd bare and cmd reads
+/// `&` as a command separator. An OAuth authorize URL is nothing *but*
+/// `&`-joined parameters, so Dropbox received `...authorize?response_type=code`
+/// and answered "Missing client_id" — a failure that reads like a missing
+/// build-time id rather than a mangled URL. `%VAR%` expansion would have been
+/// the same trap one step further along, since percent-encoding is full of `%`.
+fn spawn_browser(url: &str) -> std::io::Result<std::process::Child> {
+    if cfg!(target_os = "windows") {
+        // rundll32 receives the URL as a single argv — no cmd.exe re-parsing.
+        no_window(
+            std::process::Command::new("rundll32.exe")
+                .args(["url.dll,FileProtocolHandler", url]),
+        )
+        .spawn()
     } else if cfg!(target_os = "macos") {
         std::process::Command::new("open").arg(url).spawn()
     } else {
         std::process::Command::new("xdg-open").arg(url).spawn()
-    };
-    if let Err(error) = result {
+    }
+}
+
+/// Open a URL in the default browser (best-effort). For URLs Adit itself built;
+/// anything derived from remote output goes through `open_external_link`.
+pub(crate) fn open_url(app: &mut AditApp, url: &str) {
+    if let Err(error) = spawn_browser(url) {
         app.last_error = Some(format!("打开链接失败: {error}"));
     }
 }
@@ -46,19 +66,7 @@ pub(crate) fn open_external_link(app: &mut AditApp, url: &str) {
         app.last_error = Some(String::from("仅支持打开 http/https 链接"));
         return;
     }
-    let result = if cfg!(target_os = "windows") {
-        // rundll32 receives the URL as a single argv — no cmd.exe re-parsing.
-        no_window(
-            std::process::Command::new("rundll32.exe")
-                .args(["url.dll,FileProtocolHandler", url]),
-        )
-        .spawn()
-    } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(url).spawn()
-    } else {
-        std::process::Command::new("xdg-open").arg(url).spawn()
-    };
-    if let Err(error) = result {
+    if let Err(error) = spawn_browser(url) {
         app.last_error = Some(format!("打开链接失败: {error}"));
     }
 }
