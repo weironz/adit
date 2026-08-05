@@ -156,15 +156,23 @@ protection.
 [Google Cloud Console](https://console.cloud.google.com/apis/credentials) →
 API 和服务 → 凭据 → 创建凭据 → OAuth 客户端 ID
 
-- 应用类型：**桌面应用**
-- 需先在 **OAuth 权限请求页面** 配置，权限范围选
-  **`https://www.googleapis.com/auth/drive.file`**（仅本应用创建的文件，
-  权限最小）
-- 拿 **客户端 ID**（形如 `xxx.apps.googleusercontent.com`），
-  **不需要客户端密钥**
+1. **启用 Google Drive API**：左栏 **Library** → 搜 "Google Drive API" →
+   **Enable**。少了这步，授权会成功而所有 API 调用被拒 —— 一个看起来像
+   "凭据错了" 的失败。
+2. **声明权限范围**：左栏 **OAuth consent screen**（不在 Credentials 页里）。
+   旧版界面是 编辑应用 → 第二步 **范围**；改版后的 Google Auth Platform 把它
+   放在 **数据访问**。搜 `drive.file` 勾选
+   **`https://www.googleapis.com/auth/drive.file`** —— 仅本应用创建的文件，
+   是能用的最小权限。
+3. **创建客户端**：Credentials → 创建凭据 → OAuth 客户端 ID，应用类型
+   **桌面应用**。拿 **客户端 ID**（形如
+   `xxx.apps.googleusercontent.com`）。**不需要客户端密钥。**
 
-The console states which tier a scope falls into and whether verification is
-required — trust it over any summary here, including this one; the policy moves.
+The scope that is actually requested comes from the client — our authorize URL
+carries `scope=...drive.file`. What the console holds is the *declaration*,
+which is what decides the consent screen wording and whether verification
+applies. The console also states which tier a scope falls into; trust it over
+any summary here, including this one, because the policy moves.
 
 ### OneDrive
 
