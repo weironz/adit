@@ -29,6 +29,9 @@ pub fn oauth_config(client_id: String) -> OAuthConfig {
         token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token",
         scope: "Files.ReadWrite.AppFolder offline_access",
         extra_auth_params: &[],
+        // Azure matches `http://localhost` for a mobile-and-desktop platform
+        // registration without pinning the port.
+        redirect_port: None,
     }
 }
 

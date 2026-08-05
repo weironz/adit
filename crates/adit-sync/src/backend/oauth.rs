@@ -51,6 +51,20 @@ pub struct OAuthConfig {
     /// Google needs `access_type=offline` and `prompt=consent`, or it stops
     /// returning a refresh token on repeat authorisations.
     pub extra_auth_params: &'static [(&'static str, &'static str)],
+    /// The loopback port to listen on, when the provider will not accept an
+    /// arbitrary one.
+    ///
+    /// `None` is the RFC 8252 behaviour this module was built around: the OS
+    /// assigns a free port and the redirect URI is built from it. Google and
+    /// Microsoft both honour that.
+    ///
+    /// **Dropbox does not.** It matches `redirect_uri` against the list
+    /// registered in its App Console, with no documented exception for
+    /// loopback, so an ephemeral port earns "Invalid redirect_uri. It must
+    /// exactly match one of the redirect URIs you've pre-configured for your
+    /// app" every single time. `Some(port)` pins it — that port then has to be
+    /// registered in the console *and* be free on the machine.
+    pub redirect_port: Option<u16>,
 }
 
 /// What a token exchange yields.
@@ -80,6 +94,10 @@ pub struct PendingAuth {
     verifier: String,
     state: String,
     config: OAuthConfig,
+    /// Kept rather than rebuilt from the port at exchange time. The token
+    /// request has to repeat this byte for byte, and deriving it twice is how
+    /// the two copies quietly drift apart.
+    redirect_uri: String,
 }
 
 /// Start an authorisation. Binding the listener first is deliberate: the URL
@@ -90,9 +108,26 @@ pub fn begin(config: OAuthConfig) -> Result<PendingAuth, SyncError> {
             provider: config.provider.to_owned(),
         });
     }
-    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let listener = match config.redirect_port {
+        // A pinned port can be taken by something else, and the failure needs
+        // to name the port — "connection refused" in a browser, twenty minutes
+        // later, is not a diagnosis anyone can act on.
+        Some(port) => TcpListener::bind(("127.0.0.1", port)).map_err(|error| SyncError::Remote {
+            provider: config.provider.to_owned(),
+            message: format!("本机端口 {port} 已被占用，无法接收授权回调：{error}"),
+        })?,
+        None => TcpListener::bind("127.0.0.1:0")?,
+    };
     let port = listener.local_addr()?.port();
-    let redirect_uri = format!("http://127.0.0.1:{port}");
+    // Spelling matters only where the provider compares literally. Dropbox does,
+    // and the form its console accepts for plain http is `localhost` with a
+    // trailing slash — the same value rclone has users register. Google
+    // documents `127.0.0.1` as the preferred loopback host and takes any port,
+    // so the free-port arm keeps it.
+    let redirect_uri = match config.redirect_port {
+        Some(_) => format!("http://localhost:{port}/"),
+        None => format!("http://127.0.0.1:{port}"),
+    };
 
     let verifier = random_urlsafe(64);
     let challenge = base64url(&Sha256::digest(verifier.as_bytes()));
@@ -117,6 +152,7 @@ pub fn begin(config: OAuthConfig) -> Result<PendingAuth, SyncError> {
         verifier,
         state,
         config,
+        redirect_uri,
     })
 }
 
@@ -124,9 +160,8 @@ impl PendingAuth {
     /// Block until the browser redirects back, then trade the code for tokens.
     /// Runs on a worker thread — it waits on a human.
     pub fn complete(self) -> Result<Tokens, SyncError> {
-        let port = self.listener.local_addr()?.port();
         let code = self.wait_for_code()?;
-        exchange(&self.config, &code, &self.verifier, port)
+        exchange(&self.config, &code, &self.verifier, &self.redirect_uri)
     }
 
     fn wait_for_code(&self) -> Result<String, SyncError> {
@@ -204,14 +239,13 @@ fn exchange(
     config: &OAuthConfig,
     code: &str,
     verifier: &str,
-    port: u16,
+    redirect_uri: &str,
 ) -> Result<Tokens, SyncError> {
-    let redirect_uri = format!("http://127.0.0.1:{port}");
     let form = [
         ("grant_type", "authorization_code"),
         ("code", code),
         ("client_id", config.client_id.as_str()),
-        ("redirect_uri", redirect_uri.as_str()),
+        ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
     ];
     post_token(config, &form)
@@ -511,10 +545,51 @@ mod tests {
             token_url: "https://example.com/token",
             scope: "files",
             extra_auth_params: &[],
+            redirect_port: None,
         };
         assert!(matches!(
             begin(config),
             Err(SyncError::NotAuthenticated { .. })
         ));
+    }
+
+    /// A pinned-port provider must be told `http://localhost:PORT/` — lowercase
+    /// host, trailing slash — because Dropbox compares the string it was
+    /// registered with literally and rejects anything else outright. The
+    /// free-port providers keep the `127.0.0.1` spelling Google documents.
+    ///
+    /// Port 0 stands in for a real pin: it exercises the same branch while
+    /// letting the OS pick, so the test cannot fail because 53682 happens to be
+    /// busy on the machine running it.
+    #[test]
+    fn a_pinned_port_changes_how_the_redirect_uri_is_spelled() {
+        let base = OAuthConfig {
+            provider: "Test",
+            client_id: String::from("id"),
+            auth_url: "https://example.com/auth",
+            token_url: "https://example.com/token",
+            scope: "files",
+            extra_auth_params: &[],
+            redirect_port: None,
+        };
+
+        let pinned = begin(OAuthConfig {
+            redirect_port: Some(0),
+            ..base.clone()
+        })
+        .expect("bind an OS-assigned port");
+        let port = pinned.listener.local_addr().unwrap().port();
+        assert_eq!(pinned.redirect_uri, format!("http://localhost:{port}/"));
+        assert!(
+            pinned
+                .url
+                .contains(&percent(&format!("http://localhost:{port}/"))),
+            "authorize URL must carry the same spelling: {}",
+            pinned.url
+        );
+
+        let free = begin(base).expect("bind a free port");
+        let port = free.listener.local_addr().unwrap().port();
+        assert_eq!(free.redirect_uri, format!("http://127.0.0.1:{port}"));
     }
 }

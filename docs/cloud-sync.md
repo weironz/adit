@@ -134,6 +134,16 @@ race cannot happen.
   write conditional on.
 - **Dropbox** without `autorename: false` "resolves" a conflict by inventing
   `adit-sync (1).json`, which nobody would ever look in again.
+- **Dropbox** matches `redirect_uri` against its registered list literally, with
+  no loopback exception — the RFC 8252 "let the OS pick a port" approach that
+  Google and Microsoft both accept fails on every attempt. It needs a pinned,
+  pre-registered port (53682, following rclone).
+- **Windows** `cmd /C start "" <url>` truncates any URL at its first `&`: Rust
+  quotes an argument only when it holds whitespace, so a percent-encoded URL
+  arrives bare and `&` reads as a command separator. An authorize URL is
+  nothing but `&`-joined parameters, and the provider reports it as a *missing
+  client id*. Hand URLs to `rundll32 url.dll,FileProtocolHandler` instead — one
+  argv, no shell.
 - **Google** without `prompt=consent` stops issuing a refresh token to a
   *reconnecting* user, who then works for an hour and stops.
 
@@ -189,6 +199,9 @@ any summary here, including this one, because the policy moves.
 [Dropbox App Console](https://www.dropbox.com/developers/apps) → Create app
 
 - 选 **Scoped access** → **App folder**
+- **OAuth2 Redirect URIs 填 `http://localhost:53682/` 并点 Add** —— 结尾的斜杠
+  不能少。Dropbox 逐字比对这个字符串，且**不给 loopback 端口开例外**，所以
+  Adit 对它固定用 53682 端口，而不像 Google / Microsoft 那样由系统随机分配。
 - Permissions 页勾 **`files.content.write`** + **`files.content.read`**
   （勾完要点 **Submit**，未提交的勾选不生效）
 - 拿 **App key**

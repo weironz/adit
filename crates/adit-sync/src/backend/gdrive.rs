@@ -34,6 +34,9 @@ pub fn oauth_config(client_id: String) -> OAuthConfig {
         token_url: "https://oauth2.googleapis.com/token",
         scope: "https://www.googleapis.com/auth/drive.file",
         extra_auth_params: &[("access_type", "offline"), ("prompt", "consent")],
+        // Google accepts any loopback port for a desktop client, so nothing
+        // has to be registered and nothing can be occupied.
+        redirect_port: None,
     }
 }
 

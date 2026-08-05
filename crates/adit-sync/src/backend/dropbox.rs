@@ -20,6 +20,16 @@ const PROVIDER: &str = "Dropbox";
 /// Relative to the app folder, so this is `Apps/Adit/adit-sync.json`.
 const PATH: &str = "/adit-sync.json";
 
+/// The loopback port the Dropbox App Console must have registered, as
+/// `http://localhost:53682/`.
+///
+/// Dropbox compares `redirect_uri` against that list literally and documents no
+/// loopback exception, so unlike Google and Microsoft it cannot be handed an
+/// OS-assigned port. 53682 is not special to Dropbox — it is the port rclone
+/// has had its users register for years, which makes it the one least likely to
+/// be claimed by something else on the same machine.
+const REDIRECT_PORT: u16 = 53682;
+
 /// Dropbox only returns a refresh token when the authorize request asks for
 /// offline access; without it the app works for four hours and then silently
 /// stops with nothing to renew.
@@ -32,6 +42,7 @@ pub fn oauth_config(client_id: String) -> OAuthConfig {
         token_url: "https://api.dropboxapi.com/oauth2/token",
         scope: "files.content.write files.content.read",
         extra_auth_params: &[("token_access_type", "offline")],
+        redirect_port: Some(REDIRECT_PORT),
     }
 }
 
