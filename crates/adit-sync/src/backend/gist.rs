@@ -161,11 +161,18 @@ impl SyncBackend for GistBackend {
             .map_err(|error| SyncError::Malformed(error.to_string()))?;
 
         // GitHub has no conditional write for gists — no If-Match, no
-        // compare-and-swap — so `expected` cannot be enforced here. The caller
-        // closes that gap by fetching immediately before pushing and merging
-        // what it finds; the window left is one round trip, and a loss inside
-        // it is recovered on the next sync, because the merge is three-way and
-        // the ancestor is still the last agreed state.
+        // compare-and-swap — so `expected` cannot be enforced here, and a
+        // second machine writing inside the fetch-push window is overwritten
+        // silently.
+        //
+        // That does NOT heal by itself, and assuming it did was wrong: on the
+        // next sync the loser's ancestor still holds the profile, the remote
+        // does not, and a three-way merge reads that as "deleted remotely" and
+        // removes it for good. The orchestration layer is what makes this
+        // safe, by reading back after every push and only advancing the stored
+        // ancestor once the remote is confirmed to be what we wrote. Keeping
+        // the old ancestor is the whole trick: our own additions stay
+        // additions rather than becoming remote deletions.
         let response = match &self.config.gist_id {
             Some(id) => self
                 .auth(

@@ -94,8 +94,11 @@ version = "0.1.64"
 dependencies = [
  "adit-domain",
  "adit-storage",
+ "hex",
+ "hmac 0.12.1",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "ureq",
 ]

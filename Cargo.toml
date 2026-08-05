@@ -55,3 +55,7 @@ uuid = { version = "1", features = ["serde", "v4"] }
 # a sync runs on its own thread like profile saves do — so a small blocking
 # client fits where an async stack would only add a runtime to bridge.
 ureq = { version = "2", features = ["tls", "json"], default-features = false }
+# AWS Signature V4 for the S3 backend. Stable RustCrypto releases, resolved
+# independently of the pre-release train `russh` pins (see adit-rdp).
+sha2 = "0.10"
+hmac = "0.12"

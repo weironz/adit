@@ -6,6 +6,7 @@
 //! those wrong — the worst a broken backend can do is fail to sync.
 
 pub mod gist;
+pub mod s3;
 pub mod webdav;
 
 use crate::SyncError;
