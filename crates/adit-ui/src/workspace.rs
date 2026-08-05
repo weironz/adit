@@ -55,22 +55,31 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         .into()
     };
 
-    let tab_row = row![
-        scrollable(tabs).direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new()
-        )),
-        active_session_action(app),
-        container(text(app.manager.status_line()).size(12).color(muted_text()))
-            .padding([0, 8])
-            .center_y(TAB_BAR_HEIGHT),
-        Space::new().width(Fill),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center)
-    .height(TAB_BAR_HEIGHT)
-    .width(Fill);
-
-    let mut layout = column![tab_row].height(Fill).width(Fill);
+    // With no sessions open the strip holds one 主机 tab and the word 空闲,
+    // and nothing else — a full row spent on a button the sidebar already has
+    // (▦ 返回主机列表) and a status both the status bar and the title bar
+    // already show. Hiding it then is safe by construction: no sessions means
+    // the host view is what is on screen, so there is nothing to switch to.
+    let has_sessions = !app.manager.sessions().is_empty();
+    let mut layout = column![].height(Fill).width(Fill);
+    if has_sessions {
+        layout = layout.push(
+            row![
+                scrollable(tabs).direction(scrollable::Direction::Horizontal(
+                    scrollable::Scrollbar::new()
+                )),
+                active_session_action(app),
+                container(text(app.manager.status_line()).size(12).color(muted_text()))
+                    .padding([0, 8])
+                    .center_y(TAB_BAR_HEIGHT),
+                Space::new().width(Fill),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .height(TAB_BAR_HEIGHT)
+            .width(Fill),
+        );
+    }
     if app.search_open {
         layout = layout.push(terminal_search_bar(app));
     }
