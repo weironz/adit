@@ -582,7 +582,7 @@ pub(crate) fn wrap_rows(mut buttons: Vec<Element<'static, Message>>, per_row: us
     rows.into()
 }
 
-pub(crate) fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
     let current_font = font_preset_index(&app.font_family);
     let current_scheme = color_scheme_index(&app.color_scheme);
     let size = app.font_size as i32;
@@ -666,19 +666,7 @@ pub(crate) fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         ..container::Style::default()
     });
 
-    let card = container(
-        column![
-            row![
-                text("外观设置").size(18).color(primary_text()),
-                Space::new().width(Fill),
-                button("×")
-                    .width(Length::Fixed(26.0))
-                    .height(Length::Fixed(24.0))
-                    .padding(0)
-                    .style(|_theme, status| close_button_style(status))
-                    .on_press(Message::CloseAppearance),
-            ]
-            .align_y(Alignment::Center),
+    column![
             text("字体").size(12).color(muted_text()),
             wrap_rows(font_buttons, 3),
             size_row,
@@ -691,27 +679,9 @@ pub(crate) fn appearance_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             wrap_rows(highlight_buttons, 3),
             text("预览").size(12).color(muted_text()),
             preview,
-            row![
-                Space::new().width(Fill),
-                button(text("完成").size(12))
-                    .padding([5, 18])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::CloseAppearance),
-            ],
-        ]
-        .spacing(12),
-    )
-    .width(Length::Fixed(520.0))
-    .padding(20)
-    .style(|_theme| connection_dialog_style());
-
-    container(card)
-        .width(Fill)
-        .height(Fill)
-        .center_x(Fill)
-        .center_y(Fill)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    ]
+    .spacing(12)
+    .into()
 }
 
 pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
@@ -1122,7 +1092,10 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
         .into()
 }
 
-pub(crate) fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+/// The three category bodies the 设置 dialog draws for 应用 / 日志 / 终端.
+///
+/// Built together because they share the same locals; the caller picks one.
+pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
     let config_dir = &app.config_dir;
     // The env override, if set, wins over the UI, so hide the change controls.
     let overridden = std::env::var_os("ADIT_CONFIG_DIR")
@@ -1339,54 +1312,8 @@ pub(crate) fn options_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     ]
     .spacing(8);
 
-    let divider = || {
-        container(Space::new().height(Length::Fixed(1.0)).width(Fill)).style(|_theme| {
-            container::Style {
-                background: Some(Background::Color(border_color())),
-                ..container::Style::default()
-            }
-        })
-    };
 
-    let card = container(
-        column![
-            row![
-                text("选项").size(18).color(primary_text()),
-                Space::new().width(Fill),
-                button("×")
-                    .width(Length::Fixed(26.0))
-                    .height(Length::Fixed(24.0))
-                    .padding(0)
-                    .style(|_theme, status| close_button_style(status))
-                    .on_press(Message::CloseOptions),
-            ]
-            .align_y(Alignment::Center),
-            config_section,
-            divider(),
-            log_section,
-            divider(),
-            mouse_section,
-            row![
-                Space::new().width(Fill),
-                button(text("完成").size(12))
-                    .padding([5, 18])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::CloseOptions),
-            ],
-        ]
-        .spacing(14),
-    )
-    .width(Length::Fixed(560.0))
-    .padding(20)
-    .style(|_theme| connection_dialog_style());
-
-    container(card)
-        .width(Fill)
-        .height(Fill)
-        .center_x(Fill)
-        .center_y(Fill)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    [config_section.into(), log_section.into(), mouse_section.into()]
 }
 
 pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
@@ -1655,36 +1582,69 @@ pub(crate) fn saved_tunnel_row(index: usize, def: &TunnelDef) -> Element<'static
 /// services: syncing the same catalog to two places would need a merge between
 /// them as well, and every question that answers ("which one wins?") is one the
 /// user should not have to think about.
-pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     use adit_storage::SyncProvider;
 
     let sync = &app.sync;
 
-    let provider_button = |provider: SyncProvider| {
+    // One card per provider, the way a settings page usually lists accounts:
+    // name, what state it is in, and the control that changes it. A row of
+    // radio buttons said which was ticked but never whether it worked.
+    let provider_card = |provider: SyncProvider| {
         let selected = sync.provider == provider;
-        button(text(provider.label()).size(12))
-            .padding([5, 12])
+        let state = if provider == SyncProvider::None {
+            "不同步，配置只留在本机"
+        } else if !selected {
+            "未使用"
+        } else if app.sync_secret_saved {
+            "已连接"
+        } else if provider.is_oauth() {
+            "尚未授权"
+        } else {
+            "尚未填写凭据"
+        };
+
+        let mut pick = button(text(if selected { "使用中" } else { "使用" }).size(11))
+            .padding([4, 14])
             .style(move |_theme, status| {
                 if selected {
                     primary_button_style(status)
                 } else {
                     secondary_button_style(status)
                 }
-            })
-            .on_press(Message::SyncProviderChanged(provider))
+            });
+        // The active one is not a button to press again; leaving it live would
+        // invite a click that does nothing.
+        if !selected {
+            pick = pick.on_press(Message::SyncProviderChanged(provider));
+        }
+
+        container(
+            row![
+                column![
+                    text(provider.label()).size(12).color(primary_text()),
+                    text(state).size(10).color(muted_text()),
+                ]
+                .spacing(2),
+                Space::new().width(Fill),
+                pick,
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding([8, 12])
+        .style(move |_theme| settings_card_style(selected))
     };
 
-    let providers = row![
-        provider_button(SyncProvider::None),
-        provider_button(SyncProvider::Gist),
-        provider_button(SyncProvider::WebDav),
-        provider_button(SyncProvider::S3),
-    ]
-    .spacing(6);
-    let cloud_providers = row![
-        provider_button(SyncProvider::GoogleDrive),
-        provider_button(SyncProvider::OneDrive),
-        provider_button(SyncProvider::Dropbox),
+    let provider_cards = column![
+        provider_card(SyncProvider::None),
+        provider_card(SyncProvider::Gist),
+        provider_card(SyncProvider::WebDav),
+        provider_card(SyncProvider::S3),
+        provider_card(SyncProvider::GoogleDrive),
+        provider_card(SyncProvider::OneDrive),
+        provider_card(SyncProvider::Dropbox),
     ]
     .spacing(6);
 
@@ -1729,7 +1689,7 @@ pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center)
     };
 
-    let mut body = column![providers, cloud_providers].spacing(10);
+    let mut body = column![provider_cards].spacing(10);
 
     match sync.provider {
         SyncProvider::None => {
@@ -1915,30 +1875,90 @@ pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         sync_button = sync_button.on_press(Message::SyncNow);
     }
 
-    let actions = row![
-        Space::new().width(Fill),
-        button(text("关闭").size(12))
-            .padding([6, 16])
-            .style(|_theme, status| secondary_button_style(status))
-            .on_press(Message::CloseSyncPanel),
-        sync_button,
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+    let actions = row![Space::new().width(Fill), sync_button]
+        .spacing(8)
+        .align_y(Alignment::Center);
 
-    let panel = container(
+    column![body, actions].spacing(14).into()
+}
+
+/// The one settings page: a category rail on the left, the chosen section on
+/// the right.
+///
+/// It replaces three separate dialogs (应用 / 外观 / 同步与云), which between
+/// them meant three places to look for one setting and three different ways to
+/// close what you opened.
+pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
+    let [config_section, log_section, mouse_section] = options_sections(app);
+
+    let rail_item = |category: SettingsCategory| {
+        let selected = app.settings_category == category;
+        button(text(category.label()).size(12))
+            .padding([6, 12])
+            .width(Fill)
+            .style(move |_theme, status| {
+                if selected {
+                    primary_button_style(status)
+                } else {
+                    secondary_button_style(status)
+                }
+            })
+            .on_press(Message::SettingsCategoryPicked(category))
+    };
+
+    let rail = container(
         column![
-            text("同步与云").size(14).color(primary_text()),
-            body,
-            actions,
+            rail_item(SettingsCategory::App),
+            rail_item(SettingsCategory::Appearance),
+            rail_item(SettingsCategory::Terminal),
+            rail_item(SettingsCategory::Logging),
+            rail_item(SettingsCategory::Sync),
         ]
-        .spacing(14),
+        .spacing(4),
     )
-    .width(Length::Fixed(520.0))
+    .width(Length::Fixed(132.0))
+    .padding(8)
+    .style(|_theme| settings_rail_style());
+
+    let body: Element<'_, Message> = match app.settings_category {
+        SettingsCategory::App => config_section,
+        SettingsCategory::Appearance => appearance_section(app),
+        SettingsCategory::Terminal => mouse_section,
+        SettingsCategory::Logging => log_section,
+        SettingsCategory::Sync => sync_section(app),
+    };
+
+    let card = container(
+        column![
+            row![
+                text("设置").size(15).color(primary_text()),
+                Space::new().width(Fill),
+                button(text("×").size(16))
+                    .width(Length::Fixed(24.0))
+                    .height(Length::Fixed(24.0))
+                    .padding(0)
+                    .style(|_theme, status| close_button_style(status))
+                    .on_press(Message::CloseSettings),
+            ]
+            .align_y(Alignment::Center),
+            row![
+                rail,
+                // Fixed height so switching category does not resize the dialog
+                // under the cursor — a rail whose items move as you use them is
+                // worse than a slightly tall panel.
+                container(scrollable(container(body).padding([0, 14])))
+                    .height(Length::Fixed(430.0))
+                    .width(Fill),
+            ]
+            .spacing(14),
+        ]
+        .spacing(12),
+    )
+    .width(Length::Fixed(720.0))
     .padding(20)
     .style(|_theme| connection_dialog_style());
 
-    container(panel)
+    container(card)
         .width(Fill)
         .height(Fill)
         .center_x(Fill)

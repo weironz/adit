@@ -489,6 +489,37 @@ pub(crate) fn sidebar_tool_button_style(status: button::Status) -> button::Style
     toolbar_icon_button_style(status)
 }
 
+/// One card on the 设置 page: a bordered block holding a single option, or one
+/// sync provider. Selection shows as fill and border rather than a tick, so a
+/// glance down a column of them lands on the active one without reading.
+pub(crate) fn settings_card_style(selected: bool) -> container::Style {
+    container::Style {
+        background: Some(Background::Color(if selected {
+            accent_soft()
+        } else {
+            surface_alt()
+        })),
+        text_color: Some(primary_text()),
+        border: border(
+            RADIUS_SM,
+            1.0,
+            if selected { accent() } else { border_color() },
+        ),
+        ..container::Style::default()
+    }
+}
+
+/// The category rail down the left of the 设置 page. Held apart from the
+/// content by its own fill rather than a rule, which reads quieter at the
+/// small sizes this dialog uses.
+pub(crate) fn settings_rail_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface_alt())),
+        border: border(RADIUS_SM, 0.0, transparent()),
+        ..container::Style::default()
+    }
+}
+
 pub(crate) fn group_row_style(drop_target: bool) -> container::Style {
     let background = if drop_target {
         accent_soft()

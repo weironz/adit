@@ -320,16 +320,14 @@ pub struct AditApp {
     /// Highlight rules the user has moved off their shipped default, by id.
     /// Only the deviations — see `AppSettings::highlight_rules`.
     highlight_rules: BTreeMap<String, bool>,
-    appearance_open: bool,
+    /// The unified 设置 dialog, and which category it is showing.
+    settings_open: bool,
+    settings_category: SettingsCategory,
     update_dialog_open: bool,
     update_state: UpdateState,
     /// The trusted-host-keys (known_hosts) management dialog + its loaded list.
     known_hosts_open: bool,
     known_hosts: Vec<KnownHostEntry>,
-    /// The 选项 (config path + session-log) dialog.
-    options_open: bool,
-    /// The 同步与云 panel.
-    sync_open: bool,
     /// Live copy of the persisted sync configuration, edited by the panel.
     sync: adit_storage::SyncSettings,
     /// Whether the credential store already holds a secret for the selected
@@ -441,6 +439,29 @@ pub struct SyncReport {
     pub assigned_id: Option<String>,
 }
 
+/// One page of the 设置 dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsCategory {
+    App,
+    Appearance,
+    Terminal,
+    Logging,
+    Sync,
+}
+
+impl SettingsCategory {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::App => "应用",
+            Self::Appearance => "外观",
+            Self::Terminal => "终端",
+            Self::Logging => "日志",
+            Self::Sync => "同步与云",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuCommand {
     NewProfile,
@@ -503,6 +524,10 @@ pub enum Message {
     /// Flip one keyword-highlight rule, by its stable id.
     HighlightRuleToggled(&'static str),
     CloseOptions,
+    /// Close the 设置 page.
+    CloseSettings,
+    /// Show one category of the 设置 page.
+    SettingsCategoryPicked(SettingsCategory),
     // Trusted-host-keys (known_hosts) management.
     CloseKnownHosts,
     RemoveKnownHost(String, String),
@@ -1230,13 +1255,12 @@ impl AditApp {
             font_size,
             color_scheme,
             highlight_rules,
-            appearance_open: false,
+            settings_open: false,
+            settings_category: SettingsCategory::App,
             update_dialog_open: false,
             update_state: UpdateState::Idle,
             known_hosts_open: false,
             known_hosts: Vec::new(),
-            options_open: false,
-            sync_open: false,
             sync: settings.sync.clone(),
             sync_secret_saved: false,
             sync_connecting: false,

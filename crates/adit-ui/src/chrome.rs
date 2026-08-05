@@ -104,14 +104,8 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     if app.snippets_open {
         layers.push(opaque(snippets_panel_overlay(app)));
     }
-    if app.appearance_open {
-        layers.push(opaque(appearance_dialog_overlay(app)));
-    }
-    if app.options_open {
-        layers.push(opaque(options_dialog_overlay(app)));
-    }
-    if app.sync_open {
-        layers.push(opaque(sync_dialog_overlay(app)));
+    if app.settings_open {
+        layers.push(opaque(settings_dialog_overlay(app)));
     }
     if app.known_hosts_open {
         layers.push(opaque(known_hosts_overlay(app)));
@@ -204,7 +198,7 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
             ("按主机排序", MenuCommand::SortByHost),
             ("导入 ~/.ssh/config", MenuCommand::ImportSshConfig),
             ("导入 SecureCRT 会话…", MenuCommand::ImportSecureCrt),
-            ("选项 / 日志…", MenuCommand::Options),
+            ("设置…", MenuCommand::Options),
             ("同步与云…", MenuCommand::SyncCloud),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
@@ -220,7 +214,7 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
         MenuKind::View => &[
             ("侧边栏开关", MenuCommand::ToggleSidebar),
             ("深色模式开关", MenuCommand::ToggleTheme),
-            ("外观设置…", MenuCommand::Appearance),
+            ("外观…", MenuCommand::Appearance),
             ("分屏（添加窗格）", MenuCommand::SplitPane),
             ("垂直平铺（并排）", MenuCommand::TileVertical),
             ("水平平铺（上下）", MenuCommand::TileHorizontal),

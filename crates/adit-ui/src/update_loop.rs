@@ -164,7 +164,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             });
         }
         Message::CloseAppearance => {
-            app.appearance_open = false;
+            app.settings_open = false;
         }
         Message::FontFamilyChanged(index) => {
             if let Some((name, _)) = FONT_PRESETS.get(index as usize) {
@@ -194,7 +194,8 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = matches!(view, MainView::Terminal);
         }
         Message::OpenAppearance => {
-            app.appearance_open = true;
+            app.settings_open = true;
+            app.settings_category = SettingsCategory::Appearance;
         }
         Message::HighlightRuleToggled(id) => {
             let shipped = highlight::rules()
@@ -214,8 +215,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // the render path.
             highlight::apply_overrides(&app.highlight_rules);
         }
+        Message::CloseSettings => {
+            app.settings_open = false;
+        }
+        Message::SettingsCategoryPicked(category) => {
+            app.settings_category = category;
+        }
         Message::CloseOptions => {
-            app.options_open = false;
+            app.settings_open = false;
         }
         Message::CloseKnownHosts => {
             app.known_hosts_open = false;
@@ -1165,7 +1172,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_input = input;
         }
         Message::CloseSyncPanel => {
-            app.sync_open = false;
+            app.settings_open = false;
             app.sync_secret_draft.clear();
             persist_settings_if_changed(app);
         }
