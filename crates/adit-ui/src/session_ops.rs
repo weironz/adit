@@ -2051,7 +2051,50 @@ pub(crate) fn sync_secret_name(provider: adit_storage::SyncProvider) -> Option<&
         SyncProvider::Gist => Some("sync.gist.token"),
         SyncProvider::WebDav => Some("sync.webdav.password"),
         SyncProvider::S3 => Some("sync.s3.secret_key"),
+        // For an OAuth provider the stored secret is the refresh token: the
+        // one thing that must survive a restart, and the only thing worth
+        // sealing. Access tokens are re-minted from it on demand.
+        SyncProvider::GoogleDrive => Some("sync.gdrive.refresh_token"),
+        SyncProvider::OneDrive => Some("sync.onedrive.refresh_token"),
+        SyncProvider::Dropbox => Some("sync.dropbox.refresh_token"),
     }
+}
+
+/// The OAuth client id for a provider: the user's override if they set one,
+/// otherwise whatever this build carries.
+#[must_use]
+pub(crate) fn sync_client_id(app: &AditApp, provider: adit_storage::SyncProvider) -> String {
+    use adit_storage::SyncProvider;
+    use adit_sync::backend::{client_id, OAuthProvider};
+    match provider {
+        SyncProvider::GoogleDrive => {
+            client_id(OAuthProvider::GoogleDrive, &app.sync.google_client_id)
+        }
+        SyncProvider::OneDrive => client_id(OAuthProvider::OneDrive, &app.sync.onedrive_client_id),
+        SyncProvider::Dropbox => client_id(OAuthProvider::Dropbox, &app.sync.dropbox_client_id),
+        _ => String::new(),
+    }
+}
+
+/// The authorisation to run for a provider, or `None` when this build has no
+/// client id for it and the user supplied none either.
+#[must_use]
+pub(crate) fn sync_oauth_config(
+    app: &AditApp,
+    provider: adit_storage::SyncProvider,
+) -> Option<adit_sync::backend::oauth::OAuthConfig> {
+    use adit_storage::SyncProvider;
+    use adit_sync::backend::{dropbox, gdrive, onedrive};
+    let id = sync_client_id(app, provider);
+    if id.trim().is_empty() {
+        return None;
+    }
+    Some(match provider {
+        SyncProvider::GoogleDrive => gdrive::oauth_config(id),
+        SyncProvider::OneDrive => onedrive::oauth_config(id),
+        SyncProvider::Dropbox => dropbox::oauth_config(id),
+        _ => return None,
+    })
 }
 
 /// The catalog as it stands right now: what a sync uploads and merges against.
@@ -2080,7 +2123,7 @@ pub(crate) fn rfc3339_now() -> String {
 #[must_use]
 pub(crate) fn build_sync_backend(app: &AditApp) -> Option<Box<dyn adit_sync::SyncBackend>> {
     use adit_storage::SyncProvider;
-    use adit_sync::backend::{gist, s3, webdav};
+    use adit_sync::backend::{dropbox, gdrive, gist, onedrive, s3, webdav};
 
     let secret = sync_secret_name(app.sync.provider)
         .and_then(|name| app.credential_store.load_secret(name).ok().flatten())
@@ -2118,6 +2161,22 @@ pub(crate) fn build_sync_backend(app: &AditApp) -> Option<Box<dyn adit_sync::Syn
                 path_style: app.sync.s3_path_style,
             })) as Box<dyn adit_sync::SyncBackend>
         }),
+        // The OAuth three: the refresh token stands in for a password, and
+        // its absence means "not connected yet" rather than "misconfigured".
+        SyncProvider::GoogleDrive | SyncProvider::OneDrive | SyncProvider::Dropbox => {
+            let id = sync_client_id(app, app.sync.provider);
+            if id.trim().is_empty() || secret.is_empty() {
+                return None;
+            }
+            Some(match app.sync.provider {
+                SyncProvider::GoogleDrive => Box::new(gdrive::GoogleDriveBackend::new(id, secret))
+                    as Box<dyn adit_sync::SyncBackend>,
+                SyncProvider::OneDrive => Box::new(onedrive::OneDriveBackend::new(id, secret))
+                    as Box<dyn adit_sync::SyncBackend>,
+                _ => Box::new(dropbox::DropboxBackend::new(id, secret))
+                    as Box<dyn adit_sync::SyncBackend>,
+            })
+        }
     }
 }
 

@@ -1191,6 +1191,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 SyncField::S3Bucket => app.sync.s3_bucket = value,
                 SyncField::S3Key => app.sync.s3_key = value,
                 SyncField::S3AccessKey => app.sync.s3_access_key = value,
+                SyncField::GoogleClientId => app.sync.google_client_id = value,
+                SyncField::OneDriveClientId => app.sync.onedrive_client_id = value,
+                SyncField::DropboxClientId => app.sync.dropbox_client_id = value,
             }
             persist_settings_if_changed(app);
         }
@@ -1200,6 +1203,67 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SyncIncludeCredentialsToggled(enabled) => {
             app.sync.include_credentials = enabled;
             persist_settings_if_changed(app);
+        }
+        Message::SyncConnectAccount => {
+            if app.sync_connecting {
+                return Task::none();
+            }
+            let Some(config) = sync_oauth_config(app, app.sync.provider) else {
+                app.sync_status =
+                    String::from("此构建没有该云服务的 client id，可在下方填写自己的");
+                return Task::none();
+            };
+            match adit_sync::backend::oauth::begin(config) {
+                Ok(pending) => {
+                    // Open the browser from here rather than inside the worker:
+                    // the listener is already bound, so the redirect cannot
+                    // arrive before anything is waiting for it.
+                    let url = pending.url.clone();
+                    open_url(app, &url);
+                    app.sync_connecting = true;
+                    app.sync_status = String::from("已在浏览器中打开授权页，完成后自动返回…");
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                pending
+                                    .complete()
+                                    .map(|tokens| tokens.refresh_token.unwrap_or_default())
+                                    .map_err(|error| error.to_string())
+                            })
+                            .await
+                            .unwrap_or_else(|error| Err(error.to_string()))
+                        },
+                        Message::SyncAuthFinished,
+                    );
+                }
+                Err(error) => app.sync_status = format!("无法开始授权: {error}"),
+            }
+        }
+        Message::SyncAuthFinished(result) => {
+            app.sync_connecting = false;
+            match result {
+                Ok(token) if !token.trim().is_empty() => {
+                    let Some(name) = sync_secret_name(app.sync.provider) else {
+                        return Task::none();
+                    };
+                    match app.credential_store.save_secret(name, &token) {
+                        Ok(()) => {
+                            app.sync_secret_saved = true;
+                            app.sync_status = String::from("账号已连接，可以同步了");
+                        }
+                        Err(error) => app.sync_status = format!("保存令牌失败: {error}"),
+                    }
+                }
+                // Authorised, but with nothing that survives a restart. Worth
+                // naming precisely: it means the consent did not include
+                // offline access, and syncing would work until the access
+                // token expired and then stop for no visible reason.
+                Ok(_) => {
+                    app.sync_status =
+                        String::from("授权成功但未返回长期令牌，请在授权页确认已允许离线访问");
+                }
+                Err(error) => app.sync_status = format!("授权失败: {error}"),
+            }
         }
         Message::SyncNow => {
             if app.sync_busy {

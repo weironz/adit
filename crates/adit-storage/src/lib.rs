@@ -392,6 +392,9 @@ pub enum SyncProvider {
     Gist,
     WebDav,
     S3,
+    GoogleDrive,
+    OneDrive,
+    Dropbox,
 }
 
 impl SyncProvider {
@@ -402,7 +405,18 @@ impl SyncProvider {
             Self::Gist => "GitHub Gist",
             Self::WebDav => "WebDAV",
             Self::S3 => "S3 兼容存储",
+            Self::GoogleDrive => "Google Drive",
+            Self::OneDrive => "OneDrive",
+            Self::Dropbox => "Dropbox",
         }
+    }
+
+    /// Whether connecting means a browser round trip rather than typing a
+    /// secret. The panel needs to know: one shows a "连接账号" button, the
+    /// other shows a password field.
+    #[must_use]
+    pub fn is_oauth(self) -> bool {
+        matches!(self, Self::GoogleDrive | Self::OneDrive | Self::Dropbox)
     }
 }
 
@@ -445,6 +459,18 @@ pub struct SyncSettings {
     /// Sync automatically when sessions change, rather than only on demand.
     #[serde(default)]
     pub auto_sync: bool,
+    /// OAuth client ids, when the user supplies their own instead of the one
+    /// compiled into this build. Empty means "use the built-in default".
+    ///
+    /// Not secrets — a client id is a public identifier that every user sees
+    /// in their own authorize URL. They live here rather than in the
+    /// credential store for exactly that reason.
+    #[serde(default)]
+    pub google_client_id: String,
+    #[serde(default)]
+    pub onedrive_client_id: String,
+    #[serde(default)]
+    pub dropbox_client_id: String,
 }
 
 fn default_s3_region() -> String {
@@ -470,6 +496,9 @@ impl Default for SyncSettings {
             s3_path_style: true,
             include_credentials: false,
             auto_sync: false,
+            google_client_id: String::new(),
+            onedrive_client_id: String::new(),
+            dropbox_client_id: String::new(),
         }
     }
 }

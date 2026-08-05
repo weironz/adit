@@ -1681,6 +1681,12 @@ pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         provider_button(SyncProvider::S3),
     ]
     .spacing(6);
+    let cloud_providers = row![
+        provider_button(SyncProvider::GoogleDrive),
+        provider_button(SyncProvider::OneDrive),
+        provider_button(SyncProvider::Dropbox),
+    ]
+    .spacing(6);
 
     let field = |label: &'static str, value: &str, placeholder: &'static str, which: SyncField| {
         row![
@@ -1723,7 +1729,7 @@ pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center)
     };
 
-    let mut body = column![providers].spacing(10);
+    let mut body = column![providers, cloud_providers].spacing(10);
 
     match sync.provider {
         SyncProvider::None => {
@@ -1794,6 +1800,73 @@ pub(crate) fn sync_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .push(secret_field("Secret Key", app.sync_secret_saved))
                 .push(
                     text("兼容 AWS S3、MinIO、Cloudflare R2、阿里云 OSS。MinIO 等自建网关需要路径风格寻址。")
+                        .size(10)
+                        .color(muted_text()),
+                );
+        }
+        // The three that authorise in a browser. Same shape for all of them,
+        // so it is built once rather than copied three times.
+        SyncProvider::GoogleDrive | SyncProvider::OneDrive | SyncProvider::Dropbox => {
+            let (override_value, override_field, note) = match sync.provider {
+                SyncProvider::GoogleDrive => (
+                    &sync.google_client_id,
+                    SyncField::GoogleClientId,
+                    "仅访问本应用创建的文件，看不到你云端硬盘里的其他内容。",
+                ),
+                SyncProvider::OneDrive => (
+                    &sync.onedrive_client_id,
+                    SyncField::OneDriveClientId,
+                    "仅访问 Adit 自己的应用文件夹，碰不到其他文件。",
+                ),
+                _ => (
+                    &sync.dropbox_client_id,
+                    SyncField::DropboxClientId,
+                    "仅访问 Apps/Adit 文件夹，碰不到其他文件。",
+                ),
+            };
+
+            let connected = app.sync_secret_saved;
+            // Derived rather than stored: it depends only on the build's
+            // baked-in id and the override the user just typed, both of which
+            // the view already has.
+            let unconfigured = sync_client_id(app, sync.provider).trim().is_empty();
+            let status_line = if app.sync_connecting {
+                "正在等待浏览器授权…"
+            } else if unconfigured {
+                "此构建未内置该云服务的 client id — 请在下方填写自己的"
+            } else if connected {
+                "已连接"
+            } else {
+                "尚未连接"
+            };
+
+            let mut connect =
+                button(text(if connected { "重新连接账号" } else { "连接账号" }).size(12))
+                    .padding([5, 14])
+                    .style(|_theme, status| primary_button_style(status));
+            if !app.sync_connecting && !unconfigured {
+                connect = connect.on_press(Message::SyncConnectAccount);
+            }
+
+            body = body
+                .push(
+                    row![
+                        text(status_line).size(11).color(muted_text()),
+                        Space::new().width(Fill),
+                        connect,
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
+                )
+                .push(text(note).size(10).color(muted_text()))
+                .push(field(
+                    "client id",
+                    override_value,
+                    "留空则用本应用内置的",
+                    override_field,
+                ))
+                .push(
+                    text("填写自己的 client id 可避开共享配额；本地或自行编译的版本也需要它。")
                         .size(10)
                         .color(muted_text()),
                 );

@@ -340,6 +340,8 @@ pub struct AditApp {
     /// "keep what is saved" rather than "clear it". Opening the panel and
     /// closing it can therefore never silently wipe a working configuration.
     sync_secret_draft: String,
+    /// True while a browser authorisation is outstanding.
+    sync_connecting: bool,
     /// True while a sync is in flight, so the button can say so and cannot be
     /// pressed twice.
     sync_busy: bool,
@@ -421,6 +423,9 @@ pub enum SyncField {
     S3Bucket,
     S3Key,
     S3AccessKey,
+    GoogleClientId,
+    OneDriveClientId,
+    DropboxClientId,
 }
 
 /// What a finished sync tells the UI. Carries the merged catalog so the update
@@ -670,6 +675,9 @@ pub enum Message {
     SyncIncludeCredentialsToggled(bool),
     SyncNow,
     SyncFinished(Result<SyncReport, String>),
+    SyncConnectAccount,
+    /// The refresh token an authorisation produced, or why it failed.
+    SyncAuthFinished(Result<String, String>),
     /// The window's display scale factor (device pixels per logical point).
     DisplayScale(f32),
     ToggleSidebar,
@@ -1230,6 +1238,7 @@ impl AditApp {
             sync_open: false,
             sync: settings.sync.clone(),
             sync_secret_saved: false,
+            sync_connecting: false,
             sync_secret_draft: String::new(),
             sync_busy: false,
             sync_status: String::new(),
