@@ -17,6 +17,20 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # Cloud-sync OAuth client ids, baked in at build time and read with
+  # `option_env!` (crates/adit-sync/src/backend/mod.rs). Set at the workflow
+  # level because several jobs build binaries and each target needs them.
+  #
+  # These are public identifiers, not secrets: PKCE exists precisely because a
+  # client id in a distributed binary cannot be kept private, and every user
+  # sees theirs in the authorize URL. They live in repository secrets only to
+  # keep the shared API quota from being copy-pasted straight out of the repo.
+  #
+  # An unset one is not an error — the provider simply reports itself as
+  # unconfigured in the panel, which is also what a local or forked build sees.
+  ADIT_SYNC_GOOGLE_CLIENT_ID: ${{ secrets.ADIT_SYNC_GOOGLE_CLIENT_ID }}
+  ADIT_SYNC_ONEDRIVE_CLIENT_ID: ${{ secrets.ADIT_SYNC_ONEDRIVE_CLIENT_ID }}
+  ADIT_SYNC_DROPBOX_CLIENT_ID: ${{ secrets.ADIT_SYNC_DROPBOX_CLIENT_ID }}
 
 # Needed to push the bump commit + tag and to create the GitHub Release.
 permissions:
