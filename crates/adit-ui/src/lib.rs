@@ -323,6 +323,7 @@ pub struct AditApp {
     /// The unified 设置 dialog, and which category it is showing.
     settings_open: bool,
     settings_category: SettingsCategory,
+    sync_tab: SyncTab,
     update_dialog_open: bool,
     update_state: UpdateState,
     /// The trusted-host-keys (known_hosts) management dialog + its loaded list.
@@ -439,6 +440,18 @@ pub struct SyncReport {
     pub assigned_id: Option<String>,
 }
 
+/// Which half of the 同步与云 page is showing.
+///
+/// Split because the two answer different questions: "where does this go" is
+/// set once, and "did it work" is looked at repeatedly. One scroll holding both
+/// buried the second under the first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SyncTab {
+    #[default]
+    Services,
+    Status,
+}
+
 /// One page of the 设置 dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsCategory {
@@ -528,6 +541,8 @@ pub enum Message {
     CloseSettings,
     /// Show one category of the 设置 page.
     SettingsCategoryPicked(SettingsCategory),
+    /// Switch between 云服务 and 同步状态.
+    SyncTabPicked(SyncTab),
     // Trusted-host-keys (known_hosts) management.
     CloseKnownHosts,
     RemoveKnownHost(String, String),
@@ -1257,6 +1272,7 @@ impl AditApp {
             highlight_rules,
             settings_open: false,
             settings_category: SettingsCategory::App,
+            sync_tab: SyncTab::default(),
             update_dialog_open: false,
             update_state: UpdateState::Idle,
             known_hosts_open: false,

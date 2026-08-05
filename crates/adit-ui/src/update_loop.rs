@@ -221,6 +221,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SettingsCategoryPicked(category) => {
             app.settings_category = category;
         }
+        Message::SyncTabPicked(tab) => {
+            app.sync_tab = tab;
+        }
         Message::CloseOptions => {
             app.settings_open = false;
         }

@@ -1148,19 +1148,18 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
 
     let mut config_section = column![
         text("配置目录").size(13).color(primary_text()),
-        config_dir_row,
-        options_path_row(
+        setting_card(config_dir_row),
+        setting_card(options_path_row(
             "会话配置",
             config_dir.join("profiles.json").display().to_string(),
             None,
-        ),
-        options_path_row(
+        )),
+        setting_card(options_path_row(
             "应用设置",
             config_dir.join("settings.json").display().to_string(),
             None,
-        ),
-        text(config_note).size(11).color(muted_text()),
-    ]
+        )),
+        setting_card(text(config_note).size(11).color(muted_text()))]
     .spacing(8);
 
     if let Some(pending) = &app.pending_config_dir {
@@ -1236,7 +1235,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
 
     let log_section = column![
         text("会话日志").size(13).color(primary_text()),
-        column![
+        setting_card(column![
             text("日志目录（留空 = 配置目录下的 logs）")
                 .size(11)
                 .color(muted_text()),
@@ -1260,8 +1259,8 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
             ]
             .spacing(8),
         ]
-        .spacing(3),
-        column![
+        .spacing(3)),
+        setting_card(column![
             text("日志文件名（留空 = 默认）").size(11).color(muted_text()),
             text_input(DEFAULT_LOG_PATTERN, &app.log_name_pattern)
                 .on_input(Message::LogNamePatternChanged)
@@ -1269,47 +1268,45 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
                 .style(text_input_style)
                 .width(Fill),
         ]
-        .spacing(3),
-        text("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒")
+        .spacing(3)),
+        setting_card(text("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒")
             .size(11)
-            .color(muted_text()),
-        options_path_row("预览", preview_path.display().to_string(), None),
-        checkbox(app.auto_log_on_connect)
+            .color(muted_text())),
+        setting_card(options_path_row("预览", preview_path.display().to_string(), None)),
+        setting_card(checkbox(app.auto_log_on_connect)
             .label("连接后自动开始记录日志")
             .on_toggle(Message::ToggleAutoLog)
             .size(16)
-            .text_size(12),
-        checkbox(app.log_plaintext)
+            .text_size(12)),
+        setting_card(checkbox(app.log_plaintext)
             .label("记录为纯文本（去除颜色/转义码，便于阅读和 grep）")
             .on_toggle(Message::ToggleLogPlaintext)
             .size(16)
-            .text_size(12),
-    ]
+            .text_size(12))]
     .spacing(8);
 
     let mouse_section = column![
         text("终端复制 / 粘贴（PuTTY 风格）")
             .size(13)
             .color(primary_text()),
-        checkbox(app.copy_on_select)
+        setting_card(checkbox(app.copy_on_select)
             .label("选中内容即复制到剪贴板")
             .on_toggle(Message::ToggleCopyOnSelect)
             .size(16)
-            .text_size(12),
-        checkbox(app.right_click_paste)
+            .text_size(12)),
+        setting_card(checkbox(app.right_click_paste)
             .label("右键直接粘贴（不弹出菜单）")
             .on_toggle(Message::ToggleRightClickPaste)
             .size(16)
-            .text_size(12),
-        checkbox(app.confirm_multiline_paste)
+            .text_size(12)),
+        setting_card(checkbox(app.confirm_multiline_paste)
             .label("粘贴多行内容前先确认")
             .on_toggle(Message::ToggleConfirmMultilinePaste)
             .size(16)
-            .text_size(12),
-        text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。")
+            .text_size(12)),
+        setting_card(text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。")
             .size(11)
-            .color(muted_text()),
-    ]
+            .color(muted_text()))]
     .spacing(8);
 
 
@@ -1844,27 +1841,29 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
+    let mut status_tab = column![].spacing(10);
+
     if sync.provider != SyncProvider::None {
-        body = body.push(
+        status_tab = status_tab.push(setting_card(
             checkbox(sync.include_credentials)
                 .label("同时同步已保存的密码（加密后上传，主密码不出本机）")
                 .on_toggle(Message::SyncIncludeCredentialsToggled)
                 .size(14)
                 .text_size(11)
                 .spacing(8),
-        );
+        ));
     }
 
     // Status: what the last attempt did, then any sessions it could not settle.
     if !app.sync_status.is_empty() {
-        body = body.push(
+        status_tab = status_tab.push(setting_card(
             text(app.sync_status.clone())
                 .size(11)
                 .color(primary_text()),
-        );
+        ));
     }
     for conflict in &app.sync_conflicts {
-        body = body.push(text(conflict.clone()).size(10).color(muted_text()));
+        status_tab = status_tab.push(text(conflict.clone()).size(10).color(muted_text()));
     }
 
     let sync_label = if app.sync_busy { "同步中…" } else { "立即同步" };
@@ -1875,11 +1874,41 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
         sync_button = sync_button.on_press(Message::SyncNow);
     }
 
-    let actions = row![Space::new().width(Fill), sync_button]
-        .spacing(8)
-        .align_y(Alignment::Center);
+    let status_tab = status_tab.push(
+        row![Space::new().width(Fill), sync_button]
+            .spacing(8)
+            .align_y(Alignment::Center),
+    );
 
-    column![body, actions].spacing(14).into()
+    // Two tabs rather than one long scroll: where the data goes is decided once,
+    // whether it arrived is checked over and over, and stacking them buried the
+    // second under the first.
+    let tab_button = |tab: SyncTab, label: &'static str| {
+        let selected = app.sync_tab == tab;
+        button(text(label).size(12))
+            .padding([5, 16])
+            .width(Fill)
+            .style(move |_theme, status| {
+                if selected {
+                    primary_button_style(status)
+                } else {
+                    secondary_button_style(status)
+                }
+            })
+            .on_press(Message::SyncTabPicked(tab))
+    };
+    let tabs = row![
+        tab_button(SyncTab::Services, "云服务"),
+        tab_button(SyncTab::Status, "同步状态"),
+    ]
+    .spacing(6);
+
+    let shown: Element<'_, Message> = match app.sync_tab {
+        SyncTab::Services => body.into(),
+        SyncTab::Status => status_tab.into(),
+    };
+
+    column![tabs, shown].spacing(14).into()
 }
 
 /// The one settings page: a category rail on the left, the chosen section on
@@ -1888,6 +1917,19 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
 /// It replaces three separate dialogs (应用 / 外观 / 同步与云), which between
 /// them meant three places to look for one setting and three different ways to
 /// close what you opened.
+/// Wrap one setting in the card the 设置 page uses.
+///
+/// A column of these reads as a list of separate choices; the same widgets
+/// stacked bare read as one dense block, which is what the old dialogs looked
+/// like and why nobody could find anything in them.
+fn setting_card<'a>(inner: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(inner)
+        .width(Fill)
+        .padding([10, 12])
+        .style(|_theme| settings_card_style(false))
+        .into()
+}
+
 pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let [config_section, log_section, mouse_section] = options_sections(app);
 
