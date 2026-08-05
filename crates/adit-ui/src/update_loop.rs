@@ -1296,13 +1296,31 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             let store =
                 adit_sync::orchestrate::SyncStateStore::new(app.config_dir.join("sync-state.json"));
             let catalog = catalog_snapshot(app);
+            // An unreadable credential file must not pass for "the user did
+            // not ask for credentials". Dropping it silently reads as a clean
+            // sync and only surfaces much later, on the machine that then
+            // cannot sign in to anything.
+            let credentials = if app.sync.include_credentials {
+                match std::fs::read(app.credential_store.path()) {
+                    Ok(bytes) => Some(hex::encode(bytes)),
+                    // Nothing saved on this machine yet — nothing to send, and
+                    // nothing wrong.
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(error) => {
+                        app.sync_busy = false;
+                        app.sync_status = format!("读取本机密码库失败，已中止同步: {error}");
+                        return Task::none();
+                    }
+                }
+            } else {
+                None
+            };
             let extras = adit_sync::orchestrate::Extras {
-                settings: Some(current_settings(app)),
-                credentials: app
-                    .sync
-                    .include_credentials
-                    .then(|| std::fs::read(app.credential_store.path()).ok().map(hex::encode))
-                    .flatten(),
+                // The sync section stays home: it is per-machine, and it holds
+                // account identifiers that do not belong in a document the
+                // user is invited to read.
+                settings: Some(current_settings(app).without_sync_config()),
+                credentials,
             };
             let device = hostname_or_unknown();
             let now = rfc3339_now();

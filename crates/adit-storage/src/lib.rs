@@ -542,6 +542,26 @@ fn default_font_size() -> f32 {
     13.0
 }
 
+impl AppSettings {
+    /// A copy safe to publish to a sync provider: the sync configuration
+    /// itself stripped out.
+    ///
+    /// That section is per-machine by nature — which provider, which gist,
+    /// whose client id — so carrying it across would let one machine's choice
+    /// of backend silently reconfigure another's. It also holds account
+    /// identifiers: the S3 access key id and the WebDAV username. Those are
+    /// not passwords, but this document is deliberately plain readable JSON
+    /// that the user is invited to open, and half of a credential pair is not
+    /// something to leave lying in it.
+    #[must_use]
+    pub fn without_sync_config(&self) -> Self {
+        Self {
+            sync: SyncSettings::default(),
+            ..self.clone()
+        }
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -1418,6 +1438,42 @@ Host db
         assert_eq!(loaded.profiles[0].group, "Lab");
 
         let _ = fs::remove_file(path);
+    }
+
+    /// What goes to the provider must not carry this machine's sync setup:
+    /// it would reconfigure the next machine's backend, and it holds the S3
+    /// access key id and WebDAV username, which have no business in a document
+    /// whose whole point is that the user can open and read it.
+    #[test]
+    fn the_published_settings_leave_the_sync_section_behind() {
+        let settings = AppSettings {
+            dark_mode: true,
+            scrollback_lines: 12_345,
+            sync: SyncSettings {
+                provider: SyncProvider::S3,
+                s3_access_key: String::from("AKIAEXAMPLE"),
+                s3_bucket: String::from("private-bucket"),
+                webdav_username: String::from("will"),
+                gist_id: String::from("abc123"),
+                dropbox_client_id: String::from("my-own-app-key"),
+                ..SyncSettings::default()
+            },
+            ..AppSettings::default()
+        };
+
+        let published = settings.without_sync_config();
+
+        assert_eq!(published.sync, SyncSettings::default());
+        // Everything that is not sync configuration still travels.
+        assert!(published.dark_mode);
+        assert_eq!(published.scrollback_lines, 12_345);
+        // And the original is untouched — this hands back a copy.
+        assert_eq!(settings.sync.s3_access_key, "AKIAEXAMPLE");
+
+        let json = serde_json::to_string(&published).expect("serialise");
+        for leaked in ["AKIAEXAMPLE", "private-bucket", "will", "abc123"] {
+            assert!(!json.contains(leaked), "{leaked} must not be published");
+        }
     }
 
     #[test]
