@@ -24,13 +24,14 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 
     // The status bar survives fullscreen on purpose. It is one thin line, and
     // it is the only thing left telling the user how to get back out.
+    // No toolbar row: every one of its buttons is a menu item, and the icon
+    // strip cost a permanent 36px of desktop for shortcuts that were mostly
+    // duplicates. Session Manager's own header keeps the three that belong to
+    // it (host list, new session, hide panel).
     let layout = if app.fullscreen {
         column![main].push(status_bar(app))
     } else {
-        column![menu_bar(app)]
-            .push(toolbar(app))
-            .push(main)
-            .push(status_bar(app))
+        column![menu_bar(app)].push(main).push(status_bar(app))
     }
     .height(Fill)
     .width(Fill);
@@ -213,6 +214,8 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
         ],
         MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
         MenuKind::View => &[
+            ("侧边栏开关", MenuCommand::ToggleSidebar),
+            ("深色模式开关", MenuCommand::ToggleTheme),
             ("外观设置…", MenuCommand::Appearance),
             ("分屏（添加窗格）", MenuCommand::SplitPane),
             ("垂直平铺（并排）", MenuCommand::TileVertical),
@@ -260,106 +263,5 @@ pub(crate) fn menu_dropdown_button(label: &'static str, command: MenuCommand) ->
         .into()
 }
 
-pub(crate) fn toolbar(app: &AditApp) -> Element<'_, Message> {
-    container(
-        row![
-            tool_button("☰", Message::ToggleSidebar),
-            tool_separator(),
-            tool_button("↯", Message::ConnectSelectedProfile),
-            tool_button("■", Message::DisconnectActive),
-            tool_button("+", Message::NewProfileDraft),
-            tool_button("G+", Message::NewGroupDraft),
-            tool_button("□", Message::SaveProfile),
-            tool_button("×", Message::DeleteSelectedProfile),
-            tool_separator(),
-            tool_button("↺", Message::OpenSelectedProfile),
-            tool_button("⌫", Message::ClearActiveTerminal),
-            tool_button("⇅", Message::RunMenu(MenuCommand::Sftp)),
-            tool_button("⇄", Message::OpenTunnels),
-            tool_toggle_button("⇶", app.broadcast_input, Message::ToggleBroadcast),
-            tool_toggle_button(">_", app.command_window_open, Message::ToggleCommandWindow),
-            tool_separator(),
-            text_input("Enter host <Alt+R>", &app.profile_host)
-                .id(host_input_id())
-                .on_input(Message::ProfileHostChanged)
-                .on_submit(Message::ConnectSelectedProfile)
-                .padding([4, 8])
-                .style(toolbar_input_style)
-                .width(Length::Fixed(210.0)),
-            button(text("Connect").size(13))
-                .padding([5, 14])
-                .style(|_theme, status| primary_button_style(status))
-                .on_press(Message::ConnectSelectedProfile),
-            text(form_endpoint(app)).size(11).color(muted_text()),
-            Space::new().width(Fill),
-            text(if form_matches_selected_profile(app) {
-                "saved"
-            } else {
-                "modified"
-            })
-            .size(11)
-            .color(muted_text()),
-            theme_toggle_button(app),
-        ]
-        .spacing(5)
-        .align_y(Alignment::Center),
-    )
-    .padding([4, 10])
-    .height(TOOLBAR_HEIGHT)
-    .width(Fill)
-    .style(|_theme| toolbar_style())
-    .into()
-}
 
-pub(crate) fn theme_toggle_button(app: &AditApp) -> Element<'static, Message> {
-    let glyph = if app.dark_mode { "☀" } else { "☾" };
-    button(text(glyph).size(14))
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(26.0))
-        .padding(0)
-        .style(|_theme, status| toolbar_icon_button_style(status))
-        .on_press(Message::ToggleTheme)
-        .into()
-}
 
-pub(crate) fn tool_button(label: &'static str, message: Message) -> Element<'static, Message> {
-    button(text(label).size(14))
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(26.0))
-        .padding(0)
-        .style(|_theme, status| toolbar_icon_button_style(status))
-        .on_press(message)
-        .into()
-}
-
-/// A toolbar icon button that stays highlighted (accent fill) while `active`.
-pub(crate) fn tool_toggle_button(
-    label: &'static str,
-    active: bool,
-    message: Message,
-) -> Element<'static, Message> {
-    button(text(label).size(14))
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(26.0))
-        .padding(0)
-        .style(move |_theme, status| {
-            if active {
-                base_button_style(accent(), Color::from_rgb8(245, 249, 255), transparent())
-            } else {
-                toolbar_icon_button_style(status)
-            }
-        })
-        .on_press(message)
-        .into()
-}
-
-pub(crate) fn tool_separator() -> Element<'static, Message> {
-    container(
-        Space::new()
-            .width(Length::Fixed(1.0))
-            .height(Length::Fixed(20.0)),
-    )
-    .style(|_theme| toolbar_separator_style())
-    .width(Length::Fixed(5.0))
-    .into()
-}

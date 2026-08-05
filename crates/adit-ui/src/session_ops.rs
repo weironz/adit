@@ -650,16 +650,7 @@ pub(crate) fn focus_search_input() -> Task<Message> {
     ))
 }
 
-pub(crate) fn host_input_id() -> iced::advanced::widget::Id {
-    iced::advanced::widget::Id::new("toolbar-host")
-}
 
-/// A Task that moves keyboard focus to the toolbar's host box (Alt+R).
-pub(crate) fn focus_host_input() -> Task<Message> {
-    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
-        host_input_id(),
-    ))
-}
 
 pub(crate) fn session_filter_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("sidebar-filter")
@@ -1510,7 +1501,7 @@ pub(crate) fn terminal_region_area(
     let chrome = if fullscreen {
         TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
     } else {
-        MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+        MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
     };
     let region_height = (height - chrome).max(0.0);
     (region_width, region_height)
@@ -1666,7 +1657,7 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         pane_w,
         pane_h,
         origin_x: effective_sidebar,
-        origin_y: MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT,
+        origin_y: MENU_BAR_HEIGHT + TAB_BAR_HEIGHT,
         header,
     }
 }

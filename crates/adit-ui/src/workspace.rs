@@ -64,7 +64,6 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
             .padding([0, 8])
             .center_y(TAB_BAR_HEIGHT),
         Space::new().width(Fill),
-        split_button(app),
     ]
     .spacing(6)
     .align_y(Alignment::Center)
@@ -315,20 +314,6 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .style(|_theme| toolbar_style())
     .into()
-}
-
-/// The tab-row split control: adds another connected session as a pane.
-pub(crate) fn split_button(app: &AditApp) -> Element<'static, Message> {
-    let label = if app.panes.len() >= 2 {
-        format!("▥ 分屏 {}", app.panes.len())
-    } else {
-        String::from("▥ 分屏")
-    };
-    button(text(label).size(11))
-        .padding([3, 10])
-        .style(|_theme, status| secondary_button_style(status))
-        .on_press(Message::SplitPane)
-        .into()
 }
 
 /// Tile the current `panes` into a row/grid, each a headed terminal pane.

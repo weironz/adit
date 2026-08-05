@@ -1200,10 +1200,6 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Alt+R / Alt+I jump to the toolbar's host box and the sidebar filter —
             // the two shortcuts those placeholders advertise. Both take focus away
             // from the terminal so the typed text lands in the box, not the session.
-            if alt_shortcut(&event, 'r') {
-                app.terminal_focused = false;
-                return focus_host_input();
-            }
             if alt_shortcut(&event, 'i') {
                 // Filtering is pointless with the sidebar hidden; reveal it first.
                 if !app.sidebar_visible {

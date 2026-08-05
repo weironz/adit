@@ -51,6 +51,12 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             app.known_hosts = list_known_hosts(&known_hosts_path());
             app.known_hosts_open = true;
         }
+        // Both used to live on the toolbar; the menu is their only home now.
+        MenuCommand::ToggleSidebar => {
+            app.sidebar_visible = !app.sidebar_visible;
+            sync_terminal_size(app);
+        }
+        MenuCommand::ToggleTheme => app.dark_mode = !app.dark_mode,
         MenuCommand::Appearance => app.appearance_open = true,
         MenuCommand::Options => app.options_open = true,
         MenuCommand::ImportSshConfig => import_ssh_config(app),

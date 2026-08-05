@@ -930,17 +930,6 @@ pub(crate) fn human_size(bytes: u64) -> String {
     }
 }
 
-pub(crate) fn form_endpoint(app: &AditApp) -> String {
-    let username = app.profile_username.trim();
-    let host = app.profile_host.trim();
-    let port = app.profile_port.trim();
-
-    if username.is_empty() || host.is_empty() || port.is_empty() {
-        String::from("会话信息不完整")
-    } else {
-        format!("{username}@{host}:{port}")
-    }
-}
 
 pub(crate) fn form_matches_selected_profile(app: &AditApp) -> bool {
     let Some(profile_id) = app.selected_profile else {

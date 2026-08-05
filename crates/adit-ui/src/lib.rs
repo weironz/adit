@@ -418,6 +418,8 @@ pub enum MenuCommand {
     ToggleBroadcast,
     ToggleCommandWindow,
     SplitPane,
+    ToggleSidebar,
+    ToggleTheme,
     TileVertical,
     TileHorizontal,
     TileGrid,

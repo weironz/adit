@@ -458,12 +458,6 @@ pub(crate) fn toolbar_icon_button_style(status: button::Status) -> button::Style
     base_button_style(background, primary_text(), transparent())
 }
 
-pub(crate) fn toolbar_separator_style() -> container::Style {
-    container::Style {
-        background: Some(Background::Color(border_color())),
-        ..container::Style::default()
-    }
-}
 
 pub(crate) fn toolbar_input_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border_color = match status {
