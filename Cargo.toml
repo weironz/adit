@@ -6,6 +6,7 @@ members = [
     "crates/adit-session",
     "crates/adit-ssh",
     "crates/adit-storage",
+    "crates/adit-sync",
     "crates/adit-terminal",
     "crates/adit-ui",
 ]
@@ -28,6 +29,7 @@ adit-rdp-proto = { path = "crates/adit-rdp-proto" }
 adit-session = { path = "crates/adit-session" }
 adit-ssh = { path = "crates/adit-ssh" }
 adit-storage = { path = "crates/adit-storage" }
+adit-sync = { path = "crates/adit-sync" }
 adit-terminal = { path = "crates/adit-terminal" }
 adit-ui = { path = "crates/adit-ui" }
 bytes = "1"

@@ -89,6 +89,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "adit-sync"
+version = "0.1.64"
+dependencies = [
+ "adit-domain",
+ "adit-storage",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "adit-terminal"
 version = "0.1.64"
 dependencies = [
