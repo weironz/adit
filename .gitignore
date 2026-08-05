@@ -7,6 +7,11 @@ crates/adit-rdp/target/
 # rule (anchored at the repo root) does not cover.
 crates/adit-rdp/vendor/*/target/
 
+# Local OAuth client ids for cloud sync — copy .cargo/config.toml.example.
+# Deliberately narrow: it ignores that one file, not `.cargo/`, so a genuinely
+# workspace-wide cargo config could still be committed alongside it.
+/.cargo/config.toml
+
 # Session logs
 logs
 *.log

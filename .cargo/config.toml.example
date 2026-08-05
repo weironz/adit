@@ -1,0 +1,22 @@
+# Local OAuth client ids for cloud sync.
+#
+# Copy this file to `.cargo/config.toml` (gitignored) and fill in the ids.
+# Cargo applies `[env]` to every build in this workspace, so `just app` and a
+# bare `cargo run -p adit-app` both pick them up — and Cargo tracks the values,
+# so editing one here recompiles the crate that reads it. No `build.rs` and no
+# justfile shell-scripting involved.
+#
+# These are NOT secrets. A client id is a public identifier that every user sees
+# in their own authorize URL, and all three providers are PKCE public clients
+# with no client secret at all. They are kept out of the repo because this repo
+# is public: a published id gets its API quota consumed by strangers, and its
+# name reused on lookalike consent screens. The release pipeline injects the
+# real ones from CI secrets (see docs/cloud-sync.md §6).
+#
+# An empty value is the same as not setting it — that provider simply shows as
+# unconfigured in the sync panel rather than failing at the browser.
+
+[env]
+ADIT_SYNC_GOOGLE_CLIENT_ID = ""
+ADIT_SYNC_ONEDRIVE_CLIENT_ID = ""
+ADIT_SYNC_DROPBOX_CLIENT_ID = ""

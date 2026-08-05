@@ -210,6 +210,17 @@ Set them as CI secrets on the release workflow. A build without them leaves
 those three providers unconfigured — the panel says so rather than failing at
 the browser.
 
+That includes **your own local build**, which is the surprising part: `just app`
+compiles with whatever is in the environment, and a developer machine has none
+of these set, so a locally built Adit shows Google Drive, OneDrive and Dropbox
+as unconfigured even on the machine where the ids were registered. Copy
+[`.cargo/config.toml.example`](../.cargo/config.toml.example) to
+`.cargo/config.toml` (gitignored) and fill them in — Cargo applies `[env]` to
+every build in the workspace and tracks the values, so changing one recompiles
+the crate that reads it. No `build.rs` is needed: `rustc` records `option_env!`
+lookups in the dep-info file and Cargo rebuilds on them, which is worth knowing
+before adding a build script to "fix" a rebuild that already works.
+
 **Users can override any of them.** That is not decoration: a shared client id
 is a shared API quota. rclone ships one for Drive and is retiring it during
 2026 for exactly that reason, telling users to create their own. Having the
