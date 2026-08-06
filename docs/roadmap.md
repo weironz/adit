@@ -76,6 +76,9 @@ by how interesting the work is.
   it — a spawned process's stdin/stdout joined as the stream. Token expansion
   (`%h`/`%p`/`%r`) and quoting on Windows is the part to be careful with; it is
   an injection surface.
+- **The identity file is typed, not picked.** The profile editor's key field is a
+  plain text input; there is no file browser beside it, though the SFTP pane
+  already carries a native picker.
 - **No profile export, and no PuTTY session import.** Import covers
   `~/.ssh/config` and a SecureCRT session tree; nothing goes the other way, and
   PuTTY's registry sessions are unread (its `.ppk` *keys* work).
