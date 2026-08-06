@@ -7,17 +7,20 @@
 # justfile shell-scripting involved.
 #
 # These are NOT secrets. A client id is a public identifier that every user sees
-# in their own authorize URL, and all three providers are PKCE public clients
-# with no client secret at all. They are kept out of the repo because this repo
-# is public: a published id gets its API quota consumed by strangers, and its
-# name reused on lookalike consent screens. The release pipeline injects the
+# in their own authorize URL, and every provider here is a public client with no
+# client secret at all except Google. They are kept out of the repo because this
+# repo is public: a published id gets its API quota consumed by strangers, and
+# its name reused on lookalike consent screens. The release pipeline injects the
 # real ones from CI secrets (see docs/cloud-sync.md §6).
 #
 # An empty value is the same as not setting it — that provider simply shows as
-# unconfigured in the sync panel rather than failing at the browser.
+# unconfigured in the sync panel rather than failing at the browser. GitHub Gist
+# is the one exception that still works without its id: the device flow goes
+# dark, but pasting a personal access token by hand does not need one.
 
 [env]
 ADIT_SYNC_GOOGLE_CLIENT_ID = ""
 ADIT_SYNC_ONEDRIVE_CLIENT_ID = ""
 ADIT_SYNC_DROPBOX_CLIENT_ID = ""
+ADIT_SYNC_GITHUB_CLIENT_ID = ""
 ADIT_SYNC_GOOGLE_CLIENT_SECRET = ""

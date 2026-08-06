@@ -5,6 +5,7 @@
 //! what gets stored all live above this layer, so adding a provider cannot get
 //! those wrong — the worst a broken backend can do is fail to sync.
 
+pub mod device;
 pub mod dropbox;
 pub mod gdrive;
 pub mod gist;
@@ -21,6 +22,10 @@ pub enum OAuthProvider {
     GoogleDrive,
     OneDrive,
     Dropbox,
+    /// GitHub, for the Gist backend. Reached through the device flow rather
+    /// than the loopback one — see [`device`] for why — but the client id is
+    /// resolved identically, so it belongs in the same enum.
+    GitHub,
 }
 
 /// The OAuth client id to use: the user's own if they supplied one, otherwise
@@ -46,6 +51,7 @@ pub fn client_id(provider: OAuthProvider, user_override: &str) -> String {
         OAuthProvider::GoogleDrive => option_env!("ADIT_SYNC_GOOGLE_CLIENT_ID"),
         OAuthProvider::OneDrive => option_env!("ADIT_SYNC_ONEDRIVE_CLIENT_ID"),
         OAuthProvider::Dropbox => option_env!("ADIT_SYNC_DROPBOX_CLIENT_ID"),
+        OAuthProvider::GitHub => option_env!("ADIT_SYNC_GITHUB_CLIENT_ID"),
     }
     .unwrap_or_default()
     .to_owned()
@@ -56,6 +62,10 @@ pub fn client_id(provider: OAuthProvider, user_override: &str) -> String {
 /// Resolved exactly like [`client_id`]: the user's override wins, otherwise
 /// whatever this build was compiled with. Empty means "send none", which is
 /// correct for Dropbox and Microsoft and fatal for Google.
+///
+/// GitHub takes none either — the device flow is the one GitHub flow that
+/// needs no client secret, which is most of why it was chosen over the web
+/// application flow (whose token exchange still demands one, PKCE or not).
 #[must_use]
 pub fn client_secret(provider: OAuthProvider, user_override: &str) -> String {
     let trimmed = user_override.trim();
@@ -64,7 +74,7 @@ pub fn client_secret(provider: OAuthProvider, user_override: &str) -> String {
     }
     match provider {
         OAuthProvider::GoogleDrive => option_env!("ADIT_SYNC_GOOGLE_CLIENT_SECRET"),
-        OAuthProvider::OneDrive | OAuthProvider::Dropbox => None,
+        OAuthProvider::OneDrive | OAuthProvider::Dropbox | OAuthProvider::GitHub => None,
     }
     .unwrap_or_default()
     .to_owned()

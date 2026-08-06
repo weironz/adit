@@ -346,6 +346,9 @@ pub struct AditApp {
     sync_secret_draft: String,
     /// True while a browser authorisation is outstanding.
     sync_connecting: bool,
+    /// The user code to display while a device flow is waiting, and where to
+    /// type it. `None` for the loopback providers, which have nothing to show.
+    sync_device_prompt: Option<DeviceCodePrompt>,
     /// True while a sync is in flight, so the button can say so and cannot be
     /// pressed twice.
     sync_busy: bool,
@@ -430,7 +433,20 @@ pub enum SyncField {
     GoogleClientId,
     OneDriveClientId,
     DropboxClientId,
+    GitHubClientId,
     GoogleClientSecret,
+}
+
+/// The half of a device-flow authorisation the user has to act on.
+///
+/// Kept in app state rather than derived, because it must stay on screen for
+/// the whole polling window: unlike the loopback flow, nothing brings the user
+/// back to us automatically, and a code that vanishes on the next redraw is a
+/// code nobody can finish typing.
+#[derive(Debug, Clone)]
+pub struct DeviceCodePrompt {
+    pub user_code: String,
+    pub verification_uri: String,
 }
 
 /// What a finished sync tells the UI. Carries the merged catalog so the update
@@ -723,6 +739,14 @@ pub enum Message {
     SyncNow,
     SyncFinished(Result<SyncReport, String>),
     SyncConnectAccount,
+    /// A device flow got its code pair back, or could not. Carries the whole
+    /// authorisation: the update loop shows its user code, opens the browser,
+    /// and hands the rest to the polling worker.
+    SyncDeviceCodeReady(Result<Box<adit_sync::backend::device::DeviceAuth>, String>),
+    /// Copy the user code to the clipboard. Typing eight characters by hand is
+    /// exactly the sort of transcription this can spare, and the code is the
+    /// only interaction point the device flow has.
+    SyncCopyUserCode,
     /// The refresh token an authorisation produced, or why it failed.
     SyncAuthFinished(Result<String, String>),
     /// The window's display scale factor (device pixels per logical point).
@@ -1308,6 +1332,7 @@ impl AditApp {
             sync: settings.sync.clone(),
             sync_secret_saved: false,
             sync_connecting: false,
+            sync_device_prompt: None,
             sync_secret_draft: String::new(),
             sync_busy: false,
             sync_status: String::new(),

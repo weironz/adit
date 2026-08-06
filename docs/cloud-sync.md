@@ -132,7 +132,7 @@ in `orchestrate.rs` hold both halves, and both fail if either is removed.
 
 | Provider | Conditional write | Setup | Notes |
 |---|---|---|---|
-| **GitHub Gist** | ✗ none | A token with `gist` scope | Version history free; a secret gist is URL-readable, not private |
+| **GitHub Gist** | ✗ none | OAuth device flow (§5), or a pasted `gist` token | Version history free; a secret gist is URL-readable, not private |
 | **WebDAV** | ✓ `ETag` / `If-Match` | URL + password | Nextcloud, 坚果云, Synology. The safest of the six |
 | **S3-compatible** | ✓ (2024+) | Access key pair | AWS, MinIO, R2, 阿里云 OSS. Hand-written SigV4 |
 | **Google Drive** | ✗ none | OAuth (§5) | `drive.file`: only files this app created |
@@ -150,6 +150,15 @@ race cannot happen.
   than wedging sync forever.
 - **Gist** mints its id on the *first push*; forgetting it scatters sessions
   across a growing pile of gists. `SyncBackend::assigned_id` carries it back.
+- **GitHub's OAuth endpoints answer form-encoded by default**, not JSON —
+  `device_code=...&user_code=...`. Without `Accept: application/json` the parse
+  fails and reports itself as malformed JSON, which reads like a GitHub outage
+  rather than a missing header.
+- **GitHub's device flow is off until switched on** in the OAuth App's settings.
+  Until then the device-code request answers `200` with
+  `error=device_flow_disabled` — a success status carrying a refusal, which is
+  also why the device-code response has to be checked for an `error` key
+  instead of trusting the HTTP status.
 - **WebDAV** servers answer `405`, not `404`, for a path that never existed.
 - **S3** signs the *encoded* path — a key with a space signs differently from
   one with `%20` written out.
@@ -184,8 +193,9 @@ in their browser and their data goes to *their* account. The client id
 identifies the application; the access token identifies the user, and the two
 never mix.
 
-All three are PKCE public clients. Dropbox and Microsoft need **no client
-secret**, and none is sent.
+Google, Microsoft and Dropbox are PKCE public clients over a loopback redirect.
+Dropbox and Microsoft need **no client secret**, and none is sent. GitHub is a
+different shape — see below.
 
 **Google is the exception, and its documentation is wrong about it.** The table
 for installed apps lists `client_secret` as *optional*; the token endpoint then
@@ -194,6 +204,50 @@ dies after the browser has already said "已授权". So a Google desktop client 
 to ship its secret, the way rclone has for years — compiled in, plainly not
 confidential, and protecting nothing that PKCE was not already protecting. Take
 the server's word over the table's.
+
+### Why GitHub uses the device flow instead
+
+Not because GitHub lacks PKCE — **it has supported it since July 2025**, and the
+folklore that it does not is out of date. The reason is the sentence next to
+that announcement: GitHub **does not distinguish public from confidential
+clients**. PKCE is optional on every GitHub flow, and the web application flow's
+token exchange still requires `client_secret` regardless. PKCE there is defence
+in depth for a client that already ships a secret — it does not turn a desktop
+app into a public client the way it does on Dropbox and Microsoft.
+
+The device flow is the one GitHub flow that needs **no client secret** (GitHub
+says so outright) and **no loopback listener**. That is worth more here than the
+extra browser polish: nothing confidential is compiled into a binary users
+already have, and there is no localhost port to bind — which is the part that
+fails first on a locked-down corporate machine.
+
+Its cost is that the user must transcribe an 8-character code, and there is no
+redirect back to close the loop. So the panel keeps the code on screen for the
+whole polling window, in monospace and next to a copy button. A device flow
+whose code is hidden is a device flow nobody can finish.
+
+**Pasting a token by hand is still supported and should stay that way.** The
+browser half is the part most likely to be unavailable — `github.com/login` is
+blockable, and an operator holding a fine-grained token should not have to
+authorise an OAuth app to use it. Both paths end in the same sealed credential
+slot, and `backend/gist.rs` cannot tell them apart by design.
+
+### GitHub (Gist)
+
+[GitHub Developer settings](https://github.com/settings/developers) → OAuth Apps
+→ New OAuth App
+
+- **Application name** 会显示在授权页上，用户看到的就是这个名字
+- **Homepage URL** 填仓库地址即可
+- **Authorization callback URL** 是必填项，但设备流程**根本不会用到它** ——
+  填仓库地址或 `http://localhost` 都行，GitHub 只是不允许留空
+- 建好后进入应用设置页，勾上 **Enable Device Flow** 并保存。**少了这一步，
+  申请设备码会返回 `device_flow_disabled`** —— 一个看起来像 client id 填错了
+  的失败，实际上只是这个开关没开
+- 拿 **Client ID**。**不要**生成 client secret：设备流程不需要，桌面端也存不住
+
+权限范围不在这里声明。GitHub 的 scope 由客户端在请求里指定，Adit 只申请
+`gist` —— 读写用户自己的 gist，碰不到仓库，也没有更小的粒度可选。
 
 ### Google Drive
 
@@ -255,15 +309,19 @@ ADIT_SYNC_GOOGLE_CLIENT_ID
 ADIT_SYNC_GOOGLE_CLIENT_SECRET
 ADIT_SYNC_ONEDRIVE_CLIENT_ID
 ADIT_SYNC_DROPBOX_CLIENT_ID
+ADIT_SYNC_GITHUB_CLIENT_ID
 ```
 
 Only Google has a secret, for the reason in §5. A user supplying their own
 Google client id must supply its secret too — the panel has a field for both,
-and neither needs a rebuild.
+and neither needs a rebuild. GitHub takes no secret at all: the device flow is
+specified not to need one.
 
 Set them as CI secrets on the release workflow. A build without them leaves
-those three providers unconfigured — the panel says so rather than failing at
-the browser.
+those providers unconfigured — the panel says so rather than failing at the
+browser. **Gist is the one that degrades rather than goes dark:** without
+`ADIT_SYNC_GITHUB_CLIENT_ID` the 连接账号 button is disabled, but pasting a
+personal access token still works, because that path never needed a client id.
 
 That includes **your own local build**, which is the surprising part: `just app`
 compiles with whatever is in the environment, and a developer machine has none
@@ -294,6 +352,15 @@ Gist, WebDAV and S3 are unaffected — those carry the user's own credentials.
 Unit tests (`cargo test -p adit-sync`) cover the merge, the orchestration
 including the racing-writer case, SigV4 against AWS's published vectors, and
 PKCE against the RFC 7636 vector.
+
+The device-flow polling state machine is tested against captured response
+bodies rather than the network (`backend/device.rs`), because its four
+documented answers are exactly where this is easy to get wrong: two of them mean
+*keep waiting* (`authorization_pending`, `slow_down`) and two mean *stop*
+(`expired_token`, `access_denied`). Collapsing the pairs produces either a flow
+that quits while the user is still typing, or one that polls a dead code until
+the app closes. The tests assert all four stay distinct, and that `slow_down`
+actually widens the interval rather than merely not failing.
 
 An end-to-end check against the real GitHub API lives in `tests/gist_live.rs` —
 ignored, because it needs a token and creates a gist on whichever account owns
