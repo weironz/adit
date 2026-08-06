@@ -220,6 +220,11 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SyncTabPicked(tab) => {
             app.sync_tab = tab;
         }
+        Message::LanguageChanged(language) => {
+            app.language = language;
+            set_language(language);
+            persist_settings_if_changed(app);
+        }
         Message::CloseOptions => {
             app.settings_open = false;
         }

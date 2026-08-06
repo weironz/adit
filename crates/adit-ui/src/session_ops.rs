@@ -377,7 +377,11 @@ pub(crate) fn retry_active_session(app: &mut AditApp) {
     app.terminal_selection = None;
     app.terminal_context_menu = false;
     app.notice = format!("准备重连: {}", summary.endpoint);
-    open_connection_dialog(app);
+    // Reconnect the way the host list connects: straight through when the
+    // profile already has what it needs. Opening the dialog unconditionally
+    // asked for a password that was sitting in the credential store, which made
+    // 重连 slower than double-clicking the host it was offering to reconnect.
+    connect_or_prompt(app);
 }
 
 pub(crate) fn sync_connection_password(
@@ -2201,6 +2205,7 @@ pub(crate) fn build_sync_backend(app: &AditApp) -> Option<Box<dyn adit_sync::Syn
 /// Snapshot the persistable preferences from live app state.
 pub(crate) fn current_settings(app: &AditApp) -> AppSettings {
     AppSettings {
+        language: app.language,
         sync: app.sync.clone(),
         dark_mode: app.dark_mode,
         theme_mode: Some(app.theme_mode),

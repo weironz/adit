@@ -46,6 +46,8 @@ pub enum SftpSortKey {
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
+mod i18n;
+pub(crate) use i18n::{set_language, t};
 mod style;
 use style::*;
 mod workspace;
@@ -323,6 +325,7 @@ pub struct AditApp {
     /// The unified 设置 dialog, and which category it is showing.
     settings_open: bool,
     settings_category: SettingsCategory,
+    language: adit_storage::Language,
     sync_tab: SyncTab,
     update_dialog_open: bool,
     update_state: UpdateState,
@@ -540,6 +543,8 @@ pub enum Message {
     SettingsCategoryPicked(SettingsCategory),
     /// Switch between 云服务 and 同步状态.
     SyncTabPicked(SyncTab),
+    /// Redraw the whole UI in another language.
+    LanguageChanged(adit_storage::Language),
     // Trusted-host-keys (known_hosts) management.
     CloseKnownHosts,
     RemoveKnownHost(String, String),
@@ -1093,7 +1098,12 @@ impl AditApp {
 
         // Mirror what is on disk (raw, not clamped) so a bad size triggers one
         // corrective write, while a valid size stays untouched.
+        // Before the first frame is drawn, not after: otherwise the window
+        // opens in Chinese and flips a moment later.
+        set_language(settings.language);
+
         let persisted_settings = AppSettings {
+            language: settings.language,
             sync: settings.sync.clone(),
             dark_mode,
             theme_mode: Some(theme_mode),
@@ -1269,6 +1279,7 @@ impl AditApp {
             highlight_rules,
             settings_open: false,
             settings_category: SettingsCategory::App,
+            language: settings.language,
             sync_tab: SyncTab::default(),
             update_dialog_open: false,
             update_state: UpdateState::Idle,

@@ -155,6 +155,7 @@ pub(crate) fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> 
 pub(crate) fn menu_overlay(menu: MenuKind) -> Element<'static, Message> {
     let mut commands = column![].spacing(0).width(Fill);
     for (label, command) in menu_commands(menu) {
+        let label = t(label);
         commands = commands.push(menu_dropdown_button(label, *command));
     }
 

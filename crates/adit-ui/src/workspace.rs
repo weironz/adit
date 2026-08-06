@@ -105,7 +105,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let display_scale = app.display_scale.max(0.1);
 
     if app.rdp_tiles.is_empty() || sw == 0 || sh == 0 {
-        return container(text("正在连接 RDP…").size(14).color(muted_text()))
+        return container(text(t("正在连接 RDP…")).size(14).color(muted_text()))
             .width(Fill)
             .height(Fill)
             .center_x(Fill)
@@ -219,7 +219,7 @@ pub(crate) fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
 
     container(
         row![
-            text("查找").size(12).color(muted_text()),
+            text(t("查找")).size(12).color(muted_text()),
             text_input("搜索终端历史…", &app.search_query)
                 .id(search_input_id())
                 .on_input(Message::SearchQueryChanged)
@@ -299,7 +299,7 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
                 .padding([3, 8])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::CommandHistoryNext),
-            button(text("即时").size(12))
+            button(text(t("即时")).size(12))
                 .padding([4, 10])
                 .style(move |_theme, status| if immediate {
                     base_button_style(accent(), Color::from_rgb8(245, 249, 255), transparent())
@@ -307,7 +307,7 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
                     secondary_button_style(status)
                 })
                 .on_press(Message::ToggleCommandSendImmediately),
-            button(text("发送").size(12))
+            button(text(t("发送")).size(12))
                 .padding([4, 14])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::SendTerminalInput),
@@ -452,7 +452,7 @@ pub(crate) fn active_session_action(app: &AditApp) -> Element<'_, Message> {
             SessionStatus::Error | SessionStatus::Disconnected
         )
     }) {
-        return button(text("重连").size(12))
+        return button(text(t("重连")).size(12))
             .padding([4, 10])
             .style(|_theme, status| primary_button_style(status))
             .on_press(Message::RetryActiveSession)

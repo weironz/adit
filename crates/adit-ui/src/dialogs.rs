@@ -62,12 +62,12 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .padding([6, 8])
                 .style(text_input_style),
             checkbox(app.remember_connection_password)
-                .label("保存密码")
+                .label(t("保存密码"))
                 .on_toggle(Message::RememberConnectionPasswordChanged)
                 .size(14)
                 .text_size(12)
                 .spacing(8),
-            text("加密保存在配置目录，可随 Dropbox 等同步到其他电脑")
+            text(t("加密保存在配置目录，可随 Dropbox 等同步到其他电脑"))
                 .size(10)
                 .color(muted_text()),
             row![
@@ -118,7 +118,7 @@ pub(crate) fn host_key_dialog_overlay(
         text(format!("密钥类型: {}", prompt.key_type))
             .size(11)
             .color(muted_text()),
-        text("SHA256 指纹").size(11).color(muted_text()),
+        text(t("SHA256 指纹")).size(11).color(muted_text()),
         text(prompt.fingerprint.clone())
             .size(12)
             .font(Font::MONOSPACE)
@@ -128,7 +128,7 @@ pub(crate) fn host_key_dialog_overlay(
 
     if let Some(previous) = &prompt.previous_fingerprint {
         details = details
-            .push(text("此前记录的指纹").size(11).color(muted_text()))
+            .push(text(t("此前记录的指纹")).size(11).color(muted_text()))
             .push(
                 text(previous.clone())
                     .size(12)
@@ -136,13 +136,13 @@ pub(crate) fn host_key_dialog_overlay(
                     .color(danger()),
             )
             .push(
-                text("密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。")
+                text(t("密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。"))
                     .size(11)
                     .color(danger()),
             );
     } else {
         details = details.push(
-            text("首次连接此主机。请通过其它可信渠道核对指纹后再信任。")
+            text(t("首次连接此主机。请通过其它可信渠道核对指纹后再信任。"))
                 .size(11)
                 .color(muted_text()),
         );
@@ -220,7 +220,7 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
     prompt: &'a AuthPromptInfo,
     answers: &'a [String],
 ) -> Element<'a, Message> {
-    let mut body = column![text("需要交互式验证").size(16).color(primary_text())].spacing(8);
+    let mut body = column![text(t("需要交互式验证")).size(16).color(primary_text())].spacing(8);
 
     if !prompt.name.trim().is_empty() {
         body = body.push(text(prompt.name.clone()).size(12).color(primary_text()));
@@ -293,8 +293,8 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
 pub(crate) fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> {
     let panel = container(
         column![
-            text("打开链接？").size(16).color(primary_text()),
-            text("此链接来自终端输出，请确认目标地址后再打开：")
+            text(t("打开链接？")).size(16).color(primary_text()),
+            text(t("此链接来自终端输出，请确认目标地址后再打开："))
                 .size(11)
                 .color(muted_text()),
             container(
@@ -312,7 +312,7 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> 
                     .padding([6, 10])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::CancelOpenHyperlink),
-                button(text("打开").size(13))
+                button(text(t("打开")).size(13))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| primary_button_style(status))
@@ -420,14 +420,14 @@ pub(crate) fn about_dialog_overlay() -> Element<'static, Message> {
             ]
             .align_y(Alignment::Center),
             text(format!("版本 v{version}")).size(13).color(accent()),
-            text("原生 Rust 桌面 SSH 终端").size(13).color(primary_text()),
-            text("iced · russh · vte 终端核心 — 无 WebView，无 JavaScript")
+            text(t("原生 Rust 桌面 SSH 终端")).size(13).color(primary_text()),
+            text(t("iced · russh · vte 终端核心 — 无 WebView，无 JavaScript"))
                 .size(12)
                 .color(muted_text()),
             text("github.com/weironz/adit").size(12).color(muted_text()),
             row![
                 Space::new().width(Fill),
-                button(text("确定").size(12))
+                button(text(t("确定")).size(12))
                     .padding([5, 18])
                     .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::CloseAbout),
@@ -606,7 +606,7 @@ pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
         .collect();
 
     let size_row = row![
-        text("字号")
+        text(t("字号"))
             .size(12)
             .color(muted_text())
             .width(Length::Fixed(52.0)),
@@ -667,17 +667,17 @@ pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
     });
 
     column![
-            text("字体").size(12).color(muted_text()),
+            text(t("字体")).size(12).color(muted_text()),
             wrap_rows(font_buttons, 3),
             size_row,
-            text("配色方案").size(12).color(muted_text()),
+            text(t("配色方案")).size(12).color(muted_text()),
             wrap_rows(scheme_buttons, 3),
-            text("输出高亮").size(12).color(muted_text()),
-            text("仅对服务端未着色的文本生效，全屏程序（vim、less 等）中不启用")
+            text(t("输出高亮")).size(12).color(muted_text()),
+            text(t("仅对服务端未着色的文本生效，全屏程序（vim、less 等）中不启用"))
                 .size(11)
                 .color(muted_text()),
             wrap_rows(highlight_buttons, 3),
-            text("预览").size(12).color(muted_text()),
+            text(t("预览")).size(12).color(muted_text()),
             preview,
     ]
     .spacing(12)
@@ -689,7 +689,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let body: Element<'_, Message> = match &app.update_state {
         UpdateState::Idle | UpdateState::Checking => {
-            column![text("正在检查更新…").size(13).color(primary_text())].into()
+            column![text(t("正在检查更新…")).size(13).color(primary_text())].into()
         }
         UpdateState::UpToDate => column![
             text(format!("已是最新版本（v{current}）"))
@@ -709,7 +709,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             .spacing(6);
             if !info.notes_url.is_empty() {
                 col = col.push(
-                    button(text("查看发布说明").size(12))
+                    button(text(t("查看发布说明")).size(12))
                         .padding([3, 0])
                         .style(|_theme, _status| {
                             base_button_style(transparent(), accent(), transparent())
@@ -718,12 +718,12 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 );
             }
             let action = if info.installer_url.is_empty() {
-                text("该版本暂无 Windows 安装包")
+                text(t("该版本暂无 Windows 安装包"))
                     .size(12)
                     .color(muted_text())
                     .into()
             } else {
-                let btn: Element<'_, Message> = button(text("下载并更新").size(12))
+                let btn: Element<'_, Message> = button(text(t("下载并更新")).size(12))
                     .padding([6, 18])
                     .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::StartUpdateDownload)
@@ -735,25 +735,25 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .into()
         }
         UpdateState::Downloading => column![
-            text("正在下载安装包…").size(13).color(primary_text()),
-            text("完成后会自动启动安装程序")
+            text(t("正在下载安装包…")).size(13).color(primary_text()),
+            text(t("完成后会自动启动安装程序"))
                 .size(11)
                 .color(muted_text()),
         ]
         .spacing(6)
         .into(),
         UpdateState::Launched => column![
-            text("正在后台安装更新…").size(13).color(primary_text()),
-            text("无需操作，安装完成后 Adit 会自动关闭并重启（可能需要确认一次 UAC）")
+            text(t("正在后台安装更新…")).size(13).color(primary_text()),
+            text(t("无需操作，安装完成后 Adit 会自动关闭并重启（可能需要确认一次 UAC）"))
                 .size(11)
                 .color(muted_text()),
         ]
         .spacing(6)
         .into(),
         UpdateState::Error(error) => column![
-            text("检查/更新失败").size(13).color(danger()),
+            text(t("检查/更新失败")).size(13).color(danger()),
             text(error.clone()).size(11).color(muted_text()),
-            button(text("重试").size(12))
+            button(text(t("重试")).size(12))
                 .padding([5, 16])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::CheckForUpdates),
@@ -765,7 +765,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let card = container(
         column![
             row![
-                text("检查更新").size(18).color(primary_text()),
+                text(t("检查更新")).size(18).color(primary_text()),
                 Space::new().width(Fill),
                 button("×")
                     .width(Length::Fixed(26.0))
@@ -778,7 +778,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             body,
             row![
                 Space::new().width(Fill),
-                button(text("关闭").size(12))
+                button(text(t("关闭")).size(12))
                     .padding([5, 18])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::CloseUpdateDialog),
@@ -803,7 +803,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
 pub(crate) fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
     let card = container(
         column![
-            text("重命名标签").size(16).color(primary_text()),
+            text(t("重命名标签")).size(16).color(primary_text()),
             text_input("标签名称", &app.session_rename_draft)
                 .on_input(Message::SessionRenameChanged)
                 .on_submit(Message::ConfirmRenameSession)
@@ -812,11 +812,11 @@ pub(crate) fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
                 .width(Fill),
             row![
                 Space::new().width(Fill),
-                button(text("取消").size(12))
+                button(text(t("取消")).size(12))
                     .padding([5, 16])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::CancelRenameSession),
-                button(text("确定").size(12))
+                button(text(t("确定")).size(12))
                     .padding([5, 18])
                     .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::ConfirmRenameSession),
@@ -841,7 +841,7 @@ pub(crate) fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
 /// Command-snippets panel: list saved commands (send / delete) + an add form.
 pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     let header = row![
-        text("命令片段").size(16).color(primary_text()),
+        text(t("命令片段")).size(16).color(primary_text()),
         Space::new().width(Fill),
         button("×")
             .width(Length::Fixed(26.0))
@@ -855,7 +855,7 @@ pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     let mut list = column![].spacing(6);
     if app.snippets.is_empty() {
         list = list.push(
-            text("还没有片段。在下方添加常用命令，一键发送到当前终端。")
+            text(t("还没有片段。在下方添加常用命令，一键发送到当前终端。"))
                 .size(11)
                 .color(muted_text()),
         );
@@ -870,11 +870,11 @@ pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
                     ]
                     .spacing(1)
                     .width(Fill),
-                    button(text("发送").size(11))
+                    button(text(t("发送")).size(11))
                         .padding([4, 12])
                         .style(|_theme, status| primary_button_style(status))
                         .on_press(Message::SendSnippet(index)),
-                    button(text("删除").size(11))
+                    button(text(t("删除")).size(11))
                         .padding([4, 10])
                         .style(|_theme, status| secondary_button_style(status))
                         .on_press(Message::DeleteSnippet(index)),
@@ -888,7 +888,7 @@ pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     }
 
     let form = column![
-        text("新增片段").size(12).color(muted_text()),
+        text(t("新增片段")).size(12).color(muted_text()),
         text_input("名称（可选）", &app.snippet_name_draft)
             .on_input(Message::SnippetNameChanged)
             .padding([5, 8])
@@ -901,7 +901,7 @@ pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
                 .padding([5, 8])
                 .style(text_input_style)
                 .width(Fill),
-            button(text("添加").size(12))
+            button(text(t("添加")).size(12))
                 .padding([5, 16])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::AddSnippet),
@@ -944,7 +944,7 @@ pub(crate) fn paste_confirm_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let card = container(
         column![
-            text("确认粘贴").size(16).color(primary_text()),
+            text(t("确认粘贴")).size(16).color(primary_text()),
             text(format!("将向当前终端粘贴 {line_count} 行内容："))
                 .size(12)
                 .color(muted_text()),
@@ -961,11 +961,11 @@ pub(crate) fn paste_confirm_overlay(app: &AditApp) -> Element<'_, Message> {
             }),
             row![
                 Space::new().width(Fill),
-                button(text("取消").size(12))
+                button(text(t("取消")).size(12))
                     .padding([5, 16])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::CancelPaste),
-                button(text("粘贴").size(12))
+                button(text(t("粘贴")).size(12))
                     .padding([5, 18])
                     .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::ConfirmPaste),
@@ -1005,7 +1005,7 @@ pub(crate) fn options_path_row<'a>(
     .align_y(Alignment::Center);
     if let Some(message) = open {
         row = row.push(
-            button(text("打开").size(11))
+            button(text(t("打开")).size(11))
                 .padding([3, 12])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(message),
@@ -1018,7 +1018,7 @@ pub(crate) fn options_path_row<'a>(
 /// `host → key type · SHA256 fingerprint` and forget individual entries.
 pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
     let header = row![
-        text("受信主机密钥").size(15).color(primary_text()),
+        text(t("受信主机密钥")).size(15).color(primary_text()),
         Space::new().width(Fill),
         button("×")
             .width(Length::Fixed(26.0))
@@ -1032,7 +1032,7 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
     let mut list = column![].spacing(4).width(Fill);
     if app.known_hosts.is_empty() {
         list = list.push(
-            text("尚无受信主机密钥（首次连接会自动信任并记录）")
+            text(t("尚无受信主机密钥（首次连接会自动信任并记录）"))
                 .size(12)
                 .color(muted_text()),
         );
@@ -1052,7 +1052,7 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
                         ]
                         .spacing(1)
                         .width(Fill),
-                        button(text("删除").size(11))
+                        button(text(t("删除")).size(11))
                             .padding([3, 10])
                             .style(|_theme, status| close_button_style(status))
                             .on_press(Message::RemoveKnownHost(host, fingerprint)),
@@ -1072,7 +1072,7 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
             .size(10)
             .font(Font::MONOSPACE)
             .color(muted_text()),
-        text("删除某台主机后，下次连接会重新记录其密钥；密钥被更改（可能的中间人）时仍会拦截。")
+        text(t("删除某台主机后，下次连接会重新记录其密钥；密钥被更改（可能的中间人）时仍会拦截。"))
             .size(11)
             .color(muted_text()),
         scrollable(list).height(Length::Fixed(360.0)),
@@ -1105,7 +1105,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
     // The config-folder row: the current path, an "open" button, and (unless the
     // env override is in force) "change" / "reset to default" buttons.
     let mut config_dir_row = row![
-        text("配置目录")
+        text(t("配置目录"))
             .size(11)
             .color(muted_text())
             .width(Length::Fixed(96.0)),
@@ -1116,7 +1116,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
                 .color(primary_text())
         )
         .width(Fill),
-        button(text("打开").size(11))
+        button(text(t("打开")).size(11))
             .padding([3, 12])
             .style(|_theme, status| secondary_button_style(status))
             .on_press(Message::OpenConfigFolder),
@@ -1125,14 +1125,14 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
     .align_y(Alignment::Center);
     if !overridden {
         config_dir_row = config_dir_row.push(
-            button(text("更改…").size(11))
+            button(text(t("更改…")).size(11))
                 .padding([3, 12])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::PickConfigDir),
         );
         if is_custom {
             config_dir_row = config_dir_row.push(
-                button(text("恢复默认").size(11))
+                button(text(t("恢复默认")).size(11))
                     .padding([3, 12])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::ResetConfigDir),
@@ -1147,7 +1147,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
     };
 
     let mut config_section = column![
-        text("配置目录").size(13).color(primary_text()),
+        text(t("配置目录")).size(13).color(primary_text()),
         setting_card(config_dir_row),
         setting_card(options_path_row(
             "会话配置",
@@ -1173,7 +1173,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
     config_section = config_section
         .push(
             row![
-                text("连接超时（秒，0 = 不限）")
+                text(t("连接超时（秒，0 = 不限）"))
                     .size(12)
                     .color(muted_text())
                     .width(Length::Fixed(180.0)),
@@ -1188,7 +1188,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         )
         .push(
             row![
-                text("滚动历史行数")
+                text(t("滚动历史行数"))
                     .size(12)
                     .color(muted_text())
                     .width(Length::Fixed(180.0)),
@@ -1203,21 +1203,21 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         )
         .push(
             checkbox(app.auto_check_updates)
-                .label("启动时自动检查更新")
+                .label(t("启动时自动检查更新"))
                 .on_toggle(Message::ToggleAutoCheckUpdates)
                 .size(16)
                 .text_size(12),
         )
         .push(
             checkbox(app.auto_accept_host_keys)
-                .label("自动信任新主机密钥（不逐个弹窗确认）")
+                .label(t("自动信任新主机密钥（不逐个弹窗确认）"))
                 .on_toggle(Message::ToggleAutoAcceptHostKeys)
                 .size(16)
                 .text_size(12),
         )
         .push(
             checkbox(app.rdp_clipboard)
-                .label("RDP 会话共享剪贴板（仅文本，下次连接生效）")
+                .label(t("RDP 会话共享剪贴板（仅文本，下次连接生效）"))
                 .on_toggle(Message::ToggleRdpClipboard)
                 .size(16)
                 .text_size(12),
@@ -1234,9 +1234,9 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
     let preview_path = effective_log_dir(app).join(&preview_name);
 
     let log_section = column![
-        text("会话日志").size(13).color(primary_text()),
+        text(t("会话日志")).size(13).color(primary_text()),
         setting_card(column![
-            text("日志目录（留空 = 配置目录下的 logs）")
+            text(t("日志目录（留空 = 配置目录下的 logs）"))
                 .size(11)
                 .color(muted_text()),
             row![
@@ -1248,11 +1248,11 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
                 .padding([5, 8])
                 .style(text_input_style)
                 .width(Fill),
-                button(text("浏览…").size(11))
+                button(text(t("浏览…")).size(11))
                     .padding([5, 12])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::PickLogDir),
-                button(text("打开").size(11))
+                button(text(t("打开")).size(11))
                     .padding([5, 12])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::OpenLogFolder),
@@ -1261,7 +1261,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         ]
         .spacing(3)),
         setting_card(column![
-            text("日志文件名（留空 = 默认）").size(11).color(muted_text()),
+            text(t("日志文件名（留空 = 默认）")).size(11).color(muted_text()),
             text_input(DEFAULT_LOG_PATTERN, &app.log_name_pattern)
                 .on_input(Message::LogNamePatternChanged)
                 .padding([5, 8])
@@ -1269,42 +1269,42 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
                 .width(Fill),
         ]
         .spacing(3)),
-        setting_card(text("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒")
+        setting_card(text(t("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒"))
             .size(11)
             .color(muted_text())),
         setting_card(options_path_row("预览", preview_path.display().to_string(), None)),
         setting_card(checkbox(app.auto_log_on_connect)
-            .label("连接后自动开始记录日志")
+            .label(t("连接后自动开始记录日志"))
             .on_toggle(Message::ToggleAutoLog)
             .size(16)
             .text_size(12)),
         setting_card(checkbox(app.log_plaintext)
-            .label("记录为纯文本（去除颜色/转义码，便于阅读和 grep）")
+            .label(t("记录为纯文本（去除颜色/转义码，便于阅读和 grep）"))
             .on_toggle(Message::ToggleLogPlaintext)
             .size(16)
             .text_size(12))]
     .spacing(10);
 
     let mouse_section = column![
-        text("终端复制 / 粘贴（PuTTY 风格）")
+        text(t("终端复制 / 粘贴（PuTTY 风格）"))
             .size(13)
             .color(primary_text()),
         setting_card(checkbox(app.copy_on_select)
-            .label("选中内容即复制到剪贴板")
+            .label(t("选中内容即复制到剪贴板"))
             .on_toggle(Message::ToggleCopyOnSelect)
             .size(16)
             .text_size(12)),
         setting_card(checkbox(app.right_click_paste)
-            .label("右键直接粘贴（不弹出菜单）")
+            .label(t("右键直接粘贴（不弹出菜单）"))
             .on_toggle(Message::ToggleRightClickPaste)
             .size(16)
             .text_size(12)),
         setting_card(checkbox(app.confirm_multiline_paste)
-            .label("粘贴多行内容前先确认")
+            .label(t("粘贴多行内容前先确认"))
             .on_toggle(Message::ToggleConfirmMultilinePaste)
             .size(16)
             .text_size(12)),
-        setting_card(text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。")
+        setting_card(text(t("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。"))
             .size(11)
             .color(muted_text()))]
     .spacing(10);
@@ -1321,7 +1321,7 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         .unwrap_or_default();
 
     let header = row![
-        text("端口转发").size(15).color(primary_text()),
+        text(t("端口转发")).size(15).color(primary_text()),
         text(endpoint).size(11).color(muted_text()),
         Space::new().width(Fill),
         button("×")
@@ -1335,7 +1335,7 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .align_y(Alignment::Center);
 
     let kind_row = row![
-        text("类型").size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        text(t("类型")).size(12).color(muted_text()).width(Length::Fixed(52.0)),
         tunnel_kind_button("本地转发 -L", TunnelKind::Local, app.tunnel_kind),
         tunnel_kind_button("动态 SOCKS -D", TunnelKind::Dynamic, app.tunnel_kind),
         tunnel_kind_button("远程转发 -R", TunnelKind::Remote, app.tunnel_kind),
@@ -1410,12 +1410,12 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     form = form.push(
         row![
             checkbox(app.tunnel_save)
-                .label("保存到会话配置（连接时自动开启）")
+                .label(t("保存到会话配置（连接时自动开启）"))
                 .on_toggle(Message::ToggleTunnelSave)
                 .size(15)
                 .text_size(11),
             Space::new().width(Fill),
-            button(text("添加转发").size(12))
+            button(text(t("添加转发")).size(12))
                 .padding([5, 16])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::AddTunnel),
@@ -1427,7 +1427,7 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     let tunnels = app.manager.tunnels();
     let mut list = column![].spacing(2);
     if tunnels.is_empty() {
-        list = list.push(text("（暂无转发）").size(11).color(muted_text()));
+        list = list.push(text(t("（暂无转发）")).size(11).color(muted_text()));
     } else {
         for tunnel in tunnels {
             list = list.push(tunnel_row(tunnel));
@@ -1446,7 +1446,7 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         .unwrap_or_default();
     let mut saved_list = column![].spacing(2);
     if saved.is_empty() {
-        saved_list = saved_list.push(text("（无）").size(11).color(muted_text()));
+        saved_list = saved_list.push(text(t("（无）")).size(11).color(muted_text()));
     } else {
         for (index, def) in saved.iter().enumerate() {
             saved_list = saved_list.push(saved_tunnel_row(index, def));
@@ -1459,12 +1459,12 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
             .padding(12)
             .width(Fill)
             .style(|_theme| sftp_pane_style()),
-        text("已保存（连接时自动开启）").size(12).color(primary_text()),
+        text(t("已保存（连接时自动开启）")).size(12).color(primary_text()),
         container(saved_list)
             .padding(8)
             .width(Fill)
             .style(|_theme| sftp_list_inner_style()),
-        text("活动转发").size(12).color(primary_text()),
+        text(t("活动转发")).size(12).color(primary_text()),
         container(scrollable(list).height(Fill))
             .height(Fill)
             .padding(6)
@@ -1536,7 +1536,7 @@ pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
                 .size(10)
                 .color(status_color)
                 .width(Length::Fixed(190.0)),
-            button(text("关闭").size(11))
+            button(text(t("关闭")).size(11))
                 .padding([3, 10])
                 .style(|_theme, status| close_button_style(status))
                 .on_press(Message::CloseTunnel(tunnel.id)),
@@ -1562,7 +1562,7 @@ pub(crate) fn saved_tunnel_row(index: usize, def: &TunnelDef) -> Element<'static
     };
     row![
         text(label).size(11).color(primary_text()).width(Fill),
-        button(text("删除").size(11))
+        button(text(t("删除")).size(11))
             .padding([3, 10])
             .style(|_theme, status| close_button_style(status))
             .on_press(Message::RemoveSavedTunnel(index)),
@@ -1601,7 +1601,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
             "尚未填写凭据"
         };
 
-        let mut pick = button(text(if selected { "使用中" } else { "使用" }).size(11))
+        let mut pick = button(text(t(if selected { "使用中" } else { "使用" })).size(11))
             .padding([4, 14])
             .style(move |_theme, status| {
                 if selected {
@@ -1619,8 +1619,8 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
         container(
             row![
                 column![
-                    text(provider.label()).size(12).color(primary_text()),
-                    text(state).size(10).color(muted_text()),
+                    text(t(provider.label())).size(12).color(primary_text()),
+                    text(t(state)).size(10).color(muted_text()),
                 ]
                 .spacing(2),
                 Space::new().width(Fill),
@@ -1691,7 +1691,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     match sync.provider {
         SyncProvider::None => {
             body = body.push(
-                text("选择一个云服务后，会话、分组与设置会在多台机器间合并同步。")
+                text(t("选择一个云服务后，会话、分组与设置会在多台机器间合并同步。"))
                     .size(11)
                     .color(muted_text()),
             );
@@ -1706,7 +1706,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                     SyncField::GistId,
                 ))
                 .push(
-                    text("需要一个带 gist 权限的 GitHub 个人访问令牌。GitHub 自带版本历史，可在网页端回滚。")
+                    text(t("需要一个带 gist 权限的 GitHub 个人访问令牌。GitHub 自带版本历史，可在网页端回滚。"))
                         .size(10)
                         .color(muted_text()),
                 );
@@ -1727,7 +1727,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                 ))
                 .push(secret_field("密码", app.sync_secret_saved))
                 .push(
-                    text("填到文件而不是目录。Nextcloud、坚果云、群晖均可；该方式支持并发写检测，最安全。")
+                    text(t("填到文件而不是目录。Nextcloud、坚果云、群晖均可；该方式支持并发写检测，最安全。"))
                         .size(10)
                         .color(muted_text()),
                 );
@@ -1756,7 +1756,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                 ))
                 .push(secret_field("Secret Key", app.sync_secret_saved))
                 .push(
-                    text("兼容 AWS S3、MinIO、Cloudflare R2、阿里云 OSS。MinIO 等自建网关需要路径风格寻址。")
+                    text(t("兼容 AWS S3、MinIO、Cloudflare R2、阿里云 OSS。MinIO 等自建网关需要路径风格寻址。"))
                         .size(10)
                         .color(muted_text()),
                 );
@@ -1798,7 +1798,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
             };
 
             let mut connect =
-                button(text(if connected { "重新连接账号" } else { "连接账号" }).size(12))
+                button(text(t(if connected { "重新连接账号" } else { "连接账号" })).size(12))
                     .padding([5, 14])
                     .style(|_theme, status| primary_button_style(status));
             if !app.sync_connecting && !unconfigured {
@@ -1808,14 +1808,14 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
             body = body
                 .push(
                     row![
-                        text(status_line).size(11).color(muted_text()),
+                        text(t(status_line)).size(11).color(muted_text()),
                         Space::new().width(Fill),
                         connect,
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
                 )
-                .push(text(note).size(10).color(muted_text()))
+                .push(text(t(note)).size(10).color(muted_text()))
                 .push(field(
                     "client id",
                     override_value,
@@ -1823,7 +1823,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                     override_field,
                 ))
                 .push(
-                    text("填写自己的 client id 可避开共享配额；本地或自行编译的版本也需要它。")
+                    text(t("填写自己的 client id 可避开共享配额；本地或自行编译的版本也需要它。"))
                         .size(10)
                         .color(muted_text()),
                 );
@@ -1846,7 +1846,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     if sync.provider != SyncProvider::None {
         status_tab = status_tab.push(setting_card(
             checkbox(sync.include_credentials)
-                .label("同时同步已保存的密码（加密后上传，主密码不出本机）")
+                .label(t("同时同步已保存的密码（加密后上传，主密码不出本机）"))
                 .on_toggle(Message::SyncIncludeCredentialsToggled)
                 .size(14)
                 .text_size(11)
@@ -1867,7 +1867,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     }
 
     let sync_label = if app.sync_busy { "同步中…" } else { "立即同步" };
-    let mut sync_button = button(text(sync_label).size(12))
+    let mut sync_button = button(text(t(sync_label)).size(12))
         .padding([6, 16])
         .style(|_theme, status| primary_button_style(status));
     if !app.sync_busy && sync.provider != SyncProvider::None {
@@ -1885,7 +1885,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     // second under the first.
     let tab_button = |tab: SyncTab, label: &'static str| {
         let selected = app.sync_tab == tab;
-        button(text(label).size(12))
+        button(text(t(label)).size(12))
             .padding([5, 16])
             .width(Fill)
             .style(move |_theme, status| {
@@ -1935,7 +1935,7 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let rail_item = |category: SettingsCategory| {
         let selected = app.settings_category == category;
-        button(text(category.label()).size(12))
+        button(text(t(category.label())).size(12))
             .padding([9, 14])
             .width(Fill)
             .style(move |_theme, status| {
@@ -1962,8 +1962,38 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     .padding(10)
     .style(|_theme| settings_rail_style());
 
+    // Endonyms, deliberately: a reader who cannot read the current language
+    // still recognises the name of their own.
+    let language_pick = |language: adit_storage::Language| {
+        let selected = app.language == language;
+        button(text(language.label()).size(12))
+            .padding([5, 16])
+            .style(move |_theme, status| {
+                if selected {
+                    primary_button_style(status)
+                } else {
+                    secondary_button_style(status)
+                }
+            })
+            .on_press(Message::LanguageChanged(language))
+    };
+    let language_card = setting_card(
+        row![
+            column![
+                text(t("界面语言")).size(12).color(primary_text()),
+                text(t("切换后立即生效")).size(10).color(muted_text()),
+            ]
+            .spacing(2),
+            Space::new().width(Fill),
+            language_pick(adit_storage::Language::Zh),
+            language_pick(adit_storage::Language::En),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    );
+
     let body: Element<'_, Message> = match app.settings_category {
-        SettingsCategory::App => config_section,
+        SettingsCategory::App => column![language_card, config_section].spacing(10).into(),
         SettingsCategory::Appearance => appearance_section(app),
         SettingsCategory::Terminal => mouse_section,
         SettingsCategory::Logging => log_section,
@@ -1973,7 +2003,7 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let card = container(
         column![
             row![
-                text("设置").size(15).color(primary_text()),
+                text(t("设置")).size(15).color(primary_text()),
                 Space::new().width(Fill),
                 button(text("×").size(16))
                     .width(Length::Fixed(24.0))

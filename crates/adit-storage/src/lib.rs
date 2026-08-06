@@ -252,6 +252,11 @@ impl Default for ProfileStore {
 /// but is not a connection profile or a secret.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AppSettings {
+    /// UI language. Chinese is the default because that is what every string in
+    /// this program was written in; English is a translation of it, not the
+    /// other way round.
+    #[serde(default)]
+    pub language: Language,
     /// Resolved light/dark, kept in step with [`Self::theme_mode`].
     ///
     /// Retained after `theme_mode` superseded it so settings written by a newer
@@ -552,6 +557,24 @@ fn default_font_size() -> f32 {
     13.0
 }
 
+/// The languages the UI can be drawn in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Language {
+    #[default]
+    Zh,
+    En,
+}
+
+impl Language {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Zh => "中文",
+            Self::En => "English",
+        }
+    }
+}
+
 impl AppSettings {
     /// A copy safe to publish to a sync provider: the sync configuration
     /// itself stripped out.
@@ -575,6 +598,7 @@ impl AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
+            language: Language::default(),
             // Dark-first, matching the Termius-style look.
             dark_mode: true,
             theme_mode: None,
@@ -1501,6 +1525,7 @@ Host db
         assert_eq!(store.load().expect("default load"), AppSettings::default());
 
         let settings = AppSettings {
+            language: Language::En,
             sync: SyncSettings::default(),
             dark_mode: true,
             theme_mode: Some(ThemeMode::System),
