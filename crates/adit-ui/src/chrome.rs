@@ -14,10 +14,15 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     // host is opened, so getting back to the list never means closing a session.
     // Fullscreen drops the sidebar too, whatever the persisted setting says:
     // the point of the mode is that the remote desktop owns the glass.
-    let main = if app.sidebar_visible && !app.fullscreen {
+    let main = if app.fullscreen {
+        row![workspace(app)]
+    } else if app.sidebar_visible {
         row![sidebar(app), sidebar_divider(), workspace(app)]
     } else {
-        row![workspace(app)]
+        // Hidden, not gone: the strip is the only thing on screen that can bring
+        // the panel back. Its width is part of `sidebar_offset`, which is what
+        // the terminal's hit-testing measures from.
+        row![sidebar_reveal_strip(), workspace(app)]
     }
     .height(Fill)
     .width(Fill);

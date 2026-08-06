@@ -376,10 +376,11 @@ pub(crate) fn retry_active_session(app: &mut AditApp) {
     }
 
     select_profile(app, summary.profile_id);
-    app.manager.close(summary.id);
-    app.terminal_scroll_offset = 0;
-    app.terminal_selection = None;
-    app.terminal_context_menu = false;
+    // Retry is a close followed by a connect, and the connect can stop at the
+    // password dialog — so the gap between them is a real "no sessions" state,
+    // and `close_session_tab` is what keeps that gap off the black pane.
+    // `connect_or_prompt` switches back to the terminal view when it dials.
+    close_session_tab(app, summary.id);
     app.notice = tf("准备重连: {}", &[&summary.endpoint]);
     // Reconnect the way the host list connects: straight through when the
     // profile already has what it needs. Opening the dialog unconditionally
@@ -1535,14 +1536,7 @@ pub(crate) fn terminal_region_area(
 /// clamped to sane bounds. Returns 0×0 when there's no room yet (caller falls
 /// back to the helper's default).
 pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
-    // The divider sits between the sidebar and the workspace and is not part
-    // of either; forgetting it made the frame ~5 logical px wider than the
-    // pane, so ContentFit had to downscale by ~0.997 — enough to shimmer text.
-    let sidebar = if app.sidebar_visible && !app.fullscreen {
-        app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
-    } else {
-        0.0
-    };
+    let sidebar = sidebar_offset(app);
     let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar, app.fullscreen);
     // PHYSICAL pixels: the window lays out in logical points, but the remote
     // desktop is a pixel grid. Requesting logical sizes meant a 125%-DPI
@@ -1655,11 +1649,7 @@ pub(crate) struct PaneLayout {
 }
 
 pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
-    let effective_sidebar = if app.sidebar_visible && !app.fullscreen {
-        app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
-    } else {
-        0.0
-    };
+    let effective_sidebar = sidebar_offset(app);
     let (region_w, region_h) = terminal_region_area(
         app.window_width,
         app.window_height,
@@ -1925,6 +1915,34 @@ pub(crate) fn split_pane(app: &mut AditApp) {
     app.terminal_context_menu = false;
     sync_terminal_size(app);
     app.notice = tf("已分屏：{} 个终端并排", &[&app.panes.len()]);
+}
+
+/// Close one tab and settle the workspace behind it.
+///
+/// Every route that can take the session count to zero goes through here — the
+/// tab's ×, its right-click 关闭, 文件/会话 → 关闭标签, and the close half of
+/// 重连 — so none of them can drift from the others, and a new one gets the
+/// fallback below for free.
+pub(crate) fn close_session_tab(app: &mut AditApp, session_id: SessionId) {
+    app.manager.close(session_id);
+    app.terminal_scroll_offset = 0;
+    app.terminal_selection = None;
+    app.terminal_context_menu = false;
+
+    // Closing the last tab used to leave the terminal view with nothing to draw:
+    // a black pane captioned `not connected`, with no session, no content and no
+    // way out of it except the sidebar's 返回主机列表. Fall back to the host
+    // grid, which is where a session comes from.
+    //
+    // Only closing does this. Asking for the terminal view with nothing open is
+    // a deliberate choice (the 主机 tab is a toggle), and bouncing that back
+    // would take the switch away from the user.
+    if app.manager.sessions().is_empty() {
+        app.main_view = MainView::Hosts;
+        // Same reason `ShowMainView` does it: a terminal that is not on screen
+        // must not keep taking keystrokes.
+        app.terminal_focused = false;
+    }
 }
 
 /// Remove a pane from the tiling (does not close the session). Collapses back to

@@ -956,6 +956,11 @@ fn cell_height() -> f32 {
 const SIDEBAR_MIN_WIDTH: f32 = 220.0;
 const SIDEBAR_MAX_WIDTH: f32 = 640.0;
 const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
+/// What the hidden sidebar leaves behind: room for one glyph-sized button and
+/// nothing else. Hiding the panel is a click, so getting it back has to be one
+/// too — but the strip stands next to the terminal for as long as the panel is
+/// hidden, so it is sized to disappear rather than to be noticed.
+const SIDEBAR_REVEAL_WIDTH: f32 = 16.0;
 const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
@@ -1193,7 +1198,13 @@ impl AditApp {
             rdp_clipboard,
             keyring_migrated,
         };
-        let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
+        // `sidebar_offset` in widget terms, but there is no `AditApp` to ask yet.
+        // Hidden still costs the reveal strip's width.
+        let effective_sidebar = if sidebar_visible {
+            sidebar_width + SIDEBAR_DIVIDER_WIDTH
+        } else {
+            SIDEBAR_REVEAL_WIDTH
+        };
 
         let mut app = Self {
             group_icons,
@@ -1918,6 +1929,71 @@ mod tests {
         let _ = update(&mut app, Message::ProfileHovered(ids[2]));
         assert_eq!(slot_shape(&app), "abc", "a tree drag must not reshuffle the grid");
         let _ = update(&mut app, Message::CancelProfileDrag);
+    }
+
+    #[test]
+    fn closing_the_last_tab_falls_back_to_the_host_grid() {
+        // Closing tabs one by one used to end on an empty terminal: a black pane
+        // captioned `not connected`, with nothing on it that led anywhere.
+        let mut app = drag_test_app();
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        let first = app.manager.open_mock_session(ids[0]).unwrap();
+        let second = app.manager.open_mock_session(ids[1]).unwrap();
+        app.main_view = MainView::Terminal;
+
+        let _ = update(&mut app, Message::CloseSession(first));
+        assert_eq!(
+            app.main_view,
+            MainView::Terminal,
+            "a tab is left, so the terminal view is still where the user is"
+        );
+
+        let _ = update(&mut app, Message::CloseSession(second));
+        assert_eq!(
+            app.main_view,
+            MainView::Hosts,
+            "the last close has to land somewhere the user can act"
+        );
+        assert!(!app.terminal_focused, "and a hidden terminal takes no keys");
+
+        // Over-triggering is the other half of the bug: asking for the terminal
+        // view with nothing open is the user's own choice.
+        let _ = update(&mut app, Message::ShowMainView(MainView::Terminal));
+        assert_eq!(app.main_view, MainView::Terminal);
+    }
+
+    #[test]
+    fn closing_the_last_tab_from_the_menu_falls_back_too() {
+        // The 关闭标签 menu item is a second route to zero sessions; it shares
+        // `close_session_tab` so it cannot drift from the tab's own ×.
+        let mut app = drag_test_app();
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        app.manager.open_mock_session(ids[0]).unwrap();
+        app.main_view = MainView::Terminal;
+
+        let _ = update(&mut app, Message::RunMenu(MenuCommand::CloseActiveTab));
+        assert!(app.manager.sessions().is_empty());
+        assert_eq!(app.main_view, MainView::Hosts);
+    }
+
+    #[test]
+    fn hidden_sidebar_still_offsets_the_terminal() {
+        // The reveal strip is real layout, not an overlay: terminal hit-testing
+        // measures from this offset, so a value that disagrees with `chrome::view`
+        // selects the wrong cells rather than misdrawing anything.
+        let mut app = drag_test_app();
+        app.sidebar_visible = true;
+        app.sidebar_width = 260.0;
+        assert_eq!(sidebar_offset(&app), 260.0 + SIDEBAR_DIVIDER_WIDTH);
+
+        app.sidebar_visible = false;
+        assert_eq!(sidebar_offset(&app), SIDEBAR_REVEAL_WIDTH);
+
+        // Fullscreen drops both — the remote desktop owns the whole width.
+        app.fullscreen = true;
+        assert_eq!(sidebar_offset(&app), 0.0);
+        app.sidebar_visible = true;
+        assert_eq!(sidebar_offset(&app), 0.0);
     }
 
     #[test]

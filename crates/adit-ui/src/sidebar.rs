@@ -197,6 +197,44 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
+/// What stands in for the sidebar while it is hidden: the mirror image of its
+/// own « button, parked in the same corner.
+///
+/// Without it the panel could be dismissed with a click but only recalled from
+/// the 视图 menu or Alt+I — nothing on screen said the sidebar still existed.
+/// The strip carries no background and no border on purpose: a filled column
+/// here would read as a second divider running the height of the terminal.
+pub(crate) fn sidebar_reveal_strip() -> Element<'static, Message> {
+    column![
+        sidebar_tool_button("»", "显示会话栏", Message::ToggleSidebar),
+        Space::new().height(Fill),
+    ]
+    .width(Length::Fixed(SIDEBAR_REVEAL_WIDTH))
+    .height(Fill)
+    .into()
+}
+
+/// How much of the window's width sits to the left of the workspace.
+///
+/// Terminal hit-testing maps window coordinates through this, so every caller
+/// has to agree with the layout in `chrome::view` down to the pixel: a value
+/// that is a few points off does not misdraw anything, it silently selects the
+/// wrong cells.
+pub(crate) fn sidebar_offset(app: &AditApp) -> f32 {
+    if app.fullscreen {
+        // Fullscreen drops the panel and the reveal strip with it — the remote
+        // desktop owns the glass.
+        0.0
+    } else if app.sidebar_visible {
+        // The divider sits between the sidebar and the workspace and belongs to
+        // neither; forgetting it made an RDP frame ~5 logical px wider than its
+        // pane, so ContentFit downscaled by ~0.997 — enough to shimmer text.
+        app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
+    } else {
+        SIDEBAR_REVEAL_WIDTH
+    }
+}
+
 /// The draggable divider between the sidebar and the workspace. Pressing it
 /// starts a resize drag; the drag itself is driven by the global cursor
 /// subscription that is only active while `sidebar_dragging` is set.
@@ -808,7 +846,7 @@ pub(crate) fn sidebar_tool_button(
 
     tooltip(
         control,
-        container(text(tip).size(11).color(primary_text()))
+        container(text(t(tip)).size(11).color(primary_text()))
             .padding([3, 8])
             .style(|_theme| tooltip_style()),
         tooltip::Position::Bottom,
