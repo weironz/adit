@@ -276,8 +276,10 @@ original rather than a key (see [Known gaps](#known-gaps)).
 Verified shortcomings, so nobody has to rediscover them.
 
 ### Not implemented
-- **RDP**: the server cursor shape isn't drawn, and updates always ship the **whole**
-  framebuffer rather than dirty rectangles. (H.264 *is* decoded — AVC420 and a
+- **RDP**: the server cursor shape isn't drawn. Frame updates do carry a dirty rect, but
+  only **one**, grown to cover everything that changed — a blinking cursor in one corner
+  and a clock in another expand it to most of the screen, so what wastes bandwidth is
+  the coalescing rather than the absence of tracking. (H.264 *is* decoded — AVC420 and a
   from-scratch AVC444 — so a host that negotiates AVC no longer renders black.) The clipboard is **text only** — no images, no file copy-paste (see
   [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
   because it pulls native Opus (needs CMake).
