@@ -1877,6 +1877,10 @@ mod tests {
     fn the_fit_factor_is_inert_until_fit_is_on() {
         let mut app = drag_test_app();
         app.display_scale = 1.0;
+        // Set rather than assumed: the harness app is built through the real
+        // constructor, which reads a settings file, so leaning on the default
+        // here would make this test depend on what another one left on disk.
+        app.rdp_scale_fit = false;
         assert_eq!(rdp_fit_factor(&app, (4096, 2160)), 1.0);
 
         app.rdp_scale_fit = true;

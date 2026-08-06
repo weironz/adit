@@ -241,6 +241,10 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
 
     let surface = Arc::new(Mutex::new(Surface::new(1, 1)));
     let (cmd_tx, cmd_rx) = std_mpsc::channel::<ClientMsg>();
+    // A clone for the stdout reader, so it can answer a file-contents request
+    // with a refusal itself. The reader must not depend on the app being awake:
+    // a remote paste blocks on the stream it asked for.
+    let cmd_tx_reader = cmd_tx.clone();
     let (event_tx, event_rx) = std_mpsc::channel::<RdpClientEvent>();
     let child_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
 
@@ -273,7 +277,7 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
             // real session with the password the user can't see or control). The
             // writer takes `cmd_rx` by value; the reader takes a clone of `event_tx`
             // so this thread keeps the original for error reporting.
-            if let Err(error) = wire_up(&mut child, request, cmd_rx, event_tx.clone(), &surface_bg) {
+            if let Err(error) = wire_up(&mut child, request, cmd_rx, cmd_tx_reader, event_tx.clone(), &surface_bg) {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = event_tx.send(RdpClientEvent::Error(error.to_string()));
@@ -302,6 +306,9 @@ fn wire_up(
     child: &mut Child,
     request: ConnectRequest,
     cmd_rx: std_mpsc::Receiver<ClientMsg>,
+    // A second handle on the command channel, for the reader thread to answer a
+    // file request with a refusal without going through the app.
+    refuse_tx: std_mpsc::Sender<ClientMsg>,
     event_tx: std_mpsc::Sender<RdpClientEvent>,
     surface: &Arc<Mutex<Surface>>,
 ) -> Result<(), RdpClientError> {
@@ -361,6 +368,29 @@ fn wire_up(
                             s.generation = old.generation.wrapping_add(1);
                         }
                         let _ = event_tx.send(RdpClientEvent::Resized { width, height });
+                    }
+                    // Clipboard file transfer. The helper speaks the whole
+                    // MS-RDPECLIP file protocol, but the half that has to answer
+                    // these lives in the GUI process and is not built yet: it
+                    // needs a Win32 `CF_HDROP` reader and a COM `IDataObject`
+                    // with delay-rendered `IStream`s, neither of which iced's
+                    // text-only clipboard can express.
+                    //
+                    // Answering `FileContentsNeeded` with a refusal rather than
+                    // dropping it is the important part — a remote paste blocks
+                    // on the stream it asked for, so silence would hang Explorer
+                    // over there instead of failing it.
+                    Ok(Some(HostMsg::ClipboardFiles(files))) => {
+                        let _ = files;
+                    }
+                    Ok(Some(HostMsg::FileContentsNeeded { stream_id, .. })) => {
+                        let _ = refuse_tx.send(ClientMsg::FileContents {
+                            stream_id,
+                            data: None,
+                        });
+                    }
+                    Ok(Some(HostMsg::FileContents { stream_id, .. })) => {
+                        let _ = stream_id;
                     }
                     Ok(Some(HostMsg::Tile {
                         x,

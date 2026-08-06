@@ -9,7 +9,7 @@
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 
-use adit_rdp_proto::{ConnectRequest, HostMsg, InputEvent};
+use adit_rdp_proto::{ClipFile, ConnectRequest, HostMsg, InputEvent};
 use ironrdp_connector::{ClientConnector, ConnectionResult, ServerName};
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
@@ -29,6 +29,31 @@ use crate::clipboard::{self, SharedClipboard};
 use crate::egfx::{self, EgfxHandler, SharedEgfx};
 use crate::{build_connector_config, input::map_input, RdpError};
 
+/// A command from the app for the session loop.
+///
+/// Input used to be the only thing the app sent, so the channel carried
+/// [`InputEvent`] directly. Clipboard file transfer added three messages that
+/// are not input at all — they neither map to scancodes nor belong in the input
+/// database — so the channel carries this instead and the loop dispatches.
+#[derive(Debug)]
+pub(crate) enum SessionCmd {
+    Input(InputEvent),
+    /// Offer a local file selection to the remote clipboard (metadata only).
+    ClipboardFiles(Vec<ClipFile>),
+    /// The app read the bytes the remote asked for, or failed to.
+    FileContents {
+        stream_id: u32,
+        data: Option<Vec<u8>>,
+    },
+    /// The app wants a byte range of a file the remote offered.
+    RequestFileContents {
+        stream_id: u32,
+        index: u32,
+        offset: u64,
+        length: u32,
+    },
+}
+
 /// A type-erased upgraded (post-TLS) framed transport.
 trait AsyncReadWrite: AsyncRead + AsyncWrite {}
 impl<T> AsyncReadWrite for T where T: AsyncRead + AsyncWrite {}
@@ -45,7 +70,7 @@ const MAX_REDIRECTS: u32 = 5;
 /// PDU, reconnect to the target carrying the routing token, and repeat.
 pub(crate) async fn run_session(
     mut request: ConnectRequest,
-    mut input_rx: tokio_mpsc::UnboundedReceiver<InputEvent>,
+    mut input_rx: tokio_mpsc::UnboundedReceiver<SessionCmd>,
     host_tx: std_mpsc::Sender<HostMsg>,
 ) -> Result<(), RdpError> {
     // Shared framebuffer the EGFX handler (running inside `ActiveStage::process`)
@@ -310,7 +335,7 @@ fn full_frame_tile(image: &DecodedImage) -> HostMsg {
 async fn active_session(
     framed: UpgradedFramed,
     connection_result: ConnectionResult,
-    input_rx: &mut tokio_mpsc::UnboundedReceiver<InputEvent>,
+    input_rx: &mut tokio_mpsc::UnboundedReceiver<SessionCmd>,
     host_tx: &std_mpsc::Sender<HostMsg>,
     egfx: &SharedEgfx,
     clip: &SharedClipboard,
@@ -394,7 +419,7 @@ async fn active_session(
                         input_open = false;
                         active_stage.graceful_shutdown()?
                     }
-                    Some(InputEvent::Resize { width, height }) => {
+                    Some(SessionCmd::Input(InputEvent::Resize { width, height })) => {
                         let (w, h) = MonitorLayoutEntry::adjust_display_size(
                             u32::from(width), u32::from(height));
                         match active_stage.encode_resize(w, h, None, None) {
@@ -420,12 +445,29 @@ async fn active_session(
                     // until something over there actually pastes. The advertise
                     // itself is emitted by the clipboard pump below. With the
                     // channel disabled it just overwrites a string and stops there.
-                    Some(InputEvent::ClipboardText(text)) => {
+                    Some(SessionCmd::Input(InputEvent::ClipboardText(text))) => {
                         clipboard::offer_local_text(clip, text);
                         Vec::new()
                     }
+                    // File transfer: all three are metadata-or-bytes bookkeeping
+                    // for the CLIPRDR pump below rather than anything that touches
+                    // the desktop. Like the text offer above, nothing is read from
+                    // disk here — `ClipboardFiles` advertises names and sizes, and
+                    // bytes move only when one side actually pastes.
+                    Some(SessionCmd::ClipboardFiles(files)) => {
+                        clipboard::offer_local_files(clip, files);
+                        Vec::new()
+                    }
+                    Some(SessionCmd::FileContents { stream_id, data }) => {
+                        clipboard::submit_file_contents(clip, stream_id, data);
+                        Vec::new()
+                    }
+                    Some(SessionCmd::RequestFileContents { stream_id, index, offset, length }) => {
+                        clipboard::request_file_contents(clip, stream_id, index, offset, length);
+                        Vec::new()
+                    }
                     // Mouse / key / unicode all fold into fast-path events.
-                    Some(other) => {
+                    Some(SessionCmd::Input(other)) => {
                         // Input-path probe: the first few key events per session
                         // go to the log, so "typing does nothing" can be split
                         // into UI-side loss vs server-side rejection by reading

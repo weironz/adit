@@ -16,7 +16,7 @@ use std::thread;
 use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg};
 use tokio::sync::mpsc as tokio_mpsc;
 
-use crate::session::run_session;
+use crate::session::{run_session, SessionCmd};
 use crate::RdpError;
 
 /// Entry point for the `adit-rdp-host` binary. Blocks until the session ends.
@@ -74,8 +74,29 @@ pub fn run_host() -> Result<(), RdpError> {
                         }
                     }
                     Ok(Some(ClientMsg::Input(event))) => {
-                        if input_tx.send(event).is_err() {
+                        if input_tx.send(SessionCmd::Input(event)).is_err() {
                             break; // session ended
+                        }
+                    }
+                    Ok(Some(ClientMsg::ClipboardFiles(files))) => {
+                        if input_tx.send(SessionCmd::ClipboardFiles(files)).is_err() {
+                            break;
+                        }
+                    }
+                    Ok(Some(ClientMsg::FileContents { stream_id, data })) => {
+                        if input_tx
+                            .send(SessionCmd::FileContents { stream_id, data })
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(Some(ClientMsg::RequestFileContents { stream_id, index, offset, length })) => {
+                        if input_tx
+                            .send(SessionCmd::RequestFileContents { stream_id, index, offset, length })
+                            .is_err()
+                        {
+                            break;
                         }
                     }
                     // Close or a clean EOF ⇒ drop `input_tx`, which the session

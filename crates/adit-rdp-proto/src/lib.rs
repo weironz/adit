@@ -97,12 +97,55 @@ pub enum InputEvent {
     ClipboardText(String),
 }
 
+/// How many bytes one file-transfer chunk carries.
+///
+/// Deliberately small next to [`MAX_MESSAGE_BYTES`]. File chunks share the one
+/// stdio pipe with framebuffer tiles, so a chunk size chosen for throughput
+/// alone would park a multi-megabyte write in front of the next frame and stall
+/// the picture. 64 KiB is the size a `FileContentsRequest` typically asks for
+/// anyway, and it keeps a transfer interleaving politely with the desktop.
+pub const FILE_CHUNK_BYTES: u32 = 64 * 1024;
+
+/// One entry in a clipboard file list.
+///
+/// The list is **flat**, with directory structure carried in `name` as a
+/// relative `\`-separated path — that is how MS-RDPECLIP's
+/// `FileGroupDescriptorW` represents a copied tree, and matching it here means
+/// no translation on the wire. Directories appear as their own zero-length
+/// entries and must, or the receiver has nowhere to create them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipFile {
+    /// Relative path from the copy root, e.g. `docs\notes.txt`. Never absolute:
+    /// a path from the sender's filesystem would be meaningless on the receiver's
+    /// and is the obvious way this becomes a directory-traversal bug.
+    pub name: String,
+    pub size: u64,
+    pub is_dir: bool,
+}
+
 /// App → helper (over the helper's stdin).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Must be the first message; opens the session.
     Connect(ConnectRequest),
     Input(InputEvent),
+    /// Offer a local file selection to the remote clipboard. The helper holds
+    /// the metadata and answers the server's descriptor request from it; the
+    /// bytes are fetched lazily, one [`HostMsg::FileContentsNeeded`] at a time.
+    ClipboardFiles(Vec<ClipFile>),
+    /// Bytes the app read from a local file, answering
+    /// [`HostMsg::FileContentsNeeded`]. `None` reports a read failure, which the
+    /// helper turns into the protocol's error response — a paste that fails
+    /// loudly beats one that silently writes a truncated file.
+    FileContents { stream_id: u32, data: Option<Vec<u8>> },
+    /// Ask the remote for a byte range of a file it offered. Drives a local
+    /// paste: Explorer pulls from our data object, which pulls through here.
+    RequestFileContents {
+        stream_id: u32,
+        index: u32,
+        offset: u64,
+        length: u32,
+    },
     /// Ask for a graceful disconnect. Dropping stdin has the same effect.
     Close,
 }
@@ -125,6 +168,20 @@ pub enum HostMsg {
     Resized { width: u16, height: u16 },
     /// Server → client clipboard text.
     ClipboardText(String),
+    /// The remote copied files. The app should offer them on the Windows
+    /// clipboard; nothing crosses the wire until something over here pastes.
+    ClipboardFiles(Vec<ClipFile>),
+    /// The remote is pasting and wants a byte range of a file the app offered.
+    /// Answer with [`ClientMsg::FileContents`] carrying the same `stream_id`.
+    FileContentsNeeded {
+        stream_id: u32,
+        index: u32,
+        offset: u64,
+        length: u32,
+    },
+    /// Bytes from the remote, answering [`ClientMsg::RequestFileContents`].
+    /// `None` means the remote refused or failed the read.
+    FileContents { stream_id: u32, data: Option<Vec<u8>> },
     /// A fatal error; [`HostMsg::Closed`] follows.
     Error(String),
     /// The session ended.
@@ -213,6 +270,73 @@ mod tests {
         assert!(read_msg::<_, HostMsg>(&mut cursor)
             .expect("clean end of stream")
             .is_none());
+    }
+
+    /// A copied tree is a flat list of relative paths, directories included as
+    /// their own entries — drop those and the receiver has nowhere to put the
+    /// files under them.
+    #[test]
+    fn a_file_list_round_trips_with_its_directory_entries() {
+        let files = vec![
+            ClipFile {
+                name: String::from("报告"),
+                size: 0,
+                is_dir: true,
+            },
+            ClipFile {
+                name: String::from("报告\\第一章.docx"),
+                size: 4096,
+                is_dir: false,
+            },
+        ];
+
+        let mut pipe = Vec::new();
+        write_msg(&mut pipe, &HostMsg::ClipboardFiles(files.clone())).expect("write");
+        let msg: HostMsg = read_msg(&mut io::Cursor::new(pipe))
+            .expect("read")
+            .expect("a message");
+
+        match msg {
+            HostMsg::ClipboardFiles(got) => assert_eq!(got, files),
+            other => panic!("unexpected message: {other:?}"),
+        }
+    }
+
+    /// A failed read has to survive the pipe as a failure. Collapsing `None` into
+    /// an empty chunk would hand the receiver a silently truncated file, which is
+    /// the one outcome a file transfer must never produce.
+    #[test]
+    fn a_failed_chunk_stays_distinguishable_from_an_empty_one() {
+        let mut pipe = Vec::new();
+        write_msg(
+            &mut pipe,
+            &ClientMsg::FileContents {
+                stream_id: 7,
+                data: None,
+            },
+        )
+        .expect("write failure");
+        write_msg(
+            &mut pipe,
+            &ClientMsg::FileContents {
+                stream_id: 8,
+                data: Some(Vec::new()),
+            },
+        )
+        .expect("write empty");
+
+        let mut cursor = io::Cursor::new(pipe);
+        let failure: ClientMsg = read_msg(&mut cursor).expect("read").expect("a message");
+        let empty: ClientMsg = read_msg(&mut cursor).expect("read").expect("a message");
+
+        assert!(matches!(
+            failure,
+            ClientMsg::FileContents { stream_id: 7, data: None }
+        ));
+        assert!(matches!(
+            empty,
+            ClientMsg::FileContents { stream_id: 8, data: Some(ref bytes) } if bytes.is_empty()
+        ));
     }
 
     #[test]
