@@ -1033,6 +1033,24 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.group_context_menu = None;
             commit_inline_rename(app);
         }
+        Message::ProfileGroupPicked(group) => {
+            app.terminal_focused = false;
+            app.profile_group = group;
+            // Picking an existing folder abandons whatever was half-typed: the
+            // chips are the whole answer, and leaving the field open would show
+            // two live values for one setting.
+            app.profile_group_new = false;
+        }
+        Message::ProfileGroupNewRequested => {
+            app.terminal_focused = false;
+            // Start blank rather than seeding the current folder's name. This
+            // button means "make another one", and pre-filling invites editing
+            // an existing name into a near-duplicate — the very typo the chips
+            // exist to prevent.
+            app.profile_group.clear();
+            app.profile_group_new = true;
+            return focus_group_input();
+        }
         Message::ProfileGroupChanged(value) => {
             app.terminal_focused = false;
             app.profile_group = value;

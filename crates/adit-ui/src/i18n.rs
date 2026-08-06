@@ -194,6 +194,8 @@ fn en(zh: &'static str) -> &'static str {
         "输入广播开关" => "Toggle broadcast",
         "新建会话" => "New session",
         "新建分组" => "New group",
+        "未分组" => "Ungrouped",
+        "新分组名称" => "New group name",
         "保存会话" => "Save session",
         "删除会话" => "Delete session",
         "按名称排序" => "Sort by name",
