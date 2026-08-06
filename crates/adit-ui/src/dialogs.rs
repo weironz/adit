@@ -237,7 +237,7 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
     for (index, field) in prompt.prompts.iter().enumerate() {
         let value = answers.get(index).map(String::as_str).unwrap_or("");
         let label = if field.prompt.trim().is_empty() {
-            String::from("请输入")
+            String::from(t("请输入"))
         } else {
             field.prompt.clone()
         };
@@ -338,7 +338,7 @@ pub(crate) fn add_tunnel(app: &mut AditApp) {
     let bind_port: u16 = match app.tunnel_bind_port.trim().parse() {
         Ok(port) if port > 0 => port,
         _ => {
-            app.last_error = Some(String::from("请输入有效的本地端口"));
+            app.last_error = Some(String::from(t("请输入有效的本地端口")));
             return;
         }
     };
@@ -346,13 +346,13 @@ pub(crate) fn add_tunnel(app: &mut AditApp) {
         TunnelKind::Local | TunnelKind::Remote => {
             let host = app.tunnel_target_host.trim().to_string();
             if host.is_empty() {
-                app.last_error = Some(String::from("该转发需要填写目标主机"));
+                app.last_error = Some(String::from(t("该转发需要填写目标主机")));
                 return;
             }
             match app.tunnel_target_port.trim().parse::<u16>() {
                 Ok(port) if port > 0 => (host, port),
                 _ => {
-                    app.last_error = Some(String::from("请输入有效的目标端口"));
+                    app.last_error = Some(String::from(t("请输入有效的目标端口")));
                     return;
                 }
             }
@@ -378,7 +378,7 @@ pub(crate) fn add_tunnel(app: &mut AditApp) {
     ) {
         Ok(()) => {
             app.last_error = None;
-            app.notice = String::from("已创建端口转发");
+            app.notice = String::from(t("已创建端口转发"));
             // Persist to the active profile so it auto-starts on the next connect.
             if app.tunnel_save {
                 if let Some(profile_id) = app.manager.active_session_summary().map(|s| s.profile_id)
@@ -400,7 +400,7 @@ pub(crate) fn add_tunnel(app: &mut AditApp) {
             app.tunnel_target_host.clear();
             app.tunnel_target_port.clear();
         }
-        Err(error) => app.last_error = Some(format!("端口转发失败: {error}")),
+        Err(error) => app.last_error = Some(tf("端口转发失败: {}", &[&error])),
     }
 }
 
@@ -419,7 +419,7 @@ pub(crate) fn about_dialog_overlay() -> Element<'static, Message> {
                     .on_press(Message::CloseAbout),
             ]
             .align_y(Alignment::Center),
-            text(format!("版本 v{version}")).size(13).color(accent()),
+            text(tf("版本 v{}", &[&version])).size(13).color(accent()),
             text(t("原生 Rust 桌面 SSH 终端")).size(13).color(primary_text()),
             text(t("iced · russh · vte 终端核心 — 无 WebView，无 JavaScript"))
                 .size(12)
@@ -692,7 +692,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             column![text(t("正在检查更新…")).size(13).color(primary_text())].into()
         }
         UpdateState::UpToDate => column![
-            text(format!("已是最新版本（v{current}）"))
+            text(tf("已是最新版本（v{}）", &[&current]))
                 .size(13)
                 .color(primary_text()),
         ]
@@ -702,7 +702,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 text(format!("发现新版本 {}", info.tag))
                     .size(15)
                     .color(accent()),
-                text(format!("当前版本 v{current}"))
+                text(tf("当前版本 v{}", &[&current]))
                     .size(12)
                     .color(muted_text()),
             ]
@@ -945,7 +945,7 @@ pub(crate) fn paste_confirm_overlay(app: &AditApp) -> Element<'_, Message> {
     let card = container(
         column![
             text(t("确认粘贴")).size(16).color(primary_text()),
-            text(format!("将向当前终端粘贴 {line_count} 行内容："))
+            text(tf("将向当前终端粘贴 {} 行内容：", &[&line_count]))
                 .size(12)
                 .color(muted_text()),
             container(

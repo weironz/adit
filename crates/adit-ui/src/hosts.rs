@@ -267,10 +267,10 @@ pub(crate) fn host_section_header(
         }))
         .push(Space::new().width(Fill));
     if online > 0 {
-        header = header.push(pill(format!("{online} 个在线"), success()));
+        header = header.push(pill(tf("{} 个在线", &[&online]), success()));
     }
     let header = header
-        .push(pill(format!("{count} 台"), muted_text()))
+        .push(pill(tf("{} 台", &[&count]), muted_text()))
         .spacing(8)
         .align_y(Alignment::Center);
 
@@ -416,7 +416,7 @@ pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: b
                 tile,
                 column![
                     text(name).size(13).color(primary_text()),
-                    text(format!("{count} 台主机")).size(11).color(muted_text()),
+                    text(tf("{} 台主机", &[&count])).size(11).color(muted_text()),
                 ]
                 .spacing(3),
             ]
@@ -769,7 +769,7 @@ pub(crate) fn reorder_grid(app: &mut AditApp, source: ProfileId, target: Profile
     }
     order.insert(at, source);
     app.grid_order = order;
-    app.notice = String::from("已调整网格排序");
+    app.notice = String::from(t("已调整网格排序"));
 }
 
 pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
@@ -834,7 +834,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             &style,
             None,
             BandKind::Search,
-            String::from("搜索结果"),
+            String::from(t("搜索结果")),
             matching,
             &online,
         ));
@@ -852,7 +852,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 &style,
                 Some("◷"),
                 BandKind::Recent,
-                String::from("最近连接"),
+                String::from(t("最近连接")),
                 recent,
                 &online,
             ));
@@ -890,7 +890,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 .collect();
             body = body.push(
                 column![
-                    host_section_header(None, String::from("分组"), bands.len(), 0, None),
+                    host_section_header(None, String::from(t("分组")), bands.len(), 0, None),
                     wrap_cards(cards, style.columns)
                 ]
                 .spacing(10),
@@ -918,7 +918,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 &style,
                 None,
                 BandKind::Ungrouped,
-                String::from("主机"),
+                String::from(t("主机")),
                 loose,
                 &online,
             ));

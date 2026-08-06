@@ -122,13 +122,13 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
             text("▣").size(14).color(accent()),
-            menu_button(app, MenuKind::File, "File"),
-            menu_button(app, MenuKind::Session, "Session"),
-            menu_button(app, MenuKind::Edit, "Edit"),
-            menu_button(app, MenuKind::View, "View"),
-            menu_button(app, MenuKind::Transfer, "Transfer"),
-            menu_button(app, MenuKind::Script, "Script"),
-            menu_button(app, MenuKind::Help, "Help"),
+            menu_button(app, MenuKind::File, t("文件")),
+            menu_button(app, MenuKind::Session, t("会话")),
+            menu_button(app, MenuKind::Edit, t("编辑")),
+            menu_button(app, MenuKind::View, t("视图")),
+            menu_button(app, MenuKind::Transfer, t("传输")),
+            menu_button(app, MenuKind::Script, t("脚本")),
+            menu_button(app, MenuKind::Help, t("帮助")),
             Space::new().width(Fill),
             text(app.manager.status_line()).size(11).color(muted_text()),
         ]

@@ -17,9 +17,9 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
                 app.terminal_scroll_offset = 0;
                 app.terminal_selection = None;
                 app.terminal_context_menu = false;
-                app.notice = String::from("当前标签已关闭");
+                app.notice = String::from(t("当前标签已关闭"));
             } else {
-                app.last_error = Some(String::from("没有可关闭的标签"));
+                app.last_error = Some(String::from(t("没有可关闭的标签")));
             }
         }
         MenuCommand::ClearTerminal => clear_active_terminal(app),
@@ -27,12 +27,12 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::ResizeWide => resize_active(app, 120, 36),
         MenuCommand::Sftp => {
             if let Err(error) = app.manager.open_sftp_for_active() {
-                app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+                app.last_error = Some(tf("打开 SFTP 失败: {}", &[&error]));
             }
         }
         MenuCommand::Tunnels => {
             if app.manager.active_session().is_none() {
-                app.last_error = Some(String::from("请先连接一个会话再配置端口转发"));
+                app.last_error = Some(String::from(t("请先连接一个会话再配置端口转发")));
             } else {
                 app.tunnels_open = true;
             }
@@ -42,9 +42,9 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             let enabled = !app.manager.auto_reconnect();
             app.manager.set_auto_reconnect(enabled);
             app.notice = if enabled {
-                String::from("自动重连已开启")
+                String::from(t("自动重连已开启"))
             } else {
-                String::from("自动重连已关闭")
+                String::from(t("自动重连已关闭"))
             };
         }
         MenuCommand::KnownHosts => {
@@ -75,18 +75,18 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
             app.notice = if app.broadcast_input {
-                String::from("输入广播已开启：键盘输入将同时发往所有已连接会话")
+                String::from(t("输入广播已开启：键盘输入将同时发往所有已连接会话"))
             } else {
-                String::from("输入广播已关闭")
+                String::from(t("输入广播已关闭"))
             };
         }
         MenuCommand::ToggleCommandWindow => {
             app.command_window_open = !app.command_window_open;
             app.command_history_pos = None;
             app.notice = if app.command_window_open {
-                String::from("命令窗口已打开")
+                String::from(t("命令窗口已打开"))
             } else {
-                String::from("命令窗口已关闭")
+                String::from(t("命令窗口已关闭"))
             };
         }
         MenuCommand::About => app.about_open = true,
@@ -240,7 +240,7 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
             app.selected_profile = Some(source_id);
             load_selected_profile(app);
             if persist_profiles(app) {
-                app.notice = String::from("会话已移动");
+                app.notice = String::from(t("会话已移动"));
             }
         }
         Err(error) => app.last_error = Some(error.to_string()),
@@ -263,7 +263,7 @@ pub(crate) fn drop_profile_on_group(app: &mut AditApp, group: String) {
             app.selected_profile = Some(source_id);
             load_selected_profile(app);
             if persist_profiles(app) {
-                app.notice = format!("会话已移动到分组: {group}");
+                app.notice = tf("会话已移动到分组: {}", &[&group]);
             }
         }
         Err(error) => {
@@ -328,7 +328,7 @@ pub(crate) fn commit_group_reorder(app: &mut AditApp, source: String, target: St
     let order = sidebar_group_names(app, app.manager.profiles());
     app.groups = reordered_folders(order, &source, &target);
     if persist_profiles(app) {
-        app.notice = String::from("分组顺序已更新");
+        app.notice = String::from(t("分组顺序已更新"));
     }
 }
 
@@ -451,7 +451,7 @@ pub(crate) fn new_profile_draft(app: &mut AditApp) {
             load_selected_profile(app);
             app.last_error = None;
             if persist_profiles(app) {
-                app.notice = String::from("新建会话已加入左侧列表，编辑后点击保存");
+                app.notice = String::from(t("新建会话已加入左侧列表，编辑后点击保存"));
             }
         }
         Err(error) => {
@@ -473,7 +473,7 @@ pub(crate) fn new_group_draft(app: &mut AditApp) {
     app.last_error = None;
 
     if persist_profiles(app) {
-        app.notice = format!("分组已创建: {group}");
+        app.notice = tf("分组已创建: {}", &[&group]);
     }
 }
 
@@ -528,7 +528,7 @@ pub(crate) fn apply_profile_rename(app: &mut AditApp, profile_id: ProfileId, nam
         app.profile_name = name.to_string();
     }
     if persist_profiles(app) {
-        app.notice = String::from("会话已重命名");
+        app.notice = String::from(t("会话已重命名"));
     }
     true
 }
@@ -552,7 +552,7 @@ pub(crate) fn apply_group_rename(app: &mut AditApp, old_group: &str, new_group: 
         app.profile_group = new_group.to_string();
     }
     if persist_profiles(app) {
-        app.notice = format!("分组已重命名: {old_group} -> {new_group}");
+        app.notice = tf("分组已重命名: {} -> {}", &[&old_group, &new_group]);
     }
     Ok(())
 }
@@ -563,7 +563,7 @@ pub(crate) fn save_profile_rename(app: &mut AditApp) {
     };
     let name = app.profile_name_draft.trim().to_string();
     if name.is_empty() {
-        app.last_error = Some(String::from("会话名称不能为空"));
+        app.last_error = Some(String::from(t("会话名称不能为空")));
         return;
     }
     // Unchanged name — just close the editor (no rewrite, no "renamed" toast).
@@ -589,7 +589,7 @@ pub(crate) fn save_group_rename(app: &mut AditApp) {
     };
     let new_group = app.group_name_draft.trim().to_string();
     if new_group.is_empty() {
-        app.last_error = Some(String::from("分组名称不能为空"));
+        app.last_error = Some(String::from(t("分组名称不能为空")));
         return;
     }
     if new_group == old_group {
@@ -599,7 +599,7 @@ pub(crate) fn save_group_rename(app: &mut AditApp) {
         return;
     }
     if app.groups.contains(&new_group) {
-        app.last_error = Some(format!("分组已存在: {new_group}"));
+        app.last_error = Some(tf("分组已存在: {}", &[&new_group]));
         return;
     }
     match apply_group_rename(app, &old_group, &new_group) {
@@ -648,9 +648,9 @@ pub(crate) fn delete_group(app: &mut AditApp, group: String) {
     app.last_error = None;
     if persist_profiles(app) {
         app.notice = if count > 0 {
-            format!("已删除分组「{group}」及其 {count} 个会话配置（已打开标签不受影响）")
+            tf("已删除分组「{}」及其 {} 个会话配置（已打开标签不受影响）", &[&group, &count])
         } else {
-            format!("已删除空分组「{group}」")
+            tf("已删除空分组「{}」", &[&group])
         };
     }
 }
@@ -727,7 +727,7 @@ pub(crate) fn parse_jumps_checked(spec: &str) -> Result<Vec<JumpHop>, String> {
 
 pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<ProfileId> {
     let Some(port) = parse_port(&app.profile_port) else {
-        app.last_error = Some(String::from("端口必须是 1-65535 的数字"));
+        app.last_error = Some(String::from(t("端口必须是 1-65535 的数字")));
         return None;
     };
     // Validate the jump chain up front: a bad hop must block the save (and be
@@ -839,7 +839,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
 
 pub(crate) fn delete_selected_profile(app: &mut AditApp) {
     let Some(profile_id) = app.selected_profile else {
-        app.last_error = Some(String::from("请选择要删除的会话配置"));
+        app.last_error = Some(String::from(t("请选择要删除的会话配置")));
         return;
     };
 
@@ -857,7 +857,7 @@ pub(crate) fn delete_selected_profile(app: &mut AditApp) {
                 .err();
             let _ = app.credential_store.delete_profile_passphrase(profile_id);
             if let Some(error) = credential_cleanup {
-                app.last_error = Some(format!("删除系统凭据失败: {error}"));
+                app.last_error = Some(tf("删除系统凭据失败: {}", &[&error]));
             }
             if persist_profiles(app) {
                 app.notice = format!(
@@ -882,8 +882,8 @@ pub(crate) fn sort_profiles(app: &mut AditApp, key: ProfileSortKey) {
     if persist_profiles(app) {
         app.last_error = None;
         app.notice = match key {
-            ProfileSortKey::Name => String::from("会话已按名称排序"),
-            ProfileSortKey::Host => String::from("会话已按主机排序"),
+            ProfileSortKey::Name => String::from(t("会话已按名称排序")),
+            ProfileSortKey::Host => String::from(t("会话已按主机排序")),
         };
     }
 }
@@ -896,7 +896,7 @@ pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
     let sessions = adit_storage::parse_securecrt_sessions(root);
     if sessions.is_empty() {
         app.last_error =
-            Some(String::from("该文件夹下没有找到 SecureCRT 会话（.ini），请选择 Config/Sessions 文件夹"));
+            Some(String::from(t("该文件夹下没有找到 SecureCRT 会话（.ini），请选择 Config/Sessions 文件夹")));
         return;
     }
 
@@ -959,18 +959,18 @@ pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
         persist_profiles(app);
         app.last_error = None;
         app.notice = if skipped > 0 {
-            format!("已从 SecureCRT 导入 {added} 个会话（跳过 {skipped} 个已存在/无效）；密码未导入，请重新设置")
+            tf("已从 SecureCRT 导入 {} 个会话（跳过 {} 个已存在/无效）；密码未导入，请重新设置", &[&added, &skipped])
         } else {
-            format!("已从 SecureCRT 导入 {added} 个会话；密码未导入，请重新设置")
+            tf("已从 SecureCRT 导入 {} 个会话；密码未导入，请重新设置", &[&added])
         };
     } else {
-        app.notice = String::from("没有新的 SecureCRT 会话需要导入（可能都已存在）");
+        app.notice = String::from(t("没有新的 SecureCRT 会话需要导入（可能都已存在）"));
     }
 }
 
 pub(crate) fn import_ssh_config(app: &mut AditApp) {
     let Some(path) = adit_storage::ssh_config_path() else {
-        app.last_error = Some(String::from("找不到用户主目录"));
+        app.last_error = Some(String::from(t("找不到用户主目录")));
         return;
     };
     if !path.exists() {
@@ -980,14 +980,14 @@ pub(crate) fn import_ssh_config(app: &mut AditApp) {
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
         Err(error) => {
-            app.last_error = Some(format!("读取 ssh config 失败: {error}"));
+            app.last_error = Some(tf("读取 ssh config 失败: {}", &[&error]));
             return;
         }
     };
 
     let hosts = adit_storage::parse_ssh_config(&text);
     if hosts.is_empty() {
-        app.notice = String::from("~/.ssh/config 中没有可导入的主机");
+        app.notice = String::from(t("~/.ssh/config 中没有可导入的主机"));
         return;
     }
 
@@ -1039,12 +1039,12 @@ pub(crate) fn import_ssh_config(app: &mut AditApp) {
         persist_profiles(app);
         app.last_error = None;
         app.notice = if skipped > 0 {
-            format!("已从 ~/.ssh/config 导入 {added} 个会话（跳过 {skipped} 个已存在）")
+            tf("已从 ~/.ssh/config 导入 {} 个会话（跳过 {} 个已存在）", &[&added, &skipped])
         } else {
-            format!("已从 ~/.ssh/config 导入 {added} 个会话")
+            tf("已从 ~/.ssh/config 导入 {} 个会话", &[&added])
         };
     } else {
-        app.notice = String::from("没有新的主机需要导入（可能都已存在）");
+        app.notice = String::from(t("没有新的主机需要导入（可能都已存在）"));
     }
 }
 
@@ -1059,7 +1059,7 @@ pub(crate) fn persist_profiles(app: &mut AditApp) -> bool {
     match app.profile_store.save_catalog_async(&catalog) {
         Ok(()) => true,
         Err(error) => {
-            app.last_error = Some(format!("保存会话配置失败: {error}"));
+            app.last_error = Some(tf("保存会话配置失败: {}", &[&error]));
             false
         }
     }
@@ -1084,7 +1084,7 @@ pub(crate) fn carry_config_to(app: &mut AditApp, target: std::path::PathBuf) -> 
         return false;
     }
     if let Err(error) = write_config_pointer(&target) {
-        app.last_error = Some(format!("设置配置文件夹失败: {error}"));
+        app.last_error = Some(tf("设置配置文件夹失败: {}", &[&error]));
         return false;
     }
     app.profile_store = ProfileStore::new(target.join("profiles.json"));
@@ -1116,13 +1116,13 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
         // No move — just make sure the on-disk pointer matches the live folder
         // (repairs state if a prior reset cleared it).
         if let Err(error) = write_config_pointer(&target) {
-            app.last_error = Some(format!("设置配置文件夹失败: {error}"));
+            app.last_error = Some(tf("设置配置文件夹失败: {}", &[&error]));
             return;
         }
         app.config_dir_custom = target != default;
         app.pending_config_dir = None;
         app.last_error = None;
-        app.notice = String::from("配置文件夹未改变");
+        app.notice = String::from(t("配置文件夹未改变"));
         return;
     }
 
@@ -1133,7 +1133,7 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
     if target != default && adit_storage::config_dir_has_config(&target) {
         // Adopt it on the next launch rather than overwriting it.
         if let Err(error) = write_config_pointer(&target) {
-            app.last_error = Some(format!("设置配置文件夹失败: {error}"));
+            app.last_error = Some(tf("设置配置文件夹失败: {}", &[&error]));
             return;
         }
         app.config_dir_custom = true;
@@ -1150,7 +1150,7 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
     // switch over live.
     if carry_config_to(app, target.clone()) {
         app.notice = if target == default {
-            String::from("已恢复到默认配置文件夹（已生效）")
+            String::from(t("已恢复到默认配置文件夹（已生效）"))
         } else {
             format!("配置文件夹已切换到 {}（已生效）", target.display())
         };

@@ -47,7 +47,7 @@ pub enum SftpSortKey {
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
 mod i18n;
-pub(crate) use i18n::{set_language, t};
+pub(crate) use i18n::{set_language, t, tf};
 mod style;
 use style::*;
 mod workspace;
@@ -1002,7 +1002,7 @@ impl Default for AditApp {
                         "使用演示会话配置，保存后写入 {}",
                         profile_store.path().display()
                     ),
-                    Some(format!("读取会话配置失败: {error}")),
+                    Some(tf("读取会话配置失败: {}", &[&error])),
                 )
             }
         };

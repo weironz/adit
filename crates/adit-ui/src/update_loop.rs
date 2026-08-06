@@ -15,7 +15,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // long after the call returned Ok. Surface it instead of letting the
             // user believe their sessions were saved.
             if let Some(error) = app.profile_store.take_write_error() {
-                app.last_error = Some(format!("保存会话配置失败: {error}"));
+                app.last_error = Some(tf("保存会话配置失败: {}", &[&error]));
             }
             let panes_before = app.panes.len();
             sync_panes(app);
@@ -235,10 +235,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             match remove_known_host(&known_hosts_path(), &host, &fingerprint) {
                 Ok(()) => {
                     app.known_hosts = list_known_hosts(&known_hosts_path());
-                    app.notice = format!("已删除受信主机密钥: {host}");
+                    app.notice = tf("已删除受信主机密钥: {}", &[&host]);
                 }
                 Err(error) => {
-                    app.last_error = Some(format!("删除主机密钥失败: {error}"));
+                    app.last_error = Some(tf("删除主机密钥失败: {}", &[&error]));
                 }
             }
         }
@@ -312,9 +312,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ToggleBroadcast => {
             app.broadcast_input = !app.broadcast_input;
             app.notice = if app.broadcast_input {
-                String::from("输入广播已开启：键盘输入将同时发往所有已连接会话")
+                String::from(t("输入广播已开启：键盘输入将同时发往所有已连接会话"))
             } else {
-                String::from("输入广播已关闭")
+                String::from(t("输入广播已关闭"))
             };
         }
         Message::RunMenu(command) => {
@@ -661,7 +661,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             select_profile(app, profile_id);
             app.profile_context_menu = None;
             app.profile_editor = Some(profile_id);
-            app.notice = String::from("已打开会话编辑面板");
+            app.notice = String::from(t("已打开会话编辑面板"));
         }
         Message::CloseProfileEditor => {
             app.profile_editor = None;
@@ -689,7 +689,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
                 select_profile(app, new_id);
                 if persist_profiles(app) {
-                    app.notice = String::from("已克隆会话");
+                    app.notice = String::from(t("已克隆会话"));
                 }
             }
         }
@@ -717,9 +717,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.last_error = Some(error.to_string());
             } else {
                 app.notice = if accept {
-                    String::from("已信任主机密钥，继续连接")
+                    String::from(t("已信任主机密钥，继续连接"))
                 } else {
-                    String::from("已拒绝主机密钥")
+                    String::from(t("已拒绝主机密钥"))
                 };
             }
         }
@@ -749,7 +749,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if is_openable_http_url(&url) {
                 app.pending_hyperlink = Some(url);
             } else {
-                app.last_error = Some(String::from("仅支持打开 http/https 链接"));
+                app.last_error = Some(String::from(t("仅支持打开 http/https 链接")));
             }
         }
         Message::ConfirmOpenHyperlink => {
@@ -779,7 +779,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::OpenTunnels => {
             if app.manager.active_session().is_none() {
-                app.last_error = Some(String::from("请先连接一个会话再配置端口转发"));
+                app.last_error = Some(String::from(t("请先连接一个会话再配置端口转发")));
             } else {
                 app.tunnels_open = true;
                 app.last_error = None;
@@ -883,7 +883,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         },
         Message::SftpFileDropped(path) => {
             if path.is_dir() {
-                app.last_error = Some(String::from("暂不支持上传文件夹，请拖入单个文件"));
+                app.last_error = Some(String::from(t("暂不支持上传文件夹，请拖入单个文件")));
             } else if app.manager.active_is_sftp_shell() {
                 // Dropped onto a command-line SFTP tab: upload into its cwd.
                 if let Err(error) = app.manager.sftp_shell_upload_dropped(&path) {
@@ -891,7 +891,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             } else if !app.manager.sftp_is_open() {
                 app.notice =
-                    String::from("拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)");
+                    String::from(t("拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)"));
             } else if let Err(error) = app.manager.sftp_upload(&path) {
                 app.last_error = Some(error.to_string());
             } else {
@@ -908,7 +908,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SftpUpload => {
             let path = app.sftp_upload_path.trim().to_string();
             if path.is_empty() {
-                app.last_error = Some(String::from("请输入要上传的本地文件路径"));
+                app.last_error = Some(String::from(t("请输入要上传的本地文件路径")));
             } else {
                 match app.manager.sftp_upload(std::path::Path::new(&path)) {
                     Ok(()) => {
@@ -1222,7 +1222,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             let Some(config) = sync_oauth_config(app, app.sync.provider) else {
                 app.sync_status =
-                    String::from("此构建没有该云服务的 client id，可在下方填写自己的");
+                    String::from(t("此构建没有该云服务的 client id，可在下方填写自己的"));
                 return Task::none();
             };
             match adit_sync::backend::oauth::begin(config) {
@@ -1233,7 +1233,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     let url = pending.url.clone();
                     open_url(app, &url);
                     app.sync_connecting = true;
-                    app.sync_status = String::from("已在浏览器中打开授权页，完成后自动返回…");
+                    app.sync_status = String::from(t("已在浏览器中打开授权页，完成后自动返回…"));
                     return Task::perform(
                         async move {
                             tokio::task::spawn_blocking(move || {
@@ -1248,7 +1248,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         Message::SyncAuthFinished,
                     );
                 }
-                Err(error) => app.sync_status = format!("无法开始授权: {error}"),
+                Err(error) => app.sync_status = tf("无法开始授权: {}", &[&error]),
             }
         }
         Message::SyncAuthFinished(result) => {
@@ -1261,9 +1261,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     match app.credential_store.save_secret(name, &token) {
                         Ok(()) => {
                             app.sync_secret_saved = true;
-                            app.sync_status = String::from("账号已连接，可以同步了");
+                            app.sync_status = String::from(t("账号已连接，可以同步了"));
                         }
-                        Err(error) => app.sync_status = format!("保存令牌失败: {error}"),
+                        Err(error) => app.sync_status = tf("保存令牌失败: {}", &[&error]),
                     }
                 }
                 // Authorised, but with nothing that survives a restart. Worth
@@ -1272,9 +1272,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 // token expired and then stop for no visible reason.
                 Ok(_) => {
                     app.sync_status =
-                        String::from("授权成功但未返回长期令牌，请在授权页确认已允许离线访问");
+                        String::from(t("授权成功但未返回长期令牌，请在授权页确认已允许离线访问"));
                 }
-                Err(error) => app.sync_status = format!("授权失败: {error}"),
+                Err(error) => app.sync_status = tf("授权失败: {}", &[&error]),
             }
         }
         Message::SyncNow => {
@@ -1289,7 +1289,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         .credential_store
                         .save_secret(name, &app.sync_secret_draft)
                     {
-                        app.sync_status = format!("保存密钥失败: {error}");
+                        app.sync_status = tf("保存密钥失败: {}", &[&error]);
                         return Task::none();
                     }
                     app.sync_secret_saved = true;
@@ -1297,12 +1297,12 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
             let Some(mut backend) = build_sync_backend(app) else {
-                app.sync_status = String::from("请先填写该云服务所需的信息");
+                app.sync_status = String::from(t("请先填写该云服务所需的信息"));
                 return Task::none();
             };
 
             app.sync_busy = true;
-            app.sync_status = String::from("正在同步…");
+            app.sync_status = String::from(t("正在同步…"));
             app.sync_conflicts.clear();
 
             let store =
@@ -1320,7 +1320,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => {
                         app.sync_busy = false;
-                        app.sync_status = format!("读取本机密码库失败，已中止同步: {error}");
+                        app.sync_status = tf("读取本机密码库失败，已中止同步: {}", &[&error]);
                         return Task::none();
                     }
                 }
@@ -1369,7 +1369,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                                     outcome.stats.deleted
                                 )
                             } else {
-                                String::from("已是最新，无需上传")
+                                String::from(t("已是最新，无需上传"))
                             },
                             catalog: outcome.catalog,
                             assigned_id,
@@ -1398,7 +1398,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     persist_profiles(app);
                     persist_settings_if_changed(app);
                 }
-                Err(error) => app.sync_status = format!("同步失败: {error}"),
+                Err(error) => app.sync_status = tf("同步失败: {}", &[&error]),
             }
         }
         Message::ToggleFullscreen => {
@@ -1454,11 +1454,11 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     Ok(_) => {
                         app.terminal_focused = true;
                         app.last_error = None;
-                        app.notice = String::from("已打开 SFTP 命令行 (输入 help 查看命令)");
+                        app.notice = String::from(t("已打开 SFTP 命令行 (输入 help 查看命令)"));
                         sync_terminal_size(app);
                     }
                     Err(error) => {
-                        app.last_error = Some(format!("打开 SFTP 失败: {error}"));
+                        app.last_error = Some(tf("打开 SFTP 失败: {}", &[&error]));
                     }
                 }
                 return Task::none();
@@ -1541,9 +1541,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 let text = selected_terminal_text(app);
                 if !text.is_empty() {
                     app.notice = if app.terminal_selection.is_some() {
-                        String::from("已复制终端选区")
+                        String::from(t("已复制终端选区"))
                     } else {
-                        String::from("已复制当前终端可见文本")
+                        String::from(t("已复制当前终端可见文本"))
                     };
                     return clipboard::write(text);
                 }
@@ -1752,7 +1752,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.copy_on_select && app.terminal_selection.is_some() {
                 let text = selected_terminal_text(app);
                 if !text.is_empty() {
-                    app.notice = String::from("已复制选区到剪贴板");
+                    app.notice = String::from(t("已复制选区到剪贴板"));
                     return clipboard::write(text);
                 }
             }
@@ -1774,10 +1774,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             let text = selected_terminal_text(app);
             app.terminal_context_menu = false;
             if !text.is_empty() {
-                app.notice = String::from("已复制终端选区");
+                app.notice = String::from(t("已复制终端选区"));
                 return clipboard::write(text);
             }
-            app.notice = String::from("没有可复制的终端选区");
+            app.notice = String::from(t("没有可复制的终端选区"));
         }
         Message::PasteIntoTerminal => {
             app.terminal_context_menu = false;
@@ -1811,7 +1811,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CancelPaste => {
             app.paste_confirm_open = false;
             app.pending_paste = None;
-            app.notice = String::from("已取消粘贴");
+            app.notice = String::from(t("已取消粘贴"));
         }
         Message::ToggleConfirmMultilinePaste(enabled) => {
             app.confirm_multiline_paste = enabled;
@@ -1856,7 +1856,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_scroll_offset = 0;
             app.terminal_selection = None;
             app.terminal_context_menu = false;
-            app.notice = String::from("标签已关闭");
+            app.notice = String::from(t("标签已关闭"));
         }
         Message::RenameSessionPrompt(session_id) => {
             app.tab_context_menu = None;
@@ -1885,7 +1885,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Err(error) = app.manager.disconnect(session_id) {
                 app.last_error = Some(error.to_string());
             } else {
-                app.notice = String::from("已断开连接");
+                app.notice = String::from(t("已断开连接"));
             }
         }
         Message::ReconnectSession(session_id) => {
@@ -1894,7 +1894,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.last_error = Some(error.to_string());
             } else {
                 sync_terminal_size(app);
-                app.notice = String::from("正在重新连接…");
+                app.notice = String::from(t("正在重新连接…"));
             }
         }
         Message::CloneSessionFromTab(session_id) => {
@@ -1925,7 +1925,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                                     app.terminal_focused = true;
                                     app.rdp_frame_generation = 0;
                                     app.last_error = None;
-                                    app.notice = String::from("已克隆 RDP 会话");
+                                    app.notice = String::from(t("已克隆 RDP 会话"));
                                 }
                                 Err(error) => app.last_error = Some(error.to_string()),
                             }
@@ -1945,7 +1945,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.terminal_selection = None;
                     app.terminal_context_menu = false;
                     sync_terminal_size(app);
-                    app.notice = String::from("已克隆会话");
+                    app.notice = String::from(t("已克隆会话"));
                 }
                 Err(error) => app.last_error = Some(error.to_string()),
             }
@@ -1982,9 +1982,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ToggleCommandSendImmediately => {
             app.command_send_immediately = !app.command_send_immediately;
             app.notice = if app.command_send_immediately {
-                String::from("命令窗口：逐字符即时发送")
+                String::from(t("命令窗口：逐字符即时发送"))
             } else {
-                String::from("命令窗口：回车整行发送")
+                String::from(t("命令窗口：回车整行发送"))
             };
         }
         Message::CommandHistoryPrev => {
@@ -2035,7 +2035,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 let mut bytes = snippet.command.clone().into_bytes();
                 bytes.push(b'\r');
                 send_terminal_bytes(app, bytes);
-                app.notice = format!("已发送片段: {name}");
+                app.notice = tf("已发送片段: {}", &[&name]);
             }
         }
         Message::CloseSearch => {
@@ -2078,7 +2078,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.keyring_migrated = true;
             if imported > 0 {
                 app.notice =
-                    format!("已从系统密钥环导入 {imported} 条密码到配置目录(可随 Dropbox 同步)");
+                    tf("已从系统密钥环导入 {} 条密码到配置目录(可随 Dropbox 同步)", &[&imported]);
                 // A secret for the selected profile may have just arrived; refresh
                 // so the connect form reflects it.
                 load_selected_profile(app);
@@ -2091,9 +2091,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.auto_accept_host_keys = enabled;
             app.manager.set_auto_accept_host_keys(enabled);
             app.notice = if enabled {
-                String::from("已开启：自动信任新主机密钥")
+                String::from(t("已开启：自动信任新主机密钥"))
             } else {
-                String::from("已关闭：新主机密钥将逐个确认")
+                String::from(t("已关闭：新主机密钥将逐个确认"))
             };
         }
         Message::ToggleRdpClipboard(enabled) => {
@@ -2106,9 +2106,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_clipboard_offered = None;
             }
             app.notice = if enabled {
-                String::from("已开启：RDP 共享剪贴板（下次连接生效）")
+                String::from(t("已开启：RDP 共享剪贴板（下次连接生效）"))
             } else {
-                String::from("已关闭：RDP 不再共享剪贴板（下次连接生效）")
+                String::from(t("已关闭：RDP 不再共享剪贴板（下次连接生效）"))
             };
         }
         Message::StartUpdateDownload => {
@@ -2131,7 +2131,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     );
                 }
                 Err(error) => {
-                    app.update_state = UpdateState::Error(format!("无法启动安装程序: {error}"));
+                    app.update_state = UpdateState::Error(tf("无法启动安装程序: {}", &[&error]));
                 }
             },
             Err(error) => {

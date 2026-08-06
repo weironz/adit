@@ -39,7 +39,7 @@ fn spawn_browser(url: &str) -> std::io::Result<std::process::Child> {
 /// anything derived from remote output goes through `open_external_link`.
 pub(crate) fn open_url(app: &mut AditApp, url: &str) {
     if let Err(error) = spawn_browser(url) {
-        app.last_error = Some(format!("打开链接失败: {error}"));
+        app.last_error = Some(tf("打开链接失败: {}", &[&error]));
     }
 }
 
@@ -63,11 +63,11 @@ pub(crate) fn is_openable_http_url(url: &str) -> bool {
 /// expected to have shown the user the destination and gotten confirmation first.
 pub(crate) fn open_external_link(app: &mut AditApp, url: &str) {
     if !is_openable_http_url(url) {
-        app.last_error = Some(String::from("仅支持打开 http/https 链接"));
+        app.last_error = Some(String::from(t("仅支持打开 http/https 链接")));
         return;
     }
     if let Err(error) = spawn_browser(url) {
-        app.last_error = Some(format!("打开链接失败: {error}"));
+        app.last_error = Some(tf("打开链接失败: {}", &[&error]));
     }
 }
 
@@ -88,7 +88,7 @@ pub(crate) const UPDATE_REPO: &str = "weironz/adit";
 pub(crate) async fn check_for_update() -> Result<Option<UpdateInfo>, String> {
     tokio::task::spawn_blocking(check_for_update_blocking)
         .await
-        .map_err(|error| format!("更新检查任务失败: {error}"))?
+        .map_err(|error| tf("更新检查任务失败: {}", &[&error]))?
 }
 
 pub(crate) fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> {
@@ -104,7 +104,7 @@ pub(crate) fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> 
         &url,
     ]))
     .output()
-    .map_err(|error| format!("无法运行 curl（检查更新需要系统自带的 curl）: {error}"))?;
+    .map_err(|error| tf("无法运行 curl（检查更新需要系统自带的 curl）: {}", &[&error]))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -112,7 +112,7 @@ pub(crate) fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> 
     }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("解析发布信息失败: {error}"))?;
+        .map_err(|error| tf("解析发布信息失败: {}", &[&error]))?;
 
     let tag = json["tag_name"]
         .as_str()
@@ -168,16 +168,16 @@ pub(crate) fn launch_silent_update(installer_path: &str) -> std::process::Comman
 /// Download the installer to a temp folder; returns the saved path.
 pub(crate) async fn download_installer(url: String, name: String) -> Result<String, String> {
     if url.is_empty() {
-        return Err(String::from("该版本没有可下载的 Windows 安装包"));
+        return Err(String::from(t("该版本没有可下载的 Windows 安装包")));
     }
     tokio::task::spawn_blocking(move || download_installer_blocking(&url, &name))
         .await
-        .map_err(|error| format!("下载任务失败: {error}"))?
+        .map_err(|error| tf("下载任务失败: {}", &[&error]))?
 }
 
 pub(crate) fn download_installer_blocking(url: &str, name: &str) -> Result<String, String> {
     let dir = std::env::temp_dir().join("adit-update");
-    std::fs::create_dir_all(&dir).map_err(|error| format!("创建下载目录失败: {error}"))?;
+    std::fs::create_dir_all(&dir).map_err(|error| tf("创建下载目录失败: {}", &[&error]))?;
     let safe_name = if name.is_empty() { "adit-installer.exe" } else { name };
     let dest = dir.join(safe_name);
 
@@ -192,7 +192,7 @@ pub(crate) fn download_installer_blocking(url: &str, name: &str) -> Result<Strin
         url,
     ]))
     .output()
-    .map_err(|error| format!("无法运行 curl: {error}"))?;
+    .map_err(|error| tf("无法运行 curl: {}", &[&error]))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -201,8 +201,8 @@ pub(crate) fn download_installer_blocking(url: &str, name: &str) -> Result<Strin
 
     match std::fs::metadata(&dest) {
         Ok(meta) if meta.len() >= 200_000 => Ok(dest.to_string_lossy().to_string()),
-        Ok(_) => Err(String::from("下载的安装包不完整，请重试")),
-        Err(error) => Err(format!("找不到下载的安装包: {error}")),
+        Ok(_) => Err(String::from(t("下载的安装包不完整，请重试"))),
+        Err(error) => Err(tf("找不到下载的安装包: {}", &[&error])),
     }
 }
 

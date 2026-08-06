@@ -18,7 +18,7 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
                 SftpPane::Remote => app.sftp_remote_selected.contains(name),
             };
             let subject = if selected && count > 1 {
-                format!("{count} 项")
+                tf("{} 项", &[&count])
             } else {
                 format!("«{name}»")
             };
@@ -26,7 +26,7 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
                 SftpPane::Local => "松开到右侧远程栏上传",
                 SftpPane::Remote => "松开到左侧本地栏下载",
             };
-            (format!("⠿ 拖拽 {subject} — {target}"), accent())
+            (tf("⠿ 拖拽 {} — {}", &[&subject, &target]), accent())
         }
         None if browser.status.starts_with("error") => (browser.status.clone(), danger()),
         None => (browser.status.clone(), muted_text()),
@@ -259,7 +259,7 @@ pub(crate) fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -
 pub(crate) fn sftp_rename_bar<'a>(from: &str, rename_to: &'a str) -> Element<'a, Message> {
     container(
         row![
-            text(format!("重命名 {from} →"))
+            text(tf("重命名 {} →", &[&from]))
                 .size(12)
                 .color(primary_text()),
             text_input("新名称", rename_to)
@@ -289,7 +289,7 @@ pub(crate) fn sftp_rename_bar<'a>(from: &str, rename_to: &'a str) -> Element<'a,
 pub(crate) fn sftp_delete_bar(name: &str) -> Element<'static, Message> {
     container(
         row![
-            text(format!("确认删除 {name}?"))
+            text(tf("确认删除 {}?", &[&name]))
                 .size(12)
                 .color(danger())
                 .width(Fill),
@@ -345,7 +345,7 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
 
     let title = row![
         text("传输队列").size(11).color(primary_text()),
-        text(format!("完成 {done} · 失败 {failed} · 停止 {cancelled} · 进行 {active}"))
+        text(tf("完成 {} · 失败 {} · 停止 {} · 进行 {}", &[&done, &failed, &cancelled, &active]))
             .size(10)
             .color(muted_text()),
         Space::new().width(Fill),

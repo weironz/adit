@@ -10,7 +10,7 @@ pub(crate) fn open_selected_mock_tab(app: &mut AditApp) {
                 app.terminal_context_menu = false;
                 sync_terminal_size(app);
                 app.last_error = None;
-                app.notice = String::from("已打开演示标签");
+                app.notice = String::from(t("已打开演示标签"));
             }
             Err(error) => app.last_error = Some(error.to_string()),
         }
@@ -44,7 +44,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
     };
     remember_recent_host(app, profile_id);
     let Some(profile) = app.manager.profile(profile_id).cloned() else {
-        app.last_error = Some(String::from("请选择要连接的会话配置"));
+        app.last_error = Some(String::from(t("请选择要连接的会话配置")));
         return;
     };
 
@@ -162,7 +162,7 @@ pub(crate) fn open_password_reprompt(app: &mut AditApp, profile_id: ProfileId, r
     // Save by default (SecureCRT-style), same as the normal connect dialog — so a
     // corrected password is remembered without the user re-ticking the box.
     app.remember_connection_password = true;
-    app.last_error = Some(format!("认证失败，请重新输入密码: {reason}"));
+    app.last_error = Some(tf("认证失败，请重新输入密码: {}", &[&reason]));
 }
 
 /// Drain a credential rejection and re-open the password dialog for it. Skipped
@@ -182,7 +182,7 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
         return;
     };
     let Some(profile) = app.manager.profile(profile_id).cloned() else {
-        app.last_error = Some(String::from("请选择要连接的会话配置"));
+        app.last_error = Some(String::from(t("请选择要连接的会话配置")));
         return;
     };
 
@@ -212,20 +212,20 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
             app.password = password;
             app.remember_connection_password = true;
             app.last_error = None;
-            app.notice = String::from("已载入已保存的密码");
+            app.notice = String::from(t("已载入已保存的密码"));
         }
         Ok(None) => {
             app.password.clear();
             // Auto-save whatever the user types, no opt-in needed (SecureCRT-style).
             app.remember_connection_password = true;
             app.last_error = None;
-            app.notice = String::from("请输入本次连接的密码或 passphrase");
+            app.notice = String::from(t("请输入本次连接的密码或 passphrase"));
         }
         Err(error) => {
             app.password.clear();
             app.remember_connection_password = true;
-            app.last_error = Some(format!("读取已保存的密码失败: {error}"));
-            app.notice = String::from("请输入本次连接的密码或 passphrase");
+            app.last_error = Some(tf("读取已保存的密码失败: {}", &[&error]));
+            app.notice = String::from(t("请输入本次连接的密码或 passphrase"));
         }
     }
 
@@ -311,7 +311,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
                 app.rdp_frame_generation = 0;
                 app.last_error = credential_warning
                     .as_ref()
-                    .map(|error| format!("保存密码失败: {error}"));
+                    .map(|error| tf("保存密码失败: {}", &[&error]));
                 app.notice = format!("RDP 会话已开始连接: {}", dialog.endpoint);
             }
             Err(error) => app.last_error = Some(error.to_string()),
@@ -344,7 +344,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
             app.manager.start_profile_tunnels(dialog.profile_id);
             app.last_error = credential_warning
                 .as_ref()
-                .map(|error| format!("保存密码失败: {error}"));
+                .map(|error| tf("保存密码失败: {}", &[&error]));
             app.notice = if credential_warning.is_some() {
                 format!("SSH 会话已开始连接: {}；系统凭据未保存", dialog.endpoint)
             } else {
@@ -359,7 +359,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
 
 pub(crate) fn retry_active_session(app: &mut AditApp) {
     let Some(summary) = app.manager.active_session_summary() else {
-        app.last_error = Some(String::from("没有可重连的活动标签"));
+        app.last_error = Some(String::from(t("没有可重连的活动标签")));
         return;
     };
 
@@ -367,7 +367,7 @@ pub(crate) fn retry_active_session(app: &mut AditApp) {
         summary.status,
         SessionStatus::Error | SessionStatus::Disconnected
     ) {
-        app.notice = String::from("当前会话仍在连接或已连接，无需重连");
+        app.notice = String::from(t("当前会话仍在连接或已连接，无需重连"));
         return;
     }
 
@@ -401,12 +401,12 @@ pub(crate) fn disconnect_active(app: &mut AditApp) {
         match app.manager.disconnect(session_id) {
             Ok(()) => {
                 app.last_error = None;
-                app.notice = String::from("已请求断开当前会话");
+                app.notice = String::from(t("已请求断开当前会话"));
             }
             Err(error) => app.last_error = Some(error.to_string()),
         }
     } else {
-        app.last_error = Some(String::from("没有活动会话"));
+        app.last_error = Some(String::from(t("没有活动会话")));
     }
 }
 
@@ -640,7 +640,7 @@ pub(crate) fn perform_paste(app: &mut AditApp, contents: &str, bracketed: bool) 
         bytes = wrapped;
     }
     send_terminal_bytes(app, bytes);
-    app.notice = String::from("已粘贴到当前终端");
+    app.notice = String::from(t("已粘贴到当前终端"));
 }
 
 pub(crate) fn search_input_id() -> iced::advanced::widget::Id {
@@ -853,9 +853,9 @@ pub(crate) fn apply_terminal_scroll(app: &mut AditApp, action: TerminalScrollAct
         // The selection is anchored in absolute scrollback rows, so scrolling no
         // longer invalidates it — keep it (and let a drag extend through a scroll).
         app.notice = if next == 0 {
-            String::from("终端已回到底部")
+            String::from(t("终端已回到底部"))
         } else {
-            format!("终端历史: 距底部 {next} 行")
+            tf("终端历史: 距底部 {} 行", &[&next])
         };
     }
 }
@@ -1344,7 +1344,7 @@ pub(crate) fn clear_active_terminal(app: &mut AditApp) {
             app.terminal_selection = None;
             app.terminal_context_menu = false;
             app.last_error = None;
-            app.notice = String::from("当前终端已清屏");
+            app.notice = String::from(t("当前终端已清屏"));
         }
         Err(error) => app.last_error = Some(error.to_string()),
     }
@@ -1352,7 +1352,7 @@ pub(crate) fn clear_active_terminal(app: &mut AditApp) {
 
 pub(crate) fn toggle_active_logging(app: &mut AditApp) {
     let Some(summary) = app.manager.active_session_summary() else {
-        app.last_error = Some(String::from("没有活动会话"));
+        app.last_error = Some(String::from(t("没有活动会话")));
         return;
     };
 
@@ -1368,7 +1368,7 @@ pub(crate) fn toggle_active_logging(app: &mut AditApp) {
                 app.last_error = None;
                 app.notice = format!("正在记录会话输出到: {}", path.display());
             }
-            Err(error) => app.last_error = Some(format!("开启会话日志失败: {error}")),
+            Err(error) => app.last_error = Some(tf("开启会话日志失败: {}", &[&error])),
         }
     }
 }
@@ -1448,7 +1448,7 @@ pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
     // status and only surface a spawn failure.
     match std::process::Command::new(opener).arg(&dir).spawn() {
         Ok(_) => app.notice = format!("已在文件管理器中打开: {}", dir.display()),
-        Err(error) => app.last_error = Some(format!("打开目录失败: {error}")),
+        Err(error) => app.last_error = Some(tf("打开目录失败: {}", &[&error])),
     }
 }
 
@@ -1472,7 +1472,7 @@ pub(crate) fn auto_log_connected_sessions(app: &mut AditApp) {
     for (session_id, title, endpoint) in targets {
         let name = render_log_name(&pattern, &title, &endpoint);
         if let Err(error) = app.manager.start_logging(session_id, &dir, &name, plaintext) {
-            app.last_error = Some(format!("自动日志开启失败: {error}"));
+            app.last_error = Some(tf("自动日志开启失败: {}", &[&error]));
         }
     }
 }
@@ -1482,7 +1482,7 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
         Ok(()) => {
             app.terminal_size = TerminalSize::new(cols, rows);
             app.last_error = None;
-            app.notice = format!("当前终端尺寸已设置为 {cols}x{rows}");
+            app.notice = tf("当前终端尺寸已设置为 {}x{}", &[&cols, &rows]);
         }
         Err(error) => app.last_error = Some(error.to_string()),
     }
@@ -1817,7 +1817,7 @@ pub(crate) fn tile_all_sessions(app: &mut AditApp, mode: TileMode) {
         .take(MAX_PANES)
         .collect();
     if ids.len() < 2 {
-        app.notice = String::from("至少要两个会话才能平铺（先多连接/打开几个会话）");
+        app.notice = String::from(t("至少要两个会话才能平铺（先多连接/打开几个会话）"));
         return;
     }
 
@@ -1850,14 +1850,14 @@ pub(crate) fn untile_sessions(app: &mut AditApp) {
     app.terminal_scroll_offset = 0;
     app.terminal_selection = None;
     sync_terminal_size(app);
-    app.notice = String::from("已合并为单标签视图");
+    app.notice = String::from(t("已合并为单标签视图"));
 }
 
 pub(crate) fn split_pane(app: &mut AditApp) {
     // RDP is a full-surface graphical session and isn't rendered inside a tile, so
     // it can't participate in split panes.
     if app.panes.is_empty() && app.manager.active_is_rdp() {
-        app.last_error = Some(String::from("RDP 会话不支持分屏"));
+        app.last_error = Some(String::from(t("RDP 会话不支持分屏")));
         return;
     }
 
@@ -1870,14 +1870,14 @@ pub(crate) fn split_pane(app: &mut AditApp) {
                 app.focused_pane = 0;
             }
             None => {
-                app.last_error = Some(String::from("请先连接一个会话再分屏"));
+                app.last_error = Some(String::from(t("请先连接一个会话再分屏")));
                 return;
             }
         }
     }
 
     if app.panes.len() >= MAX_PANES {
-        app.notice = format!("最多同时分屏 {MAX_PANES} 个终端");
+        app.notice = tf("最多同时分屏 {} 个终端", &[&MAX_PANES]);
         return;
     }
 
@@ -1893,7 +1893,7 @@ pub(crate) fn split_pane(app: &mut AditApp) {
     let Some(session_id) = candidate else {
         app.panes.clear();
         app.focused_pane = 0;
-        app.notice = String::from("没有更多会话可分屏（先在侧栏连接另一个会话）");
+        app.notice = String::from(t("没有更多会话可分屏（先在侧栏连接另一个会话）"));
         return;
     };
 
@@ -2251,7 +2251,7 @@ pub(crate) fn persist_settings_if_changed(app: &mut AditApp) {
         return;
     }
     if let Err(error) = app.settings_store.save(&current) {
-        app.last_error = Some(format!("保存设置失败: {error}"));
+        app.last_error = Some(tf("保存设置失败: {}", &[&error]));
     }
     // Update the baseline regardless of outcome so a failing write does not
     // retry on every frame.

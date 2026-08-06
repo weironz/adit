@@ -212,7 +212,7 @@ pub(crate) fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
     let status = if app.search_query.is_empty() {
         String::new()
     } else if count == 0 {
-        String::from("无匹配")
+        String::from(t("无匹配"))
     } else {
         format!("{}/{}", app.search_index.map(|i| i + 1).unwrap_or(0), count)
     };
@@ -359,7 +359,7 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
     let title = summary
         .as_ref()
         .map(|summary| summary.title.clone())
-        .unwrap_or_else(|| String::from("会话"));
+        .unwrap_or_else(|| String::from(t("会话")));
     let status = summary
         .map(|summary| summary.status)
         .unwrap_or(SessionStatus::Disconnected);
@@ -939,7 +939,7 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
         let reach = app.manager.live_session_count();
         left = left
             .push(text("⇶").size(12).color(accent()))
-            .push(text(format!("广播 ×{reach}")).size(11).color(accent()));
+            .push(text(tf("广播 ×{}", &[&reach])).size(11).color(accent()));
     }
     left = left.push(text(status).size(12).color(muted_text()));
 
