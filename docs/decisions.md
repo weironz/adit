@@ -84,8 +84,11 @@ and snapshot types.
 a *snapshot* it can hand to `iced` widgets, plus split panes and per-session viewports.
 Taking only the parser kept the boundary clean.
 
-**Cost.** We own the emulator's gaps: no reflow on resize, no DCS/Sixel, no combining
-marks. See the limitations table in [features.md](features.md).
+**Cost.** We own the emulator's gaps: no DCS/Sixel, no combining marks, no charset
+designation. Reflow on resize was on that list and has since been built — narrowing
+re-wraps every logical line, and the selection and scroll position are re-anchored
+through `LogicalAnchor` across the renumbering a reflow causes. The current list is
+under [Known gaps](features.md#known-gaps).
 
 ## 4. RDP lives in a separate workspace *and* a separate process
 
@@ -180,6 +183,19 @@ later without a format change; only that would make the store genuinely secret.
 **Cost.** Bandwidth, and a message cap that must accommodate a full 8192×8192 RGBA frame
 (288 MiB). Marked `TODO(perf)` in `session.rs`.
 
+**Where it got to.** The deferral was lifted for the path that carries most traffic, and
+only that one. **EGFX** sessions now ship changed regions: `egfx.rs` keeps up to 16 dirty
+rects apart rather than unioning them (`MAX_DIRTY_RECTS`), merging a pair only when the
+merge costs no extra pixels — so a progressive frame's hundreds of adjacent 64×64 tiles
+still collapse into strips, while a blinking cursor and a clock in opposite corners stay
+two small rects instead of one spanning the screen. Both failure modes were measured:
+one rect stretched around everything sent most of the screen for a few hundred changed
+pixels, and an unbounded list sent a full repaint as ~900 separate messages whose headers
+cost more than the pixels saved. The **legacy, non-EGFX** path is untouched —
+`full_frame_tile` still sends the whole framebuffer per update, and the `TODO(perf)` and
+the 288 MiB cap both remain for it. The wire format needed no change, exactly as this
+entry predicted.
+
 ## 10. The terminal selection is anchored in absolute scrollback rows
 
 **Decision.** Store selections as absolute row indices, mapping to viewport rows only at
@@ -235,8 +251,13 @@ the UI thread that is indistinguishable from a hang, and was a real "Not Respond
 report. (Process spawning has the same hazard — the RDP helper is spawned off-thread for
 the same reason.)
 
-**Known gap.** The *synchronous* `save_catalog` and `SettingsStore::save` are still plain
-non-atomic writes. See [features.md](features.md#known-gaps).
+**Closed since.** The *synchronous* `save_catalog` and `SettingsStore::save` were plain
+non-atomic writes for a while, and were a listed known gap. Both go through
+`write_atomic` (temp + rename) now, joining the credential store's own temp+rename in
+`credentials.rs`, so `profiles.json`, `settings.json` and `credentials.json` are all
+written atomically however they are saved. Only the *off-thread* half — serialize on the
+caller, hand the bytes to the writer thread, coalesce bursts — is still exclusive to
+`save_catalog_async`.
 
 ## 15. More protocols than SSH — *reversal*
 

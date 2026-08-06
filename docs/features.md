@@ -12,13 +12,20 @@ Known gaps are listed honestly at the [end](#known-gaps).
 | Protocol | Transport | Notes |
 |---|---|---|
 | **SSH** | `russh` | The main path: PTY shell, SFTP, tunnels, jump hosts |
+| **SFTP** | `russh` | An `sftp>` prompt on its own, without opening a shell first |
 | **Local shell** | `portable-pty` (ConPTY on Windows) | Any program; defaults to the system shell |
 | **Serial** | `serialport` | Port in the host field, baud in the identity field |
 | **Telnet** | raw TCP (RFC 854) | For switches, IPMI and console servers. Unencrypted, no client credential |
 | **RDP** | IronRDP, out-of-process helper | Graphical surface, not a VT terminal |
 
-All four terminal protocols share one event protocol, so the session layer treats them
-uniformly. RDP is the exception and carries a framebuffer instead.
+The four terminal protocols — SSH, local shell, serial, Telnet — share one event
+protocol, so the session layer treats them uniformly. The other two are the exceptions:
+RDP carries a framebuffer instead, and **SFTP** is a *starting point* rather than a
+separate transport — the same connection SSH uses, opened straight onto the
+[command-line `sftp>` tab](#sftp) because reaching a host's files should not require
+opening a shell you did not want. It carries no byte stream to drive a PTY, so it is
+built on its own path (`SessionManager::open_sftp_session`) rather than bent into the
+live-shell shape.
 
 **Telnet** negotiates options reactively — it opens with silence and answers what the
 device offers, which keeps it out of the states where two implementations can negotiate
@@ -118,6 +125,21 @@ remains, see [Known gaps](#known-gaps)).
 **Scrollback search** (Ctrl+Shift+F) highlights all matches, steps with wraparound,
 auto-scrolls to the current hit, and shows an `n/total` counter.
 
+**Keyword highlighting** colours output the server sent *uncoloured* — SecureCRT's
+feature of the same name. Nine rules ship (`# ` and `//` comment lines, quoted strings,
+`ERROR`/`FATAL`/`CRITICAL`, `WARN`/`WARNING`, URLs, IPv4 addresses, code keywords,
+numbers), all on by default and each switchable under 外观. The rule that shapes the
+implementation is that a cell the server coloured is **never** repainted: server colour
+classifies things the client cannot reconstruct (blue is a directory, red an archive,
+green and red the two sides of a diff), so only cells still at `Color::Default` are
+eligible, a match straddling both emits spans for the uncoloured runs alone, and the
+alternate screen is suppressed wholesale — a rule firing inside `vim`'s status line is
+noise at best. Colours are ANSI palette indices, not RGB, so a highlight follows
+whichever scheme is selected instead of fighting it; first rule in list order wins an
+overlap. Only deviations from the shipped defaults are persisted, so changing a default
+later still reaches everyone who never touched that rule. Design and the two conclusions
+it got wrong are in [keyword-highlighting.md](keyword-highlighting.md).
+
 **Appearance**: 6 monospace font presets, font size 9–28 px (Ctrl+wheel zooms), and 7
 colour schemes (Default, Dracula, One Dark, Nord, Gruvbox Dark, Solarized Dark/Light).
 A reverse-video block cursor blinks at 530 ms on the focused pane and holds solid while
@@ -144,9 +166,19 @@ a filename.
 `lcd`, `lpwd`, `get`, `put`, `mkdir`, `rmdir`, `rm`/`del`, `rename`/`mv`, `clear`,
 `help`, `exit`. Paths accept `~` and `..`; quoted paths keep spaces. Dropping a file onto
 the tab uploads it to the current remote directory. Line editing supports Backspace,
-Ctrl+C, and Ctrl+U. Because SFTP has no remote echo and no `chdir`, the shell owns its
-own echo and prompt, and `cd` is implemented as a listing whose success commits the
-directory — so an unreadable directory reports an error instead of silently "working".
+Ctrl+C, and Ctrl+U; **Tab completes** and **Up/Down recall history**. Tab completes a
+command name in first position and a path after that — local or remote depending on
+which argument of which command the cursor sits in (`lcd`/`lls` and `put`'s first
+argument are local, `get`'s second is; everything else is remote) — inserting only the
+longest prefix every candidate agrees on, listing the candidates when that would add
+nothing, and appending a `/` on a directory or a space on a settled single match. A
+remote completion is a real `ListDir` round trip, so the splice point is remembered
+while it is in flight and abandoned if the line moved on underneath it. Up/Down keep
+the half-typed line as a draft, so walking forward returns it rather than an empty
+prompt, and a repeated command is not pushed twice. Because SFTP has no remote echo and
+no `chdir`, the shell owns its own echo and prompt, and `cd` is implemented as a listing
+whose success commits the directory — so an unreadable directory reports an error
+instead of silently "working".
 
 ## Port forwarding
 
@@ -244,7 +276,11 @@ optional plaintext mode that strips escape sequences for a human-readable log.
   settings, *and* credentials travel with it. Takes effect on next launch;
   `ADIT_CONFIG_DIR` overrides everything.
 - **In-app updater** — checks GitHub releases, compares semver, downloads and silently
-  launches the installer. Optional check on startup.
+  launches the installer, reinstalling in place at the current directory and scope so a
+  background update never leaves a second copy behind. Optional check on startup. It is
+  a **Windows** path: the asset is picked by the running architecture, so an ARM machine
+  takes the `_arm64` installer and everything else takes the x64 one. There are no
+  installers to pick on macOS or Linux.
 
 ## Cloud sync
 
@@ -291,11 +327,19 @@ original rather than a key (see [Known gaps](#known-gaps)).
 Verified shortcomings, so nobody has to rediscover them.
 
 ### Not implemented
-- **RDP**: the server cursor shape isn't drawn. Frame updates do carry a dirty rect, but
-  only **one**, grown to cover everything that changed — a blinking cursor in one corner
-  and a clock in another expand it to most of the screen, so what wastes bandwidth is
-  the coalescing rather than the absence of tracking. (H.264 *is* decoded — AVC420 and a
-  from-scratch AVC444 — so a host that negotiates AVC no longer renders black.) The clipboard is **text only** — no images, no file copy-paste (see
+- **RDP**: the server cursor shape isn't drawn — `ActiveStageOutput::PointerBitmap` is
+  dropped, so the pointer stays whatever the local one is. Dirty-rect tracking exists on
+  the **EGFX** path only. There it carries up to 16 rects kept apart rather than unioned
+  (`MAX_DIRTY_RECTS` in `egfx.rs`), merging a pair only when the merge is *free* — the
+  hundreds of adjacent 64×64 tiles of a progressive frame fold into strips at zero cost,
+  while a blinking cursor in one corner and a clock in another stay two small rects
+  instead of one covering most of the screen — and coalescing the cheapest pair only
+  once the list is full. The **legacy, non-EGFX** path has no tracking at all:
+  `full_frame_tile` in `session.rs` still ships the whole framebuffer as one tile per
+  update, which is what its `TODO(perf)` names and what the 288 MiB IPC message cap
+  exists to accommodate. (H.264 *is* decoded — AVC420 and a from-scratch AVC444 — so a
+  host that negotiates AVC no longer renders black.) The clipboard is **text only** —
+  no images, no file copy-paste (see
   [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
   because it pulls native Opus (needs CMake).
 - **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
@@ -320,12 +364,21 @@ Verified shortcomings, so nobody has to rediscover them.
   character by character whatever the server negotiated — no `AYT`/`BRK`/`IP` controls,
   and no encryption of any kind, including none for the password.
 - **Jump hosts reuse the target's single credential** — no per-hop authentication.
-- **SFTP shell**: no tab completion, and no history recall (the history is recorded but
-  unbound).
+- **SFTP shell**: the line editor is append-and-backspace only. Tab completion and
+  Up/Down history recall both work (see [SFTP](#sftp)), but there is no cursor movement
+  *within* the line — Left/Right and Home/End are swallowed with the rest of the escape
+  sequences, so a typo mid-path means backspacing to it — no word-wise kill, no
+  Ctrl+R history search, and the history lives only as long as the tab.
 - stderr is merged into stdout on the shell path.
-- macOS ships since v0.1.62 — CI builds and publishes both Apple Silicon and Intel dmgs
-  — but they are **unsigned**, as is the Windows installer; code signing is pending on
-  both platforms. The RDP helper is Windows-only, so macOS builds are SSH/SFTP only.
+- **Nothing that ships is signed.** One `release.yml` dispatch publishes six kinds of
+  artifact — the Windows x64 installer, a Windows-on-ARM (aarch64) installer built
+  natively on a `windows-11-arm` runner, Apple Silicon and Intel dmgs (macOS ships since
+  v0.1.62), and `.deb` + `.rpm` packages for both x86_64 and aarch64 Linux — and every
+  one of them is **unsigned and un-notarised** — no Authenticode on the installers, no
+  Developer ID or notarisation on the dmgs (Gatekeeper blocks a double-click), no GPG on
+  the deb/rpm. Code signing is pending on all three platforms. The RDP helper is
+  Windows-only (`adit-rdp-host.exe`, located by name), so the macOS and Linux builds are
+  everything *except* RDP.
 
 ### Cosmetic / cleanup
 - `adit-ui` is ~17k lines. It is no longer one file — `update_loop`, `dialogs`,
