@@ -1,9 +1,19 @@
 //! GitHub Gist.
 //!
-//! Chosen as the first provider because it needs no OAuth application: a
-//! personal access token with the `gist` scope is the whole setup, and GitHub
-//! keeps every revision by itself, so "restore an older version" costs nothing
-//! to implement.
+//! Chosen as the first provider because it needed no OAuth application at all:
+//! a personal access token with the `gist` scope was the whole setup, and
+//! GitHub keeps every revision by itself, so "restore an older version" costs
+//! nothing to implement.
+//!
+//! **Two ways to get the token, and both are kept.** The normal one is now the
+//! device flow in [`super::device`] — a code the user types into their browser,
+//! no token minting by hand and no chance of pasting one with the wrong scope.
+//! The manual path stays because the browser flow is the part most likely to be
+//! unavailable: a locked-down corporate network can block `github.com/login`
+//! outright, and an operator who already has a fine-grained token should not be
+//! made to authorise an OAuth app to use it. This backend cannot tell the two
+//! apart and does not try — a token is a token, both land in the same sealed
+//! credential slot, and [`GistConfig::token`] is opaque to everything here.
 //!
 //! A **secret** gist is not public, but it is also not private — anyone with
 //! the URL can read it. That is fine for the session list and settings, and it
@@ -11,17 +21,40 @@
 
 use serde::Deserialize;
 
+use super::device::DeviceFlowConfig;
 use super::{agent, remote_error};
 use crate::{RemoteRevision, SyncBackend, SyncDocument, SyncError};
 
 const PROVIDER: &str = "GitHub Gist";
+
+/// The device-flow authorisation for GitHub.
+///
+/// `gist` is the whole ask: it grants read and write over the user's gists and
+/// nothing else — not repositories, not their profile. A narrower scope does
+/// not exist, and a broader one would be asking for reach this backend never
+/// uses.
+#[must_use]
+pub fn device_flow_config(client_id: String) -> DeviceFlowConfig {
+    DeviceFlowConfig {
+        provider: PROVIDER,
+        client_id,
+        // Note these are `github.com`, not `api.github.com` — the OAuth
+        // endpoints live on the web host, and pointing them at the API host
+        // yields a 404 that reads like a broken client id.
+        device_code_url: "https://github.com/login/device/code",
+        token_url: "https://github.com/login/oauth/access_token",
+        scope: "gist",
+    }
+}
+
 /// The file inside the gist. Fixed so a user can find it, and so a gist that
 /// also holds other content keeps working.
 const FILE_NAME: &str = "adit-sync.json";
 
 #[derive(Debug, Clone)]
 pub struct GistConfig {
-    /// Personal access token with the `gist` scope.
+    /// A token carrying the `gist` scope: either one the device flow minted or
+    /// one the user pasted in by hand. Deliberately indistinguishable here.
     pub token: String,
     /// Existing gist id, or `None` to create one on the first push.
     pub gist_id: Option<String>,

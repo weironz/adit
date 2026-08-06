@@ -2080,6 +2080,9 @@ pub(crate) fn sync_client_id(app: &AditApp, provider: adit_storage::SyncProvider
         }
         SyncProvider::OneDrive => client_id(OAuthProvider::OneDrive, &app.sync.onedrive_client_id),
         SyncProvider::Dropbox => client_id(OAuthProvider::Dropbox, &app.sync.dropbox_client_id),
+        // GitHub authorises through the device flow rather than the loopback
+        // one, but its client id is resolved exactly the same way.
+        SyncProvider::Gist => client_id(OAuthProvider::GitHub, &app.sync.github_client_id),
         _ => String::new(),
     }
 }

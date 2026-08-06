@@ -514,6 +514,10 @@ pub struct SyncSettings {
     pub onedrive_client_id: String,
     #[serde(default)]
     pub dropbox_client_id: String,
+    /// GitHub's, for the Gist backend's device flow. Same rules as the three
+    /// above — public identifier, empty means "use the built-in default".
+    #[serde(default)]
+    pub github_client_id: String,
     /// Google's client secret, when the user brings their own client id.
     ///
     /// Plaintext here on purpose. Google's own documentation concedes a
@@ -550,6 +554,7 @@ impl Default for SyncSettings {
             google_client_id: String::new(),
             onedrive_client_id: String::new(),
             dropbox_client_id: String::new(),
+            github_client_id: String::new(),
             google_client_secret: String::new(),
         }
     }

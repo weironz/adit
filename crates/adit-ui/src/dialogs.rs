@@ -1697,8 +1697,80 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
             );
         }
         SyncProvider::Gist => {
+            let connected = app.sync_secret_saved;
+            // The device flow needs a registered client id like any other
+            // OAuth app; without one only the manual token path is available,
+            // and the panel says so rather than offering a dead button.
+            let unconfigured = sync_client_id(app, SyncProvider::Gist).trim().is_empty();
+            let status_line = if app.sync_device_prompt.is_some() {
+                "正在等待你在浏览器中确认…"
+            } else if app.sync_connecting {
+                "正在向 GitHub 申请设备码…"
+            } else if unconfigured {
+                "此构建未内置 GitHub 的 client id — 可填写自己的，或直接粘贴令牌"
+            } else if connected {
+                "已连接"
+            } else {
+                "尚未连接"
+            };
+
+            let mut connect =
+                button(text(t(if connected { "重新连接账号" } else { "连接账号" })).size(12))
+                    .padding([5, 14])
+                    .style(|_theme, status| primary_button_style(status));
+            if !app.sync_connecting && !unconfigured {
+                connect = connect.on_press(Message::SyncConnectAccount);
+            }
+
+            body = body.push(
+                row![
+                    text(t(status_line)).size(11).color(muted_text()),
+                    Space::new().width(Fill),
+                    connect,
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+
+            // The user code, while one is live. This is the entire interaction
+            // point of a device flow — there is no redirect back — so it is
+            // shown large, in monospace (GitHub's codes mix letters and digits,
+            // where 0/O and 1/I have to be told apart), and next to a copy
+            // button so it need not be transcribed at all.
+            if let Some(prompt) = &app.sync_device_prompt {
+                body = body.push(
+                    container(
+                        column![
+                            text(t("用户码")).size(10).color(muted_text()),
+                            row![
+                                text(prompt.user_code.clone())
+                                    .size(24)
+                                    .font(Font::MONOSPACE)
+                                    .color(primary_text()),
+                                Space::new().width(Fill),
+                                button(text(t("复制")).size(11))
+                                    .padding([4, 12])
+                                    .style(|_theme, status| secondary_button_style(status))
+                                    .on_press(Message::SyncCopyUserCode),
+                            ]
+                            .spacing(8)
+                            .align_y(Alignment::Center),
+                            text(tf(
+                                "在浏览器中打开 {} 并输入以上用户码。完成后本页会自动继续。",
+                                &[&prompt.verification_uri]
+                            ))
+                            .size(10)
+                            .color(muted_text()),
+                        ]
+                        .spacing(6),
+                    )
+                    .width(Fill)
+                    .padding([10, 12])
+                    .style(|_theme| settings_card_style(true)),
+                );
+            }
+
             body = body
-                .push(secret_field("访问令牌", app.sync_secret_saved))
                 .push(field(
                     "Gist ID",
                     &sync.gist_id,
@@ -1706,10 +1778,26 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                     SyncField::GistId,
                 ))
                 .push(
-                    text(t("需要一个带 gist 权限的 GitHub 个人访问令牌。GitHub 自带版本历史，可在网页端回滚。"))
+                    text(t("授权只申请 gist 权限，看不到你的仓库。GitHub 自带版本历史，可在网页端回滚。"))
                         .size(10)
                         .color(muted_text()),
-                );
+                )
+                // The manual path, kept deliberately. A corporate network can
+                // block github.com/login outright, and someone who already
+                // holds a fine-grained token should not have to authorise an
+                // OAuth app to use it.
+                .push(
+                    text(t("浏览器不可用时，也可以直接粘贴一个带 gist 权限的个人访问令牌："))
+                        .size(10)
+                        .color(muted_text()),
+                )
+                .push(secret_field("访问令牌", app.sync_secret_saved))
+                .push(field(
+                    "client id",
+                    &sync.github_client_id,
+                    "留空则用本应用内置的",
+                    SyncField::GitHubClientId,
+                ));
         }
         SyncProvider::WebDav => {
             body = body

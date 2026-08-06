@@ -1208,6 +1208,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sync_secret_saved = sync_secret_name(provider)
                 .and_then(|name| app.credential_store.load_secret(name).ok().flatten())
                 .is_some_and(|secret| !secret.is_empty());
+            // A user code belongs to the provider that minted it; leaving it up
+            // would show a GitHub code on the Dropbox panel.
+            app.sync_device_prompt = None;
             app.sync_status.clear();
             app.sync_conflicts.clear();
             persist_settings_if_changed(app);
@@ -1225,6 +1228,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 SyncField::GoogleClientId => app.sync.google_client_id = value,
                 SyncField::OneDriveClientId => app.sync.onedrive_client_id = value,
                 SyncField::DropboxClientId => app.sync.dropbox_client_id = value,
+                SyncField::GitHubClientId => app.sync.github_client_id = value,
                 SyncField::GoogleClientSecret => app.sync.google_client_secret = value,
             }
             persist_settings_if_changed(app);
@@ -1239,6 +1243,37 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SyncConnectAccount => {
             if app.sync_connecting {
                 return Task::none();
+            }
+            // GitHub takes the device flow instead of the loopback one, and it
+            // starts with a network round trip rather than a bound socket — so
+            // there is nothing to open a browser at yet. The browser waits for
+            // `SyncDeviceCodeReady`, which is the first moment a user code
+            // exists to show alongside it.
+            if matches!(app.sync.provider, adit_storage::SyncProvider::Gist) {
+                let id = sync_client_id(app, app.sync.provider);
+                if id.trim().is_empty() {
+                    app.sync_status = String::from(t(
+                        "此构建没有 GitHub 的 client id — 可在下方填写自己的，或直接粘贴个人访问令牌",
+                    ));
+                    return Task::none();
+                }
+                app.sync_connecting = true;
+                app.sync_device_prompt = None;
+                app.sync_status = String::from(t("正在向 GitHub 申请设备码…"));
+                return Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            adit_sync::backend::device::begin(
+                                adit_sync::backend::gist::device_flow_config(id),
+                            )
+                            .map(Box::new)
+                            .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()))
+                    },
+                    Message::SyncDeviceCodeReady,
+                );
             }
             let Some(config) = sync_oauth_config(app, app.sync.provider) else {
                 app.sync_status =
@@ -1271,8 +1306,56 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 Err(error) => app.sync_status = tf("无法开始授权: {}", &[&error]),
             }
         }
+        Message::SyncDeviceCodeReady(result) => {
+            match result {
+                Ok(auth) => {
+                    // Show the code before opening the browser. The browser
+                    // takes the foreground, and a user who lands on GitHub's
+                    // "enter code" page having never seen the code has nothing
+                    // to type — the code must already be on screen behind it.
+                    app.sync_device_prompt = Some(DeviceCodePrompt {
+                        user_code: auth.user_code.clone(),
+                        verification_uri: auth.verification_uri.clone(),
+                    });
+                    app.sync_status = String::from(t("请在浏览器中输入下面的用户码完成授权"));
+                    // Opened here rather than in the worker for the same reason
+                    // the loopback flow does it here: spawning a browser can
+                    // block on Defender, and this is the handler that already
+                    // owns the sequencing.
+                    let url = auth.verification_uri.clone();
+                    open_url(app, &url);
+
+                    return Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                (*auth)
+                                    .poll_until_authorized()
+                                    .map_err(|error| error.to_string())
+                            })
+                            .await
+                            .unwrap_or_else(|error| Err(error.to_string()))
+                        },
+                        Message::SyncAuthFinished,
+                    );
+                }
+                Err(error) => {
+                    app.sync_connecting = false;
+                    app.sync_status = tf("无法开始授权: {}", &[&error]);
+                }
+            }
+        }
+        Message::SyncCopyUserCode => {
+            if let Some(prompt) = &app.sync_device_prompt {
+                let code = prompt.user_code.clone();
+                app.sync_status = String::from(t("已复制用户码"));
+                return clipboard::write(code);
+            }
+        }
         Message::SyncAuthFinished(result) => {
             app.sync_connecting = false;
+            // The code is spent either way — it cannot be redeemed twice, so
+            // leaving it on screen would only invite someone to try.
+            app.sync_device_prompt = None;
             match result {
                 Ok(token) if !token.trim().is_empty() => {
                     let Some(name) = sync_secret_name(app.sync.provider) else {
