@@ -98,8 +98,23 @@ anchor comes back on a different line from the text it named.
   the gate (build + clippy + test), builds both binaries, packages the Inno Setup
   installer, commits + tags the bump, and creates the GitHub Release — so what ships is
   exactly what a clean, gated checkout produces, never a developer's local artifacts.
-  A red gate produces no installer. Watch it with `gh run watch`. There is deliberately
-  **no `just release`** (that used to push a tag and tangle the trigger up with the
+  A red gate produces no installer. Watch it with `gh run watch`.
+
+  **Confirm a release by its artefact, never by an exit code:**
+
+  ```bash
+  gh release view v0.1.66
+  ```
+
+  Two ways that bites, both paid for on 0.1.66. First, `gh run watch --exit-status`
+  reports through a *pipe* as whatever the pipe's last command returned — `| tail`
+  turns any failure into a clean 0. Second, the run can genuinely pass its gate and
+  still publish nothing: the workflow commits the version bump and pushes at the very
+  end, so **anything pushed to `main` after the run starts makes that push a
+  non-fast-forward and fails the release** with build, clippy and tests all green
+  behind it. Do not push to `main` — not even docs — while a release is in flight.
+
+  There is deliberately **no `just release`** (that used to push a tag and tangle the trigger up with the
   build). `just installer` / `just deploy` still build locally for smoke-testing, but
   never publish.
 - **Secrets never go in the repo.** Passwords/keys live in the encrypted credential
