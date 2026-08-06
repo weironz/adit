@@ -231,11 +231,33 @@ optional plaintext mode that strips escape sequences for a human-readable log.
 - **In-app updater** — checks GitHub releases, compares semver, downloads and silently
   launches the installer. Optional check on startup.
 
+## Cloud sync
+
+Sessions, groups and settings merged across machines, behind six providers: **GitHub
+Gist**, **WebDAV**, **S3-compatible** storage, **Google Drive**, **OneDrive** and
+**Dropbox**. Saved passwords travel too, opt-in, and only as the sealed blob — the
+passphrase never leaves the machine.
+
+The merge runs per session, keyed by UUID and measured against the last catalog the
+provider confirmed, so a deletion made on one machine propagates instead of being
+resurrected by a union. Design, provider quirks and the one-time OAuth registrations are
+in [cloud-sync.md](cloud-sync.md), which is worth reading before touching any of it: two
+of its rules exist because breaking them destroyed a real 152-session catalog.
+
+## Settings
+
+One page, reached from **File → 设置…**, with a category rail: 应用 / 外观 / 终端 /
+日志 / 同步与云. It replaced three separate dialogs, which between them meant three
+places to look for one setting.
+
+**Language** — Chinese or English, switched under 应用 and applied without a restart.
+Lookup is keyed by the Chinese source string, so a missing translation shows the
+original rather than a key (see [Known gaps](#known-gaps)).
+
 ## Keyboard shortcuts
 
 | Keys | Action |
 |---|---|
-| `Alt+R` | Jump to the toolbar's host box |
 | `Alt+I` | Jump to the sidebar filter (reveals the sidebar if hidden) |
 | `Alt+P` | Open a command-line SFTP tab for the active session |
 | `Ctrl+Shift+F` | Scrollback search (`Esc` closes) |
@@ -254,9 +276,9 @@ optional plaintext mode that strips escape sequences for a human-readable log.
 Verified shortcomings, so nobody has to rediscover them.
 
 ### Not implemented
-- **RDP**: no H.264 decoder (hosts that negotiate AVC render black), the server cursor
-  shape isn't drawn, and updates always ship the **whole** framebuffer rather than dirty
-  rectangles. The clipboard is **text only** — no images, no file copy-paste (see
+- **RDP**: the server cursor shape isn't drawn, and updates always ship the **whole**
+  framebuffer rather than dirty rectangles. (H.264 *is* decoded — AVC420 and a
+  from-scratch AVC444 — so a host that negotiates AVC no longer renders black.) The clipboard is **text only** — no images, no file copy-paste (see
   [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
   because it pulls native Opus (needs CMake).
 - **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
@@ -284,4 +306,11 @@ Verified shortcomings, so nobody has to rediscover them.
   both platforms. The RDP helper is Windows-only, so macOS builds are SSH/SFTP only.
 
 ### Cosmetic / cleanup
-- `adit-ui` is a single ~12.7k-line file; navigating it is the main friction in the repo.
+- `adit-ui` is ~17k lines. It is no longer one file — `update_loop`, `dialogs`,
+  `session_ops`, `workspace`, `hosts`, `sidebar`, `profiles`, `sftp`, `style` and `i18n`
+  are separate modules — but `lib.rs` and `update_loop.rs` are still ~2.3k lines each,
+  because iced wants a single `Message` enum and a single `update`.
+- **The English translation is partial.** Menus, the settings page, the dialogs and the
+  runtime notices are covered (~330 strings); anything missing falls back to the Chinese
+  original rather than showing a key, so a gap is invisible until you meet it. Adding a
+  translation is one row in `i18n.rs` and touches no call site.

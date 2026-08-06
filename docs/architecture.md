@@ -8,6 +8,7 @@ How Adit is actually put together today. For *why* the shape is what it is, see
 ```
 adit-app        binary entrypoint — iced runtime, window/exe icon, /STACK link arg
  └─ adit-ui     the entire GUI: screens, terminal renderer, input, theme, dialogs
+     ├─ adit-sync      cloud sync: six provider backends, three-way merge, orchestration
      └─ adit-session   session manager: lifecycle, event pump, SFTP/tunnel/log state
          ├─ adit-ssh       russh: auth, host keys, PTY shell, SFTP, tunnels, local/serial
          ├─ adit-storage   profiles, settings, encrypted credentials, imports
@@ -18,10 +19,12 @@ adit-domain     shared ids, profile/auth models, enums  (used by everything)
 adit-rdp        SEPARATE WORKSPACE → adit-rdp-host.exe   (IronRDP; talks IPC)
 ```
 
-`adit-ui` is one large file (~12.7k lines) holding the iced `Message`/`update`/`view`
-triple. `adit-session` and `adit-ssh` are likewise single large modules. This is
-deliberate for `update`/`view` (iced's model wants one message enum) but is the main
-source of navigation friction in the repo.
+`adit-ui` is ~17k lines across a dozen modules: `lib.rs` holds the `Message` enum and
+the app struct, with `update_loop`, `dialogs`, `session_ops`, `workspace`, `hosts`,
+`sidebar`, `profiles`, `sftp`, `style` and `i18n` beside it. The single message enum is
+deliberate — iced's model wants one — and it is why `lib.rs` and `update_loop.rs` stay
+large however the rest is divided. `adit-session` and `adit-ssh` are still single large
+modules.
 
 **`adit-rdp` is excluded from the root workspace** and has its own `Cargo.lock`, because
 IronRDP's `picky` exact-pins pre-release RustCrypto crates that conflict irreconcilably
@@ -120,6 +123,7 @@ Windows).
 | `profiles.json` | Profiles + group order (`version: 2`) |
 | `settings.json` | UI/app preferences (`version: 1`) |
 | `credentials.json` | Passwords/passphrases, **encrypted** (`version: 1`) |
+| `sync-state.json` | The last catalog a provider confirmed — the ancestor every merge is measured against ([cloud-sync.md](cloud-sync.md)) |
 | `logs/`, `downloads/` | Session transcripts, SFTP downloads |
 
 Those three files are what "relocate the config directory" copies — pointing it at a

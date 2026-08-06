@@ -461,9 +461,6 @@ pub struct SyncSettings {
     /// it is the user's call, not ours.
     #[serde(default)]
     pub include_credentials: bool,
-    /// Sync automatically when sessions change, rather than only on demand.
-    #[serde(default)]
-    pub auto_sync: bool,
     /// OAuth client ids, when the user supplies their own instead of the one
     /// compiled into this build. Empty means "use the built-in default".
     ///
@@ -509,7 +506,6 @@ impl Default for SyncSettings {
             s3_access_key: String::new(),
             s3_path_style: true,
             include_credentials: false,
-            auto_sync: false,
             google_client_id: String::new(),
             onedrive_client_id: String::new(),
             dropbox_client_id: String::new(),
