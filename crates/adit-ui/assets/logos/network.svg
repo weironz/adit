@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!--
+    Network: a hub and three nodes, white on this key's teal.
+
+    Three satellites rather than four. Four corners make an X through the
+    middle, and at 26px the links and the hub merge into a solid lozenge; three
+    at 120° apart keep visible teal between every pair of arms.
+
+    Satellites sit on a circle of radius ~44 about the centre:
+      top          (64,20)   exactly 44 up
+      bottom-left  (26,86)   hypot(38,22) = 43.9
+      bottom-right (102,86)  hypot(38,22) = 43.9
+    Their outer edges reach 53 from centre at worst, inside the r=64 disc.
+
+    Links are drawn before the nodes so the round caps disappear underneath them
+    rather than showing as bumps on the far side.
+  -->
+  <circle cx="64" cy="64" r="64" fill="#108A7A"/>
+  <g stroke="#ffffff" stroke-width="7" stroke-linecap="round">
+    <line x1="64" y1="64" x2="64" y2="20"/>
+    <line x1="64" y1="64" x2="26" y2="86"/>
+    <line x1="64" y1="64" x2="102" y2="86"/>
+  </g>
+  <g fill="#ffffff">
+    <circle cx="64" cy="64" r="12"/>
+    <circle cx="64" cy="20" r="9"/>
+    <circle cx="26" cy="86" r="9"/>
+    <circle cx="102" cy="86" r="9"/>
+  </g>
+</svg>

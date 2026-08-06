@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!--
+    Server: three rack units, white on the slate this key already carries.
+
+    Not a brand, so it does not have to look like anything in particular — it
+    has to survive being 26px tall. That rules out a front panel full of detail
+    and leaves the one thing a rack reads as: stacked identical slabs.
+
+    White slabs on a slate disc rather than slate slabs on nothing, so the mark
+    keeps the coloured-tile-with-a-white-symbol shape it had as a glyph and
+    stays legible in both themes.
+
+    Layout: 3 units of h=18 with 8 between them = 70 tall, so y = 29, 55, 81 and
+    the block spans 29..99, centred on 64. Width x 26..102 puts the far corner
+    at hypot(38,38) = 53.7 from centre, inside the r=64 disc.
+
+    The LED and vents are punched in the disc colour rather than drawn in a
+    third colour: one fewer value to keep legible, and at this size a hole and a
+    dark mark are the same thing.
+  -->
+  <circle cx="64" cy="64" r="64" fill="#5A6478"/>
+  <g fill="#ffffff">
+    <rect x="26" y="29" width="76" height="18" rx="4"/>
+    <rect x="26" y="55" width="76" height="18" rx="4"/>
+    <rect x="26" y="81" width="76" height="18" rx="4"/>
+  </g>
+  <g fill="#5A6478">
+    <circle cx="37" cy="38" r="3.5"/>
+    <circle cx="37" cy="64" r="3.5"/>
+    <circle cx="37" cy="90" r="3.5"/>
+    <rect x="56" y="36" width="11" height="4" rx="2"/>
+    <rect x="71" y="36" width="11" height="4" rx="2"/>
+    <rect x="86" y="36" width="11" height="4" rx="2"/>
+    <rect x="56" y="62" width="11" height="4" rx="2"/>
+    <rect x="71" y="62" width="11" height="4" rx="2"/>
+    <rect x="86" y="62" width="11" height="4" rx="2"/>
+    <rect x="56" y="88" width="11" height="4" rx="2"/>
+    <rect x="71" y="88" width="11" height="4" rx="2"/>
+    <rect x="86" y="88" width="11" height="4" rx="2"/>
+  </g>
+</svg>

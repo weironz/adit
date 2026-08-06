@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!--
+    Red Hat: a fedora, which is what the name says and what the current mark is.
+
+    No disc behind it — a red hat on a red disc is one red blob. Red carries on
+    both themes unaided, the way the Windows squares do.
+
+    Three parts, drawn back to front so each one covers the last:
+      crown  a dome from y=26 to its own base at y=84, spanning x 34..94
+      band   x 36..92, y 66..80, in a darker red
+      brim   ellipse cx=64 cy=88, rx=60 ry=12, so its top edge is y=76
+
+    The brim is drawn last and swallows everything below y=76, which leaves the
+    band showing as a 10-unit stripe (~2px at the 26px this renders at). That
+    stripe is the whole reason this reads as a hat and not a mushroom, so it is
+    the first thing to check if the shape ever stops working: raise the brim and
+    the stripe closes up.
+
+    The band is inset to x 36..92 rather than the crown's nominal 34..94 because
+    the crown's sides are a cubic, not a vertical: at y=66 they have come in to
+    x≈34.9 and x≈93.1, and a band drawn to the nominal width would poke out past
+    the silhouette on both sides.
+
+    Mark spans y 26..100, centred on 64. It is deliberately near the edges of
+    the box: with no disc behind it the hat has only its own ink, and drawn any
+    smaller it reads as lighter than the filled discs beside it in the picker.
+  -->
+  <path d="M34 84 C34 42 47 26 64 26 C81 26 94 42 94 84 Z" fill="#EE0000"/>
+  <rect x="36" y="66" width="56" height="14" fill="#A30000"/>
+  <ellipse cx="64" cy="88" rx="60" ry="12" fill="#EE0000"/>
+</svg>

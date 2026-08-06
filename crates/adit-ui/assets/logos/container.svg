@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!--
+    Container: an isometric box, white on this key's blue.
+
+    A box drawn flat is a rectangle and reads as nothing. The three faces are
+    what make it a box, and at 26px the only way to tell them apart is value —
+    hence one white and two dimmed whites rather than three hues.
+
+    Seven points, all derived from half-width 40 and the two "shoulder" heights:
+      apex          (64,24)
+      left/right    (24,48) and (104,48)   shoulders, 24 below the apex
+      middle        (64,72)                where the three faces meet
+      left/right    (24,80) and (104,80)   shoulders + 32
+      base          (64,104)               middle + 32
+
+    The 32 is the same drop on all three verticals, which is what keeps the box
+    looking rigid; change one and the shape shears. Mark spans y 24..104 and
+    x 24..104, so the outermost point (24,48) is hypot(40,16) = 43 from centre.
+  -->
+  <circle cx="64" cy="64" r="64" fill="#2496ED"/>
+  <path d="M64 24 L104 48 L64 72 L24 48 Z" fill="#ffffff"/>
+  <path d="M104 48 L104 80 L64 104 L64 72 Z" fill="#ffffff" fill-opacity="0.88"/>
+  <path d="M24 48 L64 72 L64 104 L24 80 Z" fill="#ffffff" fill-opacity="0.66"/>
+</svg>

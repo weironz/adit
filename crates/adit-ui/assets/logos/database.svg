@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <!--
+    Database: the cylinder, white on this key's blue.
+
+    Built from a rect between two ellipses rather than one arc-terminated path,
+    because the two caps are the only places the shape is doing anything and
+    keeping them as ellipses makes rx/ry adjustable without re-deriving arc
+    flags.
+
+      rx = 34, so the body spans x 30..98
+      caps at cy = 36 and cy = 92, both ry = 12
+      body rect fills y 36..92, hiding the caps' inner halves
+
+    That leaves the mark at y 24..104 — centred on 64, matching its neighbours.
+    Far corner (30,92) is hypot(34,28) = 44 from centre, well inside r=64.
+
+    The top rim is stroked as a FULL ellipse (you see all the way round the open
+    end) while the band at y=66 is only the front half, drawn as an arc with
+    sweep-flag 0 — in SVG's y-down space that is the counter-clockwise route
+    from left to right, i.e. under the shape rather than over it. Flip that flag
+    and the band jumps to the back of the cylinder, where it looks like a crack.
+  -->
+  <circle cx="64" cy="64" r="64" fill="#345CA8"/>
+  <ellipse cx="64" cy="92" rx="34" ry="12" fill="#ffffff"/>
+  <rect x="30" y="36" width="68" height="56" fill="#ffffff"/>
+  <ellipse cx="64" cy="36" rx="34" ry="12" fill="#ffffff"/>
+  <g fill="none" stroke="#345CA8" stroke-width="5">
+    <ellipse cx="64" cy="36" rx="34" ry="12"/>
+    <path d="M30 66 A34 12 0 0 0 98 66"/>
+  </g>
+</svg>

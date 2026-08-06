@@ -551,6 +551,10 @@ pub(crate) fn tree_profile_row(
                 avatar(&profile.name),
                 // Name only — the user@host subtitle was too busy in a long list.
                 text(profile.name.clone()).size(13).color(primary_text()),
+                // The one exception to "name only": the avatar is initials and
+                // the name is a name, so a row for an RDP host and a row for the
+                // SSH session on the same box were identical down to the pixel.
+                crate::hosts::protocol_pill(profile.protocol),
                 Space::new().width(Fill),
             ]
             .spacing(8)

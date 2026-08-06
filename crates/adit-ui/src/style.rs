@@ -131,6 +131,32 @@ pub(crate) fn success() -> Color {
     pick(Color::from_rgb8(22, 143, 92), Color::from_rgb8(63, 185, 122))
 }
 
+/// The one hue the rest of this palette leaves free.
+///
+/// Teal already means "selected", green "up", red "broken" and grey "quiet", so
+/// a mark that must mean none of those — and must not be misread as any of them
+/// — has nowhere else to go. Blue is that nowhere.
+pub(crate) fn info() -> Color {
+    pick(Color::from_rgb8(37, 99, 190), Color::from_rgb8(96, 160, 240))
+}
+
+/// The ink a protocol pill is drawn in.
+///
+/// RDP takes the standout colour because it is the one that collides: the same
+/// Ubuntu box reached over SSH and over RDP produces two cards with the same
+/// tile, the same name and the same accent, and nothing but the port in the
+/// subtitle told them apart. SFTP takes the accent because it is SSH's sibling
+/// — one connection, a different door. SSH itself stays grey along with the two
+/// local transports: it is the default, and a lit badge on every card in the
+/// list is not a signal, it is wallpaper.
+pub(crate) fn protocol_tint(protocol: Protocol) -> Color {
+    match protocol {
+        Protocol::Rdp => info(),
+        Protocol::Sftp => accent(),
+        Protocol::Ssh | Protocol::LocalShell | Protocol::Serial => muted_text(),
+    }
+}
+
 pub(crate) fn danger_background() -> Color {
     pick(Color::from_rgb8(253, 237, 237), Color::from_rgb8(58, 36, 38))
 }

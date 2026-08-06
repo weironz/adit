@@ -52,10 +52,21 @@ pub(crate) const HOST_ICONS: &[HostIcon] = &[
 /// Compiled in rather than read from disk: a host tile that renders on some
 /// installs and not others is worse than one that never had a logo, and there
 /// is no install step that could place these.
+/// `debian` is deliberately absent: the swirl is a *tapered* open curl, and the
+/// only version of it these hands can compute exactly — a constant-width arc
+/// spiral — is a different mark that happens to be red. A wrong swirl is worse
+/// than the diamond it would replace, because the diamond never claimed to be
+/// anything.
 fn logo_bytes(key: &str) -> Option<&'static [u8]> {
     match key {
         "ubuntu" => Some(include_bytes!("../assets/logos/ubuntu.svg")),
         "windows" => Some(include_bytes!("../assets/logos/windows.svg")),
+        "redhat" => Some(include_bytes!("../assets/logos/redhat.svg")),
+        "alpine" => Some(include_bytes!("../assets/logos/alpine.svg")),
+        "server" => Some(include_bytes!("../assets/logos/server.svg")),
+        "network" => Some(include_bytes!("../assets/logos/network.svg")),
+        "database" => Some(include_bytes!("../assets/logos/database.svg")),
+        "container" => Some(include_bytes!("../assets/logos/container.svg")),
         _ => None,
     }
 }
@@ -164,6 +175,54 @@ pub(crate) fn protocol_glyph(protocol: Protocol) -> &'static str {
     }
 }
 
+/// The protocol as a word, short enough to sit beside a session name.
+///
+/// Not `Protocol::label`, which spells out 本地 Shell — the pill rides in a row
+/// that is mostly name, and two characters is what there is room for.
+pub(crate) fn protocol_tag(protocol: Protocol) -> &'static str {
+    match protocol {
+        Protocol::Ssh => "SSH",
+        Protocol::Sftp => "SFTP",
+        Protocol::Rdp => "RDP",
+        Protocol::Serial => t("串口"),
+        Protocol::LocalShell => t("本地"),
+    }
+}
+
+/// The protocol a host is reached over, as a pill beside its name.
+///
+/// The tile answers "what kind of machine is this", and nothing answered "how
+/// do we get in". One Ubuntu box that takes both SSH and RDP drew two identical
+/// orange cards; the only tell was the `:3389` in the subtitle, and reading a
+/// port is not glancing. The port stays — this is the glance, not a replacement.
+///
+/// A word rather than a corner badge: a word needs no legend, and it survives
+/// both themes and every scale factor, where a 6px mark turns to mush.
+pub(crate) fn protocol_pill(protocol: Protocol) -> Element<'static, Message> {
+    let ink = protocol_tint(protocol);
+    // 10, not the 9 the group badges use: those carry a geometric glyph, this
+    // carries 串口 and 本地, and a CJK character at 9px is a smudge. Still under
+    // the 11px subtitle and well under the 13px name, which is what keeps it
+    // subordinate — size does that job here, not weight or colour.
+    container(text(protocol_tag(protocol)).size(10).color(ink))
+        .padding([1, 5])
+        .style(move |_theme| container::Style {
+            // A wash of the pill's own ink rather than one of the surface
+            // tokens. The pill sits on a card, on a sidebar row and on a
+            // *selected* sidebar row, and those are three different colours in
+            // each mode — a fixed fill lands invisible on at least one of them
+            // (surface_alt is exactly the dark sidebar), while 14% of the ink
+            // reads as a tint of whatever is underneath it every time.
+            background: Some(Background::Color(Color { a: 0.14, ..ink })),
+            border: Border {
+                radius: 999.0.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
 /// A small filled dot, for "this host has a session up".
 pub(crate) fn online_dot() -> Element<'static, Message> {
     container(Space::new())
@@ -213,9 +272,16 @@ pub(crate) fn host_card(
             tile,
             column![
                 {
-                    let mut title = row![text(profile.name.clone()).size(13).color(primary_text())]
-                        .spacing(6)
-                        .align_y(Alignment::Center);
+                    // Pill against the name, dot after it: the dot belongs to
+                    // the whole card ("this one is up"), the pill to the name
+                    // ("this name means RDP"), and putting the dot in between
+                    // would attach it to neither.
+                    let mut title = row![
+                        text(profile.name.clone()).size(13).color(primary_text()),
+                        protocol_pill(profile.protocol),
+                    ]
+                    .spacing(6)
+                    .align_y(Alignment::Center);
                     if online {
                         title = title.push(online_dot());
                     }
@@ -369,6 +435,9 @@ pub(crate) fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, 
                 Space::new().width(Length::Fixed(indent)),
                 dot,
                 text(profile.name.clone()).size(13).color(primary_text()),
+                // The list layout is the same host, drawn flat — it gets the
+                // same pill, or switching layout would lose the answer.
+                protocol_pill(profile.protocol),
                 Space::new().width(Fill),
                 text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
             ]

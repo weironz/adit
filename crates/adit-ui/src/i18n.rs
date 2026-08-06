@@ -210,6 +210,8 @@ fn en(zh: &'static str) -> &'static str {
         "下载的安装包不完整，请重试" => "The downloaded installer is incomplete; try again",
         "主机" => "Hosts",
         "会话" => "Sessions",
+        "串口" => "Serial",
+        "本地" => "Local",
         "分组" => "Groups",
         "搜索结果" => "Search results",
         "仅支持打开 http/https 链接" => "Only http and https links can be opened",
