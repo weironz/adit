@@ -1066,13 +1066,24 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             let port = app.profile_port.trim();
             if protocol == Protocol::Rdp && (port.is_empty() || port == "22") {
                 app.profile_port = String::from("3389");
-            } else if protocol == Protocol::Ssh && port == "3389" {
+            } else if protocol.is_ssh_based() && port == "3389" {
                 app.profile_port = String::from("22");
             }
             // SSH defaults to password auth; only upgrade the implicit "Auto" so an
             // explicit Key/Agent choice is preserved.
-            if protocol == Protocol::Ssh && app.profile_auth_method == AuthMethod::Auto {
+            if protocol.is_ssh_based() && app.profile_auth_method == AuthMethod::Auto {
                 app.profile_auth_method = AuthMethod::Password;
+            }
+            // Give the tile a starting icon, but only while the user has not
+            // picked one. RDP *is* Windows — the protocol is the evidence, not a
+            // guess — and everything else is far more often Linux than not.
+            // Guessing from the host's *name* is what stays off the table.
+            if app.profile_icon.trim().is_empty() {
+                app.profile_icon = String::from(if protocol == Protocol::Rdp {
+                    "windows"
+                } else {
+                    "ubuntu"
+                });
             }
             app.profile_protocol = protocol;
         }
