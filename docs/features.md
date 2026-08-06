@@ -2,8 +2,8 @@
 
 What Adit actually does today, verified against the source. For the shape of the code
 see [architecture.md](architecture.md); for the reasoning, [decisions.md](decisions.md).
-Planned-but-unbuilt work lives in [feature-roadmap.md](feature-roadmap.md) and
-[phase2-plan.md](phase2-plan.md) — this file is only what exists.
+Planned-but-unbuilt work lives in [roadmap.md](roadmap.md) — this file is only what
+exists.
 
 Known gaps are listed honestly at the [end](#known-gaps).
 

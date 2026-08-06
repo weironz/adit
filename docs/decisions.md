@@ -5,8 +5,8 @@ what it costs — including the ones we later **reversed**, because a decision r
 that quietly edits out its own mistakes is worth very little.
 
 For what the code looks like today see [architecture.md](architecture.md); for what
-it does see [features.md](features.md). The original 2026-06-27 design doc is kept at
-[native-rust-architecture.md](native-rust-architecture.md) for historical context.
+it does see [features.md](features.md); for what is and is not next,
+[roadmap.md](roadmap.md) and [roadmap-done.md](roadmap-done.md).
 
 ---
 
@@ -248,6 +248,15 @@ protocols. The milestone was met, and the session model generalised cleanly beca
 session is defined by its event stream rather than by SSH specifics — RDP is the only one
 that isn't a VT terminal, and it carries a separate surface.
 
+**Telnet took two goes to overturn.** The 2026-07-11 phase-2 plan re-declared Telnet out
+of scope even after local shell, serial and RDP had already landed. It shipped in v0.1.66
+anyway, and for a reason the non-goal never weighed: the audience it serves is switches,
+IPMI boards and console servers, which is exactly the SecureCRT audience this client
+aims at, and the same shell event protocol already carried three other transports. What
+the non-goal was really protecting against — writing a second terminal stack — had
+stopped being true. The plugin system, the other half of that non-goal, still stands
+(see [roadmap.md](roadmap.md)).
+
 ## 16. Releases are patch-only, cut on request, and built on CI — *reversal*
 
 **Decision.** Every release bumps the patch component; releases happen when asked, not
@@ -353,3 +362,64 @@ every unconfigured host, which is most of them.
 **Revisit if** IronRDP ships its own AVC decode + the codec fixes upstream (drop the
 vendored patches), or the RustCrypto pin conflict (#4) dissolves and a single-binary
 layout becomes possible.
+
+## 18. New host keys are trusted silently by default — *reversal of the phase-2 plan*
+
+**Decision.** `auto_accept_host_keys` defaults to **on**: a never-seen host key is
+recorded without asking. A **changed** key always prompts, and the prompt itself exists
+and works — the default just doesn't reach it.
+
+**What the plan said.** The July 2026 phase-2 research argued the opposite at length, and
+it is worth keeping because the argument is sound: silently trusting a new key is
+strictly weaker than OpenSSH's `accept-new`, defeats the whole point of
+Trust-On-First-Use, and no mainstream client does it — PuTTY, SecureCRT and Termius all
+prompt on first connect and show the fingerprint. It specified a three-way dialog
+(**Trust & Save** / **Connect Once** / **Cancel**, Cancel default) with the opt-in
+auto-accept reserved for batch workflows.
+
+**What we do instead, and why.** The prompt-per-new-host default was not adopted: the
+in-code reason is that batch connections would pop a confirmation for every new host.
+"Connect Once" was never built at all.
+
+**Cost, stated plainly.** First-connect MITM protection is off unless the user finds the
+toggle, which is exactly the failure the research named. Everything *around* the default
+did land — hashed `known_hosts` entries, wildcard and negated patterns, `@revoked` and
+`@cert-authority` markers, per-`(host, port)` keying, the changed-key comparison, and a
+management UI that lists and deletes entries — so flipping the default is a one-line
+change whenever the trade is judged differently.
+
+## 19. The Adit-owned SSH and secret-store trait boundaries were never built
+
+**Original plan.** The 2026-06-27 design specified three Adit-owned traits to isolate
+risky dependencies: `SshTransport` / `SshChannel` over `russh`, and `SecretStore` over
+the OS credential vaults, alongside `TerminalCore` over the terminal backend.
+
+**What we have.** Only `TerminalCore` exists. `adit-ssh` exposes concrete request and
+handle types (`LiveShellRequest`, `LiveShellHandle`, `SftpHandle`, `TunnelHandle`) and
+the crate boundary itself is what keeps `russh` out of the UI. The `SecretStore`
+abstraction was overtaken by decision #8 — there is no OS vault left to abstract over.
+
+**Cost.** Swapping the SSH backend would mean reshaping `adit-ssh`'s public surface
+rather than writing one more trait impl. In exchange the layer that survived contact —
+the crate boundary — is the one that was actually load-bearing: no UI code names a
+`russh` type today.
+
+## 20. The dated backlogs were retired for a two-file roadmap
+
+**Decision.** `feature-roadmap.md` (2026-06-27), `phase2-plan.md` (2026-07-11) and
+`native-rust-architecture.md` (2026-06-27) were folded into
+[roadmap.md](roadmap.md) / [roadmap-done.md](roadmap-done.md), with the reversals landing
+here, and then deleted. Git history keeps the originals.
+
+**Why.** Four planning documents disagreed with each other and with the code. Each was a
+dated snapshot with its own ✅/❌ marks, which meant every claim had to be re-checked
+against the source before it could be believed — and several were wrong by the time
+anyone read them: keyword highlighting was marked "designed but not built" after it
+shipped, snippets and tab rename were listed as open after both landed. A dated plan
+cannot be maintained; a living pair split by *has it shipped* can, because there is
+exactly one place a finished item moves to.
+
+**Cost.** The per-item effort/risk tables and the inline research citations went with
+them. Where a citation was carrying the reasoning rather than decorating it — the
+Azure Trusted Signing route, the Zmodem deferral, the host-key argument in #18 — it was
+carried across instead.

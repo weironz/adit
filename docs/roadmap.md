@@ -28,8 +28,18 @@ by how interesting the work is.
 - **Code signing, Windows and macOS.** Currently the biggest thing between this
   and other people running it: SmartScreen blocks an unsigned installer behind
   an "unknown publisher" warning, and macOS requires a right-click to open the
-  dmg. Mostly a procurement task — an OV/EV certificate and an Apple Developer
-  ID — rather than an engineering one. Parked pending a decision to spend.
+  dmg. Mostly a procurement task — a certificate and an Apple Developer ID —
+  rather than an engineering one. Parked pending a decision to spend.
+
+  The researched Windows route is **Azure Trusted Signing**: cloud-only, around
+  $10/month, no USB hardware token, and built for CI — `azure/login` over OIDC
+  federated credentials then `azure/trusted-signing-action`, signing both
+  `adit-app.exe` and the installer with an RFC3161 timestamp so the signatures
+  outlive the certificate. The reason it matters more than it looks: SmartScreen
+  scores *publisher-certificate* reputation as well as per-file hashes, so an
+  unsigned build starts from zero every single release and never accumulates
+  anything. The prerequisite is an organisation identity on the Azure account;
+  the CI work is small once that exists.
 
 ## Known gaps worth closing
 
@@ -58,6 +68,51 @@ by how interesting the work is.
   asymmetry, and the only version computable by hand is a constant-width arc
   spiral — a different mark that happens to be red. A diamond never claimed to
   be anything; a bad swirl would. Wants real vector art rather than more effort.
+- **`ProxyCommand`, and `ProxyJump` on import.** Jump chains are typed into the
+  profile by hand: the `~/.ssh/config` importer reads `Host` / `HostName` /
+  `User` / `Port` / `IdentityFile` and drops everything else, so a `ProxyJump`
+  line does not become a chain. `ProxyCommand` has no implementation at all,
+  though the `connect_stream` transport the jump chain already uses would carry
+  it — a spawned process's stdin/stdout joined as the stream. Token expansion
+  (`%h`/`%p`/`%r`) and quoting on Windows is the part to be careful with; it is
+  an injection surface.
+- **No profile export, and no PuTTY session import.** Import covers
+  `~/.ssh/config` and a SecureCRT session tree; nothing goes the other way, and
+  PuTTY's registry sessions are unread (its `.ppk` *keys* work).
+- **Per-profile session options stop at the startup command and terminal type.**
+  No per-profile environment variables and no character-encoding override.
+- **Logging is app-wide.** The folder, the filename pattern, auto-start and the
+  plaintext mode are one global setting; there is no per-profile policy and no
+  keystroke (input) log.
+- **Nothing runs on a pattern.** Snippets ship, and keyword highlighting is the
+  colouring half of what SecureCRT calls triggers, but no *action* fires when a
+  pattern appears in the output.
+- **Appearance is process-global.** `TERM_SCHEME` is a process-wide atomic, so
+  font, size and colour scheme are one setting for every session at once. That
+  blocks three things behind one refactor: per-profile scheme overrides,
+  user-defined schemes, and the per-pane background tint that would extend the
+  PROD badge from the tab into the terminal itself.
+- **Bare URLs are not detected.** An OSC 8 link is clickable; a plain
+  `https://…` the server printed without markup is not, and a linked run does
+  not underline on hover.
+- **A rejected host key is not remembered**, and there is no "connect once" that
+  trusts a key for one session without writing it to `known_hosts`.
+- **Reconnect is one global policy.** The backoff curve and the attempt cap are
+  compiled in and the toggle is app-wide; no per-profile override.
+- **A tunnel does not survive its own connection dropping.** Each tunnel runs its
+  own SSH connection, and when that connection dies the tunnel stops rather than
+  re-dialling.
+- **SFTP transfers have no overwrite confirmation, no "download as", and no
+  resume.**
+- **Panes cannot be detached** into their own window and re-attached.
+- **High-DPI and accessibility have never had a pass.**
+- **Test gaps against the real `sshd`.** The Docker suite covers password accept
+  and reject, key auth, encrypted keys with right and wrong passphrases, SFTP
+  files and directory trees, local and remote forwarding, and jump hosts through
+  a bastion. Untested: dynamic (SOCKS) forwarding, agent auth, and
+  keyboard-interactive — the last one deliberately, because a real
+  PAM/TOTP container is time-based and therefore flaky, so the interactive-MFA
+  path has no end-to-end test at all.
 
 ## Considered and not doing
 
@@ -73,3 +128,16 @@ by how interesting the work is.
   nothing. The protocol *is* evidence — RDP means Windows — and so is an SSH
   banner (`SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.4`), so reading the banner
   after connect is the version of this idea worth building.
+- **Zmodem (`rz` / `sz`).** Researched, planned, and deliberately deferred. For
+  Adit it is parity, not capability: the SFTP panel is strictly more capable —
+  browsing, recursive directories, a queue — and what ZMODEM adds is *workflow*,
+  typing `sz file` at whatever prompt you happen to be sitting at, including
+  through sudo, a jump host, or a nested shell. Against that it is the highest
+  risk item on this list, because it takes over the live shell channel in-band:
+  a sentry on the output stream watches for the ZRQINIT trigger, then the
+  channel stops being a terminal until the transfer ends. Revisit on explicit
+  demand rather than on principle.
+- **A plugin system.** Named out of scope for the first native milestone and
+  never revisited since. Unlike the protocol non-goals beside it
+  ([decisions.md #15](decisions.md#15-more-protocols-than-ssh--reversal)), this
+  one still stands.

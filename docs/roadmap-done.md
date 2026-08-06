@@ -100,7 +100,7 @@ was already a menu item.
 
 ---
 
-## Earlier
+## Earlier — the RDP campaign
 
 **H.264 for RDP** — AVC420, then AVC444 written from scratch (two AVC420 views
 recombined into persistent per-surface YUV 4:4:4 planes). The wire is Annex-B,
@@ -118,3 +118,146 @@ solid black desktop — a symptom that looks like a connection bug and is not.
 
 **Auto-login and fullscreen for RDP.** Microsoft-account hosts need the local
 SAM name for interactive logon even though NLA accepts the email alias.
+
+---
+
+## v0.1.31 – v0.1.36 — the phase-2 batch
+
+Six items planned together in July 2026, each researched against OpenSSH, PuTTY,
+SecureCRT/Xshell, Termius and WezTerm before any code was written.
+
+**Jump hosts (`ProxyJump`), v0.1.31.** Hop 0 dials its own TCP; every further hop
+opens `direct-tcpip` through the previous one and runs a *fresh handshake* over
+that channel — which is what makes every host key on the chain, bastions
+included, verified through the tunnel rather than assumed. All intermediate
+handles are kept alive for the session lifetime: drop one and its channel dies
+under everything stacked above it. SFTP and tunnels ride the same final session,
+because a second direct dial cannot reach a non-routable target. Hops reuse the
+profile's one credential (see [roadmap.md](roadmap.md)).
+
+**Interactive MFA, v0.1.32.** Keyboard-interactive used to be a password fallback
+that answered *every* server prompt with the saved password via a keyword
+heuristic. The driver now auto-fills only account-password fields — masked or
+labelled as such, excluding second factors and new-password prompts — and
+surfaces anything else as a dialog, across as many rounds as the server runs.
+Auth happens before the main channel loop exists, so the command channel is
+pumped in a `tokio::select!` to let answers and disconnects arrive mid-handshake.
+Cancelling aborts the whole connect with `AuthenticationCancelled` rather than
+falling through to key or agent auth.
+
+**Key passphrase in its own field, v0.1.33; PuTTY `.ppk`, v0.1.36.** The
+passphrase used to be the login-password field doing double duty, and a key that
+failed to load returned `Ok(false)` — a silent fallthrough that read as "wrong
+password". It now raises `KeyPassphraseRequired` / `KeyPassphraseWrong` to the
+UI, while the opportunistic `~/.ssh` default-key scan still skips quietly.
+`.ppk` then needed no parser at all: russh 0.61 enables `ssh-key`'s `ppk`
+feature, and the same `decode_secret_key` call routes `PuTTY-User-Key-File-*`
+content to it — v2 (SHA-1 MAC) and v3 (Argon2id) — so the passphrase already
+threaded through in v0.1.33 decrypts them.
+
+**Per-session appearance, v0.1.34.** A profile carries an environment
+(None/Dev/Staging/Prod/Custom), an accent colour and a badge label, all
+`#[serde(default)]` so old files load unchanged; the tab shows the badge. The
+enum rather than a bare colour picker is the point — red/amber/green presets are
+mistake-proof, with Custom as the escape hatch — because the whole feature exists
+to prevent running something on the wrong server.
+
+**OSC 8 hyperlinks, v0.1.35.** The link id lives on the cell but *off* the SGR
+pen, so a mid-link SGR reset doesn't drop the link; it resets on RIS and across
+the alternate screen. Opening is Ctrl/Cmd+click, so a plain click still selects
+and mouse reporting still passes through, and it goes through a confirmation
+showing the real destination. The allowlist is `http(s)` and printable ASCII
+only, which is what rejects `file:`/`javascript:` and the Unicode bidi/format
+characters that could make the shown URL lie; opening is shell-free (`rundll32
+url.dll,FileProtocolHandler` with the URL as a single argv).
+
+**Integration tests against a real `sshd`.** A Docker-backed suite
+(`crates/adit-ssh/tests/integration.rs`, feature `integration`) driving the
+`spawn_*` API, plus a Linux CI job; the default Windows `cargo test --workspace`
+needs no Docker. In-process russh tests validate the protocol, not interop with
+the OpenSSH `sshd` people actually connect to — banner/kex negotiation, PAM,
+`AllowTcpForwarding` semantics. The cautionary precedent is WezTerm's harness,
+whose pubkey auth hung **only** inside GitHub Actions.
+
+---
+
+## Before that — the phase A–E backlog
+
+The first native push, worked through as a phased plan. Dates are vaguer here:
+a few of these (snippets, the sixth split pane, the non-Windows packages)
+landed much later than the rest, and the plan they came from recorded ✅ marks
+rather than reasons, so several entries below are a statement of fact and
+nothing more.
+
+**Host-key verification.** An unknown key can pause the handshake and show its
+SHA256 fingerprint for accept/reject before being recorded; a **changed** key
+always prompts, shows the previously stored fingerprint beside the new one, and
+names the MITM risk. `known_hosts` stays OpenSSH-format, including hashed
+(`|1|…`) entries, wildcard and negated patterns, and the `@revoked` /
+`@cert-authority` markers — a tolerant parser is what stops an import silently
+dropping a security marker. Entries can be listed and deleted from the UI, which
+returns that host to first-use. New keys are trusted silently by default; that
+default, and how it departs from the plan, is
+[decisions.md #18](decisions.md#18-new-host-keys-are-trusted-silently-by-default--reversal-of-the-phase-2-plan).
+
+**Keepalive and auto-reconnect.** A 30 s keepalive dropping after 3 missed
+replies, which also removed an earlier 20 s inactivity timeout that had been
+killing idle sessions outright. Reconnect backs off 1→30 s over at most 10
+attempts and arms **only** for a session that actually reached "connected" and
+was not disconnected on purpose — otherwise a wrong password or an unreachable
+host would loop forever.
+
+**Scrollback search** (Ctrl+Shift+F), with wraparound, auto-scroll to the current
+hit, and an `n/total` counter.
+
+**Fonts and colour schemes.** Six monospace presets, a 9–28 px size stepper, and
+seven full 16-colour ANSI palettes with a live preview. The size is not cosmetic:
+the whole cell grid rescales from it, so render, hit-testing and column fitting
+all derive from one number.
+
+**Mouse reporting passthrough, bracketed paste, and paste safety.** Mouse events
+reach `vim`/`tmux`/`htop` instead of selecting text; a multi-line paste asks for
+confirmation, skipped when the remote app is already in bracketed-paste mode.
+
+**Broadcast input.** Keystrokes fan out to every connected session, with an
+always-visible badge showing the reach count — the badge is the feature's safety
+mechanism, because the failure mode is leaving it on without noticing.
+
+**Keyword highlighting.** Colour output locally by pattern, the way SecureCRT
+does, for text the server sent uncoloured. The whole design follows from one
+rule: **never repaint a cell the server coloured**, since server colour carries
+classification we cannot reconstruct (blue is a directory, green and red are the
+two sides of a diff). `Color::Default` is exactly "the pen was at SGR 39 here",
+so the existing model already had the test. It lives in the UI beside scrollback
+search rather than in the terminal core, which keeps the grid a faithful record
+of what the server sent. Two of the design's own conclusions turned out to be
+wrong and are recorded rather than edited away, in
+[keyword-highlighting.md](keyword-highlighting.md).
+
+**SFTP dual-pane file manager.** Local and remote panes, sortable columns,
+multi-select, pane-to-pane drag, drag-from-Explorer upload, recursive directory
+transfers, cancellable transfers, and a queue with progress and speed.
+
+**Port forwarding.** All three OpenSSH forms — local (`-L`), remote (`-R`) and
+dynamic SOCKS5 (`-D`) — saveable per profile and auto-started on connect.
+
+**Snippets, tab rename, and command-bar history.** Saved commands sent to the
+active session in one click; tabs renamed in place; the command bar steps back
+through what was typed.
+
+**Split panes.** Up to six sessions tiled at once, each with its own PTY size and
+its own hit-testing, the focused pane driving keyboard input and the status bar.
+
+**Session logging.** A configurable folder and filename pattern (`%N %H %Y %M %D
+%h %m %s`) with a live preview, auto-start on connect, and a plaintext mode that
+strips escape sequences.
+
+**Imports.** `~/.ssh/config` (`Host`/`HostName`/`User`/`Port`/`IdentityFile`,
+multiple aliases per block) and a SecureCRT session tree, whose folder structure
+becomes groups and whose port fields are hex DWORDs.
+
+**Packaging beyond the Windows x64 installer.** Windows-on-ARM, `.deb` and `.rpm`
+for x86_64 and aarch64, and an unsigned `.dmg` per macOS architecture, all built
+and attached by the release workflow — plus an in-app updater that compares
+semver against GitHub releases and launches the installer. All of it unsigned
+(see [roadmap.md](roadmap.md)).

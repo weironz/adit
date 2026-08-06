@@ -25,9 +25,8 @@ A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`.
 | [docs/rdp-gnome-remote-desktop.md](docs/rdp-gnome-remote-desktop.md) | GNOME Remote Desktop handover: EGFX, RDSTLS, Server Redirection |
 | [crates/adit-rdp/IRONRDP-PATCHES.md](crates/adit-rdp/IRONRDP-PATCHES.md) | The three vendored IronRDP patches and when to drop them |
 
-Backlogs (plans, not current state): [feature-roadmap.md](docs/feature-roadmap.md),
-[phase2-plan.md](docs/phase2-plan.md). The original design doc is kept at
-[native-rust-architecture.md](docs/native-rust-architecture.md) for history.
+What is and is not next: [docs/roadmap.md](docs/roadmap.md), with the shipped work
+and the reasoning behind it in [docs/roadmap-done.md](docs/roadmap-done.md).
 
 The workspace crates:
 
@@ -122,6 +121,6 @@ Adding `/DArch=arm64` to the `ISCC.exe` call builds the Windows-on-ARM installer
 
 ## Roadmap
 
-Most of the phased plan is implemented — SSH/SFTP/tunnels, four protocols, split panes, broadcast, fonts/schemes, scrollback search, mouse passthrough, bracketed paste, `~/.ssh/config` import, in-app updates, and the Inno Setup installer.
+Most of what was originally planned is built — SSH/SFTP/tunnels, five protocols, jump hosts, interactive MFA, split panes, broadcast, snippets, keyword highlighting, fonts/schemes, scrollback search, mouse passthrough, bracketed paste, `~/.ssh/config` and SecureCRT import, cloud sync, in-app updates, and installers for Windows, macOS and Linux.
 
-Still open: command snippets, tab rename, and code signing — the macOS `.dmg` and the Linux packages are unsigned, and Gatekeeper blocks the former until the quarantine flag is cleared by hand. See [docs/feature-roadmap.md](docs/feature-roadmap.md) for the full status.
+The biggest thing still open is code signing — the Windows installer, the macOS `.dmg` and the Linux packages are all unsigned, SmartScreen warns on the first, and Gatekeeper blocks the second until the quarantine flag is cleared by hand. See [docs/roadmap.md](docs/roadmap.md) for the full status.
