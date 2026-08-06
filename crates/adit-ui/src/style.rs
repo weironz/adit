@@ -153,6 +153,10 @@ pub(crate) fn protocol_tint(protocol: Protocol) -> Color {
     match protocol {
         Protocol::Rdp => info(),
         Protocol::Sftp => accent(),
+        // Telnet is the one that is *not* encrypted. It gets the warning hue
+        // rather than the quiet default, because "this session is in the clear"
+        // is worth a glance every time it is on screen.
+        Protocol::Telnet => danger(),
         Protocol::Ssh | Protocol::LocalShell | Protocol::Serial => muted_text(),
     }
 }

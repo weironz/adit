@@ -188,6 +188,7 @@ pub(crate) fn protocol_tag(protocol: Protocol) -> &'static str {
         Protocol::Sftp => "SFTP",
         Protocol::Rdp => "RDP",
         Protocol::Serial => t("串口"),
+        Protocol::Telnet => "TELNET",
         Protocol::LocalShell => t("本地"),
     }
 }
