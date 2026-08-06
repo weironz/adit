@@ -36,6 +36,7 @@ fn helper_reports_error_on_unreachable_host() {
         height: 768,
         enable_clipboard: false,
         enable_audio: false,
+        quality: adit_rdp_proto::Quality::default(),
     };
     write_msg(&mut stdin, &ClientMsg::Connect(request)).expect("send Connect");
 

@@ -30,7 +30,9 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 mod rdp_client;
-pub use adit_rdp_proto::{InputEvent as RdpInput, MouseButton as RdpMouseButton};
+pub use adit_rdp_proto::{
+    InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
+};
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFrame};
 
 /// Default RDP desktop size when the caller doesn't specify one.
@@ -350,6 +352,9 @@ pub struct SessionManager {
     auto_accept_host_keys: bool,
     /// Share the clipboard with an RDP desktop.
     rdp_clipboard: bool,
+    /// Visual fidelity to request from an RDP server. Read when a session is
+    /// opened and never after: RDP fixes it during the handshake.
+    rdp_quality: adit_rdp_proto::Quality,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
     next_tunnel_id: u64,
@@ -419,6 +424,7 @@ impl SessionManager {
             default_size: TerminalSize::default(),
             auto_accept_host_keys: true,
             rdp_clipboard: true,
+            rdp_quality: adit_rdp_proto::Quality::default(),
             sftp: None,
             tunnels: Vec::new(),
             next_tunnel_id: 0,
@@ -438,6 +444,14 @@ impl SessionManager {
     /// the handshake, so a live session keeps whatever it was opened with.
     pub fn set_rdp_clipboard(&mut self, enabled: bool) {
         self.rdp_clipboard = enabled;
+    }
+
+    /// Set the visual-fidelity preset for RDP sessions. Like the clipboard flag
+    /// above, it lands on the *next* connection: the performance flags ride the
+    /// Client Info PDU, which RDP sends once and never revises, so a live desktop
+    /// keeps whatever it was opened with until it reconnects.
+    pub fn set_rdp_quality(&mut self, quality: adit_rdp_proto::Quality) {
+        self.rdp_quality = quality;
     }
 
     pub fn set_auto_accept_host_keys(&mut self, auto_accept: bool) {
@@ -1179,6 +1193,7 @@ impl SessionManager {
             // data to a remote machine.
             enable_clipboard: self.rdp_clipboard,
             enable_audio: false,
+            quality: self.rdp_quality,
         };
 
         let handle = rdp_client::spawn_rdp_session(request)

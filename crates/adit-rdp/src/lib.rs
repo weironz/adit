@@ -46,6 +46,45 @@ pub(crate) fn routing_token_value(load_balance_info: &[u8]) -> String {
     text.strip_prefix("Cookie: msts=").unwrap_or(text).to_owned()
 }
 
+/// RDP performance flags for a quality preset, mirroring what mstsc's
+/// "Experience" tab sends.
+///
+/// Each flag is an instruction to the *server* about what to stop drawing, so
+/// what this buys is fewer pixels changing, not better compression — which is
+/// why the effect is dramatic on a desktop with a photographic wallpaper and
+/// nearly invisible on a bare login screen.
+///
+/// `ENABLE_*` are the two positive flags in the set: absent means "off", so
+/// Speed switches them off simply by not naming them.
+pub(crate) fn performance_flags(
+    quality: adit_rdp_proto::Quality,
+) -> ironrdp_pdu::rdp::client_info::PerformanceFlags {
+    use adit_rdp_proto::Quality;
+    use ironrdp_pdu::rdp::client_info::PerformanceFlags as Flags;
+
+    match quality {
+        // Nothing disabled, and composition asked for on top. Aero/DWM effects
+        // cost real bandwidth, so this is a LAN setting.
+        Quality::High => Flags::ENABLE_FONT_SMOOTHING | Flags::ENABLE_DESKTOP_COMPOSITION,
+        // Byte-for-byte IronRDP's `PerformanceFlags::default()`, spelled out
+        // rather than delegated: this is the behaviour every session had before
+        // the preset existed, and it must not drift if upstream's default does.
+        Quality::Balanced => {
+            Flags::DISABLE_FULLWINDOWDRAG
+                | Flags::DISABLE_MENUANIMATIONS
+                | Flags::ENABLE_FONT_SMOOTHING
+        }
+        Quality::Speed => {
+            Flags::DISABLE_WALLPAPER
+                | Flags::DISABLE_FULLWINDOWDRAG
+                | Flags::DISABLE_MENUANIMATIONS
+                | Flags::DISABLE_THEMING
+                | Flags::DISABLE_CURSOR_SHADOW
+                | Flags::DISABLE_CURSORSETTINGS
+        }
+    }
+}
+
 /// Build the IronRDP connector config from a connect request. On a redirection
 /// reconnect, `routing_token` carries the server's load-balance info, which goes
 /// into the X.224 connection request so the server routes us to the right session.
@@ -56,7 +95,6 @@ pub(crate) fn build_connector_config(
     use ironrdp_pdu::gcc::KeyboardType;
     use ironrdp_pdu::nego::NegoRequestData;
     use ironrdp_pdu::rdp::capability_sets::MajorPlatformType;
-    use ironrdp_pdu::rdp::client_info::PerformanceFlags;
 
     // Redirection reconnect ⇒ send the routing token; initial connect ⇒ leave it
     // None so the connector falls back to a `mstshash` cookie with the username.
@@ -124,11 +162,57 @@ pub(crate) fn build_connector_config(
         enable_server_pointer: true,
         pointer_software_rendering: false,
         multitransport_flags: None,
-        performance_flags: PerformanceFlags::default(),
+        performance_flags: performance_flags(request.quality),
         license_cache: None,
         timezone_info: Default::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
         compression_type: None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adit_rdp_proto::Quality;
+    use ironrdp_pdu::rdp::client_info::PerformanceFlags as Flags;
+
+    /// The preset exists to change what an *existing* session looks like, so the
+    /// default must not: every session before this feature ran on IronRDP's
+    /// `PerformanceFlags::default()`, and Balanced is the promise that nothing
+    /// moved for anyone who never touches the new control.
+    #[test]
+    fn balanced_is_exactly_the_pre_existing_default() {
+        assert_eq!(performance_flags(Quality::Balanced), Flags::default());
+        assert_eq!(performance_flags(Quality::default()), Flags::default());
+    }
+
+    /// Speed's whole point is a slow link: font smoothing and composition are
+    /// the two flags that *cost* bandwidth, so naming either would defeat it.
+    #[test]
+    fn speed_asks_for_nothing_that_costs_bandwidth() {
+        let flags = performance_flags(Quality::Speed);
+        assert!(!flags.contains(Flags::ENABLE_FONT_SMOOTHING));
+        assert!(!flags.contains(Flags::ENABLE_DESKTOP_COMPOSITION));
+        assert!(flags.contains(Flags::DISABLE_WALLPAPER));
+        assert!(flags.contains(Flags::DISABLE_THEMING));
+    }
+
+    /// High is "draw everything": no DISABLE_* bit may creep in, or the preset
+    /// quietly stops being the high-fidelity end of the scale.
+    #[test]
+    fn high_disables_nothing() {
+        let flags = performance_flags(Quality::High);
+        assert!(flags.contains(Flags::ENABLE_DESKTOP_COMPOSITION));
+        for disable in [
+            Flags::DISABLE_WALLPAPER,
+            Flags::DISABLE_FULLWINDOWDRAG,
+            Flags::DISABLE_MENUANIMATIONS,
+            Flags::DISABLE_THEMING,
+            Flags::DISABLE_CURSOR_SHADOW,
+            Flags::DISABLE_CURSORSETTINGS,
+        ] {
+            assert!(!flags.contains(disable), "High must not set {disable:?}");
+        }
     }
 }

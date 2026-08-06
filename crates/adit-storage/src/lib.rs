@@ -416,6 +416,21 @@ pub struct AppSettings {
     /// Local text is only *advertised*; it crosses when the remote pastes.
     #[serde(default = "default_true")]
     pub rdp_clipboard: bool,
+    /// Visual fidelity to ask an RDP server for, traded against bandwidth.
+    /// App-wide rather than per-profile, matching `rdp_clipboard` beside it.
+    /// Connect-time only: RDP sends it once in the Client Info PDU, so changing
+    /// it reconnects the session rather than taking effect in place.
+    #[serde(default)]
+    pub rdp_quality: adit_rdp_proto::Quality,
+    /// Scale the remote desktop to fit the window instead of resizing the remote
+    /// desktop to match it (mstsc's "smart sizing").
+    ///
+    /// Off by default, because matching the viewport is the sharper of the two:
+    /// every remote pixel lands on exactly one local pixel and nothing resamples.
+    /// Fit exists for the servers that will not renegotiate a desktop size, where
+    /// the alternative to resampling is a desktop that does not fit at all.
+    #[serde(default)]
+    pub rdp_scale_fit: bool,
     /// Whether the one-time import of secrets from the legacy OS keyring has run.
     /// Once true, startup skips probing the keyring for every profile — with many
     /// profiles that was hundreds of synchronous Credential Manager lookups on
@@ -672,6 +687,8 @@ impl Default for AppSettings {
             command_send_immediately: false,
             auto_accept_host_keys: true,
             rdp_clipboard: true,
+            rdp_quality: adit_rdp_proto::Quality::default(),
+            rdp_scale_fit: false,
             keyring_migrated: false,
             sync: SyncSettings::default(),
         }
@@ -1557,6 +1574,38 @@ Host db
         }
     }
 
+    /// Every settings.json written before the RDP quality/fit controls existed
+    /// lacks those two keys, and there is one on every machine that has ever run
+    /// Adit. Loading such a file must produce the old behaviour — Balanced (which
+    /// is what those sessions already connect at) and fit off — not an error and
+    /// not a silently different desktop.
+    #[test]
+    fn a_settings_file_from_before_the_rdp_controls_still_loads() {
+        // Built by taking a current document and deleting exactly the two keys
+        // the older writer never emitted, rather than hand-writing a minimal
+        // one: most of `AppSettings` has no serde default, so a sparse literal
+        // would fail for reasons that have nothing to do with this change.
+        let mut document = serde_json::to_value(AppSettings {
+            dark_mode: true,
+            font_size: 15.0,
+            ..AppSettings::default()
+        })
+        .expect("serialise");
+        let object = document.as_object_mut().expect("an object");
+        object.remove("rdp_quality").expect("the key was there to remove");
+        object.remove("rdp_scale_fit").expect("the key was there to remove");
+
+        let settings: AppSettings =
+            serde_json::from_value(document).expect("an older file must load");
+
+        assert_eq!(settings.rdp_quality, adit_rdp_proto::Quality::Balanced);
+        assert!(!settings.rdp_scale_fit);
+        // And the keys that were in the file are still honoured, so the defaults
+        // are filling gaps rather than replacing the document.
+        assert!(settings.dark_mode);
+        assert_eq!(settings.font_size, 15.0);
+    }
+
     #[test]
     fn saves_and_loads_settings() {
         let unique = SystemTime::now()
@@ -1579,6 +1628,8 @@ Host db
             // Deliberately the non-default value, so the round-trip proves the
             // field is actually persisted and not just defaulted back on load.
             rdp_clipboard: false,
+            rdp_quality: adit_rdp_proto::Quality::Speed,
+            rdp_scale_fit: true,
             host_layout: HostLayout::Tree,
             recent_hosts: Vec::new(),
             grid_order: Vec::new(),

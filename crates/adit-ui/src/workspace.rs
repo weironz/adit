@@ -102,19 +102,28 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
 /// double-cursor; its shape is a plain arrow for now.
 pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
-    let display_scale = app.display_scale.max(0.1);
+    // One scale for the whole function, folding the fit factor into the DPI
+    // scale. Everything below — tile sizes and the mouse mapping — divides or
+    // multiplies by this single number, which is what keeps the picture and the
+    // pointer from disagreeing about where a pixel is.
+    let display_scale = app.display_scale.max(0.1) / rdp_fit_factor(app, (sw, sh));
 
     if app.rdp_tiles.is_empty() || sw == 0 || sh == 0 {
-        return container(text(t("正在连接 RDP…")).size(14).color(muted_text()))
-            .width(Fill)
-            .height(Fill)
-            .center_x(Fill)
-            .center_y(Fill)
-            .style(|_theme| container::Style {
-                background: Some(Color::BLACK.into()),
-                ..container::Style::default()
-            })
-            .into();
+        // The toolbar wraps this branch too: a connect that hangs in fullscreen
+        // is exactly when someone needs the way out, and there is no menu bar.
+        return with_rdp_toolbar(
+            app,
+            container(text(t("正在连接 RDP…")).size(14).color(muted_text()))
+                .width(Fill)
+                .height(Fill)
+                .center_x(Fill)
+                .center_y(Fill)
+                .style(|_theme| container::Style {
+                    background: Some(Color::BLACK.into()),
+                    ..container::Style::default()
+                })
+                .into(),
+        );
     }
 
     // The texture arrives as a grid of tiles, each small enough for the
@@ -179,7 +188,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     // Centred, and scrollable when the desktop is momentarily larger than the
     // pane (a resize renegotiation in flight): clipping a fixed-size child
     // would otherwise hide part of it with no way to reach it.
-    container(scrollable(container(surface).center_x(Fill)).direction(
+    let desktop = container(scrollable(container(surface).center_x(Fill)).direction(
         iced::widget::scrollable::Direction::Both {
             vertical: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
             horizontal: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
@@ -191,7 +200,211 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         background: Some(Color::BLACK.into()),
         ..container::Style::default()
     })
+    .into();
+
+    with_rdp_toolbar(app, desktop)
+}
+
+/// Stack the floating toolbar over a remote desktop, in fullscreen only.
+///
+/// Windowed sessions already have the menu bar and the tab strip; a second row
+/// of icons there would be the 36px of duplicated shortcuts that the previous
+/// toolbar was deleted for (see `chrome::view`). Fullscreen is the mode that
+/// genuinely has nothing, so it is the mode that gets this.
+pub(crate) fn with_rdp_toolbar<'a>(
+    app: &'a AditApp,
+    desktop: Element<'a, Message>,
+) -> Element<'a, Message> {
+    if !app.fullscreen {
+        return desktop;
+    }
+
+    let open = app.rdp_toolbar_pinned || app.rdp_toolbar_hovered || app.rdp_quality_menu_open;
+
+    // The reveal strip: a thin band along the top edge that only has to notice
+    // the pointer. It stays in the stack even when the bar is open, because it
+    // is what keeps `rdp_toolbar_hovered` true in the gap above the bar.
+    let strip = column![
+        mouse_area(container(Space::new()).width(Fill).height(Length::Fixed(RDP_TOOLBAR_REVEAL_PX)))
+            .on_enter(Message::RdpToolbarHovered(true))
+            .on_exit(Message::RdpToolbarHovered(false)),
+        Space::new().height(Fill),
+    ]
+    .width(Fill)
+    .height(Fill);
+
+    let mut layers: Vec<Element<'a, Message>> = vec![desktop, strip.into()];
+    if open {
+        layers.push(rdp_toolbar_overlay(app));
+        if app.rdp_quality_menu_open {
+            layers.push(rdp_quality_menu_overlay(app));
+        }
+    }
+    stack(layers).into()
+}
+
+/// The floating bar itself: centred at the top, over the desktop, reserving no
+/// layout space.
+fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
+    let live = app.manager.active_rdp_live();
+
+    let buttons = row![
+        // Pin first, matching every floating toolbar that has one: it is the
+        // control that decides whether the others stay reachable.
+        rdp_toolbar_button("📌", t("固定工具栏"), app.rdp_toolbar_pinned, Some(Message::ToggleRdpToolbarPin)),
+        rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu)),
+        rdp_toolbar_button(
+            "⤢",
+            t("缩放适应窗口"),
+            app.rdp_scale_fit,
+            Some(Message::ToggleRdpScaleFit),
+        ),
+        // Ctrl+Alt+Del and the clipboard are meaningless without a live desktop
+        // to receive them, so they grey out rather than firing into a dead pipe.
+        rdp_toolbar_button(
+            "⌨",
+            t("发送 Ctrl+Alt+Del"),
+            false,
+            live.then_some(Message::RdpSendCtrlAltDel),
+        ),
+        rdp_toolbar_button(
+            "📋",
+            t("剪贴板同步"),
+            app.rdp_clipboard,
+            Some(Message::ToggleRdpClipboard(!app.rdp_clipboard)),
+        ),
+        rdp_toolbar_separator(),
+        rdp_toolbar_button("⛶", t("退出全屏"), false, Some(Message::ToggleFullscreen)),
+        rdp_toolbar_button(
+            "✕",
+            t("断开会话"),
+            false,
+            app.manager.active_session().map(Message::CloseSession),
+        ),
+    ]
+    .spacing(2)
+    .align_y(Alignment::Center);
+
+    // `mouse_area` around the bar, not just the strip above it: without it the
+    // bar would hide the moment the pointer left the strip to reach a button,
+    // which is to say it could never be clicked.
+    let bar = mouse_area(
+        container(buttons)
+            .padding([4, 6])
+            .style(|_theme| rdp_toolbar_style()),
+    )
+    .on_enter(Message::RdpToolbarHovered(true))
+    .on_exit(Message::RdpToolbarHovered(false));
+
+    column![
+        row![Space::new().width(Fill), bar, Space::new().width(Fill)],
+        Space::new().height(Fill),
+    ]
+    .width(Fill)
+    .height(Fill)
     .into()
+}
+
+/// The ⚡ dropdown. Picking an entry reconnects the session, so each one says so.
+fn rdp_quality_menu_overlay(app: &AditApp) -> Element<'_, Message> {
+    let mut entries = column![].spacing(0).width(Fill);
+    for (quality, label, hint) in [
+        (RdpQuality::High, "高清", "局域网：桌面特效全开"),
+        (RdpQuality::Balanced, "均衡", "默认：保留壁纸与主题"),
+        (RdpQuality::Speed, "流畅", "慢速链路：关闭壁纸与主题"),
+    ] {
+        let chosen = app.rdp_quality == quality;
+        entries = entries.push(
+            button(
+                column![
+                    text(format!("{} {}", if chosen { "●" } else { "○" }, t(label))).size(12),
+                    text(t(hint)).size(10).color(muted_text()),
+                ]
+                .spacing(1),
+            )
+            .width(Fill)
+            .padding([6, 12])
+            .style(|_theme, status| menu_command_button_style(status))
+            .on_press(Message::RdpQualityChosen(quality)),
+        );
+    }
+
+    let card = container(
+        column![
+            entries,
+            container(
+                text(t("切换后会重新连接（RDP 只在握手时协商画质）"))
+                    .size(10)
+                    .color(muted_text())
+            )
+            .padding([4, 12]),
+        ]
+        .spacing(2),
+    )
+    .width(Length::Fixed(212.0))
+    .padding([5, 0])
+    .style(|_theme| menu_dropdown_style());
+
+    // A full-screen click-catcher behind the card so clicking anywhere else
+    // closes the dropdown instead of landing on the remote desktop.
+    let backdrop = mouse_area(container(Space::new()).width(Fill).height(Fill))
+        .on_press(Message::ToggleRdpQualityMenu);
+
+    let positioned = column![
+        Space::new().height(Length::Fixed(RDP_TOOLBAR_HEIGHT)),
+        row![
+            Space::new().width(Fill),
+            card,
+            // Nudges the card under the ⚡ button rather than under the centre
+            // of the bar: ⚡ is the second of eight, left of centre.
+            Space::new().width(Length::Fixed(RDP_QUALITY_MENU_RIGHT_PAD)),
+        ],
+        Space::new().height(Fill),
+    ]
+    .width(Fill)
+    .height(Fill);
+
+    stack(vec![backdrop.into(), positioned.into()]).into()
+}
+
+fn rdp_toolbar_button(
+    glyph: &'static str,
+    tip: &'static str,
+    active: bool,
+    on_press: Option<Message>,
+) -> Element<'static, Message> {
+    let enabled = on_press.is_some();
+    let control = button(
+        container(text(glyph).size(15))
+            .center_x(Length::Fixed(30.0))
+            .center_y(Length::Fixed(26.0)),
+    )
+    .padding(0)
+    .style(move |_theme, status| rdp_toolbar_button_style(active, enabled, status));
+    let control = match on_press {
+        Some(message) => control.on_press(message),
+        None => control,
+    };
+    // The glyphs carry no words, so the label has to come from somewhere; a
+    // tooltip is the only place it fits without making the bar three times wider.
+    tooltip(
+        control,
+        container(text(tip).size(11))
+            .padding([3, 7])
+            .style(|_theme| tooltip_style()),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+fn rdp_toolbar_separator() -> Element<'static, Message> {
+    container(Space::new().width(Length::Fixed(1.0)).height(Length::Fixed(18.0)))
+        .padding([0, 4])
+        .style(|_theme| container::Style {
+            background: Some(muted_text().scale_alpha(0.35).into()),
+            ..container::Style::default()
+        })
+        .into()
 }
 
 /// Map an iced mouse button to the RDP button set (`Other` is ignored).

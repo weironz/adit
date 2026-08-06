@@ -210,6 +210,48 @@ See [rdp-gnome-remote-desktop.md](rdp-gnome-remote-desktop.md).
 The framebuffer is sampled per vsync frame, but only while an RDP tab is *active*, so a
 background RDP session doesn't pin the app at 60 fps.
 
+### The fullscreen toolbar
+
+Fullscreen drops the menu bar — that is the point of the mode — which left the status
+bar's one line of text as the only thing telling anyone how to get back out. So a
+floating bar (RustDesk-style) appears at the top edge in fullscreen, and **only** in
+fullscreen: windowed sessions already have the menu bar and the tab strip, and a
+permanent icon row there is the 36px of duplicated shortcuts the previous toolbar was
+deleted for. This one reserves no layout space at all. It reveals on hover over an 8px
+strip at the top edge and can be pinned; the pin, the fit toggle and the clipboard
+toggle light up when they are on, so the bar shows state and not just actions.
+
+Seven buttons: **pin**, **quality**, **scale-to-fit**, **Ctrl+Alt+Del**, **clipboard
+sharing**, **leave fullscreen**, **disconnect**. Ctrl+Alt+Del cannot simply be typed —
+Windows reserves the real sequence for the local machine and never delivers it to an
+application, which is why mstsc offers Ctrl+Alt+End instead and every remote-desktop
+client grows a button for it; Adit synthesises it as three scancode pairs, releasing the
+modifiers last so nothing stays stuck down.
+
+### Quality presets, and why switching one reconnects
+
+**高清 / 均衡 / 流畅** map to RDP performance flags, the same lever as mstsc's
+"Experience" tab: what they buy is fewer pixels changing at the *server*, not better
+compression, so the effect is dramatic on a desktop with a photographic wallpaper and
+nearly invisible on a bare login screen. 均衡 is byte-for-byte what every session
+connected at before the control existed.
+
+Those flags ride the Client Info PDU, which RDP sends once during the handshake and never
+revises — so there is no way to change this in place, and picking a different preset
+reconnects the session rather than pretending to apply. The alternative was a control
+that appeared to do nothing for the two seconds a reconnect takes.
+
+### Fit vs. viewport-matching
+
+By default the *remote desktop* is resized to match the viewport, which is the sharper of
+the two: every remote pixel lands on exactly one local pixel and nothing resamples.
+**缩放适应窗口** (mstsc's "smart sizing") does the opposite — leaves the remote resolution
+alone and scales the picture, aspect preserved. It exists for servers that will not
+renegotiate a desktop size, where the alternative to resampling is a desktop that doesn't
+fit at all. The fit factor is folded into the same scale the tile layout and the mouse
+mapping both divide by, which is what keeps the pointer and the picture agreeing about
+where a pixel is.
+
 ### Clipboard (CLIPRDR)
 
 **Text copies both ways**, on by default. Copy in the remote desktop and it lands on the

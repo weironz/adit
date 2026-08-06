@@ -78,6 +78,7 @@ fn debug_connect_real_host() {
             height: 900,
             enable_clipboard: false,
             enable_audio: false,
+            quality: adit_rdp_proto::Quality::default(),
         }),
     )
     .expect("send Connect");

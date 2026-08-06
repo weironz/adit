@@ -1543,10 +1543,100 @@ pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
     }
 }
 
+/// The factor the RDP framebuffer is drawn at so it fits the pane, and the
+/// matching divisor for turning a click back into a remote pixel.
+///
+/// 1.0 in the default (viewport-matching) mode: the desktop is already the size
+/// of the pane, so nothing is resampled. In fit mode the remote desktop keeps
+/// whatever size it has and the image is scaled instead — shrunk when it is
+/// bigger than the pane, and enlarged when smaller, because a locked 1024×768
+/// desktop marooned in the top-left of a 4K window is the case fit mode exists
+/// to fix.
+///
+/// `surface` is in device pixels; the pane is measured in logical points, so
+/// `display_scale` converts between them.
+pub(crate) fn rdp_fit_factor(app: &AditApp, surface: (u16, u16)) -> f32 {
+    if !app.rdp_scale_fit {
+        return 1.0;
+    }
+    let (sw, sh) = surface;
+    if sw == 0 || sh == 0 {
+        return 1.0;
+    }
+    let sidebar = sidebar_offset(app);
+    let (pane_w, pane_h) =
+        terminal_region_area(app.window_width, app.window_height, sidebar, app.fullscreen);
+    if pane_w <= 0.0 || pane_h <= 0.0 {
+        return 1.0;
+    }
+    let scale = app.display_scale.max(0.1);
+    // The surface's natural size in logical points, which is what the pane is in.
+    let natural_w = f32::from(sw) / scale;
+    let natural_h = f32::from(sh) / scale;
+    // Aspect-preserving: the tighter of the two axes wins, so nothing is cropped.
+    let factor = (pane_w / natural_w).min(pane_h / natural_h);
+    // Guard the degenerate cases (a zero or NaN surface would otherwise divide
+    // into the mouse mapping and send garbage coordinates to the remote).
+    if factor.is_finite() && factor > 0.0 {
+        factor.clamp(0.1, 8.0)
+    } else {
+        1.0
+    }
+}
+
+/// The picker label for a fidelity preset.
+pub(crate) fn rdp_quality_label(quality: RdpQuality) -> &'static str {
+    match quality {
+        RdpQuality::High => "高清",
+        RdpQuality::Balanced => "均衡",
+        RdpQuality::Speed => "流畅",
+    }
+}
+
+/// Send Ctrl+Alt+Del to the remote desktop.
+///
+/// It cannot be typed: Windows reserves the real sequence for the local machine
+/// and never delivers it to an application, which is why mstsc offers Ctrl+Alt+End
+/// as a stand-in and every remote-desktop client grows a button for it. Synthesised
+/// here as three ordinary scancode pairs — the server's own session handles the
+/// secure attention sequence at the far end.
+///
+/// Released in reverse order, and the modifiers released last: leaving Ctrl or Alt
+/// stuck down would make every subsequent keystroke a chord, which is the classic
+/// way this goes wrong.
+pub(crate) fn send_ctrl_alt_del(app: &AditApp) {
+    const CTRL: (u8, bool) = (0x1D, false);
+    const ALT: (u8, bool) = (0x38, false);
+    const DELETE: (u8, bool) = (0x53, true); // E0-extended: the nav-cluster Delete, not numpad '.'
+
+    for ((scancode, extended), pressed) in [
+        (CTRL, true),
+        (ALT, true),
+        (DELETE, true),
+        (DELETE, false),
+        (ALT, false),
+        (CTRL, false),
+    ] {
+        app.manager.send_rdp_input_to_active(RdpInput::Key {
+            scancode,
+            extended,
+            pressed,
+        });
+    }
+}
+
 /// After a layout change, ask the active RDP desktop to match the viewport, but
 /// only when the target actually changed (window/sidebar drags fire continuously).
 pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     if !app.manager.active_rdp_live() {
+        return;
+    }
+    // Fit mode's whole premise is that the remote desktop size is left alone and
+    // the picture is scaled locally, so this is where that promise is kept.
+    // `rdp_target_size` is deliberately left as it was: turning fit back off must
+    // renegotiate, and it can only tell that it needs to if the remembered target
+    // still describes the last size actually requested.
+    if app.rdp_scale_fit {
         return;
     }
     let (w, h) = rdp_viewport_size(app);
@@ -2267,6 +2357,8 @@ pub(crate) fn current_settings(app: &AditApp) -> AppSettings {
         command_send_immediately: app.command_send_immediately,
         auto_accept_host_keys: app.auto_accept_host_keys,
         rdp_clipboard: app.rdp_clipboard,
+        rdp_quality: app.rdp_quality,
+        rdp_scale_fit: app.rdp_scale_fit,
         keyring_migrated: app.keyring_migrated,
     }
 }

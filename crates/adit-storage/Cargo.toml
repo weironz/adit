@@ -7,6 +7,12 @@ license.workspace = true
 
 [dependencies]
 adit-domain.workspace = true
+# For `Quality` only. The wire enum is reused as the persisted one on purpose:
+# a settings-local copy would be a second list to keep in step with the helper's,
+# and the first time they disagreed a saved preset would silently connect at a
+# different one. adit-rdp-proto carries nothing but serde + bincode, so this
+# does not drag anything into the dependency graph.
+adit-rdp-proto.workspace = true
 keyring.workspace = true
 serde.workspace = true
 serde_json.workspace = true

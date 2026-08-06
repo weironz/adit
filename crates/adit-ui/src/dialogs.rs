@@ -1221,6 +1221,27 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
                 .on_toggle(Message::ToggleRdpClipboard)
                 .size(16)
                 .text_size(12),
+        )
+        // The same two controls the fullscreen toolbar carries. They are
+        // duplicated here on purpose: the toolbar only exists in fullscreen, and
+        // a setting reachable from exactly one screen mode is a setting most
+        // people never find.
+        .push(
+            row![
+                text(t("RDP 画质")).size(12).color(primary_text()),
+                rdp_quality_choice(app, RdpQuality::High),
+                rdp_quality_choice(app, RdpQuality::Balanced),
+                rdp_quality_choice(app, RdpQuality::Speed),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+        )
+        .push(
+            checkbox(app.rdp_scale_fit)
+                .label(t("缩放远程画面以适应窗口（而不是调整远程分辨率）"))
+                .on_toggle(|_| Message::ToggleRdpScaleFit)
+                .size(16)
+                .text_size(12),
         );
 
     // Live preview of the rendered log filename for the active (or a sample)
@@ -1311,6 +1332,24 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
 
 
     [config_section.into(), log_section.into(), mouse_section.into()]
+}
+
+/// One segment of the settings dialog's RDP-quality picker. A row of small
+/// buttons rather than a radio group, so it matches the toolbar's dropdown and
+/// stays on one line.
+fn rdp_quality_choice(app: &AditApp, quality: RdpQuality) -> Element<'_, Message> {
+    let chosen = app.rdp_quality == quality;
+    button(text(t(rdp_quality_label(quality))).size(12))
+        .padding([4, 10])
+        .style(move |_theme, status| {
+            if chosen {
+                primary_button_style(status)
+            } else {
+                secondary_button_style(status)
+            }
+        })
+        .on_press(Message::RdpQualityChosen(quality))
+        .into()
 }
 
 pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {

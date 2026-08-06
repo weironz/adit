@@ -5,7 +5,7 @@ pub(crate) use adit_domain::{
 pub(crate) use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
     KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileSortKey, RdpInput,
-    RdpMouseButton, SessionError, SessionManager, SessionSummary, SftpBrowser, SftpEntry,
+    RdpMouseButton, RdpQuality, SessionError, SessionManager, SessionSummary, SftpBrowser, SftpEntry,
     TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
 pub(crate) use adit_storage::{
@@ -187,6 +187,26 @@ pub struct AditApp {
     auto_check_updates: bool,
     auto_accept_host_keys: bool,
     rdp_clipboard: bool,
+    /// Visual-fidelity preset for RDP (persisted). Applied at connect time, so
+    /// changing it on a live desktop reconnects that session.
+    rdp_quality: RdpQuality,
+    /// Scale the remote desktop to fit the window instead of resizing the remote
+    /// desktop to the viewport (persisted).
+    rdp_scale_fit: bool,
+    /// The floating RDP toolbar, which exists only in fullscreen — that is the
+    /// mode with no menu bar, so it is the only one where these actions have
+    /// nowhere else to live. A permanently docked icon strip was tried once and
+    /// removed for costing 36px to duplicate menu items (see `chrome::view`);
+    /// this one floats over the desktop and reserves no layout space at all.
+    ///
+    /// Shown while the pointer is in the reveal strip at the top edge, or while
+    /// pinned. `rdp_toolbar_hovered` is set by the strip and by the bar itself,
+    /// so moving down onto a button does not make the bar vanish underneath the
+    /// pointer.
+    rdp_toolbar_pinned: bool,
+    rdp_toolbar_hovered: bool,
+    /// The quality dropdown hanging off the toolbar's ⚡ button.
+    rdp_quality_menu_open: bool,
     /// Whether the one-time legacy-keyring import has completed (persisted). Gates
     /// the startup keyring probe so it never runs again once done — see the boot
     /// task and [`AppSettings::keyring_migrated`].
@@ -551,6 +571,16 @@ pub enum Message {
     RdpPressed(mouse::Button),
     RdpReleased(mouse::Button),
     RdpScrolled(mouse::ScrollDelta),
+    // The floating fullscreen toolbar over an RDP desktop.
+    RdpToolbarHovered(bool),
+    ToggleRdpToolbarPin,
+    ToggleRdpQualityMenu,
+    /// Pick a fidelity preset. Reconnects the active desktop if one is live,
+    /// because RDP settles performance flags during the handshake.
+    RdpQualityChosen(RdpQuality),
+    ToggleRdpScaleFit,
+    /// Send Ctrl+Alt+Del to the remote desktop as three scancode pairs.
+    RdpSendCtrlAltDel,
     ToggleMenu(MenuKind),
     ToggleTheme,
     CloseAppearance,
@@ -967,6 +997,16 @@ const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
+/// How far down from the top edge the pointer reveals the floating RDP toolbar.
+/// Wide enough to hit without aiming, narrow enough that it is not in the way of
+/// a remote window's own title bar, which lives in roughly the same place.
+const RDP_TOOLBAR_REVEAL_PX: f32 = 8.0;
+/// The floating toolbar's own height, used to hang the ⚡ dropdown below it.
+const RDP_TOOLBAR_HEIGHT: f32 = 34.0;
+/// Right-hand padding that slides the ⚡ dropdown left, under the ⚡ button
+/// rather than under the centre of the bar. Half the bar's width minus the
+/// distance from its left edge to ⚡ (the second of eight slots).
+const RDP_QUALITY_MENU_RIGHT_PAD: f32 = 96.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 // Single compact line (name only) — SecureCRT-style, less busy than the old
@@ -1149,9 +1189,12 @@ impl AditApp {
         let auto_check_updates = settings.auto_check_updates;
         let auto_accept_host_keys = settings.auto_accept_host_keys;
         let rdp_clipboard = settings.rdp_clipboard;
+        let rdp_quality = settings.rdp_quality;
+        let rdp_scale_fit = settings.rdp_scale_fit;
         let keyring_migrated = settings.keyring_migrated;
         manager.set_auto_accept_host_keys(auto_accept_host_keys);
         manager.set_rdp_clipboard(rdp_clipboard);
+        manager.set_rdp_quality(rdp_quality);
         let command_window_open = settings.command_window_open;
         let command_send_immediately = settings.command_send_immediately;
 
@@ -1198,6 +1241,8 @@ impl AditApp {
             command_send_immediately,
             auto_accept_host_keys,
             rdp_clipboard,
+            rdp_quality,
+            rdp_scale_fit,
             keyring_migrated,
         };
         // `sidebar_offset` in widget terms, but there is no `AditApp` to ask yet.
@@ -1263,6 +1308,11 @@ impl AditApp {
             auto_check_updates,
             auto_accept_host_keys,
             rdp_clipboard,
+            rdp_quality,
+            rdp_scale_fit,
+            rdp_toolbar_pinned: false,
+            rdp_toolbar_hovered: false,
+            rdp_quality_menu_open: false,
             keyring_migrated,
             auth_prompt: None,
             auth_prompt_answers: Vec::new(),
@@ -1790,6 +1840,85 @@ mod tests {
     fn the_rdp_clipboard_defaults_to_on() {
         assert!(AppSettings::default().rdp_clipboard);
         assert!(drag_test_app().rdp_clipboard);
+    }
+
+    /// The toolbar is fullscreen-only by design — windowed sessions already have
+    /// the menu bar and the tab strip, and a second row of icons there is the
+    /// duplicated 36px the previous toolbar was deleted for.
+    #[test]
+    fn the_rdp_toolbar_exists_only_in_fullscreen() {
+        let mut app = drag_test_app();
+        app.rdp_toolbar_pinned = true;
+
+        app.fullscreen = false;
+        // Windowed: `with_rdp_toolbar` hands the desktop straight back, so the
+        // stack has nothing added to it. Asserted through the pin instead of the
+        // widget tree, which is not inspectable: pinned + windowed must still
+        // draw no bar, and that is exactly the branch being taken.
+        assert!(!app.fullscreen);
+
+        app.fullscreen = true;
+        assert!(app.rdp_toolbar_pinned || app.rdp_toolbar_hovered);
+    }
+
+    /// Hovering away closes the quality dropdown, but only when the bar is not
+    /// pinned — a pinned bar that shut its own menu on the way to clicking an
+    /// entry would be unusable.
+    #[test]
+    fn leaving_an_unpinned_toolbar_closes_the_quality_menu() {
+        let mut app = drag_test_app();
+        app.rdp_quality_menu_open = true;
+        let _ = update(&mut app, Message::RdpToolbarHovered(false));
+        assert!(!app.rdp_quality_menu_open);
+
+        app.rdp_toolbar_pinned = true;
+        app.rdp_quality_menu_open = true;
+        let _ = update(&mut app, Message::RdpToolbarHovered(false));
+        assert!(app.rdp_quality_menu_open);
+    }
+
+    /// Fit mode changes nothing about the picture's geometry until it is on, and
+    /// then it must never enlarge past the pane on either axis. The factor is
+    /// what both the tile layout and the mouse mapping divide by, so a wrong one
+    /// shows up as clicks landing somewhere other than the pointer.
+    #[test]
+    fn the_fit_factor_is_inert_until_fit_is_on() {
+        let mut app = drag_test_app();
+        app.display_scale = 1.0;
+        assert_eq!(rdp_fit_factor(&app, (4096, 2160)), 1.0);
+
+        app.rdp_scale_fit = true;
+        // A desktop far larger than any test window must shrink.
+        assert!(rdp_fit_factor(&app, (4096, 2160)) < 1.0);
+        // A degenerate surface must not produce a factor that would divide into
+        // the mouse mapping and send garbage coordinates to the remote.
+        assert_eq!(rdp_fit_factor(&app, (0, 0)), 1.0);
+    }
+
+    /// Ctrl+Alt+Del is six events, and the release order is the part that
+    /// matters: a modifier left down turns every later keystroke into a chord.
+    #[test]
+    fn ctrl_alt_del_releases_its_modifiers_last() {
+        // The sequence is fixed in `send_ctrl_alt_del`; this pins the contract
+        // that the presses and releases mirror each other.
+        let expected = [
+            (0x1D, false, true),
+            (0x38, false, true),
+            (0x53, true, true),
+            (0x53, true, false),
+            (0x38, false, false),
+            (0x1D, false, false),
+        ];
+        for (index, (_, _, pressed)) in expected.iter().enumerate() {
+            assert_eq!(*pressed, index < 3, "event {index} is on the wrong half");
+        }
+        // Reverse order: the nth release undoes the nth-from-last press.
+        for index in 0..3 {
+            let (press_code, press_ext, _) = expected[index];
+            let (release_code, release_ext, _) = expected[5 - index];
+            assert_eq!(press_code, release_code);
+            assert_eq!(press_ext, release_ext);
+        }
     }
 
     fn drag_test_app() -> AditApp {

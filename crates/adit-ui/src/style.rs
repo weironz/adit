@@ -479,6 +479,42 @@ pub(crate) fn menu_command_button_style(status: button::Status) -> button::Style
     secondary_button_style(status)
 }
 
+/// The floating RDP toolbar's own card. Unlike every other bar in the app this
+/// one sits on top of the remote desktop rather than in the chrome, so it needs
+/// a border and a shadow to read as floating — and it must stay legible over
+/// whatever wallpaper happens to be behind it, which is why the background is
+/// opaque rather than a tint.
+pub(crate) fn rdp_toolbar_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface())),
+        text_color: Some(primary_text()),
+        border: border(RADIUS_SM, 1.0, border_color()),
+        shadow: subtle_shadow(),
+        ..container::Style::default()
+    }
+}
+
+/// A toolbar glyph button. `active` marks a toggle that is currently on (pin,
+/// clipboard, fit) so the bar shows state, not just actions; `enabled` false is
+/// the greyed-out form used when there is no live desktop to act on.
+pub(crate) fn rdp_toolbar_button_style(
+    active: bool,
+    enabled: bool,
+    status: button::Status,
+) -> button::Style {
+    if !enabled {
+        return base_button_style(transparent(), muted_text().scale_alpha(0.5), transparent());
+    }
+    let background = match status {
+        _ if active => accent_soft(),
+        button::Status::Hovered => panel_background_hover(),
+        button::Status::Pressed => accent_soft(),
+        _ => transparent(),
+    };
+    let text = if active { accent() } else { primary_text() };
+    base_button_style(background, text, transparent())
+}
+
 pub(crate) fn toolbar_icon_button_style(status: button::Status) -> button::Style {
     let background = match status {
         button::Status::Hovered => panel_background_hover(),

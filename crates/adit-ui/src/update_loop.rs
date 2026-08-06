@@ -2227,6 +2227,54 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from(t("已关闭：RDP 不再共享剪贴板（下次连接生效）"))
             };
         }
+        Message::RdpToolbarHovered(inside) => {
+            app.rdp_toolbar_hovered = inside;
+            // Leaving the bar closes the dropdown with it, otherwise the menu
+            // would outlive the thing it hangs off and float on its own.
+            if !inside && !app.rdp_toolbar_pinned {
+                app.rdp_quality_menu_open = false;
+            }
+        }
+        Message::ToggleRdpToolbarPin => {
+            app.rdp_toolbar_pinned = !app.rdp_toolbar_pinned;
+        }
+        Message::ToggleRdpQualityMenu => {
+            app.rdp_quality_menu_open = !app.rdp_quality_menu_open;
+        }
+        Message::RdpQualityChosen(quality) => {
+            app.rdp_quality_menu_open = false;
+            if app.rdp_quality == quality {
+                return Task::none();
+            }
+            app.rdp_quality = quality;
+            app.manager.set_rdp_quality(quality);
+            // RDP fixes the performance flags during the handshake, so the only
+            // way to apply this to what is on screen is to open the session
+            // again. Doing it silently would look like the button did nothing
+            // for the two seconds the reconnect takes, hence the notice.
+            if app.manager.active_rdp_live() {
+                app.notice = tf("画质已切换为 {} — 正在重新连接", &[&t(rdp_quality_label(quality))]);
+                reconnect_active_session(app);
+            } else {
+                app.notice = tf("画质已切换为 {}（下次连接生效）", &[&t(rdp_quality_label(quality))]);
+            }
+        }
+        Message::ToggleRdpScaleFit => {
+            app.rdp_scale_fit = !app.rdp_scale_fit;
+            app.notice = String::from(if app.rdp_scale_fit {
+                t("已开启：缩放画面以适应窗口")
+            } else {
+                t("已关闭：远程分辨率跟随窗口")
+            });
+            // Turning fit *off* has to renegotiate right now: while it was on,
+            // `maybe_resize_active_rdp` deliberately skipped every window change,
+            // so the remote desktop can be any size at this point.
+            maybe_resize_active_rdp(app);
+        }
+        Message::RdpSendCtrlAltDel => {
+            send_ctrl_alt_del(app);
+            app.notice = String::from(t("已发送 Ctrl+Alt+Del"));
+        }
         Message::StartUpdateDownload => {
             if let UpdateState::Available(info) = &app.update_state {
                 let url = info.installer_url.clone();

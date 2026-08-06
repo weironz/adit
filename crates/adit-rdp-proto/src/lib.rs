@@ -25,8 +25,32 @@ use serde::{Deserialize, Serialize};
 /// the writer instead of desyncing the reader.
 pub const MAX_MESSAGE_BYTES: usize = 288 * 1024 * 1024;
 
+/// How much of the remote desktop's visual fidelity to ask for, traded against
+/// bandwidth. This is mstsc's "Experience" tab, and like mstsc's it is a
+/// **connect-time** choice: it becomes RDP performance flags in the Client Info
+/// PDU, which is sent once during the handshake and never renegotiated. Changing
+/// it on a live session therefore means reconnecting — there is no wire message
+/// that could do it in place, which is why none is offered here.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Quality {
+    /// Everything on, including desktop composition: for a LAN.
+    High,
+    /// The historical default, and mstsc's on a fast link — drop the two
+    /// animations nobody misses, keep wallpaper, themes and font smoothing.
+    #[default]
+    Balanced,
+    /// Everything the protocol can switch off: wallpaper, themes, cursor
+    /// shadow and blink, font smoothing. For a slow or metered link.
+    Speed,
+}
+
 /// Everything needed to open an RDP session. The password rides the stdin pipe,
 /// never argv/env, so it isn't visible in the process list.
+///
+/// Adding a field here changes the bincode layout, and bincode has no version
+/// tolerance: an app talking to a helper built from a different revision fails
+/// to deserialise rather than degrading. That is why the two are built and
+/// shipped together — see the helper note in CLAUDE.md.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub host: String,
@@ -38,6 +62,7 @@ pub struct ConnectRequest {
     pub height: u16,
     pub enable_clipboard: bool,
     pub enable_audio: bool,
+    pub quality: Quality,
 }
 
 /// A mouse button, protocol-neutral.
