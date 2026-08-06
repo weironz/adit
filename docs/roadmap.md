@@ -1,161 +1,127 @@
-# Roadmap
+# 路线图
 
-What is not built yet, and why each thing is or is not next. Finished work moves
-to [roadmap-done.md](roadmap-done.md) rather than being deleted — the reasoning
-behind a decision outlives the decision.
+还没做的事，以及每件事为什么排在或不排在下一步。做完的工作会挪到
+[roadmap-done.md](roadmap-done.md) 而不是删掉——一个决定背后的推理，比决定本身
+活得更久。
 
-Ordered by what stands between Adit and someone else being able to use it, not
-by how interesting the work is.
+排序依据是"什么挡在 Adit 和别人能用上它之间"，而不是哪件事更有意思。
 
 ---
 
-## Blocked on someone else
+## 卡在别人手上
 
-- **OneDrive client id.** The code path is complete and identical to the other
-  two drives; the app registration has not come back. When it does it is one
-  command — `gh secret set ADIT_SYNC_ONEDRIVE_CLIENT_ID` — and no code change.
-  Until then the panel reports the provider as unconfigured, by design.
+- **OneDrive client id。** 代码路径已经完整，和另外两个网盘一模一样；只是应用
+  注册还没批下来。批下来之后只是一条命令——`gh secret set
+  ADIT_SYNC_ONEDRIVE_CLIENT_ID`——不需要改代码。在那之前，面板会按设计把这个
+  provider 报成"未配置"。
 
-## Needs a real device, not more code
+## 需要真机，而不是继续写代码
 
-- **Telnet against actual hardware.** The IAC negotiation is verified against
-  the RFCs and a loopback harness, never against a Cisco switch or an IPMI
-  console. The `CR NUL` translation is the specific thing to watch: it is
-  spec-correct, and exactly the sort of detail real equipment disagrees about.
+- **对着真实硬件跑 Telnet。** IAC 协商只对着 RFC 和一套回环测试验证过，从没对着
+  一台 Cisco 交换机或 IPMI 控制台跑过。要盯的具体一点是 `CR NUL` 转换：它符合
+  规范，而这恰恰是真实设备最爱各执一词的那类细节。
 
-## Adoption
+## 推广
 
-- **Code signing, Windows and macOS.** Currently the biggest thing between this
-  and other people running it: SmartScreen blocks an unsigned installer behind
-  an "unknown publisher" warning, and macOS requires a right-click to open the
-  dmg. Mostly a procurement task — a certificate and an Apple Developer ID —
-  rather than an engineering one. Parked pending a decision to spend.
+- **Windows 和 macOS 的代码签名。** 目前挡在"能用"和"别人也能用"之间最大的一件
+  事：SmartScreen 会用"未知发布者"警告拦下未签名的安装包，macOS 则要右键才能打开
+  dmg。这更像一件采购任务——一张证书加一个 Apple Developer ID——而不是工程任务。
+  等一个"要不要花这笔钱"的决定，暂时搁置。
 
-  The researched Windows route is **Azure Trusted Signing**: cloud-only, around
-  $10/month, no USB hardware token, and built for CI — `azure/login` over OIDC
-  federated credentials then `azure/trusted-signing-action`, signing both
-  `adit-app.exe` and the installer with an RFC3161 timestamp so the signatures
-  outlive the certificate. The reason it matters more than it looks: SmartScreen
-  scores *publisher-certificate* reputation as well as per-file hashes, so an
-  unsigned build starts from zero every single release and never accumulates
-  anything. The prerequisite is an organisation identity on the Azure account;
-  the CI work is small once that exists.
+  Windows 这边调研出来的路线是 **Azure Trusted Signing**：纯云端，每月约 10 美元，
+  不需要 USB 硬件令牌，而且是为 CI 设计的——用 OIDC 联合凭据走 `azure/login`，再走
+  `azure/trusted-signing-action`，给 `adit-app.exe` 和安装包都加上 RFC3161 时间戳，
+  这样签名的有效期能超过证书本身。它比看上去更重要的原因是：SmartScreen 除了按文件
+  哈希打分，还会给*发布者证书*算信誉，所以未签名的构建每发一版都从零开始，永远
+  攒不下任何东西。前提条件是 Azure 账号上要有一个组织身份；有了之后 CI 那部分工作
+  量很小。
 
-## Known gaps worth closing
+## 值得补上的已知缺口
 
-- **The English translation is partial.** Menus, the settings page, the dialogs
-  and the runtime notices are covered; a missing string falls back to the
-  Chinese original rather than showing a key, so the gap is invisible until you
-  meet it. Adding one is a row in `i18n.rs` and touches no call site.
+- **英文翻译只做了一半。** 菜单、设置页、各种对话框和运行时提示都覆盖了；缺失的
+  字符串会回退到中文原文而不是显示 key，所以这个缺口在你撞上之前是看不见的。加
+  一条就是 `i18n.rs` 里的一行，不用动任何调用点。
 
-  Finishing it needs a design change first, not more rows. Lookup is keyed by
-  the Chinese source string, so **two places that say the same thing in Chinese
-  cannot say different things in English.** `主机` is already mapped to `Hosts`
-  for the host-manager tab, which means the session editor's `主机` field label
-  cannot be wrapped in `t()` at all — it would render as "Hosts". That is why
-  `editor.rs` still carries bare literals: they are right in Chinese and wrong
-  in English, and there is no way to express that today.
+  但要收尾，先要改的是设计，而不是继续加行。查表以中文原串为 key，所以**两处中文
+  说法相同的地方，英文没法说得不一样。** `主机` 已经为主机管理页签映射成了
+  `Hosts`，这就意味着会话编辑器里的 `主机` 字段标签根本不能包 `t()`——一包就会
+  渲染成 "Hosts"。这就是 `editor.rs` 里还留着裸字面量的原因：它们中文是对的、英文
+  是错的，而今天没有办法把这件事表达出来。
 
-  Whatever fixes it has to keep the property that makes the table safe to grow —
-  a missing entry showing the original rather than a bare key — so swapping the
-  Chinese key for an opaque identifier trades one problem for a worse one. A
-  context-qualified lookup (`t_in("editor", "主机")`, falling back to the plain
-  table and then to the source string) keeps that fallback and touches only the
-  call sites that actually collide.
-- **RDP: the server cursor shape is not drawn.** The pointer is the local OS's,
-  not the remote host's.
-- **RDP dirty rects coalesce by count, not by cost.** Sixteen regions are kept
-  and the cheapest pair merges past that. A better policy would weigh bytes
-  saved against per-message overhead instead of using a fixed cap.
-- **Terminal: no combining or zero-width characters, no DCS/Sixel, no charset
-  designation, no custom tab stops.** `TerminalChangeSet` dirty-row tracking is
-  a stub that always reports the whole screen.
-- **MFA does not cover the dial fallback.** SFTP, tunnels and the SFTP protocol
-  ride an existing SSH session where there is one, and answer no challenge.
-  With nothing to ride on they dial their own connection, and that path is
-  non-interactive — so an MFA host cannot be reached by SFTP once its shell has
-  exited.
-- **Jump hosts reuse the target's single credential.** No per-hop
-  authentication.
-- **SFTP shell has no line-at-a-time mode**, and its history is reachable with
-  the arrow keys but not searchable.
-- **Debian has no logo.** Deliberately: the swirl's identity is its taper and
-  asymmetry, and the only version computable by hand is a constant-width arc
-  spiral — a different mark that happens to be red. A diamond never claimed to
-  be anything; a bad swirl would. Wants real vector art rather than more effort.
-- **`ProxyCommand`, and `ProxyJump` on import.** Jump chains are typed into the
-  profile by hand: the `~/.ssh/config` importer reads `Host` / `HostName` /
-  `User` / `Port` / `IdentityFile` and drops everything else, so a `ProxyJump`
-  line does not become a chain. `ProxyCommand` has no implementation at all,
-  though the `connect_stream` transport the jump chain already uses would carry
-  it — a spawned process's stdin/stdout joined as the stream. Token expansion
-  (`%h`/`%p`/`%r`) and quoting on Windows is the part to be careful with; it is
-  an injection surface.
-- **The identity file is typed, not picked.** The profile editor's key field is a
-  plain text input; there is no file browser beside it, though the SFTP pane
-  already carries a native picker.
-- **No profile export, and no PuTTY session import.** Import covers
-  `~/.ssh/config` and a SecureCRT session tree; nothing goes the other way, and
-  PuTTY's registry sessions are unread (its `.ppk` *keys* work).
-- **Per-profile session options stop at the startup command and terminal type.**
-  No per-profile environment variables and no character-encoding override.
-- **Logging is app-wide.** The folder, the filename pattern, auto-start and the
-  plaintext mode are one global setting; there is no per-profile policy and no
-  keystroke (input) log.
-- **Nothing runs on a pattern.** Snippets ship, and keyword highlighting is the
-  colouring half of what SecureCRT calls triggers, but no *action* fires when a
-  pattern appears in the output.
-- **Appearance is process-global.** `TERM_SCHEME` is a process-wide atomic, so
-  font, size and colour scheme are one setting for every session at once. That
-  blocks three things behind one refactor: per-profile scheme overrides,
-  user-defined schemes, and the per-pane background tint that would extend the
-  PROD badge from the tab into the terminal itself.
-- **Bare URLs are not detected.** An OSC 8 link is clickable; a plain
-  `https://…` the server printed without markup is not, and a linked run does
-  not underline on hover.
-- **A rejected host key is not remembered**, and there is no "connect once" that
-  trusts a key for one session without writing it to `known_hosts`.
-- **Reconnect is one global policy.** The backoff curve and the attempt cap are
-  compiled in and the toggle is app-wide; no per-profile override.
-- **A tunnel does not survive its own connection dropping.** Each tunnel runs its
-  own SSH connection, and when that connection dies the tunnel stops rather than
-  re-dialling.
-- **SFTP transfers have no overwrite confirmation, no "download as", and no
-  resume.**
-- **Panes cannot be detached** into their own window and re-attached.
-- **High-DPI and accessibility have never had a pass.**
-- **Test gaps against the real `sshd`.** The Docker suite covers password accept
-  and reject, key auth, encrypted keys with right and wrong passphrases, SFTP
-  files and directory trees, local and remote forwarding, and jump hosts through
-  a bastion. Untested: dynamic (SOCKS) forwarding, agent auth, and
-  keyboard-interactive — the last one deliberately, because a real
-  PAM/TOTP container is time-based and therefore flaky, so the interactive-MFA
-  path has no end-to-end test at all.
+  不管怎么修，都必须保住那条让这张表可以放心生长的性质——缺条目时显示原文而不是
+  一个裸 key——所以把中文 key 换成不透明标识符，是拿一个问题换一个更糟的问题。
+  带上下文的查表（`t_in("editor", "主机")`，先回退到普通表、再回退到源串）既保住了
+  这个回退，又只需要改真正冲突的那几个调用点。
+- **RDP：不绘制服务端光标形状。** 指针是本地系统的，不是远端主机的。
+- **RDP 脏矩形按数量合并，而不是按代价。** 保留 16 个区域，超过之后合并最便宜的
+  一对。更好的策略应该权衡省下的字节数和每条消息的开销，而不是用一个固定上限。
+- **终端：不支持组合字符和零宽字符，没有 DCS/Sixel，没有字符集指派，没有自定义
+  制表位。** `TerminalChangeSet` 的脏行跟踪是个桩，永远上报整屏。
+- **MFA 没覆盖自建连接的回退路径。** SFTP、隧道和 SFTP 协议在有现成 SSH 会话时会
+  搭车复用，不需要回答任何 challenge。没有车可搭时它们会自己拨一条连接，而那条
+  路径是非交互的——所以一台开了 MFA 的主机，在它的 shell 退出之后就没法用 SFTP
+  连上了。
+- **跳板机复用目标主机的那一份凭据。** 没有逐跳认证。
+- **SFTP shell 没有整行模式**，历史记录能用方向键翻，但不能搜索。
+- **Debian 没有图标。** 这是故意的：那个漩涡的辨识度来自它的收细和不对称，而唯一
+  能手工算出来的版本是等宽的弧形螺旋——那是另一个恰好是红色的标记。菱形从没自称
+  是什么东西；一个糟糕的漩涡会。这件事要的是真正的矢量美术，而不是更多的努力。
+- **`ProxyCommand`，以及导入时的 `ProxyJump`。** 跳板链现在是手工敲进配置里的：
+  `~/.ssh/config` 导入器只读 `Host` / `HostName` / `User` / `Port` /
+  `IdentityFile`，其余全丢，所以一行 `ProxyJump` 不会变成一条链。`ProxyCommand`
+  则完全没有实现，尽管跳板链已经在用的 `connect_stream` 传输层扛得住它——把一个
+  子进程的 stdin/stdout 接成流即可。要小心的是 token 展开（`%h`/`%p`/`%r`）和
+  Windows 上的引号处理；那是一个注入面。
+- **身份文件是敲进去的，不是选出来的。** 配置编辑器里的密钥字段是个纯文本输入框，
+  旁边没有文件浏览器，尽管 SFTP 面板早就带了一个原生选择器。
+- **没有配置导出，也没有 PuTTY 会话导入。** 导入覆盖了 `~/.ssh/config` 和
+  SecureCRT 的会话树；反方向什么都没有，PuTTY 注册表里的会话也读不了（它的
+  `.ppk` *密钥*是支持的）。
+- **每个配置的会话选项只到启动命令和终端类型为止。** 没有按配置的环境变量，也没有
+  字符编码覆盖。
+- **日志是全应用一份。** 目录、文件名模式、自动启动和明文模式都是一个全局设置；
+  没有按配置的策略，也没有击键（输入）日志。
+- **没有任何东西按模式触发。** 代码片段有了，关键字高亮也做到了 SecureCRT 所谓
+  triggers 里"上色"的那一半，但输出里出现某个模式时不会触发任何*动作*。
+- **外观是进程全局的。** `TERM_SCHEME` 是一个进程级的 atomic，所以字体、字号和
+  配色方案对所有会话是同一份设置。这一件重构挡住了三件事：按配置的方案覆盖、
+  用户自定义方案，以及把 PROD 标记从页签延伸进终端本身的每窗格背景色调。
+- **裸 URL 不会被识别。** OSC 8 链接可以点击；服务端不加标记直接打印的
+  `https://…` 不行，而且已链接的那一段悬停时也不会加下划线。
+- **被拒绝的主机密钥不会被记住**，也没有"只连这一次"——即临时信任一个密钥而不把它
+  写进 `known_hosts`。
+- **重连只有一套全局策略。** 退避曲线和尝试次数上限是编译进去的，开关是全应用级
+  的；没有按配置的覆盖。
+- **隧道扛不住自己那条连接掉线。** 每条隧道跑自己的 SSH 连接，连接一死隧道就停，
+  而不是重拨。
+- **SFTP 传输没有覆盖确认、没有"另存为下载"、也没有续传。**
+- **窗格不能拆出**到独立窗口再合回来。
+- **高 DPI 和无障碍从来没有过一轮专门处理。**
+- **对真实 `sshd` 的测试缺口。** Docker 测试套覆盖了密码接受与拒绝、密钥认证、
+  加密密钥的正确与错误口令、SFTP 文件与目录树、本地与远程转发，以及经堡垒机的
+  跳板。没覆盖的是：动态（SOCKS）转发、agent 认证，以及 keyboard-interactive
+  ——最后一个是故意的，因为真跑一个 PAM/TOTP 容器是基于时间的、因而容易 flaky，
+  所以交互式 MFA 那条路径完全没有端到端测试。
 
-## Considered and not doing
+## 考虑过，不做
 
-- **VNC.** A full RFB client means the protocol, several authentication types,
-  and Raw/CopyRect/Hextile/Tight/ZRLE encodings — comparable in size to the
-  entire RDP subsystem. Not worth it without a machine that genuinely needs it.
-- **Automatic sync on change.** The setting existed, did nothing, and was
-  removed rather than wired up. Syncing on every change would have spread this
-  project's one mass-deletion bug faster than a manual button did, and the guard
-  that caught it was a human deciding when to press. Worth revisiting once the
-  merge has more history behind it.
-- **Guessing a host's OS from its name.** Wrong often enough to be worse than
-  nothing. The protocol *is* evidence — RDP means Windows — and so is an SSH
-  banner (`SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.4`), so reading the banner
-  after connect is the version of this idea worth building.
-- **Zmodem (`rz` / `sz`).** Researched, planned, and deliberately deferred. For
-  Adit it is parity, not capability: the SFTP panel is strictly more capable —
-  browsing, recursive directories, a queue — and what ZMODEM adds is *workflow*,
-  typing `sz file` at whatever prompt you happen to be sitting at, including
-  through sudo, a jump host, or a nested shell. Against that it is the highest
-  risk item on this list, because it takes over the live shell channel in-band:
-  a sentry on the output stream watches for the ZRQINIT trigger, then the
-  channel stops being a terminal until the transfer ends. Revisit on explicit
-  demand rather than on principle.
-- **A plugin system.** Named out of scope for the first native milestone and
-  never revisited since. Unlike the protocol non-goals beside it
-  ([decisions.md #15](decisions.md#15-more-protocols-than-ssh--reversal)), this
-  one still stands.
+- **VNC。** 一个完整的 RFB 客户端意味着协议本身、好几种认证类型，外加
+  Raw/CopyRect/Hextile/Tight/ZRLE 编码——体量堪比整个 RDP 子系统。在没有一台
+  真正需要它的机器之前，不值得。
+- **改动即自动同步。** 这个设置曾经存在、什么也不做，最后被删掉而不是接上。每次
+  改动都同步，只会让这个项目唯一那次批量删除的 bug 传播得比手动按钮更快，而当时
+  抓住它的那道防线，正是一个人决定什么时候按下去。等合并逻辑攒够历史之后值得
+  重新考虑。
+- **从主机名猜它的操作系统。** 猜错的频率高到还不如不猜。协议*本身*就是证据——
+  RDP 就意味着 Windows——SSH banner 同样是
+  （`SSH-2.0-OpenSSH_8.9p1 Ubuntu-3ubuntu0.4`），所以连上之后读 banner，才是这个
+  想法里值得做的那个版本。
+- **Zmodem（`rz` / `sz`）。** 调研过、规划过，然后故意推迟。对 Adit 来说它是补齐
+  对标项而不是补齐能力：SFTP 面板严格地更强——能浏览、能递归目录、有队列——ZMODEM
+  多出来的是*工作流*，在你恰好待着的任何提示符下敲 `sz file`，包括在 sudo 里、
+  跳板机后面或者嵌套 shell 中。代价是它是这份清单上风险最高的一项，因为它带内
+  接管了活着的 shell 通道：一个哨兵盯着输出流等 ZRQINIT 触发，之后这条通道在传输
+  结束前就不再是终端了。等有明确需求再重新考虑，而不是出于原则去做。
+- **插件系统。** 在第一个原生里程碑里就被划出范围，之后再没重新考虑过。和它旁边
+  那些协议类非目标不同（[decisions.md #15](decisions.md#15-more-protocols-than-ssh--reversal)），
+  这一条到今天仍然成立。
