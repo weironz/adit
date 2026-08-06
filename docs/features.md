@@ -14,10 +14,25 @@ Known gaps are listed honestly at the [end](#known-gaps).
 | **SSH** | `russh` | The main path: PTY shell, SFTP, tunnels, jump hosts |
 | **Local shell** | `portable-pty` (ConPTY on Windows) | Any program; defaults to the system shell |
 | **Serial** | `serialport` | Port in the host field, baud in the identity field |
+| **Telnet** | raw TCP (RFC 854) | For switches, IPMI and console servers. Unencrypted, no client credential |
 | **RDP** | IronRDP, out-of-process helper | Graphical surface, not a VT terminal |
 
-All three terminal protocols share one event protocol, so the session layer treats them
+All four terminal protocols share one event protocol, so the session layer treats them
 uniformly. RDP is the exception and carries a framebuffer instead.
+
+**Telnet** negotiates options reactively — it opens with silence and answers what the
+device offers, which keeps it out of the states where two implementations can negotiate
+at each other forever. It accepts the server's `ECHO` and `SUPPRESS-GO-AHEAD` (that pair
+is what puts the link in character-at-a-time mode), performs `TERMINAL-TYPE` (answering
+`xterm-256color`, the same `TERM` the SSH path requests) and `NAWS` (reporting the window
+on agreement and on every later resize), and refuses everything else explicitly rather
+than ignoring it — an unanswered option leaves some servers waiting forever. `IAC IAC`
+is unescaped back to a literal `0xFF` in both directions, and a bare `CR` leaves as
+`CR NUL` because RFC 854 has no bare `CR`. Until the server says it will echo, input is
+echoed locally, so a device that never negotiates `ECHO` doesn't look dead while you
+type. There is no credential plumbing at all: the login prompt is ordinary terminal
+output, so the username and password are typed into the terminal and never touch the
+credential store.
 
 ## Sessions
 
@@ -299,6 +314,11 @@ Verified shortcomings, so nobody has to rediscover them.
   channel. When there is no live session to ride on they dial their own connection
   instead, and *that* path is still non-interactive: opening SFTP against an MFA host
   after its shell has already exited fails.
+- **Telnet** implements only the four options a terminal needs (`ECHO`,
+  `SUPPRESS-GO-AHEAD`, `TERMINAL-TYPE`, `NAWS`); `NEW-ENVIRON`, `TSPEED`, `BINARY`,
+  `LINEMODE` and the rest are refused. There is no line-at-a-time mode — input goes out
+  character by character whatever the server negotiated — no `AYT`/`BRK`/`IP` controls,
+  and no encryption of any kind, including none for the password.
 - **Jump hosts reuse the target's single credential** — no per-hop authentication.
 - **SFTP shell**: no tab completion, and no history recall (the history is recorded but
   unbound).

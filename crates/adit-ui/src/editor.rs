@@ -38,10 +38,12 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 protocol_button(app, Protocol::Ssh),
                 protocol_button(app, Protocol::Sftp),
                 protocol_button(app, Protocol::Rdp),
+                protocol_button(app, Protocol::Telnet),
                 protocol_button(app, Protocol::LocalShell),
                 protocol_button(app, Protocol::Serial),
             ]
             .spacing(6)
+            .wrap()
             .into(),
         ),
         dialog_field(
@@ -280,6 +282,45 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                         .width(Fill)
                         .into(),
                 ));
+        }
+        Protocol::Telnet => {
+            form = form
+                .push(
+                    row![
+                        container(dialog_field(
+                            "主机",
+                            text_input("10.0.0.5", &app.profile_host)
+                                .on_input(Message::ProfileHostChanged)
+                                .on_submit(Message::ConnectSelectedProfile)
+                                .padding([5, 8])
+                                .style(text_input_style)
+                                .width(Fill)
+                                .into(),
+                        ))
+                        .width(Length::FillPortion(2)),
+                        container(dialog_field(
+                            "端口",
+                            text_input("23", &app.profile_port)
+                                .on_input(Message::ProfilePortChanged)
+                                .padding([5, 8])
+                                .style(text_input_style)
+                                .width(Fill)
+                                .into(),
+                        ))
+                        .width(Length::FillPortion(1)),
+                    ]
+                    .spacing(10),
+                )
+                // No username, no password, no key: telnet authenticates in-band,
+                // so the device's own login prompt is what asks. Offering the SSH
+                // credential fields here would collect secrets nothing sends.
+                .push(
+                    text(t(
+                        "Telnet 明文传输，用户名和密码都在终端里按提示输入，不经过凭据库。仅建议用于交换机、IPMI、串口服务器等只支持 telnet 的设备。",
+                    ))
+                    .size(11)
+                    .color(muted_text()),
+                );
         }
         Protocol::Rdp => {
             form = form

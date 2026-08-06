@@ -61,6 +61,7 @@ fn en(zh: &'static str) -> &'static str {
     match zh {
         "RDP 会话共享剪贴板（仅文本，下次连接生效）" => "Share the clipboard with RDP sessions (text only, applies to the next connection)",
         "SHA256 指纹" => "SHA256 fingerprint",
+        "Telnet 明文传输，用户名和密码都在终端里按提示输入，不经过凭据库。仅建议用于交换机、IPMI、串口服务器等只支持 telnet 的设备。" => "Telnet is unencrypted, and the username and password are typed at the device's own prompt rather than held in the credential store. Use it only for switches, IPMI and console servers that speak nothing else.",
         "iced · russh · vte 终端核心 — 无 WebView，无 JavaScript" => "iced · russh · vte terminal core — no WebView, no JavaScript",
         "下载并更新" => "Download and update",
         "仅对服务端未着色的文本生效，全屏程序（vim、less 等）中不启用" => "Applies only to text the server left uncoloured; off inside full-screen programs such as vim and less",

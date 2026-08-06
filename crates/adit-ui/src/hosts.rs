@@ -159,6 +159,9 @@ pub(crate) fn protocol_glyph(protocol: Protocol) -> &'static str {
         Protocol::Ssh => "\u{25b8}",
         Protocol::LocalShell => "\u{25a3}",
         Protocol::Serial => "\u{2325}",
+        // The hollow twin of SSH's filled triangle: the same kind of session,
+        // without the thing that makes SSH worth using.
+        Protocol::Telnet => "\u{25b9}",
         Protocol::Rdp => "\u{25a4}",
         Protocol::Sftp => "\u{21c5}",
     }

@@ -10,7 +10,7 @@ adit-app        binary entrypoint — iced runtime, window/exe icon, /STACK link
  └─ adit-ui     the entire GUI: screens, terminal renderer, input, theme, dialogs
      ├─ adit-sync      cloud sync: six provider backends, three-way merge, orchestration
      └─ adit-session   session manager: lifecycle, event pump, SFTP/tunnel/log state
-         ├─ adit-ssh       russh: auth, host keys, PTY shell, SFTP, tunnels, local/serial
+         ├─ adit-ssh       russh: auth, host keys, PTY shell, SFTP, tunnels, local/serial/telnet
          ├─ adit-storage   profiles, settings, encrypted credentials, imports
          ├─ adit-terminal  vte-driven VT grid → render-ready snapshots
          └─ adit-rdp-proto IPC wire types (serde + bincode)
@@ -36,7 +36,7 @@ as a helper *process*. See [decisions.md](decisions.md#4-rdp-lives-in-a-separate
 | Thread / process | Owns |
 |---|---|
 | **UI thread** (iced) | All app state. Never blocks on disk or process spawn — both have caused "Not Responding" |
-| **Per-session transport thread** | One per live SSH/local/serial session, running a tokio runtime and the shell loop |
+| **Per-session transport thread** | One per live SSH/local/serial/telnet session, running a tokio runtime and the shell loop |
 | **SFTP / tunnel threads** | One per SFTP connection and per tunnel, same pattern |
 | **`adit-profile-writer`** | Lazily spawned; serialises profile saves off the UI thread, coalescing bursts |
 | **`adit-rdp-host.exe`** | Separate *process* per RDP session; two threads inside it own stdin/stdout |
@@ -53,8 +53,8 @@ non-blocking `try_recv`.
 
 - **Shell** — `LiveShellCommand` (`Input`, `Resize`, `Disconnect`, `HostKeyDecision`,
   `AuthResponses`) / `LiveShellEvent` (`Status`, `Output`, `Error`, `AuthRejected`,
-  `Closed`, `HostKeyPrompt`, `AuthPrompt`). Shared by SSH, local shell (ConPTY), and
-  serial, so the session layer treats all three uniformly.
+  `Closed`, `HostKeyPrompt`, `AuthPrompt`). Shared by SSH, local shell (ConPTY),
+  serial and telnet, so the session layer treats all four uniformly.
 - **SFTP** — `SftpCommand` (`ListDir`, `Download`, `Upload`, `Mkdir`, `Rename`,
   `Remove`, `Disconnect`) / `SftpEvent` (`Status`, `Ready`, `Listing`, `Progress`,
   `Done`, `Error`, `Closed`).
@@ -76,7 +76,7 @@ endpoint, status) plus whichever transport it owns: `live` (shell), `rdp`, or
 
 - **RDP sessions keep a placeholder `VtTerminal` that is never rendered** and leave
   `live`/`reconnect` as `None`, so every terminal-only code path skips them naturally.
-- **Only SSH sessions carry `ReconnectState`.** RDP, local shell, serial and the SFTP
+- **Only SSH sessions carry `ReconnectState`.** RDP, local shell, serial, telnet and the SFTP
   shell therefore fall back to the connection dialog rather than reconnecting in place.
 - Tab order is a separate `Vec<SessionId>` because the session store is a `HashMap`.
 
