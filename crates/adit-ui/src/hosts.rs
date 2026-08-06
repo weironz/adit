@@ -94,6 +94,7 @@ pub(crate) fn protocol_glyph(protocol: Protocol) -> &'static str {
         Protocol::LocalShell => "\u{25a3}",
         Protocol::Serial => "\u{2325}",
         Protocol::Rdp => "\u{25a4}",
+        Protocol::Sftp => "\u{21c5}",
     }
 }
 

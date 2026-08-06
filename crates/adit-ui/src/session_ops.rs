@@ -267,6 +267,10 @@ pub(crate) fn connect_or_prompt(app: &mut AditApp) {
         .is_some_and(|password| !password.is_empty());
     let can_auto = match profile.protocol {
         Protocol::Rdp => stored,
+        // SFTP dials over SSH, so it needs the same secret SSH would. Letting
+        // it fall through to "no credential required" would auto-connect with
+        // an empty password and fail at the handshake.
+        Protocol::Sftp => stored || profile.auth_method != AuthMethod::Password,
         // A key-based SSH profile needs no password at all; a password one
         // needs the stored secret.
         Protocol::Ssh => stored || profile.auth_method != AuthMethod::Password,

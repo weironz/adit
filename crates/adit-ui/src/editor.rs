@@ -36,9 +36,10 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
             "协议",
             row![
                 protocol_button(app, Protocol::Ssh),
+                protocol_button(app, Protocol::Sftp),
+                protocol_button(app, Protocol::Rdp),
                 protocol_button(app, Protocol::LocalShell),
                 protocol_button(app, Protocol::Serial),
-                protocol_button(app, Protocol::Rdp),
             ]
             .spacing(6)
             .into(),
@@ -88,7 +89,9 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(12);
 
     match app.profile_protocol {
-        Protocol::Ssh => {
+        // SFTP dials over SSH, so it wants the same host, user, port and
+        // authentication fields — only what happens after the handshake differs.
+        Protocol::Ssh | Protocol::Sftp => {
             form = form
                 .push(
                     row![

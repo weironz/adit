@@ -369,6 +369,12 @@ pub enum Protocol {
     Serial,
     /// Remote Desktop (graphical).
     Rdp,
+    /// An `sftp>` prompt on its own, without opening a shell first.
+    ///
+    /// The same connection SSH uses — a starting point rather than a separate
+    /// transport. It exists because reaching a host's files should not require
+    /// opening a shell you did not want.
+    Sftp,
 }
 
 impl Protocol {
@@ -379,13 +385,24 @@ impl Protocol {
             Self::LocalShell => "本地 Shell",
             Self::Serial => "串口",
             Self::Rdp => "RDP",
+            Self::Sftp => "SFTP",
         }
     }
 
     /// Whether this protocol drives the built-in VT terminal (byte-stream based).
+    ///
+    /// SFTP counts: it has no PTY, but its line editor writes to the same VT, so
+    /// scrollback, selection and logging all work the way they do for a shell.
     #[must_use]
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Ssh | Self::LocalShell | Self::Serial)
+        matches!(self, Self::Ssh | Self::LocalShell | Self::Serial | Self::Sftp)
+    }
+
+    /// Whether this protocol dials over SSH, and so needs a username, a port and
+    /// the SSH authentication fields.
+    #[must_use]
+    pub fn is_ssh_based(self) -> bool {
+        matches!(self, Self::Ssh | Self::Sftp)
     }
 }
 

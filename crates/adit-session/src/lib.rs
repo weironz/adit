@@ -933,6 +933,13 @@ impl SessionManager {
             .find(|profile| profile.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?
             .clone();
+
+        // SFTP carries no byte stream to drive a PTY, so it is built on its own
+        // rather than bent into the live-shell shape below.
+        if profile.protocol == Protocol::Sftp {
+            return self.open_sftp_session(&profile, &password, &passphrase);
+        }
+
         let size = self.default_size;
 
         let (live, endpoint, terminal, reconnect) = match profile.protocol {
@@ -992,6 +999,8 @@ impl SessionManager {
                     "RDP 通过系统远程桌面客户端连接",
                 )));
             }
+            // Handled above, before the size is taken.
+            Protocol::Sftp => unreachable!("SFTP returns earlier"),
         };
 
         let session_id = SessionId::new();
@@ -1975,6 +1984,65 @@ impl SessionManager {
         self.order.push(session_id);
         self.active_session = Some(session_id);
         self.renumber_profile_tabs(profile_id);
+        Ok(session_id)
+    }
+
+    /// Open an `sftp>` session straight from a profile, dialling its own
+    /// connection.
+    ///
+    /// The sibling [`Self::open_sftp_shell_for_active`] rides a live SSH
+    /// session, which is cheaper and answers only one MFA challenge. This one
+    /// has nothing to ride on — that is the whole point of the protocol, and
+    /// also why it inherits the caveat that MFA hosts cannot be reached this
+    /// way: the dial path is non-interactive.
+    fn open_sftp_session(
+        &mut self,
+        profile: &ConnectionProfile,
+        password: &str,
+        passphrase: &str,
+    ) -> Result<SessionId, SessionError> {
+        let mut request = SftpRequest::new(
+            profile.host.clone(),
+            profile.port,
+            profile.username.clone(),
+            password.to_owned(),
+        );
+        request.auth = auth_options_for_profile(profile, password, passphrase);
+        request.jumps = profile.jumps.clone();
+        request.connect_timeout_secs = self.connect_timeout_secs;
+        let handle = adit_ssh::spawn_sftp_session(request)?;
+
+        let session_id = SessionId::new();
+        let endpoint = profile.endpoint();
+        let title = profile.name.clone();
+        let mut terminal = VtTerminal::with_title(self.default_size, title.clone());
+        terminal.feed_str(&format!("正在连接 SFTP: {endpoint}\r\n"));
+
+        self.sessions.insert(
+            session_id,
+            SessionRecord {
+                summary: SessionSummary {
+                    id: session_id,
+                    profile_id: profile.id,
+                    title,
+                    endpoint,
+                    status: SessionStatus::Connecting,
+                },
+                terminal,
+                live: None,
+                rdp: None,
+                sftp_shell: Some(SftpShell::new(handle, default_local_dir())),
+                log: None,
+                pending_host_key: None,
+                pending_auth_prompt: None,
+                auth_rejected: None,
+                shared_session: None,
+                reconnect: None,
+            },
+        );
+        self.order.push(session_id);
+        self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile.id);
         Ok(session_id)
     }
 
