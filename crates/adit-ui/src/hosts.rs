@@ -47,6 +47,72 @@ pub(crate) const HOST_ICONS: &[HostIcon] = &[
     HostIcon { key: "container", label: "容器", glyph: "\u{25a7}", rgb: (36, 150, 237) },
 ];
 
+/// Real logo art, for the icon keys that have some.
+///
+/// Compiled in rather than read from disk: a host tile that renders on some
+/// installs and not others is worse than one that never had a logo, and there
+/// is no install step that could place these.
+fn logo_bytes(key: &str) -> Option<&'static [u8]> {
+    match key {
+        "ubuntu" => Some(include_bytes!("../assets/logos/ubuntu.svg")),
+        "windows" => Some(include_bytes!("../assets/logos/windows.svg")),
+        _ => None,
+    }
+}
+
+/// The tile a host card shows: its logo where there is one, its glyph
+/// otherwise.
+///
+/// A logo carries its own colours, so it sits on a plain surface; a glyph is
+/// monochrome and needs the coloured tile behind it to be legible.
+pub(crate) fn host_tile(
+    app: &AditApp,
+    profile: &ConnectionProfile,
+    size: f32,
+    dim: bool,
+) -> Element<'static, Message> {
+    let (glyph, tile_color) = host_icon(app, profile);
+    let tile_color = if dim {
+        Color { a: 0.35, ..tile_color }
+    } else {
+        tile_color
+    };
+
+    let (content, background): (Element<'static, Message>, Option<Color>) =
+        match logo_bytes(&profile.icon) {
+            Some(bytes) => (
+                iced::widget::svg(iced::widget::svg::Handle::from_memory(bytes))
+                    .width(Length::Fixed(size * 0.78_f32))
+                    .height(Length::Fixed(size * 0.78_f32))
+                    .opacity(if dim { 0.35_f32 } else { 1.0_f32 })
+                    .into(),
+                None,
+            ),
+            None => (
+                text(glyph)
+                    .size(size * 0.44_f32)
+                    .color(Color::WHITE)
+                    .into(),
+                Some(tile_color),
+            ),
+        };
+
+    container(content)
+        .width(Length::Fixed(size))
+        .height(Length::Fixed(size))
+        .center_x(Length::Fixed(size))
+        .center_y(Length::Fixed(size))
+        .style(move |_theme| container::Style {
+            background: background.map(Background::Color),
+            border: Border {
+                radius: RADIUS_SM.into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
 /// The glyph and colour a profile's tile shows.
 ///
 /// An unset icon falls back to the protocol and the profile's accent, which is
@@ -123,28 +189,10 @@ pub(crate) fn host_card(
     // test needs cannot be one either.
     card_width: f32,
 ) -> Element<'static, Message> {
-    let (glyph, tile_color) = host_icon(app, profile);
     // The source fades while its ghost travels — the ghost is the thing being
     // moved, and a second highlighted copy sitting in place reads as two cards.
     let dragging = app.dragged_profile == Some(profile.id);
-    let tile_color = if dragging {
-        Color { a: 0.35, ..tile_color }
-    } else {
-        tile_color
-    };
-    let tile = container(text(glyph).size(15).color(Color::WHITE))
-    .width(Length::Fixed(34.0))
-    .height(Length::Fixed(34.0))
-    .center_x(Length::Fixed(34.0))
-    .center_y(Length::Fixed(34.0))
-    .style(move |_theme| container::Style {
-        background: Some(Background::Color(tile_color)),
-        border: Border {
-            radius: RADIUS_SM.into(),
-            ..Border::default()
-        },
-        ..container::Style::default()
-    });
+    let tile = host_tile(app, profile, 34.0, dragging);
 
     let subtitle = if profile.username.trim().is_empty() {
         profile.host.clone()

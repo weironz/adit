@@ -35,7 +35,10 @@ adit-ui = { path = "crates/adit-ui" }
 bytes = "1"
 # `image-without-codecs` gives the `image` widget (for the RDP framebuffer)
 # without pulling PNG/JPEG decoders — Adit only ever feeds it raw RGBA.
-iced = { version = "0.14.0", default-features = true, features = ["tokio", "advanced", "image-without-codecs"] }
+# `svg` is what lets a host tile show a real logo. The alternative was more
+# geometric glyphs, and the whole complaint about those was that a square is not
+# the Windows logo and a triangle is not Ubuntu.
+iced = { version = "0.14.0", default-features = true, features = ["tokio", "advanced", "image-without-codecs", "svg"] }
 keyring = "4.1.2"
 # Credential store at rest: XChaCha20-Poly1305 (24-byte random nonces, so no
 # nonce-reuse risk) with an Argon2id-derived key. Stable releases on purpose —
