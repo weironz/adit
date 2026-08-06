@@ -217,12 +217,22 @@ bar's one line of text as the only thing telling anyone how to get back out. So 
 floating bar (RustDesk-style) appears at the top edge in fullscreen, and **only** in
 fullscreen: windowed sessions already have the menu bar and the tab strip, and a
 permanent icon row there is the 36px of duplicated shortcuts the previous toolbar was
-deleted for. This one reserves no layout space at all. It reveals on hover over an 8px
-strip at the top edge and can be pinned; the pin, the fit toggle and the clipboard
-toggle light up when they are on, so the bar shows state and not just actions.
+deleted for. This one reserves no layout space at all. The fit and clipboard toggles
+light up when they are on, so the bar shows state and not just actions.
 
-Seven buttons: **pin**, **quality**, **scale-to-fit**, **Ctrl+Alt+Del**, **clipboard
-sharing**, **leave fullscreen**, **disconnect**. Ctrl+Alt+Del cannot simply be typed —
+It is **always visible** while fullscreen, and collapses to a small ⌄ tab on request.
+That is a fix, not a preference. The first version revealed it on hover, which needs one
+widget to sense the pointer and another to be clicked — and iced's `stack` gives the
+cursor to the topmost layer while telling the layers below that the pointer left. So the
+bar appearing over its own reveal strip read as "pointer gone", hid itself, and
+immediately re-triggered: it flickered once per frame and could not be clicked, because
+on the frame the button was pressed it was no longer there. Two overlapping hover regions
+cannot be made to agree; one always-present bar has nothing to disagree with. There is a
+test guarding this — if toolbar visibility ever depends on pointer position again, the
+loop comes back.
+
+Six buttons plus the collapse chevron: **quality**, **scale-to-fit**, **Ctrl+Alt+Del**,
+**clipboard sharing**, **leave fullscreen**, **disconnect**, **⌃**. Ctrl+Alt+Del cannot simply be typed —
 Windows reserves the real sequence for the local machine and never delivers it to an
 application, which is why mstsc offers Ctrl+Alt+End instead and every remote-desktop
 client grows a button for it; Adit synthesises it as three scancode pairs, releasing the

@@ -2227,16 +2227,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from(t("已关闭：RDP 不再共享剪贴板（下次连接生效）"))
             };
         }
-        Message::RdpToolbarHovered(inside) => {
-            app.rdp_toolbar_hovered = inside;
-            // Leaving the bar closes the dropdown with it, otherwise the menu
-            // would outlive the thing it hangs off and float on its own.
-            if !inside && !app.rdp_toolbar_pinned {
+        Message::ToggleRdpToolbarCollapsed => {
+            app.rdp_toolbar_collapsed = !app.rdp_toolbar_collapsed;
+            // Collapsing takes the dropdown with it: the menu hangs off a button
+            // that is no longer on screen, and leaving it floating on its own was
+            // the sort of orphan the hover version used to produce.
+            if app.rdp_toolbar_collapsed {
                 app.rdp_quality_menu_open = false;
             }
-        }
-        Message::ToggleRdpToolbarPin => {
-            app.rdp_toolbar_pinned = !app.rdp_toolbar_pinned;
         }
         Message::ToggleRdpQualityMenu => {
             app.rdp_quality_menu_open = !app.rdp_quality_menu_open;

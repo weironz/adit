@@ -219,39 +219,55 @@ pub(crate) fn with_rdp_toolbar<'a>(
         return desktop;
     }
 
-    let open = app.rdp_toolbar_pinned || app.rdp_toolbar_hovered || app.rdp_quality_menu_open;
-
-    // The reveal strip: a thin band along the top edge that only has to notice
-    // the pointer. It stays in the stack even when the bar is open, because it
-    // is what keeps `rdp_toolbar_hovered` true in the gap above the bar.
-    let strip = column![
-        mouse_area(container(Space::new()).width(Fill).height(Length::Fixed(RDP_TOOLBAR_REVEAL_PX)))
-            .on_enter(Message::RdpToolbarHovered(true))
-            .on_exit(Message::RdpToolbarHovered(false)),
-        Space::new().height(Fill),
-    ]
-    .width(Fill)
-    .height(Fill);
-
-    let mut layers: Vec<Element<'a, Message>> = vec![desktop, strip.into()];
-    if open {
-        layers.push(rdp_toolbar_overlay(app));
-        if app.rdp_quality_menu_open {
-            layers.push(rdp_quality_menu_overlay(app));
-        }
+    // Visible whenever the session is fullscreen, collapsed only when the user
+    // says so. It is NOT revealed by hovering, and that is a fix rather than a
+    // preference: a hover-revealed bar needs one widget to sense the pointer and
+    // another to be clicked, and `stack` hands the topmost layer the cursor and
+    // tells the ones below it the pointer is gone. So the bar appearing over its
+    // own reveal strip read as "pointer left" — hide — "pointer entered" — show,
+    // flickering once per frame and never staying put long enough to be clicked.
+    // Two overlapping hover regions cannot be made to agree; one always-present
+    // bar has nothing to disagree with.
+    let mut layers: Vec<Element<'a, Message>> = vec![desktop];
+    layers.push(rdp_toolbar_overlay(app));
+    if app.rdp_quality_menu_open && !app.rdp_toolbar_collapsed {
+        layers.push(rdp_quality_menu_overlay(app));
     }
     stack(layers).into()
 }
 
 /// The floating bar itself: centred at the top, over the desktop, reserving no
-/// layout space.
+/// layout space. Collapses to a small tab that costs a few pixels of desktop
+/// and is the only way back.
 fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
+    if app.rdp_toolbar_collapsed {
+        let handle = tooltip(
+            button(text("⌄").size(13))
+                .padding([0, 10])
+                .height(Length::Fixed(14.0))
+                .style(|_theme, status| rdp_toolbar_button_style(false, true, status))
+                .on_press(Message::ToggleRdpToolbarCollapsed),
+            container(text(t("展开工具栏")).size(11))
+                .padding([3, 7])
+                .style(|_theme| tooltip_style()),
+            tooltip::Position::Bottom,
+        );
+        return column![
+            row![
+                Space::new().width(Fill),
+                container(handle).style(|_theme| rdp_toolbar_style()),
+                Space::new().width(Fill)
+            ],
+            Space::new().height(Fill),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into();
+    }
+
     let live = app.manager.active_rdp_live();
 
     let buttons = row![
-        // Pin first, matching every floating toolbar that has one: it is the
-        // control that decides whether the others stay reachable.
-        rdp_toolbar_button("📌", t("固定工具栏"), app.rdp_toolbar_pinned, Some(Message::ToggleRdpToolbarPin)),
         rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu)),
         rdp_toolbar_button(
             "⤢",
@@ -281,20 +297,19 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
             false,
             app.manager.active_session().map(Message::CloseSession),
         ),
+        rdp_toolbar_separator(),
+        // Collapse last, where the chevron sits in every bar that has one.
+        rdp_toolbar_button("⌃", t("收起工具栏"), false, Some(Message::ToggleRdpToolbarCollapsed)),
     ]
-    .spacing(2)
+    .spacing(3)
     .align_y(Alignment::Center);
 
-    // `mouse_area` around the bar, not just the strip above it: without it the
-    // bar would hide the moment the pointer left the strip to reach a button,
-    // which is to say it could never be clicked.
-    let bar = mouse_area(
-        container(buttons)
-            .padding([4, 6])
-            .style(|_theme| rdp_toolbar_style()),
-    )
-    .on_enter(Message::RdpToolbarHovered(true))
-    .on_exit(Message::RdpToolbarHovered(false));
+    // A plain container, deliberately: an enclosing `mouse_area` here is what
+    // built the flicker loop described in `with_rdp_toolbar`. The buttons are
+    // real buttons and handle their own clicks.
+    let bar = container(buttons)
+        .padding([4, 6])
+        .style(|_theme| rdp_toolbar_style());
 
     column![
         row![Space::new().width(Fill), bar, Space::new().width(Fill)],
@@ -350,15 +365,13 @@ fn rdp_quality_menu_overlay(app: &AditApp) -> Element<'_, Message> {
     let backdrop = mouse_area(container(Space::new()).width(Fill).height(Fill))
         .on_press(Message::ToggleRdpQualityMenu);
 
+    // Centred under the bar, which is itself centred — so the two stay aligned
+    // at every window width. An earlier version offset the card by a fixed
+    // number of pixels to sit under the ⚡ button specifically; that can only be
+    // right at one window width and drifts at every other.
     let positioned = column![
         Space::new().height(Length::Fixed(RDP_TOOLBAR_HEIGHT)),
-        row![
-            Space::new().width(Fill),
-            card,
-            // Nudges the card under the ⚡ button rather than under the centre
-            // of the bar: ⚡ is the second of eight, left of centre.
-            Space::new().width(Length::Fixed(RDP_QUALITY_MENU_RIGHT_PAD)),
-        ],
+        row![Space::new().width(Fill), card, Space::new().width(Fill)],
         Space::new().height(Fill),
     ]
     .width(Fill)

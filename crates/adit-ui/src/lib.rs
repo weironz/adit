@@ -199,12 +199,12 @@ pub struct AditApp {
     /// removed for costing 36px to duplicate menu items (see `chrome::view`);
     /// this one floats over the desktop and reserves no layout space at all.
     ///
-    /// Shown while the pointer is in the reveal strip at the top edge, or while
-    /// pinned. `rdp_toolbar_hovered` is set by the strip and by the bar itself,
-    /// so moving down onto a button does not make the bar vanish underneath the
-    /// pointer.
-    rdp_toolbar_pinned: bool,
-    rdp_toolbar_hovered: bool,
+    /// Collapsed to a small tab by the ⌃ button, and not otherwise hidden. It
+    /// was hover-revealed once and could not be: see the note in
+    /// `with_rdp_toolbar` for why that flickered every frame. Deliberately not
+    /// persisted, matching `fullscreen` itself — it is a view choice about the
+    /// session in front of you, not a preference.
+    rdp_toolbar_collapsed: bool,
     /// The quality dropdown hanging off the toolbar's ⚡ button.
     rdp_quality_menu_open: bool,
     /// Whether the one-time legacy-keyring import has completed (persisted). Gates
@@ -572,8 +572,7 @@ pub enum Message {
     RdpReleased(mouse::Button),
     RdpScrolled(mouse::ScrollDelta),
     // The floating fullscreen toolbar over an RDP desktop.
-    RdpToolbarHovered(bool),
-    ToggleRdpToolbarPin,
+    ToggleRdpToolbarCollapsed,
     ToggleRdpQualityMenu,
     /// Pick a fidelity preset. Reconnects the active desktop if one is live,
     /// because RDP settles performance flags during the handshake.
@@ -997,16 +996,8 @@ const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
-/// How far down from the top edge the pointer reveals the floating RDP toolbar.
-/// Wide enough to hit without aiming, narrow enough that it is not in the way of
-/// a remote window's own title bar, which lives in roughly the same place.
-const RDP_TOOLBAR_REVEAL_PX: f32 = 8.0;
-/// The floating toolbar's own height, used to hang the ⚡ dropdown below it.
-const RDP_TOOLBAR_HEIGHT: f32 = 34.0;
-/// Right-hand padding that slides the ⚡ dropdown left, under the ⚡ button
-/// rather than under the centre of the bar. Half the bar's width minus the
-/// distance from its left edge to ⚡ (the second of eight slots).
-const RDP_QUALITY_MENU_RIGHT_PAD: f32 = 96.0;
+/// The floating RDP toolbar's own height, used to hang the ⚡ dropdown below it.
+const RDP_TOOLBAR_HEIGHT: f32 = 36.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
 const TERMINAL_HEADER_AND_GAP: f32 = 0.0;
 // Single compact line (name only) — SecureCRT-style, less busy than the old
@@ -1310,8 +1301,7 @@ impl AditApp {
             rdp_clipboard,
             rdp_quality,
             rdp_scale_fit,
-            rdp_toolbar_pinned: false,
-            rdp_toolbar_hovered: false,
+            rdp_toolbar_collapsed: false,
             rdp_quality_menu_open: false,
             keyring_migrated,
             auth_prompt: None,
@@ -1842,39 +1832,41 @@ mod tests {
         assert!(drag_test_app().rdp_clipboard);
     }
 
-    /// The toolbar is fullscreen-only by design — windowed sessions already have
-    /// the menu bar and the tab strip, and a second row of icons there is the
-    /// duplicated 36px the previous toolbar was deleted for.
+    /// The toolbar starts visible, and nothing but the ⌃ button hides it.
+    ///
+    /// This is the regression guard for the flicker: the first version revealed
+    /// the bar on hover, which needs one widget to sense the pointer and another
+    /// to be clicked — and `stack` gives the topmost layer the cursor while
+    /// telling the layers below that the pointer left. The bar appearing over its
+    /// own reveal strip therefore read as "pointer gone", hid itself, and
+    /// re-triggered, once per frame. If toolbar visibility ever depends on
+    /// pointer position again, that loop comes back.
     #[test]
-    fn the_rdp_toolbar_exists_only_in_fullscreen() {
+    fn the_toolbar_is_visible_until_it_is_collapsed() {
         let mut app = drag_test_app();
-        app.rdp_toolbar_pinned = true;
+        assert!(!app.rdp_toolbar_collapsed, "the bar starts shown");
 
-        app.fullscreen = false;
-        // Windowed: `with_rdp_toolbar` hands the desktop straight back, so the
-        // stack has nothing added to it. Asserted through the pin instead of the
-        // widget tree, which is not inspectable: pinned + windowed must still
-        // draw no bar, and that is exactly the branch being taken.
-        assert!(!app.fullscreen);
-
-        app.fullscreen = true;
-        assert!(app.rdp_toolbar_pinned || app.rdp_toolbar_hovered);
+        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
+        assert!(app.rdp_toolbar_collapsed);
+        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
+        assert!(!app.rdp_toolbar_collapsed);
     }
 
-    /// Hovering away closes the quality dropdown, but only when the bar is not
-    /// pinned — a pinned bar that shut its own menu on the way to clicking an
-    /// entry would be unusable.
+    /// Collapsing takes the quality dropdown with it — the menu hangs off a
+    /// button that is no longer drawn, and an orphaned card floating over the
+    /// desktop is exactly the kind of leftover the hover version produced.
     #[test]
-    fn leaving_an_unpinned_toolbar_closes_the_quality_menu() {
+    fn collapsing_the_toolbar_closes_the_quality_menu() {
         let mut app = drag_test_app();
         app.rdp_quality_menu_open = true;
-        let _ = update(&mut app, Message::RdpToolbarHovered(false));
+
+        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
+        assert!(app.rdp_toolbar_collapsed);
         assert!(!app.rdp_quality_menu_open);
 
-        app.rdp_toolbar_pinned = true;
-        app.rdp_quality_menu_open = true;
-        let _ = update(&mut app, Message::RdpToolbarHovered(false));
-        assert!(app.rdp_quality_menu_open);
+        // And expanding again does not resurrect it.
+        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
+        assert!(!app.rdp_quality_menu_open);
     }
 
     /// Fit mode changes nothing about the picture's geometry until it is on, and

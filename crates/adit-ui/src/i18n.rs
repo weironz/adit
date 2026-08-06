@@ -61,7 +61,8 @@ fn en(zh: &'static str) -> &'static str {
     match zh {
         "RDP 会话共享剪贴板（仅文本，下次连接生效）" => "Share the clipboard with RDP sessions (text only, applies to the next connection)",
         // The fullscreen RDP toolbar.
-        "固定工具栏" => "Pin the toolbar",
+        "收起工具栏" => "Collapse the toolbar",
+        "展开工具栏" => "Expand the toolbar",
         "画质" => "Quality",
         "缩放适应窗口" => "Scale to fit the window",
         "发送 Ctrl+Alt+Del" => "Send Ctrl+Alt+Del",
