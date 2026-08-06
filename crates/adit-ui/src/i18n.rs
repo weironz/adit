@@ -184,6 +184,11 @@ fn en(zh: &'static str) -> &'static str {
         "仅访问 Adit 自己的应用文件夹，碰不到其他文件。" => "Reaches only Adit's own app folder and nothing else.",
         "仅访问 Apps/Adit 文件夹，碰不到其他文件。" => "Reaches only the Apps/Adit folder and nothing else.",
         "侧边栏开关" => "Toggle sidebar",
+        // The session panel's own header buttons, and the strip that stands in
+        // for it once it is hidden.
+        "返回主机列表" => "Back to the host list",
+        "隐藏会话栏" => "Hide the session panel",
+        "显示会话栏" => "Show the session panel",
         "深色模式开关" => "Toggle dark mode",
         "分屏（添加窗格）" => "Split pane",
         "垂直平铺（并排）" => "Tile vertically",

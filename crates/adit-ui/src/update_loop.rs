@@ -1762,11 +1762,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_pointer = Some(terminal_point);
             // Track the window-absolute cursor so a right-click can anchor the
             // floating terminal context menu at the pointer.
-            let terminal_left = if app.sidebar_visible {
-                app.sidebar_width + SIDEBAR_DIVIDER_WIDTH
-            } else {
-                0.0
-            };
+            let terminal_left = sidebar_offset(app);
             let terminal_top = MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT;
             app.cursor_pos = Point::new(point.x + terminal_left, point.y + terminal_top);
 
@@ -1964,10 +1960,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloseSession(session_id) => {
             app.tab_context_menu = None;
-            app.manager.close(session_id);
-            app.terminal_scroll_offset = 0;
-            app.terminal_selection = None;
-            app.terminal_context_menu = false;
+            close_session_tab(app, session_id);
             app.notice = String::from(t("标签已关闭"));
         }
         Message::RenameSessionPrompt(session_id) => {

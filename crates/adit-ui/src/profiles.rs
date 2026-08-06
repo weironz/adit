@@ -13,10 +13,7 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::OpenMockTab => open_selected_mock_tab(app),
         MenuCommand::CloseActiveTab => {
             if let Some(session_id) = app.manager.active_session() {
-                app.manager.close(session_id);
-                app.terminal_scroll_offset = 0;
-                app.terminal_selection = None;
-                app.terminal_context_menu = false;
+                close_session_tab(app, session_id);
                 app.notice = String::from(t("当前标签已关闭"));
             } else {
                 app.last_error = Some(String::from(t("没有可关闭的标签")));
