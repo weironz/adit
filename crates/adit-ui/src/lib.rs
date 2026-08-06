@@ -145,6 +145,14 @@ pub struct AditApp {
     collapsed_groups: BTreeSet<String>,
     active_menu: Option<MenuKind>,
     profile_group: String,
+    /// Whether the editor's folder picker is showing its "type a new name" field
+    /// rather than offering the existing folders as chips.
+    ///
+    /// It cannot be derived from `profile_group`: "the field is open and still
+    /// empty" and "no folder" are the same value, and deriving it from "the name
+    /// matches no existing folder" would make the field vanish mid-word the
+    /// moment a prefix happened to equal a folder that already exists.
+    profile_group_new: bool,
     profile_name: String,
     profile_host: String,
     profile_port: String,
@@ -698,6 +706,11 @@ pub enum Message {
     // Pressing a folder header arms a folder drag-reorder; a release without any
     // real movement falls back to toggling the folder's collapse.
     GroupPressed(String),
+    /// Put the session being edited in an existing folder (empty = ungrouped).
+    ProfileGroupPicked(String),
+    /// Swap the editor's folder chips for a field that names a brand new one.
+    ProfileGroupNewRequested,
+    /// Type into that field. Only reachable while `profile_group_new` is set.
     ProfileGroupChanged(String),
     ProfileNameChanged(String),
     ProfileHostChanged(String),
@@ -1211,6 +1224,7 @@ impl AditApp {
             collapsed_groups,
             active_menu: None,
             profile_group: String::new(),
+            profile_group_new: false,
             profile_name: String::new(),
             profile_host: String::new(),
             profile_port: String::from("22"),

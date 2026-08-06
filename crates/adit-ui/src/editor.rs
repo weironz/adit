@@ -66,27 +66,16 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 .wrap()
                 .into(),
         ),
-        row![
-            dialog_field(
-                "分组",
-                text_input("默认", &app.profile_group)
-                    .on_input(Message::ProfileGroupChanged)
-                    .padding([5, 8])
-                    .style(text_input_style)
-                    .width(Fill)
-                    .into(),
-            ),
-            dialog_field(
-                "名称",
-                text_input("会话名称", &app.profile_name)
-                    .on_input(Message::ProfileNameChanged)
-                    .padding([5, 8])
-                    .style(text_input_style)
-                    .width(Fill)
-                    .into(),
-            ),
-        ]
-        .spacing(10),
+        dialog_field("分组", group_picker(app)),
+        dialog_field(
+            "名称",
+            text_input("会话名称", &app.profile_name)
+                .on_input(Message::ProfileNameChanged)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill)
+                .into(),
+        ),
     ]
     .spacing(12);
 
@@ -457,6 +446,101 @@ pub(crate) fn icon_button(
     .style(move |_theme, status| method_button_style(selected, status))
     .on_press(Message::ProfileIconChanged(key))
     .into()
+}
+
+/// How tall the folder chips may grow before they start scrolling — about three
+/// lines on this dialog's width.
+const GROUP_PICKER_MAX_HEIGHT: f32 = 104.0;
+
+/// The folder picker: every folder that exists, as chips, plus one that opens a
+/// field for a name that doesn't exist yet.
+///
+/// This was a bare text field, which meant retyping a folder name on every edit
+/// — and one wrong character silently invents a folder, because a profile's
+/// folder *is* its name string and nothing warns about a near-miss.
+///
+/// A drop-down is the obvious replacement and the wrong one here: the editor is
+/// itself a modal floating on a scrim, and a second overlay stacked inside it is
+/// where iced's layering has the least to be trusted with. Chips sit in the
+/// dialog's own layout, exactly like the protocol and icon rows above them.
+fn group_picker(app: &AditApp) -> Element<'_, Message> {
+    // Ungrouped first, then the folders in the order the sidebar tree shows
+    // them, so the two surfaces read the same way.
+    let mut chips = row![group_chip(app, String::new(), String::from(t("未分组")), None)].spacing(6);
+    for group in &app.groups {
+        let icon = app
+            .group_icons
+            .get(group)
+            .and_then(|key| HOST_ICONS.iter().find(|icon| icon.key == key));
+        chips = chips.push(group_chip(app, group.clone(), group.clone(), icon));
+    }
+    // The escape hatch. A picker that can only pick would be a downgrade: new
+    // folders have to be reachable from the same place sessions are filed.
+    let creating = app.profile_group_new;
+    chips = chips.push(
+        button(
+            row![text("\u{ff0b}").size(11), text(t("新建分组")).size(11)]
+                .spacing(4)
+                .align_y(Alignment::Center),
+        )
+        .padding([4, 8])
+        .style(move |_theme, status| method_button_style(creating, status))
+        .on_press(Message::ProfileGroupNewRequested),
+    );
+
+    // Five folders fit on one line today; twenty would push the dialog's own
+    // buttons off the bottom of the screen. Wrapping alone only trades that for
+    // a very tall dialog, so the row gets a ceiling and scrolls past it.
+    let mut picker = column![container(scrollable(chips.wrap()))
+        .width(Fill)
+        .max_height(GROUP_PICKER_MAX_HEIGHT)]
+    .spacing(6);
+
+    if creating {
+        picker = picker.push(
+            text_input(t("新分组名称"), &app.profile_group)
+                .id(group_input_id())
+                .on_input(Message::ProfileGroupChanged)
+                .on_submit(Message::SaveProfile)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
+        );
+    }
+
+    picker.into()
+}
+
+/// One folder in the picker — the same shape and the same selected style as
+/// `protocol_button`, because it is the same kind of choice.
+fn group_chip(
+    app: &AditApp,
+    group: String,
+    label: String,
+    icon: Option<&HostIcon>,
+) -> Element<'static, Message> {
+    // Nothing existing is selected while a new name is being typed: an empty
+    // field would otherwise light up 未分组 and claim a folder had been chosen.
+    let selected = !app.profile_group_new && app.profile_group.trim() == group;
+
+    let mut content = row![].spacing(5).align_y(Alignment::Center);
+    if let Some(icon) = icon {
+        let (r, g, b) = icon.rgb;
+        // A selected chip is filled with the accent, where the icon's own colour
+        // stops being legible.
+        content = content.push(text(icon.glyph).size(12).color(if selected {
+            Color::WHITE
+        } else {
+            Color::from_rgb8(r, g, b)
+        }));
+    }
+    content = content.push(text(label).size(11));
+
+    button(content)
+        .padding([4, 8])
+        .style(move |_theme, status| method_button_style(selected, status))
+        .on_press(Message::ProfileGroupPicked(group))
+        .into()
 }
 
 pub(crate) fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'static, Message> {
