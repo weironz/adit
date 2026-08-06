@@ -592,6 +592,8 @@ pub enum Message {
     CancelProfileDrag,
     ShowGroupContextMenu(String),
     HideGroupContextMenu,
+    /// Set a group's tile icon, or clear it with an empty key.
+    GroupIconPicked(String, &'static str),
     RenameGroupFromContext(String),
     NewProfileInGroup(String),
     DeleteGroupFromContext(String),

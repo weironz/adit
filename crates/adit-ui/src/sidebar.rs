@@ -99,6 +99,11 @@ pub(crate) fn session_tree(app: &AditApp) -> Element<'_, Message> {
                         collapsed,
                         group_count,
                         group_drop_target,
+                        app.group_icons
+                            .get(&group)
+                            .and_then(|key| {
+                                crate::hosts::HOST_ICONS.iter().find(|icon| icon.key == key)
+                            }),
                     ));
                 }
                 if !collapsed {
@@ -231,8 +236,32 @@ pub(crate) fn tree_group_row(
     collapsed: bool,
     profile_count: usize,
     drop_target: bool,
+    icon: Option<&'static crate::hosts::HostIcon>,
 ) -> Element<'static, Message> {
     let arrow = if collapsed { "▸" } else { "▾" };
+    // The glyph sits where the folder's colour can be seen at a glance; without
+    // one the row keeps its old shape rather than reserving empty space.
+    let badge: Element<'static, Message> = match icon {
+        Some(icon) => {
+            let (r, g, b) = icon.rgb;
+            let colour = Color::from_rgb8(r, g, b);
+            container(text(icon.glyph).size(9).color(Color::WHITE))
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(16.0))
+                .center_x(Length::Fixed(16.0))
+                .center_y(Length::Fixed(16.0))
+                .style(move |_theme| container::Style {
+                    background: Some(Background::Color(colour)),
+                    border: Border {
+                        radius: RADIUS_SM.into(),
+                        ..Border::default()
+                    },
+                    ..container::Style::default()
+                })
+                .into()
+        }
+        None => Space::new().width(Length::Fixed(0.0)).into(),
+    };
     let group_label = group.clone();
     let toggle_group = group.clone();
     let enter_group = group.clone();
@@ -245,6 +274,7 @@ pub(crate) fn tree_group_row(
         container(
             row![
                 text(arrow).size(12).color(muted_text()),
+                badge,
                 text(group_label).size(13).color(muted_text()),
                 Space::new().width(Fill),
                 text(profile_count.to_string()).size(10).color(muted_text()),
@@ -270,13 +300,53 @@ pub(crate) fn tree_group_row(
 /// The floating folder context menu (mirrors the session menu): rename, new
 /// session, collapse/expand, and a destructive "delete folder" that removes the
 /// folder and its session configs.
-pub(crate) fn group_context_menu_card(group: String, collapsed: bool) -> Element<'static, Message> {
+pub(crate) fn group_context_menu_card(
+    group: String,
+    collapsed: bool,
+    current_icon: String,
+) -> Element<'static, Message> {
     let toggle_label = if collapsed { "展开" } else { "折叠" };
+
+    // Swatches rather than a submenu: there are nine, they *are* the thing being
+    // chosen, and a row of them is smaller than a nested menu while also showing
+    // the current choice without opening anything.
+    let swatch = |key: &'static str, glyph: &'static str, rgb: (u8, u8, u8), name: String| {
+        let selected = current_icon == key;
+        let (r, g, b) = rgb;
+        let colour = Color::from_rgb8(r, g, b);
+        button(text(glyph).size(11).color(Color::WHITE))
+            .width(Length::Fixed(22.0))
+            .height(Length::Fixed(22.0))
+            .padding(0)
+            .style(move |_theme, _status| button::Style {
+                background: Some(Background::Color(colour)),
+                border: Border {
+                    radius: RADIUS_SM.into(),
+                    // Ringed rather than merely brighter: several of these
+                    // colours sit close together, and "which one is lit" has to
+                    // survive that.
+                    width: if selected { 2.0 } else { 0.0 },
+                    color: primary_text(),
+                },
+                ..button::Style::default()
+            })
+            .on_press(Message::GroupIconPicked(name, key))
+    };
+
+    let mut swatches = row![].spacing(3);
+    for icon in crate::hosts::HOST_ICONS {
+        swatches = swatches.push(swatch(icon.key, icon.glyph, icon.rgb, group.clone()));
+    }
+
     container(
         column![
             profile_menu_item("重命名", Message::RenameGroupFromContext(group.clone()), false),
             profile_menu_item("新会话", Message::NewProfileInGroup(group.clone()), false),
             profile_menu_item(toggle_label, Message::ToggleProfileGroup(group.clone()), false),
+            profile_menu_divider(),
+            container(text("分组图标").size(10).color(muted_text())).padding([2, 6]),
+            container(swatches).padding([0, 6]),
+            profile_menu_item("清除图标", Message::GroupIconPicked(group.clone(), ""), false),
             profile_menu_divider(),
             profile_menu_item("删除分组", Message::DeleteGroupFromContext(group), true),
         ]
@@ -291,7 +361,11 @@ pub(crate) fn group_context_menu_card(group: String, collapsed: bool) -> Element
 pub(crate) fn group_context_overlay(app: &AditApp, group: String, collapsed: bool) -> Element<'_, Message> {
     floating_context_menu(
         app,
-        group_context_menu_card(group, collapsed),
+        group_context_menu_card(
+            group.clone(),
+            collapsed,
+            app.group_icons.get(&group).cloned().unwrap_or_default(),
+        ),
         Message::HideGroupContextMenu,
     )
 }

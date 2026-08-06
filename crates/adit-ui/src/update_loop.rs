@@ -567,6 +567,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_context_menu = false;
             commit_inline_rename(app);
         }
+        Message::GroupIconPicked(group, key) => {
+            app.group_context_menu = None;
+            if key.is_empty() {
+                app.group_icons.remove(&group);
+            } else {
+                app.group_icons.insert(group, key.to_owned());
+            }
+            persist_profiles(app);
+        }
         Message::HideGroupContextMenu => {
             app.group_context_menu = None;
         }
