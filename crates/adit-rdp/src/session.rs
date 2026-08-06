@@ -595,30 +595,28 @@ async fn active_session(
         // EGFX graphics (GNOME RDP / modern Windows) are composited into the shared
         // buffer by the pipeline handler that just ran inside `process`; emit them
         // as tiles, preceded by a Resized if the graphics output size changed.
-        if let Some(update) = egfx::take_frame(egfx) {
+        let updates = egfx::take_frames(egfx);
+        if let Some(first) = updates.first() {
             egfx_active = true;
-            if (update.surface_width, update.surface_height) != egfx_size {
-                egfx_size = (update.surface_width, update.surface_height);
+            if (first.surface_width, first.surface_height) != egfx_size {
+                egfx_size = (first.surface_width, first.surface_height);
                 if host_tx
                     .send(HostMsg::Resized {
-                        width: update.surface_width,
-                        height: update.surface_height,
+                        width: first.surface_width,
+                        height: first.surface_height,
                     })
                     .is_err()
                 {
                     break 'session;
                 }
             }
-            // Only the changed region crosses the pipe: full frames are ~9 MB
-            // at high-DPI sizes, and serializing one per present was a large
-            // slice of the perceived lag.
-            let tile = HostMsg::Tile {
-                x: update.x,
-                y: update.y,
-                width: update.width,
-                height: update.height,
-                rgba: update.rgba,
-            };
+        }
+        // Only the changed regions cross the pipe: full frames are ~9 MB at
+        // high-DPI sizes, and serializing one per present was a large slice of
+        // the perceived lag. Several small tiles beat one rect stretched around
+        // them — the far side blits each into the same surface, so the extra
+        // messages cost a header apiece and nothing else.
+        for update in updates {
             if frames_emitted < 30 {
                 frames_emitted += 1;
                 tracing::info!(
@@ -629,7 +627,16 @@ async fn active_session(
                     "emitted frame region"
                 );
             }
-            if host_tx.send(tile).is_err() {
+            if host_tx
+                .send(HostMsg::Tile {
+                    x: update.x,
+                    y: update.y,
+                    width: update.width,
+                    height: update.height,
+                    rgba: update.rgba,
+                })
+                .is_err()
+            {
                 break 'session;
             }
         }

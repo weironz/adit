@@ -6,11 +6,12 @@
 //! the dynamic virtual channels and composite the decoded RGBA surface updates it
 //! hands us into a shared framebuffer the session loop emits as tiles.
 //!
-//! No H.264 decoder is configured, so IronRDP advertises the V8 (no-AVC)
-//! capability set and the server falls back to **RemoteFX Progressive**
-//! (`WireToSurface2`, which IronRDP delivers via [`on_wire_to_surface2`] but does
-//! NOT decode itself). We decode it with [`ironrdp_graphics::progressive`] and
-//! composite the resulting 64×64 RGBA tiles.
+//! Capabilities are advertised V10.7 (which implies AVC444) → V8.1 (AVC420) →
+//! V8, so a server picks H.264 where it has one and **RemoteFX Progressive**
+//! otherwise. Progressive arrives as `WireToSurface2`, which IronRDP delivers
+//! via [`on_wire_to_surface2`] but does NOT decode itself; we decode it with
+//! [`ironrdp_graphics::progressive`] and composite the resulting 64×64 RGBA
+//! tiles. AVC is decoded in [`super::avc444`].
 //!
 //! [`GraphicsPipelineClient`]: ironrdp_egfx::client::GraphicsPipelineClient
 //! [`on_wire_to_surface2`]: GraphicsPipelineHandler::on_wire_to_surface2
@@ -63,11 +64,45 @@ pub(crate) struct EgfxFrame {
     pub height: u16,
     /// Updates landed since the loop last emitted a frame.
     pub dirty: bool,
-    /// Union of the pixel rects touched since the last take (x, y, w, h).
-    /// Lets the session loop ship only the changed region instead of cloning
+    /// The pixel rects touched since the last take, kept apart rather than
+    /// unioned. Lets the session loop ship only what changed instead of cloning
     /// and piping the whole framebuffer (~9 MB per frame at 2560-class sizes)
     /// on every present.
-    dirty_rect: Option<(usize, usize, usize, usize)>,
+    dirty_rects: Vec<Rect>,
+}
+
+/// A dirty region: `(x, y, w, h)` in pixels.
+type Rect = (usize, usize, usize, usize);
+
+/// How many separate dirty rects to carry before coalescing.
+///
+/// One rect was the original behaviour, and it degrades in exactly the case
+/// that matters: a blinking cursor in one corner and a clock in another grow
+/// the single rect to span both, so a few hundred changed pixels ship as most
+/// of the screen. An unbounded list is the opposite failure — a full repaint
+/// arrives as ~900 tiles at 2560-class sizes, and one IPC message each costs
+/// more than the pixels saved. Sixteen keeps unrelated activity apart while a
+/// genuine full-surface paint still collapses to roughly one rect, because
+/// adjacent tiles merge for free (see [`merge_cost`]).
+const MAX_DIRTY_RECTS: usize = 16;
+
+fn area(rect: Rect) -> usize {
+    rect.2 * rect.3
+}
+
+fn union(a: Rect, b: Rect) -> Rect {
+    let x0 = a.0.min(b.0);
+    let y0 = a.1.min(b.1);
+    let x1 = (a.0 + a.2).max(b.0 + b.2);
+    let y1 = (a.1 + a.3).max(b.1 + b.3);
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
+/// Pixels that merging `a` and `b` would send without either having asked for
+/// them. Zero when they overlap or tile exactly edge to edge, which is what
+/// lets a row of adjacent tiles collapse into one strip at no cost.
+fn merge_cost(a: Rect, b: Rect) -> usize {
+    area(union(a, b)).saturating_sub(area(a) + area(b))
 }
 
 impl EgfxFrame {
@@ -75,7 +110,7 @@ impl EgfxFrame {
         self.width = width;
         self.height = height;
         self.rgba = vec![0u8; usize::from(width) * usize::from(height) * 4];
-        self.dirty_rect = None;
+        self.dirty_rects.clear();
         // Deliberately NOT dirty: this buffer is all black until content
         // lands. Publishing it at allocation time flashed a full black frame
         // on every graphics reset; the first composited EndFrame after the
@@ -92,14 +127,12 @@ pub(crate) fn new_shared() -> SharedEgfx {
         width: 0,
         height: 0,
         dirty: false,
-        dirty_rect: None,
+        dirty_rects: Vec::new(),
     }))
 }
 
-/// If a new EGFX frame is ready, return its size + a full-frame RGBA copy and
-/// clear the dirty flag. `None` when nothing changed (or EGFX isn't in use).
-/// One published frame: the surface size, the changed region's position and
-/// size, and that region's pixels (row-major, tightly packed).
+/// One published region: the surface size, the region's position and size, and
+/// its pixels (row-major, tightly packed).
 pub(crate) struct FrameUpdate {
     pub surface_width: u16,
     pub surface_height: u16,
@@ -110,34 +143,48 @@ pub(crate) struct FrameUpdate {
     pub rgba: Vec<u8>,
 }
 
-pub(crate) fn take_frame(shared: &SharedEgfx) -> Option<FrameUpdate> {
-    let mut frame = shared.lock().ok()?;
+/// Every region changed since the last call, clearing the dirty flag. Empty
+/// when nothing changed (or EGFX isn't in use).
+pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
+    let Ok(mut frame) = shared.lock() else {
+        return Vec::new();
+    };
     if !frame.dirty || frame.rgba.is_empty() {
-        return None;
+        return Vec::new();
     }
     frame.dirty = false;
     let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+    let (surface_width, surface_height) = (frame.width, frame.height);
+
+    let mut rects = std::mem::take(&mut frame.dirty_rects);
     // No recorded rect (defensive) -> whole surface.
-    let (x, y, w, h) = frame.dirty_rect.take().unwrap_or((0, 0, fw, fh));
-    let (x, y) = (x.min(fw), y.min(fh));
-    let (w, h) = (w.min(fw - x), h.min(fh - y));
-    if w == 0 || h == 0 {
-        return None;
+    if rects.is_empty() {
+        rects.push((0, 0, fw, fh));
     }
-    let mut rgba = Vec::with_capacity(w * h * 4);
-    for row in 0..h {
-        let start = ((y + row) * fw + x) * 4;
-        rgba.extend_from_slice(&frame.rgba[start..start + w * 4]);
+
+    let mut out = Vec::with_capacity(rects.len());
+    for (x, y, w, h) in rects {
+        let (x, y) = (x.min(fw), y.min(fh));
+        let (w, h) = (w.min(fw - x), h.min(fh - y));
+        if w == 0 || h == 0 {
+            continue;
+        }
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for row in 0..h {
+            let start = ((y + row) * fw + x) * 4;
+            rgba.extend_from_slice(&frame.rgba[start..start + w * 4]);
+        }
+        out.push(FrameUpdate {
+            surface_width,
+            surface_height,
+            x: x as u16,
+            y: y as u16,
+            width: w as u16,
+            height: h as u16,
+            rgba,
+        });
     }
-    Some(FrameUpdate {
-        surface_width: frame.width,
-        surface_height: frame.height,
-        x: x as u16,
-        y: y as u16,
-        width: w as u16,
-        height: h as u16,
-        rgba,
-    })
+    out
 }
 
 /// Grow the frame's dirty rect to cover `w x h` pixels at `(x, y)`.
@@ -173,16 +220,52 @@ fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
     if w == 0 || h == 0 {
         return;
     }
-    frame.dirty_rect = Some(match frame.dirty_rect {
-        None => (x, y, w, h),
-        Some((dx, dy, dw, dh)) => {
-            let x0 = dx.min(x);
-            let y0 = dy.min(y);
-            let x1 = (dx + dw).max(x + w);
-            let y1 = (dy + dh).max(y + h);
-            (x0, y0, x1 - x0, y1 - y0)
+    add_dirty_rect(&mut frame.dirty_rects, (x, y, w, h));
+}
+
+/// Add one changed rect, merging where merging is free and coalescing only
+/// once the list is full.
+///
+/// The free merges are what keep this cheap on the hot path: a progressive
+/// frame arrives as hundreds of adjacent 64x64 tiles, and each folds into the
+/// strip beside it at zero cost, so the list stays short without any search.
+fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
+    // Fold into anything it overlaps or tiles against, repeatedly: a rect that
+    // just grew can now reach a third one, and leaving those apart would send
+    // the pixels they share twice.
+    let mut merged = new;
+    let mut again = true;
+    while again {
+        again = false;
+        let mut index = 0;
+        while index < rects.len() {
+            if merge_cost(rects[index], merged) == 0 {
+                merged = union(rects.swap_remove(index), merged);
+                again = true;
+            } else {
+                index += 1;
+            }
         }
-    });
+    }
+    rects.push(merged);
+
+    // Full: give up the pair that costs least to join. Shrinking by one each
+    // time means the list cannot grow past the cap, however scattered the
+    // paints are.
+    while rects.len() > MAX_DIRTY_RECTS {
+        let mut best = (0, 1, usize::MAX);
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let cost = merge_cost(rects[i], rects[j]);
+                if cost < best.2 {
+                    best = (i, j, cost);
+                }
+            }
+        }
+        let (i, j, _) = best;
+        let other = rects.swap_remove(j);
+        rects[i] = union(rects[i], other);
+    }
 }
 
 /// One entry of the EGFX bitmap cache.
@@ -1101,5 +1184,89 @@ impl GraphicsPipelineHandler for EgfxHandler {
         if let Ok(mut frame) = self.shared.lock() {
             frame.dirty = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod dirty_rect_tests {
+    use super::*;
+
+    /// Every pixel that was marked must still be covered afterwards. Anything
+    /// less is a region that changed on the server and never reaches the
+    /// screen — the failure mode this whole mechanism can produce.
+    fn covers(rects: &[Rect], (x, y, w, h): Rect) -> bool {
+        (x..x + w).all(|px| {
+            (y..y + h).any(|_| true)
+                && (y..y + h).all(|py| {
+                    rects
+                        .iter()
+                        .any(|r| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                })
+        })
+    }
+
+    /// A progressive frame arrives as a run of adjacent 64x64 tiles. They must
+    /// collapse into one strip, or the list fills on every frame and the
+    /// coalescing below does the work instead.
+    #[test]
+    fn adjacent_tiles_collapse_into_one_rect() {
+        let mut rects = Vec::new();
+        for i in 0..20 {
+            add_dirty_rect(&mut rects, (i * TILE, 0, TILE, TILE));
+        }
+        assert_eq!(rects, vec![(0, 0, 20 * TILE, TILE)]);
+    }
+
+    /// The case that motivated the change: two small changes far apart used to
+    /// grow one rect across everything between them.
+    #[test]
+    fn distant_changes_stay_apart() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 16, 16));
+        add_dirty_rect(&mut rects, (2000, 1200, 16, 16));
+
+        assert_eq!(rects.len(), 2);
+        let sent: usize = rects.iter().map(|r| area(*r)).sum();
+        assert_eq!(sent, 512, "must not ship the span between them");
+    }
+
+    /// A rect that grows can reach a third one. Leaving those apart would send
+    /// the pixels they share twice.
+    #[test]
+    fn a_merge_that_bridges_two_rects_joins_all_three() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 10, 10));
+        add_dirty_rect(&mut rects, (20, 0, 10, 10));
+        assert_eq!(rects.len(), 2, "not touching yet");
+
+        add_dirty_rect(&mut rects, (10, 0, 10, 10));
+        assert_eq!(rects, vec![(0, 0, 30, 10)]);
+    }
+
+    /// Scattered paints must never grow the list past the cap, and must never
+    /// drop coverage while shrinking it.
+    #[test]
+    fn the_list_is_capped_and_loses_nothing() {
+        let mut rects = Vec::new();
+        let marked: Vec<Rect> = (0..200)
+            .map(|i| ((i * 37) % 1900, (i * 61) % 1000, 8, 8))
+            .collect();
+        for rect in &marked {
+            add_dirty_rect(&mut rects, *rect);
+            assert!(rects.len() <= MAX_DIRTY_RECTS, "{} rects", rects.len());
+        }
+        for rect in &marked {
+            assert!(covers(&rects, *rect), "lost {rect:?}");
+        }
+    }
+
+    /// Overlapping and edge-to-edge merges are free; a diagonal neighbour is
+    /// not, and that difference is what keeps unrelated activity apart.
+    #[test]
+    fn merge_cost_is_zero_only_when_nothing_extra_is_sent() {
+        assert_eq!(merge_cost((0, 0, 10, 10), (10, 0, 10, 10)), 0);
+        assert_eq!(merge_cost((0, 0, 10, 10), (5, 0, 10, 10)), 0);
+        assert_eq!(merge_cost((0, 0, 10, 10), (0, 0, 10, 10)), 0);
+        assert!(merge_cost((0, 0, 10, 10), (10, 10, 10, 10)) > 0);
     }
 }
