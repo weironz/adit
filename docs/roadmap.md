@@ -47,6 +47,21 @@ by how interesting the work is.
   and the runtime notices are covered; a missing string falls back to the
   Chinese original rather than showing a key, so the gap is invisible until you
   meet it. Adding one is a row in `i18n.rs` and touches no call site.
+
+  Finishing it needs a design change first, not more rows. Lookup is keyed by
+  the Chinese source string, so **two places that say the same thing in Chinese
+  cannot say different things in English.** `主机` is already mapped to `Hosts`
+  for the host-manager tab, which means the session editor's `主机` field label
+  cannot be wrapped in `t()` at all — it would render as "Hosts". That is why
+  `editor.rs` still carries bare literals: they are right in Chinese and wrong
+  in English, and there is no way to express that today.
+
+  Whatever fixes it has to keep the property that makes the table safe to grow —
+  a missing entry showing the original rather than a bare key — so swapping the
+  Chinese key for an opaque identifier trades one problem for a worse one. A
+  context-qualified lookup (`t_in("editor", "主机")`, falling back to the plain
+  table and then to the source string) keeps that fallback and touches only the
+  call sites that actually collide.
 - **RDP: the server cursor shape is not drawn.** The pointer is the local OS's,
   not the remote host's.
 - **RDP dirty rects coalesce by count, not by cost.** Sixteen regions are kept
