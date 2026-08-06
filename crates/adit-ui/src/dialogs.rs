@@ -1160,7 +1160,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
             None,
         )),
         setting_card(text(config_note).size(11).color(muted_text()))]
-    .spacing(8);
+    .spacing(10);
 
     if let Some(pending) = &app.pending_config_dir {
         config_section = config_section.push(
@@ -1283,7 +1283,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
             .on_toggle(Message::ToggleLogPlaintext)
             .size(16)
             .text_size(12))]
-    .spacing(8);
+    .spacing(10);
 
     let mouse_section = column![
         text("终端复制 / 粘贴（PuTTY 风格）")
@@ -1307,7 +1307,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         setting_card(text("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。")
             .size(11)
             .color(muted_text()))]
-    .spacing(8);
+    .spacing(10);
 
 
     [config_section.into(), log_section.into(), mouse_section.into()]
@@ -1925,7 +1925,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
 fn setting_card<'a>(inner: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(inner)
         .width(Fill)
-        .padding([10, 12])
+        .padding([14, 16])
         .style(|_theme| settings_card_style(false))
         .into()
 }
@@ -1936,7 +1936,7 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let rail_item = |category: SettingsCategory| {
         let selected = app.settings_category == category;
         button(text(category.label()).size(12))
-            .padding([6, 12])
+            .padding([9, 14])
             .width(Fill)
             .style(move |_theme, status| {
                 if selected {
@@ -1956,10 +1956,10 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             rail_item(SettingsCategory::Logging),
             rail_item(SettingsCategory::Sync),
         ]
-        .spacing(4),
+        .spacing(6),
     )
-    .width(Length::Fixed(132.0))
-    .padding(8)
+    .width(Length::Fixed(168.0))
+    .padding(10)
     .style(|_theme| settings_rail_style());
 
     let body: Element<'_, Message> = match app.settings_category {
@@ -1988,16 +1988,16 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 // Fixed height so switching category does not resize the dialog
                 // under the cursor — a rail whose items move as you use them is
                 // worse than a slightly tall panel.
-                container(scrollable(container(body).padding([0, 14])))
-                    .height(Length::Fixed(430.0))
+                container(scrollable(container(body).padding([0, 20])))
+                    .height(Length::Fixed(560.0))
                     .width(Fill),
             ]
-            .spacing(14),
+            .spacing(18),
         ]
-        .spacing(12),
+        .spacing(16),
     )
-    .width(Length::Fixed(720.0))
-    .padding(20)
+    .width(Length::Fixed(900.0))
+    .padding(24)
     .style(|_theme| connection_dialog_style());
 
     container(card)

@@ -199,7 +199,6 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
             ("导入 ~/.ssh/config", MenuCommand::ImportSshConfig),
             ("导入 SecureCRT 会话…", MenuCommand::ImportSecureCrt),
             ("设置…", MenuCommand::Options),
-            ("同步与云…", MenuCommand::SyncCloud),
             ("关闭标签", MenuCommand::CloseActiveTab),
         ],
         MenuKind::Session => &[
@@ -214,7 +213,6 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
         MenuKind::View => &[
             ("侧边栏开关", MenuCommand::ToggleSidebar),
             ("深色模式开关", MenuCommand::ToggleTheme),
-            ("外观…", MenuCommand::Appearance),
             ("分屏（添加窗格）", MenuCommand::SplitPane),
             ("垂直平铺（并排）", MenuCommand::TileVertical),
             ("水平平铺（上下）", MenuCommand::TileHorizontal),
@@ -231,7 +229,7 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
         ],
         MenuKind::Script => &[
             ("命令片段", MenuCommand::Snippets),
-            ("日志/脚本", MenuCommand::Logging),
+            ("记录日志开关", MenuCommand::Logging),
         ],
         MenuKind::Help => &[
             ("检查更新…", MenuCommand::CheckUpdate),

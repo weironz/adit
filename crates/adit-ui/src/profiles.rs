@@ -57,18 +57,9 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             sync_terminal_size(app);
         }
         MenuCommand::ToggleTheme => app.dark_mode = !app.dark_mode,
-        MenuCommand::Appearance => {
-            app.settings_open = true;
-            app.settings_category = SettingsCategory::Appearance;
-        }
         MenuCommand::Options => {
             app.settings_open = true;
             app.settings_category = SettingsCategory::App;
-        }
-        MenuCommand::SyncCloud => {
-            app.settings_open = true;
-            app.settings_category = SettingsCategory::Sync;
-            app.sync_secret_draft.clear();
         }
         MenuCommand::ImportSshConfig => import_ssh_config(app),
         // Handled in the RunMenu message arm (opens an async folder picker).

@@ -193,10 +193,6 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // screen; leaving focus behind would send typing into a hidden pane.
             app.terminal_focused = matches!(view, MainView::Terminal);
         }
-        Message::OpenAppearance => {
-            app.settings_open = true;
-            app.settings_category = SettingsCategory::Appearance;
-        }
         Message::HighlightRuleToggled(id) => {
             let shipped = highlight::rules()
                 .iter()

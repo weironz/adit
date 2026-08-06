@@ -495,7 +495,6 @@ pub enum MenuCommand {
     Logging,
     ToggleAutoReconnect,
     KnownHosts,
-    Appearance,
     Options,
     ImportSshConfig,
     ImportSecureCrt,
@@ -503,7 +502,6 @@ pub enum MenuCommand {
     ToggleBroadcast,
     ToggleCommandWindow,
     SplitPane,
-    SyncCloud,
     ToggleSidebar,
     ToggleTheme,
     TileVertical,
@@ -533,7 +531,6 @@ pub enum Message {
     ShowMainView(MainView),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
-    OpenAppearance,
     /// Flip one keyword-highlight rule, by its stable id.
     HighlightRuleToggled(&'static str),
     CloseOptions,
