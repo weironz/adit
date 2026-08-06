@@ -1035,25 +1035,18 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileGroupPicked(group) => {
             app.terminal_focused = false;
+            // A chip writes its folder into the same field the user types in:
+            // the field's text *is* the chosen folder, so there is only ever
+            // one live value for the setting.
             app.profile_group = group;
-            // Picking an existing folder abandons whatever was half-typed: the
-            // chips are the whole answer, and leaving the field open would show
-            // two live values for one setting.
-            app.profile_group_new = false;
-        }
-        Message::ProfileGroupNewRequested => {
-            app.terminal_focused = false;
-            // Start blank rather than seeding the current folder's name. This
-            // button means "make another one", and pre-filling invites editing
-            // an existing name into a near-duplicate — the very typo the chips
-            // exist to prevent.
-            app.profile_group.clear();
-            app.profile_group_new = true;
-            return focus_group_input();
         }
         Message::ProfileGroupChanged(value) => {
             app.terminal_focused = false;
             app.profile_group = value;
+        }
+        Message::ToggleProfileAdvanced => {
+            app.terminal_focused = false;
+            app.profile_advanced_open = !app.profile_advanced_open;
         }
         Message::ProfileNameChanged(value) => {
             app.terminal_focused = false;

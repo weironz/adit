@@ -685,20 +685,6 @@ pub(crate) fn focus_rename_input() -> Task<Message> {
     ))
 }
 
-/// The id of the session editor's new-folder field (only one editor is open at
-/// a time, so a single shared id is enough).
-pub(crate) fn group_input_id() -> iced::advanced::widget::Id {
-    iced::advanced::widget::Id::new("editor-new-group")
-}
-
-/// A Task that focuses that field, so pressing 新建分组 leaves the caret where
-/// the next keystroke belongs instead of asking for a second click.
-pub(crate) fn focus_group_input() -> Task<Message> {
-    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(
-        group_input_id(),
-    ))
-}
-
 /// Recompute scrollback-search matches over the active session's full buffer
 /// (ASCII case-insensitive), then jump to the last (most recent) match.
 pub(crate) fn recompute_search(app: &mut AditApp) {

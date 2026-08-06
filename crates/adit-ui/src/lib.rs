@@ -145,14 +145,15 @@ pub struct AditApp {
     collapsed_groups: BTreeSet<String>,
     active_menu: Option<MenuKind>,
     profile_group: String,
-    /// Whether the editor's folder picker is showing its "type a new name" field
-    /// rather than offering the existing folders as chips.
+    /// Whether the session editor's 高级 section is expanded.
     ///
-    /// It cannot be derived from `profile_group`: "the field is open and still
-    /// empty" and "no folder" are the same value, and deriving it from "the name
-    /// matches no existing folder" would make the field vanish mid-word the
-    /// moment a prefix happened to equal a folder that already exists.
-    profile_group_new: bool,
+    /// Its own field rather than something inferred from the fields inside it:
+    /// a section that unfolded whenever a profile happened to carry a TERM
+    /// would give the dialog a different height for every session, and leave
+    /// no state for the disclosure triangle to toggle back to. Sticky for the
+    /// run (editing ProxyJump across several sessions shouldn't re-collapse
+    /// each time) but never persisted, so a fresh start is always collapsed.
+    profile_advanced_open: bool,
     profile_name: String,
     profile_host: String,
     profile_port: String,
@@ -708,10 +709,11 @@ pub enum Message {
     GroupPressed(String),
     /// Put the session being edited in an existing folder (empty = ungrouped).
     ProfileGroupPicked(String),
-    /// Swap the editor's folder chips for a field that names a brand new one.
-    ProfileGroupNewRequested,
-    /// Type into that field. Only reachable while `profile_group_new` is set.
+    /// Type in the editor's folder field: filters the chips below it, and names
+    /// a brand new folder when it matches none of them.
     ProfileGroupChanged(String),
+    /// Fold / unfold the session editor's 高级 section.
+    ToggleProfileAdvanced,
     ProfileNameChanged(String),
     ProfileHostChanged(String),
     ProfilePortChanged(String),
@@ -1235,7 +1237,7 @@ impl AditApp {
             collapsed_groups,
             active_menu: None,
             profile_group: String::new(),
-            profile_group_new: false,
+            profile_advanced_open: false,
             profile_name: String::new(),
             profile_host: String::new(),
             profile_port: String::from("22"),

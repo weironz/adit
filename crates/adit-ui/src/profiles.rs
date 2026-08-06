@@ -382,10 +382,6 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_group = profile.group;
         let group = app.profile_group.clone();
         add_group(&mut app.groups, &group);
-        // Refilling the form from a profile always lands on a folder that now
-        // exists (add_group just made sure of it), so the picker goes back to
-        // its chips. This is also what closes the field after a save.
-        app.profile_group_new = false;
         app.profile_name = profile.name;
         app.profile_host = profile.host;
         app.profile_port = profile.port.to_string();
