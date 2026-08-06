@@ -935,6 +935,7 @@ pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
                 let protocol = match session.protocol.as_str() {
                     "RDP" => Some(Protocol::Rdp),
                     "Serial" => Some(Protocol::Serial),
+                    "Telnet" => Some(Protocol::Telnet),
                     _ => None,
                 };
                 if let Some(protocol) = protocol {

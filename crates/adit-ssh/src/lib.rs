@@ -15,6 +15,7 @@ use std::{
     collections::HashSet,
     env, fs,
     io::{Read, Write},
+    net::{Shutdown, TcpStream, ToSocketAddrs},
     path::{Path, PathBuf},
     sync::{mpsc, Arc, Mutex},
     thread,
@@ -623,6 +624,482 @@ fn run_serial(
     }
 
     running.store(false, Ordering::Relaxed);
+    let _ = reader_handle.join();
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Telnet (RFC 854 / 855, with RFC 1073 NAWS and RFC 1091 TERMINAL-TYPE)
+// ---------------------------------------------------------------------------
+
+/// "Interpret As Command" — the escape byte that introduces every telnet
+/// command, and therefore the only byte value a payload cannot carry unescaped.
+const TELNET_IAC: u8 = 255;
+/// End of a subnegotiation.
+const TELNET_SE: u8 = 240;
+/// Start of a subnegotiation (`IAC SB <option> … IAC SE`).
+const TELNET_SB: u8 = 250;
+const TELNET_WILL: u8 = 251;
+const TELNET_WONT: u8 = 252;
+const TELNET_DO: u8 = 253;
+const TELNET_DONT: u8 = 254;
+
+const TELNET_OPT_ECHO: u8 = 1;
+const TELNET_OPT_SGA: u8 = 3;
+const TELNET_OPT_TTYPE: u8 = 24;
+const TELNET_OPT_NAWS: u8 = 31;
+
+const TELNET_TTYPE_IS: u8 = 0;
+const TELNET_TTYPE_SEND: u8 = 1;
+
+/// What we answer TERMINAL-TYPE with. The same `TERM` the SSH path requests, so
+/// a switch's pager, line editing and colours behave identically over either
+/// protocol — a device that is told `dumb` turns half of them off.
+const TELNET_TERMINAL_TYPE: &[u8] = b"xterm-256color";
+
+/// A server that opens a subnegotiation and never closes it would otherwise grow
+/// this buffer without bound. Nothing we answer is anywhere near this long.
+const TELNET_SUB_LIMIT: usize = 512;
+
+/// Where the option parser is, *between* reads.
+///
+/// This being a field rather than a local is the whole point: TCP delivers
+/// whatever happened to arrive, so a three-byte `IAC DO NAWS` is as likely to be
+/// split across two reads as not. A parser that restarts at each read loses the
+/// option byte and answers a question the server never asked — which shows up
+/// much later as a device that silently ignores the window size.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TelnetState {
+    /// Ordinary payload, bound for the VT.
+    Data,
+    /// Saw IAC; the next byte says which command this is.
+    Command,
+    /// Saw `IAC WILL|WONT|DO|DONT`; the next byte is the option.
+    Negotiate(u8),
+    /// Saw `IAC SB`; the next byte is the option being subnegotiated.
+    SubOption,
+    /// Inside `IAC SB <option> …`, collecting until `IAC SE`.
+    Sub(u8),
+    /// Saw IAC inside a subnegotiation: the next byte either ends it (`SE`) or
+    /// is an escaped literal `0xFF`.
+    SubCommand(u8),
+}
+
+/// Telnet option negotiation and IAC unescaping for one connection.
+///
+/// Deliberately transport-free so the negotiation logic can be tested against
+/// byte slices — including the split-across-reads case, which is the part that
+/// is easy to get wrong and impossible to notice by hand.
+#[derive(Debug)]
+struct TelnetCodec {
+    state: TelnetState,
+    sub: Vec<u8>,
+    /// Options *we* perform, i.e. the ones we answered `DO` with `WILL`.
+    local: HashSet<u8>,
+    /// Options the *server* performs, i.e. the ones we answered `WILL` with `DO`.
+    remote: HashSet<u8>,
+    cols: u16,
+    rows: u16,
+}
+
+impl TelnetCodec {
+    fn new(cols: u16, rows: u16) -> Self {
+        Self {
+            state: TelnetState::Data,
+            sub: Vec::new(),
+            local: HashSet::new(),
+            remote: HashSet::new(),
+            cols,
+            rows,
+        }
+    }
+
+    /// Split `input` into terminal payload (`data`) and the bytes owed back to
+    /// the server (`reply`).
+    fn feed(&mut self, input: &[u8], data: &mut Vec<u8>, reply: &mut Vec<u8>) {
+        for &byte in input {
+            self.state = match (self.state, byte) {
+                (TelnetState::Data, TELNET_IAC) => TelnetState::Command,
+                (TelnetState::Data, _) => {
+                    data.push(byte);
+                    TelnetState::Data
+                }
+                // `IAC IAC` is how a literal 0xFF travels. It is the escape, not
+                // a command, and collapsing it back to one byte here is what
+                // stops binary output (or a UTF-8 tail byte) from being eaten.
+                (TelnetState::Command, TELNET_IAC) => {
+                    data.push(TELNET_IAC);
+                    TelnetState::Data
+                }
+                (TelnetState::Command, TELNET_WILL | TELNET_WONT | TELNET_DO | TELNET_DONT) => {
+                    TelnetState::Negotiate(byte)
+                }
+                (TelnetState::Command, TELNET_SB) => TelnetState::SubOption,
+                // NOP, GA, Are-You-There, the data mark and the rest: two-byte
+                // commands with nothing to answer. Swallowing them is the job —
+                // left in place they would reach the VT as garbage glyphs.
+                (TelnetState::Command, _) => TelnetState::Data,
+                (TelnetState::Negotiate(verb), _) => {
+                    self.negotiate(verb, byte, reply);
+                    TelnetState::Data
+                }
+                (TelnetState::SubOption, _) => {
+                    self.sub.clear();
+                    TelnetState::Sub(byte)
+                }
+                (TelnetState::Sub(option), TELNET_IAC) => TelnetState::SubCommand(option),
+                (TelnetState::Sub(option), _) => {
+                    if self.sub.len() < TELNET_SUB_LIMIT {
+                        self.sub.push(byte);
+                    }
+                    TelnetState::Sub(option)
+                }
+                (TelnetState::SubCommand(option), TELNET_SE) => {
+                    self.subnegotiate(option, reply);
+                    TelnetState::Data
+                }
+                (TelnetState::SubCommand(option), TELNET_IAC) => {
+                    if self.sub.len() < TELNET_SUB_LIMIT {
+                        self.sub.push(TELNET_IAC);
+                    }
+                    TelnetState::Sub(option)
+                }
+                // IAC followed by something other than SE or IAC inside a
+                // subnegotiation is malformed. Staying inside it keeps us in sync
+                // with the closing `IAC SE`; treating it as data would spray the
+                // rest of the subnegotiation onto the screen.
+                (TelnetState::SubCommand(option), _) => TelnetState::Sub(option),
+            };
+        }
+    }
+
+    /// Answer one `IAC <verb> <option>`.
+    ///
+    /// The rule that matters is RFC 1143's: **only a state change is answered.**
+    /// Acknowledging a request that changes nothing is exactly how two
+    /// implementations negotiate the same option at each other forever.
+    fn negotiate(&mut self, verb: u8, option: u8, reply: &mut Vec<u8>) {
+        match verb {
+            // "You do X" — a request about *our* side.
+            TELNET_DO => {
+                // ECHO is conspicuously absent. On our side it means "echo back
+                // everything the server sends us", i.e. the server asking the
+                // client to be its mirror; for an interactive terminal that is a
+                // loop, so it is the one option we understand and still refuse.
+                // SGA is accepted because character-at-a-time is what a VT wants,
+                // and we never send GA regardless.
+                let supported = matches!(
+                    option,
+                    TELNET_OPT_SGA | TELNET_OPT_TTYPE | TELNET_OPT_NAWS
+                );
+                if !supported {
+                    // Refusing everything else is not politeness — an option we
+                    // silently ignore leaves the server waiting for data we will
+                    // never send (NEW-ENVIRON and TSPEED both hang like this).
+                    reply.extend_from_slice(&[TELNET_IAC, TELNET_WONT, option]);
+                    return;
+                }
+                if !self.local.insert(option) {
+                    return;
+                }
+                reply.extend_from_slice(&[TELNET_IAC, TELNET_WILL, option]);
+                // NAWS is agreed and immediately *used*: the server has no other
+                // way to learn the window, and it will not ask again. Waiting for
+                // the first resize would leave a device paging at its built-in
+                // 80x24 for the whole session.
+                if option == TELNET_OPT_NAWS {
+                    reply.extend_from_slice(&self.naws_report());
+                }
+            }
+            TELNET_DONT => Self::turn_off(&mut self.local, option, TELNET_WONT, reply),
+            // "I will do X" — a statement about the *server's* side.
+            TELNET_WILL => {
+                // ECHO + SUPPRESS-GO-AHEAD from the server is precisely the pair
+                // that puts the link in character-at-a-time mode with remote
+                // echo, which is what a full-screen VT needs. TTYPE and NAWS are
+                // refused here even though we support them, because they only
+                // carry meaning in the client's direction — a server offering to
+                // report *our* window size is nonsense we should not agree to.
+                if !matches!(option, TELNET_OPT_ECHO | TELNET_OPT_SGA) {
+                    reply.extend_from_slice(&[TELNET_IAC, TELNET_DONT, option]);
+                    return;
+                }
+                if !self.remote.insert(option) {
+                    return;
+                }
+                reply.extend_from_slice(&[TELNET_IAC, TELNET_DO, option]);
+            }
+            TELNET_WONT => Self::turn_off(&mut self.remote, option, TELNET_DONT, reply),
+            _ => {}
+        }
+    }
+
+    /// Acknowledge a "stop doing X" for either side, and only when it was being
+    /// done — the same state-change rule as everywhere else here, which is what
+    /// keeps two implementations from acknowledging each other in a loop.
+    fn turn_off(enabled: &mut HashSet<u8>, option: u8, verb: u8, reply: &mut Vec<u8>) {
+        if enabled.remove(&option) {
+            reply.extend_from_slice(&[TELNET_IAC, verb, option]);
+        }
+    }
+
+    /// Answer a completed `IAC SB <option> … IAC SE`.
+    fn subnegotiate(&mut self, option: u8, reply: &mut Vec<u8>) {
+        // TERMINAL-TYPE's `SEND` is the only subnegotiation we answer. The option
+        // also has a cycling form (repeated SENDs walk a list until the client
+        // repeats itself); we always name the same terminal, which ends the walk
+        // on the second ask and is what every fixed-TERM client does.
+        if option == TELNET_OPT_TTYPE && self.sub.first() == Some(&TELNET_TTYPE_SEND) {
+            reply.extend_from_slice(&[TELNET_IAC, TELNET_SB, TELNET_OPT_TTYPE, TELNET_TTYPE_IS]);
+            reply.extend_from_slice(TELNET_TERMINAL_TYPE);
+            reply.extend_from_slice(&[TELNET_IAC, TELNET_SE]);
+        }
+    }
+
+    /// The `IAC SB NAWS <width> <height> IAC SE` report for the current size.
+    fn naws_report(&self) -> Vec<u8> {
+        let mut report = vec![TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS];
+        // Width and height are big-endian 16-bit, and — being ordinary data
+        // inside a subnegotiation — a dimension byte that happens to be 0xFF has
+        // to be doubled like any other IAC. A 255-column window is exactly the
+        // case that desynchronises a codec which forgets this.
+        for byte in self
+            .cols
+            .to_be_bytes()
+            .into_iter()
+            .chain(self.rows.to_be_bytes())
+        {
+            report.push(byte);
+            if byte == TELNET_IAC {
+                report.push(TELNET_IAC);
+            }
+        }
+        report.extend_from_slice(&[TELNET_IAC, TELNET_SE]);
+        report
+    }
+
+    /// Record a new window size, returning the report to send — `None` unless the
+    /// server actually asked for NAWS, since an unsolicited subnegotiation for an
+    /// unnegotiated option is a protocol error.
+    fn resize(&mut self, cols: u16, rows: u16) -> Option<Vec<u8>> {
+        if self.cols == cols && self.rows == rows {
+            return None;
+        }
+        self.cols = cols;
+        self.rows = rows;
+        self.local
+            .contains(&TELNET_OPT_NAWS)
+            .then(|| self.naws_report())
+    }
+
+    /// Whether the server has taken responsibility for echoing what we type.
+    fn server_echoes(&self) -> bool {
+        self.remote.contains(&TELNET_OPT_ECHO)
+    }
+}
+
+/// Escape terminal input for the wire.
+fn telnet_encode_input(input: &[u8], out: &mut Vec<u8>) {
+    for (index, &byte) in input.iter().enumerate() {
+        out.push(byte);
+        match byte {
+            // Not optional: an unescaped 0xFF in the payload is read by the
+            // server as the start of a command, and 0xFF turns up for real in
+            // Alt-prefixed sequences and in pasted binary.
+            TELNET_IAC => out.push(TELNET_IAC),
+            // RFC 854: bare CR is illegal on the wire. The NVT reads `CR LF` as
+            // "new line" and `CR NUL` as "carriage return, stay on this line".
+            // A VT sends a bare `\r` for Enter, so it becomes `CR NUL` here —
+            // servers that don't care ignore the NUL, and the strict ones (some
+            // console servers, some IPMI stacks) would otherwise never see the
+            // line end at all.
+            b'\r' if !matches!(input.get(index + 1), Some(b'\n' | b'\0')) => out.push(0),
+            _ => {}
+        }
+    }
+}
+
+/// Open a telnet session and present it through the same [`LiveShellHandle`]
+/// transport as an SSH / local / serial shell, so the session layer treats all
+/// four uniformly.
+///
+/// Telnet exists here for the devices that only speak it — console servers, IPMI
+/// serial-over-LAN, switches whose SSH stack is absent or switched off. It is
+/// **unencrypted end to end**, credentials included: the login prompt arrives as
+/// ordinary terminal output and the password goes back the same way. That is why
+/// this path has no credential plumbing at all — there is nothing for the vault
+/// to protect once the bytes are on the wire.
+pub fn spawn_telnet(
+    host: String,
+    port: u16,
+    cols: u16,
+    rows: u16,
+) -> Result<LiveShellHandle, SshError> {
+    if host.trim().is_empty() {
+        return Err(SshError::EmptyHost);
+    }
+    if port == 0 {
+        return Err(SshError::InvalidPort);
+    }
+
+    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
+    let (event_tx, event_rx) = mpsc::channel();
+
+    thread::Builder::new()
+        .name(format!("adit-telnet-{host}:{port}"))
+        .spawn(move || {
+            if let Err(error) = run_telnet(&host, port, cols, rows, command_rx, &event_tx) {
+                let _ = event_tx.send(LiveShellEvent::Error(error));
+            }
+            let _ = event_tx.send(LiveShellEvent::Closed);
+        })
+        .map_err(|error| SshError::Runtime(error.to_string()))?;
+
+    Ok(LiveShellHandle {
+        command_tx,
+        event_rx,
+    })
+}
+
+const TELNET_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Dial the first address that answers, with a cap so an unreachable device fails
+/// instead of parking the session thread on the OS's own (minutes-long) timeout.
+fn telnet_connect(host: &str, port: u16) -> Result<TcpStream, String> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|error| format!("无法解析 {host}: {error}"))?;
+
+    let mut last: Option<String> = None;
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, TELNET_CONNECT_TIMEOUT) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last = Some(error.to_string()),
+        }
+    }
+    Err(match last {
+        Some(error) => format!("连接 {host}:{port} 失败: {error}"),
+        None => format!("无法解析 {host}"),
+    })
+}
+
+fn run_telnet(
+    host: &str,
+    port: u16,
+    cols: u16,
+    rows: u16,
+    mut commands: tokio_mpsc::UnboundedReceiver<LiveShellCommand>,
+    events: &mpsc::Sender<LiveShellEvent>,
+) -> Result<(), String> {
+    let stream = telnet_connect(host, port)?;
+    // Interactive typing is one byte at a time; Nagle would hold each keystroke
+    // back waiting for company that never comes.
+    let _ = stream.set_nodelay(true);
+    let reader_stream = stream.try_clone().map_err(|error| error.to_string())?;
+
+    // Both threads write to this socket: the reader answers negotiations as it
+    // parses them, the command loop sends what the user types. One mutex over the
+    // socket is what keeps a negotiation reply from landing in the middle of an
+    // escape sequence.
+    let writer = Arc::new(Mutex::new(stream));
+    // Shared because a resize has to emit NAWS from the command loop, and local
+    // echo has to consult what the reader thread negotiated.
+    let codec = Arc::new(Mutex::new(TelnetCodec::new(cols, rows)));
+
+    let _ = events.send(LiveShellEvent::Status(format!("Telnet {host}:{port}")));
+
+    // Deliberately reactive: we open with silence and answer what the device
+    // offers. Every target worth having (IOS, telnetd, IPMI SOL, Lantronix)
+    // opens with its own DO/WILL, and not speaking first keeps us out of RFC
+    // 1143's "requested but unanswered" states entirely — which is where the
+    // negotiation loops live.
+    let reader_codec = Arc::clone(&codec);
+    let reader_writer = Arc::clone(&writer);
+    let reader_events = events.clone();
+    let reader_handle = thread::spawn(move || {
+        let mut reader = reader_stream;
+        let mut buffer = [0u8; 8192];
+        let mut data = Vec::with_capacity(8192);
+        let mut reply = Vec::new();
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(read) => {
+                    data.clear();
+                    reply.clear();
+                    let Ok(mut codec) = reader_codec.lock() else {
+                        break;
+                    };
+                    codec.feed(&buffer[..read], &mut data, &mut reply);
+                    drop(codec);
+
+                    if !reply.is_empty() {
+                        let Ok(mut socket) = reader_writer.lock() else {
+                            break;
+                        };
+                        if socket.write_all(&reply).and_then(|()| socket.flush()).is_err() {
+                            break;
+                        }
+                    }
+                    if !data.is_empty()
+                        && reader_events
+                            .send(LiveShellEvent::Output(data.clone()))
+                            .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(ref error) if error.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(_) => break,
+            }
+        }
+    });
+
+    let mut wire = Vec::new();
+    while let Some(command) = commands.blocking_recv() {
+        match command {
+            LiveShellCommand::Input(bytes) => {
+                wire.clear();
+                telnet_encode_input(&bytes, &mut wire);
+                let echo_locally = codec.lock().is_ok_and(|codec| !codec.server_echoes());
+                let Ok(mut socket) = writer.lock() else {
+                    break;
+                };
+                let written = socket.write_all(&wire).and_then(|()| socket.flush());
+                drop(socket);
+                if written.is_err() {
+                    break;
+                }
+                // Until the server says WILL ECHO nothing comes back, and an NVT
+                // client is the one responsible for showing what was typed. Skip
+                // this and a device that never negotiates ECHO looks dead while
+                // you type — which reads as a broken connection, not as a mode.
+                if echo_locally && events.send(LiveShellEvent::Output(bytes)).is_err() {
+                    break;
+                }
+            }
+            LiveShellCommand::Resize { cols, rows } => {
+                let report = codec.lock().ok().and_then(|mut codec| codec.resize(cols, rows));
+                if let Some(report) = report {
+                    let Ok(mut socket) = writer.lock() else {
+                        break;
+                    };
+                    if socket.write_all(&report).and_then(|()| socket.flush()).is_err() {
+                        break;
+                    }
+                }
+            }
+            LiveShellCommand::Disconnect => break,
+            LiveShellCommand::HostKeyDecision(_) | LiveShellCommand::AuthResponses(_) => {}
+        }
+    }
+
+    // Shut the socket down rather than merely dropping our handle: the reader
+    // thread is parked inside a blocking `read` and only a shutdown wakes it, so
+    // without this the join below never returns.
+    if let Ok(socket) = writer.lock() {
+        let _ = socket.shutdown(Shutdown::Both);
+    }
     let _ = reader_handle.join();
     Ok(())
 }
@@ -3710,6 +4187,283 @@ mod tests {
         assert_send_sync::<russh::client::Handle<KnownHostsClient>>();
         assert_send_sync::<std::sync::Arc<russh::client::Handle<KnownHostsClient>>>();
     }
+    /// Feed one slice and return `(payload, reply)`.
+    fn telnet_feed(codec: &mut TelnetCodec, input: &[u8]) -> (Vec<u8>, Vec<u8>) {
+        let mut data = Vec::new();
+        let mut reply = Vec::new();
+        codec.feed(input, &mut data, &mut reply);
+        (data, reply)
+    }
+
+    #[test]
+    fn telnet_answers_a_full_opening_negotiation() {
+        let mut codec = TelnetCodec::new(120, 40);
+        let (data, reply) = telnet_feed(
+            &mut codec,
+            &[
+                // The server offers to echo and to suppress go-ahead: accept both,
+                // that pair is what puts the link in character-at-a-time mode.
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO,
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA,
+                // It asks us to perform SGA, TTYPE and NAWS: all three are ours.
+                TELNET_IAC, TELNET_DO, TELNET_OPT_SGA,
+                TELNET_IAC, TELNET_DO, TELNET_OPT_TTYPE,
+                TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS,
+                // Asking *us* to echo is the mirror-loop request, and NEW-ENVIRON
+                // (39) is an option we do not speak. Both must be refused, or the
+                // server sits waiting for data that never comes.
+                TELNET_IAC, TELNET_DO, TELNET_OPT_ECHO,
+                TELNET_IAC, TELNET_DO, 39,
+                // A server offering to report the window size is nonsense.
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
+            ],
+        );
+
+        assert!(data.is_empty(), "negotiation must not reach the VT");
+        assert_eq!(
+            reply,
+            vec![
+                TELNET_IAC, TELNET_DO, TELNET_OPT_ECHO,
+                TELNET_IAC, TELNET_DO, TELNET_OPT_SGA,
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA,
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_TTYPE,
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
+                // Agreeing NAWS reports the size straight away — the server never
+                // asks a second time.
+                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 120, 0, 40, TELNET_IAC, TELNET_SE,
+                TELNET_IAC, TELNET_WONT, TELNET_OPT_ECHO,
+                TELNET_IAC, TELNET_WONT, 39,
+                TELNET_IAC, TELNET_DONT, TELNET_OPT_NAWS,
+            ]
+        );
+        assert!(codec.server_echoes());
+    }
+
+    /// Re-answering a request that changes nothing is how two implementations
+    /// negotiate at each other forever (RFC 1143's whole subject).
+    #[test]
+    fn telnet_does_not_re_answer_a_settled_option() {
+        let mut codec = TelnetCodec::new(80, 24);
+        let (_, first) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DO, TELNET_OPT_SGA]);
+        assert_eq!(first, vec![TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA]);
+
+        let (_, again) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DO, TELNET_OPT_SGA]);
+        assert!(again.is_empty(), "already on: nothing changed, so say nothing");
+
+        // Turning it back off *is* a change, and is acknowledged.
+        let (_, off) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DONT, TELNET_OPT_SGA]);
+        assert_eq!(off, vec![TELNET_IAC, TELNET_WONT, TELNET_OPT_SGA]);
+        let (_, off_again) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DONT, TELNET_OPT_SGA]);
+        assert!(off_again.is_empty());
+    }
+
+    #[test]
+    fn telnet_unescapes_doubled_iac_and_drops_bare_commands() {
+        let mut codec = TelnetCodec::new(80, 24);
+        let (data, reply) = telnet_feed(
+            &mut codec,
+            &[
+                b'a',
+                // IAC IAC is a literal 0xFF, not a command.
+                TELNET_IAC, TELNET_IAC,
+                b'b',
+                // IAC NOP / IAC GA: two-byte commands with nothing to answer, and
+                // nothing that may reach the VT.
+                TELNET_IAC, 241,
+                TELNET_IAC, 249,
+                b'c',
+            ],
+        );
+        assert_eq!(data, vec![b'a', 0xFF, b'b', b'c']);
+        assert!(reply.is_empty());
+    }
+
+    /// The case that is easy to write wrong and impossible to spot by hand: TCP
+    /// hands over whatever arrived, so a command routinely straddles two reads.
+    #[test]
+    fn telnet_resumes_a_command_split_across_reads() {
+        let mut codec = TelnetCodec::new(100, 30);
+
+        // A negotiation cut between the verb and the option.
+        let (data, reply) = telnet_feed(&mut codec, &[b'x', TELNET_IAC, TELNET_DO]);
+        assert_eq!(data, vec![b'x']);
+        assert!(reply.is_empty(), "the option byte has not arrived yet");
+
+        let (data, reply) = telnet_feed(&mut codec, &[TELNET_OPT_NAWS, b'y']);
+        assert_eq!(data, vec![b'y']);
+        assert_eq!(
+            reply,
+            vec![
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
+                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 100, 0, 30, TELNET_IAC, TELNET_SE,
+            ]
+        );
+
+        // And a doubled IAC cut down the middle: the second half must still be
+        // read as the escape, not as the start of a fresh command.
+        let (data, _) = telnet_feed(&mut codec, &[b'p', TELNET_IAC]);
+        assert_eq!(data, vec![b'p']);
+        let (data, _) = telnet_feed(&mut codec, &[TELNET_IAC, b'q']);
+        assert_eq!(data, vec![0xFF, b'q']);
+    }
+
+    #[test]
+    fn telnet_answers_terminal_type_split_across_reads() {
+        let mut codec = TelnetCodec::new(80, 24);
+        let (_, reply) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_SB, TELNET_OPT_TTYPE]);
+        assert!(reply.is_empty(), "the subnegotiation has not closed yet");
+
+        let (data, reply) = telnet_feed(&mut codec, &[TELNET_TTYPE_SEND, TELNET_IAC]);
+        assert!(data.is_empty() && reply.is_empty());
+
+        let (data, reply) = telnet_feed(&mut codec, &[TELNET_SE]);
+        assert!(data.is_empty(), "subnegotiation payload must not reach the VT");
+        let mut expected = vec![TELNET_IAC, TELNET_SB, TELNET_OPT_TTYPE, TELNET_TTYPE_IS];
+        expected.extend_from_slice(b"xterm-256color");
+        expected.extend_from_slice(&[TELNET_IAC, TELNET_SE]);
+        assert_eq!(reply, expected);
+    }
+
+    /// A dimension byte of 0xFF is ordinary data inside the subnegotiation and has
+    /// to be doubled like any other IAC — a 255-column window is exactly what
+    /// desynchronises a codec that forgets.
+    #[test]
+    fn telnet_naws_escapes_a_255_dimension() {
+        let mut codec = TelnetCodec::new(255, 24);
+        let (_, reply) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS]);
+        assert_eq!(
+            reply,
+            vec![
+                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
+                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS,
+                0, TELNET_IAC, TELNET_IAC, 0, 24,
+                TELNET_IAC, TELNET_SE,
+            ]
+        );
+    }
+
+    #[test]
+    fn telnet_reports_a_resize_only_once_naws_is_agreed() {
+        let mut codec = TelnetCodec::new(80, 24);
+        // Nobody asked for NAWS: an unsolicited subnegotiation is a protocol error.
+        assert!(codec.resize(100, 30).is_none());
+
+        let (_, _) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS]);
+        assert_eq!(
+            codec.resize(132, 43),
+            Some(vec![
+                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 132, 0, 43, TELNET_IAC, TELNET_SE,
+            ])
+        );
+        // A resize to the size it already has is not news.
+        assert!(codec.resize(132, 43).is_none());
+    }
+
+    #[test]
+    fn telnet_escapes_outbound_input() {
+        let mut wire = Vec::new();
+        telnet_encode_input(&[b'l', b's', 0xFF, b'\r'], &mut wire);
+        assert_eq!(
+            wire,
+            // 0xFF doubled, and the bare CR completed with NUL: RFC 854 has no
+            // bare CR, and a strict server otherwise never sees the line end.
+            vec![b'l', b's', 0xFF, 0xFF, b'\r', 0]
+        );
+
+        // A CR that already carries its LF (or NUL) is left exactly as it is.
+        let mut wire = Vec::new();
+        telnet_encode_input(b"a\r\nb\r\0", &mut wire);
+        assert_eq!(wire, b"a\r\nb\r\0");
+    }
+
+    fn contains_sequence(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack.windows(needle.len()).any(|window| window == needle)
+    }
+
+    /// The codec tests above prove the parser; this one proves the wiring around
+    /// it — that a spawned session actually answers on the socket, escapes what
+    /// the user types, and turns the rest into `Output`. It runs against a
+    /// loopback listener, so it needs no network and no fixture host.
+    #[test]
+    fn telnet_session_negotiates_and_streams_over_a_real_socket() {
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().expect("accept");
+            let _ = socket.set_read_timeout(Some(Duration::from_secs(10)));
+            socket
+                .write_all(&[
+                    TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS,
+                    TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO,
+                    b'r', b'e', b'a', b'd', b'y',
+                ])
+                .expect("banner");
+            let _ = socket.flush();
+
+            // WILL NAWS (3) + the NAWS report (9) + DO ECHO (3) + the escaped
+            // input, `a FF FF CR NUL` (5). Read until they are all in, or the
+            // timeout gives up.
+            const EXPECTED: usize = 3 + 9 + 3 + 5;
+            let mut received = Vec::new();
+            let mut buffer = [0u8; 256];
+            while received.len() < EXPECTED {
+                match socket.read(&mut buffer) {
+                    Ok(0) => break,
+                    Ok(read) => received.extend_from_slice(&buffer[..read]),
+                    Err(_) => break,
+                }
+            }
+            received
+        });
+
+        let handle = spawn_telnet(String::from("127.0.0.1"), port, 100, 30).expect("spawn");
+        handle
+            .send(LiveShellCommand::Input(vec![b'a', 0xFF, b'\r']))
+            .expect("input");
+
+        // Drain events until the banner shows up. Polled with a deadline rather
+        // than a fixed sleep so a slow machine does not turn this red.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let mut output = Vec::new();
+        while std::time::Instant::now() < deadline && !contains_sequence(&output, b"ready") {
+            match handle.try_recv() {
+                Some(LiveShellEvent::Output(bytes)) => output.extend_from_slice(&bytes),
+                Some(_) => {}
+                None => thread::sleep(Duration::from_millis(10)),
+            }
+        }
+        assert!(
+            contains_sequence(&output, b"ready"),
+            "payload should reach the terminal with the negotiation stripped out"
+        );
+
+        let wire = server.join().expect("server thread");
+        assert!(
+            contains_sequence(&wire, &[TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS]),
+            "the DO NAWS should have been accepted"
+        );
+        assert!(
+            contains_sequence(
+                &wire,
+                &[TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 100, 0, 30, TELNET_IAC, TELNET_SE]
+            ),
+            "accepting NAWS should report the window straight away"
+        );
+        assert!(
+            contains_sequence(&wire, &[TELNET_IAC, TELNET_DO, TELNET_OPT_ECHO]),
+            "the server's offer to echo should have been accepted"
+        );
+        assert!(
+            contains_sequence(&wire, &[b'a', 0xFF, 0xFF, b'\r', 0]),
+            "input should reach the wire with 0xFF doubled and CR completed"
+        );
+
+        let _ = handle.send(LiveShellCommand::Disconnect);
+    }
+
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn current_thread_rt() -> tokio::runtime::Runtime {

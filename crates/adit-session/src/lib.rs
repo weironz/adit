@@ -992,6 +992,23 @@ impl SessionManager {
                 let terminal = serial_terminal(&profile.name, &endpoint, size);
                 (live, endpoint, terminal, None)
             }
+            Protocol::Telnet => {
+                let host = profile.host.trim();
+                if host.is_empty() {
+                    return Err(SessionError::Unsupported(String::from("请填写主机地址")));
+                }
+                // Port 0 means "never set" (an old profile predating telnet, or a
+                // blank field), not "port zero" — there is no such TCP port.
+                let port = if profile.port == 0 { 23 } else { profile.port };
+                // No credential is passed: telnet authenticates in-band, so the
+                // login prompt is ordinary terminal output the user answers by
+                // typing. Handing a password to the transport would only mean
+                // guessing where in the banner to type it.
+                let live = adit_ssh::spawn_telnet(host.to_string(), port, size.cols, size.rows)?;
+                let endpoint = format!("{host}:{port}");
+                let terminal = telnet_terminal(&profile.name, &endpoint, size);
+                (live, endpoint, terminal, None)
+            }
             Protocol::Rdp => {
                 // RDP is launched externally (see `launch_rdp`); it never opens a
                 // terminal session.
@@ -3375,6 +3392,10 @@ fn local_shell_terminal(profile_name: &str, size: TerminalSize) -> VtTerminal {
 }
 
 fn serial_terminal(profile_name: &str, _endpoint: &str, size: TerminalSize) -> VtTerminal {
+    VtTerminal::with_title(size, profile_name)
+}
+
+fn telnet_terminal(profile_name: &str, _endpoint: &str, size: TerminalSize) -> VtTerminal {
     VtTerminal::with_title(size, profile_name)
 }
 

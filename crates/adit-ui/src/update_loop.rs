@@ -1071,12 +1071,17 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileProtocolChanged(protocol) => {
             app.terminal_focused = false;
-            // Nudge the port to a sensible default when moving to/from RDP.
+            // Nudge the port to the new protocol's default, but only when the
+            // current value is blank or is some *other* protocol's default —
+            // a hand-typed port (2222, a console server on 2001) is a choice and
+            // survives the switch.
             let port = app.profile_port.trim();
-            if protocol == Protocol::Rdp && (port.is_empty() || port == "22") {
-                app.profile_port = String::from("3389");
-            } else if protocol.is_ssh_based() && port == "3389" {
-                app.profile_port = String::from("22");
+            let borrowed =
+                port.is_empty() || Protocol::is_default_port(port.parse::<u16>().unwrap_or(0));
+            if borrowed {
+                if let Some(default) = protocol.default_port() {
+                    app.profile_port = default.to_string();
+                }
             }
             // SSH defaults to password auth; only upgrade the implicit "Auto" so an
             // explicit Key/Agent choice is preserved.

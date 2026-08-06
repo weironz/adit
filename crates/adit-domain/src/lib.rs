@@ -367,6 +367,12 @@ pub enum Protocol {
     LocalShell,
     /// A serial port (COM/tty).
     Serial,
+    /// Plain telnet (RFC 854), for devices that speak nothing else — console
+    /// servers, IPMI serial-over-LAN, switches with no SSH stack.
+    ///
+    /// Unencrypted, and it has no authentication of its own: the login prompt is
+    /// just terminal output, so the credential store never sees this path.
+    Telnet,
     /// Remote Desktop (graphical).
     Rdp,
     /// An `sftp>` prompt on its own, without opening a shell first.
@@ -378,15 +384,53 @@ pub enum Protocol {
 }
 
 impl Protocol {
+    /// Every variant, in the order the profile editor offers them.
+    pub const ALL: [Self; 6] = [
+        Self::Ssh,
+        Self::Sftp,
+        Self::Rdp,
+        Self::Telnet,
+        Self::LocalShell,
+        Self::Serial,
+    ];
+
     #[must_use]
     pub fn label(self) -> &'static str {
         match self {
             Self::Ssh => "SSH",
             Self::LocalShell => "本地 Shell",
             Self::Serial => "串口",
+            Self::Telnet => "Telnet",
             Self::Rdp => "RDP",
             Self::Sftp => "SFTP",
         }
+    }
+
+    /// The port to offer when a profile switches to this protocol and has none
+    /// worth keeping. `None` for the protocols that do not dial a TCP port at
+    /// all (a local shell has none; a serial profile puts the baud rate here).
+    #[must_use]
+    pub fn default_port(self) -> Option<u16> {
+        match self {
+            Self::Ssh | Self::Sftp => Some(22),
+            Self::Telnet => Some(23),
+            Self::Rdp => Some(3389),
+            Self::LocalShell | Self::Serial => None,
+        }
+    }
+
+    /// Whether `port` is some protocol's default rather than a number the user
+    /// chose.
+    ///
+    /// Switching a profile's protocol should carry 22 → 23 → 3389 along with it,
+    /// but must never overwrite a hand-typed port (2222, or a console server on
+    /// 2001). "Still sitting on a default" is the only evidence available for
+    /// telling those apart, so it is the one used.
+    #[must_use]
+    pub fn is_default_port(port: u16) -> bool {
+        Self::ALL
+            .iter()
+            .any(|protocol| protocol.default_port() == Some(port))
     }
 
     /// Whether this protocol drives the built-in VT terminal (byte-stream based).
@@ -395,11 +439,18 @@ impl Protocol {
     /// scrollback, selection and logging all work the way they do for a shell.
     #[must_use]
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Ssh | Self::LocalShell | Self::Serial | Self::Sftp)
+        matches!(
+            self,
+            Self::Ssh | Self::LocalShell | Self::Serial | Self::Telnet | Self::Sftp
+        )
     }
 
     /// Whether this protocol dials over SSH, and so needs a username, a port and
     /// the SSH authentication fields.
+    ///
+    /// Telnet is **not** in here despite also taking a host and a port: it has no
+    /// SSH handshake, no key, no known-hosts entry and no client-side credential
+    /// at all, so every SSH-shaped affordance keyed off this would be a lie.
     #[must_use]
     pub fn is_ssh_based(self) -> bool {
         matches!(self, Self::Ssh | Self::Sftp)
