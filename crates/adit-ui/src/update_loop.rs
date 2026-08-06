@@ -1405,6 +1405,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     // Adopt what the merge produced, then persist it the same
                     // way any other profile change is persisted.
                     app.groups = report.catalog.groups.clone();
+                    // Adopted alongside the groups: an icon chosen on the other
+                    // machine has already survived the merge, and dropping it
+                    // here would undo that on the next save.
+                    app.group_icons = report.catalog.group_icons.clone();
                     app.manager.replace_profiles(report.catalog.profiles.clone());
                     persist_profiles(app);
                     persist_settings_if_changed(app);

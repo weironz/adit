@@ -110,6 +110,18 @@ pub struct ProfileStore {
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct ProfileCatalog {
     pub groups: Vec<String>,
+    /// Icon key per group, for the groups that have one chosen.
+    ///
+    /// A map beside the name list rather than turning `groups` into structs:
+    /// the list carries order and membership, which thirty-odd call sites read
+    /// as plain names, and the icon is metadata none of them care about.
+    /// Keeping the two apart bought the feature without a format migration —
+    /// worth it on a file whose last rewrite lost a whole catalog.
+    ///
+    /// Pruned to the live groups whenever a catalog is built, so renaming or
+    /// deleting one cannot leave an entry behind to reattach itself later.
+    #[serde(default)]
+    pub group_icons: BTreeMap<String, String>,
     pub profiles: Vec<ConnectionProfile>,
 }
 
@@ -118,8 +130,25 @@ impl ProfileCatalog {
     pub fn new(groups: Vec<String>, profiles: Vec<ConnectionProfile>) -> Self {
         Self {
             groups: normalize_groups(groups, &profiles),
+            group_icons: BTreeMap::new(),
             profiles,
         }
+    }
+
+    /// As [`Self::new`], carrying group icons through — pruned to the groups
+    /// that survived normalisation, so a deleted group takes its icon with it.
+    #[must_use]
+    pub fn with_group_icons(
+        groups: Vec<String>,
+        group_icons: BTreeMap<String, String>,
+        profiles: Vec<ConnectionProfile>,
+    ) -> Self {
+        let mut catalog = Self::new(groups, profiles);
+        catalog.group_icons = group_icons
+            .into_iter()
+            .filter(|(name, icon)| !icon.trim().is_empty() && catalog.groups.contains(name))
+            .collect();
+        catalog
     }
 
     #[must_use]
@@ -166,7 +195,11 @@ impl ProfileStore {
         // writing back a downgraded version, which would silently drop fields.
         check_format_version(&content, "profiles.json", PROFILES_FORMAT_VERSION)?;
         let document: StoredProfiles = serde_json::from_str(&content)?;
-        Ok(ProfileCatalog::new(document.groups, document.profiles))
+        Ok(ProfileCatalog::with_group_icons(
+            document.groups,
+            document.group_icons,
+            document.profiles,
+        ))
     }
 
     pub fn save_profiles(&self, profiles: &[ConnectionProfile]) -> Result<(), StorageError> {
@@ -183,6 +216,14 @@ impl ProfileStore {
         let groups = normalize_groups(catalog.groups.clone(), &catalog.profiles);
         let document = StoredProfiles {
             version: PROFILES_FORMAT_VERSION,
+            // Prune against the normalised list, not the caller's: a group that
+            // normalisation dropped must not keep an icon on disk.
+            group_icons: catalog
+                .group_icons
+                .iter()
+                .filter(|(name, _)| groups.contains(name))
+                .map(|(name, icon)| (name.clone(), icon.clone()))
+                .collect(),
             groups,
             profiles: catalog.profiles.clone(),
         };
@@ -723,6 +764,11 @@ struct StoredProfiles {
     version: u16,
     #[serde(default)]
     groups: Vec<String>,
+    /// Absent in every file written before group icons existed, which is what
+    /// `default` covers — no migration, and an older Adit reading this file
+    /// ignores the field rather than choking on it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    group_icons: BTreeMap<String, String>,
     profiles: Vec<ConnectionProfile>,
 }
 

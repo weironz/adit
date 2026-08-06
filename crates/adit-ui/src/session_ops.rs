@@ -2123,7 +2123,11 @@ pub(crate) fn sync_oauth_config(
 /// The catalog as it stands right now: what a sync uploads and merges against.
 #[must_use]
 pub(crate) fn catalog_snapshot(app: &AditApp) -> adit_storage::ProfileCatalog {
-    adit_storage::ProfileCatalog::new(app.groups.to_vec(), app.manager.profiles().to_vec())
+    adit_storage::ProfileCatalog::with_group_icons(
+        app.groups.to_vec(),
+        app.group_icons.clone(),
+        app.manager.profiles().to_vec(),
+    )
 }
 
 /// This machine's name, for the "last written by" line. Cosmetic — a device

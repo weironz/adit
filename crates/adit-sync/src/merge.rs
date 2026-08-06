@@ -218,7 +218,15 @@ pub fn three_way(
     conflicts.sort_by(|a, b| a.name.cmp(&b.name));
 
     MergeOutcome {
-        catalog: ProfileCatalog::new(merge_groups(base, local, remote), profiles),
+        catalog: {
+            let groups = merge_groups(base, local, remote);
+            // Icons have to be carried across explicitly. `ProfileCatalog::new`
+            // starts them empty, and leaving it here would have quietly wiped
+            // every group icon on every sync — a loss that reads as "the
+            // feature never worked" rather than as a merge bug.
+            let icons = merge_group_icons(local, remote);
+            ProfileCatalog::with_group_icons(groups, icons, profiles)
+        },
         conflicts,
         stats,
     }
@@ -226,6 +234,25 @@ pub fn three_way(
 
 /// Groups are a flat name list, so the same ancestor rules apply per name:
 /// a name absent from a side that had it in the ancestor was deleted there.
+/// Which icon each group ends up with.
+///
+/// Local wins where both sides chose, matching the rule for a session edited on
+/// both machines: this machine's choice is the one in front of the user.
+/// `with_group_icons` prunes whatever no longer names a live group.
+fn merge_group_icons(
+    local: &ProfileCatalog,
+    remote: &ProfileCatalog,
+) -> std::collections::BTreeMap<String, String> {
+    let mut icons = remote.group_icons.clone();
+    icons.extend(
+        local
+            .group_icons
+            .iter()
+            .map(|(name, icon)| (name.clone(), icon.clone())),
+    );
+    icons
+}
+
 fn merge_groups(
     base: &ProfileCatalog,
     local: &ProfileCatalog,

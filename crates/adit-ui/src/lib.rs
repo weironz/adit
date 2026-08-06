@@ -140,6 +140,8 @@ pub struct AditApp {
     // Folders in user-arrangeable order (top-level tree order); a session may be
     // ungrouped (top level) and interleaved among these.
     groups: Vec<String>,
+    /// Icon key per group, mirroring `ProfileCatalog::group_icons`.
+    group_icons: std::collections::BTreeMap<String, String>,
     collapsed_groups: BTreeSet<String>,
     active_menu: Option<MenuKind>,
     profile_group: String,
@@ -959,6 +961,13 @@ impl Default for AditApp {
     fn default() -> Self {
         let profile_store = ProfileStore::default();
         let load_result = profile_store.load_catalog();
+        // Captured before the match below consumes the catalog. Taken only from
+        // a successful load: a failed one must not look like "every group had
+        // its icon cleared" and then save that back.
+        let group_icons = load_result
+            .as_ref()
+            .map(|catalog| catalog.group_icons.clone())
+            .unwrap_or_default();
         let (manager, groups, load_notice, load_error) = match load_result {
             Ok(catalog) if !catalog.profiles.is_empty() => {
                 let count = catalog.profiles.len();
@@ -1007,7 +1016,14 @@ impl Default for AditApp {
             }
         };
 
-        Self::with_loaded_state(manager, groups, profile_store, load_notice, load_error)
+        Self::with_loaded_state(
+            manager,
+            groups,
+            group_icons,
+            profile_store,
+            load_notice,
+            load_error,
+        )
     }
 }
 
@@ -1015,6 +1031,7 @@ impl AditApp {
     fn with_loaded_state(
         mut manager: SessionManager,
         groups: Vec<String>,
+        group_icons: std::collections::BTreeMap<String, String>,
         profile_store: ProfileStore,
         load_notice: String,
         load_error: Option<String>,
@@ -1140,6 +1157,7 @@ impl AditApp {
         let effective_sidebar = if sidebar_visible { sidebar_width } else { 0.0 };
 
         let mut app = Self {
+            group_icons,
             manager,
             profile_store,
             credential_store: CredentialStore::default(),

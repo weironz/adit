@@ -1049,7 +1049,11 @@ pub(crate) fn import_ssh_config(app: &mut AditApp) {
 }
 
 pub(crate) fn persist_profiles(app: &mut AditApp) -> bool {
-    let catalog = ProfileCatalog::new(app.groups.to_vec(), app.manager.profiles().to_vec());
+    let catalog = ProfileCatalog::with_group_icons(
+        app.groups.to_vec(),
+        app.group_icons.clone(),
+        app.manager.profiles().to_vec(),
+    );
 
     // Write on a background thread: the profiles.json disk write can block for
     // seconds (antivirus scan / synced folder / lock), and this runs on the UI
