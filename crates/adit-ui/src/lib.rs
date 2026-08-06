@@ -976,7 +976,7 @@ impl Default for AditApp {
             Ok(catalog) if !catalog.groups.is_empty() => (
                 SessionManager::with_profiles(Vec::new()),
                 groups_from_catalog(catalog.groups, &catalog.profiles),
-                format!("已加载空分组配置: {}", profile_store.path().display()),
+                tf("已加载空分组配置: {}", &[&profile_store.path().display()]),
                 None,
             ),
             Ok(_) => {

@@ -895,7 +895,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             } else if let Err(error) = app.manager.sftp_upload(&path) {
                 app.last_error = Some(error.to_string());
             } else {
-                app.notice = format!("上传 {}", path.display());
+                app.notice = tf("上传 {}", &[&path.display()]);
             }
         }
         Message::SftpLocalPathChanged(value) => app.sftp_local_path_edit = value,
@@ -1359,7 +1359,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                             conflicts: outcome
                                 .conflicts
                                 .iter()
-                                .map(|conflict| format!("冲突（已保留本机）: {}", conflict.name))
+                                .map(|conflict| tf("冲突（已保留本机）: {}", &[&conflict.name]))
                                 .collect(),
                             summary: if outcome.uploaded {
                                 format!(
@@ -1697,7 +1697,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.modifiers.control() {
                 if let Some(lines) = scroll_delta_to_rows(delta) {
                     step_font_size(app, if lines > 0 { 1 } else { -1 });
-                    app.notice = format!("终端字号 {}px", app.font_size as i32);
+                    app.notice = tf("终端字号 {}px", &[&(app.font_size as i32)]);
                 }
                 return Task::none();
             }
@@ -1977,7 +1977,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CommandTargetToggled => {
             app.command_target = app.command_target.toggled();
-            app.notice = format!("命令窗口目标：{}", app.command_target.label());
+            app.notice = tf("命令窗口目标：{}", &[&t(app.command_target.label())]);
         }
         Message::ToggleCommandSendImmediately => {
             app.command_send_immediately = !app.command_send_immediately;

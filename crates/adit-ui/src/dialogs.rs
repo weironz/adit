@@ -115,7 +115,7 @@ pub(crate) fn host_key_dialog_overlay(
         text(format!("{}:{}", prompt.host, prompt.port))
             .size(13)
             .color(primary_text()),
-        text(format!("密钥类型: {}", prompt.key_type))
+        text(tf("密钥类型: {}", &[&prompt.key_type]))
             .size(11)
             .color(muted_text()),
         text(t("SHA256 指纹")).size(11).color(muted_text()),
@@ -699,7 +699,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .into(),
         UpdateState::Available(info) => {
             let mut col = column![
-                text(format!("发现新版本 {}", info.tag))
+                text(tf("发现新版本 {}", &[&info.tag]))
                     .size(15)
                     .color(accent()),
                 text(tf("当前版本 v{}", &[&current]))
@@ -1150,21 +1150,21 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         text(t("配置目录")).size(13).color(primary_text()),
         setting_card(config_dir_row),
         setting_card(options_path_row(
-            "会话配置",
+            t("会话配置"),
             config_dir.join("profiles.json").display().to_string(),
             None,
         )),
         setting_card(options_path_row(
-            "应用设置",
+            t("应用设置"),
             config_dir.join("settings.json").display().to_string(),
             None,
         )),
-        setting_card(text(config_note).size(11).color(muted_text()))]
+        setting_card(text(t(config_note)).size(11).color(muted_text()))]
     .spacing(10);
 
     if let Some(pending) = &app.pending_config_dir {
         config_section = config_section.push(
-            text(format!("重启后生效: {}", pending.display()))
+            text(tf("重启后生效: {}", &[&pending.display()]))
                 .size(11)
                 .color(accent()),
         );
@@ -1272,7 +1272,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         setting_card(text(t("可用变量：%N 会话名  %H 主机  %Y 年 %M 月 %D 日  %h 时 %m 分 %s 秒"))
             .size(11)
             .color(muted_text())),
-        setting_card(options_path_row("预览", preview_path.display().to_string(), None)),
+        setting_card(options_path_row(t("预览"), preview_path.display().to_string(), None)),
         setting_card(checkbox(app.auto_log_on_connect)
             .label(t("连接后自动开始记录日志"))
             .on_toggle(Message::ToggleAutoLog)
@@ -1514,7 +1514,7 @@ pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
     let route = match tunnel.kind {
         TunnelKind::Local => format!("{} → {}", tunnel.bind, tunnel.target),
         TunnelKind::Dynamic => format!("{}  (SOCKS5)", tunnel.bind),
-        TunnelKind::Remote => format!("远端 {} → 本地 {}", tunnel.bind, tunnel.target),
+        TunnelKind::Remote => tf("远端 {} → 本地 {}", &[&tunnel.bind, &tunnel.target]),
     };
     let status_color = if tunnel.error.is_some() {
         danger()
@@ -1528,7 +1528,7 @@ pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
         row![
             text(kind).size(11).color(accent()).width(Length::Fixed(18.0)),
             text(route).size(12).color(primary_text()).width(Fill),
-            text(format!("活动 {}", tunnel.active))
+            text(tf("活动 {}", &[&tunnel.active]))
                 .size(10)
                 .color(muted_text())
                 .width(Length::Fixed(60.0)),

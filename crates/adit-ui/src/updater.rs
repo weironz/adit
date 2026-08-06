@@ -108,7 +108,7 @@ pub(crate) fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> 
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("检查更新失败: {}", stderr.trim()));
+        return Err(tf("检查更新失败: {}", &[&stderr.trim()]));
     }
 
     let json: serde_json::Value = serde_json::from_slice(&output.stdout)
@@ -196,7 +196,7 @@ pub(crate) fn download_installer_blocking(url: &str, name: &str) -> Result<Strin
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("下载安装包失败: {}", stderr.trim()));
+        return Err(tf("下载安装包失败: {}", &[&stderr.trim()]));
     }
 
     match std::fs::metadata(&dest) {

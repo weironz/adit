@@ -259,7 +259,7 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
     let target = app.command_target;
     let broadcasting = target == CommandTarget::AllSessions;
     let target_label = if broadcasting {
-        format!("→ 所有会话 ({})", app.manager.live_session_count())
+        tf("→ 所有会话 ({})", &[&app.manager.live_session_count()])
     } else {
         format!("→ {}", target.label())
     };

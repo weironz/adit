@@ -823,7 +823,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
             if persist_profiles(app) {
                 app.last_error = None;
                 if show_notice {
-                    app.notice = format!("会话配置已保存: {}", app.profile_store.path().display());
+                    app.notice = tf("会话配置已保存: {}", &[&app.profile_store.path().display()]);
                 }
                 app.selected_profile
             } else {
@@ -974,7 +974,7 @@ pub(crate) fn import_ssh_config(app: &mut AditApp) {
         return;
     };
     if !path.exists() {
-        app.last_error = Some(format!("未找到 {}", path.display()));
+        app.last_error = Some(tf("未找到 {}", &[&path.display()]));
         return;
     }
     let text = match std::fs::read_to_string(&path) {
@@ -1080,7 +1080,7 @@ pub(crate) fn write_config_pointer(target: &std::path::Path) -> std::io::Result<
 /// Returns whether the switch succeeded.
 pub(crate) fn carry_config_to(app: &mut AditApp, target: std::path::PathBuf) -> bool {
     if let Err(error) = adit_storage::copy_config_files(&app.config_dir, &target) {
-        app.last_error = Some(format!("复制配置到 {} 失败: {error}", target.display()));
+        app.last_error = Some(tf("复制配置到 {} 失败: {}", &[&target.display(), &error]));
         return false;
     }
     if let Err(error) = write_config_pointer(&target) {
@@ -1152,7 +1152,7 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
         app.notice = if target == default {
             String::from(t("已恢复到默认配置文件夹（已生效）"))
         } else {
-            format!("配置文件夹已切换到 {}（已生效）", target.display())
+            tf("配置文件夹已切换到 {}（已生效）", &[&target.display()])
         };
     }
 }

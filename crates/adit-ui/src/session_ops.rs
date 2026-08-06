@@ -70,7 +70,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
                 app.terminal_focused = true;
                 app.rdp_frame_generation = 0;
                 app.last_error = None;
-                app.notice = format!("RDP 会话已开始连接: {}", profile.endpoint());
+                app.notice = tf("RDP 会话已开始连接: {}", &[&profile.endpoint()]);
             }
             Err(error) => app.last_error = Some(error.to_string()),
         }
@@ -125,9 +125,9 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
             }
             app.last_error = None;
             app.notice = if profile.protocol == Protocol::Ssh {
-                format!("SSH 会话已开始连接: {}", profile.endpoint())
+                tf("SSH 会话已开始连接: {}", &[&profile.endpoint()])
             } else {
-                format!("已启动{}", profile.protocol.label())
+                tf("已启动{}", &[&t(profile.protocol.label())])
             };
         }
         Err(error) => {
@@ -312,7 +312,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
                 app.last_error = credential_warning
                     .as_ref()
                     .map(|error| tf("保存密码失败: {}", &[&error]));
-                app.notice = format!("RDP 会话已开始连接: {}", dialog.endpoint);
+                app.notice = tf("RDP 会话已开始连接: {}", &[&dialog.endpoint]);
             }
             Err(error) => app.last_error = Some(error.to_string()),
         }
@@ -346,9 +346,9 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
                 .as_ref()
                 .map(|error| tf("保存密码失败: {}", &[&error]));
             app.notice = if credential_warning.is_some() {
-                format!("SSH 会话已开始连接: {}；系统凭据未保存", dialog.endpoint)
+                tf("SSH 会话已开始连接: {}；系统凭据未保存", &[&dialog.endpoint])
             } else {
-                format!("SSH 会话已开始连接: {}", dialog.endpoint)
+                tf("SSH 会话已开始连接: {}", &[&dialog.endpoint])
             };
         }
         Err(error) => {
@@ -376,7 +376,7 @@ pub(crate) fn retry_active_session(app: &mut AditApp) {
     app.terminal_scroll_offset = 0;
     app.terminal_selection = None;
     app.terminal_context_menu = false;
-    app.notice = format!("准备重连: {}", summary.endpoint);
+    app.notice = tf("准备重连: {}", &[&summary.endpoint]);
     // Reconnect the way the host list connects: straight through when the
     // profile already has what it needs. Opening the dialog unconditionally
     // asked for a password that was sitting in the credential store, which made
@@ -611,7 +611,7 @@ pub(crate) fn reconnect_active_session(app: &mut AditApp) {
                 app.terminal_scroll_offset = 0;
                 app.terminal_selection = None;
                 app.last_error = None;
-                app.notice = format!("正在重连: {}", summary.endpoint);
+                app.notice = tf("正在重连: {}", &[&summary.endpoint]);
             }
             Err(error) => app.last_error = Some(error.to_string()),
         }
@@ -1358,7 +1358,7 @@ pub(crate) fn toggle_active_logging(app: &mut AditApp) {
 
     if app.manager.active_is_logging() {
         if let Some(path) = app.manager.stop_active_logging() {
-            app.notice = format!("已停止记录会话日志: {}", path.display());
+            app.notice = tf("已停止记录会话日志: {}", &[&path.display()]);
         }
     } else {
         let dir = effective_log_dir(app);
@@ -1366,7 +1366,7 @@ pub(crate) fn toggle_active_logging(app: &mut AditApp) {
         match app.manager.start_active_logging(&dir, &name, app.log_plaintext) {
             Ok(path) => {
                 app.last_error = None;
-                app.notice = format!("正在记录会话输出到: {}", path.display());
+                app.notice = tf("正在记录会话输出到: {}", &[&path.display()]);
             }
             Err(error) => app.last_error = Some(tf("开启会话日志失败: {}", &[&error])),
         }
@@ -1434,7 +1434,7 @@ pub(crate) fn render_log_name(pattern: &str, session_name: &str, endpoint: &str)
 /// Open a folder in the OS file manager (creating it first if missing).
 pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
     if let Err(error) = std::fs::create_dir_all(&dir) {
-        app.last_error = Some(format!("无法创建目录 {}: {error}", dir.display()));
+        app.last_error = Some(tf("无法创建目录 {}: {}", &[&dir.display(), &error]));
         return;
     }
     let opener = if cfg!(target_os = "windows") {
@@ -1447,7 +1447,7 @@ pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
     // explorer.exe returns a nonzero exit code even on success, so ignore the
     // status and only surface a spawn failure.
     match std::process::Command::new(opener).arg(&dir).spawn() {
-        Ok(_) => app.notice = format!("已在文件管理器中打开: {}", dir.display()),
+        Ok(_) => app.notice = tf("已在文件管理器中打开: {}", &[&dir.display()]),
         Err(error) => app.last_error = Some(tf("打开目录失败: {}", &[&error])),
     }
 }
@@ -1840,7 +1840,7 @@ pub(crate) fn tile_all_sessions(app: &mut AditApp, mode: TileMode) {
         TileMode::Rows => "水平",
         TileMode::Grid => "网格",
     };
-    app.notice = format!("已{label}平铺 {} 个会话", app.panes.len());
+    app.notice = tf("已{}平铺 {} 个会话", &[&t(label), &app.panes.len()]);
 }
 
 /// Collapse split panes back to the single-pane tabbed view.
@@ -1906,7 +1906,7 @@ pub(crate) fn split_pane(app: &mut AditApp) {
     app.terminal_selection = None;
     app.terminal_context_menu = false;
     sync_terminal_size(app);
-    app.notice = format!("已分屏：{} 个终端并排", app.panes.len());
+    app.notice = tf("已分屏：{} 个终端并排", &[&app.panes.len()]);
 }
 
 /// Remove a pane from the tiling (does not close the session). Collapses back to
