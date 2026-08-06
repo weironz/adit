@@ -6,6 +6,8 @@ the links — [README.md](README.md) covers what Adit is and how to run it.
 Orientation: [docs/architecture.md](docs/architecture.md) (how it's built) ·
 [docs/features.md](docs/features.md) (what it does + known gaps) ·
 [docs/decisions.md](docs/decisions.md) (why, including reversals) ·
+[docs/roadmap.md](docs/roadmap.md) (what's next, and what was ruled out) ·
+[docs/roadmap-done.md](docs/roadmap-done.md) (shipped, with the reasoning) ·
 [docs/cloud-sync.md](docs/cloud-sync.md) (sync design + the one-time OAuth
 app registrations).
 
