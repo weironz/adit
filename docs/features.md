@@ -271,6 +271,46 @@ to be refusable. The flag is negotiated during the handshake, so it applies to t
 connection — but switching it off also stops the local poll and drops whatever the poll
 had already captured, so nothing stays queued for the next remote that asks.
 
+### Files (CLIPRDR file transfer)
+
+**Files copy both ways, any file, byte for byte** — the transfer path carries raw
+bytes and knows nothing about text. Copy a selection in Explorer and paste it into the
+remote desktop, or the reverse. Directory trees travel as a flat list of relative paths
+with the directories included as their own entries, which is how MS-RDPECLIP represents
+a tree.
+
+**Nothing is staged or pre-read in either direction.** A copy publishes names and sizes;
+bytes leave disk (or the wire) only when something actually pastes. Copying a 4 GB folder
+and never pasting it costs nothing.
+
+The two halves are asymmetric because Windows is:
+
+* **Local → remote** reads `CF_HDROP`, expands the selection, and answers the server's
+  `FileContentsRequest`s by reading byte ranges off disk. A `SIZE` request is answered
+  from metadata already held — Explorer issues one per file before reading anything, so
+  that is most of the traffic and none of it touches the disk.
+* **Remote → local** needs a COM `IDataObject` with delay-rendered `IStream`s, published
+  by `OleSetClipboard`. That call is apartment-bound, so it runs on a dedicated
+  `OleInitialize`d STA thread with a message pump — the same shape FreeRDP uses, and for
+  the same reason. The offer, not the object, crosses to that thread: building the data
+  object there means no COM pointer is passed between apartments.
+
+`IStream::Read` is synchronous and the bytes are three hops away, so it blocks — on
+*Explorer's* thread, never Adit's, which would surface as "Not Responding" and nothing
+else. Every wait is keyed by stream id (a folder paste opens several at once) and has a
+30-second deadline. FreeRDP waits indefinitely here; an Explorer thread parked forever in
+a COM call takes the window with it, so that part is deliberately not copied.
+
+A read that fails returns an error, never zero bytes: zero means end-of-file to the
+shell, so collapsing the two writes a truncated file and reports success.
+
+Each clipboard offer gets its own bridge. Closing one is permanent — that is how a
+waiter learns the answer is never coming — so a shared bridge would make every paste
+after the first disconnect fail forever.
+
+Not covered: images on the clipboard (`CF_DIB` is a third format, not a file), and
+drag-and-drop, which is a separate shell interaction.
+
 The design is worth knowing, because the obvious one doesn't work here. IronRDP's
 `cliprdr-native` backend owns the real system clipboard and therefore needs a window and
 a `WM_CLIPBOARDUPDATE` message pump — which the windowless helper process does not have.

@@ -314,6 +314,11 @@ pub struct AditApp {
     /// this list, so it must outlive the clipboard selection that produced it —
     /// a paste reads bytes long after Explorer has moved on to something else.
     rdp_offered_files: Vec<clipboard_files::OfferedFile>,
+    /// Brokers the blocking reads that Explorer's paste threads make against
+    /// files the *remote* offered. One per app, not per session: a paste can
+    /// outlive the session it started in, and the bridge is what tells those
+    /// waiters the answer is never coming.
+    rdp_chunk_bridge: clipboard_files::ChunkBridge,
     /// Device pixels per logical point of the window's display. Drives the
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
@@ -1022,6 +1027,10 @@ const MAX_PANES: usize = 6;
 /// so this is a poll; 500 ms is fast enough that copy-then-paste feels instant
 /// and slow enough not to contend with other apps for the clipboard.
 const RDP_CLIPBOARD_POLL_TICKS: u8 = 5;
+/// Largest byte range to ask the remote for in one round trip. Mirrors the
+/// helper-side clamp, which mirrors the wire constant: asking for more just gets
+/// clamped there and wastes a message.
+const RDP_FILE_CHUNK_BYTES: u32 = 64 * 1024;
 
 /// Smallest gap between RDP texture uploads. Each one is a full-surface
 /// allocation through iced's async image worker; see the sampler for why
@@ -1372,6 +1381,7 @@ impl AditApp {
             rdp_tiles: Vec::new(),
             rdp_clipboard_offered: None,
             rdp_offered_files: Vec::new(),
+            rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),

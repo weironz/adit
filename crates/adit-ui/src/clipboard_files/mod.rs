@@ -27,8 +27,41 @@
 mod bridge;
 #[cfg(windows)]
 mod data_object;
+#[cfg(windows)]
+mod ole;
 #[allow(unused_imports)]
 pub(crate) use bridge::{ChunkBridge, ChunkError};
+
+/// Publish a file list the remote copied on the Windows clipboard.
+///
+/// Metadata only: the data object is delay-rendered, so nothing crosses the
+/// wire until something on this machine actually pastes.
+#[cfg(windows)]
+pub(crate) fn offer_remote_files(
+    files: Vec<ClipFile>,
+    bridge: ChunkBridge,
+    requester: adit_session::RdpFileRequester,
+    chunk: u32,
+) {
+    ole::offer_to_clipboard(ole::Offer {
+        files,
+        bridge,
+        request: std::sync::Arc::new(move |stream_id, index, offset, length| {
+            requester.request(stream_id, index, offset, length);
+        }),
+        chunk,
+    });
+}
+
+/// Non-Windows builds ship no RDP at all, so there is nothing to publish.
+#[cfg(not(windows))]
+pub(crate) fn offer_remote_files(
+    _files: Vec<ClipFile>,
+    _bridge: ChunkBridge,
+    _requester: adit_session::RdpFileRequester,
+    _chunk: u32,
+) {
+}
 
 use std::path::{Path, PathBuf};
 

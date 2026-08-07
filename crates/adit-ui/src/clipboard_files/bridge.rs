@@ -26,12 +26,6 @@
 //! file would freeze the whole app for the length of the transfer. Nothing here
 //! may be called from `update`.
 
-// The only production caller is the COM `IStream::Read` that has not landed
-// yet, so every item here is currently reachable from tests alone. Scoped to
-// this module and temporary: it comes off with the data object. Without it the
-// `-D warnings` gate fails on a module that is finished and fully tested.
-#![allow(dead_code)]
-
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};

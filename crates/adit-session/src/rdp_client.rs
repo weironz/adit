@@ -26,6 +26,14 @@ pub enum RdpClientEvent {
     Connected { width: u16, height: u16 },
     Resized { width: u16, height: u16 },
     ClipboardText(String),
+    /// The remote copied files. The app should offer them on the Windows
+    /// clipboard; nothing crosses the wire until something here pastes.
+    ClipboardFiles(Vec<ClipFile>),
+    /// Bytes answering a [`RdpClientHandle::file_requester`] request.
+    FileContents {
+        stream_id: u32,
+        data: Option<Vec<u8>>,
+    },
     /// The remote is pasting files we offered and wants a byte range. The app
     /// must answer — with bytes or with a failure — because a remote paste
     /// blocks on the stream it asked for.
@@ -85,6 +93,29 @@ impl Surface {
     }
 }
 
+/// Asks the remote for a byte range of a file it offered.
+///
+/// `std::sync::mpsc::Sender` is `Send` but not `Sync`, and the COM streams that
+/// call this are shared across Explorer's threads — hence the mutex, which is
+/// only ever held for the length of a `send`.
+#[derive(Clone)]
+pub struct RdpFileRequester {
+    tx: Arc<Mutex<std_mpsc::Sender<ClientMsg>>>,
+}
+
+impl RdpFileRequester {
+    pub fn request(&self, stream_id: u32, index: u32, offset: u64, length: u32) {
+        if let Ok(tx) = self.tx.lock() {
+            let _ = tx.send(ClientMsg::RequestFileContents {
+                stream_id,
+                index,
+                offset,
+                length,
+            });
+        }
+    }
+}
+
 /// A snapshot of the framebuffer for the renderer.
 #[derive(Clone)]
 pub struct RdpFrame {
@@ -121,6 +152,17 @@ impl RdpClientHandle {
     /// read, which becomes the protocol's error response.
     pub fn answer_file_contents(&self, stream_id: u32, data: Option<Vec<u8>>) {
         let _ = self.cmd_tx.send(ClientMsg::FileContents { stream_id, data });
+    }
+
+    /// A handle for asking the remote for file bytes.
+    ///
+    /// Separate from `&self` because the callers are COM streams running on
+    /// Explorer's threads: it has to be `Send + Sync` and outlive any borrow of
+    /// the session.
+    pub fn file_requester(&self) -> RdpFileRequester {
+        RdpFileRequester {
+            tx: Arc::new(Mutex::new(self.cmd_tx.clone())),
+        }
     }
 
     /// Ask the session to disconnect gracefully.
@@ -402,7 +444,7 @@ fn wire_up(
                     // on the stream it asked for, so silence would hang Explorer
                     // over there instead of failing it.
                     Ok(Some(HostMsg::ClipboardFiles(files))) => {
-                        let _ = files;
+                        let _ = event_tx.send(RdpClientEvent::ClipboardFiles(files));
                     }
                     Ok(Some(HostMsg::FileContentsNeeded {
                         stream_id,
@@ -428,8 +470,8 @@ fn wire_up(
                             });
                         }
                     }
-                    Ok(Some(HostMsg::FileContents { stream_id, .. })) => {
-                        let _ = stream_id;
+                    Ok(Some(HostMsg::FileContents { stream_id, data })) => {
+                        let _ = event_tx.send(RdpClientEvent::FileContents { stream_id, data });
                     }
                     Ok(Some(HostMsg::Tile {
                         x,

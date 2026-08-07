@@ -33,7 +33,7 @@ mod rdp_client;
 pub use adit_rdp_proto::{
     ClipFile, InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
-pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFrame};
+pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
 
 /// Default RDP desktop size when the caller doesn't specify one.
 const DEFAULT_RDP_WIDTH: u16 = 1280;
@@ -368,6 +368,12 @@ pub struct SessionManager {
     /// paste of several files has several streams open at once, and dropping
     /// any of them hangs that file's transfer.
     pending_rdp_file_reads: Vec<RdpFileRead>,
+    /// A file list the remote copied, waiting for the UI to publish it. One slot,
+    /// like the clipboard text beside it: the clipboard holds one thing.
+    pending_rdp_clipboard_files: Option<Vec<ClipFile>>,
+    /// Chunks answering local pastes, waiting to be handed to the waiting COM
+    /// streams. A `Vec` because a folder paste has several streams open at once.
+    pending_rdp_file_chunks: Vec<(u32, Option<Vec<u8>>)>,
 }
 
 /// A byte range the remote wants from a file this side offered.
@@ -444,6 +450,8 @@ impl SessionManager {
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
             pending_rdp_file_reads: Vec::new(),
+            pending_rdp_clipboard_files: None,
+            pending_rdp_file_chunks: Vec::new(),
         }
     }
 
@@ -1610,6 +1618,23 @@ impl SessionManager {
     /// Byte ranges the remote is waiting on. Drained, so each is answered once.
     pub fn take_rdp_file_reads(&mut self) -> Vec<RdpFileRead> {
         std::mem::take(&mut self.pending_rdp_file_reads)
+    }
+
+    /// A file list the remote copied, if one arrived since the last call.
+    pub fn take_rdp_clipboard_files(&mut self) -> Option<Vec<ClipFile>> {
+        self.pending_rdp_clipboard_files.take()
+    }
+
+    /// Chunks that arrived for local pastes. Drained.
+    pub fn take_rdp_file_chunks(&mut self) -> Vec<(u32, Option<Vec<u8>>)> {
+        std::mem::take(&mut self.pending_rdp_file_chunks)
+    }
+
+    /// A `Send + Sync` handle for the COM streams to pull bytes with.
+    pub fn rdp_file_requester(&self) -> Option<RdpFileRequester> {
+        let session_id = self.active_session?;
+        let record = self.sessions.get(&session_id)?;
+        record.rdp.as_ref().map(RdpClientHandle::file_requester)
     }
 
     /// Offer a local file selection to the active RDP desktop (metadata only).
@@ -2824,6 +2849,12 @@ impl SessionManager {
                     // this process can touch a real file. Queued for the UI to
                     // answer on its next tick — never dropped, because the
                     // remote paste is blocked on the stream it asked for.
+                    RdpClientEvent::ClipboardFiles(files) => {
+                        self.pending_rdp_clipboard_files = Some(files);
+                    }
+                    RdpClientEvent::FileContents { stream_id, data } => {
+                        self.pending_rdp_file_chunks.push((stream_id, data));
+                    }
                     RdpClientEvent::FileContentsNeeded {
                         stream_id,
                         index,

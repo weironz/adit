@@ -36,6 +36,40 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
             // opens the system clipboard, and doing that ten times a second would
             // fight every other app on the machine for it.
+            // Files the remote copied: publish them on the Windows clipboard.
+            // Delay-rendered, so this costs one data object and no wire traffic.
+            if let Some(files) = app.manager.take_rdp_clipboard_files() {
+                if app.rdp_clipboard {
+                    if let Some(requester) = app.manager.rdp_file_requester() {
+                        // A bridge per offer, not per app. `close` is permanent
+                        // by design — it is what tells a waiter the answer is
+                        // never coming — so reusing one across offers would make
+                        // every paste after the first disconnect fail forever.
+                        // Closing the outgoing one releases anything still
+                        // waiting on the superseded clipboard contents.
+                        app.rdp_chunk_bridge.close();
+                        app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
+                        clipboard_files::offer_remote_files(
+                            files,
+                            app.rdp_chunk_bridge.clone(),
+                            requester,
+                            RDP_FILE_CHUNK_BYTES,
+                        );
+                    }
+                }
+            }
+            // Chunks answering a local paste. Handed straight to the COM stream
+            // blocked on them over on Explorer's thread.
+            for (stream_id, data) in app.manager.take_rdp_file_chunks() {
+                app.rdp_chunk_bridge.deliver(stream_id, data);
+            }
+            // With no live RDP session there is nothing that can answer a paste,
+            // so release any Explorer thread waiting on one instead of leaving it
+            // to time out — file by file, thirty seconds each.
+            if !app.manager.active_rdp_live() {
+                app.rdp_chunk_bridge.close();
+            }
+
             // Byte ranges the remote is pasting. Answered before the polls below
             // because a remote paste is *blocked* on each one, and every request
             // gets a reply even when the read fails — `None` becomes the

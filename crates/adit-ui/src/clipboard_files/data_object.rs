@@ -90,17 +90,12 @@ struct Source {
 }
 
 /// `IDataObject` over a remote file list.
-// Constructed by the OLE thread that has not landed yet; reachable from tests
-// alone until then. Comes off with that wiring.
-#[allow(dead_code)]
 #[implement(IDataObject)]
 pub(crate) struct FileDataObject {
     source: Arc<Source>,
 }
 
 impl FileDataObject {
-    // Called by the OLE thread that has not landed yet.
-    #[allow(dead_code)]
     pub(crate) fn new(
         files: Vec<ClipFile>,
         bridge: ChunkBridge,
