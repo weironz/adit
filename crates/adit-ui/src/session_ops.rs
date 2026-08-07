@@ -1561,13 +1561,66 @@ pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
 /// explicit switch precisely because of such servers.
 const RDP_RESIZE_TRANSITION: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Whether a resolution renegotiation is still in flight: something was
-/// requested, the delivered surface is not it yet, and the request is recent.
-fn rdp_resize_in_flight(app: &AditApp, surface: (u16, u16)) -> bool {
-    app.rdp_target_size.is_some_and(|target| target != surface)
-        && app
-            .rdp_resize_requested_at
-            .is_some_and(|at| at.elapsed() < RDP_RESIZE_TRANSITION)
+/// How long the viewport must hold still before the renegotiation is sent.
+///
+/// This is the RustDesk comparison made concrete. A window drag fires a resize
+/// event per mouse movement, and sending a renegotiation for each one made the
+/// server rebuild its desktop dozens of times per drag — every rebuild a full
+/// 8.8 MB tile re-upload through iced's async image worker, and every frame
+/// rendered before an upload landed drew the black container instead (the
+/// worker-outrun flicker the upload throttle's comment already describes).
+/// Debouncing means the drag itself is pure GPU scaling of tiles already
+/// uploaded — quiet, like scaling an image — and exactly one renegotiation goes
+/// out when the size settles.
+const RDP_RESIZE_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// Whether the picture should be presented in its transitional (stretched)
+/// form: either a debounced request is still waiting for the size to settle,
+/// or one was sent and the renegotiated surface has not landed yet.
+fn rdp_resize_transitioning(app: &AditApp, surface: (u16, u16)) -> bool {
+    app.rdp_resize_pending.is_some_and(|pending| pending != surface)
+        || (app.rdp_target_size.is_some_and(|target| target != surface)
+            && app
+                .rdp_resize_requested_at
+                .is_some_and(|at| at.elapsed() < RDP_RESIZE_TRANSITION))
+}
+
+/// Send the debounced resize once the viewport has held still long enough.
+/// Called from the periodic tick and the per-frame RDP tick; cheap when there
+/// is nothing pending.
+pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
+    let Some((w, h)) = app.rdp_resize_pending else {
+        return;
+    };
+    let settled = app
+        .rdp_resize_pending_since
+        .is_some_and(|at| at.elapsed() >= RDP_RESIZE_DEBOUNCE);
+    if !settled {
+        return;
+    }
+    app.rdp_resize_pending = None;
+    // Conditions re-checked at send time, not just at queue time: the session
+    // can die or fit mode can be switched on during the debounce window.
+    if !app.manager.active_rdp_live() || app.rdp_scale_fit {
+        return;
+    }
+    if app.rdp_target_size == Some((w, h)) {
+        return;
+    }
+    // Recorded as requested, not as achieved — the server may answer with a
+    // different size, and this dedupe is what would then stop us ever asking
+    // again. `RdpClientEvent::Resized` is the only thing that says what actually
+    // happened; see the helper log if the two disagree.
+    app.rdp_target_size = Some((w, h));
+    app.rdp_resize_requested_at = Some(std::time::Instant::now());
+    app.manager.resize_active_rdp(w, h);
+    // Surfaced, not logged: the GUI discards its own stderr, so the status bar
+    // is the only place this decision is visible.
+    if resize_probe_enabled() {
+        app.notice = format!("resize: 已发送 {w}×{h}");
+    } else {
+        app.notice = tf("已请求远程分辨率 {}×{}", &[&w, &h]);
+    }
 }
 
 /// The x and y factors the RDP picture is drawn at, and that the mouse mapping
@@ -1588,7 +1641,7 @@ fn rdp_resize_in_flight(app: &AditApp, surface: (u16, u16)) -> bool {
 /// lands. The pointer stays correct throughout because each axis of the mouse
 /// mapping multiplies by the same per-axis scale the tiles divided by.
 pub(crate) fn rdp_fit_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) {
-    let in_flight = rdp_resize_in_flight(app, surface);
+    let in_flight = rdp_resize_transitioning(app, surface);
     if !app.rdp_scale_fit && !in_flight {
         return (1.0, 1.0);
     }
@@ -1697,6 +1750,7 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
         if probe {
             app.notice = String::from("resize: 跳过（缩放适应窗口已开启）");
         }
+        app.rdp_resize_pending = None;
         return;
     }
     let (w, h) = rdp_viewport_size(app);
@@ -1715,21 +1769,18 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
         );
     }
     if w == 0 || h == 0 || app.rdp_target_size == Some((w, h)) {
+        // Back at the size already delivered (a drag that returned home):
+        // nothing to ask for, and anything still queued is stale.
+        app.rdp_resize_pending = None;
         return;
     }
-    // Recorded as requested, not as achieved — the server may answer with a
-    // different size, and this dedupe is what would then stop us ever asking
-    // again. `RdpClientEvent::Resized` is the only thing that says what actually
-    // happened; see the helper log if the two disagree.
-    app.rdp_target_size = Some((w, h));
-    app.rdp_resize_requested_at = Some(std::time::Instant::now());
-    app.manager.resize_active_rdp(w, h);
-    // Surfaced, not logged: the GUI discards its own stderr, so the status bar
-    // is the only place this decision is visible. It fires only when a request
-    // actually goes out — the common no-change case returns above — so its
-    // *absence* while the layout visibly changed is the useful signal.
-    if !probe {
-        app.notice = tf("已请求远程分辨率 {}×{}", &[&w, &h]);
+    // Queued, not sent — `flush_pending_rdp_resize` sends it once the size has
+    // held still for the debounce window. During the drag the transition
+    // scaling stretches the tiles already on the GPU, which is the whole trick:
+    // no re-upload, no worker race, no black flash.
+    if app.rdp_resize_pending != Some((w, h)) {
+        app.rdp_resize_pending = Some((w, h));
+        app.rdp_resize_pending_since = Some(std::time::Instant::now());
     }
 }
 

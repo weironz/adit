@@ -24,6 +24,12 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             persist_settings_if_changed(app);
 
+            // Send any debounced resize whose viewport has settled. On the
+            // periodic tick as well as the RDP frame tick, because the frame
+            // tick only fires while frames are being drawn — after a drag ends
+            // there may be nothing redrawing.
+            flush_pending_rdp_resize(app);
+
             // RDP clipboard bridge: the helper is a windowless process, so only
             // this one has a Windows clipboard. Remote copies land here...
             if let Some(text) = app.manager.take_rdp_clipboard().filter(|_| app.rdp_clipboard) {
@@ -108,6 +114,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::RdpTick => {
+            flush_pending_rdp_resize(app);
             // The cached frame belongs to one session; if the active session
             // changed (tab switch, or a close that auto-activated another tab),
             // drop the cache so we never paint one host's frame under another's

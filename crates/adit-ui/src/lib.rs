@@ -326,6 +326,15 @@ pub struct AditApp {
     /// the delivered surface is not yet the requested size, the stale frame is
     /// scaled to fit instead of drawn 1:1 — see `rdp_fit_factor`.
     rdp_resize_requested_at: Option<Instant>,
+    /// The size a window drag wants but has not asked for yet. Debounced: a
+    /// drag fires a resize per mouse movement, and renegotiating each one made
+    /// the server rebuild its desktop dozens of times per drag — every rebuild
+    /// a full tile re-upload racing iced's async image worker, which is what
+    /// flashed the pane black. `flush_pending_rdp_resize` sends it once the
+    /// size holds still.
+    rdp_resize_pending: Option<(u16, u16)>,
+    /// When `rdp_resize_pending` last changed — the debounce anchor.
+    rdp_resize_pending_since: Option<Instant>,
     /// Device pixels per logical point of the window's display. Drives the
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
@@ -1392,6 +1401,8 @@ impl AditApp {
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
             settings_save_failed: false,
             rdp_resize_requested_at: None,
+            rdp_resize_pending: None,
+            rdp_resize_pending_since: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),
@@ -1974,6 +1985,22 @@ mod tests {
         let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
         assert!(fx < 1.0 && fy < 1.0);
         // The requested size arrived: back to exact 1:1.
+        assert_eq!(rdp_fit_factors(&app, (800, 600)), (1.0, 1.0));
+    }
+
+    /// A debounced (queued, unsent) resize also presents in transitional form:
+    /// the pane has already changed, and 1:1 would show the mismatch for the
+    /// length of the debounce window.
+    #[test]
+    fn a_pending_debounced_resize_keeps_the_picture_filling_the_pane() {
+        let mut app = drag_test_app();
+        app.display_scale = 1.0;
+        app.rdp_scale_fit = false;
+        app.rdp_resize_pending = Some((800, 600));
+
+        let (fx, fy) = rdp_fit_factors(&app, (4000, 2000));
+        assert!(fx < 1.0 && fy < 1.0);
+        // Once the surface matches what is queued there is nothing to hide.
         assert_eq!(rdp_fit_factors(&app, (800, 600)), (1.0, 1.0));
     }
 
