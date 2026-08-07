@@ -24,6 +24,10 @@
 //! Nothing is ever copied or staged: a selection becomes metadata, and bytes are
 //! read from the original path only when the remote actually pastes.
 
+mod bridge;
+#[allow(unused_imports)]
+pub(crate) use bridge::{ChunkBridge, ChunkError};
+
 use std::path::{Path, PathBuf};
 
 use adit_session::ClipFile;
