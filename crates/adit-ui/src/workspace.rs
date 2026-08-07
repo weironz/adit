@@ -1197,9 +1197,27 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
     // sight in windowed mode. Same treatment as broadcast above: a mode that
     // changes what the app does with your input stays visible while it is on.
     if app.rdp_scale_fit && app.manager.active_is_rdp() {
-        left = left
-            .push(text("⤢").size(12).color(accent()))
-            .push(text(t("缩放适应窗口")).size(11).color(accent()));
+        // A button, not a label. The badge is where the black bars get
+        // explained, so it is also where someone reaches to make them stop —
+        // telling them the mode is on and then making them hunt for the switch
+        // elsewhere is worse than not telling them.
+        left = left.push(tooltip(
+            button(
+                row![
+                    text("⤢").size(12),
+                    text(t("缩放适应窗口")).size(11),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding([1, 5])
+            .style(|_theme, status| rdp_toolbar_button_style(true, true, status))
+            .on_press(Message::ToggleRdpScaleFit),
+            container(text(t("点击关闭：让远程分辨率重新跟随窗口")).size(11))
+                .padding([3, 7])
+                .style(|_theme| tooltip_style()),
+            tooltip::Position::Top,
+        ));
     }
     left = left.push(text(status).size(12).color(muted_text()));
 

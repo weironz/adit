@@ -67,6 +67,7 @@ fn en(zh: &'static str) -> &'static str {
         "展开工具栏" => "Expand the toolbar",
         "画质" => "Quality",
         "缩放适应窗口" => "Scale to fit the window",
+        "点击关闭：让远程分辨率重新跟随窗口" => "Click to turn off, so the remote resolution follows the window again",
         "发送 Ctrl+Alt+Del" => "Send Ctrl+Alt+Del",
         "剪贴板同步" => "Share the clipboard",
         "退出全屏" => "Leave fullscreen",
