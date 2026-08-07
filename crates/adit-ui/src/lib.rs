@@ -1876,6 +1876,20 @@ mod tests {
         assert!(app.rdp_toolbar_collapsed);
     }
 
+    /// The toolbar draws in *both* window modes. Asserted through the shape
+    /// rather than the state, because the first version of this shipped with an
+    /// early return that drew nothing in windowed mode — and the state-only
+    /// tests stayed green over it.
+    #[test]
+    fn the_toolbar_draws_in_windowed_mode_too() {
+        let mut app = drag_test_app();
+        app.fullscreen = false;
+        assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Tab);
+
+        app.rdp_toolbar_collapsed = false;
+        assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Expanded);
+    }
+
     /// Fullscreen has no menu bar, so the toolbar is the only place its controls
     /// exist there — including the way back out. Leaving fullscreen puts it away
     /// again, where the 视图 menu covers the same ground.

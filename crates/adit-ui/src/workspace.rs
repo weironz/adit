@@ -216,14 +216,32 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
 /// Windowed mode needs it because fullscreen had no discoverable entry at all —
 /// Ctrl+Alt+Enter, and nothing on screen naming it. The 视图 menu now names it
 /// too; this is the half you find without going looking.
+/// Whether the toolbar draws at all, and in which of its two shapes.
+///
+/// Split out from `with_rdp_toolbar` because an `Element` cannot be inspected:
+/// the tests below could assert on `rdp_toolbar_collapsed` all day while the
+/// view returned early and drew nothing. That is exactly what happened — the
+/// windowed-mode tab shipped invisible with three green tests over it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolbarShape {
+    /// The full bar of buttons.
+    Expanded,
+    /// The ⌄ tab, all that windowed mode costs until someone opens it.
+    Tab,
+}
+
+pub(crate) fn rdp_toolbar_shape(app: &AditApp) -> ToolbarShape {
+    if app.rdp_toolbar_collapsed {
+        ToolbarShape::Tab
+    } else {
+        ToolbarShape::Expanded
+    }
+}
+
 pub(crate) fn with_rdp_toolbar<'a>(
     app: &'a AditApp,
     desktop: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    if !app.fullscreen {
-        return desktop;
-    }
-
     // Visible whenever the session is fullscreen, collapsed only when the user
     // says so. It is NOT revealed by hovering, and that is a fix rather than a
     // preference: a hover-revealed bar needs one widget to sense the pointer and
@@ -245,7 +263,7 @@ pub(crate) fn with_rdp_toolbar<'a>(
 /// layout space. Collapses to a small tab that costs a few pixels of desktop
 /// and is the only way back.
 fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
-    if app.rdp_toolbar_collapsed {
+    if rdp_toolbar_shape(app) == ToolbarShape::Tab {
         let handle = tooltip(
             button(text("⌄").size(13))
                 .padding([0, 10])
