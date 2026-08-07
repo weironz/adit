@@ -217,8 +217,8 @@ bar's one line of text as the only thing telling anyone how to get back out. So 
 floating bar (RustDesk-style) appears at the top edge in fullscreen, and **only** in
 fullscreen: windowed sessions already have the menu bar and the tab strip, and a
 permanent icon row there is the 36px of duplicated shortcuts the previous toolbar was
-deleted for. This one reserves no layout space at all. The fit and clipboard toggles
-light up when they are on, so the bar shows state and not just actions.
+deleted for. This one reserves no layout space at all. The clipboard toggle
+lights up when it is on, so the bar shows state and not just actions.
 
 It is **always visible** while fullscreen, and collapses to a small ⌄ tab on request.
 That is a fix, not a preference. The first version revealed it on hover, which needs one
@@ -231,7 +231,7 @@ cannot be made to agree; one always-present bar has nothing to disagree with. Th
 test guarding this — if toolbar visibility ever depends on pointer position again, the
 loop comes back.
 
-Six buttons plus the collapse chevron: **quality**, **scale-to-fit**, **Ctrl+Alt+Del**,
+Five buttons plus the collapse chevron: **quality**, **Ctrl+Alt+Del**,
 **clipboard sharing**, **leave fullscreen**, **disconnect**, **⌃**. Ctrl+Alt+Del cannot simply be typed —
 Windows reserves the real sequence for the local machine and never delivers it to an
 application, which is why mstsc offers Ctrl+Alt+End instead and every remote-desktop
@@ -251,16 +251,18 @@ revises — so there is no way to change this in place, and picking a different 
 reconnects the session rather than pretending to apply. The alternative was a control
 that appeared to do nothing for the two seconds a reconnect takes.
 
-### Fit vs. viewport-matching
+### Resolution follows the window, with an automatic fallback
 
-By default the *remote desktop* is resized to match the viewport, which is the sharper of
-the two: every remote pixel lands on exactly one local pixel and nothing resamples.
-**缩放适应窗口** (mstsc's "smart sizing") does the opposite — leaves the remote resolution
-alone and scales the picture, aspect preserved. It exists for servers that will not
-renegotiate a desktop size, where the alternative to resampling is a desktop that doesn't
-fit at all. The fit factor is folded into the same scale the tile layout and the mouse
-mapping both divide by, which is what keeps the pointer and the picture agreeing about
-where a pixel is.
+The *remote desktop* is renegotiated (debounced to one request per gesture) to match the
+viewport — the sharpest presentation there is: every remote pixel lands on exactly one
+local pixel and nothing resamples. A server that refuses gets the fallback automatically:
+once the request goes stale the picture settles into an aspect-preserving letterbox, so
+the whole desktop stays visible undistorted. There used to be a manual toggle for this
+(mstsc's "smart sizing"); it was removed because the only case it genuinely served is now
+detected, and on every other server it was a foot-gun — switched on invisibly, it
+silently stopped resolution tracking and left unexplained black bars. The scale factors
+fold into the same per-axis scales the tile layout and the mouse mapping share, which is
+what keeps the pointer and the picture agreeing about where a pixel is.
 
 ### Clipboard (CLIPRDR)
 

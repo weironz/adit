@@ -344,12 +344,6 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let buttons = row![
         rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu)),
-        rdp_toolbar_button(
-            "⤢",
-            t("缩放适应窗口"),
-            app.rdp_scale_fit,
-            Some(Message::ToggleRdpScaleFit),
-        ),
         // Ctrl+Alt+Del and the clipboard are meaningless without a live desktop
         // to receive them, so they grey out rather than firing into a dead pipe.
         rdp_toolbar_button(
@@ -1241,35 +1235,6 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
         left = left
             .push(text("⇶").size(12).color(accent()))
             .push(text(tf("广播 ×{}", &[&reach])).size(11).color(accent()));
-    }
-    // Fit mode stops the remote desktop tracking the window, and the leftover
-    // is black bars. That is by design, but it used to announce itself only in
-    // the notice at toggle time — so minutes later the bars had no visible
-    // cause, and the toolbar button that explains them is collapsed out of
-    // sight in windowed mode. Same treatment as broadcast above: a mode that
-    // changes what the app does with your input stays visible while it is on.
-    if app.rdp_scale_fit && app.manager.active_is_rdp() {
-        // A button, not a label. The badge is where the black bars get
-        // explained, so it is also where someone reaches to make them stop —
-        // telling them the mode is on and then making them hunt for the switch
-        // elsewhere is worse than not telling them.
-        left = left.push(tooltip(
-            button(
-                row![
-                    text("⤢").size(12),
-                    text(t("缩放适应窗口")).size(11),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .padding([1, 5])
-            .style(|_theme, status| rdp_toolbar_button_style(true, true, status))
-            .on_press(Message::ToggleRdpScaleFit),
-            container(text(t("点击关闭：让远程分辨率重新跟随窗口")).size(11))
-                .padding([3, 7])
-                .style(|_theme| tooltip_style()),
-            tooltip::Position::Top,
-        ));
     }
     left = left.push(text(status).size(12).color(muted_text()));
 

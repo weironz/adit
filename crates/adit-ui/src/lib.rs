@@ -194,9 +194,6 @@ pub struct AditApp {
     /// Visual-fidelity preset for RDP (persisted). Applied at connect time, so
     /// changing it on a live desktop reconnects that session.
     rdp_quality: RdpQuality,
-    /// Scale the remote desktop to fit the window instead of resizing the remote
-    /// desktop to the viewport (persisted).
-    rdp_scale_fit: bool,
     /// The floating RDP toolbar, which exists only in fullscreen — that is the
     /// mode with no menu bar, so it is the only one where these actions have
     /// nowhere else to live. A permanently docked icon strip was tried once and
@@ -616,7 +613,6 @@ pub enum Message {
     /// Pick a fidelity preset. Reconnects the active desktop if one is live,
     /// because RDP settles performance flags during the handshake.
     RdpQualityChosen(RdpQuality),
-    ToggleRdpScaleFit,
     /// Send Ctrl+Alt+Del to the remote desktop as three scancode pairs.
     RdpSendCtrlAltDel,
     ToggleMenu(MenuKind),
@@ -1229,7 +1225,6 @@ impl AditApp {
         let auto_accept_host_keys = settings.auto_accept_host_keys;
         let rdp_clipboard = settings.rdp_clipboard;
         let rdp_quality = settings.rdp_quality;
-        let rdp_scale_fit = settings.rdp_scale_fit;
         let keyring_migrated = settings.keyring_migrated;
         manager.set_auto_accept_host_keys(auto_accept_host_keys);
         manager.set_rdp_clipboard(rdp_clipboard);
@@ -1281,7 +1276,6 @@ impl AditApp {
             auto_accept_host_keys,
             rdp_clipboard,
             rdp_quality,
-            rdp_scale_fit,
             keyring_migrated,
         };
         // `sidebar_offset` in widget terms, but there is no `AditApp` to ask yet.
@@ -1348,7 +1342,6 @@ impl AditApp {
             auto_accept_host_keys,
             rdp_clipboard,
             rdp_quality,
-            rdp_scale_fit,
             rdp_toolbar_collapsed: true,
             rdp_quality_menu_open: false,
             keyring_migrated,
@@ -1966,19 +1959,15 @@ mod tests {
     /// what both the tile layout and the mouse mapping divide by, so a wrong one
     /// shows up as clicks landing somewhere other than the pointer.
     #[test]
-    fn the_fit_factor_is_inert_until_fit_is_on() {
+    fn an_honoured_or_unrequested_surface_renders_one_to_one() {
         let mut app = drag_test_app();
         app.display_scale = 1.0;
-        // Set rather than assumed: the harness app is built through the real
-        // constructor, which reads a settings file, so leaning on the default
-        // here would make this test depend on what another one left on disk.
-        app.rdp_scale_fit = false;
+        // Nothing requested: whatever the server sent renders exactly 1:1.
+        app.rdp_target_size = None;
         assert_eq!(rdp_fit_factors(&app, (4096, 2160)), (1.0, 1.0));
-
-        app.rdp_scale_fit = true;
-        // A desktop far larger than any test window must shrink.
-        let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
-        assert!(fx < 1.0 && fy < 1.0);
+        // An honoured request: still exactly 1:1.
+        app.rdp_target_size = Some((4096, 2160));
+        assert_eq!(rdp_fit_factors(&app, (4096, 2160)), (1.0, 1.0));
         // A degenerate surface must not produce a factor that would divide into
         // the mouse mapping and send garbage coordinates to the remote.
         assert_eq!(rdp_fit_factors(&app, (0, 0)), (1.0, 1.0));
@@ -1992,7 +1981,6 @@ mod tests {
     fn a_resize_in_flight_scales_the_stale_surface() {
         let mut app = drag_test_app();
         app.display_scale = 1.0;
-        app.rdp_scale_fit = false;
         app.rdp_target_size = Some((800, 600));
         app.rdp_resize_requested_at = Some(std::time::Instant::now());
 
@@ -2010,7 +1998,6 @@ mod tests {
     fn a_pending_debounced_resize_keeps_the_picture_filling_the_pane() {
         let mut app = drag_test_app();
         app.display_scale = 1.0;
-        app.rdp_scale_fit = false;
         app.rdp_resize_pending = Some((800, 600));
 
         let (fx, fy) = rdp_fit_factors(&app, (4000, 2000));
@@ -2029,7 +2016,6 @@ mod tests {
     fn the_transition_fills_both_axes_independently() {
         let mut app = drag_test_app();
         app.display_scale = 1.0;
-        app.rdp_scale_fit = false;
         app.rdp_target_size = Some((800, 600));
         app.rdp_resize_requested_at = Some(std::time::Instant::now());
 
@@ -2040,22 +2026,21 @@ mod tests {
         assert_eq!(fx1, fx2);
         assert!(fy2 > fy1);
 
-        // Steady fit mode keeps its aspect-preserving contract.
-        app.rdp_scale_fit = true;
-        app.rdp_target_size = None;
+        // Once the request goes stale the fallback is aspect-preserving.
+        app.rdp_resize_requested_at =
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10));
         let (fx, fy) = rdp_fit_factors(&app, (4000, 1000));
         assert_eq!(fx, fy);
     }
 
-    /// A server that never honours the request must not leave the transition
-    /// on forever — that would silently turn fit mode on, and fit is a switch
-    /// precisely because such servers exist. Past the window, the honest
-    /// 1:1-with-bars presentation returns.
+    /// A server that never honours the request must not stay stretched forever.
+    /// Past the transition window the presentation settles into an
+    /// aspect-preserving letterbox — the automatic replacement for the manual
+    /// fit toggle — so the whole desktop stays visible, undistorted.
     #[test]
-    fn a_stale_resize_request_stops_scaling() {
+    fn a_refused_resize_settles_into_a_letterbox() {
         let mut app = drag_test_app();
         app.display_scale = 1.0;
-        app.rdp_scale_fit = false;
         app.rdp_target_size = Some((800, 600));
         app.rdp_resize_requested_at =
             std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10));
@@ -2063,7 +2048,9 @@ mod tests {
         // subtraction to have happened to mean anything.
         assert!(app.rdp_resize_requested_at.is_some());
 
-        assert_eq!(rdp_fit_factors(&app, (4096, 2160)), (1.0, 1.0));
+        let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
+        assert_eq!(fx, fy, "the steady fallback is aspect-preserving");
+        assert!(fx < 1.0);
     }
 
     /// Ctrl+Alt+Del is six events, and the release order is the part that

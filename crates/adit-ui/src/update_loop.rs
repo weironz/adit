@@ -2358,18 +2358,6 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.notice = tf("画质已切换为 {}（下次连接生效）", &[&t(rdp_quality_label(quality))]);
             }
         }
-        Message::ToggleRdpScaleFit => {
-            app.rdp_scale_fit = !app.rdp_scale_fit;
-            app.notice = String::from(if app.rdp_scale_fit {
-                t("已开启：缩放画面以适应窗口")
-            } else {
-                t("已关闭：远程分辨率跟随窗口")
-            });
-            // Turning fit *off* has to renegotiate right now: while it was on,
-            // `maybe_resize_active_rdp` deliberately skipped every window change,
-            // so the remote desktop can be any size at this point.
-            maybe_resize_active_rdp(app);
-        }
         Message::RdpSendCtrlAltDel => {
             send_ctrl_alt_del(app);
             app.notice = String::from(t("已发送 Ctrl+Alt+Del"));

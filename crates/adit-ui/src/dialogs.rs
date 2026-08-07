@@ -1222,10 +1222,8 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
                 .size(16)
                 .text_size(12),
         )
-        // The same two controls the fullscreen toolbar carries. They are
-        // duplicated here on purpose: the toolbar only exists in fullscreen, and
-        // a setting reachable from exactly one screen mode is a setting most
-        // people never find.
+        // Also on the toolbar's ⚡ dropdown; duplicated here because the toolbar
+        // collapses to a tab, and a setting should not hide inside it.
         .push(
             row![
                 text(t("RDP 画质")).size(12).color(primary_text()),
@@ -1235,13 +1233,6 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
             ]
             .spacing(6)
             .align_y(Alignment::Center),
-        )
-        .push(
-            checkbox(app.rdp_scale_fit)
-                .label(t("缩放远程画面以适应窗口（而不是调整远程分辨率）"))
-                .on_toggle(|_| Message::ToggleRdpScaleFit)
-                .size(16)
-                .text_size(12),
         );
 
     // Live preview of the rendered log filename for the active (or a sample)

@@ -1599,9 +1599,9 @@ pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
         return;
     }
     app.rdp_resize_pending = None;
-    // Conditions re-checked at send time, not just at queue time: the session
-    // can die or fit mode can be switched on during the debounce window.
-    if !app.manager.active_rdp_live() || app.rdp_scale_fit {
+    // Re-checked at send time, not just at queue time: the session can die
+    // during the debounce window.
+    if !app.manager.active_rdp_live() {
         return;
     }
     if app.rdp_target_size == Some((w, h)) {
@@ -1626,33 +1626,43 @@ pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
 /// The x and y factors the RDP picture is drawn at, and that the mouse mapping
 /// divides back out.
 ///
-/// Steady state: `(1.0, 1.0)` with fit mode off (exact 1:1), or an
-/// aspect-preserving pair with fit mode on — its letterbox is the mode's
-/// contract.
+/// Steady state is exact `(1.0, 1.0)` — the desktop was renegotiated to the
+/// viewport and nothing resamples. Two exceptions, both automatic:
 ///
-/// While a resize is in flight the stale frame is stretched to **fill both
-/// axes independently**. It was aspect-preserving at first, and a real session
-/// showed why that cannot work: a sidebar toggle changes only the width, so
-/// with the height axis already fitting (factor ≈ 1.002 in the probe capture,
-/// 1908→2220 requested) the uniform factor did essentially nothing and the
-/// 312-device-pixel bar stayed for the whole round trip. Filling both axes
-/// distorts the stale frame by the width delta for under a second — far less
-/// visible than a black bar — and the picture snaps exact when the new frame
-/// lands. The pointer stays correct throughout because each axis of the mouse
-/// mapping multiplies by the same per-axis scale the tiles divided by.
+/// * **A resize in transition** stretches the stale frame to **fill both axes
+///   independently**. Aspect-preserving stretching cannot work here: a sidebar
+///   toggle changes only the width, the height axis already fits, and the
+///   uniform minimum then does nothing — a probe capture showed factor 1.002
+///   leaving a 312-device-pixel bar for the whole round trip. A moment of
+///   distortion beats a black bar, and the picture snaps exact when the new
+///   frame lands.
+/// * **A refused resize** — the request went stale with the surface still
+///   elsewhere, i.e. a server that will not renegotiate — settles into an
+///   aspect-preserving letterbox so the whole desktop stays visible,
+///   undistorted. This replaces the manual "缩放适应窗口" toggle: the only case
+///   the toggle genuinely served is now detected, and on every other server it
+///   was a foot-gun — switched on invisibly, it silently stopped resolution
+///   tracking and left unexplained black bars (a real session paid for that).
+///
+/// The pointer stays correct throughout because each axis of the mouse mapping
+/// multiplies by the same per-axis scale the tiles divided by.
 pub(crate) fn rdp_fit_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) {
-    let in_flight = rdp_resize_transitioning(app, surface);
-    if !app.rdp_scale_fit && !in_flight {
+    if rdp_resize_transitioning(app, surface) {
+        return rdp_fill_factors(app, surface);
+    }
+    let refused = app.rdp_target_size.is_some_and(|target| target != surface);
+    if !refused {
         return (1.0, 1.0);
     }
     let (fill_x, fill_y) = rdp_fill_factors(app, surface);
-    if app.rdp_scale_fit {
-        // Fit mode proper: aspect-preserving, the tighter axis wins.
-        let factor = fill_x.min(fill_y);
-        (factor, factor)
+    let factor = fill_x.min(fill_y);
+    // Within a hair of 1:1 — a server that aligned the size a few pixels off
+    // what was asked — crisp 1:1 beats permanently resampling the whole frame
+    // over a sliver of letterbox.
+    if (0.99..=1.01).contains(&factor) {
+        (1.0, 1.0)
     } else {
-        // Transition: fill the pane completely.
-        (fill_x, fill_y)
+        (factor, factor)
     }
 }
 
@@ -1753,13 +1763,6 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // `rdp_target_size` is deliberately left as it was: turning fit back off must
     // renegotiate, and it can only tell that it needs to if the remembered target
     // still describes the last size actually requested.
-    if app.rdp_scale_fit {
-        if probe {
-            app.notice = String::from("resize: 跳过（缩放适应窗口已开启）");
-        }
-        app.rdp_resize_pending = None;
-        return;
-    }
     let (w, h) = rdp_viewport_size(app);
     // The three inputs, not just the result: if (w, h) comes out unchanged the
     // question is immediately which of them failed to move.
@@ -2502,7 +2505,6 @@ pub(crate) fn current_settings(app: &AditApp) -> AppSettings {
         auto_accept_host_keys: app.auto_accept_host_keys,
         rdp_clipboard: app.rdp_clipboard,
         rdp_quality: app.rdp_quality,
-        rdp_scale_fit: app.rdp_scale_fit,
         keyring_migrated: app.keyring_migrated,
     }
 }
