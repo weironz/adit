@@ -1190,6 +1190,17 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
             .push(text("⇶").size(12).color(accent()))
             .push(text(tf("广播 ×{}", &[&reach])).size(11).color(accent()));
     }
+    // Fit mode stops the remote desktop tracking the window, and the leftover
+    // is black bars. That is by design, but it used to announce itself only in
+    // the notice at toggle time — so minutes later the bars had no visible
+    // cause, and the toolbar button that explains them is collapsed out of
+    // sight in windowed mode. Same treatment as broadcast above: a mode that
+    // changes what the app does with your input stays visible while it is on.
+    if app.rdp_scale_fit && app.manager.active_is_rdp() {
+        left = left
+            .push(text("⤢").size(12).color(accent()))
+            .push(text(t("缩放适应窗口")).size(11).color(accent()));
+    }
     left = left.push(text(status).size(12).color(muted_text()));
 
     container(

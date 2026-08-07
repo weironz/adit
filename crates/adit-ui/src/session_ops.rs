@@ -2413,12 +2413,30 @@ pub(crate) fn persist_settings_if_changed(app: &mut AditApp) {
     if current == app.persisted_settings {
         return;
     }
-    if let Err(error) = app.settings_store.save(&current) {
-        app.last_error = Some(tf("保存设置失败: {}", &[&error]));
+    match app.settings_store.save(&current) {
+        Ok(()) => {
+            app.persisted_settings = current;
+            app.settings_save_failed = false;
+        }
+        Err(error) => {
+            // The baseline deliberately does NOT advance. It used to, to stop a
+            // failing write retrying every frame — but the cost was silent and
+            // permanent: one blocked write (antivirus, a cloud-synced folder —
+            // see CLAUDE.md) made `current == persisted` true forever after, so
+            // settings stopped being saved for the rest of the run and nothing
+            // said so. This machine last wrote settings three weeks before the
+            // bug that found it.
+            //
+            // Retrying every tick is fine — the comparison above means a retry
+            // only happens while something really is unsaved — but the error is
+            // reported once per failure streak so it cannot bury every other
+            // message.
+            if !app.settings_save_failed {
+                app.settings_save_failed = true;
+                app.last_error = Some(tf("保存设置失败: {}", &[&error]));
+            }
+        }
     }
-    // Update the baseline regardless of outcome so a failing write does not
-    // retry on every frame.
-    app.persisted_settings = current;
 }
 
 /// Keep the SFTP path-bar edit buffers in sync with each pane's current

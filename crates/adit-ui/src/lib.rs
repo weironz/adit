@@ -319,6 +319,9 @@ pub struct AditApp {
     /// outlive the session it started in, and the bridge is what tells those
     /// waiters the answer is never coming.
     rdp_chunk_bridge: clipboard_files::ChunkBridge,
+    /// Whether the last settings write failed. Only there to report the failure
+    /// once per streak; the retry itself is driven by the usual comparison.
+    settings_save_failed: bool,
     /// Device pixels per logical point of the window's display. Drives the
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
@@ -1383,6 +1386,7 @@ impl AditApp {
             rdp_clipboard_offered: None,
             rdp_offered_files: Vec::new(),
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
+            settings_save_failed: false,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),
