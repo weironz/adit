@@ -25,6 +25,8 @@
 //! read from the original path only when the remote actually pastes.
 
 mod bridge;
+#[cfg(windows)]
+mod data_object;
 #[allow(unused_imports)]
 pub(crate) use bridge::{ChunkBridge, ChunkError};
 
