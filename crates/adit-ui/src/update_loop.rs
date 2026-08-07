@@ -36,9 +36,29 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
             // opens the system clipboard, and doing that ten times a second would
             // fight every other app on the machine for it.
+            // Byte ranges the remote is pasting. Answered before the polls below
+            // because a remote paste is *blocked* on each one, and every request
+            // gets a reply even when the read fails — `None` becomes the
+            // protocol's error response, where silence would hang Explorer over
+            // there indefinitely.
+            for read in app.manager.take_rdp_file_reads() {
+                let data = app
+                    .rdp_offered_files
+                    .get(read.index as usize)
+                    .and_then(|file| {
+                        clipboard_files::read_range(&file.path, read.offset, read.length)
+                    });
+                app.manager.answer_rdp_file_read(read.stream_id, data);
+            }
+
             if app.rdp_clipboard && app.manager.active_is_rdp() {
                 app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
                 if app.rdp_clipboard_ticks.is_multiple_of(RDP_CLIPBOARD_POLL_TICKS) {
+                    // A file selection and text are mutually exclusive on the
+                    // clipboard, so files are checked first: Explorer also puts
+                    // the *names* on as text, and letting that through would
+                    // offer the remote a list of paths instead of the files.
+                    offer_local_files_if_changed(app);
                     return clipboard::read().map(Message::RdpClipboardPolled);
                 }
             }
@@ -2382,4 +2402,32 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
 ", frame.width, frame.height);
     let _ = std::fs::write(path.with_extension("txt"), meta);
     let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
+}
+
+/// Sample the local clipboard for a *file* selection and offer it to the active
+/// RDP desktop, but only when the selection actually changed.
+///
+/// The offer costs a `FormatList` on the RDP wire and the expansion walks the
+/// selected directories, so repeating it on every poll tick would be expensive
+/// twice over. Comparing the expanded list rather than the raw paths is
+/// deliberate: re-copying the same folder after editing a file inside it is a
+/// genuinely different offer, and the sizes are what changed.
+pub(crate) fn offer_local_files_if_changed(app: &mut AditApp) {
+    let Some(paths) = clipboard_files::clipboard_paths() else {
+        // Not a file selection. The offered list is deliberately *kept*: the
+        // remote may still be pasting from it, and a paste reads its bytes by
+        // index long after Explorer's clipboard has moved on to something else.
+        return;
+    };
+    let expanded = clipboard_files::expand(&paths);
+    if expanded == app.rdp_offered_files {
+        return;
+    }
+    app.rdp_offered_files = expanded;
+    let metadata = app
+        .rdp_offered_files
+        .iter()
+        .map(|file| file.meta.clone())
+        .collect();
+    app.manager.offer_rdp_files_to_active(metadata);
 }

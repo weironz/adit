@@ -12,7 +12,7 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg, InputEvent};
+use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ClipFile, ConnectRequest, HostMsg, InputEvent};
 
 /// Environment override for the helper path (mainly for development/tests).
 const HELPER_ENV: &str = "ADIT_RDP_HOST";
@@ -26,6 +26,15 @@ pub enum RdpClientEvent {
     Connected { width: u16, height: u16 },
     Resized { width: u16, height: u16 },
     ClipboardText(String),
+    /// The remote is pasting files we offered and wants a byte range. The app
+    /// must answer — with bytes or with a failure — because a remote paste
+    /// blocks on the stream it asked for.
+    FileContentsNeeded {
+        stream_id: u32,
+        index: u32,
+        offset: u64,
+        length: u32,
+    },
     Error(String),
     Closed,
 }
@@ -100,6 +109,18 @@ impl RdpClientHandle {
     /// Send an input event to the session.
     pub fn send_input(&self, event: InputEvent) {
         let _ = self.cmd_tx.send(ClientMsg::Input(event));
+    }
+
+    /// Offer a local file selection to the remote clipboard. Metadata only —
+    /// nothing is read from disk until the remote pastes.
+    pub fn send_clipboard_files(&self, files: Vec<ClipFile>) {
+        let _ = self.cmd_tx.send(ClientMsg::ClipboardFiles(files));
+    }
+
+    /// Answer a [`RdpClientEvent::FileContentsNeeded`]. `None` reports a failed
+    /// read, which becomes the protocol's error response.
+    pub fn answer_file_contents(&self, stream_id: u32, data: Option<Vec<u8>>) {
+        let _ = self.cmd_tx.send(ClientMsg::FileContents { stream_id, data });
     }
 
     /// Ask the session to disconnect gracefully.
@@ -383,11 +404,29 @@ fn wire_up(
                     Ok(Some(HostMsg::ClipboardFiles(files))) => {
                         let _ = files;
                     }
-                    Ok(Some(HostMsg::FileContentsNeeded { stream_id, .. })) => {
-                        let _ = refuse_tx.send(ClientMsg::FileContents {
-                            stream_id,
-                            data: None,
-                        });
+                    Ok(Some(HostMsg::FileContentsNeeded {
+                        stream_id,
+                        index,
+                        offset,
+                        length,
+                    })) => {
+                        // Refuse on the spot if the app is no longer listening.
+                        // Silence would leave the remote paste hanging on a
+                        // stream that is never going to arrive.
+                        if event_tx
+                            .send(RdpClientEvent::FileContentsNeeded {
+                                stream_id,
+                                index,
+                                offset,
+                                length,
+                            })
+                            .is_err()
+                        {
+                            let _ = refuse_tx.send(ClientMsg::FileContents {
+                                stream_id,
+                                data: None,
+                            });
+                        }
                     }
                     Ok(Some(HostMsg::FileContents { stream_id, .. })) => {
                         let _ = stream_id;

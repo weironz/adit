@@ -26,3 +26,21 @@ serde_json.workspace = true
 unicode-width = "0.2"
 time = { version = "0.3", features = ["local-offset"] }
 tokio.workspace = true
+
+# Clipboard *file* transfer for RDP. iced's clipboard carries text and nothing
+# else, so reading a file selection (CF_HDROP) and later offering one back
+# (a delay-rendered IDataObject) both have to go to Win32 directly.
+#
+# Windows-only by target, not by feature: the three platforms do not share a
+# mechanism here — macOS promises files through NSFilePromiseProvider, and X11
+# has no delayed-content protocol for files at all (its `text/uri-list` names
+# real paths, which is why FreeRDP mounts FUSE for this). Abstracting over three
+# designs that different would be guessing; see `clipboard_files`.
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    "Win32_UI_Shell",
+] }

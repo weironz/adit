@@ -50,6 +50,10 @@ mod i18n;
 pub(crate) use i18n::{set_language, t, tf};
 mod style;
 use style::*;
+/// The local half of RDP clipboard file transfer. Separate from the text
+/// clipboard, which iced provides — files need Win32 directly, and the three
+/// platforms do not share a mechanism. See the module docs.
+mod clipboard_files;
 mod workspace;
 use workspace::*;
 mod sidebar;
@@ -305,6 +309,11 @@ pub struct AditApp {
     // the poll from re-offering the same thing, and, because inbound remote text
     // is recorded here too, stops a remote copy from bouncing straight back.
     rdp_clipboard_offered: Option<String>,
+    /// Files currently offered to the remote, with the local path each came
+    /// from. Indexed by the remote: a `FileContentsRequest` names a position in
+    /// this list, so it must outlive the clipboard selection that produced it —
+    /// a paste reads bytes long after Explorer has moved on to something else.
+    rdp_offered_files: Vec<clipboard_files::OfferedFile>,
     /// Device pixels per logical point of the window's display. Drives the
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
@@ -1362,6 +1371,7 @@ impl AditApp {
             rdp_frame_uploaded: None,
             rdp_tiles: Vec::new(),
             rdp_clipboard_offered: None,
+            rdp_offered_files: Vec::new(),
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),

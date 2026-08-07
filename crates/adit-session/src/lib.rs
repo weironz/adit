@@ -31,7 +31,7 @@ use thiserror::Error;
 
 mod rdp_client;
 pub use adit_rdp_proto::{
-    InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
+    ClipFile, InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFrame};
 
@@ -363,6 +363,20 @@ pub struct SessionManager {
     /// per session because the system clipboard is itself a single slot: the
     /// most recent remote copy wins, exactly as it would between two local apps.
     pending_rdp_clipboard: Option<String>,
+    /// Byte ranges the remote asked for, waiting for the UI to read them off
+    /// disk. A `Vec` rather than the single slot the clipboard text uses: a
+    /// paste of several files has several streams open at once, and dropping
+    /// any of them hangs that file's transfer.
+    pending_rdp_file_reads: Vec<RdpFileRead>,
+}
+
+/// A byte range the remote wants from a file this side offered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RdpFileRead {
+    pub stream_id: u32,
+    pub index: u32,
+    pub offset: u64,
+    pub length: u32,
 }
 
 /// A live port-forwarding tunnel and its observable state.
@@ -429,6 +443,7 @@ impl SessionManager {
             tunnels: Vec::new(),
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
+            pending_rdp_file_reads: Vec::new(),
         }
     }
 
@@ -1590,6 +1605,34 @@ impl SessionManager {
     #[must_use]
     pub fn take_rdp_clipboard(&mut self) -> Option<String> {
         self.pending_rdp_clipboard.take()
+    }
+
+    /// Byte ranges the remote is waiting on. Drained, so each is answered once.
+    pub fn take_rdp_file_reads(&mut self) -> Vec<RdpFileRead> {
+        std::mem::take(&mut self.pending_rdp_file_reads)
+    }
+
+    /// Offer a local file selection to the active RDP desktop (metadata only).
+    pub fn offer_rdp_files_to_active(&self, files: Vec<ClipFile>) {
+        if let Some(session_id) = self.active_session {
+            if let Some(record) = self.sessions.get(&session_id) {
+                if let Some(rdp) = &record.rdp {
+                    rdp.send_clipboard_files(files);
+                }
+            }
+        }
+    }
+
+    /// Answer one [`RdpFileRead`]. `None` reports a failed read, which becomes
+    /// the protocol's error response rather than a silently truncated file.
+    pub fn answer_rdp_file_read(&self, stream_id: u32, data: Option<Vec<u8>>) {
+        if let Some(session_id) = self.active_session {
+            if let Some(record) = self.sessions.get(&session_id) {
+                if let Some(rdp) = &record.rdp {
+                    rdp.answer_file_contents(stream_id, data);
+                }
+            }
+        }
     }
 
     /// Whether the active session is a native RDP session (graphical surface).
@@ -2776,6 +2819,23 @@ impl SessionManager {
                     // arrive here as text and the UI process owns the paste.
                     RdpClientEvent::ClipboardText(text) => {
                         self.pending_rdp_clipboard = Some(text);
+                    }
+                    // Same split as the text above, for the same reason: only
+                    // this process can touch a real file. Queued for the UI to
+                    // answer on its next tick — never dropped, because the
+                    // remote paste is blocked on the stream it asked for.
+                    RdpClientEvent::FileContentsNeeded {
+                        stream_id,
+                        index,
+                        offset,
+                        length,
+                    } => {
+                        self.pending_rdp_file_reads.push(RdpFileRead {
+                            stream_id,
+                            index,
+                            offset,
+                            length,
+                        });
                     }
                     RdpClientEvent::Error(message) => {
                         record.summary.status = SessionStatus::Error;
