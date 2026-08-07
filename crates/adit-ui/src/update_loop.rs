@@ -372,6 +372,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             };
         }
         Message::RunMenu(command) => {
+            // Intercepted rather than handled in `run_menu_command`: changing
+            // the window mode is a `Task`, which that function has no way to
+            // return. Routed to the same message the keyboard shortcut uses so
+            // the two paths cannot drift.
+            if command == MenuCommand::ToggleFullscreen {
+                app.active_menu = None;
+                return Task::done(Message::ToggleFullscreen);
+            }
             // The update check needs to return an async Task, unlike the other
             // (synchronous) menu commands.
             if matches!(command, MenuCommand::CheckUpdate) {
@@ -1580,6 +1588,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ToggleFullscreen => {
             app.fullscreen = !app.fullscreen;
+            // Fullscreen has no menu bar, so the toolbar is the only place these
+            // controls exist there — including the way back out. Windowed mode
+            // puts it away again, where the 视图 menu covers the same ground.
+            app.rdp_toolbar_collapsed = !app.fullscreen;
             let mode = if app.fullscreen {
                 window::Mode::Fullscreen
             } else {

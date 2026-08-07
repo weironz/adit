@@ -77,6 +77,9 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
                 String::from(t("输入广播已关闭"))
             };
         }
+        // Intercepted in `update` before it reaches here, because changing the
+        // window mode needs to return a `Task` and this function cannot.
+        MenuCommand::ToggleFullscreen => {}
         MenuCommand::ToggleCommandWindow => {
             app.command_window_open = !app.command_window_open;
             app.command_history_pos = None;

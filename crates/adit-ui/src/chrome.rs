@@ -217,6 +217,11 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
         ],
         MenuKind::Edit => &[("清屏", MenuCommand::ClearTerminal)],
         MenuKind::View => &[
+            // First, and first for a reason: fullscreen was reachable only by
+            // Ctrl+Alt+Enter, which is undiscoverable — nothing on screen named
+            // it. The floating tab over a remote desktop is the other half of
+            // the same fix.
+            ("全屏", MenuCommand::ToggleFullscreen),
             ("侧边栏开关", MenuCommand::ToggleSidebar),
             ("深色模式开关", MenuCommand::ToggleTheme),
             ("分屏（添加窗格）", MenuCommand::SplitPane),

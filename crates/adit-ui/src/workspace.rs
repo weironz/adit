@@ -205,12 +205,17 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     with_rdp_toolbar(app, desktop)
 }
 
-/// Stack the floating toolbar over a remote desktop, in fullscreen only.
+/// Stack the floating toolbar over a remote desktop.
 ///
-/// Windowed sessions already have the menu bar and the tab strip; a second row
-/// of icons there would be the 36px of duplicated shortcuts that the previous
-/// toolbar was deleted for (see `chrome::view`). Fullscreen is the mode that
-/// genuinely has nothing, so it is the mode that gets this.
+/// Shown in both window modes, but **collapsed by default**, which is what keeps
+/// it from repeating the mistake `chrome::view` records: the old docked toolbar
+/// was deleted for spending a permanent 36px on duplicates of menu items. This
+/// one costs a 14px tab until someone opens it, and reserves no layout space
+/// even then.
+///
+/// Windowed mode needs it because fullscreen had no discoverable entry at all —
+/// Ctrl+Alt+Enter, and nothing on screen naming it. The 视图 menu now names it
+/// too; this is the half you find without going looking.
 pub(crate) fn with_rdp_toolbar<'a>(
     app: &'a AditApp,
     desktop: Element<'a, Message>,

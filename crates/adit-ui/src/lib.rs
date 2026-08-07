@@ -541,6 +541,7 @@ impl SettingsCategory {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuCommand {
+    ToggleFullscreen,
     NewProfile,
     NewGroup,
     SaveProfile,
@@ -1319,7 +1320,7 @@ impl AditApp {
             rdp_clipboard,
             rdp_quality,
             rdp_scale_fit,
-            rdp_toolbar_collapsed: false,
+            rdp_toolbar_collapsed: true,
             rdp_quality_menu_open: false,
             keyring_migrated,
             auth_prompt: None,
@@ -1862,14 +1863,34 @@ mod tests {
     /// re-triggered, once per frame. If toolbar visibility ever depends on
     /// pointer position again, that loop comes back.
     #[test]
-    fn the_toolbar_is_visible_until_it_is_collapsed() {
+    fn the_toolbar_opens_and_closes_only_on_request() {
         let mut app = drag_test_app();
-        assert!(!app.rdp_toolbar_collapsed, "the bar starts shown");
+        // Starts collapsed: windowed mode should cost a tab, not a bar. The old
+        // docked toolbar was deleted for spending 36px on menu duplicates, and
+        // this must not quietly become that again.
+        assert!(app.rdp_toolbar_collapsed, "the bar starts collapsed");
 
         let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
-        assert!(app.rdp_toolbar_collapsed);
-        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
         assert!(!app.rdp_toolbar_collapsed);
+        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
+        assert!(app.rdp_toolbar_collapsed);
+    }
+
+    /// Fullscreen has no menu bar, so the toolbar is the only place its controls
+    /// exist there — including the way back out. Leaving fullscreen puts it away
+    /// again, where the 视图 menu covers the same ground.
+    #[test]
+    fn entering_fullscreen_opens_the_toolbar_and_leaving_closes_it() {
+        let mut app = drag_test_app();
+        assert!(!app.fullscreen);
+
+        let _ = update(&mut app, Message::ToggleFullscreen);
+        assert!(app.fullscreen);
+        assert!(!app.rdp_toolbar_collapsed, "fullscreen must show the bar");
+
+        let _ = update(&mut app, Message::ToggleFullscreen);
+        assert!(!app.fullscreen);
+        assert!(app.rdp_toolbar_collapsed);
     }
 
     /// Collapsing takes the quality dropdown with it — the menu hangs off a
@@ -1878,6 +1899,8 @@ mod tests {
     #[test]
     fn collapsing_the_toolbar_closes_the_quality_menu() {
         let mut app = drag_test_app();
+        // Open the bar first: the dropdown only exists while it is open.
+        app.rdp_toolbar_collapsed = false;
         app.rdp_quality_menu_open = true;
 
         let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
