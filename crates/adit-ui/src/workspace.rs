@@ -96,17 +96,21 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         .into()
 }
 
-/// The active RDP session's framebuffer, scaled to fit (aspect-preserved), with
-/// mouse and scroll captured and mapped to remote-desktop pixels. A single OS
-/// cursor is shown (the server pointer isn't composited), so there's no
-/// double-cursor; its shape is a plain arrow for now.
+/// The active RDP session's framebuffer, with mouse and scroll captured and
+/// mapped to remote-desktop pixels. Presented 1:1 in the steady state,
+/// aspect-preserved in fit mode, and stretched per axis while a resize is in
+/// flight — see `rdp_fit_factors` for why the transition must not preserve
+/// aspect. A single OS cursor is shown (the server pointer isn't composited),
+/// so there's no double-cursor; its shape is a plain arrow for now.
 pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
-    // One scale for the whole function, folding the fit factor into the DPI
-    // scale. Everything below — tile sizes and the mouse mapping — divides or
-    // multiplies by this single number, which is what keeps the picture and the
-    // pointer from disagreeing about where a pixel is.
-    let display_scale = app.display_scale.max(0.1) / rdp_fit_factor(app, (sw, sh));
+    // One scale per axis for the whole function, folding the fit factors into
+    // the DPI scale. Tile sizes divide by these and the mouse mapping multiplies
+    // by them, which is what keeps the picture and the pointer agreeing about
+    // where a pixel is — including mid-transition, when the two axes differ.
+    let (fit_x, fit_y) = rdp_fit_factors(app, (sw, sh));
+    let scale_x = app.display_scale.max(0.1) / fit_x;
+    let scale_y = app.display_scale.max(0.1) / fit_y;
 
     if app.rdp_tiles.is_empty() || sw == 0 || sh == 0 {
         // The toolbar wraps this branch too: a connect that hangs in fullscreen
@@ -140,7 +144,8 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     // taking differences means neighbours agree on their shared edge by
     // construction, so the seams close exactly and the sizes still sum to the
     // full surface.
-    let edge = |device: u32| (device as f32 / display_scale).round();
+    let edge_x = |device: u32| (device as f32 / scale_x).round();
+    let edge_y = |device: u32| (device as f32 / scale_y).round();
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
     let mut current_y: Option<u16> = None;
     let mut row: Vec<Element<'_, Message>> = Vec::new();
@@ -159,8 +164,8 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         let next_y = device_y + u32::from(tile.height);
         row.push(
             iced::widget::image(tile.handle.clone())
-                .width(Length::Fixed(edge(next_x) - edge(device_x)))
-                .height(Length::Fixed(edge(next_y) - edge(device_y)))
+                .width(Length::Fixed(edge_x(next_x) - edge_x(device_x)))
+                .height(Length::Fixed(edge_y(next_y) - edge_y(device_y)))
                 .filter_method(iced::widget::image::FilterMethod::Nearest)
                 .content_fit(iced::ContentFit::Fill)
                 .into(),
@@ -173,8 +178,8 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
 
     let surface = mouse_area(iced::widget::Column::with_children(rows))
         .on_move(move |p| {
-            let x = (p.x * display_scale).clamp(0.0, f32::from(sw) - 1.0);
-            let y = (p.y * display_scale).clamp(0.0, f32::from(sh) - 1.0);
+            let x = (p.x * scale_x).clamp(0.0, f32::from(sw) - 1.0);
+            let y = (p.y * scale_y).clamp(0.0, f32::from(sh) - 1.0);
             Message::RdpPointerMoved(Point::new(x, y))
         })
         .on_press(Message::RdpPressed(mouse::Button::Left))

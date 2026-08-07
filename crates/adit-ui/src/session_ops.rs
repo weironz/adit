@@ -1570,40 +1570,60 @@ fn rdp_resize_in_flight(app: &AditApp, surface: (u16, u16)) -> bool {
             .is_some_and(|at| at.elapsed() < RDP_RESIZE_TRANSITION)
 }
 
-pub(crate) fn rdp_fit_factor(app: &AditApp, surface: (u16, u16)) -> f32 {
-    // A resize in flight is presented exactly like fit mode, deliberately:
-    // the pane changed instantly but the server takes a round trip to deliver
-    // the new resolution, and drawing the stale frame 1:1 for that window is a
-    // visible flash of black bars on every window resize, sidebar toggle, and
-    // fit-mode toggle (reported from a real session). Scaling the stale frame
-    // until the new one lands is what mstsc does — the transition then shows
-    // only as the picture sharpening. The mouse mapping divides by this same
-    // folded scale, so the pointer stays correct throughout.
-    if !app.rdp_scale_fit && !rdp_resize_in_flight(app, surface) {
-        return 1.0;
+/// The x and y factors the RDP picture is drawn at, and that the mouse mapping
+/// divides back out.
+///
+/// Steady state: `(1.0, 1.0)` with fit mode off (exact 1:1), or an
+/// aspect-preserving pair with fit mode on — its letterbox is the mode's
+/// contract.
+///
+/// While a resize is in flight the stale frame is stretched to **fill both
+/// axes independently**. It was aspect-preserving at first, and a real session
+/// showed why that cannot work: a sidebar toggle changes only the width, so
+/// with the height axis already fitting (factor ≈ 1.002 in the probe capture,
+/// 1908→2220 requested) the uniform factor did essentially nothing and the
+/// 312-device-pixel bar stayed for the whole round trip. Filling both axes
+/// distorts the stale frame by the width delta for under a second — far less
+/// visible than a black bar — and the picture snaps exact when the new frame
+/// lands. The pointer stays correct throughout because each axis of the mouse
+/// mapping multiplies by the same per-axis scale the tiles divided by.
+pub(crate) fn rdp_fit_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) {
+    let in_flight = rdp_resize_in_flight(app, surface);
+    if !app.rdp_scale_fit && !in_flight {
+        return (1.0, 1.0);
     }
     let (sw, sh) = surface;
     if sw == 0 || sh == 0 {
-        return 1.0;
+        return (1.0, 1.0);
     }
     let sidebar = sidebar_offset(app);
     let (pane_w, pane_h) =
         terminal_region_area(app.window_width, app.window_height, sidebar, app.fullscreen);
     if pane_w <= 0.0 || pane_h <= 0.0 {
-        return 1.0;
+        return (1.0, 1.0);
     }
     let scale = app.display_scale.max(0.1);
     // The surface's natural size in logical points, which is what the pane is in.
     let natural_w = f32::from(sw) / scale;
     let natural_h = f32::from(sh) / scale;
-    // Aspect-preserving: the tighter of the two axes wins, so nothing is cropped.
-    let factor = (pane_w / natural_w).min(pane_h / natural_h);
-    // Guard the degenerate cases (a zero or NaN surface would otherwise divide
+    // Guard the degenerate cases per axis (a zero or NaN surface would divide
     // into the mouse mapping and send garbage coordinates to the remote).
-    if factor.is_finite() && factor > 0.0 {
-        factor.clamp(0.1, 8.0)
+    let sane = |factor: f32| {
+        if factor.is_finite() && factor > 0.0 {
+            factor.clamp(0.1, 8.0)
+        } else {
+            1.0
+        }
+    };
+    let fill_x = pane_w / natural_w;
+    let fill_y = pane_h / natural_h;
+    if app.rdp_scale_fit {
+        // Fit mode proper: aspect-preserving, the tighter axis wins.
+        let factor = sane(fill_x.min(fill_y));
+        (factor, factor)
     } else {
-        1.0
+        // Transition: fill the pane completely.
+        (sane(fill_x), sane(fill_y))
     }
 }
 

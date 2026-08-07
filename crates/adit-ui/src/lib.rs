@@ -1947,14 +1947,15 @@ mod tests {
         // constructor, which reads a settings file, so leaning on the default
         // here would make this test depend on what another one left on disk.
         app.rdp_scale_fit = false;
-        assert_eq!(rdp_fit_factor(&app, (4096, 2160)), 1.0);
+        assert_eq!(rdp_fit_factors(&app, (4096, 2160)), (1.0, 1.0));
 
         app.rdp_scale_fit = true;
         // A desktop far larger than any test window must shrink.
-        assert!(rdp_fit_factor(&app, (4096, 2160)) < 1.0);
+        let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
+        assert!(fx < 1.0 && fy < 1.0);
         // A degenerate surface must not produce a factor that would divide into
         // the mouse mapping and send garbage coordinates to the remote.
-        assert_eq!(rdp_fit_factor(&app, (0, 0)), 1.0);
+        assert_eq!(rdp_fit_factors(&app, (0, 0)), (1.0, 1.0));
     }
 
     /// While a resize is in flight the stale surface scales to fit even with
@@ -1970,9 +1971,38 @@ mod tests {
         app.rdp_resize_requested_at = Some(std::time::Instant::now());
 
         // The delivered surface is not the requested one yet: scale it.
-        assert!(rdp_fit_factor(&app, (4096, 2160)) < 1.0);
+        let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
+        assert!(fx < 1.0 && fy < 1.0);
         // The requested size arrived: back to exact 1:1.
-        assert_eq!(rdp_fit_factor(&app, (800, 600)), 1.0);
+        assert_eq!(rdp_fit_factors(&app, (800, 600)), (1.0, 1.0));
+    }
+
+    /// The transition fills both axes independently. Aspect-preserving scaling
+    /// cannot fill a pane whose aspect changed — a sidebar toggle changes only
+    /// the width, the height axis already fits (factor ≈ 1.0), and the uniform
+    /// minimum then does nothing, leaving the exact black bar the transition
+    /// exists to remove. A real session's probe capture showed it: 1908→2220
+    /// requested, uniform factor 1.002, 312-pixel bar intact.
+    #[test]
+    fn the_transition_fills_both_axes_independently() {
+        let mut app = drag_test_app();
+        app.display_scale = 1.0;
+        app.rdp_scale_fit = false;
+        app.rdp_target_size = Some((800, 600));
+        app.rdp_resize_requested_at = Some(std::time::Instant::now());
+
+        // Same width, different heights: the x factor must hold still while the
+        // y factor moves. A uniform factor would couple them.
+        let (fx1, fy1) = rdp_fit_factors(&app, (4000, 2000));
+        let (fx2, fy2) = rdp_fit_factors(&app, (4000, 1000));
+        assert_eq!(fx1, fx2);
+        assert!(fy2 > fy1);
+
+        // Steady fit mode keeps its aspect-preserving contract.
+        app.rdp_scale_fit = true;
+        app.rdp_target_size = None;
+        let (fx, fy) = rdp_fit_factors(&app, (4000, 1000));
+        assert_eq!(fx, fy);
     }
 
     /// A server that never honours the request must not leave the transition
@@ -1991,7 +2021,7 @@ mod tests {
         // subtraction to have happened to mean anything.
         assert!(app.rdp_resize_requested_at.is_some());
 
-        assert_eq!(rdp_fit_factor(&app, (4096, 2160)), 1.0);
+        assert_eq!(rdp_fit_factors(&app, (4096, 2160)), (1.0, 1.0));
     }
 
     /// Ctrl+Alt+Del is six events, and the release order is the part that
