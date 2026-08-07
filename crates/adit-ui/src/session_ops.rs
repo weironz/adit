@@ -1649,6 +1649,11 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // happened; see the helper log if the two disagree.
     app.rdp_target_size = Some((w, h));
     app.manager.resize_active_rdp(w, h);
+    // Surfaced, not logged: the GUI discards its own stderr, so the status bar
+    // is the only place this decision is visible. It fires only when a request
+    // actually goes out — the common no-change case returns above — so its
+    // *absence* while the layout visibly changed is the useful signal.
+    app.notice = tf("已请求远程分辨率 {}×{}", &[&w, &h]);
 }
 
 /// Cols/rows that fit in a single pane's *inner* pixel area (after its own
