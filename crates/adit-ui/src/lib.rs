@@ -303,6 +303,14 @@ pub struct AditApp {
     /// is the whole story behind the black flicker, the scroll ghosting and
     /// the minimise remnants.
     rdp_tiles: Vec<RdpTile>,
+    /// The outgoing generation's tiles, drawn UNDER `rdp_tiles` across a
+    /// surface-size swap. A handle minted this update has not finished its
+    /// async GPU upload when the very next frame renders; an image that has
+    /// not landed draws nothing, and with nothing beneath it that frame was
+    /// the black container — one flash per sidebar toggle. Cleared by the next
+    /// same-size frame or by `RDP_PREV_LAYER_LINGER`.
+    rdp_tiles_prev: Vec<RdpTile>,
+    rdp_surface_size_prev: Option<(u16, u16)>,
     // RDP clipboard: only this process has a Windows clipboard (the helper is
     // windowless), so local→remote means polling it while an RDP tab is up.
     // `rdp_clipboard_offered` is the last text handed to the helper — it stops
@@ -1053,6 +1061,11 @@ const RDP_FILE_CHUNK_BYTES: u32 = 64 * 1024;
 /// allocation through iced's async image worker; see the sampler for why
 /// outrunning it flickers.
 const RDP_FRAME_MIN_INTERVAL: std::time::Duration = std::time::Duration::from_millis(33);
+/// How long the outgoing tile layer stays under a freshly-swapped one before it
+/// is dropped even without a follow-up frame. Long enough for the swap's async
+/// GPU upload to have landed many times over; short enough that a static
+/// desktop does not hold a spare framebuffer copy forever.
+const RDP_PREV_LAYER_LINGER: std::time::Duration = std::time::Duration::from_millis(1000);
 
 /// Tile edge for the desktop texture, in device pixels. 512x512x4 = 1 MiB,
 /// comfortably under iced_wgpu's 2 MiB synchronous-upload threshold.
@@ -1396,6 +1409,8 @@ impl AditApp {
             rdp_frame_session: None,
             rdp_frame_uploaded: None,
             rdp_tiles: Vec::new(),
+            rdp_tiles_prev: Vec::new(),
+            rdp_surface_size_prev: None,
             rdp_clipboard_offered: None,
             rdp_offered_files: Vec::new(),
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),

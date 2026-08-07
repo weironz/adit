@@ -1645,6 +1645,22 @@ pub(crate) fn rdp_fit_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) 
     if !app.rdp_scale_fit && !in_flight {
         return (1.0, 1.0);
     }
+    let (fill_x, fill_y) = rdp_fill_factors(app, surface);
+    if app.rdp_scale_fit {
+        // Fit mode proper: aspect-preserving, the tighter axis wins.
+        let factor = fill_x.min(fill_y);
+        (factor, factor)
+    } else {
+        // Transition: fill the pane completely.
+        (fill_x, fill_y)
+    }
+}
+
+/// Unconditional fill-the-pane factors, per axis. The arithmetic behind both
+/// of `rdp_fit_factors`' scaled branches, and used directly for the stale
+/// layer kept under a freshly-swapped frame — the caller there has already
+/// decided the layer is a stand-in, so none of the gating applies.
+pub(crate) fn rdp_fill_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) {
     let (sw, sh) = surface;
     if sw == 0 || sh == 0 {
         return (1.0, 1.0);
@@ -1668,16 +1684,7 @@ pub(crate) fn rdp_fit_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) 
             1.0
         }
     };
-    let fill_x = pane_w / natural_w;
-    let fill_y = pane_h / natural_h;
-    if app.rdp_scale_fit {
-        // Fit mode proper: aspect-preserving, the tighter axis wins.
-        let factor = sane(fill_x.min(fill_y));
-        (factor, factor)
-    } else {
-        // Transition: fill the pane completely.
-        (sane(fill_x), sane(fill_y))
-    }
+    (sane(pane_w / natural_w), sane(pane_h / natural_h))
 }
 
 /// The picker label for a fidelity preset.

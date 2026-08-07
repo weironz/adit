@@ -131,19 +131,98 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     }
 
     // The texture arrives as a grid of tiles, each small enough for the
-    // renderer's synchronous upload path (see `split_into_tiles`). Lay them
-    // back out edge to edge: rows of images, each sized in logical points so
-    // the compositor's DPI scaling lands every device pixel on exactly one
-    // frame pixel and Nearest never resamples.
-    // Seams are computed from SHARED edges, never from each tile's own size.
-    //
-    // `tile_size / scale` is fractional at any non-integer display scale
-    // (512 / 1.25 = 409.6), and laying fractional boxes end to end leaves the
-    // rounding error between them — a hairline of container showing through
-    // at every row and column boundary. Rounding each cumulative edge once and
-    // taking differences means neighbours agree on their shared edge by
-    // construction, so the seams close exactly and the sizes still sum to the
-    // full surface.
+    // renderer's synchronous upload path (see `split_into_tiles`); the seam
+    // arithmetic lives with the layout in `rdp_tile_grid`.
+    let grid = rdp_tile_grid(&app.rdp_tiles, scale_x, scale_y);
+
+    // The outgoing generation rides beneath the incoming one across a size
+    // swap — see `rdp_tiles_prev` for why an image that has not finished its
+    // async upload otherwise leaves a black frame. The stale layer fills the
+    // pane like any transitional frame and is covered the moment the live
+    // layer lands.
+    let content: Element<'_, Message> = if app.rdp_tiles_prev.is_empty() {
+        grid
+    } else {
+        let prev_surface = app.rdp_surface_size_prev.unwrap_or((0, 0));
+        let (prev_fill_x, prev_fill_y) = rdp_fill_factors(app, prev_surface);
+        let prev_scale_x = app.display_scale.max(0.1) / prev_fill_x;
+        let prev_scale_y = app.display_scale.max(0.1) / prev_fill_y;
+        stack(vec![
+            rdp_tile_grid(&app.rdp_tiles_prev, prev_scale_x, prev_scale_y),
+            grid,
+        ])
+        .into()
+    };
+
+    let surface = mouse_area(content)
+        .on_move(move |p| {
+            let x = (p.x * scale_x).clamp(0.0, f32::from(sw) - 1.0);
+            let y = (p.y * scale_y).clamp(0.0, f32::from(sh) - 1.0);
+            Message::RdpPointerMoved(Point::new(x, y))
+        })
+        .on_press(Message::RdpPressed(mouse::Button::Left))
+        .on_release(Message::RdpReleased(mouse::Button::Left))
+        .on_right_press(Message::RdpPressed(mouse::Button::Right))
+        .on_right_release(Message::RdpReleased(mouse::Button::Right))
+        .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
+        .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
+        .on_scroll(Message::RdpScrolled);
+
+    // Scrolling exists for exactly one case: a steady 1:1 surface larger than
+    // the pane — a server that refused the resize — where the content must stay
+    // reachable. Everything that fits (fit mode's letterbox, transitional
+    // stretching) is centred on both axes instead: with only horizontal
+    // centring, fit mode's bars piled onto the bottom and right edges rather
+    // than splitting evenly around the picture.
+    let (pane_w, pane_h) = terminal_region_area(
+        app.window_width,
+        app.window_height,
+        sidebar_offset(app),
+        app.fullscreen,
+    );
+    let logical_w = f32::from(sw) / scale_x;
+    let logical_h = f32::from(sh) / scale_y;
+    let overflows = logical_w > pane_w + 1.0 || logical_h > pane_h + 1.0;
+    let desktop: Element<'_, Message> = if overflows {
+        container(scrollable(container(surface).center_x(Fill)).direction(
+            iced::widget::scrollable::Direction::Both {
+                vertical: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
+                horizontal: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
+            },
+        ))
+        .width(Fill)
+        .height(Fill)
+        .style(|_theme| container::Style {
+            background: Some(Color::BLACK.into()),
+            ..container::Style::default()
+        })
+        .into()
+    } else {
+        container(surface)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_theme| container::Style {
+                background: Some(Color::BLACK.into()),
+                ..container::Style::default()
+            })
+            .into()
+    };
+
+    with_rdp_toolbar(app, desktop)
+}
+
+/// One generation of framebuffer tiles laid out edge to edge at the given
+/// per-axis scales, in logical points so the compositor's DPI scaling lands
+/// every device pixel on exactly one frame pixel when the scale is 1:1.
+///
+/// Seams are computed from SHARED edges, never from each tile's own size:
+/// `tile_size / scale` is fractional at any non-integer display scale
+/// (512 / 1.25 = 409.6), and laying fractional boxes end to end leaves the
+/// rounding error between them — a hairline of container showing through at
+/// every boundary. Rounding each cumulative edge once and taking differences
+/// means neighbours agree on their shared edge by construction, so the seams
+/// close exactly and the sizes still sum to the full surface.
+fn rdp_tile_grid(tiles: &[RdpTile], scale_x: f32, scale_y: f32) -> Element<'static, Message> {
     let edge_x = |device: u32| (device as f32 / scale_x).round();
     let edge_y = |device: u32| (device as f32 / scale_y).round();
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
@@ -151,7 +230,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let mut row: Vec<Element<'_, Message>> = Vec::new();
     let mut device_x: u32 = 0;
     let mut device_y: u32 = 0;
-    for tile in &app.rdp_tiles {
+    for tile in tiles {
         if current_y != Some(tile.y) {
             if !row.is_empty() {
                 rows.push(iced::widget::Row::with_children(std::mem::take(&mut row)).into());
@@ -175,39 +254,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     if !row.is_empty() {
         rows.push(iced::widget::Row::with_children(row).into());
     }
-
-    let surface = mouse_area(iced::widget::Column::with_children(rows))
-        .on_move(move |p| {
-            let x = (p.x * scale_x).clamp(0.0, f32::from(sw) - 1.0);
-            let y = (p.y * scale_y).clamp(0.0, f32::from(sh) - 1.0);
-            Message::RdpPointerMoved(Point::new(x, y))
-        })
-        .on_press(Message::RdpPressed(mouse::Button::Left))
-        .on_release(Message::RdpReleased(mouse::Button::Left))
-        .on_right_press(Message::RdpPressed(mouse::Button::Right))
-        .on_right_release(Message::RdpReleased(mouse::Button::Right))
-        .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
-        .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
-        .on_scroll(Message::RdpScrolled);
-
-    // Centred, and scrollable when the desktop is momentarily larger than the
-    // pane (a resize renegotiation in flight): clipping a fixed-size child
-    // would otherwise hide part of it with no way to reach it.
-    let desktop = container(scrollable(container(surface).center_x(Fill)).direction(
-        iced::widget::scrollable::Direction::Both {
-            vertical: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
-            horizontal: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
-        },
-    ))
-    .width(Fill)
-    .height(Fill)
-    .style(|_theme| container::Style {
-        background: Some(Color::BLACK.into()),
-        ..container::Style::default()
-    })
-    .into();
-
-    with_rdp_toolbar(app, desktop)
+    iced::widget::Column::with_children(rows).into()
 }
 
 /// Stack the floating toolbar over a remote desktop.

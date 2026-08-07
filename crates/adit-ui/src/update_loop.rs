@@ -30,6 +30,18 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // there may be nothing redrawing.
             flush_pending_rdp_resize(app);
 
+            // A static desktop sends no follow-up frame to retire the settle
+            // shield, so time retires it instead — the swap's upload has long
+            // landed, and the shield holds a whole framebuffer copy alive.
+            if !app.rdp_tiles_prev.is_empty()
+                && app
+                    .rdp_frame_uploaded
+                    .is_some_and(|at| at.elapsed() > RDP_PREV_LAYER_LINGER)
+            {
+                app.rdp_tiles_prev.clear();
+                app.rdp_surface_size_prev = None;
+            }
+
             // RDP clipboard bridge: the helper is a windowless process, so only
             // this one has a Windows clipboard. Remote copies land here...
             if let Some(text) = app.manager.take_rdp_clipboard().filter(|_| app.rdp_clipboard) {
@@ -125,7 +137,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_frame_session = active;
                 app.rdp_frame_generation = 0;
                 app.rdp_tiles.clear();
+                app.rdp_tiles_prev.clear();
                 app.rdp_surface_size = None;
+                app.rdp_surface_size_prev = None;
                 // Different session ⇒ forget the requested size so the next layout
                 // sync re-asserts the viewport for the newly-active desktop.
                 app.rdp_target_size = None;
@@ -150,7 +164,21 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 if let Some(frame) = app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation) {
                     app.rdp_frame_generation = frame.generation;
                     app.rdp_frame_uploaded = Some(Instant::now());
-                    app.rdp_surface_size = Some((frame.width, frame.height));
+                    let new_size = (frame.width, frame.height);
+                    // Across a size change, keep the outgoing tiles as a layer
+                    // under the incoming ones: the fresh handles have not
+                    // finished their async upload when the next frame renders,
+                    // and without this the pane flashed black on every resize
+                    // settle. A follow-up frame at the same size means the
+                    // swap has certainly landed — drop the shield then.
+                    if app.rdp_surface_size != Some(new_size) && !app.rdp_tiles.is_empty() {
+                        app.rdp_tiles_prev = std::mem::take(&mut app.rdp_tiles);
+                        app.rdp_surface_size_prev = app.rdp_surface_size;
+                    } else if !app.rdp_tiles_prev.is_empty() {
+                        app.rdp_tiles_prev.clear();
+                        app.rdp_surface_size_prev = None;
+                    }
+                    app.rdp_surface_size = Some(new_size);
                     dump_rdp_frame(&frame);
                     app.rdp_tiles = split_into_tiles(&frame);
                 }
