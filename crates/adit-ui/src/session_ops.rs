@@ -1627,8 +1627,22 @@ pub(crate) fn send_ctrl_alt_del(app: &AditApp) {
 
 /// After a layout change, ask the active RDP desktop to match the viewport, but
 /// only when the target actually changed (window/sidebar drags fire continuously).
+/// Whether to narrate every resize decision to the status bar.
+///
+/// Env-gated on the same principle as `ADIT_RDP_DUMP`: this fires on window
+/// drags and sidebar drags, so leaving it on would bury every other notice.
+/// Read once — the process will not change its own environment.
+fn resize_probe_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("ADIT_RDP_RESIZE_PROBE").is_some())
+}
+
 pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
+    let probe = resize_probe_enabled();
     if !app.manager.active_rdp_live() {
+        if probe {
+            app.notice = String::from("resize: 跳过（会话未就绪）");
+        }
         return;
     }
     // Fit mode's whole premise is that the remote desktop size is left alone and
@@ -1637,9 +1651,26 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // renegotiate, and it can only tell that it needs to if the remembered target
     // still describes the last size actually requested.
     if app.rdp_scale_fit {
+        if probe {
+            app.notice = String::from("resize: 跳过（缩放适应窗口已开启）");
+        }
         return;
     }
     let (w, h) = rdp_viewport_size(app);
+    // The three inputs, not just the result: if (w, h) comes out unchanged the
+    // question is immediately which of them failed to move.
+    if probe {
+        app.notice = format!(
+            "resize: 窗口 {:.0}×{:.0} 侧栏 {:.0} 缩放 {:.2} → {}×{}（上次 {:?}）",
+            app.window_width,
+            app.window_height,
+            sidebar_offset(app),
+            app.display_scale,
+            w,
+            h,
+            app.rdp_target_size,
+        );
+    }
     if w == 0 || h == 0 || app.rdp_target_size == Some((w, h)) {
         return;
     }
@@ -1653,7 +1684,9 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // is the only place this decision is visible. It fires only when a request
     // actually goes out — the common no-change case returns above — so its
     // *absence* while the layout visibly changed is the useful signal.
-    app.notice = tf("已请求远程分辨率 {}×{}", &[&w, &h]);
+    if !probe {
+        app.notice = tf("已请求远程分辨率 {}×{}", &[&w, &h]);
+    }
 }
 
 /// Cols/rows that fit in a single pane's *inner* pixel area (after its own
