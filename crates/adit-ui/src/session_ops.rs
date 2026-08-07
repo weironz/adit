@@ -1555,8 +1555,31 @@ pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
 ///
 /// `surface` is in device pixels; the pane is measured in logical points, so
 /// `display_scale` converts between them.
+/// How long after sending a resize request the stale surface keeps being
+/// scaled to fit. Bounded, because an unbounded transition would silently turn
+/// fit mode on against a server that never honours the request — and fit is an
+/// explicit switch precisely because of such servers.
+const RDP_RESIZE_TRANSITION: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Whether a resolution renegotiation is still in flight: something was
+/// requested, the delivered surface is not it yet, and the request is recent.
+fn rdp_resize_in_flight(app: &AditApp, surface: (u16, u16)) -> bool {
+    app.rdp_target_size.is_some_and(|target| target != surface)
+        && app
+            .rdp_resize_requested_at
+            .is_some_and(|at| at.elapsed() < RDP_RESIZE_TRANSITION)
+}
+
 pub(crate) fn rdp_fit_factor(app: &AditApp, surface: (u16, u16)) -> f32 {
-    if !app.rdp_scale_fit {
+    // A resize in flight is presented exactly like fit mode, deliberately:
+    // the pane changed instantly but the server takes a round trip to deliver
+    // the new resolution, and drawing the stale frame 1:1 for that window is a
+    // visible flash of black bars on every window resize, sidebar toggle, and
+    // fit-mode toggle (reported from a real session). Scaling the stale frame
+    // until the new one lands is what mstsc does — the transition then shows
+    // only as the picture sharpening. The mouse mapping divides by this same
+    // folded scale, so the pointer stays correct throughout.
+    if !app.rdp_scale_fit && !rdp_resize_in_flight(app, surface) {
         return 1.0;
     }
     let (sw, sh) = surface;
@@ -1679,6 +1702,7 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // again. `RdpClientEvent::Resized` is the only thing that says what actually
     // happened; see the helper log if the two disagree.
     app.rdp_target_size = Some((w, h));
+    app.rdp_resize_requested_at = Some(std::time::Instant::now());
     app.manager.resize_active_rdp(w, h);
     // Surfaced, not logged: the GUI discards its own stderr, so the status bar
     // is the only place this decision is visible. It fires only when a request

@@ -322,6 +322,10 @@ pub struct AditApp {
     /// Whether the last settings write failed. Only there to report the failure
     /// once per streak; the retry itself is driven by the usual comparison.
     settings_save_failed: bool,
+    /// When the last remote-resolution request went out. While it is recent and
+    /// the delivered surface is not yet the requested size, the stale frame is
+    /// scaled to fit instead of drawn 1:1 — see `rdp_fit_factor`.
+    rdp_resize_requested_at: Option<Instant>,
     /// Device pixels per logical point of the window's display. Drives the
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
@@ -1387,6 +1391,7 @@ impl AditApp {
             rdp_offered_files: Vec::new(),
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
             settings_save_failed: false,
+            rdp_resize_requested_at: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             modifiers: keyboard::Modifiers::empty(),
@@ -1950,6 +1955,43 @@ mod tests {
         // A degenerate surface must not produce a factor that would divide into
         // the mouse mapping and send garbage coordinates to the remote.
         assert_eq!(rdp_fit_factor(&app, (0, 0)), 1.0);
+    }
+
+    /// While a resize is in flight the stale surface scales to fit even with
+    /// fit mode off. The pane changes instantly; the server takes a round trip
+    /// to deliver the new resolution; drawing the old frame 1:1 in that window
+    /// is the flash of black bars reported from a real session.
+    #[test]
+    fn a_resize_in_flight_scales_the_stale_surface() {
+        let mut app = drag_test_app();
+        app.display_scale = 1.0;
+        app.rdp_scale_fit = false;
+        app.rdp_target_size = Some((800, 600));
+        app.rdp_resize_requested_at = Some(std::time::Instant::now());
+
+        // The delivered surface is not the requested one yet: scale it.
+        assert!(rdp_fit_factor(&app, (4096, 2160)) < 1.0);
+        // The requested size arrived: back to exact 1:1.
+        assert_eq!(rdp_fit_factor(&app, (800, 600)), 1.0);
+    }
+
+    /// A server that never honours the request must not leave the transition
+    /// on forever — that would silently turn fit mode on, and fit is a switch
+    /// precisely because such servers exist. Past the window, the honest
+    /// 1:1-with-bars presentation returns.
+    #[test]
+    fn a_stale_resize_request_stops_scaling() {
+        let mut app = drag_test_app();
+        app.display_scale = 1.0;
+        app.rdp_scale_fit = false;
+        app.rdp_target_size = Some((800, 600));
+        app.rdp_resize_requested_at =
+            std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10));
+        // `checked_sub` can fail only moments after boot; the test needs the
+        // subtraction to have happened to mean anything.
+        assert!(app.rdp_resize_requested_at.is_some());
+
+        assert_eq!(rdp_fit_factor(&app, (4096, 2160)), 1.0);
     }
 
     /// Ctrl+Alt+Del is six events, and the release order is the part that
