@@ -1643,6 +1643,10 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     if w == 0 || h == 0 || app.rdp_target_size == Some((w, h)) {
         return;
     }
+    // Recorded as requested, not as achieved — the server may answer with a
+    // different size, and this dedupe is what would then stop us ever asking
+    // again. `RdpClientEvent::Resized` is the only thing that says what actually
+    // happened; see the helper log if the two disagree.
     app.rdp_target_size = Some((w, h));
     app.manager.resize_active_rdp(w, h);
 }

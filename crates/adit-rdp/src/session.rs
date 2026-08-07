@@ -424,6 +424,15 @@ async fn active_session(
                             u32::from(width), u32::from(height));
                         match active_stage.encode_resize(w, h, None, None) {
                             Some(frame_res) => {
+                                // Logged because the whole path was silent, and a
+                                // desktop stuck at its connect-time size is
+                                // indistinguishable from one that was never asked
+                                // to move. Now the log says which.
+                                tracing::info!(
+                                    requested_w = width, requested_h = height,
+                                    adjusted_w = w, adjusted_h = h,
+                                    "resize sent to the server"
+                                );
                                 pending_resize = None;
                                 vec![ActiveStageOutput::ResponseFrame(frame_res?)]
                             }
@@ -434,6 +443,15 @@ async fn active_session(
                             // first seconds (the app-side dedupe records the
                             // request as sent and never repeats it).
                             None => {
+                                // DisplayControl is a dynamic channel the server
+                                // opens on its own schedule, and some never do. A
+                                // resize parked here forever is exactly what
+                                // "the desktop never refills the window" looks
+                                // like, so say so rather than retrying in silence.
+                                tracing::info!(
+                                    requested_w = w, requested_h = h,
+                                    "resize parked: DisplayControl is not connected yet"
+                                );
                                 pending_resize = Some((w, h));
                                 Vec::new()
                             }
@@ -626,6 +644,7 @@ async fn active_session(
         // Retry a parked resize now that more channels may have connected.
         if let Some((w, h)) = pending_resize {
             if let Some(frame_res) = active_stage.encode_resize(w, h, None, None) {
+                tracing::info!(w, h, "parked resize went out once DisplayControl connected");
                 pending_resize = None;
                 writer
                     .write_all(&frame_res?)
