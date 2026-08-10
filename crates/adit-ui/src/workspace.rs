@@ -13,10 +13,12 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
             |tabs, session| {
             let accent = profile_accent(app, session.profile_id);
             let badge = profile_badge(app, session.profile_id);
+            let selected = app.selected_tabs.contains(&session.id);
             tabs.push(tab_button(
                 session,
                 app.manager.active_session(),
                 app.dragged_tab,
+                selected,
                 accent,
                 badge,
                 ))
@@ -741,6 +743,34 @@ pub(crate) fn pane_snapshot(app: &AditApp, session_id: SessionId, is_focused: bo
 }
 
 pub(crate) fn active_session_action(app: &AditApp) -> Element<'_, Message> {
+    let has_selected = !app.selected_tabs.is_empty();
+    if has_selected {
+        let mut buttons: Vec<Element<'_, Message>> = Vec::new();
+        buttons.push(
+            button(
+                text(tf("批量关闭 ({})", &[&app.selected_tabs.len().to_string()])).size(12),
+            )
+            .padding([4, 10])
+            .style(|_theme, status| danger_button_style(status))
+            .on_press(Message::CloseSelectedTabs)
+            .into(),
+        );
+        let has_live = app.manager.sessions().iter().any(|s| {
+            app.selected_tabs.contains(&s.id)
+                && matches!(s.status, SessionStatus::Connected | SessionStatus::Connecting)
+        });
+        if has_live {
+            buttons.push(
+                button(text(t("批量断开")).size(12))
+                    .padding([4, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::DisconnectSelectedTabs)
+                    .into(),
+            );
+        }
+        return row(buttons).spacing(4).into();
+    }
+
     if app.manager.active_session_summary().is_some_and(|summary| {
         matches!(
             summary.status,
@@ -761,6 +791,7 @@ pub(crate) fn tab_button(
     session: SessionSummary,
     active_session: Option<SessionId>,
     dragged: Option<SessionId>,
+    selected: bool,
     accent: Option<Color>,
     badge: Option<String>,
 ) -> Element<'static, Message> {
@@ -800,9 +831,17 @@ pub(crate) fn tab_button(
     mouse_area(
         container(inner)
             .padding([2, 6])
-            .style(move |_theme| tab_container_style_dnd(active, is_dragging)),
+            .style(move |_theme| {
+                if is_dragging {
+                    tab_container_style_dnd(active, true)
+                } else if selected {
+                    tab_container_style_selected()
+                } else {
+                    tab_container_style_dnd(active, false)
+                }
+            }),
     )
-    .on_press(Message::TabPressed(id))
+    .on_press(Message::TabClicked(id))
     .on_release(Message::TabReleased)
     .on_enter(Message::TabDragOver(id))
     .on_right_press(Message::ShowTabContextMenu(id))

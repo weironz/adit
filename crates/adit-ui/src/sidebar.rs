@@ -713,34 +713,37 @@ pub(crate) fn tab_context_overlay(app: &AditApp, session_id: SessionId) -> Eleme
             SessionStatus::Connected | SessionStatus::Connecting
         )
     });
+    let multi = !app.selected_tabs.is_empty();
     floating_context_menu(
         app,
-        tab_context_menu(session_id, connected),
+        tab_context_menu(session_id, connected, multi),
         Message::HideTabContextMenu,
     )
 }
 
 /// The session-tab right-click menu card (rename / (dis)connect / clone / close).
-pub(crate) fn tab_context_menu(session_id: SessionId, connected: bool) -> Element<'static, Message> {
+pub(crate) fn tab_context_menu(session_id: SessionId, connected: bool, multi: bool) -> Element<'static, Message> {
     let connection_item = if connected {
         profile_menu_item("断开连接", Message::DisconnectSession(session_id), false)
     } else {
         profile_menu_item("重新连接", Message::ReconnectSession(session_id), false)
     };
-    container(
-        column![
-            profile_menu_item("重命名", Message::RenameSessionPrompt(session_id), false),
-            connection_item,
-            profile_menu_item("克隆会话", Message::CloneSessionFromTab(session_id), false),
-            profile_menu_divider(),
-            profile_menu_item("关闭", Message::CloseSession(session_id), true),
-        ]
-        .spacing(1),
-    )
-    .padding(4)
-    .width(Length::Fixed(PROFILE_MENU_WIDTH))
-    .style(|_theme| profile_context_menu_style())
-    .into()
+    let mut items: Vec<Element<'static, Message>> = Vec::new();
+    items.push(profile_menu_item("重命名", Message::RenameSessionPrompt(session_id), false));
+    items.push(connection_item);
+    items.push(profile_menu_item("克隆会话", Message::CloneSessionFromTab(session_id), false));
+    items.push(profile_menu_divider());
+    if multi {
+        items.push(profile_menu_item("关闭选中标签", Message::CloseSelectedTabs, true));
+        items.push(profile_menu_item("断开选中标签", Message::DisconnectSelectedTabs, false));
+        items.push(profile_menu_divider());
+    }
+    items.push(profile_menu_item("关闭", Message::CloseSession(session_id), true));
+    container(column(items).spacing(1))
+        .padding(4)
+        .width(Length::Fixed(PROFILE_MENU_WIDTH))
+        .style(|_theme| profile_context_menu_style())
+        .into()
 }
 
 pub(crate) fn terminal_context_overlay(app: &AditApp) -> Element<'_, Message> {

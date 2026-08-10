@@ -100,7 +100,7 @@ fn is_dark() -> bool {
     DARK_MODE.load(Ordering::Relaxed)
 }
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
     time::Duration,
 };
 use unicode_width::UnicodeWidthChar;
@@ -139,6 +139,10 @@ pub struct AditApp {
     profile_context_menu: Option<ProfileId>,
     /// The session tab whose right-click context menu is open.
     tab_context_menu: Option<SessionId>,
+    /// Multi-selected tab sessions (Ctrl/Shift+click).
+    selected_tabs: HashSet<SessionId>,
+    /// Anchor for Shift+click range selection.
+    tab_select_anchor: Option<SessionId>,
     profile_editor: Option<ProfileId>,
     connection_dialog: Option<ConnectionDialog>,
     // Folders in user-arrangeable order (top-level tree order); a session may be
@@ -868,7 +872,9 @@ pub enum Message {
     OpenSelectedProfile,
     ConnectSelectedProfile,
     RetryActiveSession,
-    TabPressed(SessionId),
+    TabClicked(SessionId),
+    CloseSelectedTabs,
+    DisconnectSelectedTabs,
     TabDragOver(SessionId),
     TabReleased,
     CloseSession(SessionId),
@@ -1474,6 +1480,8 @@ impl AditApp {
             renaming_session: None,
             session_rename_draft: String::new(),
             dragged_tab: None,
+            selected_tabs: HashSet::new(),
+            tab_select_anchor: None,
             broadcast_input: false,
             command_window_open,
             command_target: CommandTarget::ActiveSession,

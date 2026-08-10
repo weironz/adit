@@ -2147,6 +2147,7 @@ pub(crate) fn split_pane(app: &mut AditApp) {
 /// 重连 — so none of them can drift from the others, and a new one gets the
 /// fallback below for free.
 pub(crate) fn close_session_tab(app: &mut AditApp, session_id: SessionId) {
+    app.selected_tabs.remove(&session_id);
     app.manager.close(session_id);
     app.terminal_scroll_offset = 0;
     app.terminal_selection = None;

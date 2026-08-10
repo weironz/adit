@@ -451,6 +451,18 @@ pub(crate) fn tab_container_style_dnd(active: bool, dragging: bool) -> container
     }
 }
 
+/// A tab that is part of the current multi-selection (Ctrl/Shift+click).
+/// Uses a soft accent fill with a stronger accent border so it reads as
+/// selected without being confused with the active tab.
+pub(crate) fn tab_container_style_selected() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(accent_soft())),
+        text_color: Some(primary_text()),
+        border: border(RADIUS_SM, 2.0, accent()),
+        ..container::Style::default()
+    }
+}
+
 /// Subtle close glyph that hugs the title and lifts gently on hover.
 pub(crate) fn tab_close_button_style(status: button::Status) -> button::Style {
     let (background, text_color) = match status {

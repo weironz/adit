@@ -2048,12 +2048,56 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RetryActiveSession => {
             retry_active_session(app);
         }
-        Message::TabPressed(session_id) => {
+        Message::TabClicked(session_id) => {
             // Clicking a tab activates it and arms a possible drag-reorder.
             // It also leaves the host list, which shares this tab bar — without
             // that the grid would stay on screen with a session selected behind
             // it, and the two would disagree about what is in front.
             app.main_view = MainView::Terminal;
+
+            let modifiers = app.modifiers;
+            if modifiers.control() {
+                // Ctrl-click: toggle this tab in/out of the multi-selection.
+                if app.selected_tabs.contains(&session_id) {
+                    app.selected_tabs.remove(&session_id);
+                } else {
+                    app.selected_tabs.insert(session_id);
+                }
+                // Re-anchor so the next Shift-click range extends from here.
+                app.tab_select_anchor = Some(session_id);
+                // Leave the active session alone so the terminal keeps showing
+                // something sensible while more tabs are picked.
+                return Task::none();
+            }
+
+            if modifiers.shift() {
+                // Shift-click: range-select from the anchor to this tab.
+                let anchor = app.tab_select_anchor.or(app.manager.active_session());
+                if let Some(anchor_id) = anchor {
+                    let sessions: Vec<SessionId> = app
+                        .manager
+                        .sessions()
+                        .into_iter()
+                        .map(|s| s.id)
+                        .collect();
+                    let anchor_pos = sessions.iter().position(|id| *id == anchor_id);
+                    let click_pos = sessions.iter().position(|id| *id == session_id);
+                    if let (Some(a), Some(c)) = (anchor_pos, click_pos) {
+                        let range = if a <= c { a..=c } else { c..=a };
+                        for i in range {
+                            app.selected_tabs.insert(sessions[i]);
+                        }
+                    }
+                }
+                // Activate the clicked tab too.
+                activate_session(app, session_id);
+                app.dragged_tab = Some(session_id);
+                return Task::none();
+            }
+
+            // Plain click: clear multi-selection, act like the old TabPressed.
+            app.selected_tabs.clear();
+            app.tab_select_anchor = Some(session_id);
             activate_session(app, session_id);
             app.dragged_tab = Some(session_id);
         }
@@ -2069,6 +2113,30 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::TabReleased => {
             app.dragged_tab = None;
+        }
+        Message::CloseSelectedTabs => {
+            app.tab_context_menu = None;
+            let ids: Vec<SessionId> = app.selected_tabs.iter().copied().collect();
+            app.selected_tabs.clear();
+            app.tab_select_anchor = None;
+            for id in ids {
+                close_session_tab(app, id);
+            }
+            if !app.manager.sessions().is_empty() {
+                app.notice = String::from(t("已关闭选中标签"));
+            } else {
+                app.notice = String::from(t("已关闭所有标签"));
+            }
+        }
+        Message::DisconnectSelectedTabs => {
+            app.tab_context_menu = None;
+            let ids: Vec<SessionId> = app.selected_tabs.iter().copied().collect();
+            for id in ids {
+                let _ = app.manager.disconnect(id);
+            }
+            app.selected_tabs.clear();
+            app.tab_select_anchor = None;
+            app.notice = String::from(t("已断开选中标签"));
         }
         Message::CloseSession(session_id) => {
             app.tab_context_menu = None;
