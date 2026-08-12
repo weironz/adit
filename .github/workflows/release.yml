@@ -14,6 +14,22 @@ on:
         description: 'Patch version to release, e.g. 0.1.60 (no leading v)'
         required: true
         type: string
+      # Off by default because development is Windows-first: the Linux and macOS
+      # packages are the slowest jobs in a release (macOS builds two targets from
+      # scratch) and nothing being tested day to day runs on either. A checkbox
+      # rather than a code change, so re-enabling them is a decision made when
+      # triggering the release instead of a commit someone has to remember — and
+      # so a release that skipped them says so in its own run inputs afterwards.
+      #
+      # Turning it on does not rebuild the Windows installers. These jobs only
+      # ever attach extra assets to the release the Windows job already
+      # published, which is also why a release can be topped up later by
+      # re-running with it set.
+      all_platforms:
+        description: 'Also build the Linux and macOS packages'
+        required: false
+        default: false
+        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -184,9 +200,17 @@ jobs:
   # the missing asset can be uploaded afterwards, instead of a packaging bug
   # taking the whole release down. They check out the tag, so they build exactly
   # what was published rather than whatever main has drifted to since.
+  #
+  # Both are gated on `all_platforms`, so by default a release publishes the two
+  # Windows installers and stops. Compared as a STRING against 'true' rather
+  # than tested for truthiness: `github.event.inputs.*` values arrive as strings
+  # whatever their declared type, and the string 'false' is itself truthy here —
+  # a bare `if: ${{ github.event.inputs.all_platforms }}` would run these jobs
+  # every single time while looking exactly like it does not.
   linux-packages:
     name: linux · deb + rpm (${{ matrix.arch }})
     needs: release
+    if: ${{ github.event.inputs.all_platforms == 'true' }}
     runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
@@ -234,6 +258,7 @@ jobs:
   macos-bundle:
     name: macos · dmg (unsigned)
     needs: release
+    if: ${{ github.event.inputs.all_platforms == 'true' }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4

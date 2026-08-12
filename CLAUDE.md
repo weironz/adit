@@ -92,6 +92,18 @@ anchor comes back on a different line from the text it named.
   gh workflow run release.yml -f version=0.1.60
   ```
 
+  That publishes the **Windows installers only** (x64 + arm64). The Linux and
+  macOS packages are the slowest jobs in the release and nothing here is tested
+  on either, so they are off unless asked for:
+
+  ```bash
+  gh workflow run release.yml -f version=0.1.60 -f all_platforms=true
+  ```
+
+  Those jobs only ever *attach* assets to the release the Windows job already
+  published, so a Windows-only release can be topped up later by re-running the
+  workflow with the flag set.
+
   That dispatches [`.github/workflows/release.yml`](.github/workflows/release.yml)
   (a `workflow_dispatch`), which bumps the three crate versions in lockstep (root
   workspace, `crates/adit-rdp/Cargo.toml`, `crates/adit-rdp-proto/Cargo.toml`), runs
