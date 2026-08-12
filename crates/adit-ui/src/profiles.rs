@@ -5,7 +5,7 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::NewProfile => new_profile_draft(app),
         MenuCommand::NewGroup => new_group_draft(app),
         MenuCommand::SaveProfile => save_profile(app),
-        MenuCommand::DeleteProfile => delete_selected_profile(app),
+        MenuCommand::DeleteProfile => delete_selected_profiles(app),
         MenuCommand::SortByName => sort_profiles(app, ProfileSortKey::Name),
         MenuCommand::SortByHost => sort_profiles(app, ProfileSortKey::Host),
         MenuCommand::Connect => connect_or_prompt(app),
@@ -93,11 +93,76 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
     }
 }
 
+/// Make `profile_id` the whole selection: focused, and the only member.
+///
+/// `selected_profiles` is the single source of truth for *what is selected*;
+/// `selected_profile` is only which of them the editor is showing. Keeping the
+/// set in step here is what stops the two drifting — before this, a plain click
+/// left the set empty while the row rendered highlighted, so the menu bar and
+/// the batch bar disagreed about what the user had chosen.
 pub(crate) fn select_profile(app: &mut AditApp, profile_id: ProfileId) {
+    app.selected_profiles.clear();
+    app.selected_profiles.insert(profile_id);
+    app.profile_select_anchor = Some(profile_id);
+    focus_profile(app, profile_id);
+}
+
+/// Move the editor focus without touching the selection — for Ctrl/Shift
+/// clicks, which decide membership themselves.
+pub(crate) fn focus_profile(app: &mut AditApp, profile_id: ProfileId) {
     app.terminal_focused = false;
     app.selected_profile = Some(profile_id);
     load_selected_profile(app);
     app.last_error = None;
+}
+
+/// The selection in the order the sidebar draws it, pruned to profiles that
+/// still exist.
+///
+/// Every batch action iterates this rather than the `HashSet` directly: hash
+/// order is arbitrary, so without it "delete the selected three" ran in a
+/// different order each time, and a stale id left by an earlier delete could
+/// still be acted on.
+pub(crate) fn selected_profile_ids(app: &AditApp) -> Vec<ProfileId> {
+    let live: std::collections::HashSet<ProfileId> =
+        app.manager.profiles().iter().map(|p| p.id).collect();
+    let mut ordered: Vec<ProfileId> = crate::sidebar::visible_profile_ids(app)
+        .into_iter()
+        .filter(|id| app.selected_profiles.contains(id) && live.contains(id))
+        .collect();
+    // A selected row can be hidden by a collapsed group and so be missing from
+    // the visible order. It is still selected, so it is still acted on — but it
+    // goes last, after everything the user can actually see.
+    let mut hidden: Vec<ProfileId> = app
+        .selected_profiles
+        .iter()
+        .copied()
+        .filter(|id| live.contains(id) && !ordered.contains(id))
+        .collect();
+    hidden.sort_by_key(|id| id.to_string());
+    ordered.append(&mut hidden);
+    if ordered.is_empty() {
+        ordered.extend(app.selected_profile.filter(|id| live.contains(id)));
+    }
+    ordered
+}
+
+/// Drop selection entries whose profile is gone, and keep the focus inside what
+/// is left. Called after anything that removes profiles — a single delete, a
+/// batch delete, or a sync that replaces the whole catalog.
+pub(crate) fn prune_profile_selection(app: &mut AditApp) {
+    let live: std::collections::HashSet<ProfileId> =
+        app.manager.profiles().iter().map(|p| p.id).collect();
+    app.selected_profiles.retain(|id| live.contains(id));
+    if app
+        .profile_select_anchor
+        .is_some_and(|id| !live.contains(&id))
+    {
+        app.profile_select_anchor = None;
+    }
+    if app.selected_profile.is_some_and(|id| !live.contains(&id)) {
+        app.selected_profile = None;
+    }
 }
 
 pub(crate) fn close_profile_editor_if_other(app: &mut AditApp, profile_id: ProfileId) {
@@ -837,19 +902,76 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
     }
 }
 
-pub(crate) fn delete_selected_profile(app: &mut AditApp) {
-    let Some(profile_id) = app.selected_profile else {
+/// Delete everything selected.
+///
+/// Reads the selection, not `selected_profile`: the user's request was that the
+/// menu bar's 删除会话 act on a multi-selection, and this is the path it takes.
+/// With one row selected it behaves exactly as it always did.
+pub(crate) fn delete_selected_profiles(app: &mut AditApp) {
+    let ids = selected_profile_ids(app);
+    if ids.is_empty() {
         app.last_error = Some(String::from(t("请选择要删除的会话配置")));
         return;
-    };
+    }
+    if ids.len() == 1 {
+        delete_one_profile(app, ids[0]);
+        return;
+    }
 
+    let mut deleted = 0usize;
+    // Counted rather than reported one at a time: a vault that is refusing will
+    // refuse for every profile, and N identical errors is worse than one line
+    // saying how many.
+    let mut credential_failures = 0usize;
+    for id in ids {
+        if app.manager.delete_profile(id).is_ok() {
+            deleted += 1;
+            if app.credential_store.delete_profile_password(id).is_err() {
+                credential_failures += 1;
+            }
+            let _ = app.credential_store.delete_profile_passphrase(id);
+        }
+    }
+    if deleted == 0 {
+        return;
+    }
+
+    app.profile_context_menu = None;
+    app.profile_editor = None;
+    cancel_inline_rename(app);
+    prune_profile_selection(app);
+    app.selected_profiles.clear();
+    app.profile_select_anchor = None;
+    app.selected_profile = app.manager.profiles().first().map(|profile| profile.id);
+    if let Some(id) = app.selected_profile {
+        select_profile(app, id);
+    } else {
+        new_profile_draft(app);
+    }
+    if persist_profiles(app) {
+        app.notice = tf("已删除 {} 个会话配置", &[&deleted]);
+    }
+    // After the notice, so a real failure is what stays on screen: the profile
+    // is gone either way, but its stored password is not.
+    if credential_failures > 0 {
+        app.last_error = Some(tf("{} 个配置的系统凭据未能删除", &[&credential_failures]));
+    }
+}
+
+fn delete_one_profile(app: &mut AditApp, profile_id: ProfileId) {
     match app.manager.delete_profile(profile_id) {
         Ok(()) => {
             app.profile_context_menu = None;
             app.profile_editor = None;
             // The deleted row can't cancel its own in-place rename, so do it here.
             cancel_inline_rename(app);
+            prune_profile_selection(app);
             app.selected_profile = app.manager.profiles().first().map(|profile| profile.id);
+            if let Some(id) = app.selected_profile {
+                app.selected_profiles.clear();
+                app.selected_profiles.insert(id);
+            }
+            app.profile_select_anchor = app.selected_profile;
             app.last_error = None;
             let credential_cleanup = app
                 .credential_store

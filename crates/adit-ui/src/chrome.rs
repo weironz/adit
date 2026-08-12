@@ -63,6 +63,9 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
         let collapsed = app.collapsed_groups.contains(&group);
         layers.push(opaque(group_context_overlay(app, group, collapsed)));
     }
+    if app.batch_move_menu && !app.selected_profiles.is_empty() {
+        layers.push(opaque(batch_move_overlay(app)));
+    }
     if app.terminal_context_menu {
         layers.push(opaque(terminal_context_overlay(app)));
     }

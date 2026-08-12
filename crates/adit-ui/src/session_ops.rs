@@ -250,14 +250,15 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
 /// that cycle: the branch that calls back into the dialog is the no-password
 /// one. Retry deliberately keeps prompting (see `retry_active_session`) --
 /// otherwise a stored password that has gone stale could never be corrected.
-pub(crate) fn connect_or_prompt(app: &mut AditApp) {
-    let Some(profile_id) = app.selected_profile else {
-        open_connection_dialog(app);
-        return;
-    };
+/// Whether this profile can be connected without putting a dialog on screen.
+///
+/// Extracted so batch connect can ask the same question the single connect
+/// asks. Batch connect must know the answer *before* it acts: there is one
+/// dialog and one password slot, so opening prompts in a loop overwrites every
+/// one but the last, and those sessions never open with nothing said.
+pub(crate) fn profile_can_connect_unattended(app: &AditApp, profile_id: ProfileId) -> bool {
     let Some(profile) = app.manager.profile(profile_id) else {
-        open_connection_dialog(app);
-        return;
+        return false;
     };
     let stored = app
         .credential_store
@@ -265,7 +266,7 @@ pub(crate) fn connect_or_prompt(app: &mut AditApp) {
         .ok()
         .flatten()
         .is_some_and(|password| !password.is_empty());
-    let can_auto = match profile.protocol {
+    match profile.protocol {
         Protocol::Rdp => stored,
         // SFTP dials over SSH, so it needs the same secret SSH would. Letting
         // it fall through to "no credential required" would auto-connect with
@@ -275,7 +276,19 @@ pub(crate) fn connect_or_prompt(app: &mut AditApp) {
         // needs the stored secret.
         Protocol::Ssh => stored || profile.auth_method != AuthMethod::Password,
         _ => true,
+    }
+}
+
+pub(crate) fn connect_or_prompt(app: &mut AditApp) {
+    let Some(profile_id) = app.selected_profile else {
+        open_connection_dialog(app);
+        return;
     };
+    if app.manager.profile(profile_id).is_none() {
+        open_connection_dialog(app);
+        return;
+    }
+    let can_auto = profile_can_connect_unattended(app, profile_id);
     if can_auto {
         // Switching to the session view is part of connecting, not a side
         // effect of it: the RDP key path is gated on `main_view ==

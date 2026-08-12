@@ -459,6 +459,86 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.group_drop_target = None;
         }
         Message::ProfilePressed(profile_id) => {
+            let modifiers = app.modifiers;
+            // Every click path commits a rename in progress, modifier or not:
+            // the row being renamed has no confirm button, so clicking away is
+            // the only way to finish it.
+            commit_inline_rename(app);
+
+            if modifiers.control() {
+                // Ctrl+click toggles one row. Seed with the focused row first —
+                // click A then Ctrl+click B is a two-item selection in Explorer,
+                // and without the seed A stayed highlighted while only B was
+                // acted on.
+                if app.selected_profiles.is_empty() {
+                    if let Some(current) = app.selected_profile {
+                        app.selected_profiles.insert(current);
+                    }
+                }
+                if !app.selected_profiles.remove(&profile_id) {
+                    app.selected_profiles.insert(profile_id);
+                }
+                app.profile_select_anchor = Some(profile_id);
+                // The focus has to stay inside the selection, or the menu bar
+                // and the editor act on a row that is not even highlighted.
+                if app.selected_profiles.contains(&profile_id) {
+                    focus_profile(app, profile_id);
+                } else if !app
+                    .selected_profile
+                    .is_some_and(|id| app.selected_profiles.contains(&id))
+                {
+                    if let Some(first) = crate::profiles::selected_profile_ids(app).first().copied()
+                    {
+                        focus_profile(app, first);
+                    }
+                }
+                close_profile_editor_if_other(app, profile_id);
+                app.profile_context_menu = None;
+                app.group_context_menu = None;
+                // No drag arming under a modifier: a Ctrl/Shift click that
+                // drifts a few pixels would otherwise reorder the tree and
+                // persist it, with the user believing they were only selecting.
+                app.dragged_profile = None;
+                app.profile_drag_origin = None;
+                return Task::none();
+            }
+
+            if modifiers.shift() {
+                // Shift+click *replaces* the selection with anchor→click. Union
+                // would mean a range could only ever grow; replacing is what
+                // lets the user shrink one, as Explorer does. The range is taken
+                // over the sidebar's render order (sorted + filtered + collapsed)
+                // so it matches what is on screen rather than storage order.
+                let anchor = app.profile_select_anchor.or(app.selected_profile);
+                let visible = crate::sidebar::visible_profile_ids(app);
+                let click_pos = visible.iter().position(|id| *id == profile_id);
+                let anchor_pos = anchor.and_then(|id| visible.iter().position(|v| *v == id));
+                app.selected_profiles.clear();
+                match (anchor_pos, click_pos) {
+                    (Some(a), Some(c)) => {
+                        let range = if a <= c { a..=c } else { c..=a };
+                        for i in range {
+                            app.selected_profiles.insert(visible[i]);
+                        }
+                    }
+                    // No usable anchor — it was filtered out, collapsed away, or
+                    // deleted. Start a fresh one here rather than selecting a
+                    // range whose far end the user cannot see.
+                    _ => {
+                        app.selected_profiles.insert(profile_id);
+                        app.profile_select_anchor = Some(profile_id);
+                    }
+                }
+                focus_profile(app, profile_id);
+                close_profile_editor_if_other(app, profile_id);
+                app.profile_context_menu = None;
+                app.group_context_menu = None;
+                app.dragged_profile = None;
+                app.profile_drag_origin = None;
+                return Task::none();
+            }
+
+            // Plain click: the selection becomes exactly this row.
             select_profile(app, profile_id);
             app.dragged_profile = Some(profile_id);
             app.drag_from_grid = false;
@@ -474,8 +554,6 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
-            // Clicking another row saves any in-place rename (no confirm buttons).
-            commit_inline_rename(app);
             close_profile_editor_if_other(app, profile_id);
         }
         Message::ProfileDoubleClicked(profile_id) => {
@@ -722,7 +800,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             save_profile_rename(app);
         }
         Message::ShowProfileContextMenu(profile_id) => {
-            select_profile(app, profile_id);
+            // Right-clicking inside the selection keeps it — that is what makes
+            // "batch delete" on a right-click mean the rows the user chose.
+            // Right-clicking outside it selects that row instead, so the menu
+            // can never act on rows the click did not touch.
+            if app.selected_profiles.contains(&profile_id) {
+                focus_profile(app, profile_id);
+            } else {
+                select_profile(app, profile_id);
+            }
             app.dragged_profile = None;
             app.group_drop_target = None;
             // Anchor the floating menu at the cursor (last tracked position).
@@ -772,6 +858,90 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CloseProfileEditor => {
             app.profile_editor = None;
         }
+        Message::BatchConnectSelectedProfiles => {
+            app.profile_context_menu = None;
+            let ids = crate::profiles::selected_profile_ids(app);
+            app.selected_profiles.clear();
+            app.profile_select_anchor = None;
+            // There is one connection dialog and one password slot. Opening it
+            // per profile in a loop meant every prompt but the last was
+            // overwritten before the user could see it, and those sessions
+            // silently never opened. So: connect what can connect unattended,
+            // and say plainly how many were left.
+            let mut opened = 0usize;
+            let mut needs_prompt: Vec<ProfileId> = Vec::new();
+            for id in ids {
+                focus_profile(app, id);
+                if profile_can_connect_unattended(app, id) {
+                    connect_profile(app);
+                    opened += 1;
+                } else {
+                    needs_prompt.push(id);
+                }
+            }
+            match (opened, needs_prompt.len()) {
+                (0, 0) => {}
+                (_, 0) => app.notice = tf("已连接 {} 个会话", &[&opened]),
+                // Exactly one left: prompt for it, which is what a single
+                // selection would have done anyway.
+                (_, 1) => {
+                    focus_profile(app, needs_prompt[0]);
+                    connect_profile(app);
+                }
+                (_, skipped) => {
+                    app.notice = tf(
+                        "已连接 {} 个会话，{} 个需要输入密码，请逐个连接",
+                        &[&opened, &skipped],
+                    );
+                }
+            }
+        }
+        Message::BatchDeleteSelectedProfiles => {
+            // One implementation, shared with the menu bar's 删除会话, so the
+            // two can never diverge in what they delete or what they report.
+            crate::profiles::delete_selected_profiles(app);
+        }
+        Message::ShowBatchMoveMenu => {
+            // Close any open right-click menu first so the picker isn't stacked
+            // on top of it, then anchor the picker at the current cursor.
+            app.profile_context_menu = None;
+            app.context_menu_pos = app.cursor_pos;
+            app.batch_move_menu = true;
+        }
+        Message::HideBatchMoveMenu => {
+            app.batch_move_menu = false;
+        }
+        Message::BatchMoveSelectedProfilesTo(group) => {
+            app.batch_move_menu = false;
+            app.profile_context_menu = None;
+            let ids = crate::profiles::selected_profile_ids(app);
+            let mut moved = 0;
+            for id in &ids {
+                if app.manager.move_profile_to_group(*id, &group).is_ok() {
+                    moved += 1;
+                }
+            }
+            if moved > 0 {
+                crate::profiles::add_group(&mut app.groups, &group);
+                app.collapsed_groups.remove(group.trim());
+                app.selected_profiles.clear();
+                app.profile_select_anchor = None;
+                // The editor form still holds the pre-move group, and saving it
+                // would move the profile straight back out. Reload it from what
+                // was actually stored.
+                if app.profile_editor.is_some() && app.profile_editor == app.selected_profile {
+                    load_selected_profile(app);
+                }
+                if persist_profiles(app) {
+                    app.notice = tf("已移动 {} 个会话配置", &[&moved]);
+                }
+            }
+        }
+        Message::ClearProfileSelection => {
+            app.selected_profiles.clear();
+            app.profile_select_anchor = None;
+            app.batch_move_menu = false;
+        }
         Message::ConnectProfileFromContext(profile_id) => {
             select_profile(app, profile_id);
             app.profile_context_menu = None;
@@ -802,7 +972,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::DeleteProfileFromContext(profile_id) => {
             select_profile(app, profile_id);
             app.profile_context_menu = None;
-            delete_selected_profile(app);
+            crate::profiles::delete_selected_profiles(app);
         }
         Message::ConnectionPasswordChanged(password) => {
             app.password = password;
@@ -1278,6 +1448,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SessionFilterChanged(value) => {
             app.terminal_focused = false;
             app.session_filter = value;
+            // A row the filter hides is a row the user can no longer see they
+            // selected, and batch delete would still have destroyed it.
+            let visible: std::collections::HashSet<ProfileId> =
+                crate::sidebar::visible_profile_ids(app).into_iter().collect();
+            app.selected_profiles.retain(|id| visible.contains(id));
+            if app.selected_profiles.is_empty() {
+                app.profile_select_anchor = None;
+            }
         }
         Message::NewProfileDraft => {
             new_profile_draft(app);
@@ -1292,7 +1470,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::DeleteSelectedProfile => {
-            delete_selected_profile(app);
+            crate::profiles::delete_selected_profiles(app);
         }
         Message::TerminalInputChanged(input) => {
             app.terminal_focused = false;

@@ -143,6 +143,12 @@ pub struct AditApp {
     selected_tabs: HashSet<SessionId>,
     /// Anchor for Shift+click range selection.
     tab_select_anchor: Option<SessionId>,
+    /// Multi-selected sidebar profiles (Ctrl/Shift+click).
+    selected_profiles: HashSet<ProfileId>,
+    /// Anchor for Shift+click range selection on profiles.
+    profile_select_anchor: Option<ProfileId>,
+    /// Whether the "move selected profiles to group" picker overlay is open.
+    batch_move_menu: bool,
     profile_editor: Option<ProfileId>,
     connection_dialog: Option<ConnectionDialog>,
     // Folders in user-arrangeable order (top-level tree order); a session may be
@@ -707,6 +713,16 @@ pub enum Message {
     ConnectProfileFromContext(ProfileId),
     CloneProfileFromContext(ProfileId),
     DeleteProfileFromContext(ProfileId),
+    /// Batch-operate on all currently selected sidebar profiles.
+    BatchConnectSelectedProfiles,
+    BatchDeleteSelectedProfiles,
+    /// Open the "move selected profiles to group" picker overlay.
+    ShowBatchMoveMenu,
+    /// Close the "move selected profiles to group" picker overlay.
+    HideBatchMoveMenu,
+    /// Move all selected profiles into the named group and close the picker.
+    BatchMoveSelectedProfilesTo(String),
+    ClearProfileSelection,
     ConnectionPasswordChanged(String),
     RememberConnectionPasswordChanged(bool),
     ConfirmConnection,
@@ -1482,6 +1498,9 @@ impl AditApp {
             dragged_tab: None,
             selected_tabs: HashSet::new(),
             tab_select_anchor: None,
+            selected_profiles: HashSet::new(),
+            profile_select_anchor: None,
+            batch_move_menu: false,
             broadcast_input: false,
             command_window_open,
             command_target: CommandTarget::ActiveSession,
@@ -2085,6 +2104,207 @@ mod tests {
             assert_eq!(press_code, release_code);
             assert_eq!(press_ext, release_ext);
         }
+    }
+
+    /// Ids in the order the sidebar draws them, so a test can name rows the way
+    /// a user points at them.
+    fn visible(app: &AditApp) -> Vec<ProfileId> {
+        crate::sidebar::visible_profile_ids(app)
+    }
+
+    fn press(app: &mut AditApp, id: ProfileId, ctrl: bool, shift: bool) {
+        let mut modifiers = keyboard::Modifiers::default();
+        if ctrl {
+            modifiers |= keyboard::Modifiers::CTRL;
+        }
+        if shift {
+            modifiers |= keyboard::Modifiers::SHIFT;
+        }
+        app.modifiers = modifiers;
+        let _ = update(app, Message::ProfilePressed(id));
+        app.modifiers = keyboard::Modifiers::default();
+    }
+
+    /// A plain click owns the selection outright. This is the invariant the
+    /// rest depends on: `selected_profiles` is what is selected, and
+    /// `selected_profile` is only which of them the editor shows — before, a
+    /// plain click left the set empty while the row rendered highlighted, so
+    /// the menu bar and the batch bar disagreed.
+    #[test]
+    fn a_plain_click_selects_exactly_one_row() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[1], false, false);
+
+        assert_eq!(app.selected_profiles.len(), 1);
+        assert!(app.selected_profiles.contains(&rows[1]));
+        assert_eq!(app.selected_profile, Some(rows[1]));
+        assert_eq!(crate::profiles::selected_profile_ids(&app), vec![rows[1]]);
+    }
+
+    /// Click A then Ctrl+click B is a TWO-item selection, as in Explorer. The
+    /// Ctrl branch used to skip seeding itself with the focused row, so A kept
+    /// its highlight while only B was ever acted on.
+    #[test]
+    fn ctrl_click_folds_in_the_already_focused_row() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[2], true, false);
+
+        assert_eq!(app.selected_profiles.len(), 2);
+        assert!(app.selected_profiles.contains(&rows[0]));
+        assert!(app.selected_profiles.contains(&rows[2]));
+        // The focus must be inside the selection, or the menu bar acts on a row
+        // that is not highlighted.
+        assert!(app
+            .selected_profile
+            .is_some_and(|id| app.selected_profiles.contains(&id)));
+    }
+
+    /// Ctrl+click toggles off, and the focus follows the survivors rather than
+    /// staying on a row that is no longer selected.
+    #[test]
+    fn ctrl_click_toggles_off_and_moves_the_focus_inside() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        press(&mut app, rows[1], true, false);
+
+        assert_eq!(app.selected_profiles.len(), 1);
+        assert!(app.selected_profiles.contains(&rows[0]));
+        assert!(app
+            .selected_profile
+            .is_some_and(|id| app.selected_profiles.contains(&id)));
+    }
+
+    /// Shift+click REPLACES the range instead of unioning it. Union means a
+    /// range can only ever grow; replacing is what lets a user shrink one, and
+    /// it is what Explorer does.
+    #[test]
+    fn shift_click_replaces_the_range_so_it_can_shrink() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[2], false, true);
+        assert_eq!(app.selected_profiles.len(), 3, "anchor..=end inclusive");
+
+        // Shrink it: the same anchor, a nearer end.
+        press(&mut app, rows[1], false, true);
+        assert_eq!(app.selected_profiles.len(), 2);
+        assert!(app.selected_profiles.contains(&rows[0]));
+        assert!(app.selected_profiles.contains(&rows[1]));
+        assert!(!app.selected_profiles.contains(&rows[2]));
+    }
+
+    /// A modifier click must not arm a drag. Ctrl/Shift clicking with a few
+    /// pixels of drift would otherwise reorder the tree and persist it, while
+    /// the user believed they were only selecting.
+    #[test]
+    fn a_modifier_click_does_not_arm_a_drag() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], true, false);
+        assert!(app.dragged_profile.is_none());
+        assert!(app.profile_drag_origin.is_none());
+
+        press(&mut app, rows[2], false, true);
+        assert!(app.dragged_profile.is_none());
+        assert!(app.profile_drag_origin.is_none());
+
+        // A plain click still arms one — the drag feature is intact.
+        press(&mut app, rows[1], false, false);
+        assert_eq!(app.dragged_profile, Some(rows[1]));
+    }
+
+    /// Batch actions iterate the visible order, not `HashSet` order, so "delete
+    /// these three" is deterministic rather than hash-dependent.
+    #[test]
+    fn the_selection_is_reported_in_visible_order() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[2], false, false);
+        press(&mut app, rows[0], true, false);
+        press(&mut app, rows[1], true, false);
+
+        assert_eq!(
+            crate::profiles::selected_profile_ids(&app),
+            vec![rows[0], rows[1], rows[2]]
+        );
+    }
+
+    /// The menu bar's 删除会话 acts on the whole selection — the headline of the
+    /// request. It used to read `selected_profile` alone and delete exactly one.
+    #[test]
+    fn the_menu_delete_removes_every_selected_profile() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        assert_eq!(app.manager.profiles().len(), 3);
+
+        let _ = update(&mut app, Message::RunMenu(MenuCommand::DeleteProfile));
+
+        assert_eq!(app.manager.profiles().len(), 1, "both selected rows deleted");
+        // And nothing stale is left pointing at a profile that is gone.
+        let live: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        assert!(app.selected_profiles.iter().all(|id| live.contains(id)));
+        assert!(app.selected_profile.is_none_or(|id| live.contains(&id)));
+    }
+
+    /// Filtering hides rows; a hidden row must not stay silently selected,
+    /// because batch delete would still have destroyed it.
+    #[test]
+    fn filtering_drops_rows_it_hides_from_the_selection() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        press(&mut app, rows[2], true, false);
+        assert_eq!(app.selected_profiles.len(), 3);
+
+        // Narrow to a single profile by name.
+        let keep = app
+            .manager
+            .profiles()
+            .iter()
+            .find(|p| p.id == rows[0])
+            .map(|p| p.name.clone())
+            .expect("a name");
+        let _ = update(&mut app, Message::SessionFilterChanged(keep));
+
+        assert!(app.selected_profiles.len() < 3);
+        let shown: Vec<ProfileId> = visible(&app);
+        assert!(app.selected_profiles.iter().all(|id| shown.contains(id)));
+    }
+
+    /// Right-clicking a row already in the selection keeps it — otherwise the
+    /// context menu's batch entries would act on a single row every time.
+    /// Right-clicking outside resets, so the menu can never act on rows the
+    /// click did not touch.
+    #[test]
+    fn right_click_keeps_a_selection_it_lands_inside() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+
+        let _ = update(&mut app, Message::ShowProfileContextMenu(rows[1]));
+        assert_eq!(app.selected_profiles.len(), 2, "inside: selection survives");
+
+        let _ = update(&mut app, Message::ShowProfileContextMenu(rows[2]));
+        assert_eq!(app.selected_profiles.len(), 1, "outside: selection resets");
+        assert!(app.selected_profiles.contains(&rows[2]));
     }
 
     fn drag_test_app() -> AditApp {

@@ -452,12 +452,21 @@ pub(crate) fn tab_container_style_dnd(active: bool, dragging: bool) -> container
 }
 
 /// A tab that is part of the current multi-selection (Ctrl/Shift+click).
-/// Uses a soft accent fill with a stronger accent border so it reads as
-/// selected without being confused with the active tab.
+/// Uses a prominent tinted background and accent border so it reads as selected
+/// even when the tab is also the active one — the tint keeps the two states
+/// visually distinct.
 pub(crate) fn tab_container_style_selected() -> container::Style {
+    let bg = pick(
+        Color::from_rgb8(200, 235, 228),
+        Color::from_rgb8(35, 60, 55),
+    );
+    let fg = pick(
+        Color::from_rgb8(10, 120, 100),
+        Color::from_rgb8(120, 230, 210),
+    );
     container::Style {
-        background: Some(Background::Color(accent_soft())),
-        text_color: Some(primary_text()),
+        background: Some(Background::Color(bg)),
+        text_color: Some(fg),
         border: border(RADIUS_SM, 2.0, accent()),
         ..container::Style::default()
     }
