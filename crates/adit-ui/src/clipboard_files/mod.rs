@@ -24,6 +24,13 @@
 //! Nothing is ever copied or staged: a selection becomes metadata, and bytes are
 //! read from the original path only when the remote actually pastes.
 
+// The bridge's *users* — `data_object` and `ole` — are Windows-only, but the
+// type itself cannot be, because it appears in `offer_remote_files`'s
+// signature and that function has a stub for the other platforms. So on
+// non-Windows every item in here is unreachable by construction, which
+// `-D warnings` reports as six dead-code errors. Saying so is honest; gating
+// the module would mean two different signatures for one function.
+#[cfg_attr(not(windows), allow(dead_code))]
 mod bridge;
 #[cfg(windows)]
 mod data_object;
@@ -209,6 +216,10 @@ const CF_DIB: u32 = 8;
 
 /// Ceiling on one clipboard image, mirroring the helper's. Sized for a
 /// screenshot rather than for text: an uncompressed 4K DIB is about 33 MB.
+///
+/// Only the Windows clipboard functions consult it; the stubs beside them do
+/// not, so elsewhere it is dead by construction.
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
 
 /// A counter Windows bumps on every clipboard change, or 0 if unavailable.
