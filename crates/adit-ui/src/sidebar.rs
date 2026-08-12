@@ -234,43 +234,11 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     );
     content = content.push(scrollable(session_tree(app)).height(Fill));
 
-    // The selection bar sits BELOW the tree, and only once more than one row is
-    // picked. Above the tree it pushed every row down the instant a second row
-    // was selected, so the next Ctrl+click landed on a different session than
-    // the one under the pointer. Its labels carry no "批量": these are the same
-    // 连接 and 删除 as everywhere else, and the count is what says how far they
-    // reach.
-    if app.selected_profiles.len() > 1 {
-        let count = app.selected_profiles.len();
-        content = content.push(
-            container(
-                row![
-                    text(tf("已选 {} 项", &[&count])).size(11).color(muted_text()),
-                    Space::new().width(Fill),
-                    button(text(t("连接")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| primary_button_style(status))
-                        .on_press(Message::ConnectSelectedProfiles),
-                    button(text(t("移动到分组")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| secondary_button_style(status))
-                        .on_press(Message::ShowMoveToGroupMenu),
-                    button(text(t("删除")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| danger_button_style(status))
-                        .on_press(Message::DeleteSelectedProfiles),
-                    button(text(t("取消选择")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| secondary_button_style(status))
-                        .on_press(Message::ClearProfileSelection),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .padding([3, 8])
-            .style(|_theme| sidebar_header_style()),
-        );
-    }
+    // No action bar for a multi-selection, deliberately. Every action it
+    // carried is on the right-click menu and the menu bar, which is where the
+    // user already goes for one row — a strip that appears only sometimes, and
+    // whose buttons wrapped once the sidebar was narrow, was a third place to
+    // learn for nothing new.
 
     let mut content = content.spacing(0).height(Fill).width(Length::Fixed(app.sidebar_width));
 

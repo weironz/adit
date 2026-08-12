@@ -63,7 +63,6 @@ fn en(zh: &'static str) -> &'static str {
         // The fullscreen RDP toolbar.
         "全屏" => "Fullscreen",
         // Sidebar multi-selection (Ctrl/Shift+click) and its batch actions.
-        "已选 {} 项" => "{} selected",
         "关闭 {} 个标签" => "Close {} tabs",
         "移动到分组" => "Move to group",
         "取消选择" => "Clear selection",

@@ -2286,6 +2286,29 @@ mod tests {
         assert!(app.selected_profiles.iter().all(|id| shown.contains(id)));
     }
 
+    /// Escape is the way out of a multi-selection now that the action bar is
+    /// gone. It reduces to the focused row rather than emptying the set: the
+    /// set is the selection, so emptying it while `selected_profile` still
+    /// pointed somewhere would leave a row highlighted that no action reaches.
+    #[test]
+    fn clearing_a_selection_leaves_the_focused_row() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        press(&mut app, rows[2], true, false);
+        assert_eq!(app.selected_profiles.len(), 3);
+
+        let _ = update(&mut app, Message::ClearProfileSelection);
+
+        assert_eq!(app.selected_profiles.len(), 1);
+        assert!(app
+            .selected_profile
+            .is_some_and(|id| app.selected_profiles.contains(&id)));
+        assert!(!crate::sidebar::profile_menu_is_multi(&app));
+    }
+
     /// A single selection keeps 重命名 / 编辑 / 克隆; only a real multi-selection
     /// drops them. This shipped broken: the flag asked whether the selection
     /// set was non-empty, which was true for one row too once the set became

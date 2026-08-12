@@ -945,8 +945,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ClearProfileSelection => {
+            // Back to the focused row, not to nothing. The set IS the
+            // selection, and emptying it while `selected_profile` still points
+            // somewhere would leave a row highlighted that no action reaches.
+            let focused = app.selected_profile;
             app.selected_profiles.clear();
-            app.profile_select_anchor = None;
+            if let Some(id) = focused {
+                app.selected_profiles.insert(id);
+            }
+            app.profile_select_anchor = focused;
             app.move_to_group_menu = false;
         }
         Message::ConnectProfileFromContext(profile_id) => {
@@ -1884,6 +1891,16 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.search_index = None;
                 app.terminal_focused = true;
                 return Task::none();
+            }
+            // Escape drops a multi-selection back to the focused row. Checked
+            // after the rename branch below would be wrong — a rename in
+            // progress owns Escape first — so this sits after it.
+            if is_escape_key(&event)
+                && app.editing_profile.is_none()
+                && app.editing_group.is_none()
+                && app.selected_profiles.len() > 1
+            {
+                return Task::done(Message::ClearProfileSelection);
             }
             // Escape cancels an in-place rename (the focused text input ignores
             // Escape, so the key reaches us here).
