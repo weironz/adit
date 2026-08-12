@@ -78,6 +78,11 @@ pub fn run_host() -> Result<(), RdpError> {
                             break; // session ended
                         }
                     }
+                    Ok(Some(ClientMsg::ClipboardImage(image))) => {
+                        if input_tx.send(SessionCmd::ClipboardImage(image)).is_err() {
+                            break;
+                        }
+                    }
                     Ok(Some(ClientMsg::ClipboardFiles(files))) => {
                         if input_tx.send(SessionCmd::ClipboardFiles(files)).is_err() {
                             break;

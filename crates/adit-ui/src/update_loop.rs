@@ -50,6 +50,17 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_clipboard_offered = Some(text.clone());
                 return clipboard::write(text);
             }
+            // An image the remote copied. Written straight through as CF_DIB —
+            // iced's clipboard is text-only, so this is Win32 directly.
+            if let Some(image) = app.manager.take_rdp_clipboard_image() {
+                if app.rdp_clipboard && clipboard_files::set_clipboard_image(&image) {
+                    // Writing bumps the sequence number; claiming it here is what
+                    // stops the poll below offering the remote its own image back.
+                    let seq = clipboard_files::clipboard_sequence();
+                    app.rdp_clipboard_seq = seq;
+                    app.rdp_image_offered_seq = seq;
+                }
+            }
             // ...and the local clipboard is sampled for the remote. Only while an
             // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
             // opens the system clipboard, and doing that ten times a second would
@@ -111,6 +122,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     // the *names* on as text, and letting that through would
                     // offer the remote a list of paths instead of the files.
                     offer_local_files_if_changed(app);
+                    offer_local_image_if_changed(app);
                     return clipboard::read().map(Message::RdpClipboardPolled);
                 }
             }
@@ -2743,6 +2755,31 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
 ", frame.width, frame.height);
     let _ = std::fs::write(path.with_extension("txt"), meta);
     let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
+}
+
+/// Sample the local clipboard for an image and offer it to the active RDP
+/// desktop, but only when the clipboard actually changed.
+///
+/// Gated on the sequence number rather than on the bytes: a screenshot is tens
+/// of megabytes and this runs twice a second, so comparing content would mean
+/// copying the whole image off the clipboard every time just to learn it had
+/// not changed.
+pub(crate) fn offer_local_image_if_changed(app: &mut AditApp) {
+    let seq = clipboard_files::clipboard_sequence();
+    if seq == 0 || seq == app.rdp_clipboard_seq {
+        return;
+    }
+    app.rdp_clipboard_seq = seq;
+    // This is the image we ourselves just wrote from the remote; handing it
+    // back would be a loop.
+    if seq == app.rdp_image_offered_seq {
+        return;
+    }
+    let Some(image) = clipboard_files::clipboard_image() else {
+        return;
+    };
+    app.rdp_image_offered_seq = seq;
+    app.manager.offer_image_to_active_rdp(image);
 }
 
 /// Sample the local clipboard for a *file* selection and offer it to the active

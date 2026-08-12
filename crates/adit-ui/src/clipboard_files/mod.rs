@@ -203,6 +203,129 @@ pub(crate) fn read_range(path: &Path, offset: u64, length: u32) -> Option<Vec<u8
     Some(buffer)
 }
 
+/// `CF_DIB`. Not exported by the `windows` crate's clipboard bindings.
+#[cfg(windows)]
+const CF_DIB: u32 = 8;
+
+/// Ceiling on one clipboard image, mirroring the helper's. Sized for a
+/// screenshot rather than for text: an uncompressed 4K DIB is about 33 MB.
+pub(crate) const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// A counter Windows bumps on every clipboard change, or 0 if unavailable.
+///
+/// The point is to avoid copying the image at all when nothing changed: a
+/// full-screen screenshot is tens of megabytes and the RDP clipboard poll runs
+/// twice a second, so comparing this number is a syscall instead of a copy.
+#[cfg(windows)]
+pub(crate) fn clipboard_sequence() -> u32 {
+    // SAFETY: no arguments and no handles; 0 means "not available".
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clipboard_sequence() -> u32 {
+    0
+}
+
+/// The image on the Windows clipboard as raw `CF_DIB` bytes, or `None` when it
+/// holds no image.
+///
+/// Handed over untouched: a DIB is a BITMAPINFOHEADER followed by its pixels,
+/// and the remote understands that layout already. Decoding it here would only
+/// add a way to get it wrong.
+#[cfg(windows)]
+pub(crate) fn clipboard_image() -> Option<Vec<u8>> {
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+    };
+    use windows::Win32::System::Memory::{GlobalLock, GlobalSize, GlobalUnlock};
+
+    // SAFETY: the clipboard is opened and unconditionally closed on every path
+    // out. Holding it open freezes every other application that reads it.
+    unsafe {
+        if IsClipboardFormatAvailable(CF_DIB).is_err() {
+            return None;
+        }
+        if OpenClipboard(None).is_err() {
+            // Another process holds it — a normal race on a timed poll, not an
+            // error worth reporting.
+            return None;
+        }
+        let bytes = (|| {
+            let handle = GetClipboardData(CF_DIB).ok()?;
+            let global = HGLOBAL(handle.0);
+            let size = GlobalSize(global);
+            if size == 0 || size > MAX_CLIPBOARD_IMAGE_BYTES {
+                return None;
+            }
+            let base = GlobalLock(global);
+            if base.is_null() {
+                return None;
+            }
+            let copy = std::slice::from_raw_parts(base.cast::<u8>(), size).to_vec();
+            let _ = GlobalUnlock(global);
+            Some(copy)
+        })();
+        let _ = CloseClipboard();
+        bytes
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn clipboard_image() -> Option<Vec<u8>> {
+    None
+}
+
+/// Put raw `CF_DIB` bytes on the Windows clipboard.
+#[cfg(windows)]
+pub(crate) fn set_clipboard_image(bytes: &[u8]) -> bool {
+    // `GlobalFree` lives in Foundation, not Memory, unlike its Alloc/Lock kin.
+    use windows::Win32::Foundation::{GlobalFree, HANDLE};
+    use windows::Win32::System::DataExchange::{
+        CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData,
+    };
+    use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+
+    if bytes.is_empty() || bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+        return false;
+    }
+    // SAFETY: the clipboard is opened and unconditionally closed. The allocation
+    // is handed to SetClipboardData, after which the system owns it — freeing it
+    // then would be a double free, so it is freed only when that call fails.
+    unsafe {
+        if OpenClipboard(None).is_err() {
+            return false;
+        }
+        let ok = (|| {
+            EmptyClipboard().ok()?;
+            let global = GlobalAlloc(GMEM_MOVEABLE, bytes.len()).ok()?;
+            let base = GlobalLock(global);
+            if base.is_null() {
+                let _ = GlobalFree(Some(global));
+                return None;
+            }
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), base.cast::<u8>(), bytes.len());
+            let _ = GlobalUnlock(global);
+            match SetClipboardData(CF_DIB, Some(HANDLE(global.0))) {
+                Ok(_) => Some(()),
+                Err(_) => {
+                    let _ = GlobalFree(Some(global));
+                    None
+                }
+            }
+        })()
+        .is_some();
+        let _ = CloseClipboard();
+        ok
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn set_clipboard_image(_bytes: &[u8]) -> bool {
+    false
+}
+
 /// The paths currently on the Windows clipboard as a file selection (`CF_HDROP`),
 /// or `None` when it holds something else.
 #[cfg(windows)]

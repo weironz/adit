@@ -68,6 +68,26 @@ fn is_text_format(id: ClipboardFormatId) -> bool {
     TEXT_FORMATS.contains(&id)
 }
 
+/// Image formats, most preferred first. `CF_DIB` is the one we advertise and
+/// the one a Windows screenshot lands on; `CF_DIBV5` is accepted inbound
+/// because some sources offer only that.
+///
+/// The bytes are passed through untouched in both directions — a DIB is a
+/// BITMAPINFOHEADER followed by its pixels, and both ends already agree on that
+/// layout, so parsing it here would only add a way to get it wrong.
+const IMAGE_FORMATS: [ClipboardFormatId; 2] =
+    [ClipboardFormatId::CF_DIB, ClipboardFormatId::CF_DIBV5];
+
+fn is_image_format(id: ClipboardFormatId) -> bool {
+    IMAGE_FORMATS.contains(&id)
+}
+
+/// Ceiling on one clipboard image. Far above `MAX_CLIPBOARD_BYTES`, because
+/// that limit was sized for text and a screenshot is not text: an uncompressed
+/// 4K DIB is about 33 MB, and refusing it would make the feature useless on the
+/// screens people actually take screenshots of.
+pub(crate) const MAX_CLIPBOARD_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+
 /// The registered clipboard-format name for a file list. Constant across every
 /// implementation per MS-RDPECLIP 1.3.1.2, while the numeric id is arbitrary and
 /// OS-specific — so the name is the only reliable way to recognise it.
@@ -104,6 +124,13 @@ pub(crate) enum ClipboardAction {
     /// Text arrived from the remote; hand it to the app to put on the real
     /// Windows clipboard.
     Inbound(String),
+    /// Answer the remote's request for an image. `image: None` ⇒ error response.
+    SubmitImage {
+        format: ClipboardFormatId,
+        image: Option<Vec<u8>>,
+    },
+    /// An image arrived from the remote; hand it to the app.
+    InboundImage(Vec<u8>),
     /// Offer a local file selection to the remote (`initiate_file_copy`).
     AdvertiseFiles(Vec<ClipFile>),
     /// Answer the remote's `FileContentsRequest` with bytes the app read.
@@ -187,6 +214,12 @@ fn from_descriptor(descriptor: &FileDescriptor) -> ClipFile {
 pub(crate) struct ClipboardState {
     /// Newest text the app offered from the local (GUI-owned) clipboard.
     local_text: Option<String>,
+    /// Newest image the app offered, as raw `CF_DIB` bytes.
+    local_image: Option<Vec<u8>>,
+    /// Repeat-suppression for the image, as `advertised_text` is for text. The
+    /// GUI polls on a timer and a screenshot is megabytes, so re-advertising an
+    /// unchanged one is the expensive kind of pointless.
+    advertised_image_len: Option<usize>,
     /// The text last put into a `FormatList`. Advertising is idempotent on the
     /// wire but not free, and the GUI polls its clipboard on a timer, so this
     /// suppresses the repeats.
@@ -220,14 +253,19 @@ impl ClipboardState {
     /// advertising `CF_UNICODETEXT` with no text behind it would make every
     /// remote paste answer with an error response.
     fn local_formats(&self) -> Vec<ClipboardFormatId> {
-        match self.local_text {
-            Some(_) => vec![ClipboardFormatId::CF_UNICODETEXT],
-            None => Vec::new(),
+        let mut formats = Vec::new();
+        if self.local_text.is_some() {
+            formats.push(ClipboardFormatId::CF_UNICODETEXT);
         }
+        if self.local_image.is_some() {
+            formats.push(ClipboardFormatId::CF_DIB);
+        }
+        formats
     }
 
     fn queue_advertise(&mut self) {
         self.advertised_text = self.local_text.clone();
+        self.advertised_image_len = self.local_image.as_ref().map(Vec::len);
         let formats = self.local_formats();
         self.actions.push_back(ClipboardAction::Advertise(formats));
     }
@@ -235,11 +273,31 @@ impl ClipboardState {
     /// Record text the app copied locally and, once the channel is up, offer it
     /// to the remote. Before `Ready` we only stash it: the initial `FormatList`
     /// is part of the handshake and is sent from `on_request_format_list`.
+    /// Record an image the app copied locally and offer it to the remote.
+    ///
+    /// Like text and files, only the *format* is advertised — the bytes cross
+    /// when something over there pastes. Unlike them, the bytes are already in
+    /// hand, because a DIB has no path to fetch it from later.
+    pub(crate) fn offer_local_image(&mut self, image: Vec<u8>) {
+        if self.local_image.as_ref().is_some_and(|held| *held == image) {
+            return;
+        }
+        self.local_image = Some(image);
+        // One clipboard holds one thing: an image copy replaces whatever text
+        // or file list was offered, exactly as it does on Windows.
+        self.local_text = None;
+        self.local_files.clear();
+        if self.ready {
+            self.queue_advertise();
+        }
+    }
+
     pub(crate) fn offer_local_text(&mut self, text: String) {
         if self.local_text.as_deref() == Some(text.as_str()) {
             return;
         }
         self.local_text = Some(text);
+        self.local_image = None;
         // One clipboard holds one thing. MS-RDPECLIP agrees: each FormatList
         // completely replaces the last, and `initiate_copy` drops the file list
         // upstream — mirroring it here keeps our idea of what is offered from
@@ -262,6 +320,7 @@ impl ClipboardState {
         }
         self.local_files = files;
         self.local_text = None;
+        self.local_image = None;
         self.advertised_text = None;
         if self.ready && self.files_negotiated {
             self.advertised_files = self.local_files.clone();
@@ -284,6 +343,7 @@ impl ClipboardState {
     /// the channel, and the user's clipboard did not change under them.
     fn reset_for_new_channel(&mut self) {
         self.advertised_text = None;
+        self.advertised_image_len = None;
         self.advertised_files.clear();
         self.pending_remote_format = None;
         self.ready = false;
@@ -308,6 +368,13 @@ pub(crate) fn new_shared() -> SharedClipboard {
 pub(crate) fn offer_local_text(state: &SharedClipboard, text: String) {
     if let Ok(mut guard) = state.lock() {
         guard.offer_local_text(text);
+    }
+}
+
+/// Hand an image the app just copied locally to the CLIPRDR state machine.
+pub(crate) fn offer_local_image(state: &SharedClipboard, image: Vec<u8>) {
+    if let Ok(mut guard) = state.lock() {
+        guard.offer_local_image(image);
     }
 }
 
@@ -472,6 +539,25 @@ impl CliprdrBackend for AditCliprdrBackend {
             return;
         }
 
+        let text_available = TEXT_FORMATS
+            .iter()
+            .any(|wanted| available_formats.iter().any(|f| f.id == *wanted));
+        if !text_available {
+            // Images only when there is no text. A copy offering both is text
+            // with a rendering attached (a spreadsheet cell, a styled run), and
+            // the text is what the user meant to paste.
+            if let Some(format) = IMAGE_FORMATS
+                .iter()
+                .copied()
+                .find(|wanted| available_formats.iter().any(|f| f.id == *wanted))
+            {
+                self.with_state(|state| {
+                    state.pending_remote_format = Some(format);
+                    state.actions.push_back(ClipboardAction::RequestText(format));
+                });
+                return;
+            }
+        }
         let chosen = TEXT_FORMATS
             .iter()
             .copied()
@@ -495,6 +581,16 @@ impl CliprdrBackend for AditCliprdrBackend {
     fn on_format_data_request(&mut self, request: FormatDataRequest) {
         let format = request.format;
         self.with_state(|state| {
+            if is_image_format(format) {
+                let image = state.local_image.clone();
+                if image.is_none() {
+                    tracing::debug!(format = format.value(), "no image to serve");
+                }
+                state
+                    .actions
+                    .push_back(ClipboardAction::SubmitImage { format, image });
+                return;
+            }
             let text = if is_text_format(format) {
                 state.local_text.clone()
             } else {
@@ -525,6 +621,18 @@ impl CliprdrBackend for AditCliprdrBackend {
             tracing::warn!("unsolicited CLIPRDR format data response; ignoring");
             return;
         };
+        if is_image_format(format) {
+            let bytes = response.data();
+            if bytes.is_empty() || bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
+                tracing::warn!(len = bytes.len(), "remote clipboard image out of range; dropping");
+                return;
+            }
+            let image = bytes.to_vec();
+            self.with_state(|state| {
+                state.actions.push_back(ClipboardAction::InboundImage(image));
+            });
+            return;
+        }
         let decoded = if format == ClipboardFormatId::CF_UNICODETEXT {
             response.to_unicode_string()
         } else {
@@ -668,6 +776,7 @@ fn format_data_response(format: ClipboardFormatId, text: Option<&str>) -> OwnedF
 fn for_app(action: ClipboardAction) -> Result<HostMsg, ClipboardAction> {
     match action {
         ClipboardAction::Inbound(text) => Ok(HostMsg::ClipboardText(text)),
+        ClipboardAction::InboundImage(image) => Ok(HostMsg::ClipboardImage(image)),
         ClipboardAction::InboundFiles(files) => Ok(HostMsg::ClipboardFiles(files)),
         ClipboardAction::NeedFileContents {
             stream_id,
@@ -736,6 +845,14 @@ pub(crate) fn pump(
             ClipboardAction::SubmitText { format, text } => {
                 cliprdr.submit_format_data(format_data_response(*format, text.as_deref()))
             }
+            ClipboardAction::SubmitImage { image, .. } => {
+                cliprdr.submit_format_data(match image {
+                    // Passed through byte for byte: both ends already agree on
+                    // the DIB layout, so touching it could only break it.
+                    Some(bytes) => OwnedFormatDataResponse::new_data(bytes.clone()),
+                    None => OwnedFormatDataResponse::new_error(),
+                })
+            }
             ClipboardAction::AdvertiseFiles(files) => {
                 cliprdr.initiate_file_copy(files.iter().map(to_descriptor).collect())
             }
@@ -766,6 +883,7 @@ pub(crate) fn pump(
             }
             // Handled above; the borrow of `cliprdr` is what forces this shape.
             ClipboardAction::Inbound(_)
+            | ClipboardAction::InboundImage(_)
             | ClipboardAction::InboundFiles(_)
             | ClipboardAction::NeedFileContents { .. }
             | ClipboardAction::InboundFileContents { .. } => {
@@ -815,6 +933,85 @@ mod tests {
         let mut cursor = WriteCursor::new(&mut buf);
         response.encode(&mut cursor).expect("encode response");
         buf
+    }
+
+    /// A screenshot is a third format, and offering it must not look like text.
+    #[test]
+    fn an_offered_image_advertises_cf_dib() {
+        let (mut backend, state) = backend();
+        backend.on_ready();
+        let _ = actions(&state);
+
+        offer_local_image(&state, vec![0x42; 64]);
+
+        let advertised = actions(&state);
+        assert!(advertised.iter().any(|a| matches!(
+            a,
+            ClipboardAction::Advertise(ids) if ids.contains(&ClipboardFormatId::CF_DIB)
+        )));
+    }
+
+    /// One clipboard holds one thing. Copying an image replaces the offered
+    /// text, exactly as it does on Windows — otherwise the remote would be told
+    /// both are available and paste whichever it preferred.
+    #[test]
+    fn an_image_replaces_the_offered_text() {
+        let (mut backend, state) = backend();
+        backend.on_ready();
+        offer_local_text(&state, String::from("earlier"));
+        offer_local_image(&state, vec![1, 2, 3, 4]);
+
+        let advertised = actions(&state);
+        let last = advertised
+            .iter()
+            .rev()
+            .find_map(|a| match a {
+                ClipboardAction::Advertise(ids) => Some(ids.clone()),
+                _ => None,
+            })
+            .expect("an advertise");
+        assert!(last.contains(&ClipboardFormatId::CF_DIB));
+        assert!(!last.contains(&ClipboardFormatId::CF_UNICODETEXT));
+    }
+
+    /// When the remote offers text *and* an image, the text wins. A copy
+    /// carrying both is text with a rendering attached — a styled run, a
+    /// spreadsheet cell — and the text is what the user meant to paste.
+    #[test]
+    fn text_is_preferred_over_an_image_when_both_are_offered() {
+        let (mut backend, state) = backend();
+        backend.on_ready();
+        let _ = actions(&state);
+
+        backend.on_remote_copy(&[
+            ClipboardFormat::new(ClipboardFormatId::CF_DIB),
+            text_format(ClipboardFormatId::CF_UNICODETEXT),
+        ]);
+
+        let requested = actions(&state);
+        assert!(requested.iter().any(|a| matches!(
+            a,
+            ClipboardAction::RequestText(id) if *id == ClipboardFormatId::CF_UNICODETEXT
+        )));
+        assert!(!requested.iter().any(|a| matches!(
+            a,
+            ClipboardAction::RequestText(id) if *id == ClipboardFormatId::CF_DIB
+        )));
+    }
+
+    /// An image alone is asked for.
+    #[test]
+    fn an_image_alone_is_requested() {
+        let (mut backend, state) = backend();
+        backend.on_ready();
+        let _ = actions(&state);
+
+        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_DIB)]);
+
+        assert!(actions(&state).iter().any(|a| matches!(
+            a,
+            ClipboardAction::RequestText(id) if *id == ClipboardFormatId::CF_DIB
+        )));
     }
 
     #[test]
@@ -921,10 +1118,11 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_copy_of_a_bitmap_is_ignored() {
-        // Images are out of scope; asking for one would only earn an error.
+    fn a_remote_copy_of_a_format_we_do_not_handle_is_ignored() {
+        // Not every format is worth asking for: sound has nowhere to go here,
+        // and requesting it would only earn an error response.
         let (mut backend, state) = backend();
-        backend.on_remote_copy(&[text_format(ClipboardFormatId::CF_DIB)]);
+        backend.on_remote_copy(&[text_format(ClipboardFormatId(12))]);
         assert!(actions(&state).is_empty());
     }
 
@@ -1040,13 +1238,15 @@ mod tests {
         offer_local_text(&state, "clip".into());
         let _ = actions(&state);
 
+        // A format with no local content behind it at all — CF_DIB would now be
+        // served from the image slot, so it is no longer an example of one.
         backend.on_format_data_request(FormatDataRequest {
-            format: ClipboardFormatId::CF_DIB,
+            format: ClipboardFormatId(12),
         });
         assert_eq!(
             actions(&state),
             vec![ClipboardAction::SubmitText {
-                format: ClipboardFormatId::CF_DIB,
+                format: ClipboardFormatId(12),
                 text: None,
             }]
         );

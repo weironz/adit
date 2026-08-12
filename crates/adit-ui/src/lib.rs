@@ -328,6 +328,16 @@ pub struct AditApp {
     // the poll from re-offering the same thing, and, because inbound remote text
     // is recorded here too, stops a remote copy from bouncing straight back.
     rdp_clipboard_offered: Option<String>,
+    /// The clipboard sequence number at the last image check, and the sequence
+    /// the last offered image came from.
+    ///
+    /// Sequence numbers rather than the bytes: a screenshot is tens of megabytes
+    /// and the poll runs twice a second, so comparing content would copy the
+    /// whole thing off the clipboard every time just to discover it had not
+    /// changed. `rdp_image_offered_seq` also stops the remote's own image being
+    /// handed straight back to it.
+    rdp_clipboard_seq: u32,
+    rdp_image_offered_seq: u32,
     /// Files currently offered to the remote, with the local path each came
     /// from. Indexed by the remote: a `FileContentsRequest` names a position in
     /// this list, so it must outlive the clipboard selection that produced it —
@@ -1441,6 +1451,8 @@ impl AditApp {
             rdp_tiles_prev: Vec::new(),
             rdp_surface_size_prev: None,
             rdp_clipboard_offered: None,
+            rdp_clipboard_seq: 0,
+            rdp_image_offered_seq: 0,
             rdp_offered_files: Vec::new(),
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
             settings_save_failed: false,

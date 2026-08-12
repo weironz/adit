@@ -129,6 +129,14 @@ pub enum ClientMsg {
     /// Must be the first message; opens the session.
     Connect(ConnectRequest),
     Input(InputEvent),
+    /// Offer a locally-copied image to the remote clipboard, as raw `CF_DIB`
+    /// bytes (a BITMAPINFOHEADER, any palette, then the pixels).
+    ///
+    /// Separate from `ClipboardText` because a screenshot is neither text nor a
+    /// file: nothing exists on disk, so the file path cannot carry it, and the
+    /// bytes are not a string. It is a third clipboard format, and MS-RDPECLIP
+    /// treats it as exactly that.
+    ClipboardImage(Vec<u8>),
     /// Offer a local file selection to the remote clipboard. The helper holds
     /// the metadata and answers the server's descriptor request from it; the
     /// bytes are fetched lazily, one [`HostMsg::FileContentsNeeded`] at a time.
@@ -168,6 +176,9 @@ pub enum HostMsg {
     Resized { width: u16, height: u16 },
     /// Server → client clipboard text.
     ClipboardText(String),
+    /// The remote copied an image; the app should put these `CF_DIB` bytes on
+    /// the Windows clipboard.
+    ClipboardImage(Vec<u8>),
     /// The remote copied files. The app should offer them on the Windows
     /// clipboard; nothing crosses the wire until something over here pastes.
     ClipboardFiles(Vec<ClipFile>),

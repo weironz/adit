@@ -368,6 +368,10 @@ pub struct SessionManager {
     /// paste of several files has several streams open at once, and dropping
     /// any of them hangs that file's transfer.
     pending_rdp_file_reads: Vec<RdpFileRead>,
+    /// An image the remote copied, waiting for the UI to put it on the Windows
+    /// clipboard. One slot, like the text beside it: the system clipboard is
+    /// itself a single slot, so the newest remote copy wins.
+    pending_rdp_clipboard_image: Option<Vec<u8>>,
     /// A file list the remote copied, waiting for the UI to publish it. One slot,
     /// like the clipboard text beside it: the clipboard holds one thing.
     pending_rdp_clipboard_files: Option<Vec<ClipFile>>,
@@ -450,6 +454,7 @@ impl SessionManager {
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
             pending_rdp_file_reads: Vec::new(),
+            pending_rdp_clipboard_image: None,
             pending_rdp_clipboard_files: None,
             pending_rdp_file_chunks: Vec::new(),
         }
@@ -1618,6 +1623,22 @@ impl SessionManager {
     /// Byte ranges the remote is waiting on. Drained, so each is answered once.
     pub fn take_rdp_file_reads(&mut self) -> Vec<RdpFileRead> {
         std::mem::take(&mut self.pending_rdp_file_reads)
+    }
+
+    /// An image the remote copied, if one arrived since the last call.
+    pub fn take_rdp_clipboard_image(&mut self) -> Option<Vec<u8>> {
+        self.pending_rdp_clipboard_image.take()
+    }
+
+    /// Offer a locally-copied image to the active RDP desktop.
+    pub fn offer_image_to_active_rdp(&self, image: Vec<u8>) {
+        if let Some(session_id) = self.active_session {
+            if let Some(record) = self.sessions.get(&session_id) {
+                if let Some(rdp) = &record.rdp {
+                    rdp.send_clipboard_image(image);
+                }
+            }
+        }
     }
 
     /// A file list the remote copied, if one arrived since the last call.
@@ -2849,6 +2870,9 @@ impl SessionManager {
                     // this process can touch a real file. Queued for the UI to
                     // answer on its next tick — never dropped, because the
                     // remote paste is blocked on the stream it asked for.
+                    RdpClientEvent::ClipboardImage(image) => {
+                        self.pending_rdp_clipboard_image = Some(image);
+                    }
                     RdpClientEvent::ClipboardFiles(files) => {
                         self.pending_rdp_clipboard_files = Some(files);
                     }

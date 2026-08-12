@@ -29,6 +29,9 @@ pub enum RdpClientEvent {
     /// The remote copied files. The app should offer them on the Windows
     /// clipboard; nothing crosses the wire until something here pastes.
     ClipboardFiles(Vec<ClipFile>),
+    /// The remote copied an image; raw `CF_DIB` bytes for the app to put on the
+    /// Windows clipboard.
+    ClipboardImage(Vec<u8>),
     /// Bytes answering a [`RdpClientHandle::file_requester`] request.
     FileContents {
         stream_id: u32,
@@ -140,6 +143,11 @@ impl RdpClientHandle {
     /// Send an input event to the session.
     pub fn send_input(&self, event: InputEvent) {
         let _ = self.cmd_tx.send(ClientMsg::Input(event));
+    }
+
+    /// Offer a locally-copied image to the remote clipboard (raw `CF_DIB`).
+    pub fn send_clipboard_image(&self, image: Vec<u8>) {
+        let _ = self.cmd_tx.send(ClientMsg::ClipboardImage(image));
     }
 
     /// Offer a local file selection to the remote clipboard. Metadata only —
@@ -443,6 +451,9 @@ fn wire_up(
                     // dropping it is the important part — a remote paste blocks
                     // on the stream it asked for, so silence would hang Explorer
                     // over there instead of failing it.
+                    Ok(Some(HostMsg::ClipboardImage(image))) => {
+                        let _ = event_tx.send(RdpClientEvent::ClipboardImage(image));
+                    }
                     Ok(Some(HostMsg::ClipboardFiles(files))) => {
                         let _ = event_tx.send(RdpClientEvent::ClipboardFiles(files));
                     }

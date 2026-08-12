@@ -38,6 +38,8 @@ use crate::{build_connector_config, input::map_input, RdpError};
 #[derive(Debug)]
 pub(crate) enum SessionCmd {
     Input(InputEvent),
+    /// Offer a locally-copied image to the remote clipboard (raw CF_DIB).
+    ClipboardImage(Vec<u8>),
     /// Offer a local file selection to the remote clipboard (metadata only).
     ClipboardFiles(Vec<ClipFile>),
     /// The app read the bytes the remote asked for, or failed to.
@@ -472,6 +474,10 @@ async fn active_session(
                     // the desktop. Like the text offer above, nothing is read from
                     // disk here — `ClipboardFiles` advertises names and sizes, and
                     // bytes move only when one side actually pastes.
+                    Some(SessionCmd::ClipboardImage(image)) => {
+                        clipboard::offer_local_image(clip, image);
+                        Vec::new()
+                    }
                     Some(SessionCmd::ClipboardFiles(files)) => {
                         clipboard::offer_local_files(clip, files);
                         Vec::new()
