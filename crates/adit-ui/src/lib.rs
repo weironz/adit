@@ -216,6 +216,10 @@ pub struct AditApp {
     /// persisted, matching `fullscreen` itself — it is a view choice about the
     /// session in front of you, not a preference.
     rdp_toolbar_collapsed: bool,
+    /// Whether the pointer is inside the collapsed toolbar's reveal zone, which
+    /// is what makes the ⌄ tab appear. Set by ONE fixed-size `mouse_area`; see
+    /// `with_rdp_toolbar` for why a second sensing region is not an option.
+    rdp_toolbar_hovered: bool,
     /// The quality dropdown hanging off the toolbar's ⚡ button.
     rdp_quality_menu_open: bool,
     /// Whether the one-time legacy-keyring import has completed (persisted). Gates
@@ -619,6 +623,8 @@ pub enum Message {
     RdpScrolled(mouse::ScrollDelta),
     // The floating fullscreen toolbar over an RDP desktop.
     ToggleRdpToolbarCollapsed,
+    /// The pointer entered or left the collapsed toolbar's reveal zone.
+    RdpToolbarHovered(bool),
     ToggleRdpQualityMenu,
     /// Pick a fidelity preset. Reconnects the active desktop if one is live,
     /// because RDP settles performance flags during the handshake.
@@ -1052,6 +1058,14 @@ const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
+/// The reveal zone for the collapsed toolbar: the fixed box that senses the
+/// pointer and holds the ⌄ tab. Wide enough to find without aiming, small
+/// enough that the remote desktop keeps the pointer everywhere else — while
+/// the pointer is in here the desktop stops receiving moves, which is the
+/// price of any hover-reveal and the reason this is not the whole top edge.
+const RDP_TOOLBAR_REVEAL_WIDTH: f32 = 96.0;
+const RDP_TOOLBAR_REVEAL_HEIGHT: f32 = 20.0;
+
 /// The floating RDP toolbar's own height, used to hang the ⚡ dropdown below it.
 const RDP_TOOLBAR_HEIGHT: f32 = 36.0;
 const TERMINAL_PANEL_PADDING: f32 = 8.0;
@@ -1364,6 +1378,7 @@ impl AditApp {
             rdp_clipboard,
             rdp_quality,
             rdp_toolbar_collapsed: true,
+            rdp_toolbar_hovered: false,
             rdp_quality_menu_open: false,
             keyring_migrated,
             auth_prompt: None,
@@ -1941,6 +1956,42 @@ mod tests {
         assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Tab);
 
         app.rdp_toolbar_collapsed = false;
+        assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Expanded);
+    }
+
+    /// Hovering reveals the ⌄ and leaving hides it again — and crucially the
+    /// reveal state is the ONLY thing that changes. The sensing box is a fixed
+    /// size in both states, and the tab renders inside it rather than over it.
+    ///
+    /// The first attempt at hover-reveal used two sibling layers, a strip to
+    /// sense and the bar above it to click, and flickered every frame: `stack`
+    /// gives the cursor to the topmost layer and reports the pointer as gone to
+    /// the ones below, so the thing appearing over the sensor told the sensor
+    /// the pointer had left. Nothing here can reproduce that — but nothing in a
+    /// widget tree is inspectable either, so this at least pins the state
+    /// machine, and the constants are asserted so a future edit cannot quietly
+    /// make the box grow when the tab appears.
+    #[test]
+    fn hovering_reveals_the_tab_without_resizing_what_senses_it() {
+        let mut app = drag_test_app();
+        app.fullscreen = true;
+        app.rdp_toolbar_collapsed = true;
+        assert!(!app.rdp_toolbar_hovered, "hidden until reached for");
+
+        let _ = update(&mut app, Message::RdpToolbarHovered(true));
+        assert!(app.rdp_toolbar_hovered);
+        // Still the tab shape: hovering shows the ⌄, it does not open the bar.
+        assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Tab);
+
+        let _ = update(&mut app, Message::RdpToolbarHovered(false));
+        assert!(!app.rdp_toolbar_hovered);
+
+        // Expanding is still a click, not a hover: the ⌄ appearing must not by
+        // itself open the bar, or the pointer passing the top edge would swap
+        // the whole toolbar in and out.
+        let _ = update(&mut app, Message::RdpToolbarHovered(true));
+        assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Tab);
+        let _ = update(&mut app, Message::ToggleRdpToolbarCollapsed);
         assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Expanded);
     }
 

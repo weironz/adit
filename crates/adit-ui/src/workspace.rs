@@ -324,27 +324,55 @@ pub(crate) fn with_rdp_toolbar<'a>(
 /// and is the only way back.
 fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
     if rdp_toolbar_shape(app) == ToolbarShape::Tab {
-        let handle = tooltip(
-            button(text("⌄").size(13))
-                .padding([0, 10])
-                .height(Length::Fixed(14.0))
-                .style(|_theme, status| rdp_toolbar_button_style(false, true, status))
-                .on_press(Message::ToggleRdpToolbarCollapsed),
-            container(text(t("展开工具栏")).size(11))
-                .padding([3, 7])
-                .style(|_theme| tooltip_style()),
-            tooltip::Position::Bottom,
-        );
+        // The ⌄ shows only while the pointer is up here, and the whole trick is
+        // that ONE region senses that — a fixed-size box whose bounds never
+        // change, with the tab rendered as its CHILD.
+        //
+        // Hover-reveal was tried once with two sibling layers, a thin strip to
+        // sense and the bar above it to click, and it flickered every frame:
+        // `stack` hands the cursor to the topmost layer and reports the pointer
+        // as gone to the ones beneath, so the thing appearing over the sensor
+        // told the sensor the pointer had left, which hid it, which put the
+        // pointer back on the sensor. A child cannot do that to its own
+        // `mouse_area`, and a box that never resizes cannot move out from under
+        // the pointer. Both halves are load-bearing.
+        let tab: Element<'_, Message> = if app.rdp_toolbar_hovered {
+            tooltip(
+                button(text("⌄").size(13))
+                    .padding([0, 10])
+                    .height(Length::Fixed(14.0))
+                    .style(|_theme, status| rdp_toolbar_button_style(false, true, status))
+                    .on_press(Message::ToggleRdpToolbarCollapsed),
+                container(text(t("展开工具栏")).size(11))
+                    .padding([3, 7])
+                    .style(|_theme| tooltip_style()),
+                tooltip::Position::Bottom,
+            )
+            .into()
+        } else {
+            Space::new().into()
+        };
+        let zone = mouse_area(
+            container(tab)
+                .center_x(Length::Fixed(RDP_TOOLBAR_REVEAL_WIDTH))
+                .center_y(Length::Fixed(RDP_TOOLBAR_REVEAL_HEIGHT))
+                .style(move |_theme| {
+                    if app.rdp_toolbar_hovered {
+                        rdp_toolbar_tab_style()
+                    } else {
+                        // Invisible until reached for: in fullscreen this is
+                        // the only thing between the user and a bare desktop,
+                        // and a permanent smudge at the top would defeat the
+                        // mode.
+                        container::Style::default()
+                    }
+                }),
+        )
+        .on_enter(Message::RdpToolbarHovered(true))
+        .on_exit(Message::RdpToolbarHovered(false));
+
         return column![
-            row![
-                Space::new().width(Fill),
-                // A pill that hovers over the desktop rather than a strip
-                // docked to its edge: it is the only chrome left in fullscreen,
-                // so it should look like something resting on the picture, not
-                // like the picture stopping short of the top of the screen.
-                container(handle).padding([0, 2]).style(|_theme| rdp_toolbar_tab_style()),
-                Space::new().width(Fill)
-            ],
+            row![Space::new().width(Fill), zone, Space::new().width(Fill)],
             Space::new().height(Fill),
         ]
         .width(Fill)

@@ -2597,6 +2597,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from(t("已关闭：RDP 不再共享剪贴板（下次连接生效）"))
             };
         }
+        Message::RdpToolbarHovered(inside) => {
+            app.rdp_toolbar_hovered = inside;
+        }
         Message::ToggleRdpToolbarCollapsed => {
             app.rdp_toolbar_collapsed = !app.rdp_toolbar_collapsed;
             // Collapsing takes the dropdown with it: the menu hangs off a button
