@@ -14,19 +14,20 @@ on:
         description: 'Patch version to release, e.g. 0.1.60 (no leading v)'
         required: true
         type: string
-      # Off by default because development is Windows-first: the Linux and macOS
-      # packages are the slowest jobs in a release (macOS builds two targets from
-      # scratch) and nothing being tested day to day runs on either. A checkbox
-      # rather than a code change, so re-enabling them is a decision made when
-      # triggering the release instead of a commit someone has to remember — and
-      # so a release that skipped them says so in its own run inputs afterwards.
+      # Off by default because development is Windows-first and on x64: a
+      # default release publishes the x64 installer and nothing else. The
+      # arm64, Linux and macOS jobs are every slow job in the release — arm64
+      # alone was 11.9 minutes of it, serialised behind the x64 job at that —
+      # and none of the three is exercised day to day. A checkbox rather than a
+      # code change, so re-enabling them is a decision made when triggering the
+      # release instead of a commit someone has to remember — and so a release
+      # that skipped them says so in its own run inputs afterwards.
       #
-      # Turning it on does not rebuild the Windows installers. These jobs only
-      # ever attach extra assets to the release the Windows job already
-      # published, which is also why a release can be topped up later by
-      # re-running with it set.
+      # Turning it on does not rebuild the x64 installer. These jobs only ever
+      # attach extra assets to the release the x64 job already published, which
+      # is also why a release can be topped up later by re-running with it set.
       all_platforms:
-        description: 'Also build the Linux and macOS packages'
+        description: 'Also build the arm64, Linux and macOS packages'
         required: false
         default: false
         type: boolean
@@ -73,8 +74,18 @@ jobs:
         with:
           components: clippy
 
+      # `crates/adit-rdp` is a separate workspace with its own target directory,
+      # and rust-cache's default of `.` alone never covered it — the helper's
+      # 409 dependencies were rebuilt from scratch on every release no matter
+      # what the cache did. The target path defaults to `target` relative to
+      # each entry, so spelling the second one as `crates/adit-rdp/target`
+      # would resolve to that path twice over and silently cache nothing.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/adit-rdp
 
       # Bump the root workspace + both RDP crates in lockstep. sed (not PowerShell
       # 5.1's Set-Content) so the UTF-8 em-dashes in Cargo.toml survive — see the
@@ -154,9 +165,21 @@ jobs:
   # the API returns a release's assets sorted by name, whenever each arrived.
   # The underscore in `_arm64` is what does it, by sorting after the '.' in the
   # x64 installer's name. See installer/adit.iss.
+  # Gated with the rest, so a default release is x64 only. This job is 11.9 of
+  # the 35.4 minutes a release took, almost all of it serialised: `needs:
+  # release` means it does not even start until the x64 job has published.
+  #
+  # What an arm64 machine loses is the in-app update, not the app: the updater
+  # matches assets on architecture strictly and will not hand an ARM machine an
+  # x64 installer, so with no `_arm64` asset `pick_installer_asset` finds
+  # nothing and the dialog says 「该版本暂无 Windows 安装包」 beside a link to the
+  # release. Those users update by downloading a release that did build it.
+  # `installer_asset_ordering_favours_x64` covers the other direction and is
+  # unaffected.
   windows-arm64:
     name: windows · installer (aarch64)
     needs: release
+    if: ${{ github.event.inputs.all_platforms == 'true' }}
     runs-on: windows-11-arm
     steps:
       - uses: actions/checkout@v4
@@ -166,13 +189,20 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      # These three attach-to-the-release jobs had no cache at all, so each one
+      # These attach-to-the-release jobs had no cache at all, so each one
       # rebuilt every dependency from scratch — this job's two release builds ran
       # 569s between them. The version bump changes Cargo.lock, so the exact key
       # never hits on a release, but rust-cache's prefix restore-keys still land
       # the dependency graph and only the workspace crates recompile.
+      #
+      # `crates/adit-rdp` is a second workspace and has to be named, or the
+      # helper's 409 dependencies stay outside the cache entirely.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/adit-rdp
 
       - name: Build app (release)
         run: cargo build --release -p adit-app --locked

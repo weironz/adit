@@ -64,8 +64,21 @@ jobs:
         with:
           components: clippy
 
+      # rust-cache only caches the workspaces it is told about, and the default
+      # is `.` alone — so `crates/adit-rdp`, a separate workspace with its own
+      # target directory, had its 409 dependencies recompiled from scratch on
+      # every run that built the helper, cache or no cache.
+      #
+      # The target path defaults to `target` *relative to each entry*. Writing
+      # the second one as `crates/adit-rdp -> crates/adit-rdp/target` therefore
+      # resolves to that path twice over, and caches nothing while reading as
+      # though it works.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            .
+            crates/adit-rdp
 
       # iced pulls winit (X11/Wayland) and wgpu, rfd pulls GTK, keyring pulls
       # D-Bus. Windows and macOS need none of this.
@@ -197,8 +210,26 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Restore, never save — see the note on the other packaging jobs too.
+      #
+      # The repo's Actions caches had reached 10.4 GB against GitHub's 10 GB
+      # ceiling, so every new entry evicted the least-recently-used one. The
+      # entry touched least often is the release job's, and it is also the one
+      # whose miss costs the most: two consecutive releases both logged
+      # "No cache found." and compiled all 1089 dependencies from zero, twice
+      # each, for ~23 minutes a run.
+      #
+      # These packaging jobs are the cheapest writers to stop. Restoring counts
+      # as access, so the entries they already have stay alive and keep being
+      # used; what ends is the 2.4 GB of *churn* they add whenever Cargo.lock
+      # moves. The cost is that their cache slowly drifts behind the lockfile
+      # instead of being refreshed — a prefix restore still lands the bulk of
+      # the dependency graph, which is the right trade for a job that is not on
+      # anyone's critical path.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
 
       - name: Install build dependencies
         run: |
@@ -286,8 +317,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Restore only, so the release job's cache stops being evicted — the long
+      # note is on package-linux.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
 
       - name: Build the app
         run: |
@@ -350,8 +385,17 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # Restore only, so the release job's cache stops being evicted — the long
+      # note is on package-linux. The rdp workspace is listed because this job
+      # builds the helper: a restore-only entry still has to know where to put
+      # what it restores.
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: false
+          workspaces: |
+            .
+            crates/adit-rdp
 
       - name: Build the app
         run: cargo build --release -p adit-app --locked

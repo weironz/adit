@@ -92,17 +92,20 @@ anchor comes back on a different line from the text it named.
   gh workflow run release.yml -f version=0.1.60
   ```
 
-  That publishes the **Windows installers only** (x64 + arm64). The Linux and
-  macOS packages are the slowest jobs in the release and nothing here is tested
-  on either, so they are off unless asked for:
+  That publishes the **Windows x64 installer only**. The arm64, Linux and macOS
+  jobs are every slow job in the release and none of the three is exercised day
+  to day, so they are off unless asked for:
 
   ```bash
   gh workflow run release.yml -f version=0.1.60 -f all_platforms=true
   ```
 
-  Those jobs only ever *attach* assets to the release the Windows job already
-  published, so a Windows-only release can be topped up later by re-running the
-  workflow with the flag set.
+  Those jobs only ever *attach* assets to the release the x64 job already
+  published, so an x64-only release can be topped up later by re-running the
+  workflow with the flag set. Skipping arm64 costs ARM machines their **in-app
+  update**, not the app: the updater matches assets on architecture strictly and
+  never offers an x64 installer to an ARM machine, so it shows 「该版本暂无
+  Windows 安装包」 and those users update from a release that did build it.
 
   That dispatches [`.github/workflows/release.yml`](.github/workflows/release.yml)
   (a `workflow_dispatch`), which bumps the three crate versions in lockstep (root
