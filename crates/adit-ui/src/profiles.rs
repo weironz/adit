@@ -224,6 +224,43 @@ pub(crate) fn place_ungrouped_at(
     Ok(())
 }
 
+/// The rows a drag acts on: the whole selection when the pressed row is part of
+/// it, otherwise just that row.
+///
+/// The same rule the context menu follows, so "what does this act on" has one
+/// answer everywhere in the sidebar. Falls back to the pressed row if the
+/// selection somehow came back empty, because a drag that moves nothing is
+/// worse than one that moves the obvious thing.
+pub(crate) fn dragged_profile_ids(app: &AditApp, source_id: ProfileId) -> Vec<ProfileId> {
+    if !app.selected_profiles.contains(&source_id) {
+        return vec![source_id];
+    }
+    let ids = selected_profile_ids(app);
+    if ids.is_empty() {
+        vec![source_id]
+    } else {
+        ids
+    }
+}
+
+/// Apply `apply` to every dragged row in display order, keeping the first error
+/// but not stopping at it: a move half-applied and silently abandoned is worse
+/// than one that finished and then said what went wrong.
+fn move_each(
+    app: &mut AditApp,
+    ids: &[ProfileId],
+    mut apply: impl FnMut(&mut AditApp, usize, ProfileId) -> Result<(), SessionError>,
+) -> Result<(), SessionError> {
+    let mut first_error = Ok(());
+    for (offset, id) in ids.iter().enumerate() {
+        let outcome = apply(app, offset, *id);
+        if first_error.is_ok() {
+            first_error = outcome;
+        }
+    }
+    first_error
+}
+
 /// Commit the drag: move the held session to wherever the insertion line sits
 /// (beside a row, into/around a folder, or out to the top level), then persist.
 /// A plain click leaves `profile_drop` unset, so nothing moves.
@@ -243,18 +280,37 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
     app.group_drop_target = None;
     // A press without a real drag (e.g. a click or double-click) never moves.
     if !was_active {
+        // A plain click selects exactly the row pressed. Deferred to here from
+        // the press itself: collapsing on press is what stopped a multi-selection
+        // from being dragged in one gesture, because by the time the pointer
+        // moved, only the pressed row was still selected.
+        select_profile(app, source_id);
         if settle {
             retarget_card_slots(app);
         }
         return;
     }
 
+    // A drag begun on a selected row carries the whole selection; one begun
+    // outside it carries only that row.
+    let ids = dragged_profile_ids(app, source_id);
+
     let result = match drop {
-        Some(ProfileDrop::IntoGroup(group)) => app.manager.move_profile_to_group(source_id, group),
-        Some(ProfileDrop::TopLevel) if !app.drag_from_grid => place_ungrouped_at(app, source_id, 0),
+        Some(ProfileDrop::IntoGroup(group)) => move_each(app, &ids, |app, _, id| {
+            app.manager.move_profile_to_group(id, group.clone())
+        }),
+        // `offset` keeps the batch in display order. Placing each at 0 would
+        // land them reversed, which reads as a bug rather than a choice.
+        Some(ProfileDrop::TopLevel) if !app.drag_from_grid => {
+            move_each(app, &ids, |app, offset, id| place_ungrouped_at(app, id, offset))
+        }
+        // Recomputed per row rather than hoisted: each move changes what the
+        // end of the top level is.
         Some(ProfileDrop::BottomLevel) if !app.drag_from_grid => {
-            let len = top_level_entries(app, source_id).len();
-            place_ungrouped_at(app, source_id, len)
+            move_each(app, &ids, |app, _, id| {
+                let len = top_level_entries(app, id).len();
+                place_ungrouped_at(app, id, len)
+            })
         }
         // A grid drag edits the grid's order and stops there. Which group a
         // host is in stays shared — that is data — but where it sits in a view
@@ -264,8 +320,19 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
             profile_id,
             position,
         }) if app.drag_from_grid && profile_id != source_id => {
-            reorder_grid(app, source_id, profile_id, position);
-            app.selected_profile = Some(source_id);
+            // Anchor walk: the first row lands at the drop point and each next
+            // one after the row before it, so a batch arrives in one piece and
+            // in the order it was shown in.
+            let mut anchor = profile_id;
+            let mut at = position;
+            for id in &ids {
+                if *id == profile_id {
+                    continue;
+                }
+                reorder_grid(app, *id, anchor, at);
+                anchor = *id;
+                at = ProfileDropPosition::After;
+            }
             retarget_card_slots(app);
             persist_settings_if_changed(app);
             return;
@@ -290,10 +357,28 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
                     Some(i) => i,
                     None => entries.len(),
                 };
-                place_ungrouped_at(app, source_id, index)
+                move_each(app, &ids, |app, offset, id| {
+                    place_ungrouped_at(app, id, index + offset)
+                })
             } else {
-                // Beside a session inside a folder: join that folder at that spot.
-                app.manager.reorder_profile(source_id, profile_id, position)
+                // Beside a session inside a folder: join that folder at that
+                // spot, the batch staying together and in order behind the row
+                // it was dropped on.
+                let mut anchor = profile_id;
+                let mut at = position;
+                let mut first_error = Ok(());
+                for id in &ids {
+                    if *id == profile_id {
+                        continue;
+                    }
+                    let outcome = app.manager.reorder_profile(*id, anchor, at);
+                    if first_error.is_ok() {
+                        first_error = outcome;
+                    }
+                    anchor = *id;
+                    at = ProfileDropPosition::After;
+                }
+                first_error
             }
         }
         _ => return,
@@ -321,7 +406,11 @@ pub(crate) fn drop_profile_on_group(app: &mut AditApp, group: String) {
 
     app.group_drop_target = None;
 
-    match app.manager.move_profile_to_group(source_id, group.clone()) {
+    let ids = dragged_profile_ids(app, source_id);
+    let moved = move_each(app, &ids, |app, _, id| {
+        app.manager.move_profile_to_group(id, group.clone())
+    });
+    match moved {
         Ok(()) => {
             add_group(&mut app.groups, &group);
             app.collapsed_groups.remove(&group);

@@ -2391,6 +2391,69 @@ mod tests {
         assert!(app.selected_profile.is_none_or(|id| live.contains(&id)));
     }
 
+    /// Reported: after multi-selecting, one left-press-and-drag would not carry
+    /// the selection to another group. The press collapsed it to the pressed row
+    /// before the pointer had moved, so the drag that followed held one session.
+    #[test]
+    fn pressing_inside_a_selection_keeps_it_for_the_drag() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        assert_eq!(app.selected_profiles.len(), 2, "setup: two rows selected");
+
+        // A plain press on a row already in the selection leaves it alone…
+        press(&mut app, rows[0], false, false);
+        assert_eq!(
+            app.selected_profiles.len(),
+            2,
+            "press inside the selection collapsed it, so the drag carries one row"
+        );
+        // …and that is what the drag then acts on.
+        assert_eq!(
+            crate::profiles::dragged_profile_ids(&app, rows[0]).len(),
+            2,
+            "the drag must carry the whole selection"
+        );
+    }
+
+    /// The other half: the collapse still happens, it just waits for release.
+    /// Without this a click could never shrink a selection again.
+    #[test]
+    fn a_press_that_never_drags_is_still_a_plain_click() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        assert_eq!(app.selected_profiles.len(), 2, "setup: two rows selected");
+
+        press(&mut app, rows[0], false, false);
+        // Released without the pointer ever leaving the dead zone.
+        crate::profiles::finish_profile_drag(&mut app);
+        assert_eq!(
+            app.selected_profiles.iter().copied().collect::<Vec<_>>(),
+            vec![rows[0]],
+            "a click that never became a drag must select just the row pressed"
+        );
+    }
+
+    /// Pressing a row *outside* the selection replaces it immediately — there is
+    /// nothing to preserve, and waiting would leave the wrong rows highlighted
+    /// for the whole drag.
+    #[test]
+    fn pressing_outside_the_selection_replaces_it_at_once() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+
+        press(&mut app, rows[2], false, false);
+        assert_eq!(
+            app.selected_profiles.iter().copied().collect::<Vec<_>>(),
+            vec![rows[2]]
+        );
+    }
+
     /// Filtering hides rows; a hidden row must not stay silently selected,
     /// because batch delete would still have destroyed it.
     #[test]

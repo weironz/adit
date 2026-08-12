@@ -484,8 +484,13 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::GridProfilePressed(profile_id) => {
             // Same arming as ProfilePressed — selection, drag state, origin
-            // point — with the origin remembered as the grid.
-            select_profile(app, profile_id);
+            // point — with the origin remembered as the grid, and the same
+            // rule about not collapsing a selection the pressed card is in.
+            if app.selected_profiles.contains(&profile_id) {
+                focus_profile(app, profile_id);
+            } else {
+                select_profile(app, profile_id);
+            }
             app.dragged_profile = Some(profile_id);
             app.drag_from_grid = true;
             app.profile_drop = None;
@@ -576,8 +581,21 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
-            // Plain click: the selection becomes exactly this row.
-            select_profile(app, profile_id);
+            // Plain click on a row *outside* the selection: the selection
+            // becomes exactly that row.
+            //
+            // Pressing a row that is already selected leaves the selection
+            // alone, so the whole thing can be dragged in one gesture. That is
+            // the fix for a real report — after multi-selecting, a left-press
+            // collapsed the selection to the pressed row before the pointer had
+            // moved, so the drag that followed carried one session. The collapse
+            // still happens for a click that turns out not to be a drag; it just
+            // waits until release, in `finish_profile_drag`.
+            if app.selected_profiles.contains(&profile_id) {
+                focus_profile(app, profile_id);
+            } else {
+                select_profile(app, profile_id);
+            }
             app.dragged_profile = Some(profile_id);
             app.drag_from_grid = false;
             app.profile_drop = None;
