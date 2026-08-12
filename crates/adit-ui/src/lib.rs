@@ -606,6 +606,7 @@ pub enum SettingsCategory {
     Terminal,
     Logging,
     Sync,
+    Shortcuts,
 }
 
 impl SettingsCategory {
@@ -617,6 +618,7 @@ impl SettingsCategory {
             Self::Terminal => "终端",
             Self::Logging => "日志",
             Self::Sync => "同步与云",
+            Self::Shortcuts => "快捷键",
         }
     }
 }

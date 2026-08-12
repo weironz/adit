@@ -191,6 +191,40 @@ fn en(zh: &'static str) -> &'static str {
         "终端" => "Terminal",
         "日志" => "Logs",
         "同步与云" => "Sync & cloud",
+        // Settings → shortcuts. Every entry on that page is one that exists in
+        // update_loop's key dispatch; adding a line there means finding the key
+        // here first.
+        "快捷键" => "Shortcuts",
+        "会话与传输" => "Sessions & transfer",
+        "为当前会话打开 SFTP 命令行（sftp> 提示符，不是双栏面板）" => {
+            "Open an SFTP command line for the active session (the sftp> prompt, not the two-pane panel)"
+        }
+        "跳到左侧过滤框（侧边栏隐藏时会先显示出来）" => {
+            "Jump to the sidebar filter box, revealing the sidebar first if it is hidden"
+        }
+        "会话已断开时，重新连接" => "Reconnect, when the session has dropped",
+        "复制选区" => "Copy the selection",
+        // "粘贴" is not here: it is already translated above, and this table is
+        // keyed by the Chinese source, so a second arm is unreachable rather
+        // than additive.
+        "搜索回滚缓冲" => "Search the scrollback",
+        "上下翻一页" => "Scroll a page up or down",
+        "跳到回滚缓冲的顶部或底部" => "Jump to the top or bottom of the scrollback",
+        "调整终端字号" => "Resize the terminal font",
+        "远程桌面" => "Remote desktop",
+        "进入或退出全屏；全屏时这一个永远留给本地" => {
+            "Enter or leave fullscreen. In fullscreen this one is always kept local"
+        }
+        "其他全局热键" => "Other global hotkeys",
+        "仅全屏时透传给远端（如截图工具的 Ctrl+Shift+X）；窗口模式下仍由本地程序接管" => {
+            "Reach the remote in fullscreen only — a screenshot tool's Ctrl+Shift+X, say. In a window the local app still takes them"
+        }
+        "列表与多选" => "Lists & multi-select",
+        "增减单个会话或标签页的选中" => "Add or remove one session or tab from the selection",
+        "选中一整段范围" => "Select a whole range",
+        "取消多选；也用于关闭搜索、取消重命名" => {
+            "Drop a multi-selection; also closes search and cancels a rename"
+        }
         "云服务" => "Cloud services",
         "同步状态" => "Sync status",
         "未启用" => "Off",

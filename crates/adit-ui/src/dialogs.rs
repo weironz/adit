@@ -2048,6 +2048,89 @@ fn setting_card<'a>(inner: impl Into<Element<'a, Message>>) -> Element<'a, Messa
         .into()
 }
 
+/// One row of the shortcuts reference: the keys, then what they do.
+fn shortcut_row(keys: &'static str, what: &'static str) -> Element<'static, Message> {
+    row![
+        container(text(keys).size(11).color(primary_text()))
+            .width(Length::Fixed(160.0))
+            .padding([2, 0]),
+        text(t(what)).size(11).color(muted_text()).width(Fill),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn shortcut_group(
+    title: &'static str,
+    rows: Vec<Element<'static, Message>>,
+) -> Element<'static, Message> {
+    let mut items: Vec<Element<'static, Message>> =
+        vec![text(t(title)).size(12).color(primary_text()).into()];
+    items.extend(rows);
+    let body: Element<'static, Message> = iced::widget::Column::with_children(items)
+        .spacing(7)
+        .into();
+    setting_card(body)
+}
+
+/// A reference for the keys nothing else on screen names.
+///
+/// Every entry exists in `update_loop`'s key dispatch. That is the whole
+/// value of the page and the only thing that can rot: a list naming a key that
+/// does nothing is worse than no list, because the reader concludes the feature
+/// is broken rather than absent. Alt+R is left out for exactly that reason — a
+/// comment in the dispatch advertised it and no code has ever matched it.
+fn shortcuts_section() -> Element<'static, Message> {
+    column![
+        shortcut_group(
+            "会话与传输",
+            vec![
+                shortcut_row(
+                    "Alt + P",
+                    "为当前会话打开 SFTP 命令行（sftp> 提示符，不是双栏面板）",
+                ),
+                shortcut_row("Alt + I", "跳到左侧过滤框（侧边栏隐藏时会先显示出来）"),
+                shortcut_row("Enter", "会话已断开时，重新连接"),
+            ],
+        ),
+        shortcut_group(
+            "终端",
+            vec![
+                shortcut_row("Ctrl + Shift + C", "复制选区"),
+                shortcut_row("Ctrl + Shift + V", "粘贴"),
+                shortcut_row("Ctrl + Shift + F", "搜索回滚缓冲"),
+                shortcut_row("Shift + PageUp / PageDown", "上下翻一页"),
+                shortcut_row("Ctrl + Shift + Home / End", "跳到回滚缓冲的顶部或底部"),
+                shortcut_row("Ctrl + 滚轮", "调整终端字号"),
+            ],
+        ),
+        shortcut_group(
+            "远程桌面",
+            vec![
+                shortcut_row(
+                    "Ctrl + Alt + Enter",
+                    "进入或退出全屏；全屏时这一个永远留给本地",
+                ),
+                shortcut_row(
+                    "其他全局热键",
+                    "仅全屏时透传给远端（如截图工具的 Ctrl+Shift+X）；窗口模式下仍由本地程序接管",
+                ),
+            ],
+        ),
+        shortcut_group(
+            "列表与多选",
+            vec![
+                shortcut_row("Ctrl + 点击", "增减单个会话或标签页的选中"),
+                shortcut_row("Shift + 点击", "选中一整段范围"),
+                shortcut_row("Esc", "取消多选；也用于关闭搜索、取消重命名"),
+            ],
+        ),
+    ]
+    .spacing(10)
+    .into()
+}
+
 pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let [config_section, log_section, mouse_section] = options_sections(app);
 
@@ -2073,6 +2156,7 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             rail_item(SettingsCategory::Terminal),
             rail_item(SettingsCategory::Logging),
             rail_item(SettingsCategory::Sync),
+            rail_item(SettingsCategory::Shortcuts),
         ]
         .spacing(6),
     )
@@ -2116,6 +2200,7 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         SettingsCategory::Terminal => mouse_section,
         SettingsCategory::Logging => log_section,
         SettingsCategory::Sync => sync_section(app),
+        SettingsCategory::Shortcuts => shortcuts_section(),
     };
 
     let card = container(

@@ -1912,9 +1912,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     return Task::done(Message::ToggleFullscreen);
                 }
             }
-            // Alt+R / Alt+I jump to the toolbar's host box and the sidebar filter —
-            // the two shortcuts those placeholders advertise. Both take focus away
-            // from the terminal so the typed text lands in the box, not the session.
+            // Alt+I jumps to the sidebar filter, which is what its placeholder
+            // advertises. Focus leaves the terminal so the typed text lands in the
+            // box and not the session.
+            //
+            // This used to claim an Alt+R beside it, for the toolbar's host box.
+            // No code has ever matched it — writing the settings page's shortcut
+            // list is what turned it up, since every entry there had to be found
+            // in this dispatch before it could be printed.
             if alt_shortcut(&event, 'i') {
                 // Filtering is pointless with the sidebar hidden; reveal it first.
                 if !app.sidebar_visible {
