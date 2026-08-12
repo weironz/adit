@@ -186,7 +186,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         app.window_width,
         app.window_height,
         sidebar_offset(app),
-        app.fullscreen,
+        chrome_height(app),
     );
     let logical_w = f32::from(sw) / scale_x;
     let logical_h = f32::from(sh) / scale_y;
@@ -338,7 +338,11 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         return column![
             row![
                 Space::new().width(Fill),
-                container(handle).style(|_theme| rdp_toolbar_style()),
+                // A pill that hovers over the desktop rather than a strip
+                // docked to its edge: it is the only chrome left in fullscreen,
+                // so it should look like something resting on the picture, not
+                // like the picture stopping short of the top of the screen.
+                container(handle).padding([0, 2]).style(|_theme| rdp_toolbar_tab_style()),
                 Space::new().width(Fill)
             ],
             Space::new().height(Fill),

@@ -1509,22 +1509,37 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
 /// Pixel size of the whole terminal region (the grid the panes share), i.e. the
 /// workspace minus the sidebar, top chrome, tab bar, and status bar. Pane
 /// padding/headers are *not* subtracted here — that happens per pane.
+/// The height of the chrome actually drawn above and below the workspace.
+///
+/// One function decides this because the arithmetic and the layout must agree:
+/// subtracting chrome that is not on screen makes the requested remote desktop
+/// smaller than the space it has to fill, and the remainder shows as black
+/// bars. That happened the moment RDP fullscreen started hiding the tab strip
+/// and the status bar without this following — 62 points of desktop that was
+/// asked for and never used, split top and bottom by the centring.
+pub(crate) fn chrome_height(app: &AditApp) -> f32 {
+    if !app.fullscreen {
+        return MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT;
+    }
+    // Fullscreen over a remote desktop keeps nothing at all — see
+    // `chrome::view` and `workspace`, which drop the tab strip and the status
+    // bar for it. Every other session type keeps both, because the status bar
+    // is the only thing left there naming the way out.
+    if app.manager.active_is_rdp() {
+        0.0
+    } else {
+        TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+    }
+}
+
+/// The workspace area left for a session, given how much chrome is on screen.
 pub(crate) fn terminal_region_area(
     width: f32,
     height: f32,
     sidebar_width: f32,
-    fullscreen: bool,
+    chrome: f32,
 ) -> (f32, f32) {
     let region_width = (width - sidebar_width).max(0.0);
-    // Fullscreen drops the menu bar and the toolbar; the tab strip and the
-    // status bar stay. Subtracting chrome that is not on screen makes the
-    // requested remote desktop smaller than the space it has to fill, and the
-    // remainder shows as black bars down the right and bottom edges.
-    let chrome = if fullscreen {
-        TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
-    } else {
-        MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
-    };
     let region_height = (height - chrome).max(0.0);
     (region_width, region_height)
 }
@@ -1536,7 +1551,7 @@ pub(crate) fn terminal_region_area(
 /// back to the helper's default).
 pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
     let sidebar = sidebar_offset(app);
-    let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar, app.fullscreen);
+    let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar, chrome_height(app));
     // PHYSICAL pixels: the window lays out in logical points, but the remote
     // desktop is a pixel grid. Requesting logical sizes meant a 125%-DPI
     // display got a 1524x920 desktop stretched over ~1905x1150 device pixels —
@@ -1690,7 +1705,7 @@ pub(crate) fn rdp_fill_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32)
     }
     let sidebar = sidebar_offset(app);
     let (pane_w, pane_h) =
-        terminal_region_area(app.window_width, app.window_height, sidebar, app.fullscreen);
+        terminal_region_area(app.window_width, app.window_height, sidebar, chrome_height(app));
     if pane_w <= 0.0 || pane_h <= 0.0 {
         return (1.0, 1.0);
     }
@@ -1890,7 +1905,7 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         app.window_width,
         app.window_height,
         effective_sidebar,
-        app.fullscreen,
+        chrome_height(app),
     );
 
     let count = app.panes.len().max(1);
@@ -1939,7 +1954,12 @@ pub(crate) fn estimated_terminal_size(
     sidebar_width: f32,
     fullscreen: bool,
 ) -> TerminalSize {
-    let (region_w, region_h) = terminal_region_area(width, height, sidebar_width, fullscreen);
+    let chrome = if fullscreen {
+        TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+    } else {
+        MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+    };
+    let (region_w, region_h) = terminal_region_area(width, height, sidebar_width, chrome);
     terminal_size_for_area(
         region_w - TERMINAL_PANEL_PADDING * 2.0 - SCROLLBAR_WIDTH,
         region_h - TERMINAL_PANEL_PADDING * 2.0,

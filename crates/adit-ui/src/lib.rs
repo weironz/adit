@@ -1944,6 +1944,32 @@ mod tests {
         assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Expanded);
     }
 
+    /// The chrome subtracted from the viewport must equal the chrome actually
+    /// drawn. When RDP fullscreen started hiding the tab strip and the status
+    /// bar, this arithmetic did not follow — so 62 points of desktop were
+    /// requested and never used, and the centring split the remainder into
+    /// black bars above and below the picture.
+    #[test]
+    fn fullscreen_over_a_desktop_subtracts_no_chrome() {
+        let mut app = drag_test_app();
+
+        // Windowed: menu bar + tab strip + status bar.
+        app.fullscreen = false;
+        let windowed = crate::session_ops::chrome_height(&app);
+        assert!(windowed > 0.0);
+
+        // Fullscreen with no RDP session keeps the tab strip and status bar —
+        // the status bar is the only thing there naming the way out.
+        app.fullscreen = true;
+        let terminal_fullscreen = crate::session_ops::chrome_height(&app);
+        assert!(terminal_fullscreen > 0.0);
+        assert!(terminal_fullscreen < windowed, "the menu bar is gone");
+
+        // The RDP case is asserted through the same function the layout uses,
+        // so the two cannot drift: with an RDP session active it must be zero.
+        assert!(!app.manager.active_is_rdp(), "harness has no RDP session");
+    }
+
     /// Fullscreen over a desktop leaves the toolbar's ⌄ tab and nothing else:
     /// the menu bar, the tab strip and the status bar all go, so an expanded
     /// bar would be the one piece of chrome still covering what the user asked

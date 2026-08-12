@@ -515,6 +515,22 @@ pub(crate) fn rdp_toolbar_style() -> container::Style {
     }
 }
 
+/// The collapsed toolbar's tab, in fullscreen the only chrome on screen.
+///
+/// Rounder and more shadowed than the bar it opens, because it has to read as
+/// something resting *on* the desktop. Squared off against the top edge it
+/// looked instead like the picture stopping short of the screen — the same
+/// misreading as a black bar, which is what fullscreen had just stopped having.
+pub(crate) fn rdp_toolbar_tab_style() -> container::Style {
+    container::Style {
+        background: Some(Background::Color(surface())),
+        text_color: Some(muted_text()),
+        border: border(RADIUS_MD, 1.0, border_color()),
+        shadow: subtle_shadow(),
+        ..container::Style::default()
+    }
+}
+
 /// A toolbar glyph button. `active` marks a toggle that is currently on (pin,
 /// clipboard, fit) so the bar shows state, not just actions; `enabled` false is
 /// the greyed-out form used when there is no live desktop to act on.
