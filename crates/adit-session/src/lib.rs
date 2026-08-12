@@ -2444,6 +2444,36 @@ impl SessionManager {
         }
     }
 
+    /// Whether the remote pane's current directory already lists `name` as a
+    /// regular file.
+    ///
+    /// Files only, deliberately. A name that is a *directory* at the
+    /// destination is not an overwrite — the transfer fails rather than
+    /// destroying anything — so asking "确认覆盖" for it would promise something
+    /// that cannot happen. That case keeps behaving as it always has.
+    ///
+    /// This answers from the listing the pane is showing, not from a fresh stat
+    /// of the server, so a file that appeared since the last refresh is missed.
+    /// That is the right trade for a prompt: it matches what the user is
+    /// looking at, and the alternative is a round trip on the way to every
+    /// transfer. It does mean this narrows the window rather than closing it.
+    pub fn sftp_remote_file_exists(&self, name: &str) -> bool {
+        self.sftp
+            .as_ref()
+            .is_some_and(|browser| browser.entries.iter().any(|e| e.name == name && !e.is_dir))
+    }
+
+    /// Whether the local pane's current directory already lists `name` as a
+    /// regular file. See [`Self::sftp_remote_file_exists`].
+    pub fn sftp_local_file_exists(&self, name: &str) -> bool {
+        self.sftp.as_ref().is_some_and(|browser| {
+            browser
+                .local_entries
+                .iter()
+                .any(|e| e.name == name && !e.is_dir)
+        })
+    }
+
     /// Download a remote file into the current local pane directory.
     pub fn sftp_download(&mut self, name: &str) {
         if let Some(browser) = &mut self.sftp {

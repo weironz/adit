@@ -109,6 +109,23 @@ use std::{
 };
 use unicode_width::UnicodeWidthChar;
 
+/// One transfer the user asked for, in the form needed to start it later.
+///
+/// Transfers are described rather than started so the overwrite prompt has
+/// something to hold. There are four ways to ask for one — the context menu, a
+/// drag between panes, the file picker, and a typed path — and this is what
+/// they all reduce to.
+#[derive(Debug, Clone)]
+pub(crate) enum PendingTransfer {
+    /// A file in the local pane's current directory, going to the remote one.
+    UploadLocal(String),
+    /// A remote file coming into the local pane's current directory.
+    Download(String),
+    /// An arbitrary local path: the picker or a typed path, neither of which is
+    /// necessarily in the pane the panel is showing.
+    UploadPath(std::path::PathBuf),
+}
+
 pub struct AditApp {
     manager: SessionManager,
     profile_store: ProfileStore,
@@ -245,6 +262,20 @@ pub struct AditApp {
     sftp_rename: Option<(SftpPane, String)>,
     sftp_rename_to: String,
     sftp_delete_target: Option<(SftpPane, String, bool)>,
+    /// Transfers held back because they would overwrite a file already at the
+    /// destination, paired with the names that clash.
+    ///
+    /// SFTP overwrites without asking, and a file replaced that way is gone —
+    /// there is no trash to recover it from. Deleting has asked first for as
+    /// long as this panel has existed; that a transfer did not was an
+    /// inconsistency rather than a decision.
+    ///
+    /// The *whole* batch is held, not only the clashing part, so a drag of ten
+    /// files where one clashes is a single question whose answer runs what was
+    /// asked for. Per-file skip is what a full file manager offers; two buttons
+    /// meaning exactly what the delete bar's two mean is worth more here than a
+    /// third option nobody asked for.
+    sftp_overwrite: Option<(Vec<PendingTransfer>, Vec<String>)>,
     /// Right-click context menu target in an SFTP pane: (pane, entry name, is_dir).
     sftp_context_menu: Option<(SftpPane, String, bool)>,
     sftp_local_path_edit: String,
@@ -798,6 +829,8 @@ pub enum Message {
     SftpBeginDelete(SftpPane, String, bool),
     SftpConfirmDelete,
     SftpCancelDelete,
+    SftpConfirmOverwrite,
+    SftpCancelOverwrite,
     SftpSort(SftpPane, SftpSortKey),
     SftpClearTransfers,
     /// Stop a single in-flight/queued transfer by its id.
@@ -1407,6 +1440,7 @@ impl AditApp {
             sftp_context_menu: None,
             sftp_rename_to: String::new(),
             sftp_delete_target: None,
+            sftp_overwrite: None,
             sftp_local_path_edit: String::new(),
             sftp_remote_path_edit: String::new(),
             sftp_local_cwd_seen: String::new(),

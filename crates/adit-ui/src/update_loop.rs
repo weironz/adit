@@ -761,12 +761,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         } else {
                             vec![name]
                         };
-                        for entry in names {
-                            match src {
-                                SftpPane::Local => app.manager.sftp_upload_local(&entry),
-                                SftpPane::Remote => app.manager.sftp_download(&entry),
-                            }
-                        }
+                        let transfers = names
+                            .into_iter()
+                            .map(|entry| match src {
+                                SftpPane::Local => PendingTransfer::UploadLocal(entry),
+                                SftpPane::Remote => PendingTransfer::Download(entry),
+                            })
+                            .collect();
+                        start_transfers(app, transfers);
                     }
                 }
             }
@@ -1138,11 +1140,11 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SftpLocalRefresh => app.manager.sftp_local_refresh(),
         Message::SftpUploadLocal(name) => {
             app.sftp_context_menu = None;
-            app.manager.sftp_upload_local(&name);
+            start_transfers(app, vec![PendingTransfer::UploadLocal(name)]);
         }
         Message::SftpDownload(name) => {
             app.sftp_context_menu = None;
-            app.manager.sftp_download(&name);
+            start_transfers(app, vec![PendingTransfer::Download(name)]);
         }
         Message::SftpCursorMoved(point) => {
             // The SFTP panel is a full-window overlay, so on_move gives window
@@ -1229,13 +1231,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if path.is_empty() {
                 app.last_error = Some(String::from(t("请输入要上传的本地文件路径")));
             } else {
-                match app.manager.sftp_upload(std::path::Path::new(&path)) {
-                    Ok(()) => {
-                        app.sftp_upload_path.clear();
-                        app.last_error = None;
-                    }
-                    Err(error) => app.last_error = Some(error.to_string()),
-                }
+                start_transfers(app, vec![PendingTransfer::UploadPath(path.into())]);
             }
         }
         Message::SftpPickUpload => {
@@ -1248,11 +1244,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::SftpUploadPicked(path) => {
             if let Some(path) = path {
-                if let Err(error) = app.manager.sftp_upload(&path) {
-                    app.last_error = Some(error.to_string());
-                }
+                start_transfers(app, vec![PendingTransfer::UploadPath(path)]);
             }
         }
+        Message::SftpConfirmOverwrite => {
+            if let Some((transfers, _)) = app.sftp_overwrite.take() {
+                run_transfers(app, &transfers);
+            }
+        }
+        Message::SftpCancelOverwrite => app.sftp_overwrite = None,
         Message::SftpNewFolderChanged(value) => app.sftp_new_folder = value,
         Message::SftpMkdir => {
             let name = app.sftp_new_folder.trim().to_string();
@@ -2784,6 +2784,65 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
 ", frame.width, frame.height);
     let _ = std::fs::write(path.with_extension("txt"), meta);
     let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
+}
+
+/// Start `transfers`, unless one of them would overwrite a file already at the
+/// destination — in which case hold the whole batch and ask first.
+///
+/// Every way of asking for a transfer routes through here, and that is the
+/// point: the check has to sit somewhere a fifth entry point cannot quietly go
+/// around. There are already four — the context menu, a drag between panes, the
+/// file picker, and a typed path.
+fn start_transfers(app: &mut AditApp, transfers: Vec<PendingTransfer>) {
+    let clashing: Vec<String> = transfers
+        .iter()
+        .filter_map(|transfer| match transfer {
+            PendingTransfer::UploadLocal(name) => app
+                .manager
+                .sftp_remote_file_exists(name)
+                .then(|| name.clone()),
+            PendingTransfer::Download(name) => app
+                .manager
+                .sftp_local_file_exists(name)
+                .then(|| name.clone()),
+            // A path with no file name is not a transfer at all. `sftp_upload`
+            // says so itself, in the words it already uses, rather than being
+            // pre-empted with a different answer here.
+            PendingTransfer::UploadPath(path) => path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .filter(|name| app.manager.sftp_remote_file_exists(name)),
+        })
+        .collect();
+
+    if clashing.is_empty() {
+        run_transfers(app, &transfers);
+    } else {
+        app.sftp_overwrite = Some((transfers, clashing));
+    }
+}
+
+/// Queue every transfer, overwriting whatever is in the way. Reached either
+/// because nothing clashed or because the prompt was answered.
+fn run_transfers(app: &mut AditApp, transfers: &[PendingTransfer]) {
+    for transfer in transfers {
+        match transfer {
+            PendingTransfer::UploadLocal(name) => app.manager.sftp_upload_local(name),
+            PendingTransfer::Download(name) => app.manager.sftp_download(name),
+            PendingTransfer::UploadPath(path) => match app.manager.sftp_upload(path) {
+                // The typed path is cleared here rather than where it was read,
+                // so the box empties when the upload is actually queued. For a
+                // transfer that waited on the prompt that is after the answer,
+                // not before it — and a cancelled one leaves the path in place
+                // to be corrected instead of retyped.
+                Ok(()) => {
+                    app.sftp_upload_path.clear();
+                    app.last_error = None;
+                }
+                Err(error) => app.last_error = Some(error.to_string()),
+            },
+        }
+    }
 }
 
 /// Sample the local clipboard for an image and offer it to the active RDP

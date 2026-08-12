@@ -60,6 +60,9 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     if let Some((_, name, _)) = &app.sftp_delete_target {
         panel_body = panel_body.push(sftp_delete_bar(name));
     }
+    if let Some((_, clashing)) = &app.sftp_overwrite {
+        panel_body = panel_body.push(sftp_overwrite_bar(clashing));
+    }
 
     // Extra upload via picker / typed path → remote current directory.
     let upload_extra = row![
@@ -301,6 +304,39 @@ pub(crate) fn sftp_delete_bar(name: &str) -> Element<'static, Message> {
                 .padding([4, 10])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::SftpCancelDelete),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .padding(6)
+    .style(|_theme| error_panel_style())
+    .into()
+}
+
+/// Overwrite-confirmation bar, shaped like the delete bar above it on purpose:
+/// both ask about the same thing, which is data that does not come back.
+pub(crate) fn sftp_overwrite_bar(clashing: &[String]) -> Element<'static, Message> {
+    let question = match clashing.split_first() {
+        // Naming the first one keeps the question concrete. Ten names in a
+        // one-line bar are not readable, and are not what the answer turns on.
+        Some((first, rest)) if !rest.is_empty() => tf(
+            "{} 等 {} 个文件已存在，确认覆盖?",
+            &[first, &clashing.len().to_string()],
+        ),
+        Some((first, _)) => tf("{} 已存在，确认覆盖?", &[first]),
+        None => String::new(),
+    };
+    container(
+        row![
+            text(question).size(12).color(danger()).width(Fill),
+            button(text("覆盖").size(11))
+                .padding([4, 10])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SftpConfirmOverwrite),
+            button(text("取消").size(11))
+                .padding([4, 10])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::SftpCancelOverwrite),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
