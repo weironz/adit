@@ -805,10 +805,22 @@ pub(crate) fn profile_context_menu(profile_id: ProfileId, multi: bool) -> Elemen
         .into()
 }
 
+/// Whether the profile menu should present itself as acting on a set.
+///
+/// Strictly more than one row. It used to ask whether `selected_profiles` was
+/// non-empty, which was right while a plain click left that set empty — but the
+/// set is now the selection and always holds the focused row, so the old test
+/// was true for a single click too and quietly hid 重命名/编辑/克隆 from every
+/// menu. Extracted so a test can read the answer; an `Element` cannot be
+/// inspected, and that is exactly how this shipped unnoticed.
+pub(crate) fn profile_menu_is_multi(app: &AditApp) -> bool {
+    app.selected_profiles.len() > 1
+}
+
 /// A floating context menu anchored at the cursor, over a transparent scrim that
 /// dismisses it on any outside click.
 pub(crate) fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, Message> {
-    let multi = !app.selected_profiles.is_empty();
+    let multi = profile_menu_is_multi(app);
     floating_context_menu(
         app,
         profile_context_menu(profile_id, multi),
@@ -859,7 +871,7 @@ pub(crate) fn tab_context_overlay(app: &AditApp, session_id: SessionId) -> Eleme
             SessionStatus::Connected | SessionStatus::Connecting
         )
     });
-    let multi = !app.selected_tabs.is_empty();
+    let multi = app.selected_tabs.len() > 1;
     floating_context_menu(
         app,
         tab_context_menu(session_id, connected, multi),

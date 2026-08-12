@@ -2286,6 +2286,29 @@ mod tests {
         assert!(app.selected_profiles.iter().all(|id| shown.contains(id)));
     }
 
+    /// A single selection keeps 重命名 / 编辑 / 克隆; only a real multi-selection
+    /// drops them. This shipped broken: the flag asked whether the selection
+    /// set was non-empty, which was true for one row too once the set became
+    /// the selection, so those three vanished from every menu.
+    #[test]
+    fn a_single_selection_still_offers_the_single_row_actions() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        assert!(
+            !crate::sidebar::profile_menu_is_multi(&app),
+            "one row selected is not a multi-selection"
+        );
+
+        press(&mut app, rows[1], true, false);
+        assert!(crate::sidebar::profile_menu_is_multi(&app));
+
+        // Back down to one: the single-row actions come back.
+        press(&mut app, rows[1], true, false);
+        assert!(!crate::sidebar::profile_menu_is_multi(&app));
+    }
+
     /// The context menu's 删除 deletes the whole selection, not the one row the
     /// pointer was over. There is no separate "批量删除" any more: one action,
     /// scoped by what is selected. The context handler used to re-select the

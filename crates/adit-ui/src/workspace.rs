@@ -748,7 +748,7 @@ pub(crate) fn active_session_action(app: &AditApp) -> Element<'_, Message> {
         let mut buttons: Vec<Element<'_, Message>> = Vec::new();
         buttons.push(
             button(
-                text(tf("批量关闭 ({})", &[&app.selected_tabs.len().to_string()])).size(12),
+                text(tf("关闭 {} 个标签", &[&app.selected_tabs.len()])).size(12),
             )
             .padding([4, 10])
             .style(|_theme, status| danger_button_style(status))
