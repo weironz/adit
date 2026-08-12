@@ -58,5 +58,8 @@ windows = { version = "0.62", features = [
     # apartment-bound, so it runs on a dedicated STA thread with a message pump.
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
+    # SetWindowsHookExW / WH_KEYBOARD_LL, for passing global hotkeys through to
+    # a fullscreen remote desktop instead of letting the local owner eat them.
+    "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
 ] }

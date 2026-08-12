@@ -139,6 +139,25 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::RdpTick => {
             flush_pending_rdp_resize(app);
+            // Keys the hook swallowed, replayed to the remote as scancodes.
+            // Drained here rather than in the callback because the callback runs
+            // on the system input thread against a deadline, and sending on the
+            // helper pipe is not work that belongs there.
+            if app.fullscreen && app.manager.active_rdp_live() {
+                for stroke in keyboard_hook::drain() {
+                    app.manager.send_rdp_input_to_active(RdpInput::Key {
+                        scancode: stroke.scancode,
+                        extended: stroke.extended,
+                        pressed: stroke.pressed,
+                    });
+                }
+            } else if !app.fullscreen {
+                // The session can end or the mode can change without passing
+                // through ToggleFullscreen — a dropped connection, a closed
+                // tab. Leaving a global hook armed after that would swallow
+                // keys for a desktop that is no longer there.
+                keyboard_hook::disarm();
+            }
             // The cached frame belongs to one session; if the active session
             // changed (tab switch, or a close that auto-activated another tab),
             // drop the cache so we never paint one host's frame under another's
@@ -1830,6 +1849,16 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // one piece of chrome left covering the thing the user asked to see
             // whole — its ⌄ tab is enough to get the controls back.
             app.rdp_toolbar_collapsed = true;
+            // The global keyboard hook lives and dies with fullscreen. It is
+            // what lets a hotkey another app registered (a screenshot tool on
+            // Ctrl+Shift+X) reach the remote instead of being eaten locally,
+            // and it is global, so it is armed for exactly as long as the user
+            // is plainly aiming keys at a remote desktop.
+            if app.fullscreen && app.manager.active_is_rdp() {
+                keyboard_hook::arm();
+            } else {
+                keyboard_hook::disarm();
+            }
             let mode = if app.fullscreen {
                 window::Mode::Fullscreen
             } else {

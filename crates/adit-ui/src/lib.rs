@@ -54,6 +54,10 @@ use style::*;
 /// clipboard, which iced provides — files need Win32 directly, and the three
 /// platforms do not share a mechanism. See the module docs.
 mod clipboard_files;
+/// Passing global hotkeys through to a fullscreen remote desktop. A Win32
+/// low-level hook, armed only in fullscreen — see the module docs for why that
+/// leash is short.
+mod keyboard_hook;
 mod workspace;
 use workspace::*;
 mod sidebar;
