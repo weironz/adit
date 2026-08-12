@@ -3,10 +3,11 @@ name: Release
 # Manually triggered — Actions tab → "Release" → Run workflow, or from a shell:
 #   gh workflow run release.yml -f version=0.1.60
 #
-# The whole release happens HERE, on CI: it bumps the three crate versions, runs
-# the gate, builds both binaries, packages the installer, commits+tags the bump,
-# and publishes the GitHub Release. Nothing is built or published from a
-# developer's machine, and `just` is NOT involved in triggering it.
+# The whole release happens HERE, on CI: it requires ci.yml to be green on the
+# commit being released, bumps the three crate versions, builds both binaries,
+# packages the installer, commits+tags the bump, and publishes the GitHub
+# Release. Nothing is built or published from a developer's machine, and `just`
+# is NOT involved in triggering it.
 on:
   workflow_dispatch:
     inputs:
@@ -52,10 +53,15 @@ env:
 # Needed to push the bump commit + tag and to create the GitHub Release.
 permissions:
   contents: write
+  # Reading ci.yml's conclusion for the commit being released. Once a
+  # `permissions` block exists at all, every scope left out of it is `none` — so
+  # without this line the green-CI check gets a 403 instead of an answer, and
+  # fails every release rather than gating it.
+  actions: read
 
 jobs:
   release:
-    name: bump · gate · build · package · publish
+    name: require green CI · bump · build · package · publish
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -69,10 +75,48 @@ jobs:
             exit 1
           fi
 
+      # Release only from a commit ci.yml has already passed on.
+      #
+      # This replaces re-running clippy and the tests here, which spent 6.5
+      # minutes re-deriving an answer ci.yml had already computed for the same
+      # tree when it was pushed. It is *stricter* than what it replaces, not
+      # looser: nothing used to check that main was green at all — the gate
+      # merely happened to recompute it, so a release could be cut from a commit
+      # whose CI had never run or had been cancelled, and nobody would know.
+      #
+      # Deliberately fails rather than waits when CI is still in flight. A
+      # release is cut from a commit already known good; waiting here would
+      # spend the runner on it and then still have to decide what a timeout
+      # means.
+      - name: Require a green CI run on this commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # gh's own jq, so this does not depend on jq being on the image. An
+          # empty run list yields "none" rather than tripping over null.
+          out=$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" \
+            --jq '(.workflow_runs[0] // {}) | "\(.status // "none")|\(.conclusion // "none")|\(.html_url // "none")"')
+          status=${out%%|*}; rest=${out#*|}
+          conclusion=${rest%%|*}; url=${rest#*|}
+
+          if [ "$status" = none ]; then
+            echo "::error::ci.yml has never run on $GITHUB_SHA — push the commit and let CI finish before releasing"
+            exit 1
+          fi
+          if [ "$status" != completed ]; then
+            echo "::error::ci.yml is still '$status' on $GITHUB_SHA ($url) — wait for it, then dispatch again"
+            exit 1
+          fi
+          if [ "$conclusion" != success ]; then
+            echo "::error::ci.yml concluded '$conclusion' on $GITHUB_SHA ($url) — a release is only cut from a green commit"
+            exit 1
+          fi
+          echo "ci.yml is green on $GITHUB_SHA — $url"
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
 
       # `crates/adit-rdp` is a separate workspace with its own target directory,
       # and rust-cache's default of `.` alone never covered it — the helper's
@@ -99,19 +143,39 @@ jobs:
             sed -i -E "s/^version = \".*\"/version = \"$v\"/" "$f"
           done
 
-      # ── Gate: identical to ci.yml's build job, so a red tree never publishes ──
+      # The one thing the bump can break that a green ci.yml cannot have caught,
+      # because it is introduced by the step above and by nothing else.
       #
-      # No separate `cargo build --workspace`: clippy compiles every target it
-      # checks, so that step was doing the same work twice. The timings said so —
-      # the build took 218s and the clippy after it only 91s, which is the shape
-      # of an already-warm dependency graph rather than a second full compile.
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace
+      # adit-rdp-proto defines the IPC types, and both the root workspace and
+      # the helper's separate workspace depend on it by path. Path dependencies
+      # carry no version requirement, so an app and a helper built from
+      # different versions of it compile perfectly and then disagree about the
+      # wire format at runtime — and being separate workspaces, neither build
+      # is in a position to notice.
+      #
+      # This also catches the bump silently doing nothing: `sed` matching no
+      # line exits 0 and leaves the file alone, so a manifest whose `version =`
+      # line ever stops looking the way the pattern expects would ship the old
+      # version with everything green. The tests this replaced would not have
+      # noticed that either.
+      - name: Versions must be in lockstep
+        shell: bash
+        run: |
+          v='${{ github.event.inputs.version }}'
+          fail=0
+          for f in Cargo.toml crates/adit-rdp/Cargo.toml crates/adit-rdp-proto/Cargo.toml; do
+            got=$(sed -nE 's/^version = "(.*)"/\1/p' "$f" | head -1)
+            if [ "$got" != "$v" ]; then
+              echo "::error file=$f::version is '${got:-missing}', expected '$v'"
+              fail=1
+            fi
+          done
+          [ "$fail" -eq 0 ] && echo "all three manifests are at $v"
 
       # ── Build both shippable binaries (release profile) ──
+      #
+      # With clippy and the tests gone these are the only compile here, which is
+      # the point: they build exactly what ships, and nothing else.
       - name: Build app (release)
         run: cargo build --release -p adit-app
 

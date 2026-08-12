@@ -108,12 +108,22 @@ anchor comes back on a different line from the text it named.
   Windows 安装包」 and those users update from a release that did build it.
 
   That dispatches [`.github/workflows/release.yml`](.github/workflows/release.yml)
-  (a `workflow_dispatch`), which bumps the three crate versions in lockstep (root
-  workspace, `crates/adit-rdp/Cargo.toml`, `crates/adit-rdp-proto/Cargo.toml`), runs
-  the gate (build + clippy + test), builds both binaries, packages the Inno Setup
-  installer, commits + tags the bump, and creates the GitHub Release — so what ships is
-  exactly what a clean, gated checkout produces, never a developer's local artifacts.
-  A red gate produces no installer. Watch it with `gh run watch`.
+  (a `workflow_dispatch`), which **requires `ci.yml` to already be green on the
+  commit being released**, bumps the three crate versions in lockstep (root
+  workspace, `crates/adit-rdp/Cargo.toml`, `crates/adit-rdp-proto/Cargo.toml`), asserts
+  all three landed, builds both binaries, packages the Inno Setup installer, commits +
+  tags the bump, and creates the GitHub Release — so what ships is exactly what a clean,
+  gated checkout produces, never a developer's local artifacts. Watch it with
+  `gh run watch`.
+
+  It no longer re-runs clippy and the tests: that spent 6.5 minutes recomputing what
+  ci.yml had already decided about the same tree. Requiring a green run is *stricter* —
+  previously nothing checked main was green at all, so a release could be cut from a
+  commit whose CI had never run. **Dispatching a release before CI finishes now fails
+  fast** rather than waiting; let ci.yml go green first. The only thing the bump itself
+  can break is the three versions drifting apart (`adit-rdp-proto` is a path dependency
+  of both workspaces, so a mismatch compiles fine and disagrees on the wire at runtime),
+  and that is asserted directly.
 
   **Confirm a release by its artefact, never by an exit code:**
 
