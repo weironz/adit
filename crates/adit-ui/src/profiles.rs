@@ -464,6 +464,7 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_environment = profile.environment;
         app.profile_accent_color = profile.accent_color.clone().unwrap_or_default();
         app.profile_label = profile.label.clone().unwrap_or_default();
+        app.profile_keep_connection = profile.keep_connection_after_exit;
         // Password-auth password comes from the OS credential vault, not the
         // profile record.
         app.profile_password = if profile.auth_method == AuthMethod::Password {
@@ -860,6 +861,8 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
                     accent_color,
                     label,
                 );
+                app.manager
+                    .set_profile_keep_connection(profile_id, app.profile_keep_connection);
                 // Persist the password-auth password to the OS credential vault
                 // (never to profiles.json). An empty field clears any saved one.
                 if app.profile_auth_method == AuthMethod::Password {

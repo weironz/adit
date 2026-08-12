@@ -117,6 +117,16 @@ struct SessionRecord {
     /// each of those, and reject it. `None` for local shells, serial, and RDP,
     /// which have no SSH connection to share.
     shared_session: Option<SharedSession>,
+    /// Copied from the profile when the session opens, rather than looked up
+    /// when it closes.
+    ///
+    /// The event loop already holds `record` mutably by the time the shell
+    /// reports `Closed`, so reaching back into `self.profiles` there does not
+    /// borrow-check — which is the same reason `auto_reconnect` is captured
+    /// into a local before the loop starts. Caching it here also means a
+    /// profile edited mid-session does not change what happens to a connection
+    /// that was already established under the old setting.
+    keep_connection_after_exit: bool,
 }
 
 /// Open SFTP for `record`, riding on its SSH connection when that is still up.
@@ -953,6 +963,7 @@ impl SessionManager {
                 pending_auth_prompt: None,
                 auth_rejected: None,
                 shared_session: None,
+                keep_connection_after_exit: profile.keep_connection_after_exit,
                 reconnect: None,
             },
         );
@@ -1084,6 +1095,7 @@ impl SessionManager {
                 pending_auth_prompt: None,
                 auth_rejected: None,
                 shared_session: None,
+                keep_connection_after_exit: profile.keep_connection_after_exit,
                 reconnect,
             },
         );
@@ -1105,6 +1117,17 @@ impl SessionManager {
     pub fn set_profile_icon(&mut self, profile_id: ProfileId, icon: String) {
         if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.icon = icon;
+        }
+    }
+
+    /// Set whether this profile's SSH connection survives its shell exiting.
+    ///
+    /// Only affects sessions opened after this point: each record copies the
+    /// flag when it opens, so a connection established under the old setting
+    /// keeps behaving the way it was started.
+    pub fn set_profile_keep_connection(&mut self, profile_id: ProfileId, keep: bool) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.keep_connection_after_exit = keep;
         }
     }
 
@@ -1252,6 +1275,7 @@ impl SessionManager {
                 pending_auth_prompt: None,
                 auth_rejected: None,
                 shared_session: None,
+                keep_connection_after_exit: profile.keep_connection_after_exit,
                 reconnect: None,
             },
         );
@@ -1317,6 +1341,7 @@ impl SessionManager {
                 pending_auth_prompt: None,
                 auth_rejected: None,
                 shared_session: None,
+                keep_connection_after_exit: false,
                 reconnect: None,
             },
         );
@@ -2099,6 +2124,7 @@ impl SessionManager {
                 pending_auth_prompt: None,
                 auth_rejected: None,
                 shared_session: None,
+                keep_connection_after_exit: profile.keep_connection_after_exit,
                 reconnect: None,
             },
         );
@@ -2158,6 +2184,7 @@ impl SessionManager {
                 pending_auth_prompt: None,
                 auth_rejected: None,
                 shared_session: None,
+                keep_connection_after_exit: profile.keep_connection_after_exit,
                 reconnect: None,
             },
         );
@@ -2831,7 +2858,18 @@ impl SessionManager {
                         // `exit` would leave the SSH connection established.
                         // Anything still using it (an SFTP panel) holds its own
                         // claim and keeps it alive on its own.
-                        record.shared_session = None;
+                        //
+                        // Unless the profile asked otherwise. That releasing
+                        // this is what closes the connection is precisely why
+                        // it is worth *not* releasing on an MFA host: nothing
+                        // opened afterwards can dial its own, because a second
+                        // one-time code would be demanded and a reused one
+                        // refused. So `exit` there costs SFTP and tunnels until
+                        // someone opens a shell by hand — and this is the
+                        // choice to pay for the idle connection instead.
+                        if !record.keep_connection_after_exit {
+                            record.shared_session = None;
+                        }
                         record.pending_auth_prompt = None;
                         let can_retry = auto_reconnect
                             && record

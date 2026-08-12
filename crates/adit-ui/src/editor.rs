@@ -522,7 +522,7 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
         text(t("高级")).size(12),
         // Name what is inside while it is shut: ProxyJump used to be findable
         // by scrolling, and a nameless disclosure would just have lost it.
-        text(t("跳板机、启动命令、TERM、环境色标、标签徽标"))
+        text(t("跳板机、启动命令、TERM、环境色标、标签徽标、连接保留"))
             .size(10)
             .color(muted_text()),
         Space::new().width(Fill),
@@ -589,7 +589,20 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
             .spacing(6)
             .wrap()
             .into(),
-        ));
+        ))
+        // Worded around what it costs, not what it enables. "Keep the
+        // connection" sounds free; what is being agreed to is an authenticated
+        // SSH connection to a production host left open after someone typed
+        // `exit`, and MFA is the reason anyone would want that.
+        .push(
+            checkbox(app.profile_keep_connection)
+                .label(t(
+                    "退出 shell 后保留 SSH 连接，供 SFTP/隧道复用（MFA 主机需要；连接会一直挂着）",
+                ))
+                .on_toggle(Message::ProfileKeepConnectionToggled)
+                .size(16)
+                .text_size(12),
+        );
 
     let label_field = text_field(
         "标签徽标（可选，如 PROD；留空用环境名）",
@@ -628,6 +641,7 @@ fn advanced_field_count(app: &AditApp) -> usize {
         + usize::from(!app.profile_terminal_type.trim().is_empty())
         + usize::from(app.profile_environment != Environment::None)
         + usize::from(!app.profile_label.trim().is_empty())
+        + usize::from(app.profile_keep_connection)
 }
 
 /// One folder in the picker — the same shape and the same selected style as

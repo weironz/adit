@@ -992,4 +992,5 @@ pub(crate) fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.environment == app.profile_environment
         && profile.accent_color.as_deref().unwrap_or_default() == app.profile_accent_color.trim()
         && profile.label.as_deref().unwrap_or_default() == app.profile_label.trim()
+        && profile.keep_connection_after_exit == app.profile_keep_connection
 }

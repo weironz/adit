@@ -1465,6 +1465,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = false;
             app.profile_label = value;
         }
+        Message::ProfileKeepConnectionToggled(keep) => {
+            app.terminal_focused = false;
+            app.profile_keep_connection = keep;
+        }
         Message::ProfileTerminalTypeChanged(value) => {
             app.terminal_focused = false;
             app.profile_terminal_type = value;

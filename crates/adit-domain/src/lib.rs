@@ -93,6 +93,21 @@ pub struct ConnectionProfile {
     /// Short tab badge (e.g. `PROD`). Empty/None ⇒ the environment's own label.
     #[serde(default)]
     pub label: Option<String>,
+    /// Keep the authenticated SSH connection open after the shell exits, so
+    /// SFTP and tunnels opened later can still ride on it.
+    ///
+    /// Off by default, and the default is the part that matters: leaving a
+    /// connection established after someone types `exit` is what the session
+    /// layer goes out of its way to avoid, so keeping it has to be a choice
+    /// somebody made rather than something an upgrade did to them.
+    ///
+    /// It exists for MFA hosts. Those connections cannot be re-established
+    /// unattended — a fresh one-time code would be demanded for each, and a
+    /// code already used inside the same time window is normally refused — so
+    /// on such a host `exit` otherwise costs SFTP and tunnels until the next
+    /// shell is opened by hand.
+    #[serde(default)]
+    pub keep_connection_after_exit: bool,
 }
 
 /// A profile's deployment environment, used to colour-code its tab so an operator
@@ -283,6 +298,7 @@ impl ConnectionProfile {
             environment: Environment::None,
             accent_color: None,
             label: None,
+            keep_connection_after_exit: false,
         }
     }
 
