@@ -420,6 +420,13 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if matches!(command, MenuCommand::CheckUpdate) {
                 return begin_update_check(app);
             }
+            // 连接 reaches for the selection like every other action: with more
+            // than one row picked it opens them all, rather than the single row
+            // the editor happens to be showing.
+            if matches!(command, MenuCommand::Connect) && app.selected_profiles.len() > 1 {
+                app.active_menu = None;
+                return Task::done(Message::ConnectSelectedProfiles);
+            }
             // The SecureCRT import opens an async folder picker.
             if matches!(command, MenuCommand::ImportSecureCrt) {
                 app.active_menu = None;
@@ -858,7 +865,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::CloseProfileEditor => {
             app.profile_editor = None;
         }
-        Message::BatchConnectSelectedProfiles => {
+        Message::ConnectSelectedProfiles => {
             app.profile_context_menu = None;
             let ids = crate::profiles::selected_profile_ids(app);
             app.selected_profiles.clear();
@@ -896,23 +903,23 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
         }
-        Message::BatchDeleteSelectedProfiles => {
+        Message::DeleteSelectedProfiles => {
             // One implementation, shared with the menu bar's 删除会话, so the
             // two can never diverge in what they delete or what they report.
             crate::profiles::delete_selected_profiles(app);
         }
-        Message::ShowBatchMoveMenu => {
+        Message::ShowMoveToGroupMenu => {
             // Close any open right-click menu first so the picker isn't stacked
             // on top of it, then anchor the picker at the current cursor.
             app.profile_context_menu = None;
             app.context_menu_pos = app.cursor_pos;
-            app.batch_move_menu = true;
+            app.move_to_group_menu = true;
         }
-        Message::HideBatchMoveMenu => {
-            app.batch_move_menu = false;
+        Message::HideMoveToGroupMenu => {
+            app.move_to_group_menu = false;
         }
-        Message::BatchMoveSelectedProfilesTo(group) => {
-            app.batch_move_menu = false;
+        Message::MoveSelectedProfilesToGroup(group) => {
+            app.move_to_group_menu = false;
             app.profile_context_menu = None;
             let ids = crate::profiles::selected_profile_ids(app);
             let mut moved = 0;
@@ -940,10 +947,13 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ClearProfileSelection => {
             app.selected_profiles.clear();
             app.profile_select_anchor = None;
-            app.batch_move_menu = false;
+            app.move_to_group_menu = false;
         }
         Message::ConnectProfileFromContext(profile_id) => {
-            select_profile(app, profile_id);
+            // Focus, not select: the right-click already settled what is
+            // selected, and resetting it here would quietly shrink a
+            // multi-selection to the one row the pointer happened to be on.
+            focus_profile(app, profile_id);
             app.profile_context_menu = None;
             app.profile_editor = None;
             open_connection_dialog(app);
@@ -968,11 +978,6 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.notice = String::from(t("已克隆会话"));
                 }
             }
-        }
-        Message::DeleteProfileFromContext(profile_id) => {
-            select_profile(app, profile_id);
-            app.profile_context_menu = None;
-            crate::profiles::delete_selected_profiles(app);
         }
         Message::ConnectionPasswordChanged(password) => {
             app.password = password;

@@ -225,37 +225,6 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .style(|_theme| sidebar_header_style()),
     ];
 
-    // Batch action bar: shown only when profiles are multi-selected.
-    if !app.selected_profiles.is_empty() {
-        let count = app.selected_profiles.len();
-        content = content.push(
-            container(
-                row![
-                    button(text(tf("批量连接 ({})", &[&count.to_string()])).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| primary_button_style(status))
-                        .on_press(Message::BatchConnectSelectedProfiles),
-                    button(text(t("批量移动到分组")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| secondary_button_style(status))
-                        .on_press(Message::ShowBatchMoveMenu),
-                    button(text(t("批量删除")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| danger_button_style(status))
-                        .on_press(Message::BatchDeleteSelectedProfiles),
-                    button(text(t("取消选择")).size(11))
-                        .padding([2, 8])
-                        .style(|_theme, status| secondary_button_style(status))
-                        .on_press(Message::ClearProfileSelection),
-                    Space::new().width(Fill),
-                ]
-                .spacing(4)
-                .align_y(Alignment::Center),
-            )
-            .padding([2, 8]),
-        );
-    }
-
     content = content.push(
         text_input("Filter by group/session name <Alt+I>", &app.session_filter)
             .id(session_filter_id())
@@ -264,6 +233,45 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
             .style(toolbar_input_style),
     );
     content = content.push(scrollable(session_tree(app)).height(Fill));
+
+    // The selection bar sits BELOW the tree, and only once more than one row is
+    // picked. Above the tree it pushed every row down the instant a second row
+    // was selected, so the next Ctrl+click landed on a different session than
+    // the one under the pointer. Its labels carry no "批量": these are the same
+    // 连接 and 删除 as everywhere else, and the count is what says how far they
+    // reach.
+    if app.selected_profiles.len() > 1 {
+        let count = app.selected_profiles.len();
+        content = content.push(
+            container(
+                row![
+                    text(tf("已选 {} 项", &[&count])).size(11).color(muted_text()),
+                    Space::new().width(Fill),
+                    button(text(t("连接")).size(11))
+                        .padding([2, 8])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::ConnectSelectedProfiles),
+                    button(text(t("移动到分组")).size(11))
+                        .padding([2, 8])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::ShowMoveToGroupMenu),
+                    button(text(t("删除")).size(11))
+                        .padding([2, 8])
+                        .style(|_theme, status| danger_button_style(status))
+                        .on_press(Message::DeleteSelectedProfiles),
+                    button(text(t("取消选择")).size(11))
+                        .padding([2, 8])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::ClearProfileSelection),
+                ]
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .padding([3, 8])
+            .style(|_theme| sidebar_header_style()),
+        );
+    }
+
     let mut content = content.spacing(0).height(Fill).width(Length::Fixed(app.sidebar_width));
 
     if let Some(error) = error {
@@ -763,21 +771,33 @@ pub(crate) const PROFILE_MENU_WIDTH: f32 = 168.0;
 pub(crate) const PROFILE_MENU_HEIGHT: f32 = 162.0;
 
 /// The context-menu card (used inside the floating overlay).
+/// One set of actions, scoped by the selection.
+///
+/// There is deliberately no separate "批量" half. Two entries that differ only
+/// in how many rows they touch make the plain one ambiguous — with three rows
+/// selected, what did 删除 mean? — so 连接 and 删除 simply act on whatever is
+/// selected, one row or ten, as Explorer does. What `multi` changes is only
+/// which entries are *offered*: rename, edit and clone are single-row
+/// operations with no sensible meaning over a set, so they are dropped rather
+/// than left to silently pick one.
 pub(crate) fn profile_context_menu(profile_id: ProfileId, multi: bool) -> Element<'static, Message> {
-    let mut items = vec![
-        profile_menu_item("连接", Message::ConnectProfileFromContext(profile_id), false),
-        profile_menu_item("重命名", Message::RenameProfileFromContext(profile_id), false),
-        profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false),
-        profile_menu_item("克隆", Message::CloneProfileFromContext(profile_id), false),
-        profile_menu_divider(),
-    ];
-    if multi {
-        items.push(profile_menu_item("批量连接", Message::BatchConnectSelectedProfiles, false));
-        items.push(profile_menu_item("批量移动到分组", Message::ShowBatchMoveMenu, false));
-        items.push(profile_menu_item("批量删除", Message::BatchDeleteSelectedProfiles, true));
-        items.push(profile_menu_divider());
+    let mut items = vec![profile_menu_item(
+        "连接",
+        if multi {
+            Message::ConnectSelectedProfiles
+        } else {
+            Message::ConnectProfileFromContext(profile_id)
+        },
+        false,
+    )];
+    if !multi {
+        items.push(profile_menu_item("重命名", Message::RenameProfileFromContext(profile_id), false));
+        items.push(profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false));
+        items.push(profile_menu_item("克隆", Message::CloneProfileFromContext(profile_id), false));
     }
-    items.push(profile_menu_item("删除", Message::DeleteProfileFromContext(profile_id), true));
+    items.push(profile_menu_divider());
+    items.push(profile_menu_item("移动到分组", Message::ShowMoveToGroupMenu, false));
+    items.push(profile_menu_item("删除", Message::DeleteSelectedProfiles, true));
     container(column(items).spacing(1))
         .padding(4)
         .width(Length::Fixed(PROFILE_MENU_WIDTH))
@@ -798,12 +818,12 @@ pub(crate) fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> E
 
 /// The "move selected profiles to group" picker — lists every existing folder
 /// plus a "top level (no group)" entry. Picking one moves the whole selection.
-pub(crate) fn batch_move_overlay(app: &AditApp) -> Element<'_, Message> {
+pub(crate) fn move_to_group_overlay(app: &AditApp) -> Element<'_, Message> {
     let mut items: Vec<Element<'static, Message>> = Vec::new();
     // "Top level" entry uses an empty group string.
     items.push(profile_menu_item(
         "移到顶层（无分组）",
-        Message::BatchMoveSelectedProfilesTo(String::new()),
+        Message::MoveSelectedProfilesToGroup(String::new()),
         false,
     ));
     let groups = sidebar_group_names(app, app.manager.profiles());
@@ -817,7 +837,7 @@ pub(crate) fn batch_move_overlay(app: &AditApp) -> Element<'_, Message> {
                     .width(Fill)
                     .padding([6, 10])
                     .style(move |_theme, status| profile_menu_item_style(status, false))
-                    .on_press(Message::BatchMoveSelectedProfilesTo(group))
+                    .on_press(Message::MoveSelectedProfilesToGroup(group))
                     .into(),
             );
         }
@@ -827,7 +847,7 @@ pub(crate) fn batch_move_overlay(app: &AditApp) -> Element<'_, Message> {
         .width(Length::Fixed(PROFILE_MENU_WIDTH))
         .style(|_theme| profile_context_menu_style())
         .into();
-    floating_context_menu(app, card, Message::HideBatchMoveMenu)
+    floating_context_menu(app, card, Message::HideMoveToGroupMenu)
 }
 
 pub(crate) fn tab_context_overlay(app: &AditApp, session_id: SessionId) -> Element<'_, Message> {

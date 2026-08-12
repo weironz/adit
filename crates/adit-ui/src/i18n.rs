@@ -63,9 +63,8 @@ fn en(zh: &'static str) -> &'static str {
         // The fullscreen RDP toolbar.
         "全屏" => "Fullscreen",
         // Sidebar multi-selection (Ctrl/Shift+click) and its batch actions.
-        "批量连接 ({})" => "Connect {} sessions",
-        "批量移动到分组" => "Move to group",
-        "批量删除" => "Delete selected",
+        "已选 {} 项" => "{} selected",
+        "移动到分组" => "Move to group",
         "取消选择" => "Clear selection",
         "已删除 {} 个会话配置" => "Deleted {} session profiles",
         "已移动 {} 个会话配置" => "Moved {} session profiles",
@@ -453,7 +452,6 @@ fn en(zh: &'static str) -> &'static str {
         "已删除选中配置" => "Deleted selected profiles",
         "已移动选中配置" => "Moved selected profiles",
         "批量连接" => "Connect all",
-        "移动到分组" => "Move to group",
         "所有会话" => "all sessions",
         "当前会话" => "this session",
         other => other,

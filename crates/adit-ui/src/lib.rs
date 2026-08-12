@@ -148,7 +148,7 @@ pub struct AditApp {
     /// Anchor for Shift+click range selection on profiles.
     profile_select_anchor: Option<ProfileId>,
     /// Whether the "move selected profiles to group" picker overlay is open.
-    batch_move_menu: bool,
+    move_to_group_menu: bool,
     profile_editor: Option<ProfileId>,
     connection_dialog: Option<ConnectionDialog>,
     // Folders in user-arrangeable order (top-level tree order); a session may be
@@ -712,16 +712,15 @@ pub enum Message {
     CloseProfileEditor,
     ConnectProfileFromContext(ProfileId),
     CloneProfileFromContext(ProfileId),
-    DeleteProfileFromContext(ProfileId),
     /// Batch-operate on all currently selected sidebar profiles.
-    BatchConnectSelectedProfiles,
-    BatchDeleteSelectedProfiles,
+    ConnectSelectedProfiles,
+    DeleteSelectedProfiles,
     /// Open the "move selected profiles to group" picker overlay.
-    ShowBatchMoveMenu,
+    ShowMoveToGroupMenu,
     /// Close the "move selected profiles to group" picker overlay.
-    HideBatchMoveMenu,
+    HideMoveToGroupMenu,
     /// Move all selected profiles into the named group and close the picker.
-    BatchMoveSelectedProfilesTo(String),
+    MoveSelectedProfilesToGroup(String),
     ClearProfileSelection,
     ConnectionPasswordChanged(String),
     RememberConnectionPasswordChanged(bool),
@@ -1500,7 +1499,7 @@ impl AditApp {
             tab_select_anchor: None,
             selected_profiles: HashSet::new(),
             profile_select_anchor: None,
-            batch_move_menu: false,
+            move_to_group_menu: false,
             broadcast_input: false,
             command_window_open,
             command_target: CommandTarget::ActiveSession,
@@ -2285,6 +2284,25 @@ mod tests {
         assert!(app.selected_profiles.len() < 3);
         let shown: Vec<ProfileId> = visible(&app);
         assert!(app.selected_profiles.iter().all(|id| shown.contains(id)));
+    }
+
+    /// The context menu's 删除 deletes the whole selection, not the one row the
+    /// pointer was over. There is no separate "批量删除" any more: one action,
+    /// scoped by what is selected. The context handler used to re-select the
+    /// clicked row first, which silently shrank the selection to one.
+    #[test]
+    fn context_delete_removes_the_whole_selection() {
+        let mut app = drag_test_app();
+        let rows = visible(&app);
+
+        press(&mut app, rows[0], false, false);
+        press(&mut app, rows[1], true, false);
+        let _ = update(&mut app, Message::ShowProfileContextMenu(rows[1]));
+        assert_eq!(app.selected_profiles.len(), 2);
+
+        let _ = update(&mut app, Message::DeleteSelectedProfiles);
+
+        assert_eq!(app.manager.profiles().len(), 1);
     }
 
     /// Right-clicking a row already in the selection keeps it — otherwise the
