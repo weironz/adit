@@ -62,7 +62,13 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     // (▦ 返回主机列表) and a status both the status bar and the title bar
     // already show. Hiding it then is safe by construction: no sessions means
     // the host view is what is on screen, so there is nothing to switch to.
-    let has_sessions = !app.manager.sessions().is_empty();
+    // Fullscreen over a remote desktop drops the tab strip too. The menu bar
+    // already goes (see `chrome::view`), and leaving the strip behind meant
+    // "fullscreen" still spent a row of glass on chrome. Only for RDP: the
+    // floating toolbar is what replaces those controls, and a terminal session
+    // in fullscreen has no such thing, so hiding its tabs would strand it.
+    let rdp_fullscreen = app.fullscreen && app.manager.active_is_rdp();
+    let has_sessions = !app.manager.sessions().is_empty() && !rdp_fullscreen;
     let mut layout = column![].height(Fill).width(Fill);
     if has_sessions {
         layout = layout.push(
@@ -361,7 +367,15 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
             Some(Message::ToggleRdpClipboard(!app.rdp_clipboard)),
         ),
         rdp_toolbar_separator(),
-        rdp_toolbar_button("⛶", t("退出全屏"), false, Some(Message::ToggleFullscreen)),
+        // The label follows the state it toggles. It was hard-coded to 退出全屏
+        // and so read as "leave fullscreen" while windowed — the button offered
+        // the opposite of what it said.
+        rdp_toolbar_button(
+            "⛶",
+            if app.fullscreen { t("退出全屏") } else { t("全屏") },
+            false,
+            Some(Message::ToggleFullscreen),
+        ),
         rdp_toolbar_button(
             "✕",
             t("断开会话"),

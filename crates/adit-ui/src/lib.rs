@@ -1944,17 +1944,18 @@ mod tests {
         assert_eq!(rdp_toolbar_shape(&app), ToolbarShape::Expanded);
     }
 
-    /// Fullscreen has no menu bar, so the toolbar is the only place its controls
-    /// exist there — including the way back out. Leaving fullscreen puts it away
-    /// again, where the 视图 menu covers the same ground.
+    /// Fullscreen over a desktop leaves the toolbar's ⌄ tab and nothing else:
+    /// the menu bar, the tab strip and the status bar all go, so an expanded
+    /// bar would be the one piece of chrome still covering what the user asked
+    /// to see whole.
     #[test]
-    fn entering_fullscreen_opens_the_toolbar_and_leaving_closes_it() {
+    fn toggling_fullscreen_leaves_the_toolbar_collapsed() {
         let mut app = drag_test_app();
         assert!(!app.fullscreen);
 
         let _ = update(&mut app, Message::ToggleFullscreen);
         assert!(app.fullscreen);
-        assert!(!app.rdp_toolbar_collapsed, "fullscreen must show the bar");
+        assert!(app.rdp_toolbar_collapsed, "only the ⌄ tab shows");
 
         let _ = update(&mut app, Message::ToggleFullscreen);
         assert!(!app.fullscreen);

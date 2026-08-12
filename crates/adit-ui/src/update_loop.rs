@@ -1813,10 +1813,11 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ToggleFullscreen => {
             app.fullscreen = !app.fullscreen;
-            // Fullscreen has no menu bar, so the toolbar is the only place these
-            // controls exist there — including the way back out. Windowed mode
-            // puts it away again, where the 视图 menu covers the same ground.
-            app.rdp_toolbar_collapsed = !app.fullscreen;
+            // Collapsed either way. Fullscreen over a desktop now hides the tab
+            // strip and the status bar as well, so an expanded bar would be the
+            // one piece of chrome left covering the thing the user asked to see
+            // whole — its ⌄ tab is enough to get the controls back.
+            app.rdp_toolbar_collapsed = true;
             let mode = if app.fullscreen {
                 window::Mode::Fullscreen
             } else {

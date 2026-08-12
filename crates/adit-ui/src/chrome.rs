@@ -33,7 +33,14 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     // strip cost a permanent 36px of desktop for shortcuts that were mostly
     // duplicates. Session Manager's own header keeps the three that belong to
     // it (host list, new session, hide panel).
-    let layout = if app.fullscreen {
+    // The status bar survives fullscreen for every other session type because
+    // it is the only thing left naming the way out. Over a remote desktop the
+    // floating toolbar is that thing, so the bar goes as well and the glass is
+    // wholly the desktop's.
+    let rdp_fullscreen = app.fullscreen && app.manager.active_is_rdp();
+    let layout = if rdp_fullscreen {
+        column![main]
+    } else if app.fullscreen {
         column![main].push(status_bar(app))
     } else {
         column![menu_bar(app)].push(main).push(status_bar(app))
