@@ -211,11 +211,12 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
                 // and a button to hide the whole panel.
                 sidebar_tool_button(
                     "▦",
+                    14.0,
                     "返回主机列表",
                     Message::ShowMainView(MainView::Hosts),
                 ),
-                sidebar_tool_button("⊕", "新建会话", Message::NewProfileDraft),
-                sidebar_tool_button("«", "隐藏会话栏", Message::ToggleSidebar),
+                sidebar_tool_button("+", 20.0, "新建会话", Message::NewProfileDraft),
+                sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
             ]
             .spacing(4)
             .align_y(Alignment::Center),
@@ -267,7 +268,7 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
 /// here would read as a second divider running the height of the terminal.
 pub(crate) fn sidebar_reveal_strip() -> Element<'static, Message> {
     column![
-        sidebar_tool_button("»", "显示会话栏", Message::ToggleSidebar),
+        sidebar_tool_button("»", 14.0, "显示会话栏", Message::ToggleSidebar),
         Space::new().height(Fill),
     ]
     .width(Length::Fixed(SIDEBAR_REVEAL_WIDTH))
@@ -964,10 +965,14 @@ pub(crate) fn profile_sidebar_order(
 
 pub(crate) fn sidebar_tool_button(
     glyph: &'static str,
+    // Per-glyph, because these are not one typeface at one weight: a bare `+`
+    // reads noticeably smaller than `▦` or `«` at the same number, so the size
+    // is compensating for the mark rather than ranking the buttons.
+    glyph_size: f32,
     tip: &'static str,
     message: Message,
 ) -> Element<'static, Message> {
-    let control = button(text(glyph).size(14))
+    let control = button(text(glyph).size(glyph_size))
         .width(Length::Fixed(28.0))
         .height(Length::Fixed(26.0))
         .padding(0)

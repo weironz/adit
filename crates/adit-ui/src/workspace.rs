@@ -76,18 +76,28 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
                 scrollable(tabs).direction(scrollable::Direction::Horizontal(
                     scrollable::Scrollbar::new()
                 )),
+                // Directly after the last tab, not pinned to the far right: it
+                // adds a tab, so it belongs where the next one would appear.
+                // Pinned right it read as a window control and sat an entire
+                // empty row away from the thing it acts on.
+                //
+                // Same button as the sidebar's 新建会话 — same glyph, same tip,
+                // same message — so the two cannot drift into meaning different
+                // things.
+                container(sidebar_tool_button(
+                    "+",
+                    20.0,
+                    "新建会话",
+                    Message::NewProfileDraft,
+                ))
+                .padding([0, 2])
+                .center_y(TAB_BAR_HEIGHT),
                 active_session_action(app),
                 // The connection status used to sit here. It is already in the
                 // status bar and the title bar, and a third copy right beside
                 // the tab naming the same session spent the row's most useful
                 // space — the part next to the tabs — on nothing new.
                 Space::new().width(Fill),
-                // ⊕ rather than a fresh glyph: the sidebar's 新建会话 button is
-                // this same symbol sending this same message, so the two cannot
-                // drift into meaning different things.
-                container(sidebar_tool_button("⊕", "新建会话", Message::NewProfileDraft))
-                    .padding([0, 6])
-                    .center_y(TAB_BAR_HEIGHT),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
