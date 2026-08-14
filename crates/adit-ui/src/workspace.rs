@@ -77,10 +77,17 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
                     scrollable::Scrollbar::new()
                 )),
                 active_session_action(app),
-                container(text(app.manager.status_line()).size(12).color(muted_text()))
-                    .padding([0, 8])
-                    .center_y(TAB_BAR_HEIGHT),
+                // The connection status used to sit here. It is already in the
+                // status bar and the title bar, and a third copy right beside
+                // the tab naming the same session spent the row's most useful
+                // space — the part next to the tabs — on nothing new.
                 Space::new().width(Fill),
+                // ⊕ rather than a fresh glyph: the sidebar's 新建会话 button is
+                // this same symbol sending this same message, so the two cannot
+                // drift into meaning different things.
+                container(sidebar_tool_button("⊕", "新建会话", Message::NewProfileDraft))
+                    .padding([0, 6])
+                    .center_y(TAB_BAR_HEIGHT),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
