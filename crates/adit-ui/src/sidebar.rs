@@ -221,10 +221,11 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
             .spacing(4)
             .align_y(Alignment::Center),
         )
-        // The same height as the tab strip it sits beside, or the two rows
-        // centre their contents on lines a couple of pixels apart — which is
-        // exactly how far out the sidebar's buttons looked.
-        .height(Length::Fixed(TAB_BAR_HEIGHT))
+        // Same height as the tab strip beside it, and centred rather than just
+        // sized: `Container` aligns to the top by default, so height alone left
+        // these buttons hugging the top edge while the + across the divider —
+        // the one thing that *was* centred — sat 4px below them.
+        .center_y(TAB_BAR_HEIGHT)
         .padding([0, 8])
         .style(|_theme| sidebar_header_style()),
     ];

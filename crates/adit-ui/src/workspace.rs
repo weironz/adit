@@ -7,8 +7,12 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         .sessions()
         .into_iter()
         .fold(
+            // `Row` aligns to Start by default, so TAB_HEIGHT tabs in a
+            // TAB_BAR_HEIGHT row sat against the top with all 8px of the
+            // difference below them.
             row![hosts_tab_button(app.main_view == MainView::Hosts)]
                 .spacing(2)
+                .align_y(Alignment::Center)
                 .height(TAB_BAR_HEIGHT),
             |tabs, session| {
             let accent = profile_accent(app, session.profile_id);
