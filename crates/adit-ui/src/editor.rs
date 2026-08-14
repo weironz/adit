@@ -689,11 +689,16 @@ pub(crate) fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'sta
 /// navigation surface for one more destination was never worth it.
 pub(crate) fn hosts_tab_button(active: bool) -> Element<'static, Message> {
     button(
-        row![text("\u{25a6}").size(12), text("主机").size(12)]
-            .spacing(6)
-            .align_y(Alignment::Center),
+        // Centred explicitly: a button does not do it, and this box is taller
+        // than the text in it. See TAB_HEIGHT.
+        container(
+            row![text("\u{25a6}").size(12), text("主机").size(12)]
+                .spacing(6)
+                .align_y(Alignment::Center),
+        )
+        .center_y(Fill),
     )
-    .height(TAB_BAR_HEIGHT)
+    .height(TAB_HEIGHT)
     .padding([0, 12])
     .style(move |_theme, status| {
         if active {

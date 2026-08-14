@@ -1109,6 +1109,15 @@ const SIDEBAR_REVEAL_WIDTH: f32 = 16.0;
 const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 const TAB_BAR_HEIGHT: f32 = 34.0;
+/// The height of everything *inside* the tab strip — the 主机 tab, a session
+/// tab, and the + beside them — so one row does not hold three heights.
+///
+/// Anything given this height has to centre its own content. `iced`'s button
+/// lays out through `layout::padded`, whose positioning step is the identity,
+/// so content sits at the padding offset and a button taller than its content
+/// leaves every pixel of the slack underneath it. That is what had 主机 riding
+/// high in a box the full 34 tall while the tabs beside it were content-sized.
+const TAB_HEIGHT: f32 = 26.0;
 const STATUS_BAR_HEIGHT: f32 = 28.0;
 /// The reveal zone for the collapsed toolbar: the fixed box that senses the
 /// pointer and holds the ⌄ tab. Wide enough to find without aiming, small

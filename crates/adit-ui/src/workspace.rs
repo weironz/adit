@@ -893,7 +893,9 @@ pub(crate) fn tab_button(
 
     mouse_area(
         container(inner)
-            .padding([2, 6])
+            .padding([0, 6])
+            // The same height as the 主机 tab and the +, so the strip holds one.
+            .center_y(TAB_HEIGHT)
             .style(move |_theme| {
                 if is_dragging {
                     tab_container_style_dnd(active, true)

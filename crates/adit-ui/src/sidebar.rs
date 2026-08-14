@@ -221,8 +221,11 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
             .spacing(4)
             .align_y(Alignment::Center),
         )
-        .height(Length::Fixed(30.0))
-        .padding([2, 8])
+        // The same height as the tab strip it sits beside, or the two rows
+        // centre their contents on lines a couple of pixels apart — which is
+        // exactly how far out the sidebar's buttons looked.
+        .height(Length::Fixed(TAB_BAR_HEIGHT))
+        .padding([0, 8])
         .style(|_theme| sidebar_header_style()),
     ];
 
@@ -972,10 +975,17 @@ pub(crate) fn sidebar_tool_button(
     tip: &'static str,
     message: Message,
 ) -> Element<'static, Message> {
-    let control = button(text(glyph).size(glyph_size))
-        .width(Length::Fixed(28.0))
-        .height(Length::Fixed(26.0))
-        .padding(0)
+    let control = button(
+        // A button does not centre its content — see TAB_HEIGHT — and every one
+        // of these is a small glyph in a box deliberately larger than it, so
+        // without this they all sit against the top edge.
+        container(text(glyph).size(glyph_size))
+            .center_x(Fill)
+            .center_y(Fill),
+    )
+    .width(Length::Fixed(28.0))
+    .height(Length::Fixed(TAB_HEIGHT))
+    .padding(0)
         .style(|_theme, status| sidebar_tool_button_style(status))
         .on_press(message);
 
