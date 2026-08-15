@@ -593,6 +593,52 @@ fn password_auth_opens_shell_and_runs_a_command() {
     assert!(!recorded.trim().is_empty(), "host key should have been recorded to known_hosts");
 }
 
+/// `exit` in the remote shell must report `Closed` even while something is
+/// still holding the connection.
+///
+/// This mirrors what the session layer does: it keeps the `SharedSession` from
+/// `SessionReady` so SFTP and tunnels can ride the connection, and releases it
+/// only once it sees `Closed`. The shell thread used to wait for every claim to
+/// drop *before* announcing `Closed`, so the two waited on each other for good
+/// — `exit` left a tab reading connected that Enter could not reconnect,
+/// because nothing had marked the session dead.
+///
+/// Holding the claim here is the whole point: without it the claim drops as
+/// soon as the event is ignored, the wait ends on its own, and the bug cannot
+/// reproduce.
+#[test]
+fn exit_reports_closed_while_the_connection_is_still_held() {
+    let server = TestServer::start();
+    let mut request = LiveShellRequest::new("127.0.0.1", server.port, USER, PASS);
+    request.known_hosts_path = temp_known_hosts();
+    request.auto_accept_host_keys = true;
+    request.startup_command = String::from("exit");
+
+    let handle = spawn_password_shell(request).expect("spawn shell");
+    let mut held: Option<SharedSession> = None;
+    let closed = pump_until(
+        Duration::from_secs(20),
+        || handle.try_recv(),
+        |event| match event {
+            LiveShellEvent::SessionReady(shared) => {
+                held = Some(shared);
+                ControlFlow::Continue(())
+            }
+            LiveShellEvent::Closed => ControlFlow::Break(true),
+            LiveShellEvent::Error(error) => panic!("ssh error: {error}"),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+
+    assert_eq!(
+        closed,
+        Some(true),
+        "`exit` must report Closed while the connection is held, not after",
+    );
+    assert!(held.is_some(), "the connection should have been offered to hold");
+    drop(held);
+}
+
 #[test]
 fn wrong_password_is_rejected() {
     let server = TestServer::start();

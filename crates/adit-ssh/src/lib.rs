@@ -1505,6 +1505,21 @@ async fn run_live_password_shell(
 
     let _ = channel.close().await;
 
+    // Announce the shell is over BEFORE waiting on anything else, or this wait
+    // and the session layer wait on each other for good.
+    //
+    // The session layer releases its `SharedSession` when it sees this event,
+    // and that release is exactly what the wait below is waiting for. Sending
+    // it afterwards meant `exit` in a remote shell left the tab reading
+    // connected forever: the event never arrived, so nothing dropped the claim,
+    // so the event never arrived. Enter could not reconnect either — that path
+    // is gated on the session being dead, and nothing had marked it so.
+    //
+    // The thread wrapper sends a second `Closed` once this returns, which costs
+    // nothing: the session layer drops the handle on the first, leaving nothing
+    // to deliver a second to.
+    let _ = events.send(LiveShellEvent::Closed);
+
     // The shell is done, but SFTP or a tunnel may still be riding on this
     // connection — and the runtime driving it lives on this thread, so both
     // disconnecting and simply returning would kill them. Wait for the last
