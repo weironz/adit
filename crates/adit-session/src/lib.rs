@@ -2850,6 +2850,20 @@ impl SessionManager {
                             reconnect.retry_at = None;
                         }
                     }
+                    LiveShellEvent::ShellExited => {
+                        // The shell ended because the remote ended it — `exit`,
+                        // `logout`, a startup command that returned. Reconnecting
+                        // now would undo the one thing the user just asked for,
+                        // which is why this is a separate event from a drop.
+                        //
+                        // Arrives before `Closed`, which is where the reconnect
+                        // decision is made, so the flag is already set by then.
+                        record.summary.status = SessionStatus::Disconnected;
+                        if let Some(reconnect) = &mut record.reconnect {
+                            reconnect.manual = true;
+                            reconnect.retry_at = None;
+                        }
+                    }
                     LiveShellEvent::Closed => {
                         closed = true;
                         // Release our claim on the connection. Holding it keeps

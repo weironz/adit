@@ -169,6 +169,16 @@ pub enum LiveShellEvent {
     /// password instead of only showing an error.
     AuthRejected(String),
     Closed,
+    /// The remote shell ended of its own accord — it reported an exit status, or
+    /// closed the channel — rather than the connection dropping under it.
+    ///
+    /// The distinction is the whole point: `exit` is a decision, and
+    /// reconnecting automatically undoes it, which leaves the command with no
+    /// meaning. A dropped connection is not a decision and reconnecting is
+    /// exactly what it deserves. Only the side reading the channel can tell the
+    /// two apart, so it has to say which happened rather than leave the session
+    /// layer to guess.
+    ShellExited,
     /// The handshake is paused awaiting the user's decision about the server's
     /// host key. Answer with [`LiveShellCommand::HostKeyDecision`].
     HostKeyPrompt(HostKeyPrompt),
@@ -1460,6 +1470,9 @@ async fn run_live_password_shell(
     }
 
     let mut should_close = false;
+    // Whether the remote ended the shell itself, as opposed to the connection
+    // vanishing. Decides if auto-reconnect gets to undo it.
+    let mut shell_exited = false;
     while !should_close {
         while let Ok(command) = commands.try_recv() {
             match command {
@@ -1494,9 +1507,21 @@ async fn run_live_password_shell(
             }
             Ok(Some(ChannelMsg::ExitStatus { exit_status })) => {
                 let _ = events.send(LiveShellEvent::Status(format!("exit status {exit_status}")));
+                shell_exited = true;
                 should_close = true;
             }
-            Ok(Some(ChannelMsg::Eof | ChannelMsg::Close)) | Ok(None) => {
+            // The remote closed the channel, so the shell is over. Servers
+            // usually send Eof before the exit status, and this loop stops at
+            // the first of the three — which is why keying "the user meant to
+            // leave" off the exit status alone missed every ordinary `exit`.
+            Ok(Some(ChannelMsg::Eof | ChannelMsg::Close)) => {
+                shell_exited = true;
+                should_close = true;
+            }
+            // The stream ended with no goodbye of any kind: the connection went
+            // away underneath us. That is a drop, and reconnecting is what
+            // auto-reconnect is for.
+            Ok(None) => {
                 should_close = true;
             }
             Ok(Some(_)) | Err(_) => {}
@@ -1518,6 +1543,13 @@ async fn run_live_password_shell(
     // The thread wrapper sends a second `Closed` once this returns, which costs
     // nothing: the session layer drops the handle on the first, leaving nothing
     // to deliver a second to.
+    //
+    // Before it, though: whether this was the shell ending or the connection
+    // going. `Closed` is what makes the session layer decide about reconnecting,
+    // so this has to be in the queue ahead of it, not after.
+    if shell_exited {
+        let _ = events.send(LiveShellEvent::ShellExited);
+    }
     let _ = events.send(LiveShellEvent::Closed);
 
     // The shell is done, but SFTP or a tunnel may still be riding on this
