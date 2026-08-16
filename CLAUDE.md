@@ -82,6 +82,55 @@ buffer exactly the way `logical_lines` does (that's why `logical_lines` locates 
 cursor by calling it); if the two ever disagree about where a logical line starts, an
 anchor comes back on a different line from the text it named.
 
+### `just ci` only ever sees Windows
+It runs on the developer's machine, which is Windows. CI also builds on Linux and
+macOS, and **that matrix is the only thing that sees code which is dead on those
+platforms** — `clippy -D warnings` turns `dead_code` into an error there while the
+same tree is spotless locally.
+
+Not hypothetical: `main` was red on Linux and macOS for **thirty-plus commits**
+after the clipboard file-transfer work landed, and nothing noticed. The old
+release gate re-ran clippy on its own Windows runner, so a red Linux build could
+not block a release and did not — v0.1.69 shipped from a red main. What surfaced
+it was the new release gate refusing a commit whose CI was not green.
+
+A green `just ci` is necessary, not sufficient. **Check `gh run list --workflow
+ci.yml --branch main --limit 1` before assuming main is healthy.** Expect
+Windows-only code (`clipboard_files`, `keyboard_hook`) to need
+`#[cfg_attr(not(windows), allow(dead_code))]` where a type must exist on every
+platform to keep one function signature.
+
+### `iced` does not centre anything for you
+`Button::layout` goes through `layout::padded`, whose positioning step is the
+identity, so content sits at the padding offset and every pixel of a button
+taller than its content is left *underneath* it. `Container` defaults to
+`vertical_alignment: Vertical::Top`, `Row` to `align: Alignment::Start`.
+
+**Giving a widget a height does not position what is inside it.** A row of
+controls that "looks crooked" is almost always this, and it compounds: one
+element centred among several that are not makes the correct one look wrong.
+`TAB_HEIGHT` exists so the tab strip holds a single height; anything added there
+centres its own content.
+
+### `LiveShellEvent::Closed` must be announced before waiting on anything
+`run_live_password_shell` waits for the last `SharedSession` to drop before
+returning, so SFTP and tunnels riding the connection outlive the shell. The
+session layer drops *its* claim when it sees `Closed`. Send `Closed` after that
+wait and the two wait on each other for good: `exit` left a tab reading connected
+forever, and Enter could not reconnect because nothing had marked the session
+dead — one deadlock, two symptoms that look unrelated.
+
+`ShellExited` is a separate event on purpose. `Eof`/`Close`/`ExitStatus` mean the
+remote ended the shell and auto-reconnect must not undo it; a stream that ends
+with **no** goodbye is a dropped connection and must reconnect. That distinction
+used to be carried by a formatted status string, which is why it silently did
+nothing for every ordinary `exit`.
+
+[`crates/adit-ssh/tests/integration.rs`](crates/adit-ssh/tests/integration.rs)
+covers both, and the covering test **holds the `SharedSession` the way the session
+layer does** — without that the claim drops on its own and neither bug can
+reproduce.
+
 ## Conventions
 
 - **Releases are patch bumps** (`0.1.54` → `0.1.55`) and happen **only when asked**.
