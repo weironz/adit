@@ -1970,6 +1970,42 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                 .text_size(11)
                 .spacing(8),
         ));
+        status_tab = status_tab.push(setting_card(
+            checkbox(sync.auto_sync)
+                .label(t("自动同步（改动后约 10 秒，另外每 5 分钟拉取一次对方的改动）"))
+                .on_toggle(Message::ToggleAutoSync)
+                .size(14)
+                .text_size(11)
+                .spacing(8),
+        ));
+    }
+
+    // A merge auto-sync would not apply on its own. Above the status line and
+    // deliberately not phrased as an error: it is usually correct, and the only
+    // question is whether this much deletion was meant.
+    if app.sync_held.is_some() {
+        status_tab = status_tab.push(
+            container(
+                row![
+                    text(t("这次自动同步会删除本机多个会话，需要确认"))
+                        .size(11)
+                        .color(danger())
+                        .width(Fill),
+                    button(text(t("应用")).size(11))
+                        .padding([4, 10])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::SyncApplyHeld),
+                    button(text(t("丢弃")).size(11))
+                        .padding([4, 10])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::SyncDiscardHeld),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center),
+            )
+            .padding(6)
+            .style(|_theme| error_panel_style()),
+        );
     }
 
     // Status: what the last attempt did, then any sessions it could not settle.

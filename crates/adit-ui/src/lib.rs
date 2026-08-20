@@ -477,6 +477,18 @@ pub struct AditApp {
     /// True while a sync is in flight, so the button can say so and cannot be
     /// pressed twice.
     sync_busy: bool,
+    /// When the last sync finished, and when this machine was last edited.
+    /// Together they drive `auto_sync`: push soon after a change, and poll on an
+    /// interval so the other machine's edits arrive even while this one is idle.
+    sync_last_at: Option<Instant>,
+    sync_dirty_at: Option<Instant>,
+    /// Whether the sync now in flight was started by the timer. Read when it
+    /// finishes, to decide whether a large deletion needs confirming.
+    sync_next_is_auto: bool,
+    sync_auto_ran: bool,
+    /// A merge auto-sync would not apply on its own. Held rather than dropped:
+    /// it may well be correct, and refetching it is a round trip.
+    sync_held: Option<SyncReport>,
     /// One line for the panel: what the last attempt did, or why it failed.
     sync_status: String,
     /// Sessions the last sync could not settle. Local was kept for each.
@@ -894,6 +906,12 @@ pub enum Message {
     SyncSecretChanged(String),
     SyncIncludeCredentialsToggled(bool),
     SyncNow,
+    ToggleAutoSync(bool),
+    /// The timer asking for a sync, as opposed to the button.
+    SyncAuto,
+    /// Adopt, or drop, a merge that auto-sync held back for deleting too much.
+    SyncApplyHeld,
+    SyncDiscardHeld,
     SyncFinished(Result<SyncReport, String>),
     SyncConnectAccount,
     /// A device flow got its code pair back, or could not. Carries the whole
@@ -1109,6 +1127,21 @@ const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
 const SIDEBAR_REVEAL_WIDTH: f32 = 16.0;
 const MENU_BAR_HEIGHT: f32 = 28.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
+/// How long after the last local change auto-sync waits before pushing, so a
+/// burst of edits is one sync and not one per keystroke.
+const AUTO_SYNC_DEBOUNCE: Duration = Duration::from_secs(10);
+/// How often auto-sync runs when nothing changed locally. This is the half that
+/// picks up the *other* machine's edits, so it cannot be skipped just because
+/// this one has been idle.
+const AUTO_SYNC_INTERVAL: Duration = Duration::from_secs(300);
+/// How many local sessions an unattended merge may delete before it is held for
+/// confirmation instead of applied.
+///
+/// Not zero: a session deleted on the other machine is a normal thing to sync,
+/// and holding every one of those would make the feature useless. The number is
+/// meant to separate "I tidied up over there" from "something went wrong".
+const AUTO_SYNC_DELETE_LIMIT: usize = 3;
+
 const TAB_BAR_HEIGHT: f32 = 34.0;
 /// The height of everything *inside* the tab strip — the 主机 tab, a session
 /// tab, and the + beside them — so one row does not hold three heights.
@@ -1553,6 +1586,11 @@ impl AditApp {
             sync_device_prompt: None,
             sync_secret_draft: String::new(),
             sync_busy: false,
+            sync_last_at: None,
+            sync_dirty_at: None,
+            sync_next_is_auto: false,
+            sync_auto_ran: false,
+            sync_held: None,
             sync_status: String::new(),
             sync_conflicts: Vec::new(),
             config_dir: adit_storage::config_dir(),

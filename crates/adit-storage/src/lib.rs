@@ -508,6 +508,14 @@ pub struct SyncSettings {
     /// it is the user's call, not ours.
     #[serde(default)]
     pub include_credentials: bool,
+    /// Sync on a timer instead of only when the button is pressed.
+    ///
+    /// Off by default, and not because the feature is doubted: every existing
+    /// install has been running with a person deciding when to sync, and an
+    /// upgrade must not start moving somebody's sessions between machines on
+    /// its own.
+    #[serde(default)]
+    pub auto_sync: bool,
     /// OAuth client ids, when the user supplies their own instead of the one
     /// compiled into this build. Empty means "use the built-in default".
     ///
@@ -557,6 +565,7 @@ impl Default for SyncSettings {
             s3_access_key: String::new(),
             s3_path_style: true,
             include_credentials: false,
+            auto_sync: false,
             google_client_id: String::new(),
             onedrive_client_id: String::new(),
             dropbox_client_id: String::new(),

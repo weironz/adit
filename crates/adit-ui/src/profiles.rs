@@ -1264,6 +1264,9 @@ pub(crate) fn import_ssh_config(app: &mut AditApp) {
 }
 
 pub(crate) fn persist_profiles(app: &mut AditApp) -> bool {
+    // Every profile edit funnels through here, which makes it the one place
+    // auto-sync can learn that this machine has something to push.
+    app.sync_dirty_at = Some(Instant::now());
     let catalog = ProfileCatalog::with_group_icons(
         app.groups.to_vec(),
         app.group_icons.clone(),

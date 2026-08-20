@@ -3,6 +3,31 @@ use super::*;
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
     match message {
         Message::Tick => {
+            // Auto-sync, when it is on and something is due. Two clocks, because
+            // they answer different questions: the debounce pushes what was just
+            // edited here, and the interval is the only thing that ever notices
+            // an edit made on the other machine.
+            //
+            // Returning here costs the rest of this one tick — 100ms of RDP
+            // clipboard polling and the like — a handful of times an hour, which
+            // is cheaper than threading a second Task through every early return
+            // further down this arm.
+            if app.sync.auto_sync
+                && !app.sync_busy
+                && app.sync_held.is_none()
+                && app.sync.provider != adit_storage::SyncProvider::None
+            {
+                let now = Instant::now();
+                let push_due = app
+                    .sync_dirty_at
+                    .is_some_and(|at| now.duration_since(at) >= AUTO_SYNC_DEBOUNCE);
+                let poll_due = app
+                    .sync_last_at
+                    .is_none_or(|at| now.duration_since(at) >= AUTO_SYNC_INTERVAL);
+                if push_due || poll_due {
+                    return Task::done(Message::SyncAuto);
+                }
+            }
             app.manager.poll_events();
             auto_log_connected_sessions(app);
             clamp_terminal_scroll(app);
@@ -1740,10 +1765,54 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 Err(error) => app.sync_status = tf("授权失败: {}", &[&error]),
             }
         }
+        Message::SyncAuto => {
+            app.sync_next_is_auto = true;
+            return Task::done(Message::SyncNow);
+        }
+        Message::ToggleAutoSync(on) => {
+            app.sync.auto_sync = on;
+            // Start the clock now, so ticking the box does not fire a sync in
+            // the same instant.
+            app.sync_last_at = Some(Instant::now());
+            app.sync_dirty_at = None;
+            persist_settings_if_changed(app);
+        }
+        Message::SyncApplyHeld => {
+            if let Some(report) = app.sync_held.take() {
+                app.groups = report.catalog.groups.clone();
+                app.group_icons = report.catalog.group_icons.clone();
+                app.manager.replace_profiles(report.catalog.profiles.clone());
+                // The same tail as the unheld path, deliberately: two ways of
+                // adopting a catalog that do slightly different things is how
+                // one of them ends up missing a step nobody notices.
+                crate::profiles::prune_profile_selection(app);
+                persist_profiles(app);
+                persist_settings_if_changed(app);
+                app.sync_dirty_at = None;
+                app.sync_status = report.summary;
+                app.sync_conflicts = report.conflicts;
+                if let Some(id) = report.assigned_id {
+                    app.sync.gist_id = id;
+                }
+            }
+        }
+        Message::SyncDiscardHeld => {
+            app.sync_held = None;
+            // Auto-sync stays off until the user decides what to do, or the
+            // next tick offers the same merge again, and the one after that.
+            app.sync.auto_sync = false;
+            app.sync_status = String::from(t("已丢弃这次合并，自动同步已关闭"));
+            persist_settings_if_changed(app);
+        }
         Message::SyncNow => {
             if app.sync_busy {
                 return Task::none();
             }
+            // Taken rather than read: the button never sets it, so a manual sync
+            // is never held back, however the previous one was started.
+            app.sync_auto_ran = std::mem::take(&mut app.sync_next_is_auto);
+            app.sync_dirty_at = None;
+            app.sync_last_at = Some(Instant::now());
             // A typed secret is committed here rather than on every keystroke,
             // so a half-typed token never replaces a working one.
             if !app.sync_secret_draft.is_empty() {
@@ -1849,6 +1918,38 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sync_busy = false;
             match result {
                 Ok(report) => {
+                    // A merge that removes much of what is on this machine is
+                    // held for confirmation when nobody asked for this sync.
+                    //
+                    // Pressing the button is itself a decision, and that
+                    // decision is what caught the one mass-deletion bug this
+                    // project has had. Syncing on a timer takes the decision
+                    // away, so the check has to become explicit rather than
+                    // rely on a person having been present.
+                    //
+                    // Counted against the live local list rather than read from
+                    // stats.deleted: what matters is how much is about to leave
+                    // this machine, and counting it here does not depend on the
+                    // merge's own accounting being right.
+                    if app.sync_auto_ran {
+                        let surviving: std::collections::HashSet<_> =
+                            report.catalog.profiles.iter().map(|p| p.id).collect();
+                        let losing = app
+                            .manager
+                            .profiles()
+                            .iter()
+                            .filter(|p| !surviving.contains(&p.id))
+                            .count();
+                        if losing > AUTO_SYNC_DELETE_LIMIT {
+                            app.sync_status =
+                                tf("自动同步将删除本机 {} 个会话，已暂停等待确认", &[&losing]);
+                            app.sync_held = Some(report);
+                            return Task::none();
+                        }
+                    }
+                    // Only now that the merge is going to be applied: a held one
+                    // has not happened yet, and reporting its summary would say
+                    // it had.
                     app.sync_status = report.summary;
                     app.sync_conflicts = report.conflicts;
                     if let Some(id) = report.assigned_id {
@@ -1862,8 +1963,17 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     // here would undo that on the next save.
                     app.group_icons = report.catalog.group_icons.clone();
                     app.manager.replace_profiles(report.catalog.profiles.clone());
+                    // A sync can delete profiles, and the selection can still be
+                    // holding their ids. `prune_profile_selection` documents
+                    // itself as covering "a sync that replaces the whole
+                    // catalog" and was never actually called from here.
+                    crate::profiles::prune_profile_selection(app);
                     persist_profiles(app);
                     persist_settings_if_changed(app);
+                    // `persist_profiles` marks the machine dirty, and adopting a
+                    // merge goes through it — so without this a sync schedules
+                    // the next one, forever, each finding nothing to upload.
+                    app.sync_dirty_at = None;
                 }
                 Err(error) => app.sync_status = tf("同步失败: {}", &[&error]),
             }
