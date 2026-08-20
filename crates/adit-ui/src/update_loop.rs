@@ -2312,6 +2312,25 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             open_selected_mock_tab(app);
         }
         Message::ConnectSelectedProfile => {
+            // Connecting from the editor commits the form and closes it. The
+            // dialog looks modal and stayed put over the session it had just
+            // opened, so the connection appeared not to have happened.
+            //
+            // Only when the editor is actually open: this message also comes
+            // from the sidebar and the menu, where the form fields still hold
+            // whatever was last loaded and writing them back would be a save
+            // nobody asked for.
+            //
+            // A failed save keeps the dialog up with its error rather than
+            // connecting: `None` means validation rejected the form (a bad
+            // port, a bad jump chain), and connecting anyway would use values
+            // the profile does not have.
+            if app.profile_editor.is_some() {
+                if crate::profiles::save_profile_from_form(app, false).is_none() {
+                    return Task::none();
+                }
+                app.profile_editor = None;
+            }
             connect_or_prompt(app);
         }
         Message::RetryActiveSession => {

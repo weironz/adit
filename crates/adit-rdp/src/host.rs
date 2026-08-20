@@ -23,7 +23,8 @@ use crate::RdpError;
 pub fn run_host() -> Result<(), RdpError> {
     // Diagnostics go to a log file next to the app config (the GUI app discards
     // the helper's stderr), so an RDP session's lifecycle/errors are visible even
-    // in a release build. Truncated per launch. `try_init` so a double-init can't panic.
+    // in a release build. Appended across launches (see below); `try_init` so a
+    // double-init cannot panic.
     let log_path = {
         let base = std::env::var_os("APPDATA")
             .map(std::path::PathBuf::from)
@@ -33,10 +34,29 @@ pub fn run_host() -> Result<(), RdpError> {
     if let Some(parent) = log_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(
-        &log_path,
-        format!("=== adit-rdp-host {} start ===\n", env!("CARGO_PKG_VERSION")),
-    );
+    // Append, and roll only once the file has actually grown large.
+    //
+    // This used to truncate on every launch, which is wrong the moment there is
+    // more than one RDP session: each opens its own helper, every helper writes
+    // to this one path, and the second to start wiped the first one's log. That
+    // cost a real diagnosis — a clipboard bug was reproduced and the evidence
+    // was already gone, because opening a second session had reset the file.
+    //
+    // The pid goes on the banner so interleaved lines can be told apart, now
+    // that one file holds every live helper.
+    const LOG_ROLL_BYTES: u64 = 4 * 1024 * 1024;
+    if std::fs::metadata(&log_path).is_ok_and(|meta| meta.len() > LOG_ROLL_BYTES) {
+        let _ = std::fs::remove_file(&log_path);
+    }
+    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+        use std::io::Write;
+        let _ = writeln!(
+            file,
+            "=== adit-rdp-host {} start pid={} ===",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id(),
+        );
+    }
     // Default: session lifecycle + warnings/errors only (no per-frame spam).
     // Override with RUST_LOG for deeper tracing.
     let filter = std::env::var("RUST_LOG")
