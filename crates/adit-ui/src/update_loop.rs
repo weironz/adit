@@ -299,6 +299,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::ModifiersChanged(modifiers) => {
             app.modifiers = modifiers;
         }
+        Message::WindowUnfocused => {
+            // Whatever is held right now gets released somewhere we cannot see.
+            release_rdp_modifiers(app);
+        }
         Message::ColorSchemeChanged(index) => {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();

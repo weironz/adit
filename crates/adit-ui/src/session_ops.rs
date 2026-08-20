@@ -607,6 +607,44 @@ pub(crate) fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
 
 /// Whether the active tab's session has dropped (errored or disconnected) and so
 /// is a candidate for Enter-to-reconnect.
+/// Tell the remote desktop that every modifier is up.
+///
+/// Sent when the window loses focus, because that is exactly when the matching
+/// key-ups stop arriving. A global hotkey - a screenshot tool on Ctrl+Shift+X,
+/// say - is dispatched by Windows to its owner *and* takes the focus, so Adit
+/// sees the key-downs and never the key-ups, and the remote goes on believing
+/// Ctrl and Shift are held. Every keystroke after that reaches the remote as a
+/// shortcut, which is what "the keyboard went haywire after a while" is.
+///
+/// Released unconditionally rather than from tracked state: a key-up for a key
+/// that is not down is a no-op on the remote, whereas state drifting out of step
+/// with the remote is the bug being fixed here.
+pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
+    if !app.manager.active_is_rdp() {
+        return;
+    }
+    // (scancode, extended) for both halves of each pair; the right-hand ones are
+    // the same code with the extended flag, exactly as rdp_scancode_for_code
+    // maps them.
+    const MODIFIERS: [(u8, bool); 8] = [
+        (0x1D, false), // Ctrl
+        (0x1D, true),
+        (0x2A, false), // Shift
+        (0x36, false),
+        (0x38, false), // Alt
+        (0x38, true),
+        (0x5B, true), // Super
+        (0x5C, true),
+    ];
+    for (scancode, extended) in MODIFIERS {
+        app.manager.send_rdp_input_to_active(RdpInput::Key {
+            scancode,
+            extended,
+            pressed: false,
+        });
+    }
+}
+
 pub(crate) fn active_session_is_dead(app: &AditApp) -> bool {
     app.manager.active_session_summary().is_some_and(|summary| {
         matches!(

@@ -885,6 +885,7 @@ pub enum Message {
     TerminalInputChanged(String),
     KeyboardInput(keyboard::Event),
     ModifiersChanged(keyboard::Modifiers),
+    WindowUnfocused,
     WindowResized { width: f32, height: f32, window: window::Id },
     ToggleFullscreen,
     CloseSyncPanel,
@@ -1840,6 +1841,9 @@ fn runtime_event(
         event::Event::Keyboard(event) if status == event::Status::Ignored => {
             Some(Message::KeyboardInput(event))
         }
+        // Losing focus means every key still held is about to be released
+        // somewhere we cannot see. See `release_rdp_modifiers`.
+        event::Event::Window(window::Event::Unfocused) => Some(Message::WindowUnfocused),
         event::Event::Window(window::Event::Opened { size, .. })
         | event::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized {
             width: size.width,
