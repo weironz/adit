@@ -1,0 +1,37 @@
+# The compiler this project is built and linted with, everywhere.
+#
+# Without this, CI installed `dtolnay/rust-toolchain@stable` — resolved at run
+# time — while a developer's toolchain moved only when they ran `rustup update`.
+# The two drift apart, and the day `stable` ships a new clippy lint every build
+# job goes red on code nobody touched. 1.98 did exactly that with
+# `chunks_exact_to_as_chunks`, on a docs-only commit, while `just ci` was green
+# locally on 1.97.1.
+#
+# `rustup` honours this file for every cargo/rustc invocation inside the repo,
+# and it takes precedence over `rustup default` — which is what lets one line
+# here govern CI too, without touching the ten places the workflows install a
+# toolchain. Verified rather than assumed: with this file present,
+# `rustup show active-toolchain` reports the pinned version as "overridden by
+# .../rust-toolchain.toml" while the default says otherwise.
+#
+# The cost is that upgrades become deliberate. That is the point — a new lint
+# then arrives in a commit that fixes it, reviewed, instead of in whatever
+# unrelated change happened to be pushed that morning. Bump this, run `just ci`,
+# fix what the new clippy finds, and land the two together.
+#
+# Two costs, both known and both accepted:
+#
+# The cache key contains the Rust version, so the first release after a bump
+# compiles from cold. One slow build per upgrade, not per release.
+#
+# And `stable` and `1.98.0` are separate toolchains to rustup even when they are
+# the same release, so each CI job installs the one the action asked for and
+# then this one — about a minute per job. Pinning the workflows instead would
+# save it and put the version in eleven places rather than one, where ten of
+# them would eventually disagree with this file. Correctness is worth the
+# minute.
+[toolchain]
+channel = "1.98.0"
+# clippy for the gate, rustfmt for `just fmt`. Named here so the pinned
+# toolchain arrives with them instead of failing on first use.
+components = ["clippy", "rustfmt"]
