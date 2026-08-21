@@ -28,7 +28,10 @@ fn nonblack_ratio(rgba: &[u8]) -> f32 {
         return 0.0;
     }
     let mut nonblack = 0usize;
-    for px in rgba.chunks_exact(4) {
+    // `as_chunks` rather than `chunks_exact(4)`: the size is a constant, so this
+    // yields `[u8; 4]` and the indexing below is checked at compile time.
+    // clippy began asking for it in 1.98.
+    for px in rgba.as_chunks::<4>().0 {
         if px[0] >= 8 || px[1] >= 8 || px[2] >= 8 {
             nonblack += 1;
         }

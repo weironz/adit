@@ -94,6 +94,14 @@ release gate re-ran clippy on its own Windows runner, so a red Linux build could
 not block a release and did not — v0.1.69 shipped from a red main. What surfaced
 it was the new release gate refusing a commit whose CI was not green.
 
+It also only ever sees **your** toolchain. CI installs
+`dtolnay/rust-toolchain@stable`, so the day `stable` moves its clippy gains
+lints yours does not have, and every build job goes red on code nobody touched —
+1.98 did exactly that with `chunks_exact_to_as_chunks`, on a docs-only commit.
+When a build fails on a lint you cannot reproduce, compare `rustc --version`
+against the run's log before looking for anything cleverer, and `rustup update
+stable` rather than sprinkling `#[allow]`: the point is to see what CI sees.
+
 A green `just ci` is necessary, not sufficient. **Check `gh run list --workflow
 ci.yml --branch main --limit 1` before assuming main is healthy.** Expect
 Windows-only code (`clipboard_files`, `keyboard_hook`) to need
