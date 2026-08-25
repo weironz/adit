@@ -12,7 +12,7 @@ For what is *not* built, see [roadmap.md](roadmap.md). For how it works, see
 > 从 v0.1.66 往下的旧章节仍是英文；v0.1.67 起的新条目跟着
 > [roadmap.md](roadmap.md) 用中文。
 
-## 未发布
+## v0.1.74
 
 **主机密钥可以「仅本次信任」了。** 原来只有接受和拒绝，而 `HostKeyDecision(bool)` 把
 **「信任」和「记录」当成了同一件事**。它们不是——合在一起恰恰在最要紧的时刻逼人做错误
@@ -29,6 +29,40 @@ For what is *not* built, see [roadmap.md](roadmap.md). For how it works, see
 覆盖掉等于毁掉物证。
 
 枚举从 `adit-session` 再导出，没有为省事让 `adit-ui` 新增一条对 `adit-ssh` 的跨层依赖。
+
+**链接现在看得出来，而且真的只是链接。** v0.1.73 把裸 URL 做成了可点击，但同时带出两个
+缺陷，两个都要到给链接加下划线之后才显形——在此之前它们表现为"整行变成链接色"，深色主题
+下几乎看不出来。
+
+**一：整行都成了链接。** `TerminalCell` 是一整段同样式的 *run*，不是一个字符，而它的文档
+就写着配套的不变量：同一个 run 里所有 cell 共享一个链接目标，**链接边界会另起一个 run**。
+我在自己的模块注释里也写了"cell 不是一个字符"，然后紧接着按字符逻辑去索引它——约束是知道
+的，只是没照做。Ubuntu MOTD 的 ` * Documentation:  https://…` 整行是一个 run，于是整行都
+被盖上了链接。现在按 URL 边界把 run 切开。之前那次测试没抓到，是因为中英混排恰好把 URL
+切进了独立的 run，纯 ASCII 的 MOTD 才暴露。
+
+**二：中文句尾的链接整个消失。** `is_openable_http_url` 要求每个字符都是
+`is_ascii_graphic`，而识别器的标点裁剪表只有 ASCII，于是中文句号被吞进 URL → 整个目标含非
+ASCII → 渲染器把这个"打不开的链接"整个丢掉 → 变回普通文字。**不是多带一个句号的瑕疵，是
+链接消失。** 修法不是去枚举中文标点（那只能修好这一种文字），而是让识别器**在第一个非
+`is_ascii_graphic` 字符处收尾**——正是那道闸门接受的字符类，于是"识别到"蕴含"打得开"，两者
+不可能再漂移。
+
+**顺带：按住 Ctrl 时链接加下划线**，和 iTerm2／Windows Terminal 一致。选 Ctrl 而不是悬停，
+是因为 Ctrl 本来就是"我要点链接"的意图（不按 Ctrl 的点击留给拖选），且不需要逐窗格追踪鼠标
+位置。实现照搬了同一函数里已有的删除线做法——iced 的 text 既没有删除线也没有下划线，都是在
+单元格上叠一条 1px 横线。**同时补上了 `cell.underline`（SGR 4）这个从来没被渲染过的洞**：
+服务器发下划线，Adit 一直直接吞掉。
+
+**`just app` 不再刷 warning。** 两条，性质不同所以修法不同。`unnecessary qualification` 是
+**上游的 lint 打在上游自己的代码上**——vendored 的 IronRDP crate 自带 `[lints.rust]`，而
+vendored crate 是 *path* 依赖，cargo 显示 path 依赖的警告、隐藏 registry 依赖的，所以我们
+替上游看见了它；改掉限定正是 lint 要求的，已在 `IRONRDP-PATCHES.md` 里标注为**不是功能性
+补丁、下次同步直接丢弃**。`linker_messages` 则是 MSVC 的状态行（"正在创建库…"），我们代码
+里没有任何东西可改（本 crate 零个 `no_mangle`，符号来自依赖），所以只在那一个 binary 上
+allow——主程序 crate 里真正的链接器问题仍会显示。
+
+## v0.1.73
 
 **裸 URL 可以点开了。** OSC 8 链接一直能点，但几乎没有程序发 OSC 8——`curl`、`git`、
 `npm`、CI 日志、每一句 `echo` 打出来的都是裸 URL，恰恰是真正想点的那些。渲染、点击、
