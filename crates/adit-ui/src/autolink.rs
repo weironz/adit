@@ -131,11 +131,17 @@ fn find_urls(text: &str) -> Vec<(usize, usize)> {
             .is_none_or(|ch| !ch.is_alphanumeric() && ch != '.' && ch != '/');
         let mut end = start + scheme.len();
         while let Some(ch) = text[end..].chars().next() {
-            // Whitespace ends a URL; so do the control characters a terminal can
-            // hold. Everything else is allowed through and trimmed below, which
-            // is more forgiving than a whitelist for the query strings and
-            // encoded paths that turn up in real output.
-            if ch.is_whitespace() || ch.is_control() {
+            // Exactly the character class `is_openable_http_url` accepts, which
+            // is what makes "detected" imply "openable".
+            //
+            // Anything looser silently loses the link entirely: a URL at the end
+            // of a Chinese sentence swallowed the 。, one non-ASCII character
+            // made the whole thing fail that check, and the renderer drops a
+            // hyperlink it cannot open — so the URL rendered as plain text with
+            // no colour, no underline and no click. Enumerating CJK punctuation
+            // would have fixed that one sentence and left the next script to
+            // find. Deferring to the gate cannot drift from it.
+            if !ch.is_ascii_graphic() {
                 break;
             }
             end += ch.len_utf8();
@@ -261,6 +267,19 @@ mod tests {
             line.cells[0].hyperlink.as_deref(),
             Some("https://declared.example"),
         );
+    }
+
+    /// A URL ending a CJK sentence. The full stop is not ASCII, and one non-ASCII
+    /// character makes `is_openable_http_url` reject the whole target — at which
+    /// point the renderer drops the link and the URL shows as plain text. So this
+    /// is not cosmetic trimming: swallowing the 。 loses the link outright.
+    #[test]
+    fn stops_at_non_ascii_punctuation() {
+        assert_eq!(
+            urls("见 https://en.wikipedia.org/wiki/Foo_(bar)。"),
+            ["https://en.wikipedia.org/wiki/Foo_(bar)"]
+        );
+        assert_eq!(urls("链接：https://example.com，然后"), ["https://example.com"]);
     }
 
     #[test]
