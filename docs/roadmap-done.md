@@ -14,6 +14,22 @@ For what is *not* built, see [roadmap.md](roadmap.md). For how it works, see
 
 ## 未发布
 
+**启动闪窗修掉了——这次是真的那个。** 每次启动先闪出一个空白窗口又消失、隔约 3 秒真窗口
+才出现。实验证明**全程只有一个 PID、从未退出**：闪掉的和后来出现的是同一个窗口。机制是
+`window::Settings { maximized: true }` 击穿了 iced 的防闪设计——iced 把窗口藏着建好、第一
+帧画完才显示；但 winit 的 Windows 后端只能在 CreateWindowEx 之后用
+`ShowWindow(SW_MAXIMIZE)` 补最大化，而这个调用会**把隐藏窗口直接显示出来**（t≈182ms 空白
+最大化窗口出现，t≈380ms 被藏回，t≈3.1s 合成器就绪后真窗口才来）。修法：Windows 上创建时
+不设 maximized，在第一次 Focused 事件——窗口可证明已可见的最早时刻——补一次最大化；其它平
+台不动。
+
+用户记得"修过一次"，没记错：`9a3c60d` 修的是**控制台窗口**闪（`windows_subsystem`），至今
+有效；两天后 `42a73f3` 加 `maximized: true` 时引入了这个长得一样、机制无关的新闪。
+
+顺带两笔：真窗口前那 ~3 秒是 wgpu 在这台混合显卡（Intel Xe + RTX 3050 + Oray 虚拟显示驱
+动）上回退到 OpenGL 的初始化耗时，与闪无关、未处理；`%APPDATA%\Adit` 里躺着 8 月 5 日一次
+`ADIT_RDP_DUMP` 调试留下的数千个抓包文件，多到列目录超时，已另行清理。
+
 **自动同步（默认关）。** 手动同步太繁琐——每改一次都要在这台按一下、再去另一台按一下。
 现在两个时钟：改动后 **10 秒**防抖推送本机的编辑（连续编辑合并成一次），另外每 **5 分钟**
 跑一次——后者是唯一会发现*另一台机器*上的编辑的东西。脏标记打在 `persist_profiles` 里，

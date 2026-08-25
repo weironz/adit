@@ -417,6 +417,10 @@ pub struct AditApp {
     /// Kept out of the persisted settings on purpose: a client that starts up
     /// fullscreen with no menu bar gives a first-time user nothing to click.
     fullscreen: bool,
+    /// Windows only: maximize on the first Focused event rather than at window
+    /// creation, because creation-time `maximized` flashes the hidden window —
+    /// see the long note on `window::Settings` in `run()`.
+    startup_maximize_pending: bool,
     sidebar_dragging: bool,
     cursor_pos: Point,
     context_menu_pos: Point,
@@ -898,6 +902,8 @@ pub enum Message {
     KeyboardInput(keyboard::Event),
     ModifiersChanged(keyboard::Modifiers),
     WindowUnfocused,
+    /// The window gained focus. Carries the deferred startup maximize on Windows.
+    WindowFocused,
     WindowResized { width: f32, height: f32, window: window::Id },
     ToggleFullscreen,
     CloseSyncPanel,
@@ -1554,6 +1560,7 @@ impl AditApp {
             sidebar_width,
             sidebar_visible,
             fullscreen: false,
+            startup_maximize_pending: cfg!(windows),
             sidebar_dragging: false,
             cursor_pos: Point::ORIGIN,
             context_menu_pos: Point::ORIGIN,
@@ -1714,7 +1721,24 @@ pub fn run() -> iced::Result {
         .window(window::Settings {
             icon: app_icon(),
             size: iced::Size::new(width, height),
-            maximized: true,
+            // NOT `maximized: true` on Windows — that flag at creation time IS
+            // the launch flash ("a program flashed up, quit, then the app
+            // started"). iced creates every window hidden and shows it only
+            // after the first frame, precisely to prevent flashes; but winit's
+            // Windows backend can only apply `maximized` after CreateWindowEx,
+            // and does so via ShowWindow(SW_MAXIMIZE) — a call that DISPLAYS
+            // the still-hidden, still-blank window. winit then re-hides it
+            // (its VISIBLE flag is off), and the real window follows only once
+            // the wgpu compositor is up — seconds later on a hybrid-GPU machine
+            // that falls back to OpenGL. One process, one HWND, traced end to
+            // end; the phantom "program that exited" was this window.
+            //
+            // So on Windows the window is created hidden at its restore size
+            // and maximized on the first Focused event instead — the earliest
+            // moment it is provably visible, where SW_MAXIMIZE is exactly what
+            // clicking the maximize button would do. Everywhere else the flag
+            // works as written.
+            maximized: !cfg!(windows),
             ..window::Settings::default()
         })
         .run()
@@ -1882,6 +1906,7 @@ fn runtime_event(
         // Losing focus means every key still held is about to be released
         // somewhere we cannot see. See `release_rdp_modifiers`.
         event::Event::Window(window::Event::Unfocused) => Some(Message::WindowUnfocused),
+        event::Event::Window(window::Event::Focused) => Some(Message::WindowFocused),
         event::Event::Window(window::Event::Opened { size, .. })
         | event::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized {
             width: size.width,

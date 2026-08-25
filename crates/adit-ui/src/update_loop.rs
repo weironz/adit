@@ -328,6 +328,16 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Whatever is held right now gets released somewhere we cannot see.
             release_rdp_modifiers(app);
         }
+        Message::WindowFocused => {
+            // The startup maximize, deferred to the first moment the window is
+            // provably visible. Creation-time `maximized` shows the hidden
+            // window on Windows — the launch flash — so `run()` leaves it off
+            // there and this arm finishes the job exactly once.
+            if app.startup_maximize_pending {
+                app.startup_maximize_pending = false;
+                return window::latest().and_then(|id| window::maximize(id, true));
+            }
+        }
         Message::ColorSchemeChanged(index) => {
             if let Some(scheme) = COLOR_SCHEMES.get(index as usize) {
                 app.color_scheme = scheme.name.to_string();
