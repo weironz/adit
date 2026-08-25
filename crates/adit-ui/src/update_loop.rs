@@ -1090,15 +1090,21 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.password.clear();
             app.remember_connection_password = false;
         }
-        Message::RespondHostKey { session_id, accept } => {
-            if let Err(error) = app.manager.respond_host_key(session_id, accept) {
+        Message::RespondHostKey {
+            session_id,
+            decision,
+        } => {
+            if let Err(error) = app.manager.respond_host_key(session_id, decision) {
                 app.last_error = Some(error.to_string());
             } else {
-                app.notice = if accept {
-                    String::from(t("已信任主机密钥，继续连接"))
-                } else {
-                    String::from(t("已拒绝主机密钥"))
-                };
+                app.notice = String::from(match decision {
+                    adit_session::HostKeyDecision::TrustAndRecord => t("已信任主机密钥，继续连接"),
+                    // Says what did NOT happen, because that is the part worth
+                    // knowing: the key is not on file, so the next connection
+                    // asks again.
+                    adit_session::HostKeyDecision::TrustOnce => t("仅本次信任，未写入 known_hosts"),
+                    adit_session::HostKeyDecision::Reject => t("已拒绝主机密钥"),
+                });
             }
         }
         Message::AuthPromptInput { index, value } => {

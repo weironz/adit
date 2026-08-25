@@ -152,7 +152,7 @@ pub enum LiveShellCommand {
     Resize { cols: u16, rows: u16 },
     Disconnect,
     /// User's answer to a pending [`LiveShellEvent::HostKeyPrompt`].
-    HostKeyDecision(bool),
+    HostKeyDecision(HostKeyDecision),
     /// User's answers to a pending [`LiveShellEvent::AuthPrompt`], one per prompt
     /// in order. An empty vec cancels the authentication.
     AuthResponses(Vec<String>),
@@ -280,6 +280,26 @@ pub struct AuthPromptField {
     pub prompt: String,
     /// Whether the typed answer should be echoed (`false` ⇒ mask it).
     pub echo: bool,
+}
+
+/// What to do with a host key the user was asked about.
+///
+/// Three states rather than a bool, because "trust" and "record" are separate
+/// decisions and merging them forces a bad choice exactly when it matters. The
+/// honest answer to "this host's key is not what it was" is usually *let me in
+/// once and look* — which yes/no cannot express: accept, and the new key is
+/// written down as though it had been verified; refuse, and there is no way to
+/// go and find out what happened.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostKeyDecision {
+    /// Abort the connection.
+    Reject,
+    /// Connect, and leave `known_hosts` exactly as it was. The next connection
+    /// asks again — which is the point: nothing has been vouched for.
+    TrustOnce,
+    /// Connect and write the key to `known_hosts`, so it verifies silently from
+    /// now on.
+    TrustAndRecord,
 }
 
 /// A server host key awaiting the user's trust decision during connect.
@@ -1268,7 +1288,7 @@ async fn run_live_password_shell(
         // The host-key check may pause to ask the user. Drive `connect` while
         // concurrently forwarding the user's HostKeyDecision (and an early
         // Disconnect) into the handler's one-shot decision channel.
-        let (decision_tx, decision_rx) = oneshot::channel::<bool>();
+        let (decision_tx, decision_rx) = oneshot::channel::<HostKeyDecision>();
         let handler = KnownHostsClient::new(
             request.host.clone(),
             request.port,
@@ -1291,16 +1311,16 @@ async fn run_live_password_shell(
                     return Err(SshError::Timeout(request.connect_timeout_secs));
                 }
                 command = commands.recv() => match command {
-                    Some(LiveShellCommand::HostKeyDecision(accept)) => {
+                    Some(LiveShellCommand::HostKeyDecision(decision)) => {
                         if let Some(tx) = decision_tx.take() {
-                            let _ = tx.send(accept);
+                            let _ = tx.send(decision);
                         }
                     }
                     Some(LiveShellCommand::Disconnect) | None => {
                         // Cancelled before the session opened: reject any pending
                         // host-key prompt so `connect` unwinds, then stop.
                         if let Some(tx) = decision_tx.take() {
-                            let _ = tx.send(false);
+                            let _ = tx.send(HostKeyDecision::Reject);
                         }
                         return Ok(());
                     }
@@ -1317,7 +1337,7 @@ async fn run_live_password_shell(
         // HostKeyDecision into it while the chain connects (a changed key on any
         // hop or the target still aborts).
         let _ = events.send(LiveShellEvent::Status(String::from("connecting via jump host")));
-        let (decision_tx, decision_rx) = oneshot::channel::<bool>();
+        let (decision_tx, decision_rx) = oneshot::channel::<HostKeyDecision>();
         let final_handler = KnownHostsClient::new(
             request.host.clone(),
             request.port,
@@ -1359,9 +1379,9 @@ async fn run_live_password_shell(
                     return Err(SshError::Timeout(request.connect_timeout_secs));
                 }
                 command = commands.recv() => match command {
-                    Some(LiveShellCommand::HostKeyDecision(accept)) => {
+                    Some(LiveShellCommand::HostKeyDecision(decision)) => {
                         if let Some(tx) = decision_tx.take() {
-                            let _ = tx.send(accept);
+                            let _ = tx.send(decision);
                         }
                     }
                     // A hop can challenge for an MFA code mid-chain; without
@@ -1372,7 +1392,7 @@ async fn run_live_password_shell(
                     }
                     Some(LiveShellCommand::Disconnect) | None => {
                         if let Some(tx) = decision_tx.take() {
-                            let _ = tx.send(false);
+                            let _ = tx.send(HostKeyDecision::Reject);
                         }
                         // Cancel any pending hop prompt (empty answer ⇒ cancel).
                         let _ = kbd_tx.send(Vec::new());
@@ -3708,7 +3728,7 @@ struct KnownHostsClient {
     /// Present for interactive (UI) connections so an unknown/changed key can be
     /// confirmed by the user; absent for the one-shot probe, which keeps
     /// non-interactive trust-on-first-use.
-    decision: Option<oneshot::Receiver<bool>>,
+    decision: Option<oneshot::Receiver<HostKeyDecision>>,
     /// Trust a never-seen host key automatically (record it, no prompt).
     auto_accept: bool,
     /// Where server-opened `forwarded-tcpip` channels go. Shared with whoever
@@ -3723,7 +3743,7 @@ impl KnownHostsClient {
         port: u16,
         known_hosts_path: PathBuf,
         events: Option<mpsc::Sender<LiveShellEvent>>,
-        decision: Option<oneshot::Receiver<bool>>,
+        decision: Option<oneshot::Receiver<HostKeyDecision>>,
     ) -> Self {
         Self {
             host,
@@ -3836,15 +3856,27 @@ impl client::Handler for KnownHostsClient {
                 }
                 let decision = self.decision.take().expect("decision present");
                 self.emit_prompt(server_public_key, &fingerprint, None);
-                if decision.await.unwrap_or(false) {
-                    append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
-                    send_status(
-                        self.events.as_ref(),
-                        format!("recorded new host key for {host_spec}: {fingerprint}"),
-                    );
-                    Ok(true)
-                } else {
-                    Err(SshError::HostKeyRejected)
+                // A dropped channel counts as a rejection: the only way it
+                // closes unanswered is the session going away underneath us,
+                // and trusting a key because nobody was left to ask is exactly
+                // backwards.
+                match decision.await.unwrap_or(HostKeyDecision::Reject) {
+                    HostKeyDecision::TrustAndRecord => {
+                        append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
+                        send_status(
+                            self.events.as_ref(),
+                            format!("recorded new host key for {host_spec}: {fingerprint}"),
+                        );
+                        Ok(true)
+                    }
+                    HostKeyDecision::TrustOnce => {
+                        send_status(
+                            self.events.as_ref(),
+                            format!("trusted for this session only, not recorded: {fingerprint}"),
+                        );
+                        Ok(true)
+                    }
+                    HostKeyDecision::Reject => Err(SshError::HostKeyRejected),
                 }
             }
             HostKeyStatus::Changed {
@@ -3860,15 +3892,31 @@ impl client::Handler for KnownHostsClient {
                     });
                 };
                 self.emit_prompt(server_public_key, &fingerprint, Some(previous.join(", ")));
-                if decision.await.unwrap_or(false) {
-                    replace_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
-                    send_status(
-                        self.events.as_ref(),
-                        format!("updated host key for {host_spec}: {fingerprint}"),
-                    );
-                    Ok(true)
-                } else {
-                    Err(SshError::HostKeyRejected)
+                match decision.await.unwrap_or(HostKeyDecision::Reject) {
+                    HostKeyDecision::TrustAndRecord => {
+                        replace_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
+                        send_status(
+                            self.events.as_ref(),
+                            format!("updated host key for {host_spec}: {fingerprint}"),
+                        );
+                        Ok(true)
+                    }
+                    // The case this enum exists for. A changed key is either a
+                    // rebuilt host or an attack, and the way to tell is to go
+                    // and look — without overwriting what the key used to be,
+                    // which is the only evidence there is if it turns out to be
+                    // the second one.
+                    HostKeyDecision::TrustOnce => {
+                        send_status(
+                            self.events.as_ref(),
+                            format!(
+                                "CHANGED key trusted for this session only; {host_spec} still on record as {}",
+                                previous.join(", ")
+                            ),
+                        );
+                        Ok(true)
+                    }
+                    HostKeyDecision::Reject => Err(SshError::HostKeyRejected),
                 }
             }
         }
@@ -4946,7 +4994,7 @@ mod tests {
             Some(decision_rx),
         );
 
-        decision_tx.send(true).expect("send decision");
+        decision_tx.send(HostKeyDecision::TrustAndRecord).expect("send decision");
         let trusted = current_thread_rt()
             .block_on(handler.check_server_key(&key))
             .expect("accept should yield Ok");
@@ -4995,6 +5043,82 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    /// The whole point of `TrustOnce`: the connection proceeds and the file is
+    /// not touched, so the next connection asks again. If this ever starts
+    /// writing, the option silently becomes "trust and record" and the user has
+    /// vouched for a key they only meant to look at.
+    #[test]
+    fn trust_once_connects_without_recording() {
+        let path = temp_known_hosts_path("interactive-trust-once");
+        let key = public_key(ED25519_KEY);
+        let (events_tx, events_rx) = mpsc::channel();
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "node-once".into(),
+            22,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
+        );
+
+        decision_tx
+            .send(HostKeyDecision::TrustOnce)
+            .expect("send decision");
+        let trusted = current_thread_rt()
+            .block_on(handler.check_server_key(&key))
+            .expect("trust-once should yield Ok");
+        assert!(trusted, "the connection must proceed");
+
+        let event = events_rx.try_recv().expect("a prompt event");
+        assert!(matches!(event, LiveShellEvent::HostKeyPrompt(_)));
+        // Nothing on disk: not an empty file, no file at all, exactly as before.
+        assert!(
+            fs::read_to_string(&path).is_err(),
+            "known_hosts must be untouched by a trust-once decision",
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    /// The case the option exists for. A changed key must stay changed on disk:
+    /// the recorded fingerprint is the only evidence of what the host used to
+    /// be, and overwriting it while "just having a look" destroys it.
+    #[test]
+    fn trust_once_on_a_changed_key_keeps_the_old_record() {
+        let path = temp_known_hosts_path("interactive-trust-once-changed");
+        // Seed a different key, so the one presented below reads as CHANGED.
+        let recorded = public_key(ECDSA_KEY);
+        append_known_host(&path, "node-changed", &recorded).expect("seed known_hosts");
+        let before = fs::read_to_string(&path).expect("seeded known_hosts");
+
+        let key = public_key(ED25519_KEY);
+        let (events_tx, _events_rx) = mpsc::channel();
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "node-changed".into(),
+            22,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
+        );
+
+        decision_tx
+            .send(HostKeyDecision::TrustOnce)
+            .expect("send decision");
+        let trusted = current_thread_rt()
+            .block_on(handler.check_server_key(&key))
+            .expect("trust-once should yield Ok");
+        assert!(trusted);
+
+        assert_eq!(
+            fs::read_to_string(&path).expect("known_hosts"),
+            before,
+            "the previous fingerprint is the evidence; it must survive",
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
     #[test]
     fn interactive_unknown_host_aborts_on_reject() {
         let path = temp_known_hosts_path("interactive-reject");
@@ -5009,7 +5133,7 @@ mod tests {
             Some(decision_rx),
         );
 
-        decision_tx.send(false).expect("send decision");
+        decision_tx.send(HostKeyDecision::Reject).expect("send decision");
         let error = current_thread_rt()
             .block_on(handler.check_server_key(&key))
             .expect_err("reject should abort");

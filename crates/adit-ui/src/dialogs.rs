@@ -164,7 +164,19 @@ pub(crate) fn host_key_dialog_overlay(
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::RespondHostKey {
                         session_id,
-                        accept: false
+                        decision: adit_session::HostKeyDecision::Reject,
+                    }),
+                // Between refusing and vouching. Styled as a secondary action
+                // and placed in the middle so it reads as the cautious middle
+                // ground it is — and deliberately not the default, because a
+                // key you actually checked still belongs on file.
+                button(text(t("仅本次")))
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::RespondHostKey {
+                        session_id,
+                        decision: adit_session::HostKeyDecision::TrustOnce,
                     }),
                 button(text(accept_label))
                     .width(Fill)
@@ -172,7 +184,7 @@ pub(crate) fn host_key_dialog_overlay(
                     .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::RespondHostKey {
                         session_id,
-                        accept: true
+                        decision: adit_session::HostKeyDecision::TrustAndRecord,
                     }),
             ]
             .spacing(8),

@@ -9,12 +9,18 @@ use adit_domain::{
 pub use adit_domain::Environment as ProfileEnvironment;
 pub use adit_domain::JumpHop as ProfileJumpHop;
 use adit_ssh::{
-    AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand, LiveShellEvent,
-    LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle,
-    SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent, TunnelHandle, TunnelRequest,
+    AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand,
+    LiveShellEvent, LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand,
+    SftpEvent, SftpHandle, SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent,
+    TunnelHandle, TunnelRequest,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
+// Re-exported rather than making adit-ui depend on adit-ssh: the UI talks to the
+// session layer only, and what to do about a host key is part of that
+// conversation.
+pub use adit_ssh::HostKeyDecision;
+
 pub use adit_ssh::{AuthPromptField, AuthPromptRequest as AuthPromptInfo};
 pub use adit_ssh::{
     known_hosts_path, list_known_hosts, remove_known_host, KnownHostEntry, SftpEntry, TunnelKind,
@@ -2682,7 +2688,7 @@ impl SessionManager {
     pub fn respond_host_key(
         &mut self,
         session_id: SessionId,
-        accept: bool,
+        decision: HostKeyDecision,
     ) -> Result<(), SessionError> {
         let record = self
             .sessions
@@ -2690,12 +2696,15 @@ impl SessionManager {
             .ok_or(SessionError::SessionNotFound)?;
         record.pending_host_key = None;
         if let Some(live) = &record.live {
-            live.send(LiveShellCommand::HostKeyDecision(accept))?;
+            live.send(LiveShellCommand::HostKeyDecision(decision))?;
         }
-        record.terminal.append_status(if accept {
-            "host key trusted"
-        } else {
-            "host key rejected"
+        // Spelled out per case rather than "trusted / rejected": the difference
+        // between the two trusting answers is the whole point, and the
+        // transcript is where someone looks afterwards to see which they chose.
+        record.terminal.append_status(match decision {
+            HostKeyDecision::TrustAndRecord => "host key trusted and recorded",
+            HostKeyDecision::TrustOnce => "host key trusted for this session only",
+            HostKeyDecision::Reject => "host key rejected",
         });
         Ok(())
     }

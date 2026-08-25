@@ -800,7 +800,10 @@ pub enum Message {
     RememberConnectionPasswordChanged(bool),
     ConfirmConnection,
     CancelConnection,
-    RespondHostKey { session_id: SessionId, accept: bool },
+    RespondHostKey {
+        session_id: SessionId,
+        decision: adit_session::HostKeyDecision,
+    },
     AuthPromptInput { index: usize, value: String },
     SubmitAuthPrompt { session_id: SessionId },
     CancelAuthPrompt { session_id: SessionId },
