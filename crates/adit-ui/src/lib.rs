@@ -46,6 +46,9 @@ pub enum SftpSortKey {
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
+/// Bare `http(s)://…` in terminal output, made clickable. OSC 8 links already
+/// work; almost nothing emits them.
+mod autolink;
 mod i18n;
 pub(crate) use i18n::{set_language, t, tf};
 mod style;

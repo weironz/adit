@@ -960,6 +960,14 @@ pub(crate) fn terminal_view(
                 } else {
                     highlight::spans_for(&line)
                 };
+                // Bare URLs become links here rather than in the terminal: it is
+                // a presentation choice, and the scrollback must keep holding
+                // what the server actually sent. Not suppressed on the alternate
+                // screen the way keyword rules are — a URL is the literal text,
+                // not a rule that might fire on a TUI's status bar — and
+                // `link_bare_urls` already refuses any cell the server coloured.
+                let mut line = line;
+                autolink::link_bare_urls(&mut line);
                 column.push(terminal_line(
                     line,
                     row_index,
