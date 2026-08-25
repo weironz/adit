@@ -26,8 +26,10 @@ For what is *not* built, see [roadmap.md](roadmap.md). For how it works, see
 用户记得"修过一次"，没记错：`9a3c60d` 修的是**控制台窗口**闪（`windows_subsystem`），至今
 有效；两天后 `42a73f3` 加 `maximized: true` 时引入了这个长得一样、机制无关的新闪。
 
-顺带两笔：真窗口前那 ~3 秒是 wgpu 在这台混合显卡（Intel Xe + RTX 3050 + Oray 虚拟显示驱
-动）上回退到 OpenGL 的初始化耗时，与闪无关、未处理；`%APPDATA%\Adit` 里躺着 8 月 5 日一次
+顺带两笔：旧构建上真窗口前有 ~3 秒空白，当时归因于 wgpu 在这台混合显卡（Intel Xe +
+RTX 3050 + Oray 虚拟显示驱动）上回退 OpenGL——但修完闪窗后实测（默认 130~330ms，强制
+dx12/vulkan ~100ms，各两轮）**那 3 秒已不存在**，故未做任何后端强制：为省几十毫秒在所
+有机器上钉死 dx12 不划算。若慢启动复现，先重测再动；`%APPDATA%\Adit` 里躺着 8 月 5 日一次
 `ADIT_RDP_DUMP` 调试留下的数千个抓包文件，多到列目录超时，已另行清理。
 
 **自动同步（默认关）。** 手动同步太繁琐——每改一次都要在这台按一下、再去另一台按一下。
