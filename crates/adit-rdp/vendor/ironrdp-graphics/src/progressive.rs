@@ -1314,7 +1314,7 @@ fn decode_tile_block(
     surface: &mut SurfaceTiles,
     tile_block: &ironrdp_pdu::codecs::rfx::progressive::ProgressiveTile<'_>,
     quant_vals: &[ComponentCodecQuant],
-    prog_quant_vals: &[ironrdp_pdu::codecs::rfx::progressive::ProgressiveCodecQuant],
+    prog_quant_vals: &[ProgressiveCodecQuant],
     use_reduce_extrapolate: bool,
     upgrades_without_base: &mut usize,
 ) -> Result<Vec<DecodedTile>, ProgressiveDecodeError> {

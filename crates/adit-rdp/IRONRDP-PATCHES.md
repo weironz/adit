@@ -33,6 +33,15 @@ crates.io connector.
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/`
 
 Pulled in via `[patch.crates-io] ironrdp-graphics = { path = "vendor/ironrdp-graphics" }`.
+One cosmetic hunk sits apart from the rest and is **not** an `ADIT PATCH`: the
+`prog_quant_vals` parameter of `decode_tile_block` in `src/progressive.rs` had a
+fully-qualified type that upstream's own `unused_qualifications` lint flags on
+rustc 1.98, and that type is already imported at the top of the same file. It is
+upstream's lint firing on upstream's code — the only reason we see it at all is
+that a vendored crate is a *path* dependency, whose warnings cargo shows, unlike
+a registry one's. Drop this hunk on the next sync; upstream will most likely have
+fixed it themselves.
+
 A set of `ADIT PATCH` hunks across `src/progressive.rs` and `src/srl.rs`, all about **RemoteFX Progressive
 as Windows encodes it**. Upstream's decoder was written against GNOME Remote
 Desktop and xrdp, which use the simpler tile mode; a Windows host exercises the
