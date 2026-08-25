@@ -13,7 +13,7 @@
 //! which is the actual defence: terminal output is remote-controlled, and the
 //! destination is shown before anything launches.
 
-use adit_terminal::{Color as TermColor, TerminalLine};
+use adit_terminal::{Color as TermColor, TerminalCell, TerminalLine};
 
 /// Schemes worth linking. Deliberately short: the click path only opens
 /// http(s) anyway (`is_openable_http_url`), so linking `ftp://` would render as
@@ -33,40 +33,79 @@ const TRAILING: [char; 10] = ['.', ',', ';', ':', '!', '?', '\'', '"', '>', '`']
 /// Cheap-exits on lines with no `://` at all, which is nearly all of them — this
 /// runs per visible row on every frame.
 pub(crate) fn link_bare_urls(line: &mut TerminalLine) {
-    // One flat string plus a map back to cell indices. A cell is not one char:
-    // it holds a whole styled run, so the map is per byte of the flattened text.
+    // A cell is a whole styled *run*, not a character, and `TerminalCell`
+    // documents the invariant that goes with it: every cell in a run shares one
+    // hyperlink target, and a link boundary starts a new run. So a URL that is
+    // only part of a longer run cannot have the target stamped onto that run —
+    // the run has to be split at the URL's edges first.
+    //
+    // Getting this wrong is not subtle: ` * Documentation:   https://…` arrives
+    // from a MOTD as one run, and stamping it made the whole line a link.
     let mut text = String::new();
-    let mut owner: Vec<usize> = Vec::new();
-    for (index, cell) in line.cells.iter().enumerate() {
-        for ch in cell.text.chars() {
-            text.push(ch);
-            owner.extend(std::iter::repeat_n(index, ch.len_utf8()));
-        }
+    let mut spans: Vec<(usize, usize)> = Vec::with_capacity(line.cells.len());
+    for cell in &line.cells {
+        let start = text.len();
+        text.push_str(&cell.text);
+        spans.push((start, text.len()));
     }
     if !text.contains("://") {
         return;
     }
+    let urls = find_urls(&text);
+    if urls.is_empty() {
+        return;
+    }
 
-    for (start, end) in find_urls(&text) {
-        // Two things this must not take from the server, both because a link is
-        // rendered in `hyperlink_color()` and would overwrite them:
-        //
-        // its own OSC 8 target — a server that deliberately pointed this text
-        // somewhere else keeps that — and its own colour. The same restraint
-        // keyword highlighting uses (`ColumnMap::of`): a URL inside a syntax-
-        // highlighted buffer stays the colour vim gave it rather than turning
-        // link-blue mid-line.
-        let claimed = owner[start..end].iter().any(|&cell| {
-            let cell = &line.cells[cell];
-            cell.hyperlink.is_some() || cell.fg != TermColor::Default
-        });
-        if claimed {
+    let mut out: Vec<TerminalCell> = Vec::with_capacity(line.cells.len() + urls.len() * 2);
+    for (cell, (cell_start, cell_end)) in std::mem::take(&mut line.cells).into_iter().zip(spans) {
+        // Three things this must not take from the server, because a link renders
+        // in `hyperlink_color()` and would overwrite them: its own OSC 8 target
+        // (a server that deliberately pointed this text elsewhere keeps it), its
+        // own colour (the same restraint keyword highlighting uses, so a URL in a
+        // syntax-highlighted buffer stays the colour vim gave it), and the cursor
+        // run, which is one cell the renderer paints specially.
+        let eligible = cell.hyperlink.is_none() && cell.fg == TermColor::Default && !cell.cursor;
+        let overlapping: Vec<(usize, usize)> = if eligible {
+            urls.iter()
+                .map(|&(start, end)| (start.max(cell_start), end.min(cell_end)))
+                .filter(|(start, end)| start < end)
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if overlapping.is_empty() {
+            out.push(cell);
             continue;
         }
-        let url = text[start..end].to_string();
-        for &cell in &owner[start..end] {
-            line.cells[cell].hyperlink = Some(url.clone());
+
+        let mut cut = cell_start;
+        for (start, end) in overlapping {
+            if start > cut {
+                out.push(slice_of(&cell, &text[cut..start], None));
+            }
+            // The target is the WHOLE URL even when this piece is only part of
+            // one: a URL split across runs has to open the same address from
+            // either half.
+            let whole = urls
+                .iter()
+                .find(|&&(url_start, url_end)| url_start <= start && end <= url_end)
+                .map(|&(url_start, url_end)| text[url_start..url_end].to_string());
+            out.push(slice_of(&cell, &text[start..end], whole));
+            cut = end;
         }
+        if cut < cell_end {
+            out.push(slice_of(&cell, &text[cut..cell_end], None));
+        }
+    }
+    line.cells = out;
+}
+
+/// One piece of a split run: same styling, different text, its own target.
+fn slice_of(base: &TerminalCell, text: &str, hyperlink: Option<String>) -> TerminalCell {
+    TerminalCell {
+        text: text.to_string(),
+        hyperlink,
+        ..base.clone()
     }
 }
 
@@ -167,6 +206,60 @@ mod tests {
         assert_eq!(
             urls("https://en.wikipedia.org/wiki/Foo_(bar)"),
             ["https://en.wikipedia.org/wiki/Foo_(bar)"]
+        );
+    }
+
+    fn plain(text: &str) -> TerminalCell {
+        TerminalCell::plain(text)
+    }
+
+    /// The bug this module shipped with: a MOTD line arrives as ONE run, and
+    /// stamping the target onto that run made the entire line a link — visibly,
+    /// once links grew an underline.
+    #[test]
+    fn only_the_url_part_of_a_run_becomes_a_link() {
+        let mut line = TerminalLine::from_cells(vec![plain(" * Documentation:  https://docs.ubuntu.com")]);
+        link_bare_urls(&mut line);
+
+        let linked: String = line
+            .cells
+            .iter()
+            .filter(|cell| cell.hyperlink.is_some())
+            .map(|cell| cell.text.as_str())
+            .collect();
+        assert_eq!(linked, "https://docs.ubuntu.com");
+
+        // Nothing may be lost or duplicated by the split.
+        let rebuilt: String = line.cells.iter().map(|cell| cell.text.as_str()).collect();
+        assert_eq!(rebuilt, " * Documentation:  https://docs.ubuntu.com");
+        // …and the prefix must not have become clickable.
+        let prefix = line.cells.first().expect("a leading run");
+        assert!(prefix.hyperlink.is_none(), "the label is not part of the link");
+    }
+
+    /// Styling survives the split, or a link would drop the run's bold/italic.
+    #[test]
+    fn split_pieces_keep_the_runs_styling() {
+        let mut line = TerminalLine::from_cells(vec![TerminalCell {
+                bold: true,
+                ..TerminalCell::plain("see https://example.com ok")
+            }]);
+        link_bare_urls(&mut line);
+        assert!(line.cells.len() >= 2, "the run must actually split");
+        assert!(line.cells.iter().all(|cell| cell.bold), "bold is the run's, not the link's");
+    }
+
+    #[test]
+    fn a_server_declared_link_is_never_overwritten() {
+        let mut line = TerminalLine::from_cells(vec![TerminalCell {
+                hyperlink: Some(String::from("https://declared.example")),
+                ..TerminalCell::plain("https://shown.example")
+            }]);
+        link_bare_urls(&mut line);
+        assert_eq!(line.cells.len(), 1, "an already-linked run is left whole");
+        assert_eq!(
+            line.cells[0].hyperlink.as_deref(),
+            Some("https://declared.example"),
         );
     }
 

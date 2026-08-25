@@ -1237,6 +1237,36 @@ pub(crate) fn terminal_line(
             } else {
                 cell_box.into()
             };
+            // Underline, drawn the way the strike above is, because iced's text
+            // has no underline either. Two sources:
+            //
+            // SGR 4, which the cell has always carried and nothing ever drew;
+            // and a link while the open modifier is held. The latter is what
+            // makes links *findable* — the pointer already turns into a hand
+            // over one, but only once you happen to be holding Ctrl and move
+            // across it, so nothing on screen says which text is clickable.
+            // Holding Ctrl now underlines every link at once, which is what
+            // iTerm2 and Windows Terminal do with the same modifier.
+            let glyph: Element<'static, Message> = if cell.underline || (is_link && links_clickable)
+            {
+                stack![
+                    glyph,
+                    container(
+                        container(Space::new().width(Fill).height(Length::Fixed(1.0)))
+                            .width(Fill)
+                            .style(move |_theme| container::Style {
+                                background: Some(Background::Color(glyph_color)),
+                                ..container::Style::default()
+                            })
+                    )
+                    .width(Length::Fixed(cell_w * ch_width as f32))
+                    .height(Length::Fixed(cell_h))
+                    .align_y(iced::alignment::Vertical::Bottom),
+                ]
+                .into()
+            } else {
+                glyph
+            };
             let glyph: Element<'static, Message> = match &link_click {
                 Some(url) => mouse_area(glyph)
                     .on_press(Message::OpenHyperlink(url.clone()))
