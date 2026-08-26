@@ -1057,19 +1057,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloneProfileFromContext(profile_id) => {
             app.profile_context_menu = None;
-            if let Some(new_id) = app.manager.duplicate_profile(profile_id) {
-                // Copy the source's saved password + key passphrase (kept in the
-                // OS vault under the profile id) to the clone so its auth works.
-                if let Ok(Some(password)) = app.credential_store.load_profile_password(profile_id) {
-                    let _ = app.credential_store.save_profile_password(new_id, &password);
-                }
-                if let Ok(Some(passphrase)) =
-                    app.credential_store.load_profile_passphrase(profile_id)
-                {
-                    let _ = app
-                        .credential_store
-                        .save_profile_passphrase(new_id, &passphrase);
-                }
+            if let Some(new_id) = clone_profile_with_credentials(app, profile_id) {
                 select_profile(app, new_id);
                 if persist_profiles(app) {
                     app.notice = String::from(t("已克隆会话"));
@@ -2149,7 +2137,43 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
 
+            // Sidebar copy/paste clones sessions. Gated on the terminal NOT
+            // being focused, which is exactly what clicking a sidebar row sets
+            // (`focus_profile`) — so this can never take Ctrl+C from a shell,
+            // where it means SIGINT and taking it would be unforgivable.
+            //
+            // Plain Ctrl+C/V rather than Ctrl+Shift+C/V: those two are already
+            // the terminal's copy/paste, and here there is no terminal to
+            // conflict with. It is the pairing every file manager uses for the
+            // same gesture on a list row.
             if !app.terminal_focused {
+                if plain_ctrl_shortcut(&event, 'c') {
+                    let ids = crate::profiles::selected_profile_ids(app);
+                    if !ids.is_empty() {
+                        let count = ids.len();
+                        app.profile_clipboard = ids;
+                        app.notice = tf("已复制 {} 个会话，按 Ctrl+V 粘贴为副本", &[&count]);
+                    }
+                    return Task::none();
+                }
+                if plain_ctrl_shortcut(&event, 'v') && !app.profile_clipboard.is_empty() {
+                    // Cloned in the order they were copied, and the last clone
+                    // is selected — the same place the context menu leaves you.
+                    let sources = app.profile_clipboard.clone();
+                    let mut last = None;
+                    for source in &sources {
+                        if let Some(new_id) = clone_profile_with_credentials(app, *source) {
+                            last = Some(new_id);
+                        }
+                    }
+                    if let Some(new_id) = last {
+                        select_profile(app, new_id);
+                        if persist_profiles(app) {
+                            app.notice = tf("已粘贴 {} 个会话副本", &[&sources.len()]);
+                        }
+                    }
+                    return Task::none();
+                }
                 return Task::none();
             }
 

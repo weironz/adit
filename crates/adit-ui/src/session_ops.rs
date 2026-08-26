@@ -141,7 +141,12 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
 /// error in the transcript. Unlike [`open_connection_dialog`] this targets the
 /// failed session's profile rather than the sidebar form, and starts with an empty
 /// field — whatever was there is exactly what the server just refused.
-pub(crate) fn open_password_reprompt(app: &mut AditApp, profile_id: ProfileId, reason: &str) {
+pub(crate) fn open_password_reprompt(
+    app: &mut AditApp,
+    session_id: SessionId,
+    profile_id: ProfileId,
+    reason: &str,
+) {
     let Some(profile) = app.manager.profile(profile_id).cloned() else {
         return;
     };
@@ -153,6 +158,7 @@ pub(crate) fn open_password_reprompt(app: &mut AditApp, profile_id: ProfileId, r
     let endpoint = profile.endpoint();
     app.connection_dialog = Some(ConnectionDialog {
         profile_id,
+        retry_session: Some(session_id),
         title: profile.name,
         endpoint,
         auth_method: profile.auth_method,
@@ -172,8 +178,8 @@ pub(crate) fn sync_auth_retry(app: &mut AditApp) {
     if app.connection_dialog.is_some() {
         return;
     }
-    if let Some((_session_id, profile_id, reason)) = app.manager.take_auth_rejection() {
-        open_password_reprompt(app, profile_id, &reason);
+    if let Some((session_id, profile_id, reason)) = app.manager.take_auth_rejection() {
+        open_password_reprompt(app, session_id, profile_id, &reason);
     }
 }
 
@@ -201,6 +207,8 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
     let endpoint = profile.endpoint();
     app.connection_dialog = Some(ConnectionDialog {
         profile_id,
+        // A fresh connect, not a retry of anything.
+        retry_session: None,
         title: profile.name,
         endpoint,
         auth_method: profile.auth_method,
@@ -343,6 +351,31 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
         .ok()
         .flatten()
         .unwrap_or_default();
+
+    // A corrected password retries the session that was rejected instead of
+    // opening another one beside it. Without this, every typo left a dead tab
+    // behind and the working connection ended up under the second tab for the
+    // same host.
+    //
+    // `retry_with_credentials` reports whether it found a session to retry: the
+    // dialog can outlive its record if the user closed that tab while typing,
+    // and opening a new session is then the right answer after all.
+    if let Some(session_id) = dialog.retry_session {
+        if app
+            .manager
+            .retry_with_credentials(session_id, app.password.clone(), passphrase.clone())
+        {
+            app.connection_dialog = None;
+            app.password.clear();
+            app.remember_connection_password = false;
+            app.terminal_focused = true;
+            app.last_error = credential_warning
+                .as_ref()
+                .map(|error| tf("保存密码失败: {}", &[&error]));
+            app.notice = tf("正在用新密码重连: {}", &[&dialog.endpoint]);
+            return;
+        }
+    }
 
     match app
         .manager

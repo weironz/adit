@@ -2734,6 +2734,46 @@ impl SessionManager {
         Some((id, profile_id, reason))
     }
 
+    /// Retry a session that failed authentication, with corrected credentials.
+    ///
+    /// This exists so a wrong password costs a retry and not a tab. Re-running
+    /// the connect flow opens a *new* session, which left the failed one sitting
+    /// there and put the working connection under a second tab for the same
+    /// host — a fresh dead tab for every typo.
+    ///
+    /// Returns `false` when the session is gone or already live, so the caller
+    /// can fall back to opening one: the reprompt can outlive the record it came
+    /// from if the user closed that tab while the dialog was up.
+    pub fn retry_with_credentials(
+        &mut self,
+        session_id: SessionId,
+        password: String,
+        passphrase: String,
+    ) -> bool {
+        let Some(record) = self.sessions.get_mut(&session_id) else {
+            return false;
+        };
+        if record.live.is_some() {
+            return false;
+        }
+        // A rejected session has a ReconnectState, built at connect time.
+        // Rebuilding it when absent keeps this total rather than silently doing
+        // nothing on some path that turns out not to have one.
+        match &mut record.reconnect {
+            Some(reconnect) => {
+                reconnect.password = password;
+                reconnect.passphrase = passphrase;
+                reconnect.manual = false;
+                reconnect.attempts = 0;
+                reconnect.retry_at = None;
+            }
+            slot @ None => *slot = Some(ReconnectState::new(password, passphrase)),
+        }
+        record.terminal.append_status("retrying with new credentials");
+        self.attempt_reconnect(session_id);
+        true
+    }
+
     /// Answer a pending interactive-auth prompt with one response per field, in
     /// order. An empty vec cancels the authentication.
     pub fn respond_auth_prompt(

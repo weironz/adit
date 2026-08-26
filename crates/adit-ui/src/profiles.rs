@@ -224,6 +224,28 @@ pub(crate) fn place_ungrouped_at(
     Ok(())
 }
 
+/// Duplicate a profile, carrying its saved secrets across.
+///
+/// Shared by the context menu and Ctrl+V, because a clone whose password did not
+/// come with it is a clone that cannot connect — and two copies of that rule
+/// drift apart. The secrets live in the encrypted store keyed by profile id, so
+/// they have to be written under the new id explicitly; nothing else does it.
+pub(crate) fn clone_profile_with_credentials(
+    app: &mut AditApp,
+    profile_id: ProfileId,
+) -> Option<ProfileId> {
+    let new_id = app.manager.duplicate_profile(profile_id)?;
+    if let Ok(Some(password)) = app.credential_store.load_profile_password(profile_id) {
+        let _ = app.credential_store.save_profile_password(new_id, &password);
+    }
+    if let Ok(Some(passphrase)) = app.credential_store.load_profile_passphrase(profile_id) {
+        let _ = app
+            .credential_store
+            .save_profile_passphrase(new_id, &passphrase);
+    }
+    Some(new_id)
+}
+
 /// The rows a drag acts on: the whole selection when the pressed row is part of
 /// it, otherwise just that row.
 ///

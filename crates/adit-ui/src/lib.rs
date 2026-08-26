@@ -171,6 +171,11 @@ pub struct AditApp {
     selected_profiles: HashSet<ProfileId>,
     /// Anchor for Shift+click range selection on profiles.
     profile_select_anchor: Option<ProfileId>,
+    /// Profiles captured by Ctrl+C in the sidebar, waiting for Ctrl+V to clone
+    /// them. Deliberately NOT the system clipboard: these are ids into this
+    /// machine's own store, meaningless anywhere else, and putting them on the
+    /// real clipboard would clobber whatever the user was actually carrying.
+    profile_clipboard: Vec<ProfileId>,
     /// Whether the "move selected profiles to group" picker overlay is open.
     move_to_group_menu: bool,
     profile_editor: Option<ProfileId>,
@@ -1092,6 +1097,10 @@ struct TerminalSelection {
 #[derive(Debug, Clone)]
 struct ConnectionDialog {
     profile_id: ProfileId,
+    /// The session this dialog is re-asking for, when it came from an auth
+    /// rejection. Some means retry that session in place; None means the user
+    /// is opening a new one.
+    retry_session: Option<SessionId>,
     title: String,
     endpoint: String,
     auth_method: AuthMethod,
@@ -1631,6 +1640,7 @@ impl AditApp {
             tab_select_anchor: None,
             selected_profiles: HashSet::new(),
             profile_select_anchor: None,
+            profile_clipboard: Vec::new(),
             move_to_group_menu: false,
             broadcast_input: false,
             command_window_open,

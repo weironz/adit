@@ -80,6 +80,30 @@ pub(super) fn terminal_shortcut(event: &keyboard::Event, key: char) -> bool {
 /// Matched via the physical key so it works on non-Latin layouts. Alt normally
 /// prefixes terminal input with ESC (Meta), so this deliberately claims the combo
 /// before the terminal sees it.
+/// Ctrl+<key> with no Shift and no Alt — the sidebar's copy/paste pairing.
+///
+/// Distinct from `terminal_shortcut`, which requires Shift: in a terminal
+/// Ctrl+C is SIGINT and can never be taken, so copy there is Ctrl+Shift+C. On a
+/// list of sessions there is no such conflict, and plain Ctrl+C/V is what every
+/// file manager uses for the same gesture.
+pub(super) fn plain_ctrl_shortcut(event: &keyboard::Event, key: char) -> bool {
+    let keyboard::Event::KeyPressed {
+        key: logical_key,
+        physical_key,
+        modifiers,
+        ..
+    } = event
+    else {
+        return false;
+    };
+
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && logical_key
+            .to_latin(*physical_key)
+            .is_some_and(|ch| ch.eq_ignore_ascii_case(&key))
+}
 pub(super) fn alt_shortcut(event: &keyboard::Event, key: char) -> bool {
     let keyboard::Event::KeyPressed {
         key: logical_key,
