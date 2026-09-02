@@ -791,6 +791,8 @@ pub enum Message {
     CloseProfileEditor,
     ConnectProfileFromContext(ProfileId),
     CloneProfileFromContext(ProfileId),
+    /// Pin or unpin a profile for the host manager's pinned band.
+    TogglePinnedFromContext(ProfileId),
     /// Batch-operate on all currently selected sidebar profiles.
     ConnectSelectedProfiles,
     DeleteSelectedProfiles,

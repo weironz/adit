@@ -1126,6 +1126,14 @@ impl SessionManager {
         }
     }
 
+    /// Pin or unpin a profile, which decides whether it appears in the host
+    /// manager's pinned band.
+    pub fn set_profile_pinned(&mut self, profile_id: ProfileId, pinned: bool) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
+            profile.pinned = pinned;
+        }
+    }
+
     /// Set whether this profile's SSH connection survives its shell exiting.
     ///
     /// Only affects sessions opened after this point: each record copies the

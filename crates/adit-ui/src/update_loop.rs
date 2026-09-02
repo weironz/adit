@@ -1055,6 +1055,21 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_editor = None;
             open_connection_dialog(app);
         }
+        Message::TogglePinnedFromContext(profile_id) => {
+            app.profile_context_menu = None;
+            let pinned = app
+                .manager
+                .profile(profile_id)
+                .is_some_and(|profile| profile.pinned);
+            app.manager.set_profile_pinned(profile_id, !pinned);
+            if persist_profiles(app) {
+                app.notice = String::from(if pinned {
+                    t("已取消固定")
+                } else {
+                    t("已固定，显示在主机页最上方")
+                });
+            }
+        }
         Message::CloneProfileFromContext(profile_id) => {
             app.profile_context_menu = None;
             if let Some(new_id) = clone_profile_with_credentials(app, profile_id) {

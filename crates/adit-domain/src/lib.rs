@@ -108,6 +108,14 @@ pub struct ConnectionProfile {
     /// shell is opened by hand.
     #[serde(default)]
     pub keep_connection_after_exit: bool,
+    /// Show this session in the host manager's pinned band, above 最近连接.
+    ///
+    /// On the profile rather than in AppSettings, unlike `recent_hosts`: pinning
+    /// says "this session matters", which is true on every machine, so it should
+    /// travel with the profile the way its icon and label do. "I connected here
+    /// recently" is the opposite — that is about one machine and stays there.
+    #[serde(default)]
+    pub pinned: bool,
 }
 
 /// A profile's deployment environment, used to colour-code its tab so an operator
@@ -299,6 +307,7 @@ impl ConnectionProfile {
             accent_color: None,
             label: None,
             keep_connection_after_exit: false,
+            pinned: false,
         }
     }
 

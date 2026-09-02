@@ -753,7 +753,13 @@ pub(crate) const PROFILE_MENU_HEIGHT: f32 = 162.0;
 /// which entries are *offered*: rename, edit and clone are single-row
 /// operations with no sensible meaning over a set, so they are dropped rather
 /// than left to silently pick one.
-pub(crate) fn profile_context_menu(profile_id: ProfileId, multi: bool) -> Element<'static, Message> {
+pub(crate) fn profile_context_menu(
+    profile_id: ProfileId,
+    multi: bool,
+    // Named for what it will do, not for the current state: a menu entry that
+    // reads "已固定" leaves the user guessing whether clicking sets or clears it.
+    pin_label: &'static str,
+) -> Element<'static, Message> {
     let mut items = vec![profile_menu_item(
         "连接",
         if multi {
@@ -767,6 +773,11 @@ pub(crate) fn profile_context_menu(profile_id: ProfileId, multi: bool) -> Elemen
         items.push(profile_menu_item("重命名", Message::RenameProfileFromContext(profile_id), false));
         items.push(profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false));
         items.push(profile_menu_item("克隆", Message::CloneProfileFromContext(profile_id), false));
+        items.push(profile_menu_item(
+            pin_label,
+            Message::TogglePinnedFromContext(profile_id),
+            false,
+        ));
     }
     items.push(profile_menu_divider());
     items.push(profile_menu_item("移动到分组", Message::ShowMoveToGroupMenu, false));
@@ -794,9 +805,14 @@ pub(crate) fn profile_menu_is_multi(app: &AditApp) -> bool {
 /// dismisses it on any outside click.
 pub(crate) fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, Message> {
     let multi = profile_menu_is_multi(app);
+    let pinned = app
+        .manager
+        .profile(profile_id)
+        .is_some_and(|profile| profile.pinned);
+    let pin_label = if pinned { "取消固定" } else { "固定" };
     floating_context_menu(
         app,
-        profile_context_menu(profile_id, multi),
+        profile_context_menu(profile_id, multi, pin_label),
         Message::HideProfileContextMenu,
     )
 }

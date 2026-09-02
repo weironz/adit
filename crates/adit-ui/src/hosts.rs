@@ -579,6 +579,7 @@ pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: b
 pub(crate) enum BandKind {
     Group(String),
     Ungrouped,
+    Pinned,
     Recent,
     Search,
 }
@@ -963,6 +964,24 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     } else {
         // Reaching for a recent host is what you do instead of looking, so it
         // disappears the moment you start looking.
+        // Pinned first: it is the shortlist somebody curated, so it outranks the
+        // one the app assembled by watching. Like 最近连接 it is a projection —
+        // no drops, no reorder animation — and it is hidden while searching for
+        // the same reason: you are looking, not reaching.
+        let pinned: Vec<&ConnectionProfile> =
+            profiles.iter().filter(|profile| profile.pinned).collect();
+        if !pinned.is_empty() {
+            body = body.push(host_band(
+                app,
+                &style,
+                Some("★"),
+                BandKind::Pinned,
+                String::from(t("已固定")),
+                pinned,
+                &online,
+            ));
+        }
+
         let recent: Vec<&ConnectionProfile> = app
             .recent_hosts
             .iter()
