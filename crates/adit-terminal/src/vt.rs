@@ -957,7 +957,7 @@ impl TermState {
             } else {
                 None
             };
-            lines.push(render_row(row, cursor, &self.links));
+            lines.push(render_row(row, cursor, &self.links, row.wrapped));
         }
 
         TerminalSnapshot {
@@ -1530,11 +1530,25 @@ fn run_cell(
 
 /// Convert one grid row into a coalesced [`TerminalLine`], trimming trailing
 /// default blanks and rendering the cursor (if present) as its own run.
-fn render_row(cells: &[Cell], cursor_col: Option<usize>, links: &[String]) -> TerminalLine {
-    let mut last_meaningful: Option<usize> = None;
+fn render_row(
+    cells: &[Cell],
+    cursor_col: Option<usize>,
+    links: &[String],
+    wrapped: bool,
+) -> TerminalLine {
+    // A soft-wrapped row keeps its trailing blanks. It is full by definition, so
+    // those blanks are text: `docker ps` pads its columns with spaces, and a row
+    // that wraps just after such padding would otherwise be trimmed and pull the
+    // continuation up against the wrong column when the two are rejoined for a
+    // copy. Same reasoning as `line_content_len`, which reflow already relies on.
+    let mut last_meaningful: Option<usize> = if wrapped {
+        cells.len().checked_sub(1)
+    } else {
+        None
+    };
     for (i, cell) in cells.iter().enumerate() {
         if !is_default_blank(cell) {
-            last_meaningful = Some(i);
+            last_meaningful = Some(last_meaningful.map_or(i, |last| last.max(i)));
         }
     }
 
@@ -1542,7 +1556,12 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>, links: &[String]) -> Te
         (Some(l), Some(c)) => l.max(c),
         (Some(l), None) => l,
         (None, Some(c)) => c,
-        (None, None) => return TerminalLine { cells: Vec::new() },
+        (None, None) => {
+            return TerminalLine {
+                cells: Vec::new(),
+                wrapped,
+            };
+        }
     };
 
     // Resolve a cell's `link` id to its interned URL (id 0 / out of range ⇒ none).
@@ -1597,7 +1616,10 @@ fn render_row(cells: &[Cell], cursor_col: Option<usize>, links: &[String]) -> Te
         out.push(run_cell(text, fg, bg, attrs, link_url(id)));
     }
 
-    TerminalLine { cells: out }
+    TerminalLine {
+        cells: out,
+        wrapped,
+    }
 }
 
 #[cfg(test)]
@@ -1966,6 +1988,40 @@ mod tests {
         let end = t.resolve_anchor(end);
         assert_ne!(start, (1, 2), "the reflow was expected to renumber this row");
         assert_eq!(span_text(&t, start, end), "cdef");
+    }
+
+    /// The snapshot has to carry the soft wrap out of the emulator. Nothing
+    /// downstream can recover it — on screen a wrapped line and two separate
+    /// lines are the same two rows — and the copy path is what needs it.
+    #[test]
+    fn a_snapshot_marks_the_row_a_soft_wrap_continues_from() {
+        let mut t = term(10, 4);
+        t.feed_str("0123456789abcdef\r\nsecond\r\n");
+        let snap = t.snapshot(Viewport {
+            first_row: 0,
+            height: 4,
+        });
+        assert!(snap.lines[0].wrapped, "the row that ran off the margin");
+        assert!(!snap.lines[1].wrapped, "its continuation ended with a newline");
+        assert!(!snap.lines[2].wrapped, "and a line of its own is not a wrap");
+    }
+
+    /// `docker ps` pads its columns with spaces, so a row can wrap *just after*
+    /// padding. Trimming those blanks would pull the continuation up against the
+    /// wrong column when the two are rejoined for a copy.
+    #[test]
+    fn a_soft_wrapped_row_keeps_the_blanks_it_wrapped_after() {
+        let mut t = term(10, 3);
+        // "abc" then five spaces fills eight columns; "xy" fills the row and the
+        // next character wraps. The blanks are between two pieces of text, so
+        // they are content, not a ragged end.
+        t.feed_str("abc     xyzz\r\n");
+        let snap = t.snapshot(Viewport {
+            first_row: 0,
+            height: 3,
+        });
+        assert_eq!(line_text(&snap, 0), "abc     xy");
+        assert_eq!(line_text(&snap, 1), "zz");
     }
 
     #[test]

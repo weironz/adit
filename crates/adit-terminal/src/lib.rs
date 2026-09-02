@@ -172,6 +172,16 @@ impl TerminalCell {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalLine {
     pub cells: Vec<TerminalCell>,
+    /// The text ran off the right margin and continues on the next line — a
+    /// *soft* wrap, not a newline.
+    ///
+    /// Carried out of the emulator because nothing downstream can recover it:
+    /// on screen a wrapped line and two separate lines are the same two rows.
+    /// Copying has to tell them apart, or a selection comes back carrying a
+    /// newline the remote never sent — paste that into a shell and it runs two
+    /// commands.
+    #[serde(default)]
+    pub wrapped: bool,
 }
 
 impl TerminalLine {
@@ -179,6 +189,7 @@ impl TerminalLine {
     pub fn from_cells(cells: impl IntoIterator<Item = TerminalCell>) -> Self {
         Self {
             cells: cells.into_iter().collect(),
+            wrapped: false,
         }
     }
 
@@ -186,7 +197,15 @@ impl TerminalLine {
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
             cells: vec![TerminalCell::plain(text)],
+            wrapped: false,
         }
+    }
+
+    /// The same line, marked as continuing onto the next one.
+    #[must_use]
+    pub fn wrapping(mut self) -> Self {
+        self.wrapped = true;
+        self
     }
 }
 

@@ -29,14 +29,42 @@ pub(super) fn scroll_delta_to_rows(delta: mouse::ScrollDelta) -> Option<i32> {
 }
 
 pub(super) fn snapshot_to_text(snapshot: &TerminalSnapshot) -> String {
-    snapshot
+    // A wrapped row keeps its trailing blanks — they are the padding the next
+    // row continues from, not the ragged end of a line. See `join_rows`.
+    let rows: Vec<(String, bool)> = snapshot
         .lines
         .iter()
-        .map(line_to_text)
-        .collect::<Vec<_>>()
-        .join("\n")
-        .trim_end()
-        .to_string()
+        .map(|line| {
+            let text = if line.wrapped {
+                raw_line_text(line)
+            } else {
+                line_to_text(line)
+            };
+            (text, line.wrapped)
+        })
+        .collect();
+    join_rows(&rows).trim_end().to_string()
+}
+
+/// Stitch rows back into logical lines: a row marked `wrapped` runs straight
+/// into the next one, any other ends a line.
+///
+/// This is the whole of the bug it was written for. The terminal breaks a long
+/// line to fit the window, and copying it row by row hands back a newline the
+/// remote never sent. Paste a container name that wrapped after `neos` and the
+/// shell runs `docker logs -f neos`, then `tor-agent-chonburi` — two commands,
+/// neither of them the one that was copied. It reads as "the terminal mangled
+/// my clipboard" rather than as a wrapping question at all, because the text on
+/// screen was right the whole time.
+fn join_rows(rows: &[(String, bool)]) -> String {
+    let mut out = String::new();
+    for (index, (text, wrapped)) in rows.iter().enumerate() {
+        out.push_str(text);
+        if !wrapped && index + 1 < rows.len() {
+            out.push('\n');
+        }
+    }
+    out
 }
 
 pub(super) fn line_to_text(line: &TerminalLine) -> String {
@@ -55,7 +83,7 @@ pub(super) fn selection_to_text(snapshot: &TerminalSnapshot, selection: Terminal
         return String::new();
     };
 
-    let mut lines = Vec::new();
+    let mut rows: Vec<(String, bool)> = Vec::new();
     for row_index in start.row..=end.row {
         // Selection rows are absolute scrollback rows; the snapshot holds a window
         // starting at `first_row`.
@@ -65,6 +93,11 @@ pub(super) fn selection_to_text(snapshot: &TerminalSnapshot, selection: Terminal
         else {
             continue;
         };
+
+        // Only a row the selection runs *past* can be soft-wrapped into the next
+        // one. The last row is where the selection stops, so whatever follows it
+        // was not asked for and must not be joined on.
+        let wrapped = line.wrapped && row_index < end.row;
 
         let text = raw_line_text(line);
         let chars = text.chars().collect::<Vec<_>>();
@@ -76,15 +109,15 @@ pub(super) fn selection_to_text(snapshot: &TerminalSnapshot, selection: Terminal
         };
 
         if start_col >= end_col || start_col >= chars.len() {
-            lines.push(String::new());
+            rows.push((String::new(), wrapped));
             continue;
         }
 
         let end_col = end_col.min(chars.len());
-        lines.push(chars[start_col..end_col].iter().collect::<String>());
+        rows.push((chars[start_col..end_col].iter().collect(), wrapped));
     }
 
-    lines.join("\n").trim_end().to_string()
+    join_rows(&rows).trim_end().to_string()
 }
 
 pub(super) fn normalized_selection(selection: TerminalSelection) -> Option<(TerminalPoint, TerminalPoint)> {

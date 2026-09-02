@@ -3262,6 +3262,93 @@ mod tests {
         assert_eq!(selection_to_text(&snapshot, selection), "pha\nbravo\nchar");
     }
 
+    /// The bug this was written for, with the output that produced it: `docker ps`
+    /// is wider than the window, so `neostor-agent-chonburi` is broken after
+    /// `neos`. Copying it row by row put a newline in the middle of a container
+    /// name; pasting that ran `docker logs -f neos` and then `tor-agent-chonburi`.
+    #[test]
+    fn copying_a_soft_wrapped_line_does_not_invent_a_newline() {
+        let snapshot = TerminalSnapshot {
+            title: String::from("test"),
+            size: TerminalSize::new(20, 2),
+            first_row: 0,
+            total_rows: 2,
+            lines: vec![
+                TerminalLine::plain("docker logs -f neos").wrapping(),
+                TerminalLine::plain("tor-agent-chonburi"),
+            ],
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            alt_screen: false,
+        };
+        let whole = TerminalSelection {
+            start: TerminalPoint { row: 0, col: 0 },
+            end: TerminalPoint { row: 1, col: 18 },
+        };
+        assert_eq!(
+            selection_to_text(&snapshot, whole),
+            "docker logs -f neostor-agent-chonburi",
+            "a wrapped row runs straight into the next one"
+        );
+        // Copying the whole screen goes through the same rule.
+        assert_eq!(
+            snapshot_to_text(&snapshot),
+            "docker logs -f neostor-agent-chonburi"
+        );
+    }
+
+    #[test]
+    fn a_selection_that_stops_on_a_wrapped_row_does_not_drag_the_next_one_in() {
+        // The row is wrapped, but the selection ends there — what continues onto
+        // the next row was not asked for, and joining it on would copy text the
+        // cursor never crossed.
+        let snapshot = TerminalSnapshot {
+            title: String::from("test"),
+            size: TerminalSize::new(20, 2),
+            first_row: 0,
+            total_rows: 2,
+            lines: vec![
+                TerminalLine::plain("docker logs -f neos").wrapping(),
+                TerminalLine::plain("tor-agent-chonburi"),
+            ],
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            alt_screen: false,
+        };
+        let first_row_only = TerminalSelection {
+            start: TerminalPoint { row: 0, col: 0 },
+            end: TerminalPoint { row: 0, col: 19 },
+        };
+        assert_eq!(
+            selection_to_text(&snapshot, first_row_only),
+            "docker logs -f neos"
+        );
+    }
+
+    #[test]
+    fn a_real_newline_still_separates_two_lines() {
+        // The other half of the distinction: two rows that merely look like a
+        // wrapped line must keep their newline.
+        let snapshot = TerminalSnapshot {
+            title: String::from("test"),
+            size: TerminalSize::new(20, 2),
+            first_row: 0,
+            total_rows: 2,
+            lines: vec![TerminalLine::plain("first"), TerminalLine::plain("second")],
+            cursor_row: 0,
+            cursor_col: 0,
+            cursor_visible: true,
+            alt_screen: false,
+        };
+        let whole = TerminalSelection {
+            start: TerminalPoint { row: 0, col: 0 },
+            end: TerminalPoint { row: 1, col: 6 },
+        };
+        assert_eq!(selection_to_text(&snapshot, whole), "first\nsecond");
+    }
+
     /// The selection is stored in ABSOLUTE scrollback rows, so a snapshot scrolled
     /// back (first_row > 0) must resolve them against its own window — otherwise a
     /// selection made after scrolling would copy the wrong lines.
