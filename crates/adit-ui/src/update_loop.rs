@@ -521,7 +521,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::HostsCursorMoved(point) => {
             app.hosts_cursor = Some(point);
         }
-        Message::GridProfilePressed(profile_id) => {
+        Message::GridProfilePressed(profile_id, in_pinned) => {
             // Same arming as ProfilePressed — selection, drag state, origin
             // point — with the origin remembered as the grid, and the same
             // rule about not collapsing a selection the pressed card is in.
@@ -532,6 +532,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             app.dragged_profile = Some(profile_id);
             app.drag_from_grid = true;
+            app.drag_in_pinned = in_pinned;
             app.profile_drop = None;
             app.profile_drag_active = false;
             app.profile_drag_origin = Some(Point::new(
@@ -708,9 +709,12 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
         }
-        Message::GridProfileHovered(profile_id) => {
+        Message::GridProfileHovered(profile_id, in_pinned) => {
             app.hovered_profile = Some(profile_id);
-            if app.drag_from_grid {
+            // A drag stays in the band it began in. The other copy of a pinned
+            // host is not a drop target for it — accepting one would leave the
+            // release unable to say which list it was asked to reorder.
+            if app.drag_from_grid && in_pinned == app.drag_in_pinned {
                 if let Some(dragged) = app.dragged_profile {
                     if dragged != profile_id {
                         app.profile_drag_active = true;
@@ -730,9 +734,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
         }
-        Message::GridProfileDragOver(profile_id, position) => {
+        Message::GridProfileDragOver(profile_id, position, in_pinned) => {
             app.hovered_profile = Some(profile_id);
-            if app.drag_from_grid {
+            if app.drag_from_grid && in_pinned == app.drag_in_pinned {
                 if let Some(dragged) = app.dragged_profile {
                     if dragged != profile_id {
                         app.profile_drag_active = true;

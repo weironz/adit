@@ -251,6 +251,9 @@ pub(crate) fn host_card(
     // Cards stretch, so their width is not a constant and the midpoint the drop
     // test needs cannot be one either.
     card_width: f32,
+    // Which band drew this card. A pinned host is drawn twice, so every drag
+    // message it emits has to say which of the two copies it came from.
+    in_pinned: bool,
 ) -> Element<'static, Message> {
     // The source fades while its ghost travels — the ghost is the thing being
     // moved, and a second highlighted copy sitting in place reads as two cards.
@@ -326,11 +329,11 @@ pub(crate) fn host_card(
     // serves both views. Press arms rather than acts, which is what makes a drag
     // possible at all — and why a single click selects here and a double click
     // connects, exactly as in the tree.
-    .on_press(Message::GridProfilePressed(profile_id))
+    .on_press(Message::GridProfilePressed(profile_id, in_pinned))
     .on_release(Message::ProfileDropped(profile_id))
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
-    .on_enter(Message::GridProfileHovered(profile_id))
+    .on_enter(Message::GridProfileHovered(profile_id, in_pinned))
     // Left half or right half, not top or bottom. `profile_drop_position` splits
     // on Y because the tree stacks its rows; a grid puts them side by side, so
     // asking which vertical half the cursor is in answers a question nobody
@@ -341,7 +344,7 @@ pub(crate) fn host_card(
         } else {
             ProfileDropPosition::After
         };
-        Message::GridProfileDragOver(profile_id, position)
+        Message::GridProfileDragOver(profile_id, position, in_pinned)
     })
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
@@ -406,7 +409,14 @@ pub(crate) fn host_section_header(
 
 /// One host as a full-width row — the shape List and Tree share, differing only
 /// in how far it is indented.
-pub(crate) fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, online: bool) -> Element<'static, Message> {
+pub(crate) fn host_row(
+    app: &AditApp,
+    profile: &ConnectionProfile,
+    indent: f32,
+    online: bool,
+    // As on `host_card`: which band drew this row.
+    in_pinned: bool,
+) -> Element<'static, Message> {
     // The accent while idle, the success colour while a session is up: one mark
     // doing both jobs keeps the row from growing a second column of dots.
     let dot_color = if online {
@@ -464,12 +474,14 @@ pub(crate) fn host_row(app: &AditApp, profile: &ConnectionProfile, indent: f32, 
             ..container::Style::default()
         }),
     )
-    .on_press(Message::GridProfilePressed(profile_id))
+    .on_press(Message::GridProfilePressed(profile_id, in_pinned))
     .on_release(Message::ProfileDropped(profile_id))
     .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
-    .on_enter(Message::GridProfileHovered(profile_id))
-    .on_move(move |point| Message::GridProfileDragOver(profile_id, profile_drop_position(point)))
+    .on_enter(Message::GridProfileHovered(profile_id, in_pinned))
+    .on_move(move |point| {
+        Message::GridProfileDragOver(profile_id, profile_drop_position(point), in_pinned)
+    })
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into()
 }
@@ -576,6 +588,12 @@ pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: b
 /// band animates but is no drop target (not a place, just the absence of one);
 /// recent and search are projections of other state, so their cards neither
 /// animate nor accept drops — reordering a projection means nothing.
+///
+/// Pinned is the one band that is a second listing of hosts *and* orderable:
+/// its order is a thing somebody made, not a view of one. It takes drops
+/// (`pinned_order`) but does not animate — `card_slots` is keyed by profile id
+/// alone, and a pinned host appears in two bands at once, so a single slot
+/// value cannot say where it is in both.
 pub(crate) enum BandKind {
     Group(String),
     Ungrouped,
@@ -613,7 +631,10 @@ pub(crate) fn retarget_card_slots(app: &mut AditApp) {
     // The drawn slots come from the preview; easing towards the committed order
     // parks every card between origin and target one slot off, which piles some
     // cards up and leaves a blank strip where the others were.
-    if app.drag_from_grid && app.profile_drag_active {
+    // A pinned drag is excluded: the animated bands are the groups, and a
+    // reorder inside 已固定 changes nothing about where a card sits in one.
+    // Previewing it there would shuffle a band the drop will not touch.
+    if app.drag_from_grid && app.profile_drag_active && !app.drag_in_pinned {
         if let (
             Some(dragged),
             Some(ProfileDrop::Beside {
@@ -671,8 +692,16 @@ pub(crate) fn retarget_card_slots(app: &mut AditApp) {
 ///
 /// iced has no tween, but the layout is rebuilt every frame, so moving the card
 /// as the target changes produces the motion with nothing animating it.
-pub(crate) fn band_slots<'a>(app: &AditApp, hosts: Vec<&'a ConnectionProfile>) -> Vec<&'a ConnectionProfile> {
-    let live = app.drag_from_grid && app.profile_drag_active;
+pub(crate) fn band_slots<'a>(
+    app: &AditApp,
+    hosts: Vec<&'a ConnectionProfile>,
+    // Whether this band is 已固定. A drag only ever previews inside the band it
+    // started in — without this a pinned host, being in two bands at once, drags
+    // in both of them, and the group below shuffles for a reorder that will
+    // never touch it.
+    in_pinned: bool,
+) -> Vec<&'a ConnectionProfile> {
+    let live = app.drag_from_grid && app.profile_drag_active && in_pinned == app.drag_in_pinned;
     let Some(dragged) = app.dragged_profile.filter(|_| live) else {
         return hosts;
     };
@@ -719,13 +748,14 @@ pub(crate) fn host_band(
         _ => None,
     };
     let animated = matches!(kind, BandKind::Group(_) | BandKind::Ungrouped);
+    let in_pinned = matches!(kind, BandKind::Pinned);
     let count = hosts.len();
     let up = hosts
         .iter()
         .filter(|profile| online.contains(&profile.id))
         .count();
     let (layout, columns) = (style.layout, style.columns);
-    let slots = band_slots(app, hosts);
+    let slots = band_slots(app, hosts, in_pinned);
     let entries: Element<'static, Message> = match layout {
         HostLayout::Grid => {
             // The same arithmetic wrap_cards lays them out with, so the midpoint
@@ -775,7 +805,7 @@ pub(crate) fn host_band(
                     let (x1, y1) = place(base as usize + 1);
                     let (x, y) = (x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac);
                     let card =
-                        host_card(app, profile, online.contains(&profile.id), card_width);
+                        host_card(app, profile, online.contains(&profile.id), card_width, in_pinned);
                     layers = layers.push(
                         column![
                             Space::new().height(Length::Fixed(y)),
@@ -797,7 +827,13 @@ pub(crate) fn host_band(
                     slots
                         .into_iter()
                         .map(|profile| {
-                            host_card(app, profile, online.contains(&profile.id), card_width)
+                            host_card(
+                                app,
+                                profile,
+                                online.contains(&profile.id),
+                                card_width,
+                                in_pinned,
+                            )
                         })
                         .collect(),
                     columns,
@@ -807,7 +843,13 @@ pub(crate) fn host_band(
         _ => slots
             .into_iter()
             .fold(column![].spacing(2), |rows, profile| {
-                rows.push(host_row(app, profile, 0.0, online.contains(&profile.id)))
+                rows.push(host_row(
+                    app,
+                    profile,
+                    0.0,
+                    online.contains(&profile.id),
+                    in_pinned,
+                ))
             })
             .into(),
     };
@@ -874,6 +916,48 @@ pub(crate) fn grid_ordered_profiles(app: &AditApp) -> Vec<ConnectionProfile> {
     }
     ordered.extend(profiles);
     ordered
+}
+
+/// The 已固定 band, in the order it is shown: by `pinned_order`, ties left in
+/// grid order.
+///
+/// The sort is stable, and that is what carries a catalogue from before this
+/// existed — every `pinned_order` is 0 there, so nothing separates them and the
+/// band reads exactly as it did when it was a plain filter of the grid.
+pub(crate) fn pinned_profiles(profiles: &[ConnectionProfile]) -> Vec<&ConnectionProfile> {
+    let mut pinned: Vec<&ConnectionProfile> =
+        profiles.iter().filter(|profile| profile.pinned).collect();
+    pinned.sort_by_key(|profile| profile.pinned_order);
+    pinned
+}
+
+/// Commit a drop inside the pinned band: `source` lands beside `target` and the
+/// whole band is renumbered.
+///
+/// Renumbered rather than nudged, because `pinned_order` is only meaningful as
+/// a sequence — writing one number and leaving its neighbours is how two cards
+/// come to claim the same slot and the band starts reordering itself.
+pub(crate) fn reorder_pinned(
+    app: &mut AditApp,
+    source: ProfileId,
+    target: ProfileId,
+    position: ProfileDropPosition,
+) {
+    let profiles = app.manager.profiles().to_vec();
+    let mut order: Vec<ProfileId> = pinned_profiles(&profiles)
+        .into_iter()
+        .map(|profile| profile.id)
+        .collect();
+    order.retain(|id| *id != source);
+    let Some(mut at) = order.iter().position(|id| *id == target) else {
+        return;
+    };
+    if position == ProfileDropPosition::After {
+        at += 1;
+    }
+    order.insert(at, source);
+    app.manager.set_pinned_order(&order);
+    app.notice = String::from(t("已调整固定排序"));
 }
 
 /// Commit a grid-originated drop: `source` lands beside `target` in the grid's
@@ -965,11 +1049,10 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         // Reaching for a recent host is what you do instead of looking, so it
         // disappears the moment you start looking.
         // Pinned first: it is the shortlist somebody curated, so it outranks the
-        // one the app assembled by watching. Like 最近连接 it is a projection —
-        // no drops, no reorder animation — and it is hidden while searching for
-        // the same reason: you are looking, not reaching.
-        let pinned: Vec<&ConnectionProfile> =
-            profiles.iter().filter(|profile| profile.pinned).collect();
+        // one the app assembled by watching. Hidden while searching for the same
+        // reason 最近连接 is: you are looking, not reaching. Unlike 最近连接 it
+        // takes drops, because its order was made by hand too.
+        let pinned = pinned_profiles(&profiles);
         if !pinned.is_empty() {
             body = body.push(host_band(
                 app,

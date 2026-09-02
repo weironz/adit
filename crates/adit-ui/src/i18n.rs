@@ -373,6 +373,7 @@ fn en(zh: &'static str) -> &'static str {
         "已是最新，无需上传" => "Already up to date; nothing to upload",
         "已粘贴到当前终端" => "Pasted into the terminal",
         "已请求断开当前会话" => "Disconnect requested",
+        "已调整固定排序" => "Pinned order changed",
         "已调整网格排序" => "Grid order changed",
         "已载入已保存的密码" => "Loaded the saved password",
         "广播 ×{}" => "Broadcast ×{}",

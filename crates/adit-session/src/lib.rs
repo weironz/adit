@@ -1128,9 +1128,36 @@ impl SessionManager {
 
     /// Pin or unpin a profile, which decides whether it appears in the host
     /// manager's pinned band.
+    /// A newly pinned session lands at the END of the band. Anywhere else would
+    /// displace an arrangement somebody made by hand, and the one place that is
+    /// never in the middle of one is after everything.
     pub fn set_profile_pinned(&mut self, profile_id: ProfileId, pinned: bool) {
+        let last = self
+            .profiles
+            .iter()
+            .filter(|p| p.pinned)
+            .map(|p| p.pinned_order)
+            .max()
+            .unwrap_or(-1);
         if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.pinned = pinned;
+            if pinned {
+                profile.pinned_order = last.saturating_add(1);
+            }
+        }
+    }
+
+    /// Renumber the pinned band from a full list of its ids, in the order they
+    /// should appear.
+    ///
+    /// Takes the whole list rather than one profile's new index because the
+    /// numbers only mean anything relative to each other: writing one and
+    /// leaving the rest is how two sessions end up claiming the same slot.
+    pub fn set_pinned_order(&mut self, ordered: &[ProfileId]) {
+        for (index, id) in ordered.iter().enumerate() {
+            if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == *id) {
+                profile.pinned_order = index as i32;
+            }
         }
     }
 

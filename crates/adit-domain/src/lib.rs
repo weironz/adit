@@ -116,6 +116,18 @@ pub struct ConnectionProfile {
     /// recently" is the opposite — that is about one machine and stays there.
     #[serde(default)]
     pub pinned: bool,
+    /// Where this session sits within the pinned band, low to high.
+    ///
+    /// Beside `pinned` rather than in the grid's own `grid_order`, because the
+    /// pinned band is the one list on that page which is *not* a projection: it
+    /// exists because somebody built it, so the order they put it in is theirs
+    /// too and travels with the profiles, the way `sort_order` carries the
+    /// tree's.
+    ///
+    /// Defaults to 0 for every profile, and a stable sort leaves ties in grid
+    /// order — so a catalogue that predates this reads exactly as it did.
+    #[serde(default)]
+    pub pinned_order: i32,
 }
 
 /// A profile's deployment environment, used to colour-code its tab so an operator
@@ -308,6 +320,7 @@ impl ConnectionProfile {
             label: None,
             keep_connection_after_exit: false,
             pinned: false,
+            pinned_order: 0,
         }
     }
 

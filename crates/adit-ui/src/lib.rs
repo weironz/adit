@@ -444,6 +444,12 @@ pub struct AditApp {
     /// Whether the drag in flight started on a grid card. Decides which order a
     /// `Beside` drop edits: the grid's own, or the tree's shared one.
     drag_from_grid: bool,
+    /// Whether that drag started in the 已固定 band. A drag stays in the band it
+    /// began in: cards elsewhere stop being drop targets for it, so dropping a
+    /// pinned card can only ever renumber the pinned band, and dragging in a
+    /// group can never reach it. The alternative — letting either band answer
+    /// for a host that is in both — reorders whichever list the code guessed.
+    drag_in_pinned: bool,
     /// The cursor within the host pane, for the drag ghost — pane-relative, the
     /// way `sftp_drag_cursor` is, because the ghost is positioned with spacers.
     hosts_cursor: Option<Point>,
@@ -750,13 +756,19 @@ pub enum Message {
     ProfilePressed(ProfileId),
     /// A press on a grid card: the same arming as ProfilePressed, remembered as
     /// grid-originated so the drop edits the grid's order.
-    GridProfilePressed(ProfileId),
+    ///
+    /// The `bool` is "this card is in the 已固定 band". A pinned host is drawn
+    /// twice — once there and once in its own group — so its id alone cannot say
+    /// which copy the cursor is on, and a drag that could not tell them apart
+    /// would reorder the wrong list.
+    GridProfilePressed(ProfileId, bool),
     /// The cursor moved inside the host pane (feeds the drag ghost).
     HostsCursorMoved(Point),
     /// Grid-side hover/drag-over. Split from the tree's pair so each view can
-    /// only arm and retarget drags that started in it.
-    GridProfileHovered(ProfileId),
-    GridProfileDragOver(ProfileId, ProfileDropPosition),
+    /// only arm and retarget drags that started in it. Same trailing `bool` as
+    /// `GridProfilePressed`.
+    GridProfileHovered(ProfileId, bool),
+    GridProfileDragOver(ProfileId, ProfileDropPosition, bool),
     ProfileDoubleClicked(ProfileId),
     ProfileHovered(ProfileId),
     ProfileHoverExited(ProfileId),
@@ -1588,6 +1600,7 @@ impl AditApp {
             recent_hosts,
             grid_order,
             drag_from_grid: false,
+            drag_in_pinned: false,
             hosts_cursor: None,
             card_slots: std::collections::HashMap::new(),
             dark_mode,
@@ -2707,11 +2720,11 @@ mod tests {
     fn drive_drag(app: &mut AditApp, from_grid: bool, source: usize, target: usize) {
         let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
         if from_grid {
-            let _ = update(app, Message::GridProfilePressed(ids[source]));
-            let _ = update(app, Message::GridProfileHovered(ids[target]));
+            let _ = update(app, Message::GridProfilePressed(ids[source], false));
+            let _ = update(app, Message::GridProfileHovered(ids[target], false));
             let _ = update(
                 app,
-                Message::GridProfileDragOver(ids[target], ProfileDropPosition::After),
+                Message::GridProfileDragOver(ids[target], ProfileDropPosition::After, false),
             );
         } else {
             let _ = update(app, Message::ProfilePressed(ids[source]));
@@ -2761,7 +2774,7 @@ mod tests {
         // tree's here would have asserted the wrong view's state entirely.
         let ordered = grid_ordered_profiles(app);
         let hosts: Vec<&ConnectionProfile> = ordered.iter().collect();
-        band_slots(app, hosts)
+        band_slots(app, hosts, false)
             .into_iter()
             .map(|profile| profile.name.clone())
             .collect::<Vec<_>>()
@@ -2774,14 +2787,14 @@ mod tests {
         let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
         assert_eq!(slot_shape(&app), "abc", "at rest");
 
-        let _ = update(&mut app, Message::GridProfilePressed(ids[0]));
-        let _ = update(&mut app, Message::GridProfileHovered(ids[2]));
+        let _ = update(&mut app, Message::GridProfilePressed(ids[0], false));
+        let _ = update(&mut app, Message::GridProfileHovered(ids[2], false));
         // `a` has moved to just before `c`, so `b` shifted up to fill its place.
         assert_eq!(slot_shape(&app), "bac");
 
         let _ = update(
             &mut app,
-            Message::GridProfileDragOver(ids[2], ProfileDropPosition::After),
+            Message::GridProfileDragOver(ids[2], ProfileDropPosition::After, false),
         );
         // Crossing c's midpoint carries `a` past it; nothing else jumps.
         assert_eq!(slot_shape(&app), "bca");
@@ -2868,13 +2881,83 @@ mod tests {
         assert_eq!(sidebar_offset(&app), 0.0);
     }
 
+    fn pinned_names(app: &AditApp) -> Vec<String> {
+        let profiles = app.manager.profiles().to_vec();
+        pinned_profiles(&profiles)
+            .into_iter()
+            .map(|profile| profile.name.clone())
+            .collect()
+    }
+
+    /// Pin every host, in catalogue order, so the band starts out `a b c`.
+    fn pin_all(app: &mut AditApp) -> Vec<ProfileId> {
+        let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
+        for id in &ids {
+            app.manager.set_profile_pinned(*id, true);
+        }
+        ids
+    }
+
+    #[test]
+    fn a_pinned_drag_reorders_the_pinned_band_and_leaves_every_other_order_alone() {
+        let mut app = drag_test_app();
+        let ids = pin_all(&mut app);
+        assert_eq!(pinned_names(&app), ["a", "b", "c"], "pinning appends");
+
+        let _ = update(&mut app, Message::GridProfilePressed(ids[0], true));
+        let _ = update(&mut app, Message::GridProfileHovered(ids[2], true));
+        let _ = update(
+            &mut app,
+            Message::GridProfileDragOver(ids[2], ProfileDropPosition::After, true),
+        );
+        let _ = update(&mut app, Message::ProfileDropped(ids[2]));
+        let _ = update(&mut app, Message::CancelProfileDrag);
+
+        assert_eq!(pinned_names(&app), ["b", "c", "a"], "the band must reorder");
+        // The two orders a pinned drag must not reach. `reorder_grid` would have
+        // written [b, c, a] into grid_order, so this really does discriminate.
+        assert_eq!(grid_names(&app), ["a", "b", "c"], "not the grid's order");
+        assert_eq!(sidebar_names(&app), ["a", "b", "c"], "and not the tree's");
+    }
+
+    #[test]
+    fn a_pinned_drag_cannot_land_on_the_same_host_in_its_group_band() {
+        // The hazard the band flag exists for: a pinned host is on screen twice,
+        // and the copy in its group is not a drop target for a drag that began
+        // in 已固定 — if it were, the release could not say which list it meant.
+        let mut app = drag_test_app();
+        let ids = pin_all(&mut app);
+        let _ = update(&mut app, Message::GridProfilePressed(ids[0], true));
+        let _ = update(&mut app, Message::GridProfileHovered(ids[2], false));
+        assert!(
+            app.profile_drop.is_none(),
+            "the group-band copy must not arm a drop"
+        );
+        let _ = update(&mut app, Message::CancelProfileDrag);
+        assert_eq!(pinned_names(&app), ["a", "b", "c"]);
+    }
+
+    #[test]
+    fn a_grid_drag_does_not_renumber_the_pinned_band() {
+        // And the same rule in the other direction.
+        let mut app = drag_test_app();
+        pin_all(&mut app);
+        drive_drag(&mut app, true, 0, 2);
+        assert_eq!(grid_names(&app), ["b", "c", "a"], "the grid still reorders");
+        assert_eq!(
+            pinned_names(&app),
+            ["a", "b", "c"],
+            "a group drag must leave the pinned arrangement as it was"
+        );
+    }
+
     #[test]
     fn sidebar_drop_zones_do_not_commit_a_grid_drag() {
         // A grid drag released over the sidebar's top-level zone used to fall
         // through to the tree path and yank the host out of its group.
         let mut app = drag_test_app();
         let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
-        let _ = update(&mut app, Message::GridProfilePressed(ids[0]));
+        let _ = update(&mut app, Message::GridProfilePressed(ids[0], false));
         let _ = update(&mut app, Message::ProfileDragOverTop);
         let _ = update(&mut app, Message::CancelProfileDrag);
         assert_eq!(

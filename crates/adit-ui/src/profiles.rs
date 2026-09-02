@@ -351,12 +351,24 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
                 if *id == profile_id {
                     continue;
                 }
-                reorder_grid(app, *id, anchor, at);
+                if app.drag_in_pinned {
+                    reorder_pinned(app, *id, anchor, at);
+                } else {
+                    reorder_grid(app, *id, anchor, at);
+                }
                 anchor = *id;
                 at = ProfileDropPosition::After;
             }
-            retarget_card_slots(app);
-            persist_settings_if_changed(app);
+            // The pinned order lives on the profiles and the grid's in the
+            // settings, so which store the drop dirtied depends on which band it
+            // happened in. Writing both regardless would rewrite one that
+            // nothing changed in.
+            if app.drag_in_pinned {
+                persist_profiles(app);
+            } else {
+                retarget_card_slots(app);
+                persist_settings_if_changed(app);
+            }
             return;
         }
         Some(ProfileDrop::Beside {
