@@ -562,7 +562,7 @@ bytes={}
         );
         let background = self.shared.lock().ok().and_then(|frame| {
             let mut rgba = Self::read_rect(&frame, dx, dy, usize::from(w), usize::from(h))?;
-            for px in rgba.chunks_exact_mut(4) {
+            for px in rgba.as_chunks_mut::<4>().0 {
                 px.swap(0, 2); // RGBA -> BGRA
             }
             Some(rgba)
@@ -590,7 +590,7 @@ bytes={}
                 return;
             }
         };
-        for px in bgra.chunks_exact_mut(4) {
+        for px in bgra.as_chunks_mut::<4>().0 {
             px.swap(0, 2); // BGRA -> RGBA
         }
         if let Ok(mut frame) = self.shared.lock() {
