@@ -332,6 +332,27 @@ fn full_frame_tile(image: &DecodedImage) -> HostMsg {
     }
 }
 
+/// The head of a PDU as hex, for a log line about one we could not decode.
+///
+/// Deliberately a header, not a body. 32 bytes covers the TPKT/X.224/MCS framing,
+/// the Share Control header (totalLength, pduType, pduSource) and the start of a
+/// Share Data header — which together say what the PDU *was*. That is the
+/// question every wrong fix for the black-desktop symptom has answered by
+/// guessing. It cannot leak a credential: the bytes stop long before any payload,
+/// and the one PDU that carries a secret (the RDSTLS auth request) is one we
+/// send, never one we fail to decode.
+fn pdu_prefix(pdu: Option<&[u8]>) -> String {
+    let Some(bytes) = pdu else {
+        return String::from("<none>");
+    };
+    let head: String = bytes
+        .iter()
+        .take(32)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("len={} head={head}", bytes.len())
+}
+
 /// The active-session pump. Returns when the server terminates the session or the
 /// app drops its input channel.
 async fn active_session(
@@ -408,6 +429,7 @@ async fn active_session(
                         tracing::warn!(
                             ?action,
                             payload_len = payload.len(),
+                            pdu = %pdu_prefix(Some(&payload)),
                             "skipping PDU the active stage could not process: {error}"
                         );
                         Vec::new()
@@ -534,30 +556,75 @@ async fn active_session(
                     // Deactivation-Reactivation (e.g. after a resize): re-run the
                     // activation sequence from the factory captured at connect time,
                     // then rebuild the image at the new size.
+                    use ironrdp_connector::Sequence;
                     use ironrdp_connector::connection_activation::ConnectionActivationState;
                     use ironrdp_core::WriteBuf;
                     use ironrdp_session::fast_path;
-                    use ironrdp_tokio::single_sequence_step_read;
 
                     let mut connection_activation = activation_factory.create();
                     let mut buf = WriteBuf::new();
                     'activation: loop {
+                        // The GNOME handover can land HERE, not only in the main
+                        // loop. Logging in at GDM makes gnome-remote-desktop hand the
+                        // client to the session daemon it has just created, and that
+                        // redirection arrives while a deactivation-reactivation is in
+                        // flight. The main loop peeks every X.224 PDU for a Server
+                        // Redirection; this loop reads the same stream and used to
+                        // hand every PDU straight to the activation sequence, which
+                        // cannot decode one — so the handover was swallowed, reported
+                        // as a decode error, and abandoned. The session then sat on a
+                        // daemon that had stopped painting: a **black desktop on a
+                        // connection that looked healthy**, and reconnecting "fixed"
+                        // it only because by then there was a session to route to.
+                        //
+                        // Inlined instead of `single_sequence_step_read` for one
+                        // reason: the peek has to happen between the read and the
+                        // step, and that helper does both.
+                        let pdu = if let Some(hint) = connection_activation.next_pdu_hint() {
+                            match reader.read_by_hint(hint).await {
+                                Ok(pdu) => Some(pdu),
+                                Err(error) => {
+                                    tracing::warn!(
+                                        "abandoning reactivation, keeping session: read {error}"
+                                    );
+                                    break 'activation;
+                                }
+                            }
+                        } else {
+                            None
+                        };
+                        buf.clear();
+                        let stepped = match &pdu {
+                            Some(bytes) => {
+                                if let Some(redirection) =
+                                    crate::redirect::detect(bytes, io_channel_id)
+                                {
+                                    tracing::info!("server redirection arrived during reactivation");
+                                    return Ok(Some(redirection));
+                                }
+                                connection_activation.step(bytes, &mut buf)
+                            }
+                            None => connection_activation.step_no_input(&mut buf),
+                        };
                         // Tolerate a failed reactivation step rather than tearing the
                         // whole session down: GNOME interleaves stray PDUs into the
-                        // reactivation sequence that `single_sequence_step_read` can't
-                        // decode, and for an EGFX session the graphics keep flowing on
-                        // the shared buffer regardless of the legacy `image`. Abandon
-                        // the reactivation and keep the session alive.
-                        let written = match single_sequence_step_read(
-                            &mut reader,
-                            &mut connection_activation,
-                            &mut buf,
-                        )
-                        .await
-                        {
+                        // reactivation sequence that the sequence can't decode, and
+                        // for an EGFX session the graphics keep flowing on the shared
+                        // buffer regardless of the legacy `image`. Abandon the
+                        // reactivation and keep the session alive.
+                        let written = match stepped {
                             Ok(w) => w,
                             Err(error) => {
-                                tracing::warn!("abandoning reactivation, keeping session: {error}");
+                                // The bytes are the point. Whether the PDU that ended
+                                // the reactivation was a handover in a shape `detect`
+                                // does not recognise is readable straight off its
+                                // Share Control header — and guessing at that instead
+                                // of reading it is what has produced wrong fixes for
+                                // this symptom before.
+                                tracing::warn!(
+                                    pdu = %pdu_prefix(pdu.as_deref()),
+                                    "abandoning reactivation, keeping session: {error}"
+                                );
                                 break 'activation;
                             }
                         };
