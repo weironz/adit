@@ -1,0 +1,227 @@
+# AGENTS.md
+
+Guidance for Codex (and humans) working in this repo. Start here, then follow
+the links — [README.md](README.md) covers what Adit is and how to run it.
+
+Orientation: [docs/architecture.md](docs/architecture.md) (how it's built) ·
+[docs/features.md](docs/features.md) (what it does + known gaps) ·
+[docs/decisions.md](docs/decisions.md) (why, including reversals) ·
+[docs/roadmap.md](docs/roadmap.md) (what's next, and what was ruled out) ·
+[docs/roadmap-done.md](docs/roadmap-done.md) (shipped, with the reasoning) ·
+[docs/cloud-sync.md](docs/cloud-sync.md) (sync design + the one-time OAuth
+app registrations).
+
+Adit is a Windows-first SSH / SFTP / RDP terminal client in Rust (`iced` + `russh` +
+`vte`), aiming at SecureCRT-style ergonomics.
+
+## Build & test
+
+Everything is wrapped in a [`justfile`](justfile) — run `just` to list recipes.
+
+```powershell
+just ci        # exactly what CI runs: build + clippy (-D warnings) + test
+just dist      # release-build BOTH shippable binaries (app + RDP helper)
+just deploy    # copy fresh binaries over the installed Adit, for quick testing
+```
+
+- **CI treats warnings as errors** (`cargo clippy --workspace --all-targets -- -D warnings`).
+  Run `just clippy` before pushing; a stray warning turns the build red.
+- `cargo test --workspace` does **not** cover `crates/adit-rdp` (separate workspace) and
+  skips `#[ignore]`d tests (they need a real host or Docker).
+
+## Traps that cost real debugging time
+
+### The RDP helper is a separate workspace and a separate process
+IronRDP's `picky` exact-pins pre-release RustCrypto crates that conflict
+irreconcilably with `russh`'s. Two `ecdsa` versions can't live in one binary, and
+`=`-pins can't be `[patch]`ed apart, so `crates/adit-rdp` is `exclude`d from the root
+workspace and ships as `adit-rdp-host.exe`, driven over stdin/stdout (length-prefixed
+bincode, types in `adit-rdp-proto`).
+
+- Build it with `--manifest-path crates/adit-rdp/Cargo.toml` — **`-p adit-rdp` does not
+  work**, and `cargo build -p adit-app` alone leaves the helper stale.
+- Its version must be bumped in lockstep with the root workspace and `adit-rdp-proto`.
+- Do **not** "fix" this by bumping `russh` in the root workspace; that was tried and
+  reverted. See [`crates/adit-rdp/IRONRDP-PATCHES.md`](crates/adit-rdp/IRONRDP-PATCHES.md).
+
+### `ironrdp-egfx` does not decode RemoteFX Progressive
+It only decodes H.264. For a progressive frame it frame-acknowledges and hands the raw
+stream to `on_wire_to_surface2`. Leaving that unimplemented renders a **solid black
+desktop on a fully healthy session** — the symptom looks like a connection bug and is
+not. `egfx.rs` decodes it via `ironrdp_graphics::progressive::ProgressiveDecoder`.
+Details in [docs/rdp-gnome-remote-desktop.md](docs/rdp-gnome-remote-desktop.md).
+
+### Windows main-thread stack is 1 MiB
+Deep RDP render paths overflow it and the process dies **silently — no panic, no
+crash.log**. `crates/adit-app/build.rs` passes `/STACK:33554432` on MSVC. If Adit
+vanishes with no log, check the Windows Event Log (Application Error) for
+`0xc00000fd` (STATUS_STACK_OVERFLOW) before assuming anything else.
+
+### Blocking the UI thread reads as "Not Responding"
+`fs::write` can block for seconds behind antivirus or a cloud-synced folder, and
+spawning a process can block on Defender. Both have caused apparent freezes; profile
+saves and helper spawns are off-thread now. Keep them that way.
+
+### `powershell.exe` (5.1) mangles UTF-8
+Its `Set-Content` defaults to ANSI and corrupted `Cargo.toml`'s em-dashes during a
+version bump. The justfile pins `windows-shell` to **`pwsh`** (7) and the `bump`
+recipe writes UTF-8-no-BOM explicitly. Don't switch it back.
+
+### Terminal selection is anchored in absolute scrollback rows
+Not viewport rows — that's what lets a selection survive scrolling and lets a drag
+past the pane edge auto-scroll. It's mapped back to viewport space only at render.
+`terminal_point_from_cursor` stays viewport-relative on purpose, because mouse
+reporting must send viewport cells to the remote app. A drag that leaves the widget
+is tracked via the runtime's global `CursorMoved`, since `mouse_area::on_move` stops
+at the widget's bounds.
+
+A **reflow renumbers every absolute row**, so a width change re-anchors the selection
+and the scroll position through `adit_terminal::LogicalAnchor` — the pre-wrap logical
+line, which re-wrapping is what preserves. `TermState::logical_anchor` must walk the
+buffer exactly the way `logical_lines` does (that's why `logical_lines` locates the
+cursor by calling it); if the two ever disagree about where a logical line starts, an
+anchor comes back on a different line from the text it named.
+
+### `just ci` only ever sees Windows
+It runs on the developer's machine, which is Windows. CI also builds on Linux and
+macOS, and **that matrix is the only thing that sees code which is dead on those
+platforms** — `clippy -D warnings` turns `dead_code` into an error there while the
+same tree is spotless locally.
+
+Not hypothetical: `main` was red on Linux and macOS for **thirty-plus commits**
+after the clipboard file-transfer work landed, and nothing noticed. The old
+release gate re-ran clippy on its own Windows runner, so a red Linux build could
+not block a release and did not — v0.1.69 shipped from a red main. What surfaced
+it was the new release gate refusing a commit whose CI was not green.
+
+It also only ever sees **your** toolchain. CI installs
+`dtolnay/rust-toolchain@stable`, so the day `stable` moves its clippy gains
+lints yours does not have, and every build job goes red on code nobody touched —
+1.98 did exactly that with `chunks_exact_to_as_chunks`, on a docs-only commit.
+When a build fails on a lint you cannot reproduce, compare `rustc --version`
+against the run's log before looking for anything cleverer, and `rustup update
+stable` rather than sprinkling `#[allow]`: the point is to see what CI sees.
+
+A green `just ci` is necessary, not sufficient. **Check `gh run list --workflow
+ci.yml --branch main --limit 1` before assuming main is healthy.** Expect
+Windows-only code (`clipboard_files`, `keyboard_hook`) to need
+`#[cfg_attr(not(windows), allow(dead_code))]` where a type must exist on every
+platform to keep one function signature.
+
+### `iced` does not centre anything for you
+`Button::layout` goes through `layout::padded`, whose positioning step is the
+identity, so content sits at the padding offset and every pixel of a button
+taller than its content is left *underneath* it. `Container` defaults to
+`vertical_alignment: Vertical::Top`, `Row` to `align: Alignment::Start`.
+
+**Giving a widget a height does not position what is inside it.** A row of
+controls that "looks crooked" is almost always this, and it compounds: one
+element centred among several that are not makes the correct one look wrong.
+`TAB_HEIGHT` exists so the tab strip holds a single height; anything added there
+centres its own content.
+
+### `LiveShellEvent::Closed` must be announced before waiting on anything
+`run_live_password_shell` waits for the last `SharedSession` to drop before
+returning, so SFTP and tunnels riding the connection outlive the shell. The
+session layer drops *its* claim when it sees `Closed`. Send `Closed` after that
+wait and the two wait on each other for good: `exit` left a tab reading connected
+forever, and Enter could not reconnect because nothing had marked the session
+dead — one deadlock, two symptoms that look unrelated.
+
+`ShellExited` is a separate event on purpose. `Eof`/`Close`/`ExitStatus` mean the
+remote ended the shell and auto-reconnect must not undo it; a stream that ends
+with **no** goodbye is a dropped connection and must reconnect. That distinction
+used to be carried by a formatted status string, which is why it silently did
+nothing for every ordinary `exit`.
+
+[`crates/adit-ssh/tests/integration.rs`](crates/adit-ssh/tests/integration.rs)
+covers both, and the covering test **holds the `SharedSession` the way the session
+layer does** — without that the claim drops on its own and neither bug can
+reproduce.
+
+## Conventions
+
+- **Releases are patch bumps** (`0.1.54` → `0.1.55`) and happen **only when asked**.
+  Otherwise just commit and push. **The release is built and published entirely on CI,
+  and triggered manually from `gh` — never via `just`:**
+
+  ```bash
+  gh workflow run release.yml -f version=0.1.60
+  ```
+
+  That publishes the **Windows x64 installer only**. The arm64, Linux and macOS
+  jobs are every slow job in the release and none of the three is exercised day
+  to day, so they are off unless asked for:
+
+  ```bash
+  gh workflow run release.yml -f version=0.1.60 -f all_platforms=true
+  ```
+
+  Those jobs only ever *attach* assets to the release the x64 job already
+  published, so an x64-only release can be topped up later by re-running the
+  workflow with the flag set. Skipping arm64 costs ARM machines their **in-app
+  update**, not the app: the updater matches assets on architecture strictly and
+  never offers an x64 installer to an ARM machine, so it shows 「该版本暂无
+  Windows 安装包」 and those users update from a release that did build it.
+
+  That dispatches [`.github/workflows/release.yml`](.github/workflows/release.yml)
+  (a `workflow_dispatch`), which **requires `ci.yml` to already be green on the
+  commit being released**, bumps the three crate versions in lockstep (root
+  workspace, `crates/adit-rdp/Cargo.toml`, `crates/adit-rdp-proto/Cargo.toml`), asserts
+  all three landed, builds both binaries, packages the Inno Setup installer, commits +
+  tags the bump, and creates the GitHub Release — so what ships is exactly what a clean,
+  gated checkout produces, never a developer's local artifacts. Watch it with
+  `gh run watch`.
+
+  It no longer re-runs clippy and the tests: that spent 6.5 minutes recomputing what
+  ci.yml had already decided about the same tree. Requiring a green run is *stricter* —
+  previously nothing checked main was green at all, so a release could be cut from a
+  commit whose CI had never run. **Dispatching a release before CI finishes now fails
+  fast** rather than waiting; let ci.yml go green first. The only thing the bump itself
+  can break is the three versions drifting apart (`adit-rdp-proto` is a path dependency
+  of both workspaces, so a mismatch compiles fine and disagrees on the wire at runtime),
+  and that is asserted directly.
+
+  **Confirm a release by its artefact, never by an exit code:**
+
+  ```bash
+  gh release view v0.1.66
+  ```
+
+  Two ways that bites, both paid for on 0.1.66. First, `gh run watch --exit-status`
+  reports through a *pipe* as whatever the pipe's last command returned — `| tail`
+  turns any failure into a clean 0. Second, the run can genuinely pass its gate and
+  still publish nothing: the workflow commits the version bump and pushes at the very
+  end, so **anything pushed to `main` after the run starts makes that push a
+  non-fast-forward and fails the release** with build, clippy and tests all green
+  behind it. Do not push to `main` — not even docs — while a release is in flight.
+
+  There is deliberately **no `just release`** (that used to push a tag and tangle the trigger up with the
+  build). `just installer` / `just deploy` still build locally for smoke-testing, but
+  never publish.
+- **Secrets never go in the repo.** Passwords/keys live in the encrypted credential
+  store; the RDP helper takes its password over **stdin, never argv or env** (argv is
+  world-readable via the process list). Test-host credentials stay out of git.
+- UI strings are **Simplified Chinese** — match the surrounding text.
+- Comments explain *why*, not *what*. Several in this codebase encode a bug that was
+  expensive to find (see the traps above); don't delete them as noise.
+
+## Debugging leverage
+
+- **RDP rendering artefact? Capture once, replay offline** — do not iterate live.
+  [docs/rdp-debugging.md](docs/rdp-debugging.md) is the runbook: `ADIT_RDP_DUMP=1`
+  captures every codec stream + an uncapped paint trace, and
+  `crates/adit-rdp/tests/merged_dump.rs` re-executes the whole session from it
+  (99.7% pixel-faithful), so a fix is proven against the captured bytes before
+  it ships.
+- The RDP helper logs to `%APPDATA%\Adit\rdp-helper.log` (`RUST_LOG` overrides the
+  default filter) — the GUI discards its stderr, so this is the only window into it.
+- Manual RDP harness against a real host, which can dump decoded frames to PNG:
+  `crates/adit-rdp-proto/tests/debug_connect.rs` (env-driven, `--ignored`).
+- Real-sshd integration tests: `cargo test -p adit-ssh --features integration --
+  --include-ignored` (needs Docker; CI runs these).
+
+**Capture state before theorizing.** The black-screen and connect-freeze bugs each ate
+several wrong "fixes" that pattern-matched the symptom. What actually solved them was
+dumping real frames to PNG and looking, and taking a minidump of the hung process.
+Reach for the harness and the logs first.
