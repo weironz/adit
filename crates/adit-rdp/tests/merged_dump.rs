@@ -251,7 +251,7 @@ fn a_captured_session_replays() {
                         let start = ((dy + row) * fw + dx) * 4;
                         bgra.extend_from_slice(&rgba[start..start + cwu * 4]);
                     }
-                    for px in bgra.chunks_exact_mut(4) {
+                    for px in bgra.as_chunks_mut::<4>().0 {
                         px.swap(0, 2); // RGBA -> BGRA
                     }
                     bgra
@@ -271,8 +271,10 @@ fn a_captured_session_replays() {
                 // still equal the seed is the only way to see under-painting.
                 if let Some(seed) = background.as_deref() {
                     let same = bgra
-                        .chunks_exact(4)
-                        .zip(seed.chunks_exact(4))
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .zip(seed.as_chunks::<4>().0)
                         .filter(|(out, bg)| out[..3] == bg[..3])
                         .count();
                     clear_pixels += cwu * chu;
@@ -281,7 +283,7 @@ fn a_captured_session_replays() {
                         clear_blank += 1;
                     }
                 }
-                for px in bgra.chunks_exact_mut(4) {
+                for px in bgra.as_chunks_mut::<4>().0 {
                     px.swap(0, 2); // BGRA -> RGBA
                 }
                 if dx >= fw || dy >= fh {
@@ -503,7 +505,7 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                         let start = ((y + row) * fw + x) * 4;
                         bgra.extend_from_slice(&canvas[start..start + cw * 4]);
                     }
-                    for px in bgra.chunks_exact_mut(4) {
+                    for px in bgra.as_chunks_mut::<4>().0 {
                         px.swap(0, 2); // RGBA -> BGRA
                     }
                     bgra
@@ -514,7 +516,7 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                 );
                 match clear_decoder.decode_onto(data, cw16, ch16, background.as_deref()) {
                     Ok(mut bgra) => {
-                        for px in bgra.chunks_exact_mut(4) {
+                        for px in bgra.as_chunks_mut::<4>().0 {
                             px.swap(0, 2); // BGRA -> RGBA
                         }
                         blit_rect(&mut canvas, fw, fh, x, y, cw, ch, &bgra);

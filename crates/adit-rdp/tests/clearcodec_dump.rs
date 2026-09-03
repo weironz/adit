@@ -103,14 +103,14 @@ fn captured_streams_replay() {
                 let start = ((cy + row) * sw + cx) * 4;
                 bgra.extend_from_slice(&surface_rgba[start..start + cw * 4]);
             }
-            for px in bgra.chunks_exact_mut(4) {
+            for px in bgra.as_chunks_mut::<4>().0 {
                 px.swap(0, 2); // RGBA -> BGRA
             }
             bgra
         });
         match decoder.decode_onto(&capture.data, capture.w, capture.h, background.as_deref()) {
             Ok(mut bgra) => {
-                for px in bgra.chunks_exact_mut(4) {
+                for px in bgra.as_chunks_mut::<4>().0 {
                     px.swap(0, 2); // BGRA -> RGBA
                 }
                 // Per-stream tile, so a wrong region on the surface can be

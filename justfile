@@ -61,8 +61,14 @@ test:
     cargo test --workspace
 
 # Lint exactly like CI — warnings are errors
+#
+# Both workspaces, because `--workspace` is only ever the root one: the helper
+# is excluded from it, so for as long as this recipe ran a single line the
+# helper's lints were never read by anyone, locally or in CI. They rotted
+# accordingly. CI now runs the same pair.
 clippy:
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --manifest-path {{rdp}} --all-targets --locked -- -D warnings
 
 # Auto-format the tree
 fmt:
@@ -78,6 +84,7 @@ fmt:
 ci:
     cargo build --workspace
     cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --manifest-path {{rdp}} --all-targets --locked -- -D warnings
     cargo test --workspace
     cargo test -p adit-ssh --features integration --no-run
 
