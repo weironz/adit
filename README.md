@@ -27,9 +27,9 @@ A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`.
 | [docs/release.md](docs/release.md) | Step-by-step runbook for cutting a release (all of it happens on CI) |
 
 What is and is not next is tracked in [GitHub
-Issues](https://github.com/weironz/adit/issues) — open items by label, shipped work
-as closed issues under per-version milestones — navigated from
-[docs/roadmap.md](docs/roadmap.md) and [docs/roadmap-done.md](docs/roadmap-done.md).
+Issues](https://github.com/weironz/adit/issues) — open items by label (`known-gap`,
+`needs-hardware`, `growth`, `blocked-external`), rejected ideas as closed `wontfix`,
+and shipped work as closed `shipped` issues under per-version milestones.
 
 The workspace crates:
 

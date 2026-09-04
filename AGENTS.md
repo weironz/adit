@@ -6,8 +6,8 @@ the links — [README.md](README.md) covers what Adit is and how to run it.
 Orientation: [docs/architecture.md](docs/architecture.md) (how it's built) ·
 [docs/features.md](docs/features.md) (what it does + known gaps) ·
 [docs/decisions.md](docs/decisions.md) (why, including reversals) ·
-[docs/roadmap.md](docs/roadmap.md) (what's next — tracked in GitHub Issues) ·
-[docs/roadmap-done.md](docs/roadmap-done.md) (shipped — closed issues by milestone) ·
+[GitHub Issues](https://github.com/weironz/adit/issues) (what's next, what was ruled
+out, and the shipped history — decision #21) ·
 [docs/cloud-sync.md](docs/cloud-sync.md) (sync design + the one-time OAuth
 app registrations) · [docs/release.md](docs/release.md) (step-by-step release
 runbook — read before cutting a version).
@@ -142,6 +142,13 @@ reproduce.
 
 ## Conventions
 
+- **Issue tracking lives in GitHub Issues** (decision #21 — the two roadmap docs are
+  gone; git history keeps them). Open items carry one of `blocked-external` /
+  `needs-hardware` / `growth` / `known-gap`; rejected ideas are closed `wontfix`
+  (reason *not planned*); shipped work is closed `completed` with label `shipped`,
+  filed under the per-version milestone it shipped in. New issues come in through
+  `.github/ISSUE_TEMPLATE/` (缺陷 / 任务). New findings and finished work go there —
+  not into any doc.
 - **Releases are patch bumps** (`0.1.54` → `0.1.55`) and happen **only when asked**.
   Otherwise just commit and push. **The release is built and published entirely on CI,
   and triggered manually from `gh` — never via `just`:**

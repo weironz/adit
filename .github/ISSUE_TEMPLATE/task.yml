@@ -1,0 +1,47 @@
+name: 任务(给人或 Agent)
+description: 一件可以独立做完、可以独立验收的事
+labels: ["task"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **一个 issue = 一次可提交的改动。** 做不完就拆，拆不动就先开一个
+        调研 issue 去摸清 —— 一个说不清验收标准的 issue，交给谁做都会跑偏。
+        建成后按四类打 label：`known-gap` / `needs-hardware` / `growth` /
+        `blocked-external`（见 decisions.md #21）。
+  - type: textarea
+    id: what
+    attributes:
+      label: 要做什么
+      description: 一两句说清。不写实现方案，写要达到的状态。
+    validations: { required: true }
+  - type: textarea
+    id: why
+    attributes:
+      label: 为什么现在做
+      description: |
+        它挡住了什么？不做会怎样？这一栏是排期的依据 ——
+        写不出来的，多半现在不该做。
+    validations: { required: true }
+  - type: textarea
+    id: accept
+    attributes:
+      label: 验收判据
+      description: |
+        **可执行的判据**，不是"跑起来没问题"。命令 + 期望输出最好。
+        修 bug 必配回归测试；Windows-only 的代码记得 CI 还跑 Linux/macOS
+        （`just ci` 只看得见 Windows）。反证（什么情况下它该失败）加分。
+      placeholder: |
+        - `just ci` 全绿；`cargo test -p adit-ssh` 新增回归测试通过
+        - 反证：构造 XX 输入时必须报 YY，而不是静默吞掉
+    validations: { required: true }
+  - type: textarea
+    id: context
+    attributes:
+      label: 上下文
+      description: 相关文件、决策编号（decisions.md #xx）、已知的坑（AGENTS.md 的 traps）。Agent 靠这一栏省掉一轮摸索。
+  - type: input
+    id: blocked
+    attributes:
+      label: 依赖
+      description: 要先做完哪个 issue？填 `#122` 这样的编号，没有就留空。

@@ -1,0 +1,32 @@
+name: 缺陷
+description: 与预期不符的行为
+labels: ["bug"]
+body:
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤
+      description: |
+        协议（SSH / SFTP / RDP / Telnet）、目标机形态、做了什么。能贴会话日志的
+        最好——RDP 问题记得 helper 日志（追加式，带 pid），终端问题说明窗口宽度。
+    validations: { required: true }
+  - type: textarea
+    id: expect
+    attributes:
+      label: 期望 vs 实得
+    validations: { required: true }
+  - type: input
+    id: version
+    attributes:
+      label: Adit 版本
+      description: 设置页或安装包文件名里的版本号，如 0.1.75。
+  - type: dropdown
+    id: silent
+    attributes:
+      label: 是不是静默失效
+      description: |
+        **静默失效优先修** —— 报错的 bug 人能看见，静默的要到出事才发现。
+        本仓库栽过：会话完全健康却整屏纯黑（看着像连接坏了，其实不是）、
+        栈溢出进程直接消失（无 panic 无日志）、一个死锁造成两个看似无关的现象。
+      options: ["是：没有报错，结果却是错的", "否：有明确报错"]
+    validations: { required: true }
