@@ -26,8 +26,10 @@ A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`.
 | [crates/adit-rdp/IRONRDP-PATCHES.md](crates/adit-rdp/IRONRDP-PATCHES.md) | The three vendored IronRDP patches and when to drop them |
 | [docs/release.md](docs/release.md) | Step-by-step runbook for cutting a release (all of it happens on CI) |
 
-What is and is not next: [docs/roadmap.md](docs/roadmap.md), with the shipped work
-and the reasoning behind it in [docs/roadmap-done.md](docs/roadmap-done.md).
+What is and is not next is tracked in [GitHub
+Issues](https://github.com/weironz/adit/issues) — open items by label, shipped work
+as closed issues under per-version milestones — navigated from
+[docs/roadmap.md](docs/roadmap.md) and [docs/roadmap-done.md](docs/roadmap-done.md).
 
 The workspace crates:
 
@@ -124,4 +126,4 @@ Adding `/DArch=arm64` to the `ISCC.exe` call builds the Windows-on-ARM installer
 
 Most of what was originally planned is built — SSH/SFTP/tunnels, five protocols, jump hosts, interactive MFA, split panes, broadcast, snippets, keyword highlighting, fonts/schemes, scrollback search, mouse passthrough, bracketed paste, `~/.ssh/config` and SecureCRT import, cloud sync, in-app updates, and installers for Windows, macOS and Linux.
 
-The biggest thing still open is code signing — the Windows installer, the macOS `.dmg` and the Linux packages are all unsigned, SmartScreen warns on the first, and Gatekeeper blocks the second until the quarantine flag is cleared by hand. See [docs/roadmap.md](docs/roadmap.md) for the full status.
+The biggest thing still open is code signing — the Windows installer, the macOS `.dmg` and the Linux packages are all unsigned, SmartScreen warns on the first, and Gatekeeper blocks the second until the quarantine flag is cleared by hand. See the [`growth` label](https://github.com/weironz/adit/issues?q=label%3Agrowth) for the full status.

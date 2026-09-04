@@ -5,8 +5,8 @@ what it costs — including the ones we later **reversed**, because a decision r
 that quietly edits out its own mistakes is worth very little.
 
 For what the code looks like today see [architecture.md](architecture.md); for what
-it does see [features.md](features.md); for what is and is not next,
-[roadmap.md](roadmap.md) and [roadmap-done.md](roadmap-done.md).
+it does see [features.md](features.md); for what is and is not next, GitHub Issues —
+navigated from [roadmap.md](roadmap.md) and [roadmap-done.md](roadmap-done.md).
 
 ---
 
@@ -444,3 +444,22 @@ exactly one place a finished item moves to.
 them. Where a citation was carrying the reasoning rather than decorating it — the
 Azure Trusted Signing route, the Zmodem deferral, the host-key argument in #18 — it was
 carried across instead.
+
+## 21. Issue tracking moved to GitHub Issues — reversal of the two-file roadmap (#20)
+
+**Decision.** Tracking left [roadmap.md](roadmap.md) /
+[roadmap-done.md](roadmap-done.md) for GitHub Issues: open items are open issues
+labelled by the old sections (`blocked-external`, `needs-hardware`, `growth`,
+`known-gap`), rejected ideas are closed as `wontfix`, and shipped work is closed
+`completed` issues labelled `shipped` under per-version milestones. Both docs remain
+as navigation stubs because the repo's other files link to them.
+
+**Why.** The two-file split fixed the dated-snapshot problem (#20) but kept tracking
+in prose: moving an item from "next" to "done" was an edit nobody could subscribe to,
+comment on, or reference from a commit. Issues give each item a number, a state, a
+milestone and a discussion thread, and `gh` makes the whole workflow scriptable. The
+reasoning — the part #20 existed to protect — moved verbatim into the issue bodies.
+
+**Cost.** History is now split across two systems: pre-migration discussion lives in
+the git history of the two docs, post-migration in issues. And issues on a public
+repo are writable by anyone, so triage becomes a chore the file never demanded.
