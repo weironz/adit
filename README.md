@@ -24,6 +24,7 @@ A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`.
 | [CLAUDE.md](CLAUDE.md) | Traps that cost real debugging time; conventions |
 | [docs/rdp-gnome-remote-desktop.md](docs/rdp-gnome-remote-desktop.md) | GNOME Remote Desktop handover: EGFX, RDSTLS, Server Redirection |
 | [crates/adit-rdp/IRONRDP-PATCHES.md](crates/adit-rdp/IRONRDP-PATCHES.md) | The three vendored IronRDP patches and when to drop them |
+| [docs/release.md](docs/release.md) | Step-by-step runbook for cutting a release (all of it happens on CI) |
 
 What is and is not next: [docs/roadmap.md](docs/roadmap.md), with the shipped work
 and the reasoning behind it in [docs/roadmap-done.md](docs/roadmap-done.md).

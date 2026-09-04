@@ -9,7 +9,8 @@ Orientation: [docs/architecture.md](docs/architecture.md) (how it's built) ·
 [docs/roadmap.md](docs/roadmap.md) (what's next, and what was ruled out) ·
 [docs/roadmap-done.md](docs/roadmap-done.md) (shipped, with the reasoning) ·
 [docs/cloud-sync.md](docs/cloud-sync.md) (sync design + the one-time OAuth
-app registrations).
+app registrations) · [docs/release.md](docs/release.md) (step-by-step release
+runbook — read before cutting a version).
 
 Adit is a Windows-first SSH / SFTP / RDP terminal client in Rust (`iced` + `russh` +
 `vte`), aiming at SecureCRT-style ergonomics.
