@@ -1,0 +1,26 @@
+{
+  "source_commit": "80c66a531cb0d02f8d65147efb24716c2b7c3cb6",
+  "probe_sha256": "9824e89ab0f759b67c5f73ba27e1167aa375e69d1ed548ccb2607319f76c2be5",
+  "client_version": "0.1.75",
+  "client_profile": "debug",
+  "client_os": "Windows-11-10.0.26300-SP0",
+  "rust": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "servers": "tigervnc-standalone-server\t1.13.1+dfsg-2build2\nx11vnc\t0.9.16-10\nTurboVNC Server (Xvnc) 64-bit v3.3.1 (build 20260820)\nCopyright (C) 1999-2026 The VirtualGL Project and many others (see README.md)\nVisit http://www.TurboVNC.org for more information on TurboVNC\n\n",
+  "docker_image": "sha256:4419240efbf5dbd9932e34a1d3c96793b22a98a5b5de56a98711607c5631bae6",
+  "resolution": "800x600x24",
+  "security": "VncAuth (2)",
+  "network": "container egress netem delay 180ms rate 5mbit loss 0.1%; unshaped loopback",
+  "workloads": [
+    "static",
+    "scroll",
+    "drag"
+  ],
+  "quality": [
+    "lossless",
+    "wan"
+  ],
+  "samples_per_cell": 10,
+  "duration_seconds": 5,
+  "clipboard_content": "synthetic only; no private desktop content",
+  "notes": "Headless session-layer debug build. No GPU presentation measurement. Other local workloads may affect timing; no reliable P95 claim."
+}

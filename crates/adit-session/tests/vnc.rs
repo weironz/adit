@@ -479,7 +479,9 @@ fn readonly_releases_held_input_then_blocks_keyboard_mouse_and_clipboard_push() 
     manager.set_active_vnc_read_only(false);
     manager.send_vnc_key_to_active(0x62,true);
     assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(),(4,vec![1,0,0,0,0,0,0x62]));
-    manager.close(session); server.join().unwrap();
+    manager.close(session);
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(), (4,vec![0,0,0,0,0,0,0x62]));
+    server.join().unwrap();
 }
 
 #[test]

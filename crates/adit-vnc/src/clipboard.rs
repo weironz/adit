@@ -152,7 +152,10 @@ impl Clipboard {
         let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
         encoder.write_all(&(utf8.len() as u32).to_be_bytes())?;
         encoder.write_all(&utf8)?;
-        Ok(extended(PROVIDE | TEXT, &encoder.finish()?))
+        // RFB peers use a sync-flushed stream here, not a finished zlib file.
+        // Z_STREAM_END is rejected by older LibVNCServer clipboard readers.
+        encoder.flush()?;
+        Ok(extended(PROVIDE | TEXT, encoder.get_ref()))
     }
     pub async fn receive(
         &self,
@@ -193,8 +196,6 @@ impl Clipboard {
                 NOTIFY if payload.len() == 4 => {
                     if flags & TEXT != 0 && self.permissions().1 {
                         reply = Some(extended(REQUEST | TEXT, &[]));
-                    } else if flags & TEXT == 0 && self.permissions().1 {
-                        text = Some(String::new());
                     }
                 }
                 REQUEST if payload.len() == 4 && flags & TEXT != 0 && self.permissions().0 => {
@@ -308,6 +309,10 @@ mod tests {
             let Some(ClientMsg::ExtendedCutText(bytes)) = received(&mut rx).await else {
                 panic!("missing provide")
             };
+            assert!(
+                bytes.ends_with(&[0, 0, 255, 255]),
+                "clipboard stream must end in a sync flush"
+            );
             assert_eq!(
                 clip.receive(&bytes).await.unwrap().0.as_deref(),
                 Some(normalize(text).as_str())
@@ -333,6 +338,9 @@ mod tests {
         assert!(
             matches!(received(&mut rx).await, Some(ClientMsg::ExtendedCutText(bytes)) if bytes == extended(REQUEST | TEXT, &[]))
         );
+        // Losing remote text ownership is not an empty text payload.
+        // Servers send this after accepting our local clipboard offer too.
+        assert_eq!(clip.receive(&extended(NOTIFY, &[])).await.unwrap().0, None);
         clip.set_permissions(true, false);
         clip.receive(&extended(NOTIFY | TEXT, &[])).await.unwrap();
         assert!(rx.try_recv().is_err());

@@ -30,6 +30,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
             app.manager.poll_events();
+            // Fatal errors stop frame subscriptions too; retire cache/hook on
+            // the regular tick rather than relying on one more video frame.
+            retire_vnc_connection_cache(app);
             auto_log_connected_sessions(app);
             clamp_terminal_scroll(app);
             sync_auth_prompt(app);
@@ -140,7 +143,8 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.manager.answer_rdp_file_read(read.stream_id, data);
             }
 
-            if app.rdp_clipboard && app.manager.active_is_desktop() {
+            let clipboard_ready = !app.manager.active_is_vnc() || app.manager.active_session_summary().is_some_and(|s| s.status == SessionStatus::Connected);
+            if app.rdp_clipboard && app.manager.active_is_desktop() && clipboard_ready {
                 app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
                 if app.rdp_clipboard_ticks.is_multiple_of(RDP_CLIPBOARD_POLL_TICKS) {
                     // Explorer also offers file names as text. RDP checks files
@@ -150,14 +154,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         offer_local_image_if_changed(app);
                     }
                     if let Some(session) = app.manager.active_session() {
-                        return clipboard::read().map(move |contents| Message::RdpClipboardPolled(session, contents));
+                        let epoch = app.desktop_clipboard_epoch;
+                        return clipboard::read().map(move |contents| Message::RdpClipboardPolled(session, epoch, contents));
                     }
                 }
             }
         }
-        Message::RdpClipboardPolled(session, contents) => {
+        Message::RdpClipboardPolled(session, epoch, contents) => {
             // A read can finish after a tab switch or after sharing was disabled.
-            if !app.rdp_clipboard || app.manager.active_session() != Some(session) {
+            if !app.rdp_clipboard || app.manager.active_session() != Some(session) || app.desktop_clipboard_epoch != epoch {
                 return Task::none();
             }
             if let Some(text) = contents.filter(|text| app.manager.active_is_vnc() || !text.is_empty()) {
@@ -210,24 +215,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.vnc_cursor_handle = None;
                 app.vnc_grab_keys = false;
             }
-            let vnc_not_connected = app.manager.active_is_vnc()
-                && app.manager.active_session_summary().is_none_or(|s| s.status != SessionStatus::Connected);
-            if vnc_not_connected {
-                // Reconnect retains the tab id, but neither its pixels nor its
-                // cursor generation belongs to the next authenticated connection.
-                app.rdp_tiles.clear();
-                app.rdp_tiles_prev.clear();
-                app.rdp_surface_size = None;
-                app.rdp_surface_size_prev = None;
-                app.rdp_frame_generation = 0;
-                app.rdp_frame_uploaded = None;
-                app.vnc_cursor = None;
-                app.vnc_cursor_handle = None;
-                app.vnc_pressed_keys.clear();
-                app.vnc_preedit = None;
-                app.vnc_grab_keys = false;
-                keyboard_hook::disarm();
-            }
+            let vnc_not_connected = retire_vnc_connection_cache(app);
             if app.manager.active_is_vnc() && !vnc_not_connected {
                 if let Some(cursor) = app.manager.active_vnc_cursor() {
                     if app.vnc_cursor.as_ref().is_none_or(|old| old.generation != cursor.generation) {
@@ -3251,4 +3239,25 @@ pub(crate) fn offer_local_files_if_changed(app: &mut AditApp) {
         .map(|file| file.meta.clone())
         .collect();
     app.manager.offer_rdp_files_to_active(metadata);
+}
+
+/// Returns true while a VNC tab has no authenticated active connection.
+fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
+    if !app.manager.active_is_vnc() || app.manager.active_session_summary().is_some_and(|s| s.status == SessionStatus::Connected) { return false; }
+    app.rdp_tiles.clear();
+    app.rdp_tiles_prev.clear();
+    app.rdp_surface_size = None;
+    app.rdp_surface_size_prev = None;
+    app.rdp_frame_generation = 0;
+    app.rdp_frame_uploaded = None;
+    app.vnc_cursor = None;
+    app.vnc_cursor_handle = None;
+    app.vnc_pressed_keys.clear();
+    app.vnc_preedit = None;
+    app.vnc_grab_keys = false;
+    app.rdp_clipboard_offered = None;
+    // In-flight OS clipboard reads can complete after reconnect to the same tab.
+    app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
+    keyboard_hook::disarm();
+    true
 }

@@ -109,7 +109,7 @@ jobs:
         shell: bash
         run: |
           sudo apt-get install -y --no-install-recommends \
-            xvfb x11vnc tigervnc-standalone-server tigervnc-tools x11-xserver-utils x11-utils xdotool xauth
+            xvfb x11vnc tigervnc-standalone-server tigervnc-tools x11-xserver-utils x11-utils xdotool xauth python3-tk
           export DISPLAY=:99
           Xvfb "$DISPLAY" -noreset -screen 0 800x600x24 > /tmp/adit-xvfb.log 2>&1 &
           xvfb_pid=$!
@@ -156,6 +156,8 @@ jobs:
           done
           start_input_target
           cargo test -p adit-session --test vnc real_vnc_server_authenticates_and_paints -- --ignored
+          ADIT_VNC_CLIP_LOCAL=1 ADIT_VNC_CLIP_PORT=15900 ADIT_VNC_CLIP_DISPLAY=99 \
+            cargo test -p adit-session --test vnc_clipboard -- --ignored
 
       # The RDP helper is excluded from the workspace (IronRDP's dependency pins
       # cannot coexist with russh's), so nothing above touches it — until now it

@@ -392,6 +392,14 @@ impl VncClient {
             }
             inner.input_ch.clone()
         };
+        // An already pending refresh needs no queue slot. Remember an explicit
+        // full refresh before checking pending, so completion cannot lose it.
+        if matches!(event, X11Event::FullRefresh) {
+            self.flow.mark_full();
+        }
+        if matches!(event, X11Event::Refresh | X11Event::FullRefresh) && self.flow.pending() != 0 {
+            return Ok(());
+        }
         // Do not hold the client mutex while backpressure waits: close needs it.
         let permit = sender.reserve().await?;
         let inner = self.inner.lock().await;
@@ -441,6 +449,14 @@ impl VncClient {
             .await?;
         }
         Ok(event)
+    }
+
+    /// Wait until earlier input has reached the transport writer. This is not
+    /// a remote acknowledgement, but prevents close from discarding key-ups.
+    pub async fn flush_input(&self) -> Result<(), VncError> {
+        let (done, finished) = oneshot::channel();
+        self.input_ch.send(ClientMsg::Flush(done)).await?;
+        finished.await.map_err(|_| VncError::ClientNotRunning)
     }
 
     /// Stop the VNC engine and release resources

@@ -417,6 +417,7 @@ pub struct AditApp {
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
     rdp_clipboard_ticks: u8,
+    desktop_clipboard_epoch: u64,
     vnc_pressed_keys: Vec<(keyboard::key::Physical, u32)>,
     vnc_fit: bool,
     vnc_grab_keys: bool,
@@ -1011,7 +1012,7 @@ pub enum Message {
     PasteIntoTerminal,
     ClipboardPasted(Option<String>),
     /// The local clipboard, sampled for the active RDP session's remote.
-    RdpClipboardPolled(SessionId, Option<String>),
+    RdpClipboardPolled(SessionId, u64, Option<String>),
     TerminalJumpToBottom,
     OpenSelectedProfile,
     ConnectSelectedProfile,
@@ -1606,6 +1607,7 @@ impl AditApp {
             rdp_resize_pending_since: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
+            desktop_clipboard_epoch: 0,
             vnc_pressed_keys: Vec::new(),
             vnc_fit: true,
             vnc_grab_keys: false,
@@ -2783,7 +2785,12 @@ mod tests {
         app.vnc_cursor=Some(adit_session::VncCursor{width:1,height:1,rgba:vec![255;4],generation:1,..Default::default()});
         app.vnc_cursor_handle=Some(iced::widget::image::Handle::from_rgba(1,1,vec![255;4]));
         app.vnc_pressed_keys.push((Physical::Code(Code::KeyA),0x61));
-        let _=update(&mut app,Message::RdpTick);
+        app.rdp_clipboard_offered=Some("old clipboard sample".into());
+        let old_epoch=app.desktop_clipboard_epoch;
+        app.manager.disconnect(session).unwrap();
+        let _=update(&mut app,Message::Tick);
+        assert!(app.desktop_clipboard_epoch != old_epoch);
+        assert!(app.rdp_clipboard_offered.is_none());
         assert!(app.rdp_tiles.is_empty());
         assert!(app.rdp_tiles_prev.is_empty());
         assert!(app.rdp_surface_size.is_none());
@@ -2817,10 +2824,10 @@ mod tests {
     fn stale_desktop_clipboard_reads_do_not_cross_tab_or_sharing_boundaries() {
         let mut app = drag_test_app();
         app.rdp_clipboard_offered = None;
-        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), Some("stale".into())));
+        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), 0, Some("stale".into())));
         assert!(app.rdp_clipboard_offered.is_none());
         app.rdp_clipboard = false;
-        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), Some("disabled".into())));
+        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), 0, Some("disabled".into())));
         assert!(app.rdp_clipboard_offered.is_none());
     }
 

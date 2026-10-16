@@ -14,6 +14,9 @@ impl Flow {
             deferred: AtomicBool::new(false),
         }
     }
+    pub(crate) fn mark_full(&self) {
+        self.full.store(true, Ordering::Release);
+    }
     pub(crate) fn request(&self, full: bool) -> Option<bool> {
         if full {
             self.full.store(true, Ordering::Release);

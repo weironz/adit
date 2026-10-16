@@ -40,7 +40,7 @@ Cargo's output directory so tests/builds can replace the original Windows execut
 without sharing violations while the longer matrix runs.
 
 The synthetic canvas is identical on all three servers and resets its viewport
-before every sample. Each sample runs five seconds. The matrix covers lossless/WAN
+before every sample. Each sample allows up to 15 seconds for first pixel coverage, then measures a fixed five seconds of steady workload. The matrix covers lossless/WAN
 quality, static/scroll/drag workloads, and loopback versus container egress netem
 `delay 180ms rate 5mbit loss 0.1% limit 10000`, with ten fresh connections per cell.
 The injection is on the **container** eth0 only, not a host adapter. It is an egress
@@ -93,3 +93,28 @@ docker rm -f adit-vnc-integration adit-vnc-matrix adit-vnc-tls
 Linux results do not establish Windows TightVNC/UltraVNC, UAC, locked-session or
 service-mode compatibility. The Windows matrix requires its own isolated VM and
 versioned results. Cross-platform CI is an additional compile/test gate.
+
+## Real X11 clipboard exchange
+
+The matrix container also supports an independent Tk selection owner. Copy the
+control helper, then test TigerVNC (15903, display 100) and TurboVNC (15904, 101):
+
+```powershell
+docker cp tests/vnc/clipboard_target.py adit-vnc-matrix:/tmp/adit-clipboard-target.py
+$env:ADIT_VNC_CLIP_PORT='15903'; $env:ADIT_VNC_CLIP_DISPLAY='100'
+cargo test -p adit-session --test vnc_clipboard -- --ignored
+$env:ADIT_VNC_CLIP_PORT='15904'; $env:ADIT_VNC_CLIP_DISPLAY='101'
+cargo test -p adit-session --test vnc_clipboard -- --ignored
+```
+
+The assertions use actual X11 clipboard reads/writes for Chinese, emoji,
+multiline Latin text, empty text, read-only receive and sharing disabled. Each
+copy creates a fresh selection owner; before testing a new remote ownership
+transition the client offers a synthetic marker. All text is synthetic. The
+helper control pipe has a bounded read timeout and contains no user clipboard.
+
+Ubuntu's x11vnc 0.9.16 fixture advertises Extended Clipboard through its
+LibVNCServer dependency, but the current end-to-end Unicode test does **not** pass
+against its X11 selection path. Capability negotiation alone is not acceptance.
+Keep that combination open for compatibility investigation; do not count it as
+a passed clipboard target.

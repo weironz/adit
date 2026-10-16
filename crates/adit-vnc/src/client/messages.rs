@@ -3,6 +3,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 #[derive(Debug)]
 pub(crate) enum ClientMsg {
+    Flush(tokio::sync::oneshot::Sender<()>),
     SetPixelFormat(PixelFormat),
     SetEncodings(Vec<VncEncoding>),
     FramebufferUpdateRequest(Rect, u8),
@@ -26,6 +27,11 @@ impl ClientMsg {
         S: AsyncWrite + Unpin,
     {
         match self {
+            ClientMsg::Flush(done) => {
+                writer.flush().await?;
+                let _ = done.send(());
+                Ok(())
+            }
             ClientMsg::GuardedClipboard(message, permissions, epoch) => {
                 if permissions.permits(epoch, &message) {
                     Box::pin(message.write(writer)).await?;

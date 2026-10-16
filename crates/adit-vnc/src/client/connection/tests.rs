@@ -299,6 +299,15 @@ async fn full_input_queue_does_not_hold_the_client_lock_during_close() {
             closed: false,
         })),
     };
+    // Coalesced refreshes must not wait for an input permit behind a blocked
+    // writer; no additional request is needed until the current update ends.
+    client.flow.request(false).unwrap();
+    tokio::time::timeout(Duration::from_millis(100), client.input(X11Event::Refresh))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(input.len(), INPUT_CHANNEL_SIZE);
+    client.flow.complete();
     let pending = client.input(X11Event::Refresh);
     tokio::pin!(pending);
     assert!(futures::poll!(pending.as_mut()).is_pending());

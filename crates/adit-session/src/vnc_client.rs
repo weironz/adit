@@ -460,20 +460,18 @@ impl Worker {
                             vec![]
                         }
                         Command::Key { keysym, pressed } => {
-                            if pressed { keys.insert(keysym); } else { keys.remove(&keysym); }
                             vec![X11Event::KeyEvent((keysym, pressed).into())]
                         }
                         Command::Input(input) => pointer.input(input),
                     };
                     for input in inputs {
-                        let result = tokio::select! {
-                            _ = self.stopped.changed() => return Ok(()),
-                            result = tokio::time::timeout(Duration::from_secs(5), client.input(input)) => result,
-                        };
-                        match result {
-                            Ok(Err(VncError::ClipboardUnsupported)) => self.state.lock().unwrap().diagnostics.status = "对端不支持此剪贴板字符，请启用 UTF-8 剪贴板".into(),
-                            Ok(result) => result?,
-                            Err(_) => return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "VNC input timeout").into()),
+                        let key_transition = if let X11Event::KeyEvent(ref key) = input { Some((key.keycode,key.down)) } else { None };
+                        match self.send_event(client,input).await {
+                            Err(VncError::ClipboardUnsupported) => self.state.lock().unwrap().diagnostics.status = "对端不支持此剪贴板字符，请启用 UTF-8 剪贴板".into(),
+                            result => result?,
+                        }
+                        if let Some((key,pressed)) = key_transition {
+                            if pressed { keys.insert(key); } else { keys.remove(&key); }
                         }
                     }
                 }
@@ -560,14 +558,14 @@ impl Worker {
                     }
                 }
                 _ = tick.tick() => {
-                    client.input(X11Event::Refresh).await?;
+                    self.send_event(client,X11Event::Refresh).await?;
                     self.state.lock().unwrap().diagnostics.pending_updates = client.pending_updates();
                     if fence_pending.is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(15)) {
                         return Err(std::io::Error::new(std::io::ErrorKind::TimedOut,"VNC Fence heartbeat timeout").into());
                     }
                     if fence_supported && fence_pending.is_none() && Instant::now() >= next_fence {
                         fence_sequence = fence_sequence.wrapping_add(1);
-                        client.input(X11Event::FencePing(fence_sequence)).await?;
+                        self.send_event(client,X11Event::FencePing(fence_sequence)).await?;
                         fence_pending = Some((fence_sequence, Instant::now()));
                         next_fence = Instant::now() + Duration::from_secs(5);
                     }
@@ -600,6 +598,13 @@ impl Worker {
         release(client, &mut pointer, &mut keys).await;
         result
     }
+    async fn send_event(&mut self, client: &VncClient, event: X11Event) -> Result<(), VncError> {
+        tokio::select! {
+            _ = self.stopped.changed() => Err(VncError::ClientNotRunning),
+            result = tokio::time::timeout(Duration::from_secs(5),client.input(event)) =>
+                result.unwrap_or_else(|_|Err(std::io::Error::new(std::io::ErrorKind::TimedOut,"VNC input timeout").into())),
+        }
+    }
     fn paint(&self, rect: Rect, rgba: &[u8], start: Instant) {
         if let Ok(mut surface) = self.surface.lock() {
             surface.blit(rect.x, rect.y, rect.width, rect.height, rgba);
@@ -629,6 +634,7 @@ async fn release(client: &VncClient, pointer: &mut Pointer, keys: &mut HashSet<u
         if had_buttons {
             let _ = client.input(pointer_up).await;
         }
+        let _ = client.flush_input().await;
     })
     .await;
 }
