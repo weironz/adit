@@ -467,7 +467,11 @@ impl Worker {
                     for input in inputs {
                         let key_transition = if let X11Event::KeyEvent(ref key) = input { Some((key.keycode,key.down)) } else { None };
                         match self.send_event(client,input).await {
-                            Err(VncError::ClipboardUnsupported) => self.state.lock().unwrap().diagnostics.status = "对端不支持此剪贴板字符，请启用 UTF-8 剪贴板".into(),
+                            Err(VncError::ClipboardUnsupported) => {
+                                let notice = "未发送剪贴板：文本包含对端不支持的字符、NUL，或超过大小限制".to_owned();
+                                self.state.lock().unwrap().diagnostics.status = notice.clone();
+                                let _ = self.events.send(RdpClientEvent::Notice(notice));
+                            },
                             result => result?,
                         }
                         if let Some((key,pressed)) = key_transition {
@@ -684,7 +688,6 @@ async fn connect(
             .set_auth_method(async move { Ok(password) })
             .security_policy(policy)
             .tight_quality(2, (options.quality == VncQuality::Wan).then_some(7))
-            .add_encoding(VncEncoding::ExtendedClipboard)
             .add_encoding(VncEncoding::FencePseudo)
             .add_encoding(VncEncoding::Tight)
             .add_encoding(VncEncoding::Zrle)
@@ -696,6 +699,9 @@ async fn connect(
             .add_encoding(VncEncoding::LastRectPseudo)
             .allow_shared(true)
             .set_pixel_format(PixelFormat::rgba());
+        if !options.clipboard_legacy {
+            connector = connector.add_encoding(VncEncoding::ExtendedClipboard);
+        }
         if options.security == VncSecurity::RequireTls {
             let mut tls = vnc::TlsConfig {
                 server_name: host.into(),

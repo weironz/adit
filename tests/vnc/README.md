@@ -118,3 +118,34 @@ LibVNCServer dependency, but the current end-to-end Unicode test does **not** pa
 against its X11 selection path. Capability negotiation alone is not acceptance.
 Keep that combination open for compatibility investigation; do not count it as
 a passed clipboard target.
+
+The same suite now exercises an explicit per-profile Latin-1 compatibility mode
+(without advertising Extended Clipboard), reads actual X11 STRING selections,
+and requires a visible nonfatal notice for unrepresentable text. Both clipboard
+tests serialize access to their one X11 clipboard. TigerVNC has passed this path.
+The x11vnc combination remains unaccepted for clipboard use, including its
+legacy selection path; the compatibility option is not evidence it works there.
+
+The upstream 0.9.16 [callback registration](https://github.com/LibVNC/x11vnc/blob/0.9.16/src/screen.c)
+registers the old X11 cut-text hook. LibVNCServer 0.9.14 dispatches extended text
+to a [separate UTF-8 callback](https://github.com/LibVNC/libvncserver/blob/LibVNCServer-0.9.14/libvncserver/rfbserver.c).
+This explains why a capability advertisement alone is insufficient; it does not
+prove the cause of the separate legacy selection failure in this fixture.
+
+## Shared resize acceptance
+
+`start-resize.sh` starts a separate TigerVNC display on loopback-published port
+15908. Keep it separate from the performance matrix: changing a benchmark
+display would invalidate later samples. Run
+`cargo test -p adit-session --test vnc_resize -- --ignored` against this fixture.
+The test proves that default local scaling leaves the server size unchanged,
+explicit remote resizing changes real pixels, and a second shared client follows
+the change and can restore the size for the original client. Both views must
+receive complete pixel coverage after each change; same-size requests retain a
+usable frame and the outstanding refresh count stays bounded.
+
+CPU supplement measurements use process user+kernel time (Windows GetProcessTimes
+or Unix child resource usage), including initial transfer and the fixed steady
+window. They are a separate run with their own runner hash; they are not UI/GPU
+latency or FPS. Timeout cases preserve the output collected before terminating
+the probe.

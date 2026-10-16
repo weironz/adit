@@ -9,6 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+static CLIPBOARD_FIXTURE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 struct ClipboardPeer {
     child: Child,
     input: ChildStdin,
@@ -16,6 +18,8 @@ struct ClipboardPeer {
 }
 impl ClipboardPeer {
     fn start(display: &str) -> Self {
+        let container =
+            std::env::var("ADIT_VNC_CLIP_CONTAINER").unwrap_or_else(|_| "adit-vnc-matrix".into());
         let mut command = if std::env::var_os("ADIT_VNC_CLIP_LOCAL").is_some() {
             let mut c = Command::new("python3");
             c.arg("-u")
@@ -30,7 +34,7 @@ impl ClipboardPeer {
             c.args([
                 "exec",
                 "-i",
-                "adit-vnc-matrix",
+                &container,
                 "python3",
                 "-u",
                 "/tmp/adit-clipboard-target.py",
@@ -80,7 +84,13 @@ impl ClipboardPeer {
         assert_eq!(self.request(&format!("SET {hex}")), "OK");
     }
     fn get(&mut self) -> String {
-        let reply = self.request("GET");
+        self.get_format("GET")
+    }
+    fn get_legacy(&mut self) -> String {
+        self.get_format("GET_LATIN1")
+    }
+    fn get_format(&mut self, command: &str) -> String {
+        let reply = self.request(command);
         if reply == "NONE" {
             return String::new();
         }
@@ -130,6 +140,7 @@ fn until(manager: &mut SessionManager, mut ready: impl FnMut(&mut SessionManager
 #[test]
 #[ignore = "requires isolated x11vnc/TigerVNC/TurboVNC and tests/vnc/clipboard_target.py"]
 fn real_extended_clipboard_exchanges_unicode_empty_text_and_direction_policies() {
+    let _fixture = CLIPBOARD_FIXTURE_LOCK.lock().unwrap();
     let port: u16 = std::env::var("ADIT_VNC_CLIP_PORT")
         .unwrap_or_else(|_| "15903".into())
         .parse()
@@ -181,5 +192,47 @@ fn real_extended_clipboard_exchanges_unicode_empty_text_and_direction_policies()
         assert!(manager.take_rdp_clipboard().is_none());
         std::thread::sleep(Duration::from_millis(20));
     }
+    manager.close(session);
+}
+
+#[test]
+#[ignore = "requires isolated X11 VNC fixture and clipboard_target.py"]
+fn real_legacy_clipboard_uses_latin1_and_reports_unsupported_text() {
+    let _fixture = CLIPBOARD_FIXTURE_LOCK.lock().unwrap();
+    let port: u16 = std::env::var("ADIT_VNC_CLIP_PORT")
+        .unwrap_or_else(|_| "15903".into())
+        .parse()
+        .unwrap();
+    let display = std::env::var("ADIT_VNC_CLIP_DISPLAY").unwrap_or_else(|_| "100".into());
+    assert!(port >= 15000, "fixture port required");
+    let mut peer = ClipboardPeer::start(&display);
+    peer.set("initial synthetic clipboard");
+    let mut profile = ConnectionProfile::new("legacy clipboard fixture", "127.0.0.1", port, "");
+    profile.protocol = Protocol::Vnc;
+    profile.vnc.clipboard_legacy = true;
+    profile.vnc.auto_reconnect = false;
+    let id = profile.id;
+    let mut manager = SessionManager::with_profiles(vec![profile]);
+    let session = manager.open_live_vnc_session(id, "adit-ci".into()).unwrap();
+    until(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
+    manager.offer_clipboard_to_active_rdp("café\nLatin-1".into());
+    until(&mut manager, |_| peer.get_legacy() == "café\nLatin-1");
+    peer.set("remote café\nsecond line");
+    until(&mut manager, |m| {
+        m.take_rdp_clipboard().as_deref() == Some("remote café\nsecond line")
+    });
+    manager.offer_clipboard_to_active_rdp("中文 unsupported".into());
+    until(&mut manager, |m| {
+        m.take_desktop_notice()
+            .is_some_and(|s| s.contains("未发送剪贴板"))
+    });
+    assert_eq!(peer.get_legacy(), "remote café\nsecond line");
+    assert!(!manager.active_vnc_diagnostics().unwrap().clipboard_utf8);
+    assert_eq!(
+        manager.active_session_summary().unwrap().status,
+        SessionStatus::Connected
+    );
     manager.close(session);
 }

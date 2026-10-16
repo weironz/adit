@@ -25,8 +25,8 @@ def tick():
                 owner.update()
                 if previous is not None: previous.destroy()
                 print("OK",flush=True)
-            elif line=="GET":
-                try: print("TEXT "+root.clipboard_get().encode("utf-8").hex(),flush=True)
+            elif line in ("GET", "GET_LATIN1"):
+                try: print("TEXT "+root.clipboard_get(**({"type":"STRING"} if line=="GET_LATIN1" else {})).encode("utf-8").hex(),flush=True)
                 except tk.TclError: print("NONE",flush=True)
             else: print("ERR",flush=True)
         except Exception: print("ERR",flush=True)

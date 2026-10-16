@@ -30,6 +30,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
             app.manager.poll_events();
+            if let Some(notice) = app.manager.take_desktop_notice() { app.notice = notice; }
             // Fatal errors stop frame subscriptions too; retire cache/hook on
             // the regular tick rather than relying on one more video frame.
             retire_vnc_connection_cache(app);
@@ -2938,6 +2939,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             2 => app.profile_vnc.clipboard_receive = value,
             3 => app.profile_vnc.auto_reconnect = value,
             4 => app.profile_vnc.resize_remote = value,
+            5 => app.profile_vnc.clipboard_legacy = value,
             _ => {},
         },
         Message::ToggleVncReadOnly => {
@@ -2965,6 +2967,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.vnc_fit = !app.vnc_fit;
         }
         Message::ToggleRdpClipboard(enabled) => {
+            app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
             app.rdp_clipboard = enabled;
             app.manager.set_rdp_clipboard(enabled);
             // Turning it off must also drop what the poll already captured,

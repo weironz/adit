@@ -805,6 +805,30 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_locked_windows_destination_cannot_destroy_a_legacy_vault_during_migration() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let (store, path) = temp_store("master_windows_locked");
+        store.save_secret("token", "synthetic retained token").unwrap();
+        let before = std::fs::read(&path).unwrap();
+        // Permit reads, but not replacement/deletion, like an external Windows
+        // reader that has not opted in to FILE_SHARE_DELETE.
+        let held = std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+        assert!(store.enable_master_password(MASTER).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert_eq!(store.load_secret("token").unwrap().as_deref(), Some("synthetic retained token"));
+        drop(held);
+        let backup = store.enable_master_password(MASTER).unwrap();
+        assert_eq!(std::fs::read(&backup).unwrap(), before);
+        let cold = CredentialStore::with_path("adit-test", &path);
+        assert!(matches!(cold.load_secret("token"), Err(CredentialError::Locked)));
+        cold.unlock(MASTER).unwrap();
+        assert_eq!(cold.load_secret("token").unwrap().as_deref(), Some("synthetic retained token"));
+        std::fs::remove_file(path).unwrap();
+        std::fs::remove_file(backup).unwrap();
+    }
+
     #[test]
     fn external_replacement_locks_cache_and_deletion_does_not_downgrade() {
         let (store, path) = temp_store("master_external");

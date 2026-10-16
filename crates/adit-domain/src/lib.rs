@@ -142,6 +142,8 @@ pub struct VncOptions {
     pub read_only: bool,
     pub clipboard_send: bool,
     pub clipboard_receive: bool,
+    /// Opt out of broken Extended Clipboard advertisements on legacy servers.
+    pub clipboard_legacy: bool,
     pub auto_reconnect: bool,
     pub resize_remote: bool,
     pub gateway_profile: Option<ProfileId>,
@@ -156,6 +158,7 @@ impl Default for VncOptions {
             read_only: false,
             clipboard_send: true,
             clipboard_receive: true,
+            clipboard_legacy: false,
             auto_reconnect: true,
             resize_remote: false,
             gateway_profile: None,

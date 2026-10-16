@@ -402,6 +402,7 @@ pub struct SessionManager {
     /// per session because the system clipboard is itself a single slot: the
     /// most recent remote copy wins, exactly as it would between two local apps.
     pending_rdp_clipboard: Option<String>,
+    pending_desktop_notice: Option<(SessionId, String)>,
     /// Byte ranges the remote asked for, waiting for the UI to read them off
     /// disk. A `Vec` rather than the single slot the clipboard text uses: a
     /// paste of several files has several streams open at once, and dropping
@@ -492,6 +493,7 @@ impl SessionManager {
             tunnels: Vec::new(),
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
+            pending_desktop_notice: None,
             pending_rdp_file_reads: Vec::new(),
             pending_rdp_clipboard_image: None,
             pending_rdp_clipboard_files: None,
@@ -1901,8 +1903,14 @@ impl SessionManager {
         self.send_rdp_input_to_active(RdpInput::ClipboardText(text));
     }
 
-    /// Take text a remote desktop copied, for the UI to put on the real Windows
-    /// clipboard. Returns `None` when nothing new arrived.
+    /// Take a nonfatal notice for the active desktop, discarding stale-tab notices.
+    #[must_use]
+    pub fn take_desktop_notice(&mut self) -> Option<String> {
+        self.pending_desktop_notice.take().filter(|(id, _)| self.active_session == Some(*id)).map(|(_, message)| message)
+    }
+
+    /// Take text a remote desktop copied, for the UI to put on the system clipboard.
+    /// Returns `None` when nothing new arrived.
     #[must_use]
     pub fn take_rdp_clipboard(&mut self) -> Option<String> {
         self.pending_rdp_clipboard.take()
@@ -3285,6 +3293,11 @@ impl SessionManager {
                     RdpClientEvent::Connected { .. } => {
                         record.summary.status = SessionStatus::Connected;
                         record.desktop_error = None;
+                    }
+                    RdpClientEvent::Notice(message) => {
+                        if self.active_session == Some(record.summary.id) {
+                            self.pending_desktop_notice = Some((record.summary.id, message));
+                        }
                     }
                     RdpClientEvent::Resized { .. } => {}
                     RdpClientEvent::GatewayHostKey(prompt) => record.pending_host_key = Some(prompt),

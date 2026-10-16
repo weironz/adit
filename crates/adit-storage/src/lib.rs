@@ -1676,6 +1676,7 @@ Host db
         let migrated:ConnectionProfile=serde_json::from_value(legacy).unwrap();
         assert_eq!(migrated.vnc.security,VncSecurity::RequireVncAuth);
         assert!(!migrated.vnc.resize_remote);
+        assert!(!migrated.vnc.clipboard_legacy);
         let mut partial=serde_json::to_value(&vnc).unwrap();
         partial["vnc"]=serde_json::json!({"read_only":true});
         let partial:ConnectionProfile=serde_json::from_value(partial).unwrap();
@@ -1690,6 +1691,7 @@ Host db
         vnc.vnc.read_only=true;
         vnc.vnc.clipboard_send=false;
         vnc.vnc.clipboard_receive=false;
+        vnc.vnc.clipboard_legacy=true;
         vnc.vnc.auto_reconnect=false;
         vnc.vnc.resize_remote=true;
         vnc.vnc.gateway_profile=Some(gateway.id);

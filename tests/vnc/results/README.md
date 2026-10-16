@@ -24,3 +24,9 @@ These are headless debug-build session measurements. They do not establish GPU
 presentation FPS, mouse-to-photon latency, reliable P95, or Windows server
 compatibility. WAN/JPEG quality must not be assumed to reduce bytes or CPU for
 every server/workload. See [fixture method](../README.md).
+
+## Completed steady-window matrix
+
+[2026-10-17 Linux report](2026-10-17-linux-steady-report.md) summarizes all 360
+successful observations with per-cell medians/min/max and explicit measurement
+limits. The raw JSON and fixed binary identity remain beside it.

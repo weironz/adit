@@ -2826,6 +2826,13 @@ mod tests {
         app.rdp_clipboard_offered = None;
         let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), 0, Some("stale".into())));
         assert!(app.rdp_clipboard_offered.is_none());
+        let profile = app.manager.profiles()[0].id;
+        let session = app.manager.open_mock_session(profile).unwrap();
+        let epoch = app.desktop_clipboard_epoch;
+        let _ = update(&mut app, Message::ToggleRdpClipboard(false));
+        let _ = update(&mut app, Message::ToggleRdpClipboard(true));
+        let _ = update(&mut app, Message::RdpClipboardPolled(session, epoch, Some("captured before off/on".into())));
+        assert!(app.rdp_clipboard_offered.is_none());
         app.rdp_clipboard = false;
         let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), 0, Some("disabled".into())));
         assert!(app.rdp_clipboard_offered.is_none());

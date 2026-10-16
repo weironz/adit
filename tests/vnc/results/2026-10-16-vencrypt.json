@@ -1,0 +1,55 @@
+{
+  "source_commit": "d76f7440515b65d1123ea42de338ca2eaa87b09d",
+  "probe_sha256": "bc9a0963960c3df8179b82a6a5ec9d27a6771c575464ef5af3519e7c1874f878",
+  "ca_scope": "isolated one-day CA, localhost DNS SAN only",
+  "results": [
+    {
+      "server": "TigerVNC 1.13.1",
+      "case": "valid",
+      "expected": "connected",
+      "exit": 0,
+      "stdout": "connected_ms=2203\nelapsed_ms=2212 generation=1 coverage=0.0%\nfirst_paint_ms=2325 size=800x600\ncomplete_paint_ms=2325 generation=2\ndiagnostics=Some(VncDiagnostics { tcp_ms: 2029, handshake_ms: 2201, first_pixel_ms: Some(2307), first_complete_ms: Some(2211), complete_updates: 2, wire_bytes: 80, pending_updates: 1, fence_rtt_ms: Some(2), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(2313), sampled_generation: 2, queue_high_water: 0, security: \"X509Vnc\", encoding: \"[(7, 1), (-224, 1)]\", clipboard_utf8: true, status: \"已连接\" })\ncomplete=true\nsample_ms=3327 steady_ms=1001\n",
+      "stderr": ""
+    },
+    {
+      "server": "TigerVNC 1.13.1",
+      "case": "wrong_name",
+      "expected": "rejected",
+      "exit": 1,
+      "stdout": "diagnostics=Some(VncDiagnostics { tcp_ms: 2, handshake_ms: 0, first_pixel_ms: None, first_complete_ms: None, complete_updates: 0, wire_bytes: 0, pending_updates: 0, fence_rtt_ms: None, painted_pixels: 0, covered_pixels: 0, framebuffer_pixels: 0, first_covered_ms: None, sampled_generation: 0, queue_high_water: 0, security: \"\", encoding: \"\", clipboard_utf8: false, status: \"\" })\ncomplete=false\nsample_ms=33 steady_ms=0\n",
+      "stderr": "error: VNC TLS/证书验证失败: invalid peer certificate: certificate not valid for name \"127.0.0.1\"; certificate is only valid for DnsName(\"localhost\")\n"
+    },
+    {
+      "server": "TigerVNC 1.13.1",
+      "case": "unknown_issuer",
+      "expected": "rejected",
+      "exit": 1,
+      "stdout": "diagnostics=Some(VncDiagnostics { tcp_ms: 2043, handshake_ms: 0, first_pixel_ms: None, first_complete_ms: None, complete_updates: 0, wire_bytes: 0, pending_updates: 0, fence_rtt_ms: None, painted_pixels: 0, covered_pixels: 0, framebuffer_pixels: 0, first_covered_ms: None, sampled_generation: 0, queue_high_water: 0, security: \"\", encoding: \"\", clipboard_utf8: false, status: \"\" })\ncomplete=false\nsample_ms=2064 steady_ms=0\n",
+      "stderr": "error: VNC TLS/证书验证失败: invalid peer certificate: UnknownIssuer\n"
+    },
+    {
+      "server": "TurboVNC 3.3.1",
+      "case": "valid",
+      "expected": "connected",
+      "exit": 0,
+      "stdout": "connected_ms=2307\nelapsed_ms=2315 generation=1 coverage=0.0%\nfirst_paint_ms=2367 size=800x600\ncomplete_paint_ms=2386 generation=5\ndiagnostics=Some(VncDiagnostics { tcp_ms: 2046, handshake_ms: 2306, first_pixel_ms: Some(2355), first_complete_ms: Some(2335), complete_updates: 2, wire_bytes: 128, pending_updates: 1, fence_rtt_ms: Some(30), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(2385), sampled_generation: 5, queue_high_water: 0, security: \"X509Vnc\", encoding: \"[(-239, 1), (7, 4), (-224, 1)]\", clipboard_utf8: true, status: \"已连接\" })\ncomplete=true\nsample_ms=3389 steady_ms=1003\n",
+      "stderr": ""
+    },
+    {
+      "server": "TurboVNC 3.3.1",
+      "case": "wrong_name",
+      "expected": "rejected",
+      "exit": 1,
+      "stdout": "diagnostics=Some(VncDiagnostics { tcp_ms: 3, handshake_ms: 0, first_pixel_ms: None, first_complete_ms: None, complete_updates: 0, wire_bytes: 0, pending_updates: 0, fence_rtt_ms: None, painted_pixels: 0, covered_pixels: 0, framebuffer_pixels: 0, first_covered_ms: None, sampled_generation: 0, queue_high_water: 0, security: \"\", encoding: \"\", clipboard_utf8: false, status: \"\" })\ncomplete=false\nsample_ms=135 steady_ms=0\n",
+      "stderr": "error: VNC TLS/证书验证失败: invalid peer certificate: certificate not valid for name \"127.0.0.1\"; certificate is only valid for DnsName(\"localhost\")\n"
+    },
+    {
+      "server": "TurboVNC 3.3.1",
+      "case": "unknown_issuer",
+      "expected": "rejected",
+      "exit": 1,
+      "stdout": "diagnostics=Some(VncDiagnostics { tcp_ms: 2061, handshake_ms: 0, first_pixel_ms: None, first_complete_ms: None, complete_updates: 0, wire_bytes: 0, pending_updates: 0, fence_rtt_ms: None, painted_pixels: 0, covered_pixels: 0, framebuffer_pixels: 0, first_covered_ms: None, sampled_generation: 0, queue_high_water: 0, security: \"\", encoding: \"\", clipboard_utf8: false, status: \"\" })\ncomplete=false\nsample_ms=2178 steady_ms=0\n",
+      "stderr": "error: VNC TLS/证书验证失败: invalid peer certificate: UnknownIssuer\n"
+    }
+  ]
+}

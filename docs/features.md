@@ -84,7 +84,9 @@ password, policy and certificate failures stop that retry path.
 
 Clipboard text uses negotiated Extended Clipboard UTF-8 for Chinese/emoji/multiline
 and empty strings, with bounded inflation. Legacy servers use Latin-1 and reject
-unrepresentable outgoing characters. Per-profile send/receive policies and the live
+unrepresentable outgoing characters with a visible nonfatal notice. A per-profile
+Latin-1 compatibility option omits Extended Clipboard negotiation for problematic
+peers; it does not add Unicode support to legacy servers. Per-profile send/receive policies and the live
 clipboard switch gate automatic protocol replies as well as explicit offers; queued
 old text becomes invalid when permissions change. Read-only mode releases held
 keys/buttons and blocks keyboard, pointer, wheel and outgoing clipboard; receiving
