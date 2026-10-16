@@ -2766,6 +2766,34 @@ mod tests {
     }
 
     #[test]
+    fn a_vnc_reconnect_clears_same_tab_pixels_cursor_and_held_key_cache() {
+        let mut app=drag_test_app();
+        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut profile=ConnectionProfile::new("reconnect cache","127.0.0.1",listener.local_addr().unwrap().port(),"");
+        profile.protocol=Protocol::Vnc;
+        let id=profile.id;
+        app.manager=SessionManager::with_profiles(vec![profile]);
+        let session=app.manager.open_live_vnc_session(id,String::new()).unwrap();
+        app.rdp_frame_session=Some(session);
+        let frame=adit_session::RdpFrame{width:2,height:2,rgba:vec![255;16],generation:9};
+        app.rdp_tiles=split_into_tiles(&frame);
+        app.rdp_tiles_prev=split_into_tiles(&frame);
+        app.rdp_surface_size=Some((2,2));
+        app.rdp_frame_generation=9;
+        app.vnc_cursor=Some(adit_session::VncCursor{width:1,height:1,rgba:vec![255;4],generation:1,..Default::default()});
+        app.vnc_cursor_handle=Some(iced::widget::image::Handle::from_rgba(1,1,vec![255;4]));
+        app.vnc_pressed_keys.push((Physical::Code(Code::KeyA),0x61));
+        let _=update(&mut app,Message::RdpTick);
+        assert!(app.rdp_tiles.is_empty());
+        assert!(app.rdp_tiles_prev.is_empty());
+        assert!(app.rdp_surface_size.is_none());
+        assert!(app.vnc_cursor.is_none());
+        assert!(app.vnc_cursor_handle.is_none());
+        assert!(app.vnc_pressed_keys.is_empty());
+        app.manager.close(session);
+    }
+
+    #[test]
     fn vnc_releases_the_original_keysym_after_shift_or_focus_changes() {
         let mut app = drag_test_app();
         let physical = Physical::Code(Code::KeyA);

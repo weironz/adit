@@ -78,6 +78,13 @@ fn message(stream: &mut TcpStream) -> Option<(u8, Vec<u8>)> {
         3 => read::<9>(stream).to_vec(),
         4 => read::<7>(stream).to_vec(),
         5 => read::<5>(stream).to_vec(),
+        248 => {
+            let header = read::<8>(stream);
+            let mut payload = vec![0; usize::from(header[7])];
+            assert!(payload.len() <= 64);
+            stream.read_exact(&mut payload).unwrap();
+            [header.as_slice(), payload.as_slice()].concat()
+        }
         6 => {
             let header = read::<7>(stream);
             let len = u32::from_be_bytes(header[3..7].try_into().unwrap()) as usize;
@@ -330,7 +337,8 @@ fn real_vnc_server_authenticates_and_paints() {
     let session = manager.open_live_vnc_session(id, password).unwrap();
     wait(&mut manager, |m| {
         m.active_session_summary().unwrap().status == SessionStatus::Connected
-            && m.active_rdp_frame_if_newer(1).is_some()
+            // Tight can deliver the white input window before the red background.
+            && m.active_vnc_diagnostics().is_some_and(|d| d.first_covered_ms.is_some())
     });
     let frame = manager.active_rdp_frame_if_newer(0).unwrap();
     assert_eq!((frame.width, frame.height), (800, 600));
@@ -508,4 +516,109 @@ fn dropped_transport_reconnects_the_same_tab_and_manual_close_stops_retry() {
     assert_eq!(manager.active_session_summary().unwrap().id,session);
     assert!(manager.active_vnc_read_only());
     manager.close(session); server.join().unwrap();
+}
+
+#[test]
+fn an_initially_readonly_session_never_emits_input_even_during_close() {
+    let (wire_tx, wire_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init(&mut stream);
+        while let Some((tag, data)) = message(&mut stream) {
+            if matches!(tag, 4..=6) {
+                let _ = wire_tx.send((tag, data));
+            }
+        }
+    });
+    let (mut manager, id) = manager(port);
+    let mut profile = manager.profile(id).unwrap().clone();
+    profile.vnc.read_only = true;
+    manager.save_vnc_profile(profile).unwrap();
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
+    manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 3, y: 1 });
+    manager.send_vnc_key_to_active(0x61, true);
+    manager.offer_clipboard_to_active_rdp("must not send".into());
+    manager.close(session);
+    server.join().unwrap();
+    assert!(
+        wire_rx.try_recv().is_err(),
+        "readonly session emitted an unsolicited input packet"
+    );
+}
+
+#[test]
+fn fence_keeps_an_idle_desktop_alive_and_detects_a_controlled_half_open_peer() {
+    use std::sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    };
+    let respond = Arc::new(AtomicBool::new(true));
+    let server_respond = Arc::clone(&respond);
+    let (ping_tx, ping_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        stream
+            .set_read_timeout(Some(Duration::from_secs(60)))
+            .unwrap();
+        init(&mut stream);
+        let mut announced = false;
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag == 3 && !announced {
+                announced = true;
+                stream.write_all(&[0, 0, 0, 0]).unwrap();
+                stream.write_all(&[248, 0, 0, 0, 0x80, 0, 0, 0, 0]).unwrap();
+            }
+            if tag == 248 && data[3] & 0x80 != 0 {
+                let _ = ping_tx.send(());
+                if server_respond.load(Ordering::Acquire) {
+                    let mut reply = vec![248, 0, 0, 0, 0, 0, 0, 0, data[7]];
+                    reply.extend_from_slice(&data[8..]);
+                    stream.write_all(&reply).unwrap();
+                }
+            }
+        }
+    });
+    let (mut manager, id) = manager(port);
+    let mut profile = manager.profile(id).unwrap().clone();
+    profile.vnc.auto_reconnect = true;
+    profile.vnc.read_only = true;
+    manager.save_vnc_profile(profile).unwrap();
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
+    ping_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    let healthy = Instant::now();
+    while healthy.elapsed() < Duration::from_secs(21) {
+        manager.poll_events();
+        assert_eq!(
+            manager.active_session_summary().unwrap().status,
+            SessionStatus::Connected
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert!(manager
+        .active_vnc_diagnostics()
+        .unwrap()
+        .fence_rtt_ms
+        .is_some());
+    respond.store(false, Ordering::Release);
+    let stalled = Instant::now();
+    loop {
+        manager.poll_events();
+        if manager.active_session_summary().unwrap().status == SessionStatus::Connecting {
+            break;
+        }
+        assert!(
+            stalled.elapsed() < Duration::from_secs(24),
+            "half-open connection was not detected"
+        );
+        thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(manager.sessions().len(), 1);
+    assert!(manager.active_vnc_read_only());
+    manager.close(session);
+    server.join().unwrap();
+    assert!(manager.sessions().is_empty());
 }

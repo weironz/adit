@@ -430,11 +430,10 @@ impl Worker {
             tokio::task::JoinHandle<Result<vnc::DesktopLayout, vnc::ResizeError>>,
         > = None;
         let mut requested_size = None;
+        let result = async {
         loop {
             tokio::select! {
                 _ = self.stopped.changed() => {
-                    release(client, &mut pointer, &mut keys).await;
-                    if let Some(task) = resize_task.take() { task.abort(); }
                     return Ok(());
                 }
                 command = self.commands.recv() => {
@@ -592,6 +591,14 @@ impl Worker {
                 }
             }
         }
+        }.await;
+        // Every exit releases ownership, including a decoder/protocol failure.
+        // Dropping a JoinHandle alone would leave its resize task running.
+        if let Some(task) = resize_task.take() {
+            task.abort();
+        }
+        release(client, &mut pointer, &mut keys).await;
+        result
     }
     fn paint(&self, rect: Rect, rgba: &[u8], start: Instant) {
         if let Ok(mut surface) = self.surface.lock() {
@@ -610,6 +617,7 @@ async fn release(client: &VncClient, pointer: &mut Pointer, keys: &mut HashSet<u
     // One deadline for the complete release batch: close must remain bounded
     // even if a peer stops reading with many physical keys held down.
     let held: Vec<_> = keys.drain().collect();
+    let had_buttons = pointer.buttons != 0;
     pointer.buttons = 0;
     let pointer_up = pointer.event(0);
     let _ = tokio::time::timeout(Duration::from_millis(500), async {
@@ -618,7 +626,9 @@ async fn release(client: &VncClient, pointer: &mut Pointer, keys: &mut HashSet<u
                 .input(X11Event::KeyEvent((keysym, false).into()))
                 .await;
         }
-        let _ = client.input(pointer_up).await;
+        if had_buttons {
+            let _ = client.input(pointer_up).await;
+        }
     })
     .await;
 }

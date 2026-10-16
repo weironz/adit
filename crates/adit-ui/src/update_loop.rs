@@ -210,13 +210,34 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.vnc_cursor_handle = None;
                 app.vnc_grab_keys = false;
             }
-            if app.manager.active_is_vnc() {
+            let vnc_not_connected = app.manager.active_is_vnc()
+                && app.manager.active_session_summary().is_none_or(|s| s.status != SessionStatus::Connected);
+            if vnc_not_connected {
+                // Reconnect retains the tab id, but neither its pixels nor its
+                // cursor generation belongs to the next authenticated connection.
+                app.rdp_tiles.clear();
+                app.rdp_tiles_prev.clear();
+                app.rdp_surface_size = None;
+                app.rdp_surface_size_prev = None;
+                app.rdp_frame_generation = 0;
+                app.rdp_frame_uploaded = None;
+                app.vnc_cursor = None;
+                app.vnc_cursor_handle = None;
+                app.vnc_pressed_keys.clear();
+                app.vnc_preedit = None;
+                app.vnc_grab_keys = false;
+                keyboard_hook::disarm();
+            }
+            if app.manager.active_is_vnc() && !vnc_not_connected {
                 if let Some(cursor) = app.manager.active_vnc_cursor() {
                     if app.vnc_cursor.as_ref().is_none_or(|old| old.generation != cursor.generation) {
                         app.vnc_cursor_handle = (cursor.width > 0 && cursor.height > 0).then(||
                             iced::widget::image::Handle::from_rgba(u32::from(cursor.width), u32::from(cursor.height), cursor.rgba.clone()));
                         app.vnc_cursor = Some(cursor);
                     }
+                } else {
+                    app.vnc_cursor = None;
+                    app.vnc_cursor_handle = None;
                 }
             }
             // Sample the active RDP framebuffer; rebuild the GPU image handle only
@@ -235,7 +256,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             let due = app
                 .rdp_frame_uploaded
                 .is_none_or(|at| at.elapsed() >= RDP_FRAME_MIN_INTERVAL);
-            if due {
+            if due && !vnc_not_connected {
                 if let Some(frame) = app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation) {
                     app.rdp_frame_generation = frame.generation;
                     app.rdp_frame_uploaded = Some(Instant::now());

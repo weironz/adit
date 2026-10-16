@@ -1667,6 +1667,42 @@ Host db
     }
 
     #[test]
+    fn vnc_policies_roundtrip_and_legacy_profiles_require_explicit_none_permission() {
+        use adit_domain::{Protocol,VncSecurity,VncQuality};
+        let mut vnc=ConnectionProfile::new("desktop","127.0.0.1",5901,"");
+        vnc.protocol=Protocol::Vnc;
+        let mut legacy=serde_json::to_value(&vnc).unwrap();
+        legacy.as_object_mut().unwrap().remove("vnc");
+        let migrated:ConnectionProfile=serde_json::from_value(legacy).unwrap();
+        assert_eq!(migrated.vnc.security,VncSecurity::RequireVncAuth);
+        assert!(!migrated.vnc.resize_remote);
+        let mut partial=serde_json::to_value(&vnc).unwrap();
+        partial["vnc"]=serde_json::json!({"read_only":true});
+        let partial:ConnectionProfile=serde_json::from_value(partial).unwrap();
+        assert!(partial.vnc.read_only);
+        assert!(partial.vnc.clipboard_receive);
+        assert_eq!(partial.vnc.security,VncSecurity::RequireVncAuth);
+        let mut gateway=ConnectionProfile::new("gateway","127.0.0.1",2222,"fixture-user");
+        gateway.protocol=Protocol::Ssh;
+        vnc.vnc.security=VncSecurity::RequireTls;
+        vnc.vnc.tls_ca_file="fixture-ca.pem".into();
+        vnc.vnc.quality=VncQuality::Wan;
+        vnc.vnc.read_only=true;
+        vnc.vnc.clipboard_send=false;
+        vnc.vnc.clipboard_receive=false;
+        vnc.vnc.auto_reconnect=false;
+        vnc.vnc.resize_remote=true;
+        vnc.vnc.gateway_profile=Some(gateway.id);
+        let path=env::temp_dir().join(format!("adit-vnc-policy-{}.json",SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
+        let store=ProfileStore::new(&path);
+        store.save_profiles(&[vnc.clone(),gateway.clone()]).unwrap();
+        let loaded=store.load_profiles().unwrap();
+        assert_eq!(serde_json::to_value(&loaded[0]).unwrap(),serde_json::to_value(&vnc).unwrap());
+        assert_eq!(serde_json::to_value(&loaded[1]).unwrap(),serde_json::to_value(&gateway).unwrap());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
     fn loads_legacy_profiles_without_auth_fields() {
         let unique = SystemTime::now()
             .duration_since(UNIX_EPOCH)
