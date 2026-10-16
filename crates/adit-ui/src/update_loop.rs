@@ -2,6 +2,7 @@ use super::*;
 
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
     match message {
+        Message::Vault(message) => return vault_ui::update(app, message),
         Message::Tick => {
             // Auto-sync, when it is on and something is due. Two clocks, because
             // they answer different questions: the debounce pushes what was just
@@ -380,6 +381,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloseSettings => {
             app.settings_open = false;
+            app.vault_ui.clear_secrets();
         }
         Message::SettingsCategoryPicked(category) => {
             app.settings_category = category;

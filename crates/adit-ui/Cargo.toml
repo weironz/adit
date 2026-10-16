@@ -23,6 +23,7 @@ iced.workspace = true
 regex = "1"
 rfd = "0.15"
 serde_json.workspace = true
+zeroize.workspace = true
 unicode-width = "0.2"
 time = { version = "0.3", features = ["local-offset"] }
 tokio.workspace = true

@@ -1,6 +1,6 @@
 mod credentials;
 
-pub use credentials::{CredentialError, CredentialStore};
+pub use credentials::{CredentialError, CredentialProtection, CredentialStore};
 
 use adit_domain::{ConnectionProfile, ProfileId};
 use serde::{Deserialize, Serialize};

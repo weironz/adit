@@ -59,14 +59,14 @@ Passwords and key passphrases are stored **encrypted at rest** in `credentials.j
 - The config directory is relocatable, so pointing it at a synced folder carries credentials between machines. This replaced an OS-keyring store, which was machine-local and therefore lost passwords on every other machine.
 - Secrets an older build left in the OS keyring are imported once at startup.
 
-**Security model — do not overstate this.** The KDF's only secret input is a key **built into the binary**; there is no master password (a deliberate trade-off for zero-setup syncing). That keeps credentials out of plaintext on disk, out of backups, and un-greppable — but **anyone with the file and the (open-source) key can recover every password**. It is obfuscation, not secrecy. The KDF is shaped so a real user passphrase could be mixed in later without a file-format change; only that would make it genuinely secret.
+**Security model.** The default v1 compatibility mode uses a public built-in KDF input and provides obfuscation only: anyone holding the file and the program can recover its secrets. Optional v2 master-password protection derives its key from the user's secret, starts locked, and never falls back to the built-in key. Settings provides enable/unlock/lock/change/disable and encrypted export/import operations. Migration preserves a verified backup; an old v1 backup keeps its original weak protection. Read [the credential security design](docs/credential-security.md) for recovery, live-session memory and cloud-conflict boundaries.
 
 ## Features
 
 - Connection profiles with folders/groups: create, edit, delete, drag-reorder, sort, rename group, filter.
 - Authentication: password, keyboard-interactive (MFA-aware), public key (`~/.ssh` defaults or an explicit identity file), and SSH agent (Windows OpenSSH pipe / Pageant, Unix `SSH_AUTH_SOCK`).
 - Host-key security: interactive first-use confirmation showing the SHA256 fingerprint, with a changed-key (MITM) warning; verified keys are stored in a per-app `known_hosts`.
-- Secrets: optional password persistence in the OS credential vault (never in profile JSON).
+- Secrets: optional password persistence in the local encrypted credential file, with optional master-password protection (never in profile JSON).
 - Real ANSI/VT terminal: 16/256/truecolor + attributes, cursor motion, erase/scroll regions, alternate screen, scrollback, wide (CJK) glyphs.
 - Terminal UX: raw keyboard routing (Ctrl/Alt/function/navigation keys), mouse selection + copy/paste, scrollback navigation, automatic PTY resize.
 - Multi-tab workspace, keepalive, and auto-reconnect with exponential backoff on unexpected drops.

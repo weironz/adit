@@ -382,11 +382,13 @@ config directory — XChaCha20-Poly1305, Argon2id-derived key, fresh nonce per w
 atomic writes, `0600` on Unix. Secrets from the older OS-keyring store are imported once
 on startup. Saving is on by default; a rejected password re-prompts automatically.
 
-> **The security model is obfuscation, not secrecy.** The key is compiled into the
-> binary and there is no master password — a deliberate trade-off so credentials sync
-> between machines with zero setup. Anyone holding the file *and* the open-source key
-> can recover every password. See
-> [decisions.md](decisions.md#8-credentials-encrypted-in-the-config-directory-not-the-os-keyring--reversal).
+Default v1 compatibility mode is obfuscation: its KDF input is public in the binary.
+Optional v2 derives a key from a user master password and starts locked. Settings
+supports enable/unlock/lock/change/disable and encrypted export/import. Migration
+verifies a backup and candidate before atomic replacement; cloud vault conflicts
+refuse silent overwrite. Existing sessions may retain authentication copies after
+vault locking. See [credential-security.md](credential-security.md) for the complete
+memory, backup, synchronization and recovery boundaries.
 
 The RDP password reaches the helper over **stdin, never argv or env** (argv is visible
 in the process list). Passwords are never written to `profiles.json`.

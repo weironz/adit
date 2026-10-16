@@ -2247,7 +2247,7 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     );
 
     let body: Element<'_, Message> = match app.settings_category {
-        SettingsCategory::App => column![language_card, config_section].spacing(10).into(),
+        SettingsCategory::App => column![language_card, config_section, vault_ui::view(app)].spacing(10).into(),
         SettingsCategory::Appearance => appearance_section(app),
         SettingsCategory::Terminal => mouse_section,
         SettingsCategory::Logging => log_section,

@@ -176,6 +176,20 @@ pub fn sync(
         // become the ancestor, which is the failure this whole design avoids.
         let merged = three_way(base, local, &remote_catalog);
 
+        // Credentials are an opaque encrypted vault, not mergeable profile data.
+        // Never silently replace another device's vault (including v2 -> v1).
+        if let (Some(local_credentials), Some((remote, _))) = (&extras.credentials, &fetched) {
+            if remote.credentials.as_ref().is_some_and(|value| value != local_credentials) {
+                return Err(SyncError::Remote { provider: backend.provider().to_owned(),
+                    message: "云端与本机凭据库不同，未覆盖。请先导出备份并显式导入确认要保留的凭据库，或关闭凭据同步。".into() });
+            }
+        }
+        let remote_credentials = fetched.as_ref().and_then(|(doc,_)|doc.credentials.clone());
+        let desired_credentials = extras.credentials.clone().or_else(||remote_credentials.clone());
+        let credentials_equal = desired_credentials == remote_credentials;
+        let settings_equal = extras.settings.as_ref().is_none_or(|settings| fetched.as_ref().is_some_and(|(doc,_)|
+            serde_json::to_value(&doc.settings).ok() == serde_json::to_value(Some(settings)).ok()));
+
         // The brake. Propagating a deletion is deliberate (see the merge
         // rules), but a sync that empties a populated machine is a different
         // animal: every deletion in that result came from the other side, and
@@ -193,7 +207,7 @@ pub fn sync(
         // Both sides already agree: record the ancestor and stop. This still
         // advances `base`, which is correct — the provider just told us what it
         // holds, so it is confirmed by definition.
-        if same_catalog(&merged.catalog, &remote_catalog) && same_catalog(&merged.catalog, local) {
+        if same_catalog(&merged.catalog, &remote_catalog) && same_catalog(&merged.catalog, local) && credentials_equal && settings_equal {
             store.save(&SyncState {
                 base: merged.catalog.clone(),
                 revision: remote_revision.unwrap_or_default(),
@@ -209,8 +223,8 @@ pub fn sync(
 
         let mut document =
             SyncDocument::new(merged.catalog.clone(), device.to_owned(), now.to_owned());
-        document.settings = extras.settings.clone();
-        document.credentials = extras.credentials.clone();
+        document.settings = extras.settings.clone().or_else(|| fetched.as_ref().and_then(|(doc, _)| doc.settings.clone()));
+        document.credentials = desired_credentials;
 
         match backend.push(&document, remote_revision.as_ref()) {
             Ok(_) => {}
@@ -627,4 +641,33 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn different_encrypted_vaults_never_overwrite_even_if_catalogues_match() {
+        let (store, _dir) = state_store();
+        let local = catalog(vec![profile("same")]);
+        let mut document = SyncDocument::new(local.clone(), "other".into(), "now".into());
+        document.credentials = Some("remote-v2-ciphertext".into());
+        let mut backend = Fake { remote: Some(document), ..Default::default() };
+        let extras = Extras { credentials: Some("different-local-v1-ciphertext".into()), ..Default::default() };
+        let result = sync(&mut backend, &store, &local, &extras, "local", "now");
+        assert!(matches!(result, Err(SyncError::Remote { .. })));
+        assert_eq!(backend.pushes, 0);
+        assert_eq!(backend.remote.unwrap().credentials.as_deref(), Some("remote-v2-ciphertext"));
+    }
+
+    #[test]
+    fn credentials_only_backup_is_uploaded_and_disabled_sync_preserves_remote_vault() {
+        let (store, _dir) = state_store();
+        let local = catalog(vec![profile("same")]);
+        let document = SyncDocument::new(local.clone(), "other".into(), "now".into());
+        let mut backend = Fake { remote: Some(document), ..Default::default() };
+        let extras = Extras { credentials: Some("synthetic-ciphertext".into()), ..Default::default() };
+        assert!(sync(&mut backend, &store, &local, &extras, "local", "now").unwrap().uploaded);
+        assert_eq!(backend.remote.as_ref().unwrap().credentials.as_deref(), Some("synthetic-ciphertext"));
+        let mut changed = local.clone();
+        changed.profiles[0].name = "edited profile".into();
+        assert!(sync(&mut backend, &store, &changed, &Extras::default(), "local", "next").unwrap().uploaded);
+        assert_eq!(backend.remote.unwrap().credentials.as_deref(), Some("synthetic-ciphertext"));
+    }
+
 }

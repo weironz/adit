@@ -61,6 +61,7 @@ mod clipboard_files;
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
 mod keyboard_hook;
+mod vault_ui;
 mod workspace;
 use workspace::*;
 mod sidebar;
@@ -133,6 +134,7 @@ pub struct AditApp {
     manager: SessionManager,
     profile_store: ProfileStore,
     credential_store: CredentialStore,
+    vault_ui: vault_ui::State,
     selected_profile: Option<ProfileId>,
     hovered_profile: Option<ProfileId>,
     dragged_profile: Option<ProfileId>,
@@ -695,6 +697,7 @@ pub enum MenuCommand {
 
 #[derive(Debug, Clone)]
 pub enum Message {
+    Vault(vault_ui::Message),
     Tick,
     // RDP: per-frame surface sampling + input over the graphical surface.
     RdpTick,
@@ -1459,6 +1462,7 @@ impl AditApp {
             manager,
             profile_store,
             credential_store: CredentialStore::default(),
+            vault_ui: vault_ui::State::default(),
             selected_profile,
             hovered_profile: None,
             dragged_profile: None,
