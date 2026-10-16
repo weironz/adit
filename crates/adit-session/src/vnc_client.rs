@@ -1,17 +1,18 @@
 //! VNC owns a Tokio runtime off the UI thread. Only the latest framebuffer is
 //! retained, so a hidden tab cannot build an unbounded queue of desktop images.
 
+use std::collections::VecDeque;
 use std::sync::{mpsc as std_mpsc, Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{watch, Notify};
 use vnc::{PixelFormat, Rect, VncClient, VncConnector, VncEncoding, VncError, VncEvent, X11Event};
 
 use crate::rdp_client::Surface;
 use crate::{RdpClientEvent, RdpFrame, RdpInput, RdpMouseButton};
 
 pub(super) struct VncClientHandle {
-    commands: mpsc::Sender<Command>,
+    commands: Arc<CommandQueue>,
     stop: watch::Sender<bool>,
     events: std_mpsc::Receiver<RdpClientEvent>,
     errors: std_mpsc::Sender<RdpClientEvent>,
@@ -23,9 +24,49 @@ enum Command {
     Key { keysym: u32, pressed: bool },
 }
 
+// Coalesce only adjacent motion. A button/key/scroll seals the preceding
+// coordinates so clicks and drag boundaries retain their exact wire order.
+#[derive(Default)]
+struct CommandQueue {
+    pending: Mutex<VecDeque<Command>>,
+    ready: Notify,
+}
+
+impl CommandQueue {
+    fn push(&self, command: Command) -> bool {
+        let mut pending = self.pending.lock().unwrap();
+        if matches!(command, Command::Input(RdpInput::MouseMove { .. }))
+            && matches!(
+                pending.back(),
+                Some(Command::Input(RdpInput::MouseMove { .. }))
+            )
+        {
+            *pending.back_mut().unwrap() = command;
+        } else {
+            if pending.len() >= 256 {
+                return false;
+            }
+            pending.push_back(command);
+        }
+        drop(pending);
+        self.ready.notify_one();
+        true
+    }
+
+    async fn recv(&self) -> Command {
+        loop {
+            let ready = self.ready.notified();
+            if let Some(command) = self.pending.lock().unwrap().pop_front() {
+                return command;
+            }
+            ready.await;
+        }
+    }
+}
+
 impl VncClientHandle {
     fn send(&self, command: Command) {
-        if let Err(mpsc::error::TrySendError::Full(_)) = self.commands.try_send(command) {
+        if !self.commands.push(command) {
             // Losing a key-up silently would leave a remote modifier held. A
             // bounded queue and an explicit disconnect are safer than that.
             let _ = self.errors.send(RdpClientEvent::Error(
@@ -73,7 +114,8 @@ pub(super) fn spawn_vnc_session(
     port: u16,
     password: String,
 ) -> std::io::Result<VncClientHandle> {
-    let (commands, receiver) = mpsc::channel(256);
+    let commands = Arc::new(CommandQueue::default());
+    let receiver = Arc::clone(&commands);
     let (stop, stopped) = watch::channel(false);
     let (events, event_rx) = std_mpsc::channel();
     let errors = events.clone();
@@ -145,7 +187,7 @@ async fn run(
     host: String,
     port: u16,
     password: String,
-    mut commands: mpsc::Receiver<Command>,
+    commands: Arc<CommandQueue>,
     mut stopped: watch::Receiver<bool>,
     events: &std_mpsc::Sender<RdpClientEvent>,
     surface: &Arc<Mutex<Surface>>,
@@ -156,6 +198,9 @@ async fn run(
         VncConnector::new(tcp)
             .set_auth_method(async move { Ok(password) })
             .add_encoding(VncEncoding::Zrle)
+            // Ask the server to remove its delayed framebuffer cursor. The
+            // native arrow follows the local mouse without a network round trip.
+            .add_encoding(VncEncoding::CursorPseudo)
             .add_encoding(VncEncoding::CopyRect)
             .add_encoding(VncEncoding::Raw)
             .add_encoding(VncEncoding::DesktopSizePseudo)
@@ -173,28 +218,26 @@ async fn run(
         result = tokio::time::timeout(Duration::from_secs(30), connect) =>
             result.map_err(|_| VncError::General("连接或认证超时（30 秒）".into()))??,
     };
-    let result = pump(&client, &mut commands, &mut stopped, events, surface).await;
+    let result = pump(&client, &commands, &mut stopped, events, surface).await;
     let _ = client.close().await;
     result
 }
 
 async fn pump(
     client: &VncClient,
-    commands: &mut mpsc::Receiver<Command>,
+    commands: &CommandQueue,
     stopped: &mut watch::Receiver<bool>,
     events: &std_mpsc::Sender<RdpClientEvent>,
     surface: &Arc<Mutex<Surface>>,
 ) -> Result<(), VncError> {
-    let mut tick = tokio::time::interval(Duration::from_millis(16));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut refresh = tokio::time::interval(Duration::from_millis(33));
+    refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut pointer = Pointer::default();
     let mut connected = false;
     loop {
         tokio::select! {
-            biased;
             _ = stopped.changed() => return Ok(()),
             command = commands.recv() => {
-                let Some(command) = command else { return Ok(()) };
                 let inputs = match command {
                     Command::Key { keysym, pressed } =>
                         vec![X11Event::KeyEvent((keysym, pressed).into())],
@@ -211,36 +254,38 @@ async fn pump(
                     }
                 }
             }
-            _ = tick.tick() => {
-                // recv_event holds the library's mutex while waiting. Polling
-                // avoids starving input/close on a desktop with no changes.
-                for _ in 0..256 {
-                    let Some(event) = client.poll_event().await? else { break };
-                    match event {
-                        VncEvent::SetResolution(screen) => {
-                            resize(surface, screen.width, screen.height)?;
-                            let event = if connected {
-                                RdpClientEvent::Resized { width: screen.width, height: screen.height }
-                            } else {
-                                connected = true;
-                                RdpClientEvent::Connected { width: screen.width, height: screen.height }
-                            };
-                            let _ = events.send(event);
-                        }
-                        VncEvent::RawImage(rect, mut rgba) => {
-                            // RFB's fourth byte is padding, not alpha. iced
-                            // would otherwise render a healthy desktop black.
-                            for pixel in rgba.as_chunks_mut::<4>().0 { pixel[3] = 255; }
-                            if let Ok(mut surface) = surface.lock() {
-                                surface.blit(rect.x, rect.y, rect.width, rect.height, &rgba);
-                            }
-                        }
-                        VncEvent::Copy(dst, src) => copy_rect(surface, dst, src)?,
-                        VncEvent::Text(text) if text.is_ascii() => { let _ = events.send(RdpClientEvent::ClipboardText(text)); }
-                        VncEvent::Error(message) => return Err(VncError::General(message)),
-                        _ => {}
+            // This receive future is cancelled (and releases the library mutex)
+            // before any input branch runs. Awaiting events drains the two-slot
+            // decoder queue immediately instead of allowing two tiles per UI tick.
+            event = client.recv_event() => {
+                match event? {
+                    VncEvent::SetResolution(screen) => {
+                        resize(surface, screen.width, screen.height)?;
+                        let event = if connected {
+                            RdpClientEvent::Resized { width: screen.width, height: screen.height }
+                        } else {
+                            connected = true;
+                            RdpClientEvent::Connected { width: screen.width, height: screen.height }
+                        };
+                        let _ = events.send(event);
                     }
+                    VncEvent::RawImage(rect, mut rgba) => {
+                        // RFB's fourth byte is padding, not alpha. iced
+                        // would otherwise render a healthy desktop black.
+                        for pixel in rgba.as_chunks_mut::<4>().0 { pixel[3] = 255; }
+                        if let Ok(mut surface) = surface.lock() {
+                            surface.blit(rect.x, rect.y, rect.width, rect.height, &rgba);
+                        }
+                    }
+                    VncEvent::Copy(dst, src) => copy_rect(surface, dst, src)?,
+                    VncEvent::Text(text) if text.is_ascii() => { let _ = events.send(RdpClientEvent::ClipboardText(text)); }
+                    VncEvent::Error(message) => return Err(VncError::General(message)),
+                    _ => {}
                 }
+            }
+            _ = refresh.tick() => {
+                // Request at the renderer's 30 Hz budget. Receiving decoded
+                // rectangles is independent of this timer and never throttled.
                 tokio::select! {
                     biased;
                     _ = stopped.changed() => return Ok(()),
@@ -392,4 +437,59 @@ fn scancode_keysym(code: u8, extended: bool) -> Option<u32> {
         (0x53, true) => 0xffff,
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn motion_is_coalesced_without_crossing_buttons_or_keys() {
+        let queue = CommandQueue::default();
+        for x in 0..10_000 {
+            assert!(queue.push(Command::Input(RdpInput::MouseMove { x, y: 7 })));
+        }
+        assert!(queue.push(Command::Input(RdpInput::MouseButton {
+            button: RdpMouseButton::Left,
+            pressed: true,
+        })));
+        assert!(queue.push(Command::Input(RdpInput::MouseMove { x: 15, y: 20 })));
+        assert!(queue.push(Command::Key {
+            keysym: 0x61,
+            pressed: false
+        }));
+        let mut pending = queue.pending.lock().unwrap();
+        assert_eq!(pending.len(), 4);
+        assert!(matches!(
+            pending.pop_front(),
+            Some(Command::Input(RdpInput::MouseMove { x: 9999, y: 7 }))
+        ));
+        assert!(matches!(
+            pending.pop_front(),
+            Some(Command::Input(RdpInput::MouseButton { pressed: true, .. }))
+        ));
+        assert!(matches!(
+            pending.pop_front(),
+            Some(Command::Input(RdpInput::MouseMove { x: 15, y: 20 }))
+        ));
+        assert!(matches!(
+            pending.pop_front(),
+            Some(Command::Key { pressed: false, .. })
+        ));
+    }
+
+    #[test]
+    fn non_motion_input_remains_bounded_and_never_silently_dropped() {
+        let queue = CommandQueue::default();
+        for _ in 0..256 {
+            assert!(queue.push(Command::Key {
+                keysym: 0x61,
+                pressed: true
+            }));
+        }
+        assert!(!queue.push(Command::Key {
+            keysym: 0x61,
+            pressed: false
+        }));
+    }
 }

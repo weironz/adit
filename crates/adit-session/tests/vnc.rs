@@ -359,3 +359,84 @@ fn real_vnc_server_authenticates_and_paints() {
         m.active_session_summary().unwrap().status == SessionStatus::Disconnected
     });
 }
+
+#[test]
+fn a_burst_of_small_rectangles_is_not_throttled_by_ui_ticks() {
+    let (sent, received) = mpsc::channel();
+    let (key_sent, key_received) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init(&mut stream);
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag == 2 {
+                assert!(data.as_chunks::<4>().0.iter().any(|e| i32::from_be_bytes(*e) == -239), "local cursor must be negotiated");
+            }
+            if tag == 3 {
+                break;
+            }
+        }
+        // Match a ZRLE decoder burst: its two-slot output queue used to deliver
+        // only two rectangles every 16 ms, even with all bytes already local.
+        let mut update = vec![0, 0];
+        update.extend(1024_u16.to_be_bytes());
+        for _ in 0..1024 {
+            for value in [0_u16, 0, 1, 1] {
+                update.extend(value.to_be_bytes());
+            }
+            update.extend(0_i32.to_be_bytes());
+            update.extend([10, 20, 30, 0]);
+        }
+        // Include a cursor shape; it must not contaminate the desktop pixels.
+        update[2..4].copy_from_slice(&1025_u16.to_be_bytes());
+        for value in [0_u16, 0, 1, 1] {
+            update.extend(value.to_be_bytes());
+        }
+        update.extend((-239_i32).to_be_bytes());
+        update.extend([255, 0, 0, 0, 0x80]);
+        stream.write_all(&update).unwrap();
+        sent.send(Instant::now()).unwrap();
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag == 4 { key_sent.send(data).unwrap(); }
+        }
+    });
+    let (mut manager, id) = manager(port);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    let start = received.recv_timeout(Duration::from_secs(5)).unwrap();
+    wait(&mut manager, |m| m.active_rdp_frame_if_newer(0).is_some_and(|f| f.generation >= 1025));
+    assert!(start.elapsed() < Duration::from_secs(2), "decoder output stalled for {:?}", start.elapsed());
+    let frame = manager.active_rdp_frame_if_newer(0).unwrap();
+    assert_eq!(&frame.rgba[..4], &[10, 20, 30, 255]);
+    // Input must still run while recv_event is waiting on an idle server.
+    manager.send_vnc_key_to_active(0x61, false);
+    assert_eq!(key_received.recv_timeout(Duration::from_secs(2)).unwrap(), vec![0, 0, 0, 0, 0, 0, 0x61]);
+    manager.close(session);
+    server.join().unwrap();
+}
+
+#[test]
+fn a_mouse_burst_during_handshake_keeps_the_latest_position_and_click_order() {
+    let (start, started) = mpsc::channel();
+    let (wire_tx, wire_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        started.recv_timeout(Duration::from_secs(5)).unwrap();
+        init(&mut stream);
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag == 5 {
+                wire_tx.send(data).unwrap();
+            }
+        }
+    });
+    let (mut manager, id) = manager(port);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    for x in 0..10_000 {
+        manager.send_rdp_input_to_active(RdpInput::MouseMove { x: x % 4, y: 1 });
+    }
+    manager.send_rdp_input_to_active(RdpInput::MouseButton { button: RdpMouseButton::Left, pressed: true });
+    manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 2, y: 0 });
+    manager.send_rdp_input_to_active(RdpInput::MouseButton { button: RdpMouseButton::Left, pressed: false });
+    start.send(()).unwrap();
+    let received: Vec<_> = (0..4).map(|_| wire_rx.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
+    assert_eq!(received, vec![vec![0, 0, 3, 0, 1], vec![1, 0, 3, 0, 1], vec![1, 0, 2, 0, 0], vec![0, 0, 2, 0, 0]]);
+    wait(&mut manager, |m| m.active_session_summary().unwrap().status == SessionStatus::Connected);
+    manager.close(session);
+    server.join().unwrap();
+}
