@@ -1,3 +1,4 @@
+pub mod desktop_gateway;
 pub use adit_domain::JumpHop;
 use bytes::Bytes;
 use russh::{

@@ -160,14 +160,10 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if !app.rdp_clipboard || app.manager.active_session() != Some(session) {
                 return Task::none();
             }
-            if let Some(text) = contents.filter(|text| !text.is_empty()) {
+            if let Some(text) = contents.filter(|text| app.manager.active_is_vnc() || !text.is_empty()) {
                 if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
                     app.rdp_clipboard_offered = Some(text.clone());
-                    if app.manager.active_is_vnc() && !text.is_ascii() {
-                        app.notice = String::from(t("VNC 基础剪贴板暂仅同步英文等 ASCII 文本"));
-                    } else {
-                        app.manager.offer_clipboard_to_active_rdp(text);
-                    }
+                    app.manager.offer_clipboard_to_active_rdp(text);
                 }
             }
         }
@@ -177,7 +173,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Drained here rather than in the callback because the callback runs
             // on the system input thread against a deadline, and sending on the
             // helper pipe is not work that belongs there.
-            if app.fullscreen && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
+            if app.manager.active_is_vnc() && app.vnc_grab_keys && app.manager.active_rdp_live() && !app.manager.active_vnc_read_only() {
+                drain_vnc_system_keys(app);
+            } else if app.fullscreen && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
                 for stroke in keyboard_hook::drain() {
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode: stroke.scancode,
@@ -208,6 +206,18 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 // Different session ⇒ forget the requested size so the next layout
                 // sync re-asserts the viewport for the newly-active desktop.
                 app.rdp_target_size = None;
+                app.vnc_cursor = None;
+                app.vnc_cursor_handle = None;
+                app.vnc_grab_keys = false;
+            }
+            if app.manager.active_is_vnc() {
+                if let Some(cursor) = app.manager.active_vnc_cursor() {
+                    if app.vnc_cursor.as_ref().is_none_or(|old| old.generation != cursor.generation) {
+                        app.vnc_cursor_handle = (cursor.width > 0 && cursor.height > 0).then(||
+                            iced::widget::image::Handle::from_rgba(u32::from(cursor.width), u32::from(cursor.height), cursor.rgba.clone()));
+                        app.vnc_cursor = Some(cursor);
+                    }
+                }
             }
             // Sample the active RDP framebuffer; rebuild the GPU image handle only
             // when the helper produced a new generation.
@@ -334,6 +344,8 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.modifiers = modifiers;
         }
         Message::WindowUnfocused => {
+            app.vnc_grab_keys = false;
+            keyboard_hook::disarm();
             // Whatever is held right now gets released somewhere we cannot see.
             release_rdp_modifiers(app);
         }
@@ -2046,6 +2058,12 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             return window::latest().and_then(move |id| window::set_mode(id, mode));
         }
         Message::KeyboardInput(event) => {
+            // Hook events precede window events on Windows. Drain them here as
+            // well as on the frame tick, so Win+letter and fast Alt+Tab retain
+            // their original ordering across the two event queues.
+            if app.manager.active_is_vnc() && app.vnc_grab_keys && app.manager.active_rdp_live() {
+                drain_vnc_system_keys(app);
+            }
             // Fullscreen toggle first, ahead of every forwarding path: RDP
             // sends unmatched keys straight to the remote desktop, so a
             // shortcut checked later would never be seen locally. Ctrl+Alt+Enter
@@ -2056,6 +2074,13 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     && modifiers.alt()
                     && matches!(key, keyboard::Key::Named(keyboard::key::Named::Enter))
                 {
+                    if app.manager.active_is_vnc() && app.vnc_grab_keys {
+                        release_rdp_modifiers(app);
+                        app.vnc_grab_keys = false;
+                        keyboard_hook::disarm();
+                        app.notice = "已释放 VNC 系统键抓取".into();
+                        return Task::none();
+                    }
                     return Task::done(Message::ToggleFullscreen);
                 }
             }
@@ -2067,7 +2092,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // No code has ever matched it — writing the settings page's shortcut
             // list is what turned it up, since every entry there had to be found
             // in this dispatch before it could be printed.
-            if alt_shortcut(&event, 'i') {
+            if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && alt_shortcut(&event, 'i') {
                 // Filtering is pointless with the sidebar hidden; reveal it first.
                 if !app.sidebar_visible {
                     app.sidebar_visible = true;
@@ -2079,7 +2104,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Alt+P opens a command-line SFTP tab for the active session
             // (SecureCRT-style), regardless of focus. This is the `sftp>` prompt,
             // not the dual-pane panel — that one has its own toolbar button.
-            if alt_shortcut(&event, 'p') {
+            if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && alt_shortcut(&event, 'p') {
                 match app.manager.open_sftp_shell_for_active() {
                     Ok(_) => {
                         app.terminal_focused = true;
@@ -2095,7 +2120,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // Ctrl+Shift+F opens scrollback search regardless of focus; Escape
             // closes it. These run before the terminal-focus gate.
-            if terminal_shortcut(&event, 'f') {
+            if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && terminal_shortcut(&event, 'f') {
                 app.search_open = true;
                 app.terminal_focused = false;
                 recompute_search(app);
@@ -2693,7 +2718,8 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                                 .profile(profile_id)
                                 .is_some_and(|p| p.protocol == Protocol::Vnc)
                             {
-                                app.manager.open_live_vnc_session(profile_id, password)
+                                start_vnc(app, profile_id, password, None);
+                                return Task::none();
                             } else {
                                 app.manager.open_live_rdp_session(profile_id, password, rw, rh)
                             };
@@ -2875,6 +2901,57 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from(t("已关闭：新主机密钥将逐个确认"))
             };
         }
+        Message::VncImeEvent(event) => {
+            use iced::advanced::input_method::{Event, Preedit};
+            if app.manager.active_is_vnc() && !app.manager.active_vnc_read_only() {
+                match event {
+                    Event::Commit(text) => {
+                        app.vnc_preedit = None;
+                        for ch in text.chars().filter(|ch| !ch.is_control()) {
+                            let symbol = adit_session::unicode_keysym(ch);
+                            app.manager.send_vnc_key_to_active(symbol, true);
+                            app.manager.send_vnc_key_to_active(symbol, false);
+                        }
+                    }
+                    Event::Preedit(content, selection) => app.vnc_preedit = Some(Preedit { content, selection, text_size: None }),
+                    Event::Closed => app.vnc_preedit = None,
+                    Event::Opened => {},
+                }
+            }
+        }
+        Message::VncSecurityChanged(value) => app.profile_vnc.security = value,
+        Message::VncQualityChanged(value) => app.profile_vnc.quality = value,
+        Message::VncTlsCaChanged(value) => app.profile_vnc.tls_ca_file = value,
+        Message::VncGatewayChanged(value) => app.profile_vnc.gateway_profile = value,
+        Message::VncPolicyChanged(field, value) => match field {
+            0 => app.profile_vnc.read_only = value,
+            1 => app.profile_vnc.clipboard_send = value,
+            2 => app.profile_vnc.clipboard_receive = value,
+            3 => app.profile_vnc.auto_reconnect = value,
+            4 => app.profile_vnc.resize_remote = value,
+            _ => {},
+        },
+        Message::ToggleVncReadOnly => {
+            release_rdp_modifiers(app);
+            app.vnc_grab_keys = false;
+            keyboard_hook::disarm();
+            let value = !app.manager.active_vnc_read_only();
+            app.manager.set_active_vnc_read_only(value);
+            app.notice = if value { "VNC 已切换只读观察；仍按接收策略同步远端剪贴板" } else { "VNC 已允许控制" }.into();
+        }
+        Message::ToggleVncResize => {
+            let value = !app.manager.active_vnc_resize_remote();
+            app.manager.set_active_vnc_resize_remote(value);
+            app.rdp_target_size = None;
+            maybe_resize_active_rdp(app);
+        }
+        Message::ToggleVncGrab => {
+            let grab = !app.vnc_grab_keys;
+            release_rdp_modifiers(app);
+            app.vnc_grab_keys = grab;
+            if app.vnc_grab_keys { keyboard_hook::arm_vnc(); } else { keyboard_hook::disarm(); }
+            app.notice = "VNC 系统键模式：Ctrl+Alt+Enter 始终在本地释放抓取；Ctrl+Alt+Del 由服务端权限决定".into();
+        }
         Message::ToggleVncFit => {
             app.vnc_fit = !app.vnc_fit;
         }
@@ -2887,7 +2964,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             if !enabled {
                 app.rdp_clipboard_offered = None;
             }
-            app.notice = if enabled {
+            app.notice = if app.manager.active_is_vnc() {
+                if enabled { "VNC 剪贴板已按配置的收发策略开启" } else { "VNC 剪贴板已关闭，已清除待发送文本" }.into()
+            } else if enabled {
                 String::from(t("已开启：RDP 共享剪贴板（下次连接生效）"))
             } else {
                 String::from(t("已关闭：RDP 不再共享剪贴板（下次连接生效）"))

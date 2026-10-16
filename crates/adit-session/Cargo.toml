@@ -12,4 +12,8 @@ adit-ssh.workspace = true
 adit-terminal.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-vnc = { package = "vnc-rs", version = "=0.6.0" }
+vnc = { package = "vnc-rs", path = "../adit-vnc" }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+zeroize.workspace = true
+rustls-pemfile = "2"
+socket2 = "0.6"

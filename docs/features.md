@@ -17,7 +17,7 @@ Known gaps are listed honestly at the [end](#known-gaps).
 | **Serial** | `serialport` | Port in the host field, baud in the identity field |
 | **Telnet** | raw TCP (RFC 854) | For switches, IPMI and console servers. Unencrypted, no client credential |
 | **RDP** | IronRDP, out-of-process helper | Graphical surface, not a VT terminal |
-| **VNC** | `vnc-rs`, background worker | Embedded graphical desktop; standard VncAuth or no authentication |
+| **VNC** | `vnc-rs`, background worker | Embedded desktop; explicit auth/TLS policy, optional SSH gateway |
 
 The four terminal protocols — SSH, local shell, serial, Telnet — share one event
 protocol, so the session layer treats them uniformly. The other protocols are the exceptions:
@@ -51,24 +51,51 @@ fullscreen, fit-to-window or original-size rendering, and a Ctrl+Alt+Del button.
 A rejected password reopens the prompt and retries the same tab. Closing a tab
 also cancels a pending connection or authentication handshake.
 
-The first implementation negotiates ZRLE, CopyRect and Raw, plus server-driven
-desktop-size updates. It uses a shared session and does not disconnect existing
-viewers. Window resizing scales locally rather than changing the server's desktop.
-Decoded rectangles are received immediately rather than paced by the UI redraw
-timer. Consecutive pointer moves are coalesced without crossing button/key
-boundaries. CursorPseudo is negotiated to use a local plain arrow; server cursor
-shapes, hotspots and hidden-cursor semantics are not rendered yet.
-Standard VncAuth and authentication-free servers are supported; TLS/VeNCrypt,
-certificate authentication and vendor-specific security extensions are not yet
-supported. VncAuth uses only the first eight password bytes and does not encrypt
-the desktop stream; use a trusted network or an existing VPN/tunnel. Adit's SSH
-jump-host setting is rejected explicitly for VNC instead of being ignored.
+The maintained protocol fork negotiates Tight (fill/copy/palette/gradient and bounded
+JPEG decoding), ZRLE, CopyRect and Raw. The default quality is lossless; a per-profile
+WAN preset permits lossy JPEG. Window resizing scales locally by default. An opt-in
+remote resize requests a negotiated single-screen ExtendedDesktopSize layout, with
+bounded confirmation waits; unsupported/multi-screen layouts keep local scaling.
+Sessions are shared and do not evict existing viewers.
 
-Clipboard sharing follows the remote-desktop clipboard toggle. The initial bridge
-supports ASCII text in both directions; non-ASCII local text is not sent and a
-notice explains the limit. Images, files and extended UTF-8 clipboard negotiation
-are not included. Windows fullscreen uses normal keyboard events for VNC, so OS
-and other applications' global hotkeys keep their local behaviour.
+The decoder drains rectangles immediately. Refresh requests are coalesced to one
+outstanding RFB update, including resize follow-up requests. The toolbar exposes
+negotiated security and metadata about connection phases, complete updates, initial
+pixel coverage, traffic, encoding, Fence RTT and the bounded input queue. A completed
+RFB update can contain only metadata; it is distinct from complete screen coverage
+and from the UI sampling a frame. The cursor is drawn locally from the remote RGBA
+shape and mask, with the negotiated hotspot and hide semantics.
+
+A profile explicitly chooses password authentication (default), permission to use
+None authentication, or required verified TLS. Password authentication wins over
+None when both are offered. TLS supports VeNCrypt 0.2 X509Vnc/X509None, validates the
+connection target name/IP, chain and expiry, and has no verification bypass. Empty
+CA settings use bundled public WebPKI roots; a per-profile PEM/DER CA file supplies
+custom trust. OS-installed enterprise roots are not imported automatically. RealVNC
+vendor authentication, UltraVNC DSM/MS-Logon and TLSPlain are separate extensions.
+VncAuth uses only the first eight password bytes and does not encrypt desktop data.
+
+An independent single-hop SSH profile can provide a direct-tcpip gateway, with its
+own password/key passphrase and interactive host-key trust. It opens no remote shell
+and never falls back to a direct VNC connection. Existing terminal jump chains remain
+rejected rather than silently ignored. Network failures after a successful session
+can reconnect the same tab with bounded exponential backoff; manual close, wrong
+password, policy and certificate failures stop that retry path.
+
+Clipboard text uses negotiated Extended Clipboard UTF-8 for Chinese/emoji/multiline
+and empty strings, with bounded inflation. Legacy servers use Latin-1 and reject
+unrepresentable outgoing characters. Per-profile send/receive policies and the live
+clipboard switch gate automatic protocol replies as well as explicit offers; queued
+old text becomes invalid when permissions change. Read-only mode releases held
+keys/buttons and blocks keyboard, pointer, wheel and outgoing clipboard; receiving
+remote text follows its separate policy. Images/files remain RDP-only.
+
+Logical keysyms preserve layout-specific characters, with right-hand modifiers and
+multi-character IME commits. Windows optionally grabs Tab/Windows system keys while
+letting normal text reach the IME; Ctrl+Alt+Enter always releases the grab locally.
+Ctrl+Alt+Del still depends on the remote server's secure-desktop permissions. Native
+keyboard/IME, DPI, UAC and service-mode acceptance require real environment evidence;
+a unit-test pass alone is not that evidence.
 
 VNC profiles serialize with `protocol: "vnc"`. Older Adit versions do not recognize
 that protocol; upgrade clients before sharing the updated catalog through cloud

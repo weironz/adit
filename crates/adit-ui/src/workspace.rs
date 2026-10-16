@@ -130,7 +130,7 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
 /// aspect-preserved in fit mode, and stretched per axis while a resize is in
 /// flight — see `rdp_fit_factors` for why the transition must not preserve
 /// aspect. A single OS cursor is shown (the server pointer isn't composited),
-/// so there's no double-cursor; its shape is a plain arrow for now.
+/// so the cursor can follow local motion without a network round trip.
 pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
     // One scale per axis for the whole function, folding the fit factors into
@@ -197,6 +197,15 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         .into()
     };
 
+    let content = if app.manager.active_is_vnc() {
+        stack(vec![content, Element::new(vnc_cursor::CursorLayer {
+            cursor: app.vnc_cursor.clone(), handle: app.vnc_cursor_handle.clone(), scale_x, scale_y,
+            logical_size: iced::Size::new(f32::from(sw)/scale_x, f32::from(sh)/scale_y),
+            ime_enabled: app.terminal_focused && !app.manager.active_vnc_read_only()
+                && !app.settings_open && app.profile_editor.is_none() && app.connection_dialog.is_none(),
+            preedit: app.vnc_preedit.clone(),
+        })]).into()
+    } else { content };
     let surface = mouse_area(content)
         .on_move(move |p| {
             let x = (p.x * scale_x).clamp(0.0, f32::from(sw) - 1.0);
@@ -428,13 +437,21 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         } else {
             rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu))
         },
+        if app.manager.active_is_vnc() {
+            row![
+                vnc_connection_info(app),
+                rdp_toolbar_button("◉", "只读观察（切换前释放键鼠）", app.manager.active_vnc_read_only(), Some(Message::ToggleVncReadOnly)),
+                rdp_toolbar_button("↔", "请求远端单屏适应窗口（影响共享桌面）", app.manager.active_vnc_resize_remote(), Some(Message::ToggleVncResize)),
+                rdp_toolbar_button("⌘", "抓取系统键（Windows）；Ctrl+Alt+Enter 释放", app.vnc_grab_keys, (live && !app.manager.active_vnc_read_only()).then_some(Message::ToggleVncGrab)),
+            ].spacing(2)
+        } else { row![] },
         // Ctrl+Alt+Del and the clipboard are meaningless without a live desktop
         // to receive them, so they grey out rather than firing into a dead pipe.
         rdp_toolbar_button(
             "⌨",
             t("发送 Ctrl+Alt+Del"),
             false,
-            live.then_some(Message::RdpSendCtrlAltDel),
+            (live && !app.manager.active_vnc_read_only()).then_some(Message::RdpSendCtrlAltDel),
         ),
         rdp_toolbar_button(
             "📋",
@@ -479,6 +496,21 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .height(Fill)
     .into()
+}
+
+/// A compact entry keeps the actual negotiated security visible without placing
+/// transport details in the connection form's normal interaction path.
+fn vnc_connection_info(app: &AditApp) -> Element<'_, Message> {
+    let d = app.manager.active_vnc_diagnostics().unwrap_or_default();
+    let coverage = if d.framebuffer_pixels == 0 { 0.0 } else { d.covered_pixels as f64 * 100.0 / d.framebuffer_pixels as f64 };
+    let details = format!("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {:?} ms；完整更新 {:?} ms；覆盖完成 {:?} ms\n首屏覆盖 {:.1}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {:?} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}",
+        d.security, d.tcp_ms, d.handshake_ms, d.first_pixel_ms, d.first_complete_ms, d.first_covered_ms,
+        coverage, d.covered_pixels, d.framebuffer_pixels, d.complete_updates, d.wire_bytes, d.pending_updates,
+        d.fence_rtt_ms, d.queue_high_water, d.encoding, d.clipboard_utf8, d.status);
+    let label = if d.security.is_empty() { "连接信息".to_owned() } else { d.security };
+    tooltip(container(text(label).size(10)).padding([4,6]),
+        container(text(details).size(11)).padding(8).style(|_| tooltip_style()),
+        tooltip::Position::Bottom).into()
 }
 
 /// The ⚡ dropdown. Picking an entry reconnects the session, so each one says so.

@@ -65,6 +65,8 @@ pub struct ConnectionProfile {
     pub tunnels: Vec<TunnelDef>,
     #[serde(default)]
     pub protocol: Protocol,
+    #[serde(default)]
+    pub vnc: VncOptions,
     /// A command sent to the shell right after it opens (e.g. `tmux attach`,
     /// `cd /srv`). Empty means nothing is sent.
     #[serde(default)]
@@ -128,6 +130,54 @@ pub struct ConnectionProfile {
     /// order — so a catalogue that predates this reads exactly as it did.
     #[serde(default)]
     pub pinned_order: i32,
+}
+
+/// Per-profile VNC policy. Old catalogues acquire authenticated, lossless defaults.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VncOptions {
+    pub security: VncSecurity,
+    pub tls_ca_file: String,
+    pub quality: VncQuality,
+    pub read_only: bool,
+    pub clipboard_send: bool,
+    pub clipboard_receive: bool,
+    pub auto_reconnect: bool,
+    pub resize_remote: bool,
+    pub gateway_profile: Option<ProfileId>,
+}
+
+impl Default for VncOptions {
+    fn default() -> Self {
+        Self {
+            security: VncSecurity::RequireVncAuth,
+            tls_ca_file: String::new(),
+            quality: VncQuality::Lossless,
+            read_only: false,
+            clipboard_send: true,
+            clipboard_receive: true,
+            auto_reconnect: true,
+            resize_remote: false,
+            gateway_profile: None,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VncSecurity {
+    #[default]
+    RequireVncAuth,
+    AllowNone,
+    RequireTls,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VncQuality {
+    #[default]
+    Lossless,
+    Wan,
 }
 
 /// A profile's deployment environment, used to colour-code its tab so an operator
@@ -312,6 +362,7 @@ impl ConnectionProfile {
             identity_file: String::new(),
             tunnels: Vec::new(),
             protocol: Protocol::Ssh,
+            vnc: VncOptions::default(),
             startup_command: String::new(),
             terminal_type: String::new(),
             jumps: Vec::new(),

@@ -1,6 +1,6 @@
 pub(crate) use adit_domain::{
     AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
-    SessionStatus, TunnelDef,
+    SessionStatus, TunnelDef, VncOptions, VncSecurity, VncQuality,
 };
 pub(crate) use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
@@ -61,6 +61,7 @@ mod clipboard_files;
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
 mod keyboard_hook;
+mod vnc_cursor;
 mod vault_ui;
 mod workspace;
 use workspace::*;
@@ -211,6 +212,7 @@ pub struct AditApp {
     /// profiles.json. Distinct from `profile_password`.
     profile_passphrase: String,
     profile_protocol: Protocol,
+    profile_vnc: VncOptions,
     /// Preset icon key being edited; empty means "work it out".
     profile_icon: String,
     profile_identity_file: String,
@@ -417,6 +419,10 @@ pub struct AditApp {
     rdp_clipboard_ticks: u8,
     vnc_pressed_keys: Vec<(keyboard::key::Physical, u32)>,
     vnc_fit: bool,
+    vnc_grab_keys: bool,
+    vnc_preedit: Option<iced::advanced::input_method::Preedit>,
+    vnc_cursor: Option<adit_session::VncCursor>,
+    vnc_cursor_handle: Option<iced::widget::image::Handle>,
     // Latest keyboard modifier state, so wheel handling can tell a plain scroll
     // from a Ctrl+wheel zoom.
     modifiers: keyboard::Modifiers,
@@ -716,6 +722,15 @@ pub enum Message {
     /// Send Ctrl+Alt+Del to the remote desktop as three scancode pairs.
     RdpSendCtrlAltDel,
     ToggleVncFit,
+    ToggleVncReadOnly,
+    ToggleVncResize,
+    ToggleVncGrab,
+    VncImeEvent(iced::advanced::input_method::Event),
+    VncSecurityChanged(VncSecurity),
+    VncQualityChanged(VncQuality),
+    VncTlsCaChanged(String),
+    VncGatewayChanged(Option<ProfileId>),
+    VncPolicyChanged(u8, bool),
     ToggleMenu(MenuKind),
     ToggleTheme,
     CloseAppearance,
@@ -1496,6 +1511,7 @@ impl AditApp {
             profile_password: String::new(),
             profile_passphrase: String::new(),
             profile_protocol: Protocol::Ssh,
+            profile_vnc: VncOptions::default(),
             profile_icon: String::new(),
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
@@ -1592,6 +1608,10 @@ impl AditApp {
             rdp_clipboard_ticks: 0,
             vnc_pressed_keys: Vec::new(),
             vnc_fit: true,
+            vnc_grab_keys: false,
+            vnc_preedit: None,
+            vnc_cursor: None,
+            vnc_cursor_handle: None,
             modifiers: keyboard::Modifiers::empty(),
             window_width,
             window_height,

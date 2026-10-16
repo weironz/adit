@@ -37,11 +37,13 @@ use thiserror::Error;
 
 mod rdp_client;
 mod vnc_client;
+mod vnc_input;
 pub use adit_rdp_proto::{
     ClipFile, InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
-pub use vnc_client::unicode_keysym;
+pub use vnc_input::unicode_keysym;
+pub use vnc_client::{VncCursor, VncDiagnostics};
 use vnc_client::VncClientHandle;
 
 /// Default RDP desktop size when the caller doesn't specify one.
@@ -357,6 +359,22 @@ pub enum TransferStatus {
     Cancelled,
 }
 
+/// Independent gateway login and private-key passphrase, never the VNC password.
+#[derive(Clone, Default)]
+pub struct VncGatewayCredentials {
+    pub password: String,
+    pub passphrase: String,
+}
+impl std::fmt::Debug for VncGatewayCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("VncGatewayCredentials(redacted)") }
+}
+impl Drop for VncGatewayCredentials {
+    fn drop(&mut self) {
+        zeroize::Zeroize::zeroize(&mut self.password);
+        zeroize::Zeroize::zeroize(&mut self.passphrase);
+    }
+}
+
 pub struct SessionManager {
     profiles: Vec<ConnectionProfile>,
     sessions: HashMap<SessionId, SessionRecord>,
@@ -493,6 +511,10 @@ impl SessionManager {
     /// the handshake, so a live session keeps whatever it was opened with.
     pub fn set_rdp_clipboard(&mut self, enabled: bool) {
         self.rdp_clipboard = enabled;
+        for record in self.sessions.values() {
+            if let Some(vnc) = &record.vnc { vnc.set_clipboard_sharing(enabled); }
+        }
+        if !enabled { self.pending_rdp_clipboard = None; }
     }
 
     /// Set the visual-fidelity preset for RDP sessions. Like the clipboard flag
@@ -1248,6 +1270,12 @@ impl SessionManager {
         profile_id: ProfileId,
         password: String,
     ) -> Result<SessionId, SessionError> {
+        self.open_live_vnc_session_via(profile_id, password, None)
+    }
+
+    pub fn open_live_vnc_session_via(
+        &mut self, profile_id: ProfileId, password: String, gateway_password: Option<VncGatewayCredentials>,
+    ) -> Result<SessionId, SessionError> {
         let profile = self
             .profile(profile_id)
             .ok_or(SessionError::ProfileNotFound)?
@@ -1260,12 +1288,16 @@ impl SessionManager {
                 "VNC 暂不支持 SSH 跳板，请先建立隧道或使用 VPN".into(),
             ));
         }
+        let gateway = self.vnc_gateway_request(&profile, gateway_password)?;
         let handle = vnc_client::spawn_vnc_session(
             profile.host.trim().trim_matches(['[', ']']).to_string(),
             profile.port,
             password,
+            profile.vnc.clone(),
+            gateway,
         )
         .map_err(|error| SessionError::Unsupported(error.to_string()))?;
+        handle.set_clipboard_sharing(self.rdp_clipboard);
         let session_id = SessionId::new();
         let endpoint = profile.endpoint();
         let terminal = live_shell_terminal(&profile.name, &endpoint, self.default_size);
@@ -1300,6 +1332,31 @@ impl SessionManager {
         Ok(session_id)
     }
 
+    fn vnc_gateway_request(&self, profile: &ConnectionProfile, password: Option<VncGatewayCredentials>) -> Result<Option<LiveShellRequest>, SessionError> {
+        let Some(id) = profile.vnc.gateway_profile else { return Ok(None); };
+        let gateway = self.profile(id).ok_or(SessionError::ProfileNotFound)?;
+        if gateway.protocol != Protocol::Ssh || gateway.id == profile.id || !gateway.jumps.is_empty() {
+            return Err(SessionError::Unsupported("请选择独立的单跳 SSH 配置作为 VNC 网关".into()));
+        }
+        let credentials = password.unwrap_or_default();
+        let mut request = LiveShellRequest::new(gateway.host.clone(), gateway.port, gateway.username.clone(), credentials.password.clone());
+        request.auth = auth_options_for_profile(gateway, &credentials.password, &credentials.passphrase);
+        request.connect_timeout_secs = self.connect_timeout_secs.max(30);
+        request.auto_accept_host_keys = false;
+        Ok(Some(request))
+    }
+
+    fn active_vnc(&self) -> Option<&VncClientHandle> {
+        self.active_session.and_then(|id| self.sessions.get(&id)).and_then(|r|r.vnc.as_ref())
+    }
+    pub fn active_vnc_read_only(&self) -> bool { self.active_vnc().is_some_and(VncClientHandle::read_only) }
+    pub fn set_active_vnc_read_only(&self, enabled: bool) { if let Some(vnc) = self.active_vnc() { vnc.set_read_only(enabled); } }
+    pub fn active_vnc_resize_remote(&self) -> bool { self.active_vnc().is_some_and(VncClientHandle::resize_remote) }
+    pub fn set_active_vnc_resize_remote(&self, enabled: bool) { if let Some(vnc) = self.active_vnc() { vnc.set_resize_remote(enabled); } }
+    pub fn set_active_vnc_quality(&self, quality: adit_domain::VncQuality) { if let Some(vnc) = self.active_vnc() { vnc.set_quality(quality); } }
+    pub fn active_vnc_cursor(&self) -> Option<VncCursor> { self.active_vnc().and_then(VncClientHandle::cursor) }
+    pub fn active_vnc_diagnostics(&self) -> Option<VncDiagnostics> { self.active_vnc().map(VncClientHandle::diagnostics) }
+
     /// VNC has no SSH username. Validate its own fields rather than inventing
     /// a placeholder user just to pass the SSH profile builder.
     pub fn save_vnc_profile(
@@ -1328,11 +1385,18 @@ impl SessionManager {
         Ok(id)
     }
 
-    /// A bad password retries the same tab, retaining no secret after startup.
+    /// A bad password retries the same tab. Authentication copies are retained by
+    /// the worker only for the lifetime of the connection/reconnect loop.
     pub fn retry_vnc_with_password(
         &mut self,
         session_id: SessionId,
         password: String,
+    ) -> Result<bool, SessionError> {
+        self.retry_vnc_with_password_via(session_id, password, None)
+    }
+
+    pub fn retry_vnc_with_password_via(
+        &mut self, session_id: SessionId, password: String, gateway_password: Option<VncGatewayCredentials>,
     ) -> Result<bool, SessionError> {
         let Some(record) = self
             .sessions
@@ -1352,12 +1416,16 @@ impl SessionManager {
                 "VNC 暂不支持 SSH 跳板，请先建立隧道或使用 VPN".into(),
             ));
         }
+        let gateway = self.vnc_gateway_request(profile, gateway_password)?;
         let handle = vnc_client::spawn_vnc_session(
             profile.host.trim().trim_matches(['[', ']']).to_string(),
             profile.port,
             password,
+            profile.vnc.clone(),
+            gateway,
         )
         .map_err(|error| SessionError::Unsupported(error.to_string()))?;
+        handle.set_clipboard_sharing(self.rdp_clipboard);
         let record = self
             .sessions
             .get_mut(&session_id)
@@ -2918,6 +2986,8 @@ impl SessionManager {
         record.pending_host_key = None;
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::HostKeyDecision(decision))?;
+        } else if let Some(vnc) = &record.vnc {
+            vnc.send_gateway(LiveShellCommand::HostKeyDecision(decision));
         }
         // Spelled out per case rather than "trusted / rejected": the difference
         // between the two trusting answers is the whole point, and the
@@ -3010,6 +3080,8 @@ impl SessionManager {
         let cancelled = answers.is_empty();
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::AuthResponses(answers))?;
+        } else if let Some(vnc) = &record.vnc {
+            vnc.send_gateway(LiveShellCommand::AuthResponses(answers));
         }
         record.terminal.append_status(if cancelled {
             "authentication cancelled"
@@ -3212,8 +3284,18 @@ impl SessionManager {
                 match event {
                     RdpClientEvent::Connected { .. } => {
                         record.summary.status = SessionStatus::Connected;
+                        record.desktop_error = None;
                     }
                     RdpClientEvent::Resized { .. } => {}
+                    RdpClientEvent::GatewayHostKey(prompt) => record.pending_host_key = Some(prompt),
+                    RdpClientEvent::GatewayAuthPrompt(prompt) => record.pending_auth_prompt = Some(prompt),
+                    RdpClientEvent::VncReconnecting { attempt, delay_secs } => {
+                        record.summary.status = SessionStatus::Connecting;
+                        record.pending_host_key = None;
+                        record.pending_auth_prompt = None;
+                        record.desktop_error = Some(format!("连接中断，{delay_secs} 秒后重试（{attempt}/10）"));
+                        if self.active_session == Some(record.summary.id) { self.pending_rdp_clipboard = None; }
+                    }
                     // The helper has no Windows clipboard of its own (it is a
                     // windowless process with no message pump), so remote copies
                     // arrive here as text and the UI process owns the paste.

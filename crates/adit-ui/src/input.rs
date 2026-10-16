@@ -178,6 +178,19 @@ pub(super) fn encode_rdp_scancode(event: &keyboard::Event) -> Option<(u8, bool, 
 /// VNC sends logical X11 keysyms. Keep the symbol chosen at key-down so a
 /// modifier/layout change before key-up cannot leave the original symbol held.
 pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
+    if app.manager.active_vnc_read_only() { return; }
+    if let keyboard::Event::KeyPressed { text: Some(text), modifiers, .. } = event {
+        // A composition commit is a string, not one key. Send all scalars,
+        // including combining marks, without leaving a synthetic key held.
+        if text.chars().count() > 1 && !modifiers.control() && !modifiers.alt() && !modifiers.logo() {
+            for ch in text.chars().filter(|ch| !ch.is_control()) {
+                let symbol = adit_session::unicode_keysym(ch);
+                app.manager.send_vnc_key_to_active(symbol, true);
+                app.manager.send_vnc_key_to_active(symbol, false);
+            }
+            return;
+        }
+    }
     let (key, physical, pressed) = match event {
         keyboard::Event::KeyPressed {
             modified_key, physical_key, ..
@@ -226,7 +239,7 @@ fn vnc_keysym(key: &Key, physical: keyboard::key::Physical) -> Option<u32> {
         Physical::Code(Code::ControlLeft) => Some(0xffe3),
         Physical::Code(Code::ControlRight) => Some(0xffe4),
         Physical::Code(Code::AltLeft) => Some(0xffe9),
-        Physical::Code(Code::AltRight) => Some(0xffea),
+        Physical::Code(Code::AltRight) => Some(if matches!(key, Key::Named(Named::AltGraph)) { 0xfe03 } else { 0xffea }),
         Physical::Code(Code::SuperLeft) => Some(0xffeb),
         Physical::Code(Code::SuperRight) => Some(0xffec),
         _ => None,
@@ -235,7 +248,12 @@ fn vnc_keysym(key: &Key, physical: keyboard::key::Physical) -> Option<u32> {
         return modifier;
     }
     Some(match key {
-        Key::Character(text) => adit_session::unicode_keysym(text.chars().next()?),
+        Key::Character(text) => {
+            let mut chars = text.chars();
+            let first = chars.next()?;
+            if chars.next().is_some() { return None; }
+            adit_session::unicode_keysym(first)
+        },
         Key::Named(named) => match named {
             Named::Backspace => 0xff08,
             Named::Tab => 0xff09,
@@ -306,5 +324,42 @@ mod vnc_tests {
             vnc_keysym(&Key::Named(Named::F12), Physical::Code(Code::F12)),
             Some(0xffc9)
         );
+    }
+}
+
+#[cfg(test)]
+mod vnc_input_tests {
+    use super::*;
+    #[test]
+    fn composition_is_never_truncated_to_the_first_character() {
+        assert_eq!(vnc_keysym(&Key::Character("中文🙂".into()), keyboard::key::Physical::Code(keyboard::key::Code::KeyA)), None);
+        assert_eq!(vnc_keysym(&Key::Character("e\u{301}".into()), keyboard::key::Physical::Code(keyboard::key::Code::KeyE)), None);
+    }
+    #[test]
+    fn altgr_and_right_alt_keep_distinct_symbols() {
+        let key = keyboard::key::Physical::Code(keyboard::key::Code::AltRight);
+        assert_eq!(vnc_keysym(&Key::Named(Named::AltGraph), key), Some(0xfe03));
+        assert_eq!(vnc_keysym(&Key::Named(Named::Alt), key), Some(0xffea));
+    }
+}
+
+/// Merge selectively swallowed system keys before the next ordinary window key.
+pub(crate) fn drain_vnc_system_keys(app: &mut AditApp) {
+    use keyboard::key::{Code, Physical};
+    for stroke in keyboard_hook::drain() {
+        let key = match (stroke.scancode, stroke.extended) {
+            (0x0f, _) => Some((0xff09, Physical::Code(Code::Tab))),
+            (0x5b, true) => Some((0xffeb, Physical::Code(Code::SuperLeft))),
+            (0x5c, true) => Some((0xffec, Physical::Code(Code::SuperRight))),
+            _ => None,
+        };
+        if let Some((symbol,physical)) = key {
+            if stroke.pressed {
+                if !app.vnc_pressed_keys.iter().any(|(code,_)| *code == physical) {
+                    app.vnc_pressed_keys.push((physical,symbol));
+                }
+            } else { app.vnc_pressed_keys.retain(|(code,_)| *code != physical); }
+            app.manager.send_vnc_key_to_active(symbol,stroke.pressed);
+        }
     }
 }

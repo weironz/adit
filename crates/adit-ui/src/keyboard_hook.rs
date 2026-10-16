@@ -46,6 +46,7 @@ mod imp {
     /// Whether the hook should currently swallow and forward. Read on the system
     /// input thread for every keystroke, so it is an atomic and nothing more.
     static ARMED: AtomicBool = AtomicBool::new(false);
+    static VNC: AtomicBool = AtomicBool::new(false);
 
     /// Keystrokes the callback swallowed, waiting for the UI thread to forward
     /// them. A channel rather than a lock the callback might contend on: the
@@ -116,6 +117,16 @@ mod imp {
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
+        // In VNC mode only system-reserved keys are intercepted. Ordinary
+        // characters must reach the window/IME to preserve the active layout.
+        if VNC.load(Ordering::Relaxed) {
+            const VK_TAB: u32 = 0x09;
+            const VK_LWIN: u32 = 0x5b;
+            const VK_RWIN: u32 = 0x5c;
+            if !matches!(info.vkCode, VK_TAB | VK_LWIN | VK_RWIN) {
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
+        }
         const LLKHF_EXTENDED: u32 = 0x01;
         let stroke = Stroke {
             scancode: (info.scanCode & 0xFF) as u8,
@@ -133,7 +144,13 @@ mod imp {
     }
 
     /// Install the hook if it is not already installed.
+    pub(crate) fn arm_vnc() {
+        arm();
+        VNC.store(true, Ordering::Relaxed);
+    }
+
     pub(crate) fn arm() {
+        VNC.store(false, Ordering::Relaxed);
         let mut held = HOOK.lock().unwrap_or_else(|e| e.into_inner());
         if held.is_some() {
             ARMED.store(true, Ordering::Relaxed);
@@ -192,6 +209,7 @@ mod imp {
     }
 
     pub(crate) fn arm() {}
+    pub(crate) fn arm_vnc() {}
     pub(crate) fn disarm() {}
     pub(crate) fn drain() -> Vec<Stroke> {
         Vec::new()
@@ -200,4 +218,4 @@ mod imp {
 
 // `Stroke` stays inside the module: callers read its fields off whatever
 // `drain` hands back and never name the type.
-pub(crate) use imp::{arm, disarm, drain};
+pub(crate) use imp::{arm, arm_vnc, disarm, drain};

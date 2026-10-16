@@ -322,13 +322,7 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                         .width(Fill)
                         .into(),
                 ))
-                .push(
-                    text(t(
-                        "支持标准 VNC 密码认证；连接本身不加密，请使用受控网络或 VPN",
-                    ))
-                    .size(11)
-                    .color(muted_text()),
-                );
+                .push(vnc_options_editor(app));
         }
         Protocol::Rdp => {
             form = form
@@ -753,4 +747,36 @@ pub(crate) fn hosts_tab_button(active: bool) -> Element<'static, Message> {
     })
     .on_press(Message::ShowMainView(MainView::Hosts))
     .into()
+}
+
+fn vnc_options_editor(app: &AditApp) -> Element<'_, Message> {
+    let option = &app.profile_vnc;
+    let security = row![
+        button("密码认证").on_press(Message::VncSecurityChanged(VncSecurity::RequireVncAuth)),
+        button("允许无认证").on_press(Message::VncSecurityChanged(VncSecurity::AllowNone)),
+        button("TLS + 证书").on_press(Message::VncSecurityChanged(VncSecurity::RequireTls)),
+    ].spacing(6).wrap();
+    let label = match option.security {
+        VncSecurity::RequireVncAuth => "当前：必须密码认证（传输不加密）",
+        VncSecurity::AllowNone => "当前：允许无认证（仅用于受控网络）",
+        VncSecurity::RequireTls => "当前：必须 TLS，验证主机名与受信 CA",
+    };
+    let mut fields = column![security, text(label).size(11),
+        text_field("TLS CA 证书（PEM，可空用内置公共根）", "证书文件路径", &option.tls_ca_file, Message::VncTlsCaChanged),
+        row![button("无损文字").on_press(Message::VncQualityChanged(VncQuality::Lossless)),
+             button("弱网 JPEG").on_press(Message::VncQualityChanged(VncQuality::Wan)),
+             text(if option.quality == VncQuality::Lossless { "当前：无损" } else { "当前：弱网（有损）" }).size(11)].spacing(6),
+        checkbox(option.read_only).label("只读观察（禁止键鼠及发送剪贴板）").on_toggle(|v| Message::VncPolicyChanged(0,v)),
+        checkbox(option.clipboard_send).label("允许本地文本发送到远端").on_toggle(|v| Message::VncPolicyChanged(1,v)),
+        checkbox(option.clipboard_receive).label("允许接收远端文本剪贴板").on_toggle(|v| Message::VncPolicyChanged(2,v)),
+        checkbox(option.auto_reconnect).label("连接中断后自动重连").on_toggle(|v| Message::VncPolicyChanged(3,v)),
+        checkbox(option.resize_remote).label("请求远端单屏适应窗口（会影响其他观察者）").on_toggle(|v| Message::VncPolicyChanged(4,v)),
+        text("SSH 网关（目标地址由网关访问）").size(11),
+        button(if option.gateway_profile.is_none() { "● 直接连接" } else { "直接连接" }).on_press(Message::VncGatewayChanged(None)),
+    ].spacing(8);
+    for gateway in app.manager.profiles().iter().filter(|p| p.protocol == Protocol::Ssh) {
+        let label = format!("{} {}", if option.gateway_profile == Some(gateway.id) { "●" } else { "○" }, gateway.name);
+        fields = fields.push(button(text(label)).on_press(Message::VncGatewayChanged(Some(gateway.id))));
+    }
+    fields.into()
 }

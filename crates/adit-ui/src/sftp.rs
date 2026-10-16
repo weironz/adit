@@ -983,6 +983,7 @@ pub(crate) fn form_matches_selected_profile(app: &AditApp) -> bool {
         && profile.auth_method == app.profile_auth_method
         && profile.identity_file == app.profile_identity_file.trim()
         && profile.protocol == app.profile_protocol
+                    && (profile.protocol != Protocol::Vnc || profile.vnc == app.profile_vnc)
         && profile.startup_command == app.profile_startup_command.trim()
         && profile.terminal_type == app.profile_terminal_type.trim()
         // Compare the raw field to the canonical saved spec (not the parsed set):

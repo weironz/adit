@@ -580,6 +580,7 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_auth_method = profile.auth_method;
         app.profile_identity_file = profile.identity_file;
         app.profile_protocol = profile.protocol;
+        app.profile_vnc = profile.vnc.clone();
         app.profile_icon = profile.icon.clone();
         app.profile_startup_command = profile.startup_command;
         app.profile_jumps = jumps_to_spec(&profile.jumps);
@@ -948,6 +949,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
         profile.host = app.profile_host.clone();
         profile.port = port;
         profile.auth_method = AuthMethod::Password;
+        profile.vnc = app.profile_vnc.clone();
         match app.manager.save_vnc_profile(profile) {
             Ok(id) => {
                 app.selected_profile = Some(id);

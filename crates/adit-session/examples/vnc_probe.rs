@@ -7,15 +7,29 @@ use adit_domain::{ConnectionProfile, Protocol};
 use adit_session::SessionManager;
 
 fn main() {
-    let args: Vec<_> = std::env::args().collect();
+    let all_args: Vec<_> = std::env::args().collect();
+    let wan = all_args.iter().any(|a| a == "--wan");
+    let tls_ca = all_args.iter().find_map(|a|a.strip_prefix("--tls-ca=")).map(str::to_owned);
+    let tls = tls_ca.is_some() || all_args.iter().any(|a| a == "--tls");
+    let workload = all_args.iter().find_map(|a|a.strip_prefix("--workload=")).unwrap_or("static").to_owned();
+    let args: Vec<_> = all_args.into_iter().filter(|a| !a.starts_with("--")).collect();
     if args.len() < 3 {
         eprintln!("usage: vnc_probe host port [seconds] [snapshot.ppm]; password on stdin");
         std::process::exit(2);
     }
     let mut profile = ConnectionProfile::new("VNC probe", &args[1], args[2].parse().unwrap(), "");
     profile.protocol = Protocol::Vnc;
+    if tls {
+        profile.vnc.security = adit_domain::VncSecurity::RequireTls;
+        profile.vnc.tls_ca_file = tls_ca.unwrap_or_default();
+    }
+    assert!(matches!(workload.as_str(), "static" | "scroll" | "drag"), "unknown workload");
+    assert!(workload == "static" || matches!(args[1].as_str(), "127.0.0.1" | "localhost"), "input workloads are restricted to local isolated fixtures");
+    profile.vnc.read_only = workload == "static";
+    profile.vnc.auto_reconnect = false;
+    if wan { profile.vnc.quality = adit_domain::VncQuality::Wan; }
     let id = profile.id;
-    let mut password = String::new();
+    let mut password = zeroize::Zeroizing::new(String::new());
     io::stdin().lock().read_line(&mut password).unwrap();
     let mut manager = SessionManager::with_profiles(vec![profile]);
     let start = Instant::now();
@@ -29,6 +43,9 @@ fn main() {
     let mut complete = false;
     let mut report = Instant::now();
     let mut snapshot = args.get(4);
+    let mut input_at = Instant::now();
+    let mut step = 0_u16;
+    let mut drag_down = false;
     while start.elapsed() < duration {
         manager.poll_events();
         if let Some(error) = manager.active_desktop_error() {
@@ -89,7 +106,27 @@ fn main() {
                 report = Instant::now();
             }
         }
-        std::thread::sleep(Duration::from_millis(20));
+        if complete && input_at.elapsed() >= Duration::from_millis(100) {
+            use adit_session::{RdpInput,RdpMouseButton};
+            if workload == "scroll" {
+                manager.send_rdp_input_to_active(RdpInput::MouseMove{x:400,y:300});
+                manager.send_rdp_input_to_active(RdpInput::Wheel{vertical:true,delta:if step%20<10 {-120} else {120}});
+            } else if workload == "drag" {
+                if !drag_down {
+                    manager.send_rdp_input_to_active(RdpInput::MouseMove{x:400,y:300});
+                    manager.send_rdp_input_to_active(RdpInput::MouseButton{button:RdpMouseButton::Left,pressed:true});
+                    drag_down=true;
+                }
+                let offset=if step%40<20 {step%20} else {20-step%20};
+                manager.send_rdp_input_to_active(RdpInput::MouseMove{x:400-offset*8,y:300-offset*8});
+            }
+            step=step.wrapping_add(1);
+            input_at=Instant::now();
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
+    println!("diagnostics={:?}", manager.active_vnc_diagnostics());
+    println!("complete={complete}");
     manager.close(session);
+    if !complete { std::process::exit(1); }
 }

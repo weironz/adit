@@ -149,9 +149,13 @@ cancellation, independent of the 33 ms incremental-refresh timer. The pending
 receive future releases the library mutex before an input branch executes. This
 avoids limiting a two-slot decoder queue to two small rectangles per UI tick.
 Adjacent pointer moves share the latest coordinates, while button/key boundaries
-retain their order. Complete RFB update boundaries and negotiated request flow
-control are not yet exposed by the adapter; see the
-[VNC technical reference](vnc-technical-reference.md).
+retain their order. The maintained fork in `crates/adit-vnc` emits complete RFB
+update boundaries and coalesces refresh/resize follow-ups to one pending request.
+Metadata separates protocol completion, unique initial pixel coverage and UI frame
+sampling. A local cursor overlay keeps pointer motion independent of remote paints.
+Verified VeNCrypt and independent SSH direct-tcpip transports feed the same decoder;
+protocol policy and certificate failures are not automatic network retries. See the
+[VNC technical reference](vnc-technical-reference.md) for the dated baseline.
 
 VNC and RDP share graphical-session gates, frame presentation and pointer geometry.
 They keep separate transports and keyboard encoders: VNC uses logical X11 keysyms,

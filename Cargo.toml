@@ -9,6 +9,7 @@ members = [
     "crates/adit-sync",
     "crates/adit-terminal",
     "crates/adit-ui",
+    "crates/adit-vnc",
 ]
 # adit-rdp links the IronRDP stack, whose `picky` crate exact-pins pre-release
 # RustCrypto versions that conflict irreconcilably with russh's. It therefore

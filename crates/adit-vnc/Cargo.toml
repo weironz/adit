@@ -1,0 +1,25 @@
+[package]
+name = "vnc-rs"
+version = "0.6.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+authors = ["Jovi Hsu <jv.hsu@outlook.com>"]
+description = "Adit maintained VNC protocol fork based on vnc-rs 0.6.0"
+repository = "https://github.com/HsuJv/vnc-rs"
+[lib]
+name = "vnc"
+[dependencies]
+async_io_stream = "0.3"
+flate2 = "1"
+futures = "0.3"
+thiserror = "1"
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["compat"] }
+tracing = { version = "0.1", features = ["log"] }
+tokio = { version = "1", features = ["full"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+webpki-roots = "1"
+[dev-dependencies]
+anyhow = "1"
+rcgen = "0.14"

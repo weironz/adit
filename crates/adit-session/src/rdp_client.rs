@@ -48,6 +48,9 @@ pub enum RdpClientEvent {
     },
     Error(String),
     AuthRejected(String),
+    GatewayHostKey(adit_ssh::HostKeyPrompt),
+    GatewayAuthPrompt(adit_ssh::AuthPromptRequest),
+    VncReconnecting { attempt: u32, delay_secs: u64 },
     Closed,
 }
 

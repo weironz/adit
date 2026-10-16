@@ -38,16 +38,27 @@ pub(crate) fn remember_recent_host(app: &mut AditApp, profile_id: ProfileId) {
     app.recent_hosts.truncate(RECENT_HOSTS_MAX);
 }
 
-fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: String, retry: Option<SessionId>) {
+pub(crate) fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: String, retry: Option<SessionId>) {
     release_rdp_modifiers(app);
+    let gateway_password = if let Some(id) = app.manager.profile(profile_id).and_then(|profile| profile.vnc.gateway_profile) {
+        match (app.credential_store.load_profile_password(id), app.credential_store.load_profile_passphrase(id)) {
+            (Ok(password), Ok(passphrase)) => Some(adit_session::VncGatewayCredentials {
+                password: password.unwrap_or_default(), passphrase: passphrase.unwrap_or_default(),
+            }),
+            (Err(error), _) | (_, Err(error)) => {
+                app.last_error = Some(format!("无法读取 SSH 网关凭据: {error}"));
+                return;
+            }
+        }
+    } else { None };
     let result = if let Some(id) = retry {
-        match app.manager.retry_vnc_with_password(id, password.clone()) {
+        match app.manager.retry_vnc_with_password_via(id, password.clone(), gateway_password.clone()) {
             Ok(true) => Ok(id),
-            Ok(false) => app.manager.open_live_vnc_session(profile_id, password),
+            Ok(false) => app.manager.open_live_vnc_session_via(profile_id, password, gateway_password),
             Err(error) => Err(error),
         }
     } else {
-        app.manager.open_live_vnc_session(profile_id, password)
+        app.manager.open_live_vnc_session_via(profile_id, password, gateway_password)
     };
     match result {
         Ok(_) => {
@@ -722,6 +733,9 @@ pub(crate) fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
 /// that is not down is a no-op on the remote, whereas state drifting out of step
 /// with the remote is the bug being fixed here.
 pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
+    if app.vnc_grab_keys { keyboard_hook::disarm(); }
+    app.vnc_grab_keys = false;
+    app.vnc_preedit = None;
     for (_, keysym) in app.vnc_pressed_keys.drain(..) {
         app.manager.send_vnc_key_to_active(keysym, false);
     }
@@ -1764,7 +1778,7 @@ fn rdp_resize_transitioning(app: &AditApp, surface: (u16, u16)) -> bool {
 /// Called from the periodic tick and the per-frame RDP tick; cheap when there
 /// is nothing pending.
 pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
-    if app.manager.active_is_vnc() {
+    if app.manager.active_is_vnc() && !app.manager.active_vnc_resize_remote() {
         app.rdp_resize_pending = None;
         return;
     }
@@ -1938,7 +1952,7 @@ fn resize_probe_enabled() -> bool {
 }
 
 pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
-    if app.manager.active_is_vnc() {
+    if app.manager.active_is_vnc() && !app.manager.active_vnc_resize_remote() {
         return;
     }
 

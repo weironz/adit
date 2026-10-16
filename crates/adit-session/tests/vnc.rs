@@ -94,6 +94,8 @@ fn message(stream: &mut TcpStream) -> Option<(u8, Vec<u8>)> {
 fn manager(port: u16) -> (SessionManager, adit_domain::ProfileId) {
     let mut profile = ConnectionProfile::new("VNC test", "127.0.0.1", port, "");
     profile.protocol = Protocol::Vnc;
+    profile.vnc.security = adit_domain::VncSecurity::AllowNone;
+    profile.vnc.auto_reconnect = false;
     let id = profile.id;
     (SessionManager::with_profiles(vec![profile]), id)
 }
@@ -261,7 +263,7 @@ fn unsupported_security_is_visible_and_does_not_reprompt_for_a_password() {
     assert!(manager
         .active_desktop_error()
         .unwrap()
-        .contains("认证方式暂不支持"));
+        .contains("安全策略不满足"));
     assert!(manager.take_auth_rejection().is_none());
     server.join().unwrap();
 }
@@ -439,4 +441,71 @@ fn a_mouse_burst_during_handshake_keeps_the_latest_position_and_click_order() {
     wait(&mut manager, |m| m.active_session_summary().unwrap().status == SessionStatus::Connected);
     manager.close(session);
     server.join().unwrap();
+}
+
+#[test]
+fn readonly_releases_held_input_then_blocks_keyboard_mouse_and_clipboard_push() {
+    let (wire_tx, wire_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init(&mut stream);
+        while let Some((tag, data)) = message(&mut stream) {
+            if matches!(tag,4..=6) { let _ = wire_tx.send((tag,data)); }
+        }
+    });
+    let (mut manager,id)=manager(port);
+    let session=manager.open_live_vnc_session(id,String::new()).unwrap();
+    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connected);
+    manager.send_vnc_key_to_active(0xffe1,true);
+    manager.send_rdp_input_to_active(RdpInput::MouseButton{button:RdpMouseButton::Left,pressed:true});
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().0,4);
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().0,5);
+    manager.set_active_vnc_read_only(true);
+    let key_up=wire_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(key_up,(4,vec![0,0,0,0,0,0xff,0xe1]));
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().1[0],0);
+    manager.send_vnc_key_to_active(0x61,true);
+    manager.send_rdp_input_to_active(RdpInput::MouseMove{x:2,y:1});
+    manager.send_rdp_input_to_active(RdpInput::Wheel{vertical:true,delta:120});
+    manager.offer_clipboard_to_active_rdp("blocked local".into());
+    assert!(wire_rx.recv_timeout(Duration::from_millis(200)).is_err());
+    manager.set_active_vnc_read_only(false);
+    manager.send_vnc_key_to_active(0x62,true);
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(),(4,vec![1,0,0,0,0,0,0x62]));
+    manager.close(session); server.join().unwrap();
+}
+
+#[test]
+fn dropped_transport_reconnects_the_same_tab_and_manual_close_stops_retry() {
+    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
+    let port=listener.local_addr().unwrap().port();
+    let (drop_tx,drop_rx)=mpsc::channel();
+    let (second_tx,second_rx)=mpsc::channel();
+    let server=thread::spawn(move||{
+        let (mut stream,_)=listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        init(&mut stream);
+        while message(&mut stream).is_some_and(|m|m.0!=3) {}
+        drop_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(stream);
+        let (mut stream,_)=listener.accept().unwrap();
+        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        init(&mut stream);
+        while message(&mut stream).is_some_and(|m|m.0!=3) {}
+        second_tx.send(()).unwrap();
+        while message(&mut stream).is_some() {}
+    });
+    let (mut manager,id)=manager(port);
+    let mut profile=manager.profile(id).unwrap().clone();
+    profile.vnc.auto_reconnect=true; profile.vnc.read_only=true;
+    manager.save_vnc_profile(profile).unwrap();
+    let session=manager.open_live_vnc_session(id,String::new()).unwrap();
+    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connected);
+    drop_tx.send(()).unwrap();
+    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connecting);
+    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connected);
+    second_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(manager.sessions().len(),1);
+    assert_eq!(manager.active_session_summary().unwrap().id,session);
+    assert!(manager.active_vnc_read_only());
+    manager.close(session); server.join().unwrap();
 }
