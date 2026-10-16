@@ -37,7 +37,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     // it is the only thing left naming the way out. Over a remote desktop the
     // floating toolbar is that thing, so the bar goes as well and the glass is
     // wholly the desktop's.
-    let rdp_fullscreen = app.fullscreen && app.manager.active_is_rdp();
+    let rdp_fullscreen = app.fullscreen && app.manager.active_is_desktop();
     let layout = if rdp_fullscreen {
         column![main]
     } else if app.fullscreen {

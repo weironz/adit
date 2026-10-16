@@ -105,6 +105,7 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 protocol_button(app, Protocol::Ssh),
                 protocol_button(app, Protocol::Sftp),
                 protocol_button(app, Protocol::Rdp),
+                protocol_button(app, Protocol::Vnc),
                 protocol_button(app, Protocol::Telnet),
                 protocol_button(app, Protocol::LocalShell),
                 protocol_button(app, Protocol::Serial),
@@ -281,6 +282,49 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 .push(
                     text(t(
                         "Telnet 明文传输，用户名和密码都在终端里按提示输入，不经过凭据库。仅建议用于交换机、IPMI、串口服务器等只支持 telnet 的设备。",
+                    ))
+                    .size(11)
+                    .color(muted_text()),
+                );
+        }
+        Protocol::Vnc => {
+            form = form
+                .push(
+                    row![
+                        cell(
+                            dial_field(
+                                "主机",
+                                "10.0.0.5",
+                                &app.profile_host,
+                                Message::ProfileHostChanged
+                            ),
+                            3
+                        ),
+                        cell(
+                            text_field(
+                                "端口",
+                                "5900",
+                                &app.profile_port,
+                                Message::ProfilePortChanged
+                            ),
+                            1
+                        ),
+                    ]
+                    .spacing(10),
+                )
+                .push(dialog_field(
+                    "VNC 密码（加密保存）",
+                    text_input("VNC 密码（前 8 字节）；无认证可留空", &app.profile_password)
+                        .secure(true)
+                        .on_input(Message::ProfilePasswordChanged)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .width(Fill)
+                        .into(),
+                ))
+                .push(
+                    text(t(
+                        "支持标准 VNC 密码认证；连接本身不加密，请使用受控网络或 VPN",
                     ))
                     .size(11)
                     .color(muted_text()),

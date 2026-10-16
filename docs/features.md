@@ -17,10 +17,11 @@ Known gaps are listed honestly at the [end](#known-gaps).
 | **Serial** | `serialport` | Port in the host field, baud in the identity field |
 | **Telnet** | raw TCP (RFC 854) | For switches, IPMI and console servers. Unencrypted, no client credential |
 | **RDP** | IronRDP, out-of-process helper | Graphical surface, not a VT terminal |
+| **VNC** | `vnc-rs`, background worker | Embedded graphical desktop; standard VncAuth or no authentication |
 
 The four terminal protocols — SSH, local shell, serial, Telnet — share one event
-protocol, so the session layer treats them uniformly. The other two are the exceptions:
-RDP carries a framebuffer instead, and **SFTP** is a *starting point* rather than a
+protocol, so the session layer treats them uniformly. The other protocols are the exceptions:
+RDP and VNC carry a framebuffer instead, and **SFTP** is a *starting point* rather than a
 separate transport — the same connection SSH uses, opened straight onto the
 [command-line `sftp>` tab](#sftp) because reaching a host's files should not require
 opening a shell you did not want. It carries no byte stream to drive a PTY, so it is
@@ -41,6 +42,34 @@ type. There is no credential plumbing at all: the login prompt is ordinary termi
 output, so the username and password are typed into the terminal and never touch the
 credential store.
 
+### VNC desktop connections
+
+Choose **VNC** in the session editor, enter a host and TCP port (default 5900;
+for display `:1`, usually 5901), and save the VNC password. No SSH username is
+required. The desktop opens in an Adit tab with keyboard/mouse input, scrolling,
+fullscreen, fit-to-window or original-size rendering, and a Ctrl+Alt+Del button.
+A rejected password reopens the prompt and retries the same tab. Closing a tab
+also cancels a pending connection or authentication handshake.
+
+The first implementation negotiates ZRLE, CopyRect and Raw, plus server-driven
+desktop-size updates. It uses a shared session and does not disconnect existing
+viewers. Window resizing scales locally rather than changing the server's desktop.
+Standard VncAuth and authentication-free servers are supported; TLS/VeNCrypt,
+certificate authentication and vendor-specific security extensions are not yet
+supported. VncAuth uses only the first eight password bytes and does not encrypt
+the desktop stream; use a trusted network or an existing VPN/tunnel. Adit's SSH
+jump-host setting is rejected explicitly for VNC instead of being ignored.
+
+Clipboard sharing follows the remote-desktop clipboard toggle. The initial bridge
+supports ASCII text in both directions; non-ASCII local text is not sent and a
+notice explains the limit. Images, files and extended UTF-8 clipboard negotiation
+are not included. Windows fullscreen uses normal keyboard events for VNC, so OS
+and other applications' global hotkeys keep their local behaviour.
+
+VNC profiles serialize with `protocol: "vnc"`. Older Adit versions do not recognize
+that protocol; upgrade clients before sharing the updated catalog through cloud
+sync. Existing SSH/RDP profiles keep their formats.
+
 ## Sessions
 
 - **Profiles** with group/folder organisation, manual ordering, and drag-reorder.
@@ -57,7 +86,7 @@ credential store.
 - **Enter reconnects** a dropped session; SSH reconnects in place with stored
   credentials, other protocols reopen the dialog.
 - **Split panes / tiling** — up to 6 sessions tiled as columns, rows, or a grid. Only the
-  focused pane shows a cursor and drives scrolling. RDP cannot be split.
+  focused pane shows a cursor and drives scrolling. RDP and VNC cannot be split.
 - **Broadcast input** fans keystrokes to every connected session, with a persistent
   warning in the status bar showing the reach count.
 

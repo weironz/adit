@@ -9,7 +9,7 @@ pub(crate) use adit_session::{
     TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
 pub(crate) use adit_storage::{
-    AppSettings, CredentialStore, ProfileCatalog, ProfileStore, HostLayout, SettingsStore, Snippet, ThemeMode,
+    AppSettings, CredentialStore, HostLayout, ProfileCatalog, ProfileStore, SettingsStore, Snippet, ThemeMode,
 };
 pub(crate) use adit_terminal::{
     Color as TermColor, LogicalAnchor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot,
@@ -413,6 +413,8 @@ pub struct AditApp {
     /// RDP viewport request (physical pixels) and the 1:1 presentation.
     display_scale: f32,
     rdp_clipboard_ticks: u8,
+    vnc_pressed_keys: Vec<(keyboard::key::Physical, u32)>,
+    vnc_fit: bool,
     // Latest keyboard modifier state, so wheel handling can tell a plain scroll
     // from a Ctrl+wheel zoom.
     modifiers: keyboard::Modifiers,
@@ -710,6 +712,7 @@ pub enum Message {
     RdpQualityChosen(RdpQuality),
     /// Send Ctrl+Alt+Del to the remote desktop as three scancode pairs.
     RdpSendCtrlAltDel,
+    ToggleVncFit,
     ToggleMenu(MenuKind),
     ToggleTheme,
     CloseAppearance,
@@ -990,7 +993,7 @@ pub enum Message {
     PasteIntoTerminal,
     ClipboardPasted(Option<String>),
     /// The local clipboard, sampled for the active RDP session's remote.
-    RdpClipboardPolled(Option<String>),
+    RdpClipboardPolled(SessionId, Option<String>),
     TerminalJumpToBottom,
     OpenSelectedProfile,
     ConnectSelectedProfile,
@@ -1583,6 +1586,8 @@ impl AditApp {
             rdp_resize_pending_since: None,
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
+            vnc_pressed_keys: Vec::new(),
+            vnc_fit: true,
             modifiers: keyboard::Modifiers::empty(),
             window_width,
             window_height,
@@ -2181,7 +2186,7 @@ mod tests {
 
         // The RDP case is asserted through the same function the layout uses,
         // so the two cannot drift: with an RDP session active it must be zero.
-        assert!(!app.manager.active_is_rdp(), "harness has no RDP session");
+        assert!(!app.manager.active_is_desktop(), "harness has no RDP session");
     }
 
     /// Fullscreen over a desktop leaves the toolbar's ⌄ tab and nothing else:
@@ -2697,6 +2702,74 @@ mod tests {
         app.grid_order.clear();
         app.recent_hosts.clear();
         app
+    }
+
+    #[test]
+    fn new_vnc_profile_saves_without_an_ssh_username_and_reopens_the_password_dialog() {
+        let mut app = drag_test_app();
+        // The scratch stores also isolate credentials; never touch the real vault.
+        app.credential_store =
+            CredentialStore::with_path("adit-vnc-test", app.profile_store.path().with_file_name("credentials.json"));
+        app.selected_profile = None;
+        app.profile_name = "Linux desktop".into();
+        app.profile_host = "127.0.0.1".into();
+        app.profile_username.clear();
+        app.profile_port = "22".into();
+        app.profile_password.clear();
+        app.profile_jumps.clear();
+        let _ = update(&mut app, Message::ProfileProtocolChanged(Protocol::Vnc));
+        assert_eq!(app.profile_port, "5900");
+        let id = save_profile_from_form(&mut app, false).expect("VNC profile saves");
+        assert_eq!(app.manager.profile(id).unwrap().protocol, Protocol::Vnc);
+        assert!(app.manager.profile(id).unwrap().username.is_empty());
+        assert!(!profile_can_connect_unattended(&app, id));
+        open_connection_dialog(&mut app);
+        assert_eq!(app.connection_dialog.as_ref().unwrap().profile_id, id);
+        // Rendering both panels exercises the exhaustive protocol-specific UI.
+        let _ = profile_editor_overlay(&app);
+        let _ = connection_dialog_overlay(&app);
+        assert!(app.manager.sessions().is_empty());
+        app.connection_dialog = None;
+        app.profile_password = "vnc-test-only".into();
+        assert_eq!(save_profile_from_form(&mut app, false), Some(id));
+        assert_eq!(app.credential_store.load_profile_password(id).unwrap().as_deref(), Some("vnc-test-only"));
+        let profile = app.manager.profile(id).unwrap();
+        let wire = serde_json::to_string(profile).unwrap();
+        assert!(!wire.contains("vnc-test-only"));
+        let loaded: ConnectionProfile = serde_json::from_str(&wire).unwrap();
+        assert_eq!(loaded.protocol, Protocol::Vnc);
+        assert!(profile_can_connect_unattended(&app, id));
+    }
+
+    #[test]
+    fn vnc_releases_the_original_keysym_after_shift_or_focus_changes() {
+        let mut app = drag_test_app();
+        let physical = Physical::Code(Code::KeyA);
+        let press = key_press(Key::Character("a".into()), Key::Character("A".into()),
+            physical, keyboard::Modifiers::SHIFT, Some("A"));
+        send_vnc_keyboard(&mut app, &press);
+        assert_eq!(app.vnc_pressed_keys, vec![(physical, 0x41)]);
+        let release = keyboard::Event::KeyReleased {
+            key: Key::Character("a".into()), modified_key: Key::Character("a".into()),
+            physical_key: physical, location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+        };
+        send_vnc_keyboard(&mut app, &release);
+        assert!(app.vnc_pressed_keys.is_empty());
+        send_vnc_keyboard(&mut app, &press);
+        let _ = update(&mut app, Message::WindowUnfocused);
+        assert!(app.vnc_pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn stale_desktop_clipboard_reads_do_not_cross_tab_or_sharing_boundaries() {
+        let mut app = drag_test_app();
+        app.rdp_clipboard_offered = None;
+        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), Some("stale".into())));
+        assert!(app.rdp_clipboard_offered.is_none());
+        app.rdp_clipboard = false;
+        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), Some("disabled".into())));
+        assert!(app.rdp_clipboard_offered.is_none());
     }
 
     fn sidebar_names(app: &AditApp) -> Vec<String> {

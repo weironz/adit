@@ -337,6 +337,14 @@ impl ConnectionProfile {
 
     #[must_use]
     pub fn endpoint(&self) -> String {
+        if self.protocol == Protocol::Vnc {
+            let host = if self.host.contains(':') && !self.host.starts_with('[') {
+                format!("[{}]", self.host)
+            } else {
+                self.host.clone()
+            };
+            return format!("{host}:{}", self.port);
+        }
         format!("{}@{}:{}", self.username, self.host, self.port)
     }
 
@@ -413,6 +421,8 @@ pub enum Protocol {
     Telnet,
     /// Remote Desktop (graphical).
     Rdp,
+    /// A graphical desktop over the Remote Framebuffer protocol.
+    Vnc,
     /// An `sftp>` prompt on its own, without opening a shell first.
     ///
     /// The same connection SSH uses — a starting point rather than a separate
@@ -423,10 +433,11 @@ pub enum Protocol {
 
 impl Protocol {
     /// Every variant, in the order the profile editor offers them.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Ssh,
         Self::Sftp,
         Self::Rdp,
+        Self::Vnc,
         Self::Telnet,
         Self::LocalShell,
         Self::Serial,
@@ -440,6 +451,7 @@ impl Protocol {
             Self::Serial => "串口",
             Self::Telnet => "Telnet",
             Self::Rdp => "RDP",
+            Self::Vnc => "VNC",
             Self::Sftp => "SFTP",
         }
     }
@@ -453,6 +465,7 @@ impl Protocol {
             Self::Ssh | Self::Sftp => Some(22),
             Self::Telnet => Some(23),
             Self::Rdp => Some(3389),
+            Self::Vnc => Some(5900),
             Self::LocalShell | Self::Serial => None,
         }
     }

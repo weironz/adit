@@ -14,7 +14,9 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .unwrap_or(Protocol::Ssh);
     let is_rdp = protocol == Protocol::Rdp;
 
-    let auth_hint = if is_rdp {
+    let auth_hint = if protocol == Protocol::Vnc {
+        "请输入 VNC 密码；无认证服务端可留空"
+    } else if is_rdp {
         "密码认证：请输入远程桌面 (RDP) 登录密码"
     } else {
         match dialog.auth_method {
@@ -24,7 +26,9 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             AuthMethod::Agent => "Agent 认证：通常不需要密码",
         }
     };
-    let dialog_title = if is_rdp { "连接 RDP" } else { "连接 SSH" };
+    let dialog_title = if protocol == Protocol::Vnc {
+        "连接 VNC"
+    } else if is_rdp { "连接 RDP" } else { "连接 SSH" };
 
     let mut details = column![
         row![
@@ -1229,7 +1233,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         )
         .push(
             checkbox(app.rdp_clipboard)
-                .label(t("RDP 会话共享剪贴板（仅文本，下次连接生效）"))
+                .label(t("远程桌面共享剪贴板（VNC 仅基础文本）"))
                 .on_toggle(Message::ToggleRdpClipboard)
                 .size(16)
                 .text_size(12),

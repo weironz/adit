@@ -35,7 +35,7 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         hosts_view(app)
     } else if app.panes.len() >= 2 {
         tiled_workspace_body(app)
-    } else if app.manager.active_is_rdp() {
+    } else if app.manager.active_is_desktop() {
         rdp_surface_view(app)
     } else {
         let snapshot = active_terminal_snapshot(app);
@@ -71,7 +71,7 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     // "fullscreen" still spent a row of glass on chrome. Only for RDP: the
     // floating toolbar is what replaces those controls, and a terminal session
     // in fullscreen has no such thing, so hiding its tabs would strand it.
-    let rdp_fullscreen = app.fullscreen && app.manager.active_is_rdp();
+    let rdp_fullscreen = app.fullscreen && app.manager.active_is_desktop();
     let has_sessions = !app.manager.sessions().is_empty() && !rdp_fullscreen;
     let mut layout = column![].height(Fill).width(Fill);
     if has_sessions {
@@ -146,7 +146,21 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         // is exactly when someone needs the way out, and there is no menu bar.
         return with_rdp_toolbar(
             app,
-            container(text(t("正在连接 RDP…")).size(14).color(muted_text()))
+            container(
+                text(app.manager.active_desktop_error().unwrap_or_else(|| {
+                    if app.manager.active_session_summary().is_some_and(|s| {
+                        matches!(s.status, SessionStatus::Disconnected | SessionStatus::Error)
+                    }) {
+                        t("连接已断开，按 Enter 重新连接")
+                    } else if app.manager.active_is_vnc() {
+                        t("正在连接 VNC…")
+                    } else {
+                        t("正在连接 RDP…")
+                    }
+                }))
+                .size(14)
+                .color(muted_text()),
+            )
                 .width(Fill)
                 .height(Fill)
                 .center_x(Fill)
@@ -334,7 +348,7 @@ pub(crate) fn with_rdp_toolbar<'a>(
     // bar has nothing to disagree with.
     let mut layers: Vec<Element<'a, Message>> = vec![desktop];
     layers.push(rdp_toolbar_overlay(app));
-    if app.rdp_quality_menu_open && !app.rdp_toolbar_collapsed {
+    if app.rdp_quality_menu_open && !app.rdp_toolbar_collapsed && !app.manager.active_is_vnc() {
         layers.push(rdp_quality_menu_overlay(app));
     }
     stack(layers).into()
@@ -404,7 +418,16 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
     let live = app.manager.active_rdp_live();
 
     let buttons = row![
-        rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu)),
+        if app.manager.active_is_vnc() {
+            rdp_toolbar_button(
+                "⤢",
+                t("适应窗口 / 原始比例"),
+                app.vnc_fit,
+                Some(Message::ToggleVncFit),
+            )
+        } else {
+            rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu))
+        },
         // Ctrl+Alt+Del and the clipboard are meaningless without a live desktop
         // to receive them, so they grey out rather than firing into a dead pipe.
         rdp_toolbar_button(

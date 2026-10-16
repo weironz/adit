@@ -47,16 +47,17 @@ pub enum RdpClientEvent {
         length: u32,
     },
     Error(String),
+    AuthRejected(String),
     Closed,
 }
 
 /// The current decoded desktop image plus a monotonic generation the UI uses to
 /// avoid re-uploading an unchanged frame.
-struct Surface {
-    rgba: Vec<u8>,
-    width: u16,
-    height: u16,
-    generation: u64,
+pub(super) struct Surface {
+    pub(super) rgba: Vec<u8>,
+    pub(super) width: u16,
+    pub(super) height: u16,
+    pub(super) generation: u64,
 }
 
 /// Ceiling per side for a framebuffer allocation. Mirrors the request-side clamp
@@ -68,7 +69,7 @@ struct Surface {
 const MAX_RDP_DIMENSION: u16 = 8192;
 
 impl Surface {
-    fn new(width: u16, height: u16) -> Self {
+    pub(super) fn new(width: u16, height: u16) -> Self {
         let width = width.clamp(1, MAX_RDP_DIMENSION);
         let height = height.clamp(1, MAX_RDP_DIMENSION);
         Self {
@@ -81,7 +82,7 @@ impl Surface {
 
     /// Blit a tile into the surface, ignoring anything out of bounds (defensive
     /// against a malformed message).
-    fn blit(&mut self, x: u16, y: u16, tw: u16, th: u16, rgba: &[u8]) {
+    pub(super) fn blit(&mut self, x: u16, y: u16, tw: u16, th: u16, rgba: &[u8]) {
         let (sw, sh) = (usize::from(self.width), usize::from(self.height));
         let (x, y, tw, th) = (usize::from(x), usize::from(y), usize::from(tw), usize::from(th));
         if x + tw > sw || y + th > sh || rgba.len() < tw * th * 4 {

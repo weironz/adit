@@ -139,26 +139,34 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.manager.answer_rdp_file_read(read.stream_id, data);
             }
 
-            if app.rdp_clipboard && app.manager.active_is_rdp() {
+            if app.rdp_clipboard && app.manager.active_is_desktop() {
                 app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
                 if app.rdp_clipboard_ticks.is_multiple_of(RDP_CLIPBOARD_POLL_TICKS) {
-                    // A file selection and text are mutually exclusive on the
-                    // clipboard, so files are checked first: Explorer also puts
-                    // the *names* on as text, and letting that through would
-                    // offer the remote a list of paths instead of the files.
-                    offer_local_files_if_changed(app);
-                    offer_local_image_if_changed(app);
-                    return clipboard::read().map(Message::RdpClipboardPolled);
+                    // Explorer also offers file names as text. RDP checks files
+                    // first; VNC supports text only and never requests local files.
+                    if !app.manager.active_is_vnc() {
+                        offer_local_files_if_changed(app);
+                        offer_local_image_if_changed(app);
+                    }
+                    if let Some(session) = app.manager.active_session() {
+                        return clipboard::read().map(move |contents| Message::RdpClipboardPolled(session, contents));
+                    }
                 }
             }
         }
-        Message::RdpClipboardPolled(contents) => {
-            // Offer only what actually changed: the poll fires on a timer, and
-            // the offer costs a FormatList on the RDP wire.
+        Message::RdpClipboardPolled(session, contents) => {
+            // A read can finish after a tab switch or after sharing was disabled.
+            if !app.rdp_clipboard || app.manager.active_session() != Some(session) {
+                return Task::none();
+            }
             if let Some(text) = contents.filter(|text| !text.is_empty()) {
                 if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
                     app.rdp_clipboard_offered = Some(text.clone());
-                    app.manager.offer_clipboard_to_active_rdp(text);
+                    if app.manager.active_is_vnc() && !text.is_ascii() {
+                        app.notice = String::from(t("VNC 基础剪贴板暂仅同步英文等 ASCII 文本"));
+                    } else {
+                        app.manager.offer_clipboard_to_active_rdp(text);
+                    }
                 }
             }
         }
@@ -168,7 +176,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Drained here rather than in the callback because the callback runs
             // on the system input thread against a deadline, and sending on the
             // helper pipe is not work that belongs there.
-            if app.fullscreen && app.manager.active_rdp_live() {
+            if app.fullscreen && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
                 for stroke in keyboard_hook::drain() {
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode: stroke.scancode,
@@ -176,7 +184,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                         pressed: stroke.pressed,
                     });
                 }
-            } else if !app.fullscreen {
+            } else if !app.fullscreen || app.manager.active_is_vnc() {
                 // The session can end or the mode can change without passing
                 // through ToggleFullscreen — a dropped connection, a closed
                 // tab. Leaving a global hook armed after that would swallow
@@ -1476,7 +1484,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // SSH defaults to password auth; only upgrade the implicit "Auto" so an
             // explicit Key/Agent choice is preserved.
-            if protocol.is_ssh_based() && app.profile_auth_method == AuthMethod::Auto {
+            if (protocol.is_ssh_based() || protocol == Protocol::Vnc) && app.profile_auth_method == AuthMethod::Auto {
                 app.profile_auth_method = AuthMethod::Password;
             }
             // Give the tile a starting icon, but only while the user has not
@@ -2013,7 +2021,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // Ctrl+Shift+X) reach the remote instead of being eaten locally,
             // and it is global, so it is armed for exactly as long as the user
             // is plainly aiming keys at a remote desktop.
-            if app.fullscreen && app.manager.active_is_rdp() {
+            if app.fullscreen && app.manager.active_is_desktop() && !app.manager.active_is_vnc() {
                 keyboard_hook::arm();
             } else {
                 keyboard_hook::disarm();
@@ -2129,11 +2137,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // silently died while clicks kept landing — "can click the logon
             // screen but can't type into it". A focused local text field still
             // wins: its captured events never reach this handler at all.
-            if app.manager.active_is_rdp() && app.main_view == MainView::Terminal {
+            if app.manager.active_is_desktop() && app.main_view == MainView::Terminal {
                 // A dead session: Enter reconnects (SecureCRT-style) rather
                 // than firing a scancode at a closed helper.
                 if is_enter_key(&event) && active_session_is_dead(app) {
                     reconnect_active_session(app);
+                    return Task::none();
+                }
+                if app.manager.active_is_vnc() {
+                    send_vnc_keyboard(app, &event);
                     return Task::none();
                 }
                 if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
@@ -2648,7 +2660,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // RDP keeps no password in session state (vault-only), so clone it like
             // a fresh connect: load the vault password and open a new RDP session,
             // else prompt for it. `clone_session` refuses RDP for this reason.
-            if app.manager.session_is_rdp(session_id) {
+            if app.manager.session_is_desktop(session_id) {
                 let profile_id = app
                     .manager
                     .sessions()
@@ -2664,7 +2676,16 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     match stored {
                         Some(password) => {
                             let (rw, rh) = rdp_viewport_size(app);
-                            match app.manager.open_live_rdp_session(profile_id, password, rw, rh) {
+                            let result = if app
+                                .manager
+                                .profile(profile_id)
+                                .is_some_and(|p| p.protocol == Protocol::Vnc)
+                            {
+                                app.manager.open_live_vnc_session(profile_id, password)
+                            } else {
+                                app.manager.open_live_rdp_session(profile_id, password, rw, rh)
+                            };
+                            match result {
                                 Ok(_) => {
                                     remember_recent_host(app, profile_id);
                                     app.rdp_target_size = (rw > 0).then_some((rw, rh));
@@ -2842,6 +2863,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from(t("已关闭：新主机密钥将逐个确认"))
             };
         }
+        Message::ToggleVncFit => {
+            app.vnc_fit = !app.vnc_fit;
+        }
         Message::ToggleRdpClipboard(enabled) => {
             app.rdp_clipboard = enabled;
             app.manager.set_rdp_clipboard(enabled);
@@ -2883,7 +2907,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             // way to apply this to what is on screen is to open the session
             // again. Doing it silently would look like the button did nothing
             // for the two seconds the reconnect takes, hence the notice.
-            if app.manager.active_rdp_live() {
+            if app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
                 app.notice = tf("画质已切换为 {} — 正在重新连接", &[&t(rdp_quality_label(quality))]);
                 reconnect_active_session(app);
             } else {

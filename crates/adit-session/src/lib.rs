@@ -36,10 +36,13 @@ use std::time::{Duration, Instant};
 use thiserror::Error;
 
 mod rdp_client;
+mod vnc_client;
 pub use adit_rdp_proto::{
     ClipFile, InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
+pub use vnc_client::unicode_keysym;
+use vnc_client::VncClientHandle;
 
 /// Default RDP desktop size when the caller doesn't specify one.
 const DEFAULT_RDP_WIDTH: u16 = 1280;
@@ -107,6 +110,8 @@ struct SessionRecord {
     /// a placeholder `terminal` (never rendered) and leave `live`/`reconnect`
     /// `None`, so terminal-only code paths skip them.
     rdp: Option<RdpClientHandle>,
+    vnc: Option<VncClientHandle>,
+    desktop_error: Option<String>,
     /// Set for a command-line SFTP tab: typed bytes go to this interpreter instead
     /// of a PTY, and it owns the `sftp>` prompt in `terminal`.
     sftp_shell: Option<SftpShell>,
@@ -177,9 +182,9 @@ fn open_tunnel_for(
 }
 
 impl SessionRecord {
-    /// True for a native RDP session (graphical surface, not a VT terminal).
-    fn is_rdp(&self) -> bool {
-        self.rdp.is_some()
+    /// Graphical sessions must skip every VT-only input and layout path.
+    fn is_desktop(&self) -> bool {
+        self.rdp.is_some() || self.vnc.is_some()
     }
 }
 
@@ -963,6 +968,8 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: None,
+                vnc: None,
+                desktop_error: None,
                 sftp_shell: None,
                 log: None,
                 pending_host_key: None,
@@ -1068,7 +1075,7 @@ impl SessionManager {
                 let terminal = telnet_terminal(&profile.name, &endpoint, size);
                 (live, endpoint, terminal, None)
             }
-            Protocol::Rdp => {
+            Protocol::Rdp | Protocol::Vnc => {
                 // RDP is launched externally (see `launch_rdp`); it never opens a
                 // terminal session.
                 return Err(SessionError::Unsupported(String::from(
@@ -1095,6 +1102,8 @@ impl SessionManager {
                 terminal,
                 live: Some(live),
                 rdp: None,
+                vnc: None,
+                desktop_error: None,
                 sftp_shell: None,
                 log: None,
                 pending_host_key: None,
@@ -1233,6 +1242,134 @@ impl SessionManager {
         }
     }
 
+    /// Open a framebuffer desktop without loading the RDP helper.
+    pub fn open_live_vnc_session(
+        &mut self,
+        profile_id: ProfileId,
+        password: String,
+    ) -> Result<SessionId, SessionError> {
+        let profile = self
+            .profile(profile_id)
+            .ok_or(SessionError::ProfileNotFound)?
+            .clone();
+        if profile.host.trim().is_empty() {
+            return Err(SessionError::Unsupported("请填写 VNC 主机".into()));
+        }
+        if !profile.jumps.is_empty() {
+            return Err(SessionError::Unsupported(
+                "VNC 暂不支持 SSH 跳板，请先建立隧道或使用 VPN".into(),
+            ));
+        }
+        let handle = vnc_client::spawn_vnc_session(
+            profile.host.trim().trim_matches(['[', ']']).to_string(),
+            profile.port,
+            password,
+        )
+        .map_err(|error| SessionError::Unsupported(error.to_string()))?;
+        let session_id = SessionId::new();
+        let endpoint = profile.endpoint();
+        let terminal = live_shell_terminal(&profile.name, &endpoint, self.default_size);
+        self.sessions.insert(
+            session_id,
+            SessionRecord {
+                summary: SessionSummary {
+                    id: session_id,
+                    profile_id,
+                    title: profile.name,
+                    endpoint,
+                    status: SessionStatus::Connecting,
+                },
+                terminal,
+                live: None,
+                rdp: None,
+                vnc: Some(handle),
+                desktop_error: None,
+                sftp_shell: None,
+                log: None,
+                pending_host_key: None,
+                pending_auth_prompt: None,
+                auth_rejected: None,
+                reconnect: None,
+                shared_session: None,
+                keep_connection_after_exit: false,
+            },
+        );
+        self.order.push(session_id);
+        self.active_session = Some(session_id);
+        self.renumber_profile_tabs(profile_id);
+        Ok(session_id)
+    }
+
+    /// VNC has no SSH username. Validate its own fields rather than inventing
+    /// a placeholder user just to pass the SSH profile builder.
+    pub fn save_vnc_profile(
+        &mut self,
+        mut profile: ConnectionProfile,
+    ) -> Result<ProfileId, SessionError> {
+        profile.name = profile.name.trim().to_string();
+        profile.host = profile.host.trim().to_string();
+        if profile.name.is_empty() {
+            return Err(SessionError::EmptyProfileName);
+        }
+        if profile.host.is_empty() {
+            return Err(SessionError::EmptyProfileHost);
+        }
+        if profile.port == 0 {
+            return Err(SessionError::InvalidProfilePort);
+        }
+        profile.protocol = Protocol::Vnc;
+        let id = profile.id;
+        if let Some(existing) = self.profiles.iter_mut().find(|p| p.id == id) {
+            *existing = profile;
+        } else {
+            profile.sort_order = next_sort_order_for_group(&self.profiles, &profile.group);
+            self.profiles.push(profile);
+        }
+        Ok(id)
+    }
+
+    /// A bad password retries the same tab, retaining no secret after startup.
+    pub fn retry_vnc_with_password(
+        &mut self,
+        session_id: SessionId,
+        password: String,
+    ) -> Result<bool, SessionError> {
+        let Some(record) = self
+            .sessions
+            .get(&session_id)
+            .filter(|record| record.vnc.is_some())
+        else {
+            return Ok(false);
+        };
+        let profile = self
+            .profile(record.summary.profile_id)
+            .ok_or(SessionError::ProfileNotFound)?;
+        if profile.host.trim().is_empty() || profile.port == 0 {
+            return Err(SessionError::Unsupported("请填写有效的 VNC 主机和端口".into()));
+        }
+        if !profile.jumps.is_empty() {
+            return Err(SessionError::Unsupported(
+                "VNC 暂不支持 SSH 跳板，请先建立隧道或使用 VPN".into(),
+            ));
+        }
+        let handle = vnc_client::spawn_vnc_session(
+            profile.host.trim().trim_matches(['[', ']']).to_string(),
+            profile.port,
+            password,
+        )
+        .map_err(|error| SessionError::Unsupported(error.to_string()))?;
+        let record = self
+            .sessions
+            .get_mut(&session_id)
+            .ok_or(SessionError::SessionNotFound)?;
+        record.vnc = Some(handle);
+        record.auth_rejected = None;
+        record.desktop_error = None;
+        record.summary.status = SessionStatus::Connecting;
+        self.active_session = Some(session_id);
+        Ok(true)
+    }
+
     /// Open a native RDP session in a tab. The connection runs in the
     /// out-of-process `adit-rdp-host` helper; connection progress and the
     /// framebuffer arrive via [`Self::poll_events`] and the session's RDP surface.
@@ -1300,7 +1437,7 @@ impl SessionManager {
             status: SessionStatus::Connecting,
         };
         // RDP renders a graphical surface, not a VT grid; keep a placeholder
-        // terminal so terminal-only paths (which check `is_rdp()`/`live`) stay valid.
+        // terminal so terminal-only paths (which check `is_desktop()`/`live`) stay valid.
         let terminal = live_shell_terminal(&profile.name, &endpoint, self.default_size);
 
         self.sessions.insert(
@@ -1310,6 +1447,8 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: Some(handle),
+                vnc: None,
+                desktop_error: None,
                 sftp_shell: None,
                 log: None,
                 pending_host_key: None,
@@ -1376,6 +1515,8 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: None,
+                vnc: None,
+                desktop_error: None,
                 sftp_shell: None,
                 log: None,
                 pending_host_key: None,
@@ -1395,6 +1536,9 @@ impl SessionManager {
 
     pub fn activate(&mut self, session_id: SessionId) -> Result<(), SessionError> {
         if self.sessions.contains_key(&session_id) {
+            if self.active_session != Some(session_id) {
+                self.pending_rdp_clipboard = None;
+            }
             self.active_session = Some(session_id);
             Ok(())
         } else {
@@ -1412,6 +1556,9 @@ impl SessionManager {
             // than leaving it half-open until it times out.
             if let Some(rdp) = &record.rdp {
                 rdp.close();
+            }
+            if let Some(vnc) = &record.vnc {
+                vnc.close();
             }
             record.summary.profile_id
         });
@@ -1446,6 +1593,11 @@ impl SessionManager {
         // stays on screen (status shows disconnected).
         if let Some(rdp) = &record.rdp {
             rdp.close();
+            record.summary.status = SessionStatus::Disconnected;
+            return Ok(());
+        }
+        if let Some(vnc) = &record.vnc {
+            vnc.close();
             record.summary.status = SessionStatus::Disconnected;
             return Ok(());
         }
@@ -1509,7 +1661,7 @@ impl SessionManager {
                 .as_ref()
                 .map(|rc| (rc.password.clone(), rc.passphrase.clone()))
                 .unwrap_or_default();
-            (record.summary.profile_id, password, passphrase, record.is_rdp())
+            (record.summary.profile_id, password, passphrase, record.is_desktop())
         };
         // RDP doesn't retain the password (secrets stay in the vault), so it can't
         // be cloned from session state alone. The UI clones RDP by loading the
@@ -1518,7 +1670,7 @@ impl SessionManager {
         // with an empty password (which would silently fail NLA).
         if is_rdp {
             return Err(SessionError::Unsupported(String::from(
-                "克隆 RDP 会话需要重新提供密码",
+                "克隆远程桌面会话需要重新提供密码",
             )));
         }
         self.open_live_ssh_session(profile_id, password, passphrase)
@@ -1533,7 +1685,7 @@ impl SessionManager {
         let input = input.into();
 
         // RDP takes scancode/pointer input, not a byte stream; ignore here.
-        if record.is_rdp() {
+        if record.is_desktop() {
             return Ok(());
         }
 
@@ -1574,7 +1726,7 @@ impl SessionManager {
             .ok_or(SessionError::SessionNotFound)?;
 
         // RDP takes scancode/pointer input, not a byte stream; ignore here.
-        if record.is_rdp() {
+        if record.is_desktop() {
             return Ok(());
         }
 
@@ -1608,6 +1760,8 @@ impl SessionManager {
             if let Some(record) = self.sessions.get(&session_id) {
                 if let Some(rdp) = &record.rdp {
                     rdp.send_input(event);
+                } else if let Some(vnc) = &record.vnc {
+                    vnc.send_input(event);
                 }
             }
         }
@@ -1652,7 +1806,7 @@ impl SessionManager {
             .ok_or(SessionError::SessionNotFound)?;
 
         // RDP resizes by pixel size via `resize_active_rdp`, not terminal cells.
-        if record.is_rdp() {
+        if record.is_desktop() {
             return Ok(());
         }
 
@@ -1747,20 +1901,44 @@ impl SessionManager {
         }
     }
 
-    /// Whether the active session is a native RDP session (graphical surface).
     #[must_use]
-    pub fn active_is_rdp(&self) -> bool {
+    pub fn active_desktop_error(&self) -> Option<&str> {
         self.active_session
             .and_then(|id| self.sessions.get(&id))
-            .is_some_and(SessionRecord::is_rdp)
+            .and_then(|record| record.desktop_error.as_deref())
     }
 
-    /// Whether a specific session is a native RDP session.
     #[must_use]
-    pub fn session_is_rdp(&self, session_id: SessionId) -> bool {
+    pub fn active_is_vnc(&self) -> bool {
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .is_some_and(|record| record.vnc.is_some())
+    }
+
+    pub fn send_vnc_key_to_active(&self, keysym: u32, pressed: bool) {
+        if let Some(vnc) = self
+            .active_session
+            .and_then(|id| self.sessions.get(&id))
+            .and_then(|record| record.vnc.as_ref())
+        {
+            vnc.send_key(keysym, pressed);
+        }
+    }
+
+    /// Whether the active session renders a graphical desktop.
+    #[must_use]
+    pub fn active_is_desktop(&self) -> bool {
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .is_some_and(SessionRecord::is_desktop)
+    }
+
+    /// Whether a specific session renders a graphical desktop.
+    #[must_use]
+    pub fn session_is_desktop(&self, session_id: SessionId) -> bool {
         self.sessions
             .get(&session_id)
-            .is_some_and(SessionRecord::is_rdp)
+            .is_some_and(SessionRecord::is_desktop)
     }
 
     /// Whether the *active* session is a live RDP session (connecting or
@@ -1772,7 +1950,7 @@ impl SessionManager {
         self.active_session
             .and_then(|id| self.sessions.get(&id))
             .is_some_and(|record| {
-                record.is_rdp()
+                record.is_desktop()
                     && matches!(
                         record.summary.status,
                         SessionStatus::Connecting | SessionStatus::Connected
@@ -1784,7 +1962,11 @@ impl SessionManager {
     #[must_use]
     pub fn active_rdp_frame_if_newer(&self, last_generation: u64) -> Option<RdpFrame> {
         let record = self.sessions.get(&self.active_session?)?;
-        record.rdp.as_ref()?.frame_if_newer(last_generation)
+        if let Some(rdp) = &record.rdp {
+            rdp.frame_if_newer(last_generation)
+        } else {
+            record.vnc.as_ref()?.frame_if_newer(last_generation)
+        }
     }
 
     pub fn clear_active_terminal(&mut self) -> Result<(), SessionError> {
@@ -2159,6 +2341,8 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: None,
+                vnc: None,
+                desktop_error: None,
                 sftp_shell: Some(SftpShell::new(handle, default_local_dir())),
                 log: None,
                 pending_host_key: None,
@@ -2219,6 +2403,8 @@ impl SessionManager {
                 terminal,
                 live: None,
                 rdp: None,
+                vnc: None,
+                desktop_error: None,
                 sftp_shell: Some(SftpShell::new(handle, default_local_dir())),
                 log: None,
                 pending_host_key: None,
@@ -3019,7 +3205,9 @@ impl SessionManager {
             // Drain RDP helper events. Framebuffer tiles are applied to the
             // surface on the client thread; here we only track status. The tab's
             // pixels refresh from a per-frame redraw subscription in the UI.
-            while let Some(event) = record.rdp.as_ref().and_then(RdpClientHandle::try_recv) {
+            while let Some(event) = record.rdp.as_ref().and_then(RdpClientHandle::try_recv)
+                .or_else(|| record.vnc.as_ref().and_then(VncClientHandle::try_recv))
+            {
                 handled += 1;
                 match event {
                     RdpClientEvent::Connected { .. } => {
@@ -3030,7 +3218,9 @@ impl SessionManager {
                     // windowless process with no message pump), so remote copies
                     // arrive here as text and the UI process owns the paste.
                     RdpClientEvent::ClipboardText(text) => {
-                        self.pending_rdp_clipboard = Some(text);
+                        if self.active_session == Some(record.summary.id) && self.rdp_clipboard {
+                            self.pending_rdp_clipboard = Some(text);
+                        }
                     }
                     // Same split as the text above, for the same reason: only
                     // this process can touch a real file. Queued for the UI to
@@ -3058,7 +3248,14 @@ impl SessionManager {
                             length,
                         });
                     }
+                    RdpClientEvent::AuthRejected(message) => {
+                        record.desktop_error = Some(message.clone());
+                        record.summary.status = SessionStatus::Error;
+                        record.terminal.append_status(&message);
+                        record.auth_rejected = Some(message);
+                    }
                     RdpClientEvent::Error(message) => {
+                        record.desktop_error = Some(message.clone());
                         record.summary.status = SessionStatus::Error;
                         record
                             .terminal

@@ -174,3 +174,137 @@ pub(super) fn encode_rdp_scancode(event: &keyboard::Event) -> Option<(u8, bool, 
     let (scancode, extended) = rdp_scancode_for_code(*code)?;
     Some((scancode, extended, pressed))
 }
+
+/// VNC sends logical X11 keysyms. Keep the symbol chosen at key-down so a
+/// modifier/layout change before key-up cannot leave the original symbol held.
+pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
+    let (key, physical, pressed) = match event {
+        keyboard::Event::KeyPressed {
+            modified_key, physical_key, ..
+        } => (modified_key, *physical_key, true),
+        keyboard::Event::KeyReleased {
+            modified_key, physical_key, ..
+        } => (modified_key, *physical_key, false),
+        _ => return,
+    };
+    let tracked = app
+        .vnc_pressed_keys
+        .iter()
+        .position(|(code, _)| *code == physical);
+    let keysym = if let Some(index) = tracked {
+        let keysym = app.vnc_pressed_keys[index].1;
+        if !pressed {
+            app.vnc_pressed_keys.remove(index);
+        }
+        Some(keysym)
+    } else {
+        vnc_keysym(key, physical)
+    };
+    if let Some(keysym) = keysym {
+        if pressed && tracked.is_none() {
+            app.vnc_pressed_keys.push((physical, keysym));
+        }
+        app.manager.send_vnc_key_to_active(keysym, pressed);
+    } else if let keyboard::Event::KeyPressed {
+        text: Some(text), ..
+    } = event
+    {
+        for ch in text.chars().filter(|ch| !ch.is_control()) {
+            let keysym = adit_session::unicode_keysym(ch);
+            app.manager.send_vnc_key_to_active(keysym, true);
+            app.manager.send_vnc_key_to_active(keysym, false);
+        }
+    }
+}
+
+fn vnc_keysym(key: &Key, physical: keyboard::key::Physical) -> Option<u32> {
+    use keyboard::key::{Code, Physical};
+    // Distinguish right-hand modifiers even when the logical key is just Alt.
+    let modifier = match physical {
+        Physical::Code(Code::ShiftLeft) => Some(0xffe1),
+        Physical::Code(Code::ShiftRight) => Some(0xffe2),
+        Physical::Code(Code::ControlLeft) => Some(0xffe3),
+        Physical::Code(Code::ControlRight) => Some(0xffe4),
+        Physical::Code(Code::AltLeft) => Some(0xffe9),
+        Physical::Code(Code::AltRight) => Some(0xffea),
+        Physical::Code(Code::SuperLeft) => Some(0xffeb),
+        Physical::Code(Code::SuperRight) => Some(0xffec),
+        _ => None,
+    };
+    if modifier.is_some() {
+        return modifier;
+    }
+    Some(match key {
+        Key::Character(text) => adit_session::unicode_keysym(text.chars().next()?),
+        Key::Named(named) => match named {
+            Named::Backspace => 0xff08,
+            Named::Tab => 0xff09,
+            Named::Enter => 0xff0d,
+            Named::Escape => 0xff1b,
+            Named::Delete => 0xffff,
+            Named::Home => 0xff50,
+            Named::ArrowLeft => 0xff51,
+            Named::ArrowUp => 0xff52,
+            Named::ArrowRight => 0xff53,
+            Named::ArrowDown => 0xff54,
+            Named::PageUp => 0xff55,
+            Named::PageDown => 0xff56,
+            Named::End => 0xff57,
+            Named::Insert => 0xff63,
+            Named::ContextMenu => 0xff67,
+            Named::CapsLock => 0xffe5,
+            Named::NumLock => 0xff7f,
+            Named::ScrollLock => 0xff14,
+            Named::Pause => 0xff13,
+            Named::PrintScreen => 0xff61,
+            Named::Space => 0x20,
+            Named::F1 => 0xffbe,
+            Named::F2 => 0xffbf,
+            Named::F3 => 0xffc0,
+            Named::F4 => 0xffc1,
+            Named::F5 => 0xffc2,
+            Named::F6 => 0xffc3,
+            Named::F7 => 0xffc4,
+            Named::F8 => 0xffc5,
+            Named::F9 => 0xffc6,
+            Named::F10 => 0xffc7,
+            Named::F11 => 0xffc8,
+            Named::F12 => 0xffc9,
+            _ => return None,
+        },
+        _ => return None,
+    })
+}
+
+#[cfg(test)]
+mod vnc_tests {
+    use super::*;
+    use keyboard::key::{Code, Physical};
+
+    #[test]
+    fn vnc_uses_logical_text_and_distinguishes_right_modifiers() {
+        assert_eq!(
+            vnc_keysym(&Key::Character("A".into()), Physical::Code(Code::KeyA)),
+            Some(0x41)
+        );
+        assert_eq!(
+            vnc_keysym(&Key::Character("中".into()), Physical::Code(Code::KeyA)),
+            Some(0x0100_4e2d)
+        );
+        assert_eq!(
+            vnc_keysym(
+                &Key::Named(Named::Control),
+                Physical::Code(Code::ControlRight)
+            ),
+            Some(0xffe4)
+        );
+        assert_eq!(
+            vnc_keysym(&Key::Named(Named::Delete), Physical::Code(Code::Delete)),
+            Some(0xffff)
+        );
+        assert_eq!(
+            vnc_keysym(&Key::Named(Named::F12), Physical::Code(Code::F12)),
+            Some(0xffc9)
+        );
+    }
+}

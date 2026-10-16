@@ -11,3 +11,5 @@ adit-rdp-proto.workspace = true
 adit-ssh.workspace = true
 adit-terminal.workspace = true
 thiserror.workspace = true
+tokio.workspace = true
+vnc = { package = "vnc-rs", version = "=0.6.0" }

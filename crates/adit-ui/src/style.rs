@@ -151,7 +151,7 @@ pub(crate) fn info() -> Color {
 /// list is not a signal, it is wallpaper.
 pub(crate) fn protocol_tint(protocol: Protocol) -> Color {
     match protocol {
-        Protocol::Rdp => info(),
+        Protocol::Rdp | Protocol::Vnc => info(),
         Protocol::Sftp => accent(),
         // Telnet is the one that is *not* encrypted. It gets the warning hue
         // rather than the quiet default, because "this session is in the clear"

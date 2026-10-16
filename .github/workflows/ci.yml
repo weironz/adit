@@ -104,6 +104,59 @@ jobs:
       - name: Test
         run: cargo test --workspace
 
+      - name: VNC integration against x11vnc and TigerVNC
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends \
+            xvfb x11vnc tigervnc-standalone-server tigervnc-tools x11-xserver-utils x11-utils xdotool xauth
+          export DISPLAY=:99
+          Xvfb "$DISPLAY" -noreset -screen 0 800x600x24 > /tmp/adit-xvfb.log 2>&1 &
+          xvfb_pid=$!
+          trap 'kill ${server_pid:-} ${xvfb_pid:-} ${xev_pid:-} 2>/dev/null || true' EXIT
+          for attempt in {1..50}; do
+            if xsetroot -solid red 2>/dev/null; then break; fi
+            sleep 0.1
+          done
+          # Disposable CI-only credentials; no production host is involved.
+          export ADIT_VNC_TEST_PASSWORD=adit-ci
+          export ADIT_VNC_TEST_PORT=15900
+          export ADIT_VNC_TEST_EVENTS=/tmp/adit-vnc-events.log
+          start_input_target() {
+            xev -name AditVncTest -geometry 120x100+0+0 -event keyboard -event mouse \
+              > "$ADIT_VNC_TEST_EVENTS" 2>&1 &
+            xev_pid=$!
+            for attempt in {1..50}; do
+              if xdotool search --name AditVncTest windowfocus 2>/dev/null; then return; fi
+              sleep 0.1
+            done
+            return 1
+          }
+          start_input_target
+          x11vnc -storepasswd "$ADIT_VNC_TEST_PASSWORD" /tmp/adit-vnc-passwd
+          x11vnc -display "$DISPLAY" -rfbport "$ADIT_VNC_TEST_PORT" \
+            -rfbauth /tmp/adit-vnc-passwd -localhost -forever -shared \
+            > /tmp/adit-x11vnc.log 2>&1 &
+          server_pid=$!
+          for attempt in {1..50}; do
+            if (echo > /dev/tcp/127.0.0.1/15900) 2>/dev/null; then break; fi
+            sleep 0.1
+          done
+          cargo test -p adit-session --test vnc real_vnc_server_authenticates_and_paints -- --ignored
+          kill "$server_pid" "$xvfb_pid" "$xev_pid"
+          wait "$server_pid" 2>/dev/null || true
+          wait "$xvfb_pid" 2>/dev/null || true
+          Xtigervnc "$DISPLAY" -noreset -geometry 800x600 -depth 24 -rfbport "$ADIT_VNC_TEST_PORT" \
+            -PasswordFile /tmp/adit-vnc-passwd -SecurityTypes VncAuth -localhost \
+            > /tmp/adit-tigervnc.log 2>&1 &
+          server_pid=$!
+          for attempt in {1..50}; do
+            if xsetroot -solid red 2>/dev/null; then break; fi
+            sleep 0.1
+          done
+          start_input_target
+          cargo test -p adit-session --test vnc real_vnc_server_authenticates_and_paints -- --ignored
+
       # The RDP helper is excluded from the workspace (IronRDP's dependency pins
       # cannot coexist with russh's), so nothing above touches it — until now it
       # was built only at release time, where a break lands too late to be cheap.

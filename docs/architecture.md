@@ -135,6 +135,21 @@ write, and atomic temp+rename. **The KDF's only secret input is a key compiled i
 binary — this is obfuscation, not secrecy.** See
 [decisions.md](decisions.md#8-credentials-encrypted-in-the-config-directory-not-the-os-keyring--reversal).
 
+## VNC subsystem
+
+`adit-session::vnc_client` runs `vnc-rs` on a dedicated thread and Tokio runtime
+per session. The UI never waits for a socket, handshake or decoder. Commands have
+a bounded queue; disconnect has a separate cancellation signal so it can cancel
+a stalled handshake or input write. Frame updates modify a single shared RGBA
+surface; the UI samples only changed generations using the existing image-tile
+renderer. VNC's padding byte is normalized to opaque alpha before display.
+
+VNC and RDP share graphical-session gates, frame presentation and pointer geometry.
+They keep separate transports and keyboard encoders: VNC uses logical X11 keysyms,
+while RDP uses physical scan codes. Pressed VNC symbols are remembered until release
+and released when focus or the active tab changes. RDP-only clipboard file/image
+transfer and quality negotiation remain on the RDP path.
+
 ## RDP subsystem
 
 The helper is spawned per session (located via `ADIT_RDP_HOST`, then next to the exe,

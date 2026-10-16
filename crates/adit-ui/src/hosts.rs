@@ -173,7 +173,7 @@ pub(crate) fn protocol_glyph(protocol: Protocol) -> &'static str {
         // The hollow twin of SSH's filled triangle: the same kind of session,
         // without the thing that makes SSH worth using.
         Protocol::Telnet => "\u{25b9}",
-        Protocol::Rdp => "\u{25a4}",
+        Protocol::Rdp | Protocol::Vnc => "\u{25a4}",
         Protocol::Sftp => "\u{21c5}",
     }
 }
@@ -187,6 +187,7 @@ pub(crate) fn protocol_tag(protocol: Protocol) -> &'static str {
         Protocol::Ssh => "SSH",
         Protocol::Sftp => "SFTP",
         Protocol::Rdp => "RDP",
+        Protocol::Vnc => "VNC",
         Protocol::Serial => t("串口"),
         Protocol::Telnet => "TELNET",
         Protocol::LocalShell => t("本地"),

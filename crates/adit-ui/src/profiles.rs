@@ -929,7 +929,33 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
         }
     };
 
-    let result = if let Some(profile_id) = app.selected_profile {
+    let result = if app.profile_protocol == Protocol::Vnc {
+        let mut profile = app
+            .selected_profile
+            .and_then(|id| app.manager.profile(id))
+            .cloned()
+            .unwrap_or_else(|| {
+                ConnectionProfile::with_group(
+                    &app.profile_group,
+                    &app.profile_name,
+                    &app.profile_host,
+                    port,
+                    "",
+                )
+            });
+        profile.group = app.profile_group.clone();
+        profile.name = app.profile_name.clone();
+        profile.host = app.profile_host.clone();
+        profile.port = port;
+        profile.auth_method = AuthMethod::Password;
+        match app.manager.save_vnc_profile(profile) {
+            Ok(id) => {
+                app.selected_profile = Some(id);
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
+    } else if let Some(profile_id) = app.selected_profile {
         app.manager.update_profile(
             profile_id,
             app.profile_group.clone(),
@@ -988,7 +1014,8 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
                     .set_profile_keep_connection(profile_id, app.profile_keep_connection);
                 // Persist the password-auth password to the OS credential vault
                 // (never to profiles.json). An empty field clears any saved one.
-                if app.profile_auth_method == AuthMethod::Password {
+                if app.profile_auth_method == AuthMethod::Password || app.profile_protocol == Protocol::Vnc
+                {
                     let _ = if app.profile_password.is_empty() {
                         app.credential_store.delete_profile_password(profile_id)
                     } else {

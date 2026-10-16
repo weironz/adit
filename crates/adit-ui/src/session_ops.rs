@@ -38,6 +38,43 @@ pub(crate) fn remember_recent_host(app: &mut AditApp, profile_id: ProfileId) {
     app.recent_hosts.truncate(RECENT_HOSTS_MAX);
 }
 
+fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: String, retry: Option<SessionId>) {
+    release_rdp_modifiers(app);
+    let result = if let Some(id) = retry {
+        match app.manager.retry_vnc_with_password(id, password.clone()) {
+            Ok(true) => Ok(id),
+            Ok(false) => app.manager.open_live_vnc_session(profile_id, password),
+            Err(error) => Err(error),
+        }
+    } else {
+        app.manager.open_live_vnc_session(profile_id, password)
+    };
+    match result {
+        Ok(_) => {
+            app.main_view = MainView::Terminal;
+            app.connection_dialog = None;
+            app.password.clear();
+            app.remember_connection_password = false;
+            app.terminal_focused = true;
+            app.rdp_frame_session = None;
+            app.rdp_frame_generation = 0;
+            app.rdp_tiles.clear();
+            app.rdp_tiles_prev.clear();
+            app.rdp_surface_size = None;
+            app.rdp_target_size = None;
+            app.rdp_resize_pending = None;
+            app.rdp_resize_requested_at = None;
+            app.rdp_quality_menu_open = false;
+            app.rdp_clipboard_offered = None;
+            app.vnc_pressed_keys.clear();
+            remember_recent_host(app, profile_id);
+            app.last_error = None;
+            app.notice = String::from(t("VNC 会话已开始连接"));
+        }
+        Err(error) => app.last_error = Some(error.to_string()),
+    }
+}
+
 pub(crate) fn connect_profile(app: &mut AditApp) {
     let Some(profile_id) = save_profile_from_form(app, false) else {
         return;
@@ -47,6 +84,20 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
         app.last_error = Some(String::from(t("请选择要连接的会话配置")));
         return;
     };
+
+    if profile.protocol == Protocol::Vnc {
+        let password = app
+            .credential_store
+            .load_profile_password(profile_id)
+            .ok()
+            .flatten();
+        if let Some(password) = password {
+            start_vnc(app, profile_id, password, None);
+        } else {
+            open_connection_dialog(app);
+        }
+        return;
+    }
 
     // RDP opens a native graphical session in a tab (via the helper process).
     // NLA needs a password: use the stored one, else prompt through the dialog.
@@ -151,7 +202,7 @@ pub(crate) fn open_password_reprompt(
         return;
     };
     // Only the credential-based protocols have a password to re-ask for.
-    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp) {
+    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp | Protocol::Vnc) {
         return;
     }
 
@@ -199,7 +250,7 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
     // stored, `connect_profile` called back into `open_connection_dialog`, which
     // called `connect_profile` again — unbounded mutual recursion that froze the
     // UI ("Not Responding"), or overflowed the stack outright on smaller stacks.
-    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp) {
+    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp | Protocol::Vnc) {
         connect_profile(app);
         return;
     }
@@ -275,7 +326,7 @@ pub(crate) fn profile_can_connect_unattended(app: &AditApp, profile_id: ProfileI
         .flatten()
         .is_some_and(|password| !password.is_empty());
     match profile.protocol {
-        Protocol::Rdp => stored,
+        Protocol::Rdp | Protocol::Vnc => stored,
         // SFTP dials over SSH, so it needs the same secret SSH would. Letting
         // it fall through to "no credential required" would auto-connect with
         // an empty password and fail at the handshake.
@@ -315,6 +366,24 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
         open_connection_dialog(app);
         return;
     };
+
+    if app
+        .manager
+        .profile(dialog.profile_id)
+        .is_some_and(|p| p.protocol == Protocol::Vnc)
+    {
+        let warning = sync_connection_password(app, dialog.profile_id).err();
+        start_vnc(
+            app,
+            dialog.profile_id,
+            app.password.clone(),
+            dialog.retry_session,
+        );
+        if let Some(warning) = warning {
+            app.last_error = Some(tf("保存密码失败: {}", &[&warning]));
+        }
+        return;
+    }
 
     // RDP opens a native graphical tab (helper process) instead of an SSH shell.
     let is_rdp =
@@ -653,8 +722,15 @@ pub(crate) fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
 /// that is not down is a no-op on the remote, whereas state drifting out of step
 /// with the remote is the bug being fixed here.
 pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
-    if !app.manager.active_is_rdp() {
+    for (_, keysym) in app.vnc_pressed_keys.drain(..) {
+        app.manager.send_vnc_key_to_active(keysym, false);
+    }
+
+    if !app.manager.active_is_desktop() {
         return;
+    }
+    for button in [RdpMouseButton::Left, RdpMouseButton::Middle, RdpMouseButton::Right] {
+        app.manager.send_rdp_input_to_active(RdpInput::MouseButton { button, pressed: false });
     }
     // (scancode, extended) for both halves of each pair; the right-hand ones are
     // the same code with the extended flag, exactly as rdp_scancode_for_code
@@ -1007,7 +1083,7 @@ pub(crate) fn begin_terminal_click(app: &mut AditApp) {
 /// keyboard focus and the tab is a terminal (RDP draws the remote's own cursor).
 /// Gates both the blink timer and the painting, so they can't disagree.
 pub(crate) fn terminal_cursor_blinks(app: &AditApp) -> bool {
-    app.terminal_focused && !app.manager.active_is_rdp() && app.manager.active_session().is_some()
+    app.terminal_focused && !app.manager.active_is_desktop() && app.manager.active_session().is_some()
 }
 
 pub(crate) fn window_to_pane_local(app: &AditApp, position: Point) -> Point {
@@ -1596,7 +1672,7 @@ pub(crate) fn chrome_height(app: &AditApp) -> f32 {
     // `chrome::view` and `workspace`, which drop the tab strip and the status
     // bar for it. Every other session type keeps both, because the status bar
     // is the only thing left there naming the way out.
-    if app.manager.active_is_rdp() {
+    if app.manager.active_is_desktop() {
         0.0
     } else {
         TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
@@ -1688,6 +1764,11 @@ fn rdp_resize_transitioning(app: &AditApp, surface: (u16, u16)) -> bool {
 /// Called from the periodic tick and the per-frame RDP tick; cheap when there
 /// is nothing pending.
 pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
+    if app.manager.active_is_vnc() {
+        app.rdp_resize_pending = None;
+        return;
+    }
+
     let Some((w, h)) = app.rdp_resize_pending else {
         return;
     };
@@ -1746,6 +1827,13 @@ pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
 /// The pointer stays correct throughout because each axis of the mouse mapping
 /// multiplies by the same per-axis scale the tiles divided by.
 pub(crate) fn rdp_fit_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32) {
+    if app.manager.active_is_vnc() {
+        if !app.vnc_fit {
+            return (1.0, 1.0);
+        }
+        let (x, y) = rdp_fill_factors(app, surface);
+        return (x.min(y), x.min(y));
+    }
     if rdp_resize_transitioning(app, surface) {
         return rdp_fill_factors(app, surface);
     }
@@ -1850,6 +1938,10 @@ fn resize_probe_enabled() -> bool {
 }
 
 pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
+    if app.manager.active_is_vnc() {
+        return;
+    }
+
     let probe = resize_probe_enabled();
     if !app.manager.active_rdp_live() {
         if probe {
@@ -2191,8 +2283,8 @@ pub(crate) fn untile_sessions(app: &mut AditApp) {
 pub(crate) fn split_pane(app: &mut AditApp) {
     // RDP is a full-surface graphical session and isn't rendered inside a tile, so
     // it can't participate in split panes.
-    if app.panes.is_empty() && app.manager.active_is_rdp() {
-        app.last_error = Some(String::from(t("RDP 会话不支持分屏")));
+    if app.panes.is_empty() && app.manager.active_is_desktop() {
+        app.last_error = Some(String::from(t("远程桌面会话不支持分屏")));
         return;
     }
 
@@ -2223,7 +2315,7 @@ pub(crate) fn split_pane(app: &mut AditApp) {
         .sessions()
         .into_iter()
         .map(|summary| summary.id)
-        .find(|id| !app.panes.contains(id) && !app.manager.session_is_rdp(*id));
+        .find(|id| !app.panes.contains(id) && !app.manager.session_is_desktop(*id));
 
     let Some(session_id) = candidate else {
         app.panes.clear();
@@ -2251,6 +2343,9 @@ pub(crate) fn split_pane(app: &mut AditApp) {
 /// 重连 — so none of them can drift from the others, and a new one gets the
 /// fallback below for free.
 pub(crate) fn close_session_tab(app: &mut AditApp, session_id: SessionId) {
+    if app.manager.active_session() == Some(session_id) {
+        release_rdp_modifiers(app);
+    }
     app.selected_tabs.remove(&session_id);
     app.manager.close(session_id);
     app.terminal_scroll_offset = 0;
@@ -2309,6 +2404,10 @@ pub(crate) fn close_pane(app: &mut AditApp, index: usize) {
 /// Activate a session (from a tab click). In a split, load it into the focused
 /// pane instead of collapsing the layout.
 pub(crate) fn activate_session(app: &mut AditApp, session_id: SessionId) {
+    if app.manager.active_session() != Some(session_id) {
+        release_rdp_modifiers(app);
+        app.rdp_clipboard_offered = None;
+    }
     // Switching sessions counts as clicking away from an in-place rename.
     commit_inline_rename(app);
     if app.panes.len() >= 2 {
