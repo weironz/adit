@@ -54,6 +54,10 @@ also cancels a pending connection or authentication handshake.
 The first implementation negotiates ZRLE, CopyRect and Raw, plus server-driven
 desktop-size updates. It uses a shared session and does not disconnect existing
 viewers. Window resizing scales locally rather than changing the server's desktop.
+Decoded rectangles are received immediately rather than paced by the UI redraw
+timer. Consecutive pointer moves are coalesced without crossing button/key
+boundaries. CursorPseudo is negotiated to use a local plain arrow; server cursor
+shapes, hotspots and hidden-cursor semantics are not rendered yet.
 Standard VncAuth and authentication-free servers are supported; TLS/VeNCrypt,
 certificate authentication and vendor-specific security extensions are not yet
 supported. VncAuth uses only the first eight password bytes and does not encrypt
@@ -69,6 +73,10 @@ and other applications' global hotkeys keep their local behaviour.
 VNC profiles serialize with `protocol: "vnc"`. Older Adit versions do not recognize
 that protocol; upgrade clients before sharing the updated catalog through cloud
 sync. Existing SSH/RDP profiles keep their formats.
+
+See the dated [VNC technical reference](vnc-technical-reference.md) for product
+comparisons, implementation choices, measured limitations and issue-linked work
+packages. Issue states remain the source of truth for planned work.
 
 ## Sessions
 

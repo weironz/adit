@@ -20,6 +20,7 @@ A mostly-pure-Rust desktop SSH client based on `iced + russh + vte`.
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | How it's built: crates, threading, event protocols, storage, RDP subsystem |
 | [docs/features.md](docs/features.md) | Everything it does today — plus an honest list of known gaps |
+| [docs/vnc-technical-reference.md](docs/vnc-technical-reference.md) | VNC product/implementation research, Adit capability audit, and issue-linked development plan (2026-10-16) |
 | [docs/decisions.md](docs/decisions.md) | Why it's built that way, including the decisions we reversed |
 | [CLAUDE.md](CLAUDE.md) | Traps that cost real debugging time; conventions |
 | [docs/rdp-gnome-remote-desktop.md](docs/rdp-gnome-remote-desktop.md) | GNOME Remote Desktop handover: EGFX, RDSTLS, Server Redirection |

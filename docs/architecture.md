@@ -144,6 +144,15 @@ a stalled handshake or input write. Frame updates modify a single shared RGBA
 surface; the UI samples only changed generations using the existing image-tile
 renderer. VNC's padding byte is normalized to opaque alpha before display.
 
+The worker receives decoder events in the same `select!` as commands and
+cancellation, independent of the 33 ms incremental-refresh timer. The pending
+receive future releases the library mutex before an input branch executes. This
+avoids limiting a two-slot decoder queue to two small rectangles per UI tick.
+Adjacent pointer moves share the latest coordinates, while button/key boundaries
+retain their order. Complete RFB update boundaries and negotiated request flow
+control are not yet exposed by the adapter; see the
+[VNC technical reference](vnc-technical-reference.md).
+
 VNC and RDP share graphical-session gates, frame presentation and pointer geometry.
 They keep separate transports and keyboard encoders: VNC uses logical X11 keysyms,
 while RDP uses physical scan codes. Pressed VNC symbols are remembered until release
