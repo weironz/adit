@@ -2648,6 +2648,16 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ReconnectSession(session_id) => {
             app.tab_context_menu = None;
+            let is_vnc = app.manager.session_summary(session_id)
+                .and_then(|summary| app.manager.profile(summary.profile_id))
+                .is_some_and(|profile| profile.protocol == Protocol::Vnc);
+            if is_vnc {
+                // VNC keeps secrets in the vault, unlike SSH's reconnect state.
+                // Use the same credential/prompt path as Enter-to-reconnect.
+                activate_session(app, session_id);
+                reconnect_active_session(app);
+                return Task::none();
+            }
             if let Err(error) = app.manager.reconnect(session_id) {
                 app.last_error = Some(error.to_string());
             } else {

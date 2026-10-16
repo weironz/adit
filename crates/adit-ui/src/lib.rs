@@ -2772,6 +2772,26 @@ mod tests {
         assert!(app.rdp_clipboard_offered.is_none());
     }
 
+    #[test]
+    fn the_vnc_tab_reconnect_menu_reopens_its_own_password_dialog() {
+        let mut app = drag_test_app();
+        app.credential_store = CredentialStore::with_path(
+            "adit-vnc-reconnect-test", app.profile_store.path().with_file_name("credentials.json"),
+        );
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut profile = ConnectionProfile::new(
+            "VNC reconnect", "127.0.0.1", listener.local_addr().unwrap().port(), "",
+        );
+        profile.protocol = Protocol::Vnc;
+        let id = profile.id;
+        app.manager = SessionManager::with_profiles(vec![profile]);
+        let session = app.manager.open_live_vnc_session(id, String::new()).unwrap();
+        app.manager.disconnect(session).unwrap();
+        let _ = update(&mut app, Message::ReconnectSession(session));
+        assert_eq!(app.connection_dialog.as_ref().map(|dialog| dialog.profile_id), Some(id));
+        assert!(app.manager.sessions().is_empty());
+    }
+
     fn sidebar_names(app: &AditApp) -> Vec<String> {
         let mut profiles = app.manager.profiles().to_vec();
         profiles.sort_by(profile_sidebar_order);
