@@ -1,0 +1,138 @@
+{
+  "date": "2026-10-18",
+  "issue": 207,
+  "result": "reproduced before fix; fixed actual GUI verification pending",
+  "source_sha": "5ae37747908568b1a38f7eaca603857e4f6f37f1",
+  "app_sha256": "a04695e9f88010437e8889b275d4cb2b29276df410c5a35261ec7f5a9be9a137",
+  "environment": "Existing isolated real TigerVNC through loopback relay; actual shipping Linux iced app, Xvfb121, window1100x700; synthetic noise only, no user config mounted.",
+  "measurement": "XFixesGetCursorImage on actual client X display after xdotool mousemove and400ms settle. Reports OS cursor ARGB alpha visibility, dimensions and hash, independent of iced private state. Enabled toolbar resize and reveal buttons are controls; desktop native cursor is intentionally hidden for custom compositor cursor.",
+  "probe_sha256": "93e19d1e41baa01fd7c68119b11758849622a05c75e14ce7f4812c270fc6a8f8",
+  "before_samples": [
+    {
+      "label": "desktop",
+      "point": [
+        500,
+        300
+      ],
+      "cursor_size": [
+        1,
+        1
+      ],
+      "hotspot": [
+        0,
+        0
+      ],
+      "visible_pixels": 0,
+      "argb_sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+    },
+    {
+      "label": "expanded_security_label",
+      "point": [
+        598,
+        79
+      ],
+      "cursor_size": [
+        1,
+        1
+      ],
+      "hotspot": [
+        0,
+        0
+      ],
+      "visible_pixels": 0,
+      "argb_sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+    },
+    {
+      "label": "expanded_enabled_resize_button",
+      "point": [
+        676,
+        79
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        7,
+        5
+      ],
+      "visible_pixels": 337,
+      "argb_sha256": "94a3043235954a6200fe7ebdf6d4207055a30e04efcd53b0e2f50cb55c10cf12"
+    },
+    {
+      "label": "expanded_bottom_padding",
+      "point": [
+        740,
+        93
+      ],
+      "cursor_size": [
+        1,
+        1
+      ],
+      "hotspot": [
+        0,
+        0
+      ],
+      "visible_pixels": 0,
+      "argb_sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+    },
+    {
+      "label": "collapsed_padding",
+      "point": [
+        681,
+        73
+      ],
+      "cursor_size": [
+        1,
+        1
+      ],
+      "hotspot": [
+        0,
+        0
+      ],
+      "visible_pixels": 0,
+      "argb_sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+    },
+    {
+      "label": "collapsed_enabled_reveal_button",
+      "point": [
+        726,
+        73
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        7,
+        5
+      ],
+      "visible_pixels": 337,
+      "argb_sha256": "94a3043235954a6200fe7ebdf6d4207055a30e04efcd53b0e2f50cb55c10cf12"
+    },
+    {
+      "label": "outside_app",
+      "point": [
+        1250,
+        900
+      ],
+      "cursor_size": [
+        16,
+        16
+      ],
+      "hotspot": [
+        7,
+        7
+      ],
+      "visible_pixels": 176,
+      "argb_sha256": "314b42bf34138a331b0e088dc5231bd2a53f848b4c654d3da3b119cce6b72cf9"
+    }
+  ],
+  "observed": "Security label, expanded padding and collapsed padding all yielded1x1 native cursor with0 visible pixels; enabled buttons retained24x24 visible hand. Outside the app the root cursor was visible.",
+  "candidate_fix": "Use existing iced opaque wrapper to preserve child Pointer interactions, fall back to Idle only over non-interactive toolbar regions, and block background presses from reaching remote desktop. Fixed96x20 reveal bounds are unchanged.",
+  "limits": [
+    "This captures actual native OS cursor state, not the custom cursor drawn into the desktop layer.",
+    "Not full OS100/150/200 DPI or Windows GPU acceptance.",
+    "Before-only evidence; do not count candidate fix as visually accepted until same probe is run against exact new CI app."
+  ]
+}

@@ -104,6 +104,107 @@ async fn cursor_preserves_alpha_mask_and_accepts_empty_shapes() {
 }
 
 #[tokio::test]
+async fn cursor_rejects_size_and_hotspot_before_polling_the_payload() {
+    struct NoPayloadRead;
+    impl tokio::io::AsyncRead for NoPayloadRead {
+        fn poll_read(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+            _: &mut tokio::io::ReadBuf<'_>,
+        ) -> std::task::Poll<std::io::Result<()>> {
+            panic!("invalid cursor must be rejected before any payload read");
+        }
+    }
+
+    for (width, height, x, y) in [
+        (513, 1, 0, 0),
+        (1, 513, 0, 0),
+        (3840, 2160, 0, 0),
+        (512, 512, 512, 0),
+        (512, 512, 0, 512),
+        (1, 1, u16::MAX, 0),
+        (0, 513, 0, 0),
+        (513, 0, 0, 0),
+        (0, 1, u16::MAX, 1),
+    ] {
+        let result = CursorDecoder::new()
+            .decode(
+                &PixelFormat::rgba(),
+                &Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                &mut NoPayloadRead,
+                &|_| async { panic!("invalid cursor must not publish an event") },
+            )
+            .await;
+        assert!(matches!(result, Err(VncError::InvalidImageData)));
+    }
+}
+
+#[tokio::test]
+async fn cursor_accepts_the_budget_boundary_and_hidden_shapes() {
+    let mut bytes = [1, 2, 3, 0].repeat(512 * 512);
+    bytes.extend(std::iter::repeat_n(0xff, 64 * 512));
+    let output = Mutex::new(Vec::new());
+    CursorDecoder::new()
+        .decode(
+            &PixelFormat::rgba(),
+            &Rect {
+                x: 511,
+                y: 511,
+                width: 512,
+                height: 512,
+            },
+            &mut bytes.as_slice(),
+            &|event| {
+                output.lock().unwrap().push(event);
+                async { Ok(()) }
+            },
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        &output.into_inner().unwrap()[0],
+        VncEvent::SetCursor(_, pixels)
+            if pixels.len() == 512 * 512 * 4
+                && pixels.as_chunks::<4>().0.iter().all(|p| *p == [1, 2, 3, 255])
+    ));
+
+    for (width, height, x, y) in [
+        (0, 0, u16::MAX, u16::MAX),
+        (0, 512, u16::MAX, 511),
+        (512, 0, 511, u16::MAX),
+    ] {
+        let output = Mutex::new(Vec::new());
+        CursorDecoder::new()
+            .decode(
+                &PixelFormat::rgba(),
+                &Rect {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                &mut &[][..],
+                &|event| {
+                    output.lock().unwrap().push(event);
+                    async { Ok(()) }
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(
+            &output.into_inner().unwrap()[0],
+            VncEvent::SetCursor(rect, pixels)
+                if rect.width == width && rect.height == height && pixels.is_empty()
+        ));
+    }
+}
+
+#[tokio::test]
 async fn tight_rejects_component_widths_its_filters_cannot_decode() {
     let mut format = PixelFormat::rgba();
     format.red_max = 65535;

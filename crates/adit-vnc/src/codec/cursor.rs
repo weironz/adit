@@ -24,8 +24,15 @@ impl Decoder {
         Fut: Future<Output = Result<(), VncError>>,
     {
         format.validate()?;
-        if rect.width != 0 && rect.height != 0 {
-            crate::limits::dimensions(rect.width, rect.height)?;
+        // Cursor payloads have a much smaller budget than desktop rectangles.
+        // Reject before reading or allocating; the session's later validation
+        // cannot protect standalone protocol users or this decoder's buffers.
+        if rect.width > 512
+            || rect.height > 512
+            || (rect.width != 0 && rect.x >= rect.width)
+            || (rect.height != 0 && rect.y >= rect.height)
+        {
+            return Err(VncError::InvalidImageData);
         }
         if rect.width == 0 || rect.height == 0 {
             return output_func(VncEvent::SetCursor(*rect, Vec::new())).await;
@@ -33,15 +40,11 @@ impl Decoder {
         if format.bits_per_pixel != 32 || format.true_color_flag == 0 {
             return Err(VncError::WrongPixelFormat);
         }
-        let _hotx = rect.x;
-        let _hoty = rect.y;
         let w = rect.width;
         let h = rect.height;
 
         let pixels_length = w as usize * h as usize * format.bits_per_pixel as usize / 8;
         let mask_length = (w as usize).div_ceil(8) * h as usize;
-
-        let _bytes = pixels_length + mask_length;
 
         let mut pixels = initialized_vec(pixels_length);
         input.read_exact(&mut pixels).await?;

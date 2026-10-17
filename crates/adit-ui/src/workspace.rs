@@ -397,7 +397,7 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         } else {
             Space::new().into()
         };
-        let zone = mouse_area(
+        let zone = mouse_area(opaque(
             container(tab)
                 .center_x(Length::Fixed(RDP_TOOLBAR_REVEAL_WIDTH))
                 .center_y(Length::Fixed(RDP_TOOLBAR_REVEAL_HEIGHT))
@@ -412,7 +412,7 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
                         container::Style::default()
                     }
                 }),
-        )
+        ))
         .on_enter(Message::RdpToolbarHovered(true))
         .on_exit(Message::RdpToolbarHovered(false));
 
@@ -483,12 +483,14 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(3)
     .align_y(Alignment::Center);
 
-    // A plain container, deliberately: an enclosing `mouse_area` here is what
-    // built the flicker loop described in `with_rdp_toolbar`. The buttons are
-    // real buttons and handle their own clicks.
-    let bar = container(buttons)
-        .padding([4, 6])
-        .style(|_theme| rdp_toolbar_style());
+    // Opaque preserves each button's Pointer interaction, but restores the local
+    // arrow over padding, labels and disabled buttons instead of falling through
+    // to the VNC cursor's Hidden interaction. No new hover region is introduced.
+    let bar = opaque(
+        container(buttons)
+            .padding([4, 6])
+            .style(|_theme| rdp_toolbar_style()),
+    );
 
     column![
         row![Space::new().width(Fill), bar, Space::new().width(Fill)],
