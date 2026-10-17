@@ -1,0 +1,244 @@
+{
+  "date": "2026-10-18",
+  "issue": 207,
+  "result": "passed: one actual shipping Linux GUI probe after the toolbar cursor fix",
+  "source_sha": "bf0ac781313c3294896d67bb49410c7cb3ec2f07",
+  "app_sha256": "a77e56256a0eb48c7366eb2d6781e4ee810e72124205390e439cab3788098395",
+  "build_provenance": {
+    "ci_run": 39058864576,
+    "ci_url": "https://github.com/weironz/adit/actions/runs/39058864576",
+    "package_job": 117472461776,
+    "package_job_result": "success",
+    "artifact_id": 12110712803,
+    "artifact_name": "adit-linux-packages-x86_64",
+    "artifact_digest": "sha256:9f2a4fae2188d6f7854a331b3819199e5a5db6f7d38b74112025316fc1499bcc",
+    "deb_sha256": "87ad1a86dbd8352c860d81791d099482ca98a8dc7df6a27011cd0b55a4581226",
+    "binary": "usr/bin/adit extracted from the exact CI deb into a new owned directory; no local Rust build"
+  },
+  "before_record": "2026-10-18-toolbar-cursor-baseline.json",
+  "before_source_sha": "5ae37747908568b1a38f7eaca603857e4f6f37f1",
+  "before_app_sha256": "a04695e9f88010437e8889b275d4cb2b29276df410c5a35261ec7f5a9be9a137",
+  "environment": {
+    "client": "actual shipping Linux iced app; software OpenGL on isolated Xvfb",
+    "display": ":121",
+    "xvfb_pixels": [
+      1400,
+      1000
+    ],
+    "app_window_pixels": [
+      1100,
+      700
+    ],
+    "app_origin": [
+      0,
+      0
+    ],
+    "sidebar_width": 352,
+    "target": "existing isolated TigerVNC :130 through byte-transparent loopback relay15921; synthetic noise only",
+    "configuration": "existing independent /tmp/adit-resize-frame config/home/runtime; no user config mounted",
+    "new_app_pid": 2093
+  },
+  "measurement": {
+    "method": "real xdotool mousemove and XFixesGetCursorImage on client X display; OS ARGB alpha/dimensions/hotspot/hash independent of iced private state",
+    "settle_ms_per_point": 400,
+    "after_probe_runs": 1,
+    "layout_observed_before_probe": true,
+    "layout_observation": "actual GUI screenshot confirmed ordinary saved VNC profile connected, sidebar352 and expanded toolbar at baseline coordinates before measurement",
+    "original_probe_sha256": "93e19d1e41baa01fd7c68119b11758849622a05c75e14ce7f4812c270fc6a8f8",
+    "executed_probe_sha256": "4839203b2a22b25f1412363959457c309f4d55934e8c5a80684e5ab15cd73cc4",
+    "probe_change": "inserted one idle_header_reference move at1040,17 before original desktop sample; remaining sample coordinates and expand/collapse click sequence unchanged",
+    "final_pointer": [
+      1250,
+      900
+    ]
+  },
+  "after_samples": [
+    {
+      "label": "idle_header_reference",
+      "point": [
+        1040,
+        17
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        3,
+        1
+      ],
+      "visible_pixels": 254,
+      "argb_sha256": "b4de47ea14694512e6b607b4991afd1dc651192a996da841d8f55aea3db37243"
+    },
+    {
+      "label": "desktop",
+      "point": [
+        500,
+        300
+      ],
+      "cursor_size": [
+        1,
+        1
+      ],
+      "hotspot": [
+        0,
+        0
+      ],
+      "visible_pixels": 0,
+      "argb_sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+    },
+    {
+      "label": "expanded_security_label",
+      "point": [
+        598,
+        79
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        3,
+        1
+      ],
+      "visible_pixels": 254,
+      "argb_sha256": "b4de47ea14694512e6b607b4991afd1dc651192a996da841d8f55aea3db37243"
+    },
+    {
+      "label": "expanded_enabled_resize_button",
+      "point": [
+        676,
+        79
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        7,
+        5
+      ],
+      "visible_pixels": 337,
+      "argb_sha256": "94a3043235954a6200fe7ebdf6d4207055a30e04efcd53b0e2f50cb55c10cf12"
+    },
+    {
+      "label": "expanded_bottom_padding",
+      "point": [
+        740,
+        93
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        3,
+        1
+      ],
+      "visible_pixels": 254,
+      "argb_sha256": "b4de47ea14694512e6b607b4991afd1dc651192a996da841d8f55aea3db37243"
+    },
+    {
+      "label": "collapsed_padding",
+      "point": [
+        681,
+        73
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        3,
+        1
+      ],
+      "visible_pixels": 254,
+      "argb_sha256": "b4de47ea14694512e6b607b4991afd1dc651192a996da841d8f55aea3db37243"
+    },
+    {
+      "label": "collapsed_enabled_reveal_button",
+      "point": [
+        726,
+        73
+      ],
+      "cursor_size": [
+        24,
+        24
+      ],
+      "hotspot": [
+        7,
+        5
+      ],
+      "visible_pixels": 337,
+      "argb_sha256": "94a3043235954a6200fe7ebdf6d4207055a30e04efcd53b0e2f50cb55c10cf12"
+    },
+    {
+      "label": "outside_app",
+      "point": [
+        1250,
+        900
+      ],
+      "cursor_size": [
+        16,
+        16
+      ],
+      "hotspot": [
+        7,
+        7
+      ],
+      "visible_pixels": 176,
+      "argb_sha256": "314b42bf34138a331b0e088dc5231bd2a53f848b4c654d3da3b119cce6b72cf9"
+    }
+  ],
+  "checks": [
+    {
+      "label": "expanded_security_label",
+      "passed": true,
+      "assertion": "previously hidden; now identical to independent client header Idle reference"
+    },
+    {
+      "label": "expanded_bottom_padding",
+      "passed": true,
+      "assertion": "previously hidden; now identical to independent client header Idle reference"
+    },
+    {
+      "label": "collapsed_padding",
+      "passed": true,
+      "assertion": "previously hidden; now identical to independent client header Idle reference"
+    },
+    {
+      "label": "expanded_enabled_resize_button",
+      "passed": true,
+      "assertion": "same visible Pointer hand as baseline; distinct from Idle reference"
+    },
+    {
+      "label": "collapsed_enabled_reveal_button",
+      "passed": true,
+      "assertion": "same visible Pointer hand as baseline; distinct from Idle reference"
+    },
+    {
+      "label": "desktop",
+      "passed": true,
+      "assertion": "native OS cursor stays hidden for compositor cursor; same hash as baseline"
+    },
+    {
+      "label": "outside_app",
+      "passed": true,
+      "assertion": "native cursor restored outside app; same Xvfb root cursor as baseline"
+    }
+  ],
+  "observed": "All three previously hidden toolbar noninteractive regions now match the independent visible Idle reference exactly (24x24, hotspot3,1,254 visible pixels). Both enabled buttons keep the exact baseline Pointer hand (24x24,hotspot7,5,337 visible pixels). Desktop native cursor remains hidden; leaving the app restores the baseline visible root cursor.",
+  "limitations": [
+    "One controlled actual Linux GUI round; not a performance or reliability matrix.",
+    "This measures native OS cursor state, not the remote cursor drawn by the desktop compositor.",
+    "Not Windows GPU, OS100/150/200 DPI, rapid border dragging or all focus-transition acceptance.",
+    "Background click blocking was not tested in this cursor-only round.",
+    "Screenshots are synthetic and remain in the owned private temporary directory; no desktop image is committed."
+  ],
+  "validation": {
+    "local_just_ci": "passed; workspace build, workspace and separate RDP Clippy -D warnings, workspace tests, SSH integration compile",
+    "full_ci_run": 39058864576,
+    "full_ci_result": "12/12 success on exact source bf0ac781313c3294896d67bb49410c7cb3ec2f07",
+    "independent_root_comparison": "7 behavior checks repeated from archived before/after JSON, passed"
+  }
+}
