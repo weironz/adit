@@ -1,0 +1,9 @@
+2026-10-17T13:35:18Z create isolated interfaces
+2026-10-17T13:35:18Z start TigerVNC
+2026-10-17T13:35:18Z start production client; wait for red frame and Fence
+2026-10-17T13:35:18Z red frame/Fence ready; take nic_a down
+2026-10-17T13:35:38Z old connection withdrawn; switch route to nic_b
+2026-10-17T13:35:39Z blue frame recovered; verify actual source
+2026-10-17T13:35:40Z pause production client
+2026-10-17T13:36:00Z green frame received; wait for client exit
+2026-10-17T13:38:18Z cleanup exit=124

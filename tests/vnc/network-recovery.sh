@@ -19,6 +19,9 @@ client_pid=''
 cleanup() {
     local status=$?
     phase "cleanup exit=$status"
+    # sudo may mirror a stopped child's job-control state. Resume its wrapper
+    # too, otherwise it cannot reap a child which has already resumed/exited.
+    if [[ -n "$client_pid" ]]; then kill -CONT "$client_pid" 2>/dev/null || true; fi
     if [[ "$ns_created" == 1 ]]; then
         for pid in $(sudo ip netns pids "$ns"); do
             sudo kill -CONT "$pid" 2>/dev/null || true
@@ -126,7 +129,9 @@ grep -q '^State:.*T' "/proc/${processes[0]}/status"
 pause_start=$(date +%s%N)
 timeout 3s xsetroot -solid green
 sleep 20
+ps -o pid=,stat=,comm= -p "$client_pid" > "$results/wrapper-before-resume.log" || true
 sudo kill -CONT "${processes[0]}"
+kill -CONT "$client_pid" 2>/dev/null || true
 pause_end=$(date +%s%N)
 python3 - "$pause_start" "$pause_end" > "$work/pause.json" <<'PY'
 import json,sys
@@ -159,6 +164,7 @@ record={
     'route_decision':json.loads((results/'route.json').read_text()),
     'failed_interface':json.loads((results/'link.json').read_text()),
     'process_pause':json.loads((results/'pause.json').read_text()),
+    'wrapper_before_resume':(results/'wrapper-before-resume.log').read_text(),
 }
 (results/'result.json').write_text(json.dumps(record,indent=2)+'\n')
 print(json.dumps(record,indent=2))

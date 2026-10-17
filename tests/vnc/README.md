@@ -298,6 +298,13 @@ the result directory so a blocked cleanup cannot hide the last observation.
 The first cancelled run is retained as
 [`2026-10-17-network-recovery-initial-incomplete.json`](results/2026-10-17-network-recovery-initial-incomplete.json);
 it establishes no recovery acceptance.
+The next run reached both recovered frame phases but timed out waiting for the
+wrapper to exit; its [raw evidence](results/2026-10-17-network-wrapper-timeout.json)
+is also retained. Sudo can suspend its supervisor when its child stops, including
+the [non-PTY path](https://github.com/sudo-project/sudo/blob/SUDO_1_9_15p5/src/exec_nopty.c#L709-L725).
+The runner therefore resumes both its namespace client and its own sudo wrapper,
+and records the wrapper's state before resuming it. This changes only test
+process supervision, not production reconnect behavior.
 
 This is a real Linux virtual-interface change, not a mocked socket error. The
 process pause is additional evidence; it is not OS suspend/hibernate. Neither

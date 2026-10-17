@@ -1,0 +1,28 @@
+{
+  "source_sha": "711c5e7fc1ba40620444487740c0ee4c480b85fe",
+  "ci_run": "https://github.com/weironz/adit/actions/runs/39036916262",
+  "outcome": "failed: execution deadline at wait for client exit; not overall acceptance",
+  "observed_phases_ms": {
+    "ready": 53,
+    "disconnected": 20041,
+    "recovered": 21115,
+    "resumed": 41297
+  },
+  "evidence": "2026-10-17-network-wrapper-timeout/",
+  "observations": [
+    "nic_a down; route nic_b source 10.204.0.2; server accepted new source",
+    "same session with complete blue pixels, VncAuth/ZRLE/read-only retained",
+    "20 second process pause then complete green pixels; new server connection closed cleanly",
+    "script waited for sudo wrapper until external 180 second deadline"
+  ],
+  "hypothesis": "sudo supervisor mirrors the child stop; resuming only namespace child leaves host wrapper suspended. Requires verification.",
+  "limitations": [
+    "No overall pass; no OS sleep or physical Windows NIC acceptance.",
+    "Absolute runner wall-clock timestamps are not a latency measurement; probe monotonic phase offsets are retained."
+  ],
+  "follow_up": {
+    "mechanism_verified_in_official_source": "https://github.com/sudo-project/sudo/blob/SUDO_1_9_15p5/src/exec_nopty.c#L709-L725",
+    "self_stop_source": "https://github.com/sudo-project/sudo/blob/SUDO_1_9_15p5/src/suspend_parent.c#L123-L142",
+    "change": "Resume the owned sudo wrapper as well as its namespace child; capture wrapper state before resume. Runtime confirmation awaits the next CI run."
+  }
+}
