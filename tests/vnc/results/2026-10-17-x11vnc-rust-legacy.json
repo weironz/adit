@@ -1,0 +1,81 @@
+{
+  "date": "2026-10-17",
+  "scope": "Rust production SessionManager against actual x11vnc X11 STRING clipboard; public synthetic fixture text only",
+  "test_binary_sha256": "f4319a5d71d59aa0f028e785a40f7f2ac095b9446d7398ab906da1b1d4bf2758",
+  "probe_sha256": "20cf17d1a433e447c5dbfc6ab55b13b6c7e31cb4a482d507d577a304a81eaeba",
+  "fixture_sha256": {
+    "legacy-clipboard.py": "1c1cda5df22cdb5ee9c86b2f8c7a3a00f839f09d8bc6b661cc710872c07eeb89",
+    "start-clipboard.sh": "3e73c3d5ba41dc13d0b2ba46a6f8a3c8930bc0af5afc7a82c7c37e23e25e8440",
+    "clipboard_target.py": "d621ed034357daef09c7012b97e78b64372bcfba651645d279d6aa8797bf412c"
+  },
+  "fixture": {
+    "container": "adit-vnc-clipboard",
+    "display": "113",
+    "port": 15913,
+    "host_binding": "127.0.0.1",
+    "memory": "512m",
+    "window_manager": false,
+    "X11VNC_AVOID_WINDOWS": "never"
+  },
+  "extended_utf8_accepted": false,
+  "attempts": [
+    {
+      "index": 1,
+      "returncode": 0,
+      "stdout": "\nrunning 1 test\ntest real_legacy_clipboard_uses_latin1_and_reports_unsupported_text ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.80s\n\n",
+      "stderr": ""
+    },
+    {
+      "index": 2,
+      "returncode": 0,
+      "stdout": "\nrunning 1 test\ntest real_legacy_clipboard_uses_latin1_and_reports_unsupported_text ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.33s\n\n",
+      "stderr": ""
+    },
+    {
+      "index": 3,
+      "returncode": 0,
+      "stdout": "\nrunning 1 test\ntest real_legacy_clipboard_uses_latin1_and_reports_unsupported_text ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.67s\n\n",
+      "stderr": ""
+    }
+  ],
+  "previous_failed_fixture_attempt": "2026-10-17-x11vnc-rust-legacy-initial-failure.json",
+  "versions": [
+    "libvncserver1 0.9.14+dfsg-1ubuntu0.2",
+    "x11vnc 0.9.16-10"
+  ],
+  "image_id": "sha256:4419240efbf5dbd9932e34a1d3c96793b22a98a5b5de56a98711607c5631bae6",
+  "selwin_wait_seconds": 0.236,
+  "initial_selection_send_wait_seconds": 16.179,
+  "between_samples_selection_ready_seconds": [
+    0.556,
+    0.701
+  ],
+  "legacy_accepted": true,
+  "assertions": [
+    "real client-to-X11 Latin-1 café plus newline",
+    "real X11-to-client Latin-1 café plus newline",
+    "unrepresentable Chinese produces a nonfatal visible notice without changing X11 text",
+    "UTF-8 remains unnegotiated and session remains connected"
+  ],
+  "warmup_terminated_by_runner": true,
+  "warmup_returncode": 1,
+  "warmup_stdout": "connected_ms=328\nfirst_paint_ms=353 size=800x600\ncomplete_paint_ms=385 generation=131\n",
+  "readiness_events": [
+    "17/10/2026 06:52:27 created selwin: 0x20001d",
+    "17/10/2026 06:52:44 selection_send: send-ing it.",
+    "17/10/2026 06:52:47 selection_send: send-ing it.",
+    "17/10/2026 06:52:48 selection_send: send-ing it.",
+    "17/10/2026 06:52:51 selection_send: send-ing it.",
+    "17/10/2026 06:52:52 selection_send: send-ing it.",
+    "17/10/2026 06:52:55 selection_send: send-ing it."
+  ],
+  "cleanup_returncode": 0,
+  "source_state": {
+    "checkout_base_sha": "38c4f43232fcab25d1f87566851714600870a482",
+    "binary_build_source_sha": "unverified",
+    "binary_provenance": "Reused existing executables identified by their separate SHA-256 hashes; the checkout base is not an exact-build claim.",
+    "current_worktree_changes_covered": false,
+    "scope": "Clipboard acceptance only; does not verify the concurrent reconnect changes.",
+    "provenance_note": "This clarification was added after the recorded run; fixture_sha256 identifies the scripts as executed."
+  }
+}

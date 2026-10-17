@@ -1,0 +1,54 @@
+{
+  "date": "2026-10-17",
+  "scope": "Rust production SessionManager against actual x11vnc X11 STRING clipboard; public synthetic fixture text only",
+  "source_sha": "38c4f43232fcab25d1f87566851714600870a482",
+  "test_binary_sha256": "4ea1b7cba5d6942456bda03e7f533b74c9ef3825f4806a81931b3d8cedc2da03",
+  "probe_sha256": "20cf17d1a433e447c5dbfc6ab55b13b6c7e31cb4a482d507d577a304a81eaeba",
+  "fixture": {
+    "container": "adit-vnc-clipboard",
+    "display": "113",
+    "port": 15913,
+    "host_binding": "127.0.0.1",
+    "memory": "512m",
+    "window_manager": false,
+    "X11VNC_AVOID_WINDOWS": "never"
+  },
+  "extended_utf8_accepted": false,
+  "attempts": [
+    {
+      "index": 1,
+      "returncode": 0,
+      "stdout": "\nrunning 1 test\ntest real_legacy_clipboard_uses_latin1_and_reports_unsupported_text ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 2.71s\n\n",
+      "stderr": ""
+    },
+    {
+      "index": 2,
+      "returncode": 101,
+      "stdout": "\nrunning 1 test\ntest real_legacy_clipboard_uses_latin1_and_reports_unsupported_text ... FAILED\n\nfailures:\n\nfailures:\n    real_legacy_clipboard_uses_latin1_and_reports_unsupported_text\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 11.30s\n\n",
+      "stderr": "\nthread 'real_legacy_clipboard_uses_latin1_and_reports_unsupported_text' (35820) panicked at crates\\adit-session\\tests\\vnc_clipboard.rs:131:9:\nclipboard exchange timed out: Some(VncDiagnostics { tcp_ms: 3, handshake_ms: 315, first_pixel_ms: Some(386), first_complete_ms: Some(339), complete_updates: 2, wire_bytes: 1136, pending_updates: 1, fence_rtt_ms: None, painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(396), sampled_generation: 0, queue_high_water: 1, security: \"VncAuth\", encoding: \"[(-239, 1), (7, 1), (-224, 1)]\", clipboard_utf8: false, status: \"已连接\" })\nnote: run with `RUST_BACKTRACE=1` environment variable to display a backtrace\n"
+    }
+  ],
+  "versions": [
+    "libvncserver1 0.9.14+dfsg-1ubuntu0.2",
+    "x11vnc 0.9.16-10"
+  ],
+  "image_id": "sha256:4419240efbf5dbd9932e34a1d3c96793b22a98a5b5de56a98711607c5631bae6",
+  "selwin_wait_seconds": 0.273,
+  "initial_selection_send_wait_seconds": 16.897,
+  "legacy_accepted": false,
+  "assertions": [
+    "real client-to-X11 Latin-1 café plus newline",
+    "real X11-to-client Latin-1 café plus newline",
+    "unrepresentable Chinese produces a nonfatal visible notice without changing X11 text",
+    "UTF-8 remains unnegotiated and session remains connected"
+  ],
+  "warmup_returncode": 1,
+  "warmup_stdout": "connected_ms=373\nfirst_paint_ms=402 size=800x600\ncomplete_paint_ms=461 generation=131\n",
+  "readiness_events": [
+    "17/10/2026 02:25:04 created selwin: 0x20001d",
+    "17/10/2026 02:25:25 selection_send: send-ing it.",
+    "17/10/2026 02:25:28 selection_send: send-ing it."
+  ],
+  "cleanup_returncode": 0,
+  "limitation": "First Rust run passed after startup readiness; second repeated run timed out with x11vnc selection_send no-change cache after the short-lived test selection owner. Retained as a failed fixture-repeat attempt, not accepted repeated reliability."
+}

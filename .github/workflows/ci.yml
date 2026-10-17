@@ -101,6 +101,9 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
+      - name: Clippy the opt-in native VNC acceptance harness
+        run: cargo clippy -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance -- -D warnings
+
       - name: Test
         run: cargo test --workspace
 
@@ -158,6 +161,22 @@ jobs:
           cargo test -p adit-session --test vnc real_vnc_server_authenticates_and_paints -- --ignored
           ADIT_VNC_CLIP_LOCAL=1 ADIT_VNC_CLIP_PORT=15900 ADIT_VNC_CLIP_DISPLAY=99 \
             cargo test -p adit-session --test vnc_clipboard -- --ignored
+
+      - name: VNC recovery across real isolated client interfaces
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          sudo apt-get install -y --no-install-recommends iproute2
+          cargo build -p adit-session --example vnc_recovery_probe --locked
+          bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe "$RUNNER_TEMP/adit-vnc-network-result"
+
+      - name: Preserve VNC network recovery evidence
+        if: always() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-network-recovery
+          path: ${{ runner.temp }}/adit-vnc-network-result
+          if-no-files-found: warn
 
       - name: VNC SSH gateway and protected credential connections
         if: matrix.os == 'ubuntu-latest'

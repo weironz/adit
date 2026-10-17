@@ -290,6 +290,21 @@ pub(super) fn spawn_vnc_session(
 fn is_auth_error(error: &VncError) -> bool {
     matches!(error, VncError::WrongPassword | VncError::NoPassword)
 }
+
+fn next_reconnect_delay(attempts: &mut u32, connected_for: Option<Duration>) -> Option<Duration> {
+    // A slow failed handshake is not a recovered connection. Only time spent
+    // in an authenticated session can earn a fresh retry budget.
+    if connected_for.is_some_and(|duration| duration >= Duration::from_secs(30)) {
+        *attempts = 0;
+    }
+    if *attempts >= 10 {
+        return None;
+    }
+    let delay = Duration::from_secs((1_u64 << (*attempts).min(5)).min(30));
+    *attempts += 1;
+    Some(delay)
+}
+
 fn error_message(error: &VncError) -> String {
     match error {
         VncError::WrongPassword | VncError::NoPassword => {
@@ -364,16 +379,18 @@ impl Worker {
                     }
                 }
             };
-            let result = match client_result {
+            let (result, connected_for) = match client_result {
                 Ok(client) => {
                     ever_connected = true;
+                    let connected_at = Instant::now();
                     self.state.lock().unwrap().accepting_input = true;
                     let result = self.pump(&client, start).await;
+                    let connected_for = connected_at.elapsed();
                     self.state.lock().unwrap().clipboard_policy = None;
                     let _ = client.close().await;
-                    result
+                    (result, Some(connected_for))
                 }
-                Err(error) => Err(error),
+                Err(error) => (Err(error), None),
             };
             if *self.stopped.borrow() {
                 return Ok(());
@@ -384,14 +401,12 @@ impl Worker {
             };
             let transient = matches!(&error, VncError::IoError(_) | VncError::ClientNotRunning)
                 || matches!(&error, VncError::General(m) if m == "Channel closed");
-            if !ever_connected || !options.auto_reconnect || !transient || attempts >= 10 {
+            if !ever_connected || !options.auto_reconnect || !transient {
                 return Err(error);
             }
-            if start.elapsed() > Duration::from_secs(30) {
-                attempts = 0;
-            }
-            let delay = Duration::from_secs((1_u64 << attempts.min(5)).min(30));
-            attempts += 1;
+            let Some(delay) = next_reconnect_delay(&mut attempts, connected_for) else {
+                return Err(error);
+            };
             {
                 let mut state = self.state.lock().unwrap();
                 state.accepting_input = false;
@@ -845,6 +860,29 @@ fn copy_rect(surface: &Arc<Mutex<Surface>>, dst: Rect, src: Rect) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_handshakes_and_short_connections_cannot_renew_the_retry_budget() {
+        for connected_for in [None, Some(Duration::from_secs(29))] {
+            let mut attempts = 0;
+            let delays: Vec<_> = (0..10)
+                .map(|_| next_reconnect_delay(&mut attempts, connected_for).unwrap().as_secs())
+                .collect();
+            assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30]);
+            assert!(next_reconnect_delay(&mut attempts, connected_for).is_none());
+            assert!(next_reconnect_delay(&mut attempts, connected_for).is_none());
+        }
+    }
+
+    #[test]
+    fn a_stable_authenticated_connection_renews_even_an_exhausted_retry_budget() {
+        let mut attempts = 10;
+        assert_eq!(
+            next_reconnect_delay(&mut attempts, Some(Duration::from_secs(30))),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(attempts, 1);
+    }
 
     #[test]
     fn explicit_empty_or_non_certificate_ca_never_falls_back_to_public_roots() {

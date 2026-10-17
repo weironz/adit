@@ -62,6 +62,10 @@ mod clipboard_files;
 /// leash is short.
 mod keyboard_hook;
 mod vnc_cursor;
+#[cfg(feature = "native-vnc-acceptance")]
+mod vnc_native_acceptance;
+#[cfg(feature = "native-vnc-acceptance")]
+pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
 #[cfg(test)]
 mod vnc_input_wire_tests;
 mod vault_ui;

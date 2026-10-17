@@ -140,14 +140,39 @@ The same suite now exercises an explicit per-profile Latin-1 compatibility mode
 (without advertising Extended Clipboard), reads actual X11 STRING selections,
 and requires a visible nonfatal notice for unrepresentable text. Both clipboard
 tests serialize access to their one X11 clipboard. TigerVNC has passed this path.
-The x11vnc combination remains unaccepted for clipboard use, including its
-legacy selection path; the compatibility option is not evidence it works there.
+The isolated x11vnc legacy path has now passed three consecutive Rust runs
+after observing server-side X11 readiness. The fixture has no window manager:
+`X11VNC_AVOID_WINDOWS=never` lets x11vnc create its selection window promptly,
+and the runner separately waits for its initial `selection_send`. Between runs
+it establishes a distinct ASCII selection owner and observes another send, so
+x11vnc's previous-text cache does not suppress a repeated test transition.
+These are fixture readiness checks; the Rust exchange timeout remains 10 seconds.
+
+```powershell
+cargo test -p adit-session --test vnc_clipboard --no-run
+cargo build -p adit-session --example vnc_probe
+# Select the executable printed by --no-run; its hash is recorded in the result.
+python tests/vnc/legacy-clipboard.py --test-binary target/debug/deps/vnc_clipboard-<hash>.exe --probe target/debug/examples/vnc_probe.exe --output tests/vnc/results/x11vnc-rust-legacy-local.json --repeats 3
+```
+
+The runner owns only a new `adit-vnc-clipboard` container (:113, port 15913 bound
+to loopback), refuses to replace an existing one, and removes it on exit. It
+records exact executable/image/script hashes, readiness observations and all
+test outputs. The recorded checkout base is separate from executable provenance:
+reused binaries do not prove an exact build of that commit or acceptance of
+concurrent worktree changes. Its extra shared RFB warmup connection is deliberately terminated
+at cleanup; that exit code is not a failed acceptance sample. The
+[accepted result](results/2026-10-17-x11vnc-rust-legacy.json) preserves a link to
+the [earlier failed repeat](results/2026-10-17-x11vnc-rust-legacy-initial-failure.json).
+Acceptance covers real Latin-1 café/newlines in both directions, a nonfatal
+notice for unrepresentable Chinese, and a connected session with UTF-8 disabled.
+It does **not** accept x11vnc Extended Clipboard or prove long-running reliability.
 
 The upstream 0.9.16 [callback registration](https://github.com/LibVNC/x11vnc/blob/0.9.16/src/screen.c)
 registers the old X11 cut-text hook. LibVNCServer 0.9.14 dispatches extended text
 to a [separate UTF-8 callback](https://github.com/LibVNC/libvncserver/blob/LibVNCServer-0.9.14/libvncserver/rfbserver.c).
 This explains why a capability advertisement alone is insufficient; it does not
-prove the cause of the separate legacy selection failure in this fixture.
+prove the cause of the earlier legacy fixture-repeat failure.
 
 ## Shared resize acceptance
 
@@ -209,3 +234,67 @@ directional TGHT capabilities; see [wire provenance](../../crates/adit-vnc/UPSTR
 The security envelope itself does not encrypt the desktop or clipboard. The
 explicit legacy option disables both automatic UTF-8 extensions; it must not be
 used as a workaround that silently sends Unicode bytes as classic Latin-1.
+
+## Isolated native viewer acceptance
+
+The opt-in `native-vnc-acceptance` feature builds the `vnc_native_acceptance`
+example. It uses the shipping Adit view and dispatcher, an isolated temporary
+profile directory, and an explicitly unauthenticated **synthetic loopback-only**
+target on port 15915. Clipboard send/receive, synchronization and auto-reconnect
+are disabled. Do not repoint this entry point at a user desktop or credential
+store. It is not included in the default app build.
+
+Start a dedicated fixture container from this test image, publish only
+`127.0.0.1:15915:15915`, copy `start-native.sh`, `native_target.py` and
+`cursor_target.py` into its root, and execute `sh /start-native.sh`. The target
+draws labelled crosshairs and reports server-side click coordinates; its root
+geometry query follows real RFB resizes instead of relying on Tk's initial
+screen-size cache. Build and launch the development example explicitly:
+
+```powershell
+cargo build -p adit-ui --features native-vnc-acceptance --example vnc_native_acceptance
+```
+
+Use native application automation only for ordinary canvas/control interactions.
+The bottom test controls vary **application scale**, leaving Windows OS DPI
+unchanged. Do not report app scale 100/150/200% as an OS DPI acceptance matrix.
+The example records only synthetic pointer/window/geometry metadata to
+`events.jsonl` under its isolated temporary directory. Compare each observed
+crosshair click with the target's `/tmp/native-events.jsonl`, and exclude user
+interference or unsuccessful input attempts from passed cases.
+
+The [2026-10-17 native result](results/2026-10-17-windows-native-scale.json)
+records six actual Windows-native application-scale/fit combinations at an
+unchanged **125% OS DPI**, all within two remote pixels of a labelled target.
+It also observes explicit remote resize, native maximize/restore and preserved
+coordinate mapping. It does not accept rapid border dragging, the three-value
+OS DPI matrix, shipping toolbar boundary cursor restoration, or native IME.
+
+## Actual isolated Linux client interface recovery
+
+The Ubuntu CI job builds `vnc_recovery_probe` and runs `network-recovery.sh`.
+For a dedicated Linux test machine with the fixture dependencies already
+installed, provide a fresh result directory:
+
+```sh
+cargo build -p adit-session --example vnc_recovery_probe --locked
+bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe /tmp/adit-vnc-network-result-unique
+```
+
+The runner creates its own uniquely named client network namespace and two
+veth pairs. A real TigerVNC display starts with a red background. After the
+production SessionManager receives complete pixels, the runner takes the
+client's first interface down, waits for its disconnected/reconnecting state,
+and switches the route to a second interface with a different source address.
+Acceptance requires one unchanged tab, old pixels withdrawn, a complete new
+blue desktop, and retained VncAuth, ZRLE and read-only policy. A further
+20-second `SIGSTOP`/`SIGCONT` cycle requires a fresh green desktop afterward.
+Only these owned namespace/interface/display resources are cleaned; previous
+result directories are never overwritten. CI retains logs, phases, route,
+binary hash and a success/failure result as `vnc-network-recovery` artifacts.
+
+This is a real Linux virtual-interface change, not a mocked socket error. The
+process pause is additional evidence; it is not OS suspend/hibernate. Neither
+case establishes Windows Wi-Fi hardware, Windows sleep or native GUI recovery.
+Those remain separately tracked in #212. Fixture credentials are disposable
+public constants, never a real target password in argv or environment.

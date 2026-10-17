@@ -1,0 +1,232 @@
+{
+  "date": "2026-10-17",
+  "issue": 214,
+  "scope": "Linux native GUI external X11 mouse and keyboard events; agent inspected screenshots and independent on-disk state. Not Windows security-dialog human acceptance.",
+  "source_sha": "38c4f43232fcab25d1f87566851714600870a482",
+  "ci_run": "https://github.com/weironz/adit/actions/runs/38993651189",
+  "ci_artifact": "adit-linux-packages-x86_64",
+  "package_version": "0.1.75",
+  "app_sha256": "47396dc5de7fc2c0981dc6f0cf7f8e3b1582045bbea4e24f225407afb3123a93",
+  "environment": {
+    "os": "Ubuntu 24.04.5 LTS x86_64",
+    "display": "Xvfb :121 1400x1000x24",
+    "app_window": "1360x860",
+    "renderer": "Mesa software OpenGL",
+    "config": "dedicated container /tmp/adit-vault-ui/config, no user configuration mounted",
+    "vnc_server": "TigerVNC 1.13.1 :130, 800x600, VncAuth, container loopback only, no published port",
+    "data": "public synthetic fixture credentials only"
+  },
+  "observations": [
+    {
+      "case": "enable protection",
+      "result": "passed",
+      "evidence": "UI enabled status, version 2 with 0 entries and a 0600 version 1 backup"
+    },
+    {
+      "case": "save and ordinary connect",
+      "result": "passed",
+      "evidence": "GUI VNC new-session form saved encrypted v2 entry; sidebar double-click authenticated and displayed complete blue frame"
+    },
+    {
+      "case": "lock live session",
+      "result": "passed",
+      "evidence": "locked UI status while VNC remained connected; SHA-256 unchanged"
+    },
+    {
+      "case": "wrong master and correct unlock",
+      "result": "passed",
+      "evidence": "error shown and fields cleared; SHA-256 unchanged; A subsequently unlocked"
+    },
+    {
+      "case": "encrypted export",
+      "result": "passed",
+      "evidence": "real GTK save dialog; 0600 file was byte-identical to current 514-byte v2 vault"
+    },
+    {
+      "case": "change master",
+      "result": "passed",
+      "evidence": "UI successful change with old protected backup; old A rejected and new B unlocked"
+    },
+    {
+      "case": "disable protection",
+      "result": "passed",
+      "evidence": "UI legacy status; v1 with one encrypted entry and a 0600 v2 backup"
+    },
+    {
+      "case": "import encrypted backup",
+      "result": "passed",
+      "evidence": "real GTK open dialog; imported v2 was byte-identical to export A at import completion; previous v1 backed up; imported vault locked and A unlocked"
+    },
+    {
+      "case": "cold restart ordinary entry while locked",
+      "result": "passed",
+      "evidence": "double-click showed vault-locked error and manual VNC password prompt, with no remote connection"
+    },
+    {
+      "case": "cold unlock and ordinary reconnect",
+      "result": "passed",
+      "evidence": "read status then unlock A in settings; same sidebar double-click used saved VNC credential and displayed full blue frame, no second VNC password entered"
+    },
+    {
+      "case": "cancel export",
+      "result": "passed",
+      "evidence": "real GTK dialog cancellation; UI reported no modification; SHA-256 unchanged"
+    },
+    {
+      "case": "wrong import master",
+      "result": "passed",
+      "evidence": "UI showed incorrect-master error after selecting encrypted file; current file SHA-256 unchanged and existing VNC session remained connected"
+    }
+  ],
+  "final_file_metadata": {
+    "credentials.json": {
+      "sha256": "093080194e0767c14850f8d0c628dffbb7239f04d1c19608200137d1455d8b9a",
+      "bytes": 514,
+      "mode": "0o600",
+      "version": 2,
+      "entry_count": 1,
+      "plaintext_fixture_password_absent": true,
+      "plaintext_fixture_master_absent": true
+    },
+    "credentials.json.backup-053e777d5e009194569a8c9c2fa8576cbd33eeaf27d3ebf6": {
+      "sha256": "fb991187173a244db7a9933486874f7a975c7167beed5c57444de406c7331235",
+      "bytes": 81,
+      "mode": "0o600",
+      "version": 1,
+      "entry_count": 0,
+      "plaintext_fixture_password_absent": true,
+      "plaintext_fixture_master_absent": true
+    },
+    "credentials.json.backup-6ee81b4c29dddd054d399677b0d53ca5d8df9ba1b004bd72": {
+      "sha256": "59a00bbf40e6e4d1b7f1ed13acda577222cc4cef33ce42a213a3389ac78aaff2",
+      "bytes": 514,
+      "mode": "0o600",
+      "version": 2,
+      "entry_count": 1,
+      "plaintext_fixture_password_absent": true,
+      "plaintext_fixture_master_absent": true
+    },
+    "credentials.json.backup-735c4ba4a0484afc8ea6f5f314488f442253581032825633": {
+      "sha256": "a958bb0a9bb65ed9dc7cd67acc4d0c2239bea493927699734f6ed693847f418f",
+      "bytes": 514,
+      "mode": "0o600",
+      "version": 2,
+      "entry_count": 1,
+      "plaintext_fixture_password_absent": true,
+      "plaintext_fixture_master_absent": true
+    },
+    "credentials.json.backup-bed049c5b144707116c4a7a288f9560d0a788223faf35cea": {
+      "sha256": "593553ba338466a728f859f54ed7a056089a8d107e221af3839e0f16a9d40e47",
+      "bytes": 289,
+      "mode": "0o600",
+      "version": 1,
+      "entry_count": 1,
+      "plaintext_fixture_password_absent": true,
+      "plaintext_fixture_master_absent": true
+    },
+    "credentials.json.backup-ec4e001db106edd63ab20e7c9c8a03461e30568ac503ebfa": {
+      "sha256": "2a8db9169fac9d655927a21da1a9d4f3674656afe478ce75a0377e0b55f0ff6b",
+      "bytes": 514,
+      "mode": "0o600",
+      "version": 2,
+      "entry_count": 1,
+      "plaintext_fixture_password_absent": true,
+      "plaintext_fixture_master_absent": true
+    },
+    "export-A.json": {
+      "sha256": "59a00bbf40e6e4d1b7f1ed13acda577222cc4cef33ce42a213a3389ac78aaff2",
+      "bytes": 514,
+      "mode": "0o600",
+      "version": 2,
+      "entry_count": 1
+    }
+  },
+  "screenshots": {
+    "locked.png": {
+      "path": "2026-10-17-linux-vault-gui/locked.png",
+      "sha256": "f1b4d99dd170f5099931a316ff1ee3f881b64cb0c1e4c7a1787bd8c1b80b9779"
+    },
+    "wrong-password.png": {
+      "path": "2026-10-17-linux-vault-gui/wrong-password.png",
+      "sha256": "8c8eaeb495485c61a421a024826bd6ec97b0d7a6b835e9a7599291e225bc8337"
+    },
+    "changed.png": {
+      "path": "2026-10-17-linux-vault-gui/changed.png",
+      "sha256": "92f53afc3d0791689ad49db00f14763f5a1410ad000aca09c6a3540aad844c63"
+    },
+    "disabled.png": {
+      "path": "2026-10-17-linux-vault-gui/disabled.png",
+      "sha256": "a5914fe7e47b845c95ed2c1f7bed36333811369bf019d06368dcad850adc8a45"
+    },
+    "imported.png": {
+      "path": "2026-10-17-linux-vault-gui/imported.png",
+      "sha256": "9be305cdc359f4b518a174b6a1f905128676583281fbe20bc41caee7d2d6f72d"
+    },
+    "cold-locked-connect.png": {
+      "path": "2026-10-17-linux-vault-gui/cold-locked-connect.png",
+      "sha256": "f654154e87058f7e5153ccddac3c13eeb4788ef741992232f6122e57498a3bec"
+    },
+    "cold-unlocked-connected.png": {
+      "path": "2026-10-17-linux-vault-gui/cold-unlocked-connected.png",
+      "sha256": "685da2ded020f94ec7034f60cec929077df6efba9b54fe18d77020a5f4f02388"
+    },
+    "import-wrong-password.png": {
+      "path": "2026-10-17-linux-vault-gui/import-wrong-password.png",
+      "sha256": "fe1bb6d4d3087df228b668a45799458b10a4084a75a8e0392615d3e66b40585f"
+    },
+    "old-password-rejected-verified.png": {
+      "path": "2026-10-17-linux-vault-gui/old-password-rejected-verified.png",
+      "sha256": "8c8eaeb495485c61a421a024826bd6ec97b0d7a6b835e9a7599291e225bc8337"
+    },
+    "cold-locked-connect-verified.png": {
+      "path": "2026-10-17-linux-vault-gui/cold-locked-connect-verified.png",
+      "sha256": "f654154e87058f7e5153ccddac3c13eeb4788ef741992232f6122e57498a3bec"
+    },
+    "cold-unlocked-connected-verified.png": {
+      "path": "2026-10-17-linux-vault-gui/cold-unlocked-connected-verified.png",
+      "sha256": "685da2ded020f94ec7034f60cec929077df6efba9b54fe18d77020a5f4f02388"
+    }
+  },
+  "limitations": [
+    "Not a Windows security settings or authentication-dialog manual acceptance.",
+    "GUI events were generated by xdotool in Linux; screenshots were inspected by an agent, not a human operator.",
+    "No SSH or RDP GUI conclusions are inferred from this VNC-only native UI run.",
+    "No credentials files, encrypted backups, private targets or actual passwords are committed.",
+    "Final vault ciphertext can differ from the imported export after subsequent successful credential saves; byte equality was checked at import completion."
+  ],
+  "verified_second_cold_cycle": {
+    "old_pid": 644,
+    "old_proc_absent_before_restart": true,
+    "no_adit_process_before_restart": true,
+    "new_pid": 1126,
+    "config_path": "/tmp/adit-vault-ui/config",
+    "old_master_rejection_before_and_after_sha256": "d25890b8ff20bd3393491d80e67375135c15739cfb3655a21fec5bbc495c74c5",
+    "master": "synthetic B after a repeated A-to-B GUI change",
+    "server_previous_connection_closed": "07:12:09 UTC, client port 57966",
+    "server_new_vnc_auth_connection": "07:12:55 UTC, client port 53906",
+    "no_new_connection_while_vault_locked": true,
+    "full_remote_frame_observed_after_unlock": true,
+    "old_master_rejected_sha256_check": "sha256sum -c passed after confirmed UI-locked rejection"
+  },
+  "server_events": {
+    "path": "2026-10-17-linux-vault-gui/tiger-events.log",
+    "sha256": "d106e41b2fd7a84201175ff1e2ccbd3f3c3bbda838fe1de45bf0f573618d0e36"
+  },
+  "connected_frame_pixel_check": {
+    "screenshot": "cold-unlocked-connected-verified.png",
+    "rect_exclusive_xyxy": [
+      354,
+      71,
+      1359,
+      824
+    ],
+    "pixel_count": 756765,
+    "all_pixels_rgb": [
+      36,
+      74,
+      114
+    ],
+    "result": "passed"
+  },
+  "profile_plaintext_fixture_secrets_absent": true
+}

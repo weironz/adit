@@ -1,0 +1,733 @@
+{
+  "schema": 1,
+  "date": "2026-10-17",
+  "status": "partial native acceptance; OS DPI matrix and rapid border-drag acceptance remain open",
+  "base_commit": "38c4f43232fcab25d1f87566851714600870a482",
+  "working_tree_changes": true,
+  "binary_sha256": "7bbc4a4c65e1093793be621f58e4e5d7297053758845115b1d0484d2707a6d6f",
+  "build_command": "CARGO_BUILD_JOBS=1 cargo rustc -p adit-ui --features native-vnc-acceptance --example vnc_native_acceptance -- -C debuginfo=0 -C link-arg=/DEBUG:NONE",
+  "source_sha256": {
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "2f19ec04b722d46bb15a04a357e3d5b10359b5bc59e46791b539c588eddada09",
+    "crates/adit-ui/examples/vnc_native_acceptance.rs": "44a1d34e454546fa1856dbad9218d7442fa52c2eea3b6799dcaf8235c70c2125",
+    "tests/vnc/native_target.py": "23e33356ab5f5f63536f440664a967827bc61983995a8ad5345fe3ab158d2ee6",
+    "tests/vnc/start-native.sh": "7ee6f8f60ae72f3a972e93f9db7c9177cd8f9739828da7cda9361997a477dfda",
+    "tests/vnc/cursor_target.py": "02d29e2bfc37d016b454ff1bd97dfbf1133a2786decbdd3ccf6125d6aa0e69bc"
+  },
+  "fixture": {
+    "image_id": "sha256:4419240efbf5dbd9932e34a1d3c96793b22a98a5b5de56a98711607c5631bae6",
+    "display": ":112",
+    "published_address": "127.0.0.1:15915",
+    "security": "explicit synthetic None; loopback only",
+    "initial_surface": [
+      1200,
+      800
+    ],
+    "clipboard_send": false,
+    "clipboard_receive": false,
+    "persistent_user_profiles": false,
+    "os_dpi_was_changed": false
+  },
+  "scope": {
+    "real_windows_native_window": true,
+    "shipping_view_and_dispatcher": true,
+    "actual_os_scale": 1.25,
+    "application_scales": [
+      1.0,
+      1.5,
+      2.0
+    ],
+    "application_scales_are_not_os_dpi_matrix": true,
+    "rgba_cursor": {
+      "width": 16,
+      "height": 16,
+      "hotspot_x": 5,
+      "hotspot_y": 7,
+      "transparent_hole": [
+        7,
+        7
+      ]
+    },
+    "screenshots": "inspected in Computer Use; no screenshot payload archived",
+    "source_note": "native_target.py was extended with current X root geometry queries after baseline click cases; that fixture-only change does not change the target crosshair drawing or button event reporting"
+  },
+  "pointer_cases": [
+    {
+      "case": 1,
+      "app_scale": 1.0,
+      "os_scale": 1.25,
+      "fit": true,
+      "screenshot_click": [
+        307,
+        260
+      ],
+      "remote_target": [
+        300,
+        200
+      ],
+      "server_event_ordinal": 2,
+      "observed_remote": [
+        298,
+        200
+      ],
+      "max_axis_error_pixels": 2,
+      "passed": true
+    },
+    {
+      "case": 2,
+      "app_scale": 1.0,
+      "os_scale": 1.25,
+      "fit": false,
+      "screenshot_click": [
+        319,
+        267
+      ],
+      "remote_target": [
+        300,
+        200
+      ],
+      "server_event_ordinal": 3,
+      "observed_remote": [
+        299,
+        198
+      ],
+      "max_axis_error_pixels": 2,
+      "passed": true
+    },
+    {
+      "case": 3,
+      "app_scale": 1.5,
+      "os_scale": 1.25,
+      "fit": false,
+      "screenshot_click": [
+        265,
+        283
+      ],
+      "remote_target": [
+        300,
+        200
+      ],
+      "server_event_ordinal": 4,
+      "observed_remote": [
+        300,
+        198
+      ],
+      "max_axis_error_pixels": 2,
+      "passed": true
+    },
+    {
+      "case": 4,
+      "app_scale": 1.5,
+      "os_scale": 1.25,
+      "fit": true,
+      "screenshot_click": [
+        329,
+        279
+      ],
+      "remote_target": [
+        300,
+        200
+      ],
+      "server_event_ordinal": 5,
+      "observed_remote": [
+        300,
+        198
+      ],
+      "max_axis_error_pixels": 2,
+      "passed": true
+    },
+    {
+      "case": 5,
+      "app_scale": 2.0,
+      "os_scale": 1.25,
+      "fit": true,
+      "screenshot_click": [
+        350,
+        300
+      ],
+      "remote_target": [
+        300,
+        200
+      ],
+      "server_event_ordinal": 6,
+      "observed_remote": [
+        300,
+        200
+      ],
+      "max_axis_error_pixels": 0,
+      "passed": true
+    },
+    {
+      "case": 6,
+      "app_scale": 2.0,
+      "os_scale": 1.25,
+      "fit": false,
+      "screenshot_click": [
+        273,
+        315
+      ],
+      "remote_target": [
+        300,
+        200
+      ],
+      "server_event_ordinal": 7,
+      "observed_remote": [
+        300,
+        200
+      ],
+      "max_axis_error_pixels": 0,
+      "passed": true
+    }
+  ],
+  "remote_resize": {
+    "default_local_scaling_kept_surface": [
+      1200,
+      800
+    ],
+    "explicit_enable_surface": [
+      1352,
+      836
+    ],
+    "native_maximize_window_logical": [
+      1792.0,
+      1048.800048828125
+    ],
+    "native_maximize_surface": [
+      2220,
+      1196
+    ],
+    "maximized_click_target": [
+      300,
+      200
+    ],
+    "maximized_click_actual": [
+      298,
+      199
+    ],
+    "native_restore_surface": [
+      1352,
+      836
+    ],
+    "native_keyboard_size_later_surface": [
+      1312,
+      836
+    ],
+    "full_grid_visible_after_settling": true,
+    "transient_initial_partial_paint": "observed immediately after enable; subsequent observation showed settled intact grid",
+    "rapid_border_drag_accepted": false
+  },
+  "excluded_observations": [
+    {
+      "server_event_ordinal": 1,
+      "reason": "external input before current verified build; not agent acceptance click"
+    },
+    {
+      "server_event_ordinal": 9,
+      "reason": "border drag attempt did not resize native window; this remote click is not counted as a passing resize test"
+    }
+  ],
+  "limitations": [
+    "Actual OS DPI 100/150/200 percent matrix was not run; current OS scale remained 125 percent.",
+    "Arrow/I-beam/hidden shape native interaction matrix not repeated here; existing real-server cursor-plane tests cover protocol shapes separately.",
+    "No claim of double-cursor or ghost absence from automated screenshots, which include a separate input pointer visualizer.",
+    "Ordinary toolbar test controls did not add remote button events between the six verified clicks; native shipping toolbar boundary restoration remains unverified.",
+    "Native maximize/restore and one keyboard size change are proven; rapid live border-drag coalescing remains unverified.",
+    "No user authentication, security settings, Windows-key shortcuts, clipboard data, sleep or network settings were automated."
+  ],
+  "raw_client_events": [
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 1,
+        "height": 0,
+        "hotspot_x": 0,
+        "hotspot_y": 0,
+        "width": 0
+      },
+      "display_scale": 1.0,
+      "event": "geometry",
+      "os_scale": 1.0,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 552.7164306640625,
+      "remote_y": 324.2984924316406,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 298.6268615722656,
+      "remote_y": 200.11940002441406,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "event": "fit",
+      "fit": false
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 299.5,
+      "remote_y": 198.75,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 1.5,
+      "event": "app_scale",
+      "os_scale": 1.25
+    },
+    {
+      "app_scale": 1.5,
+      "event": "window",
+      "height": 506.6666564941406,
+      "width": 733.3333129882812
+    },
+    {
+      "app_scale": 1.5,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 300.0,
+      "remote_y": 198.75,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.5,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "event": "fit",
+      "fit": true
+    },
+    {
+      "app_scale": 1.5,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 300.4800109863281,
+      "remote_y": 198.3999786376953,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 1.5,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 2.0,
+      "event": "app_scale",
+      "os_scale": 1.25
+    },
+    {
+      "app_scale": 2.0,
+      "event": "window",
+      "height": 380.0,
+      "width": 550.0
+    },
+    {
+      "app_scale": 2.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 300.4137878417969,
+      "remote_y": 200.8275909423828,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 2.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "event": "fit",
+      "fit": false
+    },
+    {
+      "app_scale": 2.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 300.0,
+      "remote_y": 200.0,
+      "surface": [
+        1200,
+        800
+      ]
+    },
+    {
+      "app_scale": 2.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 1.0,
+      "event": "app_scale",
+      "os_scale": 1.25
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1352,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 1164.75,
+      "remote_y": 720.875,
+      "surface": [
+        1352,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 1048.800048828125,
+      "width": 1792.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 1127.25,
+      "remote_y": 17.37497329711914,
+      "surface": [
+        1352,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        2220,
+        1196
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 1561.0,
+      "remote_y": 198.5,
+      "surface": [
+        2220,
+        1196
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 1561.0,
+      "remote_y": 197.37496948242188,
+      "surface": [
+        2220,
+        1196
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 1103.0,
+      "remote_y": 554.3749389648438,
+      "surface": [
+        2220,
+        1196
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": false,
+      "os_scale": 1.25,
+      "remote_x": 298.0,
+      "remote_y": 199.37496948242188,
+      "surface": [
+        2220,
+        1196
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1352,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1068.0
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1312,
+        836
+      ]
+    }
+  ],
+  "raw_server_events": [
+    {
+      "event": "resize",
+      "width": 1200,
+      "height": 800
+    },
+    {
+      "event": "button",
+      "x": 994,
+      "y": 194,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 645.914477227
+    },
+    {
+      "event": "button",
+      "x": 298,
+      "y": 200,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 778.773026868
+    },
+    {
+      "event": "button",
+      "x": 299,
+      "y": 198,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 839.358243054
+    },
+    {
+      "event": "button",
+      "x": 300,
+      "y": 198,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 877.632840287
+    },
+    {
+      "event": "button",
+      "x": 300,
+      "y": 198,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 908.721753568
+    },
+    {
+      "event": "button",
+      "x": 300,
+      "y": 200,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 944.715679964
+    },
+    {
+      "event": "button",
+      "x": 300,
+      "y": 200,
+      "button": 1,
+      "width": 1200,
+      "height": 800,
+      "time": 971.277774558
+    },
+    {
+      "event": "resize",
+      "width": 1352,
+      "height": 836
+    },
+    {
+      "event": "button",
+      "x": 1164,
+      "y": 720,
+      "button": 1,
+      "width": 1352,
+      "height": 836,
+      "time": 1088.844810232
+    },
+    {
+      "event": "resize",
+      "width": 2220,
+      "height": 1196
+    },
+    {
+      "event": "button",
+      "x": 298,
+      "y": 199,
+      "button": 1,
+      "width": 2220,
+      "height": 1196,
+      "time": 1199.39433226
+    },
+    {
+      "event": "resize",
+      "width": 1352,
+      "height": 836
+    },
+    {
+      "event": "resize",
+      "width": 1312,
+      "height": 836
+    }
+  ],
+  "post_test_source_changes": [
+    {
+      "path": "crates/adit-ui/src/vnc_native_acceptance.rs",
+      "tested_sha256": "2f19ec04b722d46bb15a04a357e3d5b10359b5bc59e46791b539c588eddada09",
+      "current_sha256": "a906377c9b36b8250422cdf9d55c3202a53af9aee01908acc291894dc8e8f6a0",
+      "reason": "Clippy-only equivalent rewrite from default-plus-field assignments to an AditApp struct initializer; no controls, mapping, subscriptions or settings values changed. Native runtime evidence belongs to the recorded binary, not an untested later executable."
+    }
+  ]
+}

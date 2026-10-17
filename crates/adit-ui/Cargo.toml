@@ -5,6 +5,13 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+native-vnc-acceptance = []
+
+[[example]]
+name = "vnc_native_acceptance"
+required-features = ["native-vnc-acceptance"]
+
 [dependencies]
 adit-domain.workspace = true
 adit-session.workspace = true
