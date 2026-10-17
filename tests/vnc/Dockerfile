@@ -7,5 +7,6 @@ COPY run.sh /run-vnc-tests.sh
 COPY start-matrix.sh /start-matrix.sh
 COPY load.py /load.py
 COPY start-tls.sh /start-tls.sh
+COPY start-resize.sh /start-resize.sh
 RUN chmod +x /run-vnc-tests.sh
 ENTRYPOINT ["/run-vnc-tests.sh"]

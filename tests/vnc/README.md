@@ -152,7 +152,7 @@ prove the cause of the separate legacy selection failure in this fixture.
 ## Shared resize acceptance
 
 `start-resize.sh` starts a separate TigerVNC display on loopback-published port
-15908. Keep it separate from the performance matrix: changing a benchmark
+15908 (rebuild the fixture image after changing its scripts). Keep it separate from the performance matrix: changing a benchmark
 display would invalidate later samples. Run
 `cargo test -p adit-session --test vnc_resize -- --ignored` against this fixture.
 The test proves that default local scaling leaves the server size unchanged,
@@ -179,3 +179,33 @@ nonzero hotspots, hidden shapes, uniform framebuffer isolation, and same-tab
 reconnection. Tiny visible corner pixels preserve the custom image bounding box
 against legitimate server cropping. Native DPI and toolbars still need UI acceptance.
 The Ubuntu CI job runs this test and cleans up the owned container.
+
+## Isolated Windows acceptance drivers
+
+`crates/adit-session/examples/vnc_fixture_driver.rs` takes an explicitly selected
+private IPv4 fixture, port and timeout as arguments. Its password is the first
+stdin line; subsequent stdin lines are synthetic input commands (`WAIT`, `KEY`,
+`CLIP`, `CLICK`, `READONLY`, `SNAP`, `CLOSE`). Never supply real credentials as
+commands or arguments. Snapshot output belongs in an explicitly selected private
+local path, never the repository. Only synthetic `ADIT_VNC_TEST:` clipboard
+markers are reported. Waiting for complete initial pixel coverage does not
+guarantee a later login/paste transition has settled: verify focus and allow
+Windows clipboard paste to finish before submitting a command.
+
+`crates/adit-ui/examples/vault_rdp_probe.rs` takes private IPv4, username and an
+optional port; the password is a single stdin line, and `ADIT_RDP_HOST` selects
+the separately built RDP helper. It creates an isolated encrypted v2 vault with
+a fresh master, cold-loads it, verifies locked/wrong-master behavior, unlocks,
+and uses the saved password in the production SessionManager RDP connection
+path. Acceptance requires a complete 1280x800 desktop, then vault relock and
+session closure. Its unique scratch directory is cleaned on normal exit. It
+never reads the user's profiles or credential store. This is a headless
+authentication check; settings dialogs and normal interactive connection flows
+require separate native UI acceptance. Closing RDP can lock the fixture console,
+so serialize it with VNC lock/UAC tests on that same VM.
+
+TightVNC 2.8.90 vendor UTF-8 requires Tight security type 16 and all matching
+directional TGHT capabilities; see [wire provenance](../../crates/adit-vnc/UPSTREAM.md).
+The security envelope itself does not encrypt the desktop or clipboard. The
+explicit legacy option disables both automatic UTF-8 extensions; it must not be
+used as a workaround that silently sends Unicode bytes as classic Latin-1.

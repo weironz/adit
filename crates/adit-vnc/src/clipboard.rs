@@ -44,6 +44,7 @@ impl ClipboardText {
 #[derive(Default)]
 pub(crate) struct Clipboard {
     pub enabled: AtomicBool,
+    pub tight_utf8: AtomicBool,
     permissions: Arc<Permissions>,
     pub fence: AtomicBool,
     local: Mutex<Option<String>>,
@@ -95,7 +96,7 @@ impl Permissions {
         }
         let sends = value & 1 != 0 && (value & (SEND_EPOCH | 1)) == (epoch & (SEND_EPOCH | 1));
         match message {
-            ClientMsg::LegacyCutText(_) => sends,
+            ClientMsg::LegacyCutText(_) | ClientMsg::TightCutText(_) => sends,
             ClientMsg::ExtendedCutText(bytes) if bytes.len() >= 4 => {
                 match u32::from_be_bytes(bytes[..4].try_into().unwrap()) & ACTIONS {
                     PROVIDE | NOTIFY => sends,
@@ -161,6 +162,13 @@ impl Clipboard {
             return Err(VncError::ClipboardUnsupported);
         }
         let text = normalize(&text);
+        if self.tight_utf8.load(Ordering::Acquire) {
+            let bytes = text.replace('\n', "\r\n").into_bytes();
+            if bytes.len() > MAX {
+                return Err(VncError::ClipboardUnsupported);
+            }
+            return Ok(super::client::messages::ClientMsg::TightCutText(bytes));
+        }
         if self.enabled.load(Ordering::Acquire) {
             {
                 let mut local = self.local.lock().unwrap();
@@ -478,5 +486,47 @@ mod tests {
             clip.receipt("fresh".into()).into_current_text().as_deref(),
             Some("fresh")
         );
+    }
+}
+
+#[cfg(test)]
+mod tight_vendor_tests {
+    use super::*;
+    #[tokio::test]
+    async fn stale_vendor_offer_is_revoked_at_wire_write_and_receive_permission_is_independent() {
+        let clipboard = Clipboard::default();
+        clipboard.tight_utf8.store(true, Ordering::Release);
+        let queued = clipboard.copy("private fixture text".into()).unwrap();
+        let received = clipboard.receipt("received fixture text".into());
+        clipboard.set_permissions(false, true);
+        clipboard.set_permissions(true, true);
+        let mut wire = Vec::new();
+        queued.write(&mut wire).await.unwrap();
+        assert!(
+            wire.is_empty(),
+            "disable/enable cannot revive a cached vendor offer"
+        );
+        assert!(
+            received.into_current_text().is_some(),
+            "send-only revocation preserves permitted receives"
+        );
+        clipboard.set_permissions(false, false);
+        assert!(clipboard
+            .receipt("disabled fixture text".into())
+            .into_current_text()
+            .is_none());
+        assert!(matches!(
+            clipboard.copy("blocked".into()),
+            Err(VncError::ClipboardUnsupported)
+        ));
+    }
+    #[test]
+    fn vendor_crlf_expansion_is_bounded_before_it_enters_the_queue() {
+        let clipboard = Clipboard::default();
+        clipboard.tight_utf8.store(true, Ordering::Release);
+        assert!(matches!(
+            clipboard.copy("\n".repeat(MAX)),
+            Err(VncError::ClipboardUnsupported)
+        ));
     }
 }

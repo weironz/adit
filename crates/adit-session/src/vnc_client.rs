@@ -687,6 +687,7 @@ async fn connect(
         let mut connector = VncConnector::new(stream)
             .set_auth_method(async move { Ok(password) })
             .security_policy(policy)
+            .utf8_clipboard(!options.clipboard_legacy)
             .add_encoding(VncEncoding::FencePseudo);
         if options.quality != VncQuality::Zrle {
             connector = connector

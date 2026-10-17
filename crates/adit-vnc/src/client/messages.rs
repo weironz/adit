@@ -16,6 +16,7 @@ pub(crate) enum ClientMsg {
         u64,
     ),
     LegacyCutText(Vec<u8>),
+    TightCutText(Vec<u8>),
     ExtendedCutText(Vec<u8>),
     #[cfg(not(target_arch = "wasm32"))]
     SetDesktopSize(crate::DesktopLayout, std::sync::Arc<crate::flow::Flow>),
@@ -161,6 +162,15 @@ impl ClientMsg {
                 writer.write_all(&payload).await?;
                 Ok(())
             }
+            ClientMsg::TightCutText(bytes) => {
+                if bytes.len() > crate::limits::MAX_TEXT || bytes.contains(&0) {
+                    return Err(VncError::ClipboardUnsupported);
+                }
+                writer.write_u32(crate::tight::CUT_TEXT).await?;
+                writer.write_u32(bytes.len() as u32).await?;
+                writer.write_all(&bytes).await?;
+                Ok(())
+            }
             ClientMsg::LegacyCutText(bytes) => {
                 writer.write_all(&[6, 0, 0, 0]).await?;
                 writer.write_i32(bytes.len() as i32).await?;
@@ -185,6 +195,7 @@ pub(super) enum ServerMsg {
     Bell,
     Fence(u32, Vec<u8>),
     ServerCutText(String),
+    TightCutText(String),
     ExtendedCutText(Vec<u8>),
 }
 
@@ -229,6 +240,26 @@ impl ServerMsg {
                 //   | 1            | U8 [2]       | message-type |
                 //   +--------------+--------------+--------------+
                 Ok(ServerMsg::Bell)
+            }
+            252 => {
+                let mut suffix = [0; 3];
+                reader.read_exact(&mut suffix).await?;
+                if suffix != [0, 2, 0] {
+                    return Err(VncError::WrongServerMessage);
+                }
+                let length = reader.read_u32().await? as usize;
+                if length > crate::limits::MAX_TEXT {
+                    return Err(VncError::InvalidImageData);
+                }
+                let mut bytes = vec![0; length];
+                reader.read_exact(&mut bytes).await?;
+                if bytes.contains(&0) {
+                    return Err(VncError::InvalidImageData);
+                }
+                let text = String::from_utf8(bytes).map_err(|_| VncError::InvalidImageData)?;
+                Ok(Self::TightCutText(
+                    text.replace("\r\n", "\n").replace('\r', "\n"),
+                ))
             }
             248 => {
                 let mut padding = [0; 3];

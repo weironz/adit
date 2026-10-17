@@ -68,6 +68,11 @@ where
                                 "Verified TLS is required; server has no VeNCrypt".into(),
                             ))
                         }
+                        _ if security_types.contains(&SecurityType::Tight)
+                            && connector.utf8_clipboard =>
+                        {
+                            SecurityType::Tight
+                        }
                         _ if security_types.contains(&SecurityType::VncAuth) => {
                             SecurityType::VncAuth
                         }
@@ -76,6 +81,7 @@ where
                         {
                             SecurityType::None
                         }
+                        _ if security_types.contains(&SecurityType::Tight) => SecurityType::Tight,
                         _ => {
                             return Err(VncError::SecurityPolicy(
                                 "Password authentication is required; server has no VncAuth".into(),
@@ -93,6 +99,8 @@ where
                         let (tls, info) = crate::security::vencrypt(stream, config).await?;
                         stream = tls;
                         info
+                    } else if selected == SecurityType::Tight {
+                        crate::tight::authenticate(&mut stream, connector.security_policy).await?
                     } else if selected == SecurityType::VncAuth {
                         crate::SecurityInfo::VncAuth
                     } else {
@@ -130,11 +138,13 @@ where
                     info!("auth done, client connected");
 
                     Ok(VncState::Connected(
-                        VncClient::new(
+                        VncClient::new_with_options(
                             stream,
                             connector.allow_shared,
                             connector.pixel_format,
                             connector.encodings,
+                            selected == SecurityType::Tight,
+                            connector.utf8_clipboard,
                         )
                         .await?
                         .with_security(security),
@@ -168,6 +178,7 @@ where
     encodings: Vec<VncEncoding>,
     security_policy: crate::SecurityPolicy,
     tls_config: Option<crate::TlsConfig>,
+    utf8_clipboard: bool,
 }
 
 impl<S, F> VncConnector<S, F>
@@ -212,6 +223,7 @@ where
             encodings: Vec::new(),
             security_policy: crate::SecurityPolicy::default(),
             tls_config: None,
+            utf8_clipboard: true,
         }
     }
 
@@ -256,6 +268,12 @@ where
     ///
     pub fn set_auth_method(mut self, auth_callback: F) -> Self {
         self.auth_methond = Some(auth_callback);
+        self
+    }
+
+    /// Disable both auto-negotiated UTF-8 clipboard paths for explicit legacy interoperability.
+    pub fn utf8_clipboard(mut self, enabled: bool) -> Self {
+        self.utf8_clipboard = enabled;
         self
     }
 
@@ -331,7 +349,11 @@ where
 
     /// Complete the client configuration
     ///
-    pub fn build(self) -> Result<VncState<S, F>, VncError> {
+    pub fn build(mut self) -> Result<VncState<S, F>, VncError> {
+        if !self.utf8_clipboard {
+            self.encodings
+                .retain(|encoding| *encoding != VncEncoding::ExtendedClipboard);
+        }
         if self.encodings.is_empty() {
             return Err(VncError::NoEncoding);
         }

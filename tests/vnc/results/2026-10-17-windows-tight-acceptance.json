@@ -1,0 +1,90 @@
+{
+  "date": "2026-10-17",
+  "timezone": "Asia/Shanghai",
+  "source_base": "ec6401716bf4ba95f37357688b82c93c32903ac9",
+  "source_state": "base plus Tight security-envelope/vendor UTF-8 patch and protected-RDP probe in the same commit as this record",
+  "build": "Windows x64 debug; headless SessionManager probes, not native GUI acceptance",
+  "binaries": {
+    "adit-vnc-current-probe.exe": "8679fc986a2fcb7c2b7c7dface541feb1f1137ffe7316267dcb724284a7daa54",
+    "adit-vault-rdp-probe.exe": "f017dd8cba26084695b6e0dc5cb9de6678dbdefb92cb4574987e7da081fd2fd0"
+  },
+  "fixture": {
+    "os": "Windows 11 Pro build 26300",
+    "server": "TightVNC 2.8.90 x64",
+    "mode": "automatic Windows service",
+    "transport": "authorized private LAN; source-specific server ACL",
+    "security": "VncAuth; not encrypted"
+  },
+  "results": [
+    {
+      "case": "Tight envelope and vendor UTF-8 capability negotiation",
+      "passed": true,
+      "clipboard_utf8": true,
+      "framebuffer": [
+        2277,
+        1278
+      ],
+      "covered_pixels": 2910006,
+      "handshake_ms": 113,
+      "first_covered_ms": 687,
+      "completed_update_bytes": 3200359,
+      "pending_updates": 1,
+      "scope": "one complete-screen smoke observation, not a benchmark median"
+    },
+    {
+      "case": "real Windows clipboard Unicode both directions",
+      "passed": true,
+      "synthetic_text": "中文😀\n第二行café",
+      "method": "send a synthetic PowerShell expression via VNC clipboard; paste and execute in the real console; Set-Clipboard emits a distinct resulting marker; receive marker and exact Unicode payload through VNC",
+      "scope": "real OS clipboard, not echo; one end-to-end run; clipboard permissions and empty/malformed boundaries also covered by wire/Linux tests"
+    },
+    {
+      "case": "Windows service UAC secure desktop",
+      "passed": true,
+      "method": "observe secure desktop over VNC, approve elevation with keyboard, verify administrator token from elevated shell",
+      "scope": "authorized fixture only; not Ctrl+Alt+Del acceptance"
+    },
+    {
+      "case": "Windows lock and unlock",
+      "passed": true,
+      "method": "lock workstation from shell; observe lock/login screen; enter protected test password as key events after stable focus; submit separately; confirm restored elevated desktop",
+      "scope": "Win+L shortcut was not accepted as evidence; native Windows key hook and IME remain open"
+    },
+    {
+      "case": "protected-vault RDP cold load",
+      "passed": true,
+      "framebuffer": [
+        1280,
+        800
+      ],
+      "elapsed_ms": 9241,
+      "method": "save password directly to isolated v2 vault, discard instance, reload locked, reject wrong master without changing file, unlock, use stored credential for real RDP authentication, complete framebuffer, relock and close",
+      "scope": "headless production SessionManager path; native vault settings/dialog interaction remains open"
+    }
+  ],
+  "limitations": [
+    "Not the full Windows performance/weak-network matrix.",
+    "UltraVNC is not covered by this record.",
+    "No native 100/150/200-percent DPI, system shortcut, AltGr, IME, suspend or physical network-switch acceptance.",
+    "Tight vendor UTF-8 is a separate negotiated extension; a classic CutText endpoint is not assumed to carry Unicode.",
+    "Screenshots, host addresses, account names, passwords and authentication bytes intentionally excluded."
+  ],
+  "regressions": {
+    "linux_real_clipboard": "TigerVNC modern UTF-8 and legacy Latin-1: 2/2 passed; see independent real-server suite",
+    "ssh_gateway": "2/2 passed",
+    "cursor_plane": "1/1 passed",
+    "shared_resize": {
+      "server": "isolated Linux TigerVNC, two shared clients",
+      "test": "real_resize_is_opt_in_and_both_shared_clients_follow_changes",
+      "passed": true,
+      "elapsed_seconds": 1.22,
+      "observations": [
+        "default local scaling preserved server 800x600",
+        "explicit controller resize to 1024x768 propagated complete pixels to observer",
+        "observer restored 800x600 for both clients",
+        "same-size request retained connected frame and pending refresh <= 1"
+      ],
+      "fixture_note": "First retry failed before connection because an older image lacked start-resize.sh. Copying that script and restarting the owned fixture produced the passing run; Dockerfile now includes it. Native window/DPI interaction remains separate."
+    }
+  }
+}

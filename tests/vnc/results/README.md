@@ -36,3 +36,12 @@ limits. The raw JSON and fixed binary identity remain beside it.
 [2026-10-17 CPU report](2026-10-17-linux-cpu-report.md) summarizes 180 additional
 loopback observations with process CPU, first coverage and update bytes. The
 original 360-sample matrix has no retroactively generated CPU metrics.
+
+## Windows service and Unicode clipboard smoke acceptance
+
+[Windows TightVNC observations](2026-10-17-windows-tight-acceptance.json) record
+real TightVNC 2.8.90 service-mode connection, UAC secure desktop, lock/unlock,
+negotiated vendor UTF-8 clipboard in both OS directions, and protected-vault RDP
+cold-load authentication. Binary hashes distinguish this patch from earlier
+Linux benchmark builds. These smoke observations do not complete the Windows
+weak-network matrix or native DPI/IME/keyboard-hook/vault-dialog acceptance.

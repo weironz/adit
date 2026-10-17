@@ -25,3 +25,5 @@ mod clipboard;
 pub use client::connection::ClipboardPolicy;
 
 pub use clipboard::ClipboardText;
+
+mod tight;

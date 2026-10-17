@@ -100,6 +100,8 @@ impl VncInner {
         shared: bool,
         mut pixel_format: Option<PixelFormat>,
         encodings: Vec<VncEncoding>,
+        tight: bool,
+        utf8_clipboard: bool,
     ) -> Result<Self, VncError>
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
@@ -121,7 +123,18 @@ impl VncInner {
             })
             .await?;
 
+        // Only Tight security appends interaction caps. Never consume these
+        // bytes or emit vendor enable based on a desktop name or version string.
+        let vendor_utf8 = if tight {
+            crate::tight::interaction(&mut stream).await? && utf8_clipboard
+        } else {
+            false
+        };
+        if vendor_utf8 {
+            stream.write_u32(crate::tight::ENABLE_UTF8).await?;
+        }
         let clipboard = Arc::new(crate::clipboard::Clipboard::default());
+        clipboard.tight_utf8.store(vendor_utf8, Ordering::Release);
         *clipboard.sender.lock().unwrap() = Some(input_ch_tx.clone());
         let decoder_clipboard = Arc::clone(&clipboard);
         let flow = Arc::new(crate::flow::Flow::initial());
@@ -160,6 +173,15 @@ impl VncInner {
                 Ok(())
             };
 
+            // Deliver capability metadata after spawning: initialization may have
+            // filled both bounded output slots when no custom pixel format is set.
+            if vendor_utf8
+                && output_func(VncEvent::ClipboardCapabilities { utf8: true })
+                    .await
+                    .is_err()
+            {
+                return;
+            }
             let pf = pixel_format.as_ref().unwrap();
             let result = asycn_vnc_read_loop_flow(
                 &mut conn_ch_rx,
@@ -322,6 +344,7 @@ pub struct VncClient {
 }
 
 impl VncClient {
+    #[cfg(test)]
     pub(super) async fn new<S>(
         stream: S,
         shared: bool,
@@ -331,7 +354,28 @@ impl VncClient {
     where
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
-        let inner = VncInner::new(stream, shared, pixel_format, encodings).await?;
+        Self::new_with_options(stream, shared, pixel_format, encodings, false, true).await
+    }
+    pub(super) async fn new_with_options<S>(
+        stream: S,
+        shared: bool,
+        pixel_format: Option<PixelFormat>,
+        encodings: Vec<VncEncoding>,
+        tight: bool,
+        utf8_clipboard: bool,
+    ) -> Result<Self, VncError>
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
+    {
+        let inner = VncInner::new(
+            stream,
+            shared,
+            pixel_format,
+            encodings,
+            tight,
+            utf8_clipboard,
+        )
+        .await?;
         Ok(Self {
             security: crate::SecurityInfo::VncAuth,
             desktop: Arc::clone(&inner.desktop),
@@ -769,6 +813,12 @@ where
                 if let Some(text) = text {
                     output_func(VncEvent::Text(text)).await?;
                 }
+            }
+            ServerMsg::TightCutText(text) => {
+                if !clipboard.tight_utf8.load(Ordering::Acquire) {
+                    return Err(VncError::WrongServerMessage);
+                }
+                output_func(VncEvent::Text(clipboard.receipt(text))).await?;
             }
             ServerMsg::ServerCutText(text) => {
                 output_func(VncEvent::Text(clipboard.receipt(text))).await?;
