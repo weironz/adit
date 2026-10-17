@@ -8,6 +8,7 @@ results=${2:?pass an owned results directory}
 [[ ! -e "$results" ]] || { echo 'choose a fresh results directory; existing evidence is preserved' >&2; exit 2; }
 mkdir -p "$results"
 results=$(realpath "$results")
+phase() { printf '%s %s\n' "$(date -u +%FT%TZ)" "$*" | tee -a "$results/runner.log"; }
 work=$(mktemp -d /tmp/adit-vnc-net-XXXXXX)
 ns="adit-vnc-net-$$"
 host_a="adna$$"
@@ -17,6 +18,7 @@ server_pid=''
 client_pid=''
 cleanup() {
     local status=$?
+    phase "cleanup exit=$status"
     if [[ "$ns_created" == 1 ]]; then
         for pid in $(sudo ip netns pids "$ns"); do
             sudo kill -CONT "$pid" 2>/dev/null || true
@@ -35,6 +37,8 @@ cleanup() {
     sudo rm -rf -- "$work"
 }
 trap cleanup EXIT
+trap 'exit 124' TERM INT
+phase 'create isolated interfaces'
 sudo -n true
 sudo ip netns add "$ns"
 ns_created=1
@@ -51,19 +55,22 @@ sudo ip -n "$ns" link set nic_a up
 sudo ip -n "$ns" link set nic_b up
 
 x11vnc -storepasswd adit-ci "$work/passwd" > /dev/null
+phase 'start TigerVNC'
 Xtigervnc :114 -noreset -geometry 800x600 -depth 24 -rfbport 15914 \
     -interface 10.203.0.1 -PasswordFile "$work/passwd" -SecurityTypes VncAuth \
-    -localhost=0 > "$work/server.log" 2>&1 &
+    -localhost=0 > "$results/server.log" 2>&1 &
 server_pid=$!
 export DISPLAY=:114
-for attempt in {1..100}; do
-    if xsetroot -solid red 2>/dev/null; then break; fi
+for attempt in {1..10}; do
+    kill -0 "$server_pid" || { cat "$results/server.log"; exit 1; }
+    if timeout 2s xsetroot -solid red 2>/dev/null; then break; fi
     sleep 0.1
 done
-xsetroot -solid red
+timeout 3s xsetroot -solid red
 kill -0 "$server_pid"
+phase 'start production client; wait for red frame and Fence'
 printf '%s\n' adit-ci | sudo ip netns exec "$ns" "$probe" 10.203.0.1 15914 "$work" \
-    > "$work/client.log" 2>&1 &
+    > "$results/client.log" 2>&1 &
 client_pid=$!
 await_marker() {
     local name=$1
@@ -71,26 +78,29 @@ await_marker() {
     for ((attempt=0;attempt<seconds*5;attempt++)); do
         if [[ -f "$work/$name" ]]; then return; fi
         if ! kill -0 "$client_pid" 2>/dev/null; then
-            cat "$work/client.log"
+            cat "$results/client.log"
             echo "client exited before phase $name" >&2
             return 1
         fi
         sleep 0.2
     done
-    cat "$work/client.log"
+    cat "$results/client.log"
     echo "timed out waiting for phase $name" >&2
     return 1
 }
 await_marker ready 25
+phase 'red frame/Fence ready; take nic_a down'
 # This is a real interface outage in the client namespace, not a mocked RFB peer.
 sudo ip -n "$ns" link set nic_a down
 await_marker disconnected 50
-xsetroot -solid blue
+phase 'old connection withdrawn; switch route to nic_b'
+timeout 3s xsetroot -solid blue
 sudo ip -n "$ns" route replace 10.203.0.1/32 via 10.204.0.1 dev nic_b src 10.204.0.2
 sudo ip netns exec "$ns" ip route get 10.203.0.1 > "$work/route.log"
 sudo ip netns exec "$ns" ip -j route get 10.203.0.1 > "$work/route.json"
 sudo ip -j -n "$ns" link show dev nic_a > "$work/link.json"
 await_marker recovered 35
+phase 'blue frame recovered; verify actual source'
 ss -ntH state established > "$work/sockets.log"
 python3 - "$work" <<'PY'
 import json,pathlib,sys
@@ -107,13 +117,14 @@ PY
 mapfile -t processes < <(sudo ip netns pids "$ns")
 [[ ${#processes[@]} == 1 ]]
 sudo kill -STOP "${processes[0]}"
+phase 'pause production client'
 for attempt in {1..50}; do
     if grep -q '^State:.*T' "/proc/${processes[0]}/status"; then break; fi
     sleep 0.02
 done
 grep -q '^State:.*T' "/proc/${processes[0]}/status"
 pause_start=$(date +%s%N)
-xsetroot -solid green
+timeout 3s xsetroot -solid green
 sleep 20
 sudo kill -CONT "${processes[0]}"
 pause_end=$(date +%s%N)
@@ -124,8 +135,10 @@ assert seconds>=20,seconds
 print(json.dumps({'observed_stopped_state':'T','seconds':seconds}))
 PY
 await_marker resumed 25
+phase 'green frame received; wait for client exit'
 wait "$client_pid"
 client_pid=''
+phase 'write acceptance result'
 cp "$work"/*.log "$results/"
 cp "$work"/route.json "$work"/link.json "$work"/pause.json "$results/"
 python3 - "$probe" "$results" <<'PY'

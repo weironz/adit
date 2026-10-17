@@ -61,6 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         manager.open_live_vnc_session(id, password.trim_end_matches(['\r', '\n']).into())?;
     drop(password);
     let start = Instant::now();
+    let mut last_progress = start;
     let (mut ready, mut disconnected, mut recovered) = (false, false, false);
     let accepted = loop {
         manager.poll_events();
@@ -80,6 +81,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             ));
         }
         let connected = summary.status == SessionStatus::Connected;
+        if last_progress.elapsed() >= Duration::from_secs(5) {
+            println!(
+                "progress elapsed_ms={} status={:?} diagnostics={:?}",
+                start.elapsed().as_millis(),
+                summary.status,
+                manager.active_vnc_diagnostics()
+            );
+            last_progress = Instant::now();
+        }
         if !ready
             && connected
             && solid(&manager, [255, 0, 0])

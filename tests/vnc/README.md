@@ -278,7 +278,7 @@ installed, provide a fresh result directory:
 
 ```sh
 cargo build -p adit-session --example vnc_recovery_probe --locked
-bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe /tmp/adit-vnc-network-result-unique
+timeout --signal=TERM --kill-after=10s 180s bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe /tmp/adit-vnc-network-result-unique
 ```
 
 The runner creates its own uniquely named client network namespace and two
@@ -292,6 +292,12 @@ blue desktop, and retained VncAuth, ZRLE and read-only policy. A further
 Only these owned namespace/interface/display resources are cleaned; previous
 result directories are never overwritten. CI retains logs, phases, route,
 binary hash and a success/failure result as `vnc-network-recovery` artifacts.
+Build and execution have separate CI steps. X11 commands and the outer execution
+have deadlines; runner phases, server and client logs are written directly into
+the result directory so a blocked cleanup cannot hide the last observation.
+The first cancelled run is retained as
+[`2026-10-17-network-recovery-initial-incomplete.json`](results/2026-10-17-network-recovery-initial-incomplete.json);
+it establishes no recovery acceptance.
 
 This is a real Linux virtual-interface change, not a mocked socket error. The
 process pause is additional evidence; it is not OS suspend/hibernate. Neither

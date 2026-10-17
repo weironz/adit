@@ -1,0 +1,11 @@
+{
+  "source_sha": "82f629cb2f59eb74fda120163b15175de0794305",
+  "ci_run": "https://github.com/weironz/adit/actions/runs/39013124569",
+  "outcome": "cancelled; no network acceptance result",
+  "build_probe_seconds": 0.76,
+  "test_step_started_utc": "2026-10-17T07:22:09Z",
+  "cancelled_utc": "2026-10-17T07:31:38Z",
+  "last_observation": "x11vnc stored the public fixture password; Xtigervnc was listed among runner orphan processes at cleanup. No phase logs or result artifact were available.",
+  "root_cause": "undetermined; this does not prove a production reconnect deadlock",
+  "follow_up": "Separate build and execution, external 180-second execution deadline, bounded X11 calls and continuously retained phase/server/client logs before retrying."
+}

@@ -210,7 +210,9 @@
   },
   "server_events": {
     "path": "2026-10-17-linux-vault-gui/tiger-events.log",
-    "sha256": "d106e41b2fd7a84201175ff1e2ccbd3f3c3bbda838fe1de45bf0f573618d0e36"
+    "sha256": "0212599cb42d0f8720c59851fead00c5fbb6af4aecf9cd379c6e7e6ace457236",
+    "captured_crlf_sha256": "d106e41b2fd7a84201175ff1e2ccbd3f3c3bbda838fe1de45bf0f573618d0e36",
+    "hash_scope": "Tracked LF-normalized Git blob; original captured CRLF bytes are recorded separately."
   },
   "connected_frame_pixel_check": {
     "screenshot": "cold-unlocked-connected-verified.png",

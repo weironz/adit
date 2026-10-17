@@ -162,13 +162,19 @@ jobs:
           ADIT_VNC_CLIP_LOCAL=1 ADIT_VNC_CLIP_PORT=15900 ADIT_VNC_CLIP_DISPLAY=99 \
             cargo test -p adit-session --test vnc_clipboard -- --ignored
 
-      - name: VNC recovery across real isolated client interfaces
+      - name: Build the VNC recovery probe
         if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 5
         shell: bash
         run: |
           sudo apt-get install -y --no-install-recommends iproute2
           cargo build -p adit-session --example vnc_recovery_probe --locked
-          bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe "$RUNNER_TEMP/adit-vnc-network-result"
+
+      - name: VNC recovery across real isolated client interfaces
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 4
+        shell: bash
+        run: timeout --signal=TERM --kill-after=10s 180s bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe "$RUNNER_TEMP/adit-vnc-network-result"
 
       - name: Preserve VNC network recovery evidence
         if: always() && matrix.os == 'ubuntu-latest'
