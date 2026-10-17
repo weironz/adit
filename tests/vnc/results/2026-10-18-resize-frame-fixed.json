@@ -1,0 +1,941 @@
+{
+  "date": "2026-10-18",
+  "issue": 213,
+  "result": "PASS for reproduced controlled-throughput Linux resize black-region regression; not full Windows/DPI acceptance",
+  "source_sha": "5ae37747908568b1a38f7eaca603857e4f6f37f1",
+  "fix_commit": "39a3c3f",
+  "app_sha256": "a04695e9f88010437e8889b275d4cb2b29276df410c5a35261ec7f5a9be9a137",
+  "artifact": {
+    "ci_run": 39051520948,
+    "name": "adit-linux-packages-x86_64",
+    "id": 12108325482,
+    "complete_ci": "12/12 success"
+  },
+  "local_validation": "just ci exited0: workspace build, workspace and separate RDP Clippy -D warnings, workspace tests, SSH integration compile",
+  "baseline": "2026-10-17-resize-frame-investigation.json",
+  "environment": "Same isolated real TigerVNC1.13.1, actual shipping iced GUI under Xvfb :121, byte-transparent relay server-to-client24576 bytes/s, deterministic public synthetic noise. Existing app replaced with exact CI deb; no user config mounted.",
+  "procedure": "Connected saved VNC profile using ordinary GUI. Waited for complete initial1004x768 image, explicitly enabled remote resize. Ran original38-second schedule once, actual X11 window sizes1200x780 then1360x860 then1100x700. No internal update handler called.",
+  "actions": [
+    {
+      "t": 1.707445,
+      "action": "xdotool windowsize",
+      "width": 1200,
+      "height": 780
+    },
+    {
+      "t": 12.285898,
+      "action": "xdotool windowsize",
+      "width": 1360,
+      "height": 860
+    },
+    {
+      "t": 23.27445,
+      "action": "xdotool windowsize",
+      "width": 1100,
+      "height": 700
+    }
+  ],
+  "duration_s": 38.00302115899831,
+  "frame_count": 31,
+  "partial_frame_count": 25,
+  "empty_frame_count": 3,
+  "full_frame_count": 3,
+  "comparison": {
+    "baseline_sample2_covered_pixels": 64988,
+    "baseline_sample2_total_pixels": 580672,
+    "baseline_gui_black_pixels": 507845,
+    "fixed_sample2_covered_pixels": 64988,
+    "fixed_sample2_total_pixels": 580672,
+    "fixed_same_gui_region_black_pixels": 0,
+    "max_black_pixels_across_all31_samples": 0
+  },
+  "artifacts": {
+    "2": {
+      "gui": {
+        "path": "2026-10-18-resize-frame-fixed/sample-002-gui.png",
+        "sha256": "ca91e63fca2551c4b0bac9f164403e86b07667ebb9c4a4d221699934ee4cd98e"
+      },
+      "frame": {
+        "path": "2026-10-18-resize-frame-fixed/sample-002-frame.png",
+        "sha256": "a5a5ae3db078f01d00b8972d50e5707ea4b01db63deb6bfbb73e27663343d64a"
+      }
+    },
+    "12": {
+      "gui": {
+        "path": "2026-10-18-resize-frame-fixed/sample-012-gui.png",
+        "sha256": "da36dc939a27fab47c02968823d78909456ddcd38addf9452089d71994a71ff0"
+      }
+    }
+  },
+  "all_frame_samples": [
+    {
+      "index": 1,
+      "t": 1.957155,
+      "source": "frame-021.raw",
+      "mtime_ns": 1792257319118958101,
+      "width": 844,
+      "height": 688,
+      "covered": 0,
+      "total": 580672,
+      "alpha_values": [
+        0
+      ],
+      "sha256": "d8855df054ec3e5379e47417c938ec696cb16f1a4e3f7c5391e009dc5a9462cd",
+      "raw": "sample-001.rgba",
+      "gui_snapshot": "sample-001.bgra",
+      "gui_t": 2.406225,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 2,
+      "t": 2.416646,
+      "source": "frame-022.raw",
+      "mtime_ns": 1792257319539033864,
+      "width": 844,
+      "height": 688,
+      "covered": 64988,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "21662bbc20d13225c7cc59a3f4649e88b41b8b5abee51692f8027b0d909c9a17",
+      "raw": "sample-002.rgba",
+      "gui_snapshot": "sample-002.bgra",
+      "gui_t": 2.713638,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 3,
+      "t": 2.724805,
+      "source": "frame-023.raw",
+      "mtime_ns": 1792257319883095918,
+      "width": 844,
+      "height": 688,
+      "covered": 129976,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "b1c6962250f13482a91b092fa5714583e338eb3f662db2fa6c7d487a115a6403",
+      "raw": "sample-003.rgba",
+      "gui_snapshot": "sample-003.bgra",
+      "gui_t": 3.10251,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 4,
+      "t": 3.118704,
+      "source": "frame-024.raw",
+      "mtime_ns": 1792257320231158692,
+      "width": 844,
+      "height": 688,
+      "covered": 194964,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "b7b4f1597a8f7679168efe073b83f87822b63ac8835369bc6820fc9b29e46da4",
+      "raw": "sample-004.rgba",
+      "gui_snapshot": "sample-004.bgra",
+      "gui_t": 3.499322,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 5,
+      "t": 3.512618,
+      "source": "frame-025.raw",
+      "mtime_ns": 1792257320575220746,
+      "width": 844,
+      "height": 688,
+      "covered": 259952,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "acdfae61b63a3422139c71c10d2bfe32fd2869c944e8215f4e293cb6d6227009",
+      "raw": "sample-005.rgba",
+      "gui_snapshot": "sample-005.bgra",
+      "gui_t": 3.956864,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 6,
+      "t": 3.969283,
+      "source": "frame-026.raw",
+      "mtime_ns": 1792257320915282078,
+      "width": 844,
+      "height": 688,
+      "covered": 324940,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "0186c55a0a07061f6c2a08405b3819107f6136dccb4a627c50e756b57f890be5",
+      "raw": "sample-006.rgba",
+      "gui_snapshot": "sample-006.bgra",
+      "gui_t": 4.529769,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 7,
+      "t": 4.071519,
+      "source": "frame-027.raw",
+      "mtime_ns": 1792257321263344853,
+      "width": 844,
+      "height": 688,
+      "covered": 389928,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "bef3632f2f426dde1a839d9f6c3d1f8988f03ea7353e551391b75ea39cfe27e2",
+      "raw": "sample-007.rgba",
+      "gui_snapshot": "sample-007.bgra",
+      "gui_t": 4.784283,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 8,
+      "t": 4.546768,
+      "source": "frame-028.raw",
+      "mtime_ns": 1792257321607406906,
+      "width": 844,
+      "height": 688,
+      "covered": 454916,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "f8b6de69fb0441c947f1ace4b4b6ea4f471ce9975013853df1e600a0cd0c2527",
+      "raw": "sample-008.rgba",
+      "gui_snapshot": "sample-008.bgra",
+      "gui_t": 5.052342,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 9,
+      "t": 4.826269,
+      "source": "frame-029.raw",
+      "mtime_ns": 1792257321975473290,
+      "width": 844,
+      "height": 688,
+      "covered": 519904,
+      "total": 580672,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "ade446db439835e0170bc38e666d9f8aa243cf41faa8e4a708bc3ce763c45293",
+      "raw": "sample-009.rgba",
+      "gui_snapshot": "sample-009.bgra",
+      "gui_t": 5.283841,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 10,
+      "t": 5.062483,
+      "source": "frame-030.raw",
+      "mtime_ns": 1792257322255523798,
+      "width": 844,
+      "height": 688,
+      "covered": 580672,
+      "total": 580672,
+      "alpha_values": [
+        255
+      ],
+      "sha256": "7f081bb4f78d8187ac433f2a2538b4e4922cdddefd8e18e51dd961b607aa44e2",
+      "raw": "sample-010.rgba",
+      "gui_snapshot": "sample-010.bgra",
+      "gui_t": 5.546997,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1199,
+          751
+        ],
+        "pixels": 507845,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 11,
+      "t": 12.500798,
+      "source": "frame-031.raw",
+      "mtime_ns": 1792257329688879572,
+      "width": 1004,
+      "height": 768,
+      "covered": 0,
+      "total": 771072,
+      "alpha_values": [
+        0
+      ],
+      "sha256": "f5f0a2a4bf476364b36b46c1262a4b9849a3c89d3911a0c3a915d0805f457bb7",
+      "raw": "sample-011.rgba",
+      "gui_snapshot": "sample-011.bgra",
+      "gui_t": 12.774124,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 12,
+      "t": 12.935466,
+      "source": "frame-032.raw",
+      "mtime_ns": 1792257330120958599,
+      "width": 1004,
+      "height": 768,
+      "covered": 65260,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "416904b4a92cd46169691a700b5cdc33b64a4e71ee84040e6a7a3f3a86069550",
+      "raw": "sample-012.rgba",
+      "gui_snapshot": "sample-012.bgra",
+      "gui_t": 13.21832,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 13,
+      "t": 13.295901,
+      "source": "frame-033.raw",
+      "mtime_ns": 1792257330480887875,
+      "width": 1004,
+      "height": 768,
+      "covered": 130520,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "99c51f2293a10cdf6f1fd13a556deb3d30a622290e84197fb7e26c63251bf5ff",
+      "raw": "sample-013.rgba",
+      "gui_snapshot": "sample-013.bgra",
+      "gui_t": 13.6184,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 14,
+      "t": 13.649059,
+      "source": "frame-034.raw",
+      "mtime_ns": 1792257330817085921,
+      "width": 1004,
+      "height": 768,
+      "covered": 195780,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "27c374631f4f15ebab41ce8c2780afa0202f0cde3279ca9a0868c4fed72f789a",
+      "raw": "sample-014.rgba",
+      "gui_snapshot": "sample-014.bgra",
+      "gui_t": 13.956127,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 15,
+      "t": 13.977912,
+      "source": "frame-035.raw",
+      "mtime_ns": 1792257331165149581,
+      "width": 1004,
+      "height": 768,
+      "covered": 261040,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "f91a1a14541c8b80fd61139df56757ce85118f959290c9d3e7ceee3ced6b2183",
+      "raw": "sample-015.rgba",
+      "gui_snapshot": "sample-015.bgra",
+      "gui_t": 14.232645,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 16,
+      "t": 14.347371,
+      "source": "frame-036.raw",
+      "mtime_ns": 1792257331517213974,
+      "width": 1004,
+      "height": 768,
+      "covered": 326300,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "2e4b2d9ef4890aec70bb937f3eacf8fff0bd095187c63d92eeb8bd17de37f841",
+      "raw": "sample-016.rgba",
+      "gui_snapshot": "sample-016.bgra",
+      "gui_t": 14.592615,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 17,
+      "t": 14.738079,
+      "source": "frame-037.raw",
+      "mtime_ns": 1792257331875026410,
+      "width": 1004,
+      "height": 768,
+      "covered": 391560,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "38c0e7b145011dae84bdfe2f60c9a51dd876d8d9e62d853a138dde39005c48f0",
+      "raw": "sample-017.rgba",
+      "gui_snapshot": "sample-017.bgra",
+      "gui_t": 14.984677,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 18,
+      "t": 15.021658,
+      "source": "frame-038.raw",
+      "mtime_ns": 1792257332209339683,
+      "width": 1004,
+      "height": 768,
+      "covered": 456820,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "dd3439f3137cc279899a66f2989492c3840a0191416766cb8a3162ea666b062e",
+      "raw": "sample-018.rgba",
+      "gui_snapshot": "sample-018.bgra",
+      "gui_t": 15.234498,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 19,
+      "t": 15.389502,
+      "source": "frame-039.raw",
+      "mtime_ns": 1792257332569404818,
+      "width": 1004,
+      "height": 768,
+      "covered": 522080,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "f994ec66056738f408d4b00f9ff8be7a7867e750409550a81f92337bc2d68e09",
+      "raw": "sample-019.rgba",
+      "gui_snapshot": "sample-019.bgra",
+      "gui_t": 15.64079,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 20,
+      "t": 15.733446,
+      "source": "frame-000.raw",
+      "mtime_ns": 1792257332909466334,
+      "width": 1004,
+      "height": 768,
+      "covered": 587340,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "9d6345202b40e31e3f6009938e75373cd194efaddee67ef2b0e658b1d3208b52",
+      "raw": "sample-020.rgba",
+      "gui_snapshot": "sample-020.bgra",
+      "gui_t": 15.951924,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 21,
+      "t": 16.072335,
+      "source": "frame-001.raw",
+      "mtime_ns": 1792257333261530023,
+      "width": 1004,
+      "height": 768,
+      "covered": 652600,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "597a8f05a177080615107a40feea181571cae253d89d3cdc348e2d890f816cde",
+      "raw": "sample-021.rgba",
+      "gui_snapshot": "sample-021.bgra",
+      "gui_t": 16.284233,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 22,
+      "t": 16.413741,
+      "source": "frame-002.raw",
+      "mtime_ns": 1792257333597590815,
+      "width": 1004,
+      "height": 768,
+      "covered": 717860,
+      "total": 771072,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "0568d3a32224d503c53d90546744dd77e971c8284b074c435ddbdb522b150bb3",
+      "raw": "sample-022.rgba",
+      "gui_snapshot": "sample-022.bgra",
+      "gui_t": 16.7501,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 23,
+      "t": 16.758715,
+      "source": "frame-003.raw",
+      "mtime_ns": 1792257333853637134,
+      "width": 1004,
+      "height": 768,
+      "covered": 771072,
+      "total": 771072,
+      "alpha_values": [
+        255
+      ],
+      "sha256": "7fc586b67a13d5774e3077eb0f5fb9ddf69b8e0d8618050aa0604e3360a12fc9",
+      "raw": "sample-023.rgba",
+      "gui_snapshot": "sample-023.bgra",
+      "gui_t": 16.956209,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1359,
+          831
+        ],
+        "pixels": 684405,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 24,
+      "t": 23.432978,
+      "source": "frame-004.raw",
+      "mtime_ns": 1792257340621781247,
+      "width": 744,
+      "height": 608,
+      "covered": 0,
+      "total": 452352,
+      "alpha_values": [
+        0
+      ],
+      "sha256": "c4c3d1b46b8910ec5eacdec49174ea71c9d002de6ff565b0f2dad6894ff69fa7",
+      "raw": "sample-024.rgba",
+      "gui_snapshot": "sample-024.bgra",
+      "gui_t": 23.585112,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 25,
+      "t": 23.858576,
+      "source": "frame-005.raw",
+      "mtime_ns": 1792257341049858588,
+      "width": 744,
+      "height": 608,
+      "covered": 65472,
+      "total": 452352,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "aedf1d76d60ebba243744a49baa667252d497f72660cb90529a36fa738d19348",
+      "raw": "sample-025.rgba",
+      "gui_snapshot": "sample-025.bgra",
+      "gui_t": 23.998618,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 26,
+      "t": 24.198833,
+      "source": "frame-006.raw",
+      "mtime_ns": 1792257341389920027,
+      "width": 744,
+      "height": 608,
+      "covered": 130944,
+      "total": 452352,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "6a65db156ace5c571740a9cb503cf500d8ceb148a63475821902521c66061040",
+      "raw": "sample-026.rgba",
+      "gui_snapshot": "sample-026.bgra",
+      "gui_t": 24.397291,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 27,
+      "t": 24.553227,
+      "source": "frame-007.raw",
+      "mtime_ns": 1792257341733982189,
+      "width": 744,
+      "height": 608,
+      "covered": 196416,
+      "total": 452352,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "5d0f3e8818d07f9900a77c02190124573d932aff5cc3518db6476ddbbcd45cb5",
+      "raw": "sample-027.rgba",
+      "gui_snapshot": "sample-027.bgra",
+      "gui_t": 24.752359,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 28,
+      "t": 24.899028,
+      "source": "frame-008.raw",
+      "mtime_ns": 1792257342078044353,
+      "width": 744,
+      "height": 608,
+      "covered": 261888,
+      "total": 452352,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "b096e87dbe20d4093dfe51b5cd6e52429c65e559ee31da729b28e2625e9e9bb5",
+      "raw": "sample-028.rgba",
+      "gui_snapshot": "sample-028.bgra",
+      "gui_t": 25.107584,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 29,
+      "t": 25.247892,
+      "source": "frame-009.raw",
+      "mtime_ns": 1792257342426107238,
+      "width": 744,
+      "height": 608,
+      "covered": 327360,
+      "total": 452352,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "2ab9bde5fa1ee77abcf07121e599e54b78970f021138ec9217e64ee25e39c53c",
+      "raw": "sample-029.rgba",
+      "gui_snapshot": "sample-029.bgra",
+      "gui_t": 25.446392,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 30,
+      "t": 25.595813,
+      "source": "frame-010.raw",
+      "mtime_ns": 1792257342786172291,
+      "width": 744,
+      "height": 608,
+      "covered": 392832,
+      "total": 452352,
+      "alpha_values": [
+        0,
+        255
+      ],
+      "sha256": "610a58b665a60f5d355e514d2094300c4fd914f4abb64ad1241947ffcb4c36ae",
+      "raw": "sample-030.rgba",
+      "gui_snapshot": "sample-030.bgra",
+      "gui_t": 25.745504,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    },
+    {
+      "index": 31,
+      "t": 25.87765,
+      "source": "frame-011.raw",
+      "mtime_ns": 1792257343066222888,
+      "width": 744,
+      "height": 608,
+      "covered": 452352,
+      "total": 452352,
+      "alpha_values": [
+        255
+      ],
+      "sha256": "5b86b36e32325d3cfe6097711ae8c9b69e2981ed17ad2ea60639b5bba1adc384",
+      "raw": "sample-031.rgba",
+      "gui_snapshot": "sample-031.bgra",
+      "gui_t": 26.062583,
+      "gui_region_pixel_check": {
+        "rect_exclusive_xyxy": [
+          354,
+          150,
+          1099,
+          671
+        ],
+        "pixels": 388145,
+        "black_pixels": 0
+      }
+    }
+  ],
+  "limitations": [
+    "GUI snapshots follow source observations rather than being simultaneous; per-sample observed timestamps retained.",
+    "Pixel checks cover the synthetic lower desktop region, exclude toolbar and surrounding desktop; zero black pixels does not prove arbitrary GPU visual perfection.",
+    "Controlled throughput is not a WAN RTT, packet-loss or Windows OS sleep model.",
+    "Actual native Windows rapid-border drag, complete100/150/200 DPI matrix and original user screenshot cause remain unproven.",
+    "Fixed binary source CI passed fully; the later evidence-only archive commit has its own CI status."
+  ]
+}
