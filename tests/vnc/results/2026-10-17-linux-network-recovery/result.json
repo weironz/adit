@@ -1,0 +1,60 @@
+{
+  "source_sha": "35bcd121f063318f88316d2bc0db3f2dd335d665",
+  "client_sha256": "46a2f23e7b177cf189135521c99d0e3d1eaefc11226ebef7abc89d7a3bb11a18",
+  "os": "Linux 6.17.0-1022-azure",
+  "server": "Xvnc TigerVNC 1.13.1 - built 2024-04-01 08:26\nCopyright (C) 1999-2022 TigerVNC Team and many others (see README.rst)\nSee https://www.tigervnc.org for information on TigerVNC.\nUnderlying X server release 12101011",
+  "network": "isolated client namespace; nic_a down, route switched to nic_b with a different source IPv4",
+  "password": "disposable fixture credential; never a user credential",
+  "outcome": "passed",
+  "assertions": [
+    "same tab, one session",
+    "stale red desktop withdrawn",
+    "new blue full framebuffer after NIC change",
+    "VncAuth/ZRLE/read-only preserved",
+    "fresh green full framebuffer after 20-second process pause"
+  ],
+  "limitations": [
+    "Linux namespace interfaces, not physical Wi-Fi hardware.",
+    "SIGSTOP/SIGCONT is process suspension, not OS suspend/hibernate.",
+    "Windows OS sleep and physical interface-switch acceptance remains separate."
+  ],
+  "phases": "phase=ready elapsed_ms=115\nprogress elapsed_ms=5010 status=Connected diagnostics=Some(VncDiagnostics { tcp_ms: 0, handshake_ms: 2, first_pixel_ms: Some(39), first_complete_ms: Some(8), complete_updates: 2, wire_bytes: 97, pending_updates: 1, fence_rtt_ms: Some(5), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(105), sampled_generation: 131, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(16, 1), (-224, 1)]\", clipboard_utf8: true, status: \"\u5df2\u8fde\u63a5\" })\nprogress elapsed_ms=10017 status=Connected diagnostics=Some(VncDiagnostics { tcp_ms: 0, handshake_ms: 2, first_pixel_ms: Some(39), first_complete_ms: Some(8), complete_updates: 2, wire_bytes: 97, pending_updates: 1, fence_rtt_ms: Some(5), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(105), sampled_generation: 131, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(16, 1), (-224, 1)]\", clipboard_utf8: true, status: \"\u5df2\u8fde\u63a5\" })\nprogress elapsed_ms=15024 status=Connected diagnostics=Some(VncDiagnostics { tcp_ms: 0, handshake_ms: 2, first_pixel_ms: Some(39), first_complete_ms: Some(8), complete_updates: 2, wire_bytes: 97, pending_updates: 1, fence_rtt_ms: Some(5), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(105), sampled_generation: 131, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(16, 1), (-224, 1)]\", clipboard_utf8: true, status: \"\u5df2\u8fde\u63a5\" })\nprogress elapsed_ms=20031 status=Connected diagnostics=Some(VncDiagnostics { tcp_ms: 0, handshake_ms: 2, first_pixel_ms: Some(39), first_complete_ms: Some(8), complete_updates: 2, wire_bytes: 97, pending_updates: 1, fence_rtt_ms: Some(5), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(105), sampled_generation: 131, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(16, 1), (-224, 1)]\", clipboard_utf8: true, status: \"\u5df2\u8fde\u63a5\" })\nphase=disconnected elapsed_ms=20041\nrecovered_policy=VncAuth,ZRLE,readonly; session_count=1\nphase=recovered elapsed_ms=21134\nprogress elapsed_ms=41336 status=Connected diagnostics=Some(VncDiagnostics { tcp_ms: 0, handshake_ms: 1, first_pixel_ms: Some(37), first_complete_ms: Some(6), complete_updates: 2, wire_bytes: 97, pending_updates: 1, fence_rtt_ms: Some(5), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(82), sampled_generation: 263, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(16, 1), (-224, 1)]\", clipboard_utf8: true, status: \"\u5df2\u8fde\u63a5\" })\nphase=resumed elapsed_ms=41395\n",
+  "route": "10.203.0.1 via 10.204.0.1 dev nic_b src 10.204.0.2 uid 0 \n    cache \n",
+  "route_decision": [
+    {
+      "dst": "10.203.0.1",
+      "gateway": "10.204.0.1",
+      "dev": "nic_b",
+      "prefsrc": "10.204.0.2",
+      "flags": [],
+      "uid": 0,
+      "cache": []
+    }
+  ],
+  "failed_interface": [
+    {
+      "ifindex": 2,
+      "link_index": 5,
+      "ifname": "nic_a",
+      "flags": [
+        "BROADCAST",
+        "MULTICAST"
+      ],
+      "mtu": 1500,
+      "qdisc": "noqueue",
+      "operstate": "DOWN",
+      "linkmode": "DEFAULT",
+      "group": "default",
+      "txqlen": 1000,
+      "link_type": "ether",
+      "address": "fe:27:03:0b:56:95",
+      "broadcast": "ff:ff:ff:ff:ff:ff",
+      "link_netnsid": 0
+    }
+  ],
+  "process_pause": {
+    "observed_stopped_state": "T",
+    "seconds": 20.025113708
+  },
+  "wrapper_before_resume": "   6083 T    sudo\n"
+}

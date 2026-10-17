@@ -1,0 +1,1 @@
+[{"ifindex":2,"link_index":5,"ifname":"nic_a","flags":["BROADCAST","MULTICAST"],"mtu":1500,"qdisc":"noqueue","operstate":"DOWN","linkmode":"DEFAULT","group":"default","txqlen":1000,"link_type":"ether","address":"fe:27:03:0b:56:95","broadcast":"ff:ff:ff:ff:ff:ff","link_netnsid":0}]

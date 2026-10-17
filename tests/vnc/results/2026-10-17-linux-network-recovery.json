@@ -1,0 +1,14 @@
+{
+  "ci_run": "https://github.com/weironz/adit/actions/runs/39038216713",
+  "artifact_name": "vnc-network-recovery",
+  "source_sha": "35bcd121f063318f88316d2bc0db3f2dd335d665",
+  "outcome": "passed",
+  "raw_artifact": "2026-10-17-linux-network-recovery/",
+  "limitations": [
+    "Linux namespace interfaces, not physical Wi-Fi hardware.",
+    "SIGSTOP/SIGCONT is process suspension, not OS suspend/hibernate.",
+    "Windows OS sleep and physical interface-switch acceptance remains separate."
+  ],
+  "scope": "One real isolated Linux interface-switch and process-pause cycle; not a latency benchmark or Windows OS sleep acceptance.",
+  "original_artifact_filename_mapping": ".log files archived as .txt; file contents unchanged before standard Git line-ending normalization."
+}

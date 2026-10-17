@@ -1,0 +1,726 @@
+{
+  "schema": 1,
+  "date": "2026-10-17",
+  "captured_at": "2026-10-17T21:58:46.003901+08:00",
+  "status": "not accepted: OS DPI matrix unavailable; Windows injection stopped after unrelated input",
+  "base_commit": "711c5e7fc1ba40620444487740c0ee4c480b85fe",
+  "binary_sha256": "49f0c15e8c8a5d48167414dc7c5d922bc36403830eb778e3b75abb03b86b8a0c",
+  "build": {
+    "command": "CARGO_BUILD_JOBS=1 cargo rustc -p adit-ui --features native-vnc-acceptance --example vnc_native_acceptance -- -C debuginfo=0 -C link-arg=/DEBUG:NONE",
+    "exit_code": 0,
+    "elapsed_seconds": 95,
+    "source_base_commit": "711c5e7fc1ba40620444487740c0ee4c480b85fe",
+    "note": "The harness was built before the later network-test-wrapper-only commit. Each native UI/source fixture file hash was checked unchanged when recording this result."
+  },
+  "source_sha256": {
+    "crates/adit-ui/Cargo.toml": "f9dfaec3f5c5b64248e90e4a226a8493deb08055aaf2c1c6c0ba3cb7bf999e09",
+    "crates/adit-ui/src/lib.rs": "1360dea4ab45fda00ae23e31ea43e38b83ac5a0d2af07a0963fba1dd6d618889",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "a906377c9b36b8250422cdf9d55c3202a53af9aee01908acc291894dc8e8f6a0",
+    "crates/adit-ui/examples/vnc_native_acceptance.rs": "44a1d34e454546fa1856dbad9218d7442fa52c2eea3b6799dcaf8235c70c2125",
+    "tests/vnc/native_target.py": "23e33356ab5f5f63536f440664a967827bc61983995a8ad5345fe3ab158d2ee6",
+    "tests/vnc/start-native.sh": "7ee6f8f60ae72f3a972e93f9db7c9177cd8f9739828da7cda9361997a477dfda",
+    "tests/vnc/cursor_target.py": "02d29e2bfc37d016b454ff1bd97dfbf1133a2786decbdd3ccf6125d6aa0e69bc"
+  },
+  "scope": {
+    "native_windows_client": true,
+    "application_scale": 1.0,
+    "initial_observed_os_scale": 1.25,
+    "os_scale_was_changed": false,
+    "resolution_was_changed": false,
+    "layout_or_primary_display_was_changed": false,
+    "original_scale_restoration": "not needed; original 125 percent was never changed",
+    "user_profile_or_credentials_accessed": false,
+    "clipboard_enabled": false,
+    "target": "synthetic TigerVNC published only at 127.0.0.1:15915",
+    "screenshots": "inspected in Computer Use; no screenshot payload archived"
+  },
+  "os_dpi_matrix": [
+    {
+      "os_scale": 1.0,
+      "fit": "fit",
+      "accepted": false,
+      "reason": "ordinary Windows Settings did not expose a targetable surface; no DPI changes attempted"
+    },
+    {
+      "os_scale": 1.0,
+      "fit": "1:1",
+      "accepted": false,
+      "reason": "ordinary Windows Settings did not expose a targetable surface; no DPI changes attempted"
+    },
+    {
+      "os_scale": 1.5,
+      "fit": "fit",
+      "accepted": false,
+      "reason": "ordinary Windows Settings did not expose a targetable surface; no DPI changes attempted"
+    },
+    {
+      "os_scale": 1.5,
+      "fit": "1:1",
+      "accepted": false,
+      "reason": "ordinary Windows Settings did not expose a targetable surface; no DPI changes attempted"
+    },
+    {
+      "os_scale": 2.0,
+      "fit": "fit",
+      "accepted": false,
+      "reason": "ordinary Windows Settings did not expose a targetable surface; no DPI changes attempted"
+    },
+    {
+      "os_scale": 2.0,
+      "fit": "1:1",
+      "accepted": false,
+      "reason": "ordinary Windows Settings did not expose a targetable surface; no DPI changes attempted"
+    }
+  ],
+  "settings_entry_observations": [
+    {
+      "operation": "sky.launch_app",
+      "app": "C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe",
+      "result": "launched app did not expose a targetable window: process:C:\\Windows\\ImmersiveControlPanel\\SystemSettings.exe"
+    },
+    {
+      "operation": "sky.list_windows",
+      "matching_settings_windows": 0,
+      "observations": 3
+    },
+    {
+      "operation": "read-only process status",
+      "process": "SystemSettings",
+      "process_id": 37004,
+      "title": "设置",
+      "responding": false,
+      "started_local": "2026-10-16T19:46:29+08:00",
+      "pre_existing": true,
+      "terminated_or_restarted": false
+    }
+  ],
+  "baseline_recheck": {
+    "current_os_scale": 1.25,
+    "app_scale": 1.0,
+    "fit": true,
+    "screenshot_click": [
+      273,
+      252
+    ],
+    "remote_target": [
+      300,
+      200
+    ],
+    "actual_remote": [
+      298,
+      199
+    ],
+    "max_axis_error_pixels": 2,
+    "passed": true,
+    "cursor_geometry": {
+      "width": 16,
+      "height": 16,
+      "hotspot_x": 5,
+      "hotspot_y": 7
+    }
+  },
+  "toolbar_observation": {
+    "screenshot_click": [
+      559,
+      102
+    ],
+    "remote_button_added_immediately": false,
+    "expanded_shipping_toolbar_confirmed": false,
+    "cursor_boundary_restoration_accepted": false
+  },
+  "input_interruption": {
+    "unsolicited_remote_button": [
+      808,
+      361
+    ],
+    "server_monotonic_time": 25392.742830871,
+    "preceded_by_natural_pointer_sequence": true,
+    "was_agent_test_action": false,
+    "excluded_from_acceptance": true,
+    "response": "stopped Windows injection; no DPI changes required restoring"
+  },
+  "rapid_native_border_drag_accepted": false,
+  "remaining": [
+    "Actual OS 100/150/200 percent DPI with Fit and original ratio remains unverified.",
+    "Shipping toolbar and window-boundary cursor restoration remains unverified.",
+    "Rapid native border dragging with complete-frame convergence remains unverified.",
+    "No Windows security/privacy settings, registry DPI writes, Windows-key shortcuts, Run dialogs, terminal UIs, authentication or sign-out prompts were automated."
+  ],
+  "raw_client_events": [
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 1,
+        "height": 0,
+        "hotspot_x": 0,
+        "hotspot_y": 0,
+        "width": 0
+      },
+      "display_scale": 1.0,
+      "event": "geometry",
+      "os_scale": 1.0,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 648.2119750976562,
+      "remote_y": 384.8095703125,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 298.83880615234375,
+      "remote_y": 199.1427001953125,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 315.8083801269531,
+      "remote_y": 206.13015747070312,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 367.7152404785156,
+      "remote_y": 398.7845153808594,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 328.78509521484375,
+      "remote_y": 448.6949462890625,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 429.60418701171875,
+      "remote_y": 138.251953125,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 429.60418701171875,
+      "remote_y": 137.2537384033203,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 428.6059875488281,
+      "remote_y": 135.25730895996094,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 428.6059875488281,
+      "remote_y": 134.25912475585938,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 413.6328430175781,
+      "remote_y": 109.30389404296875,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 413.6328430175781,
+      "remote_y": 110.30208587646484,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 413.6328430175781,
+      "remote_y": 113.29672241210938,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 414.63104248046875,
+      "remote_y": 121.28238677978516,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 429.60418701171875,
+      "remote_y": 159.21434020996094,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 482.50927734375,
+      "remote_y": 272.011962890625,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 541.4036254882812,
+      "remote_y": 472.6519470214844,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 566.3588256835938,
+      "remote_y": 576.4656982421875,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 934.6979370117188,
+      "remote_y": 831.0089721679688,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 916.730224609375,
+      "remote_y": 768.1217651367188,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 910.740966796875,
+      "remote_y": 768.1217651367188,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 910.740966796875,
+      "remote_y": 766.1254272460938,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 910.740966796875,
+      "remote_y": 765.127197265625,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 907.746337890625,
+      "remote_y": 763.1307373046875,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 906.7481079101562,
+      "remote_y": 763.1307373046875,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 910.740966796875,
+      "remote_y": 694.25439453125,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 895.767822265625,
+      "remote_y": 618.3904418945312,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 868.816162109375,
+      "remote_y": 496.6089782714844,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 867.8179321289062,
+      "remote_y": 485.6286926269531,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 851.8466186523438,
+      "remote_y": 468.65911865234375,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 850.8484497070312,
+      "remote_y": 462.66986083984375,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 850.8484497070312,
+      "remote_y": 458.6770324707031,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 850.8484497070312,
+      "remote_y": 457.6788024902344,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 850.8484497070312,
+      "remote_y": 456.68060302734375,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 843.8609008789062,
+      "remote_y": 401.77911376953125,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 837.8717041015625,
+      "remote_y": 373.82928466796875,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 816.9093017578125,
+      "remote_y": 367.8399963378906,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 808.923583984375,
+      "remote_y": 363.8471984863281,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 808.923583984375,
+      "remote_y": 362.8489685058594,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 808.923583984375,
+      "remote_y": 361.85076904296875,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button"
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 809.9218139648438,
+      "remote_y": 384.8095703125,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "app_scale": 1.0,
+      "event": "pointer",
+      "fit": true,
+      "os_scale": 1.25,
+      "remote_x": 810.9200439453125,
+      "remote_y": 391.7970275878906,
+      "surface": [
+        1312,
+        836
+      ]
+    }
+  ],
+  "raw_current_session_server_events": [
+    {
+      "event": "button",
+      "x": 298,
+      "y": 199,
+      "button": 1,
+      "width": 1312,
+      "height": 836,
+      "time": 25277.174041583
+    },
+    {
+      "event": "button",
+      "x": 808,
+      "y": 361,
+      "button": 1,
+      "width": 1312,
+      "height": 836,
+      "time": 25392.742830871
+    }
+  ],
+  "record_created_at_commit": "35bcd121f063318f88316d2bc0db3f2dd335d665"
+}

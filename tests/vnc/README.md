@@ -305,9 +305,33 @@ the [non-PTY path](https://github.com/sudo-project/sudo/blob/SUDO_1_9_15p5/src/e
 The runner therefore resumes both its namespace client and its own sudo wrapper,
 and records the wrapper's state before resuming it. This changes only test
 process supervision, not production reconnect behavior.
+The [subsequent complete result](results/2026-10-17-linux-network-recovery.json)
+from [CI39038216713](https://github.com/weironz/adit/actions/runs/39038216713)
+passes all phases and clean exit on source `35bcd12`. It also observes the
+wrapper's actual `T`/sudo state before resuming it. The full twelve-job CI passed;
+the two earlier incomplete/failed attempts remain available for comparison.
 
 This is a real Linux virtual-interface change, not a mocked socket error. The
 process pause is additional evidence; it is not OS suspend/hibernate. Neither
 case establishes Windows Wi-Fi hardware, Windows sleep or native GUI recovery.
 Those remain separately tracked in #212. Fixture credentials are disposable
 public constants, never a real target password in argv or environment.
+
+
+## Windows OS DPI acceptance attempt
+
+The [2026-10-17 OS DPI record](results/2026-10-17-windows-os-dpi.json)
+contains **zero accepted OS 100/150/200% cases**. A newly built `711c5e7`
+native acceptance example was verified at app scale 100% and unchanged OS
+scale 125%: clicking the labelled remote (300,200) target reached (298,199).
+This baseline check does not replace the missing OS DPI matrix.
+
+The ordinary Windows Settings executable was launched through the supported
+Computer Use API, but exposed no targetable window in three observations.
+Its pre-existing process remained unresponsive. It was neither terminated nor
+restarted; no DPI, resolution, display layout, primary monitor, registry,
+security or privacy setting was changed, so restoring 125% was unnecessary.
+A later unsolicited pointer sequence and remote click were excluded, and
+Windows input injection stopped. Shipping toolbar/window-boundary cursor
+restoration and rapid native border dragging remain unverified. No user desktop
+screenshot is stored in this result.
