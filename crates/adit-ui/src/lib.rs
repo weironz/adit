@@ -374,9 +374,13 @@ pub struct AditApp {
     /// async GPU upload when the very next frame renders; an image that has
     /// not landed draws nothing, and with nothing beneath it that frame was
     /// the black container — one flash per sidebar toggle. Cleared by the next
-    /// same-size frame or by `RDP_PREV_LAYER_LINGER`.
+    /// same-size frame or by `RDP_PREV_LAYER_LINGER`; VNC also requires
+    /// complete incoming coverage before either retirement path is allowed.
     rdp_tiles_prev: Vec<RdpTile>,
     rdp_surface_size_prev: Option<(u16, u16)>,
+    /// A reset epoch is sampled with VNC pixels; dimensions alone cannot
+    /// identify an A→B→A resize that happened between two UI ticks.
+    vnc_frame_coverage: update_loop::VncFrameCoverage,
     // RDP clipboard: only this process has a Windows clipboard (the helper is
     // windowless), so local→remote means polling it while an RDP tab is up.
     // `rdp_clipboard_offered` is the last text handed to the helper — it stops
@@ -1604,6 +1608,7 @@ impl AditApp {
             rdp_tiles: Vec::new(),
             rdp_tiles_prev: Vec::new(),
             rdp_surface_size_prev: None,
+            vnc_frame_coverage: update_loop::VncFrameCoverage::default(),
             rdp_clipboard_offered: None,
             rdp_clipboard_seq: 0,
             rdp_image_offered_seq: 0,
@@ -2792,6 +2797,8 @@ mod tests {
         app.rdp_tiles_prev=split_into_tiles(&frame);
         app.rdp_surface_size=Some((2,2));
         app.rdp_frame_generation=9;
+        let _=app.vnc_frame_coverage.observe(7, || true);
+        assert!(app.vnc_frame_coverage.may_retire());
         app.vnc_cursor=Some(adit_session::VncCursor{width:1,height:1,rgba:vec![255;4],generation:1,..Default::default()});
         app.vnc_cursor_handle=Some(iced::widget::image::Handle::from_rgba(1,1,vec![255;4]));
         app.vnc_pressed_keys.push((Physical::Code(Code::KeyA),0x61));
@@ -2804,10 +2811,30 @@ mod tests {
         assert!(app.rdp_tiles.is_empty());
         assert!(app.rdp_tiles_prev.is_empty());
         assert!(app.rdp_surface_size.is_none());
+        assert!(!app.vnc_frame_coverage.may_retire());
         assert!(app.vnc_cursor.is_none());
         assert!(app.vnc_cursor_handle.is_none());
         assert!(app.vnc_pressed_keys.is_empty());
         app.manager.close(session);
+    }
+
+    #[test]
+    fn switching_tabs_clears_the_previous_vnc_resize_coverage_owner() {
+        let mut app = drag_test_app();
+        let old = app.manager.open_mock_session(app.manager.profiles()[0].id).unwrap();
+        app.rdp_frame_session = Some(old);
+        let frame = adit_session::RdpFrame { width: 2, height: 2, rgba: vec![255; 16], generation: 1 };
+        app.rdp_tiles = split_into_tiles(&frame);
+        app.rdp_tiles_prev = split_into_tiles(&frame);
+        app.rdp_surface_size = Some((2, 2));
+        app.rdp_surface_size_prev = Some((2, 2));
+        let _ = app.vnc_frame_coverage.observe(99, || true);
+        let next = app.manager.open_mock_session(app.manager.profiles()[1].id).unwrap();
+        let _ = update(&mut app, Message::RdpTick);
+        assert_eq!(app.rdp_frame_session, Some(next));
+        assert!(app.rdp_tiles.is_empty());
+        assert!(app.rdp_tiles_prev.is_empty());
+        assert!(!app.vnc_frame_coverage.may_retire());
     }
 
     #[test]

@@ -43,7 +43,7 @@ pub use adit_rdp_proto::{
 };
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
 pub use vnc_input::unicode_keysym;
-pub use vnc_client::{VncCursor, VncDiagnostics};
+pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
 use vnc_client::VncClientHandle;
 
 /// Default RDP desktop size when the caller doesn't specify one.
@@ -1370,6 +1370,15 @@ impl SessionManager {
         self.active_vnc().and_then(VncClientHandle::cursor)
     }
     pub fn active_vnc_diagnostics(&self) -> Option<VncDiagnostics> { self.active_vnc().map(VncClientHandle::diagnostics) }
+
+    /// VNC pixels and resize epoch sampled atomically, without changing the
+    /// generic desktop frame or the separate RDP helper's IPC contract.
+    pub fn active_vnc_frame_if_newer(&self, generation: u64) -> Option<VncFrameSnapshot> {
+        if self.active_session_summary()?.status != SessionStatus::Connected {
+            return None;
+        }
+        self.active_vnc()?.frame_snapshot_if_newer(generation)
+    }
 
     /// VNC has no SSH username. Validate its own fields rather than inventing
     /// a placeholder user just to pass the SSH profile builder.

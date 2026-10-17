@@ -24,6 +24,43 @@ pub struct VncCursor {
     pub generation: u64,
 }
 
+/// A VNC resize can return to the same dimensions between two UI samples.
+/// Read the epoch and pixels under one lock so a previous coverage decision
+/// cannot be applied to a freshly cleared, identically sized surface.
+pub struct VncFrameSnapshot {
+    pub frame: RdpFrame,
+    pub resize_epoch: u64,
+}
+
+struct VncSurface {
+    pixels: Surface,
+    resize_epoch: u64,
+}
+
+impl VncSurface {
+    fn new(width: u16, height: u16) -> Self {
+        Self { pixels: Surface::new(width, height), resize_epoch: 0 }
+    }
+
+    fn snapshot_if_newer(&self, generation: u64) -> Option<VncFrameSnapshot> {
+        (self.generation != generation).then(|| VncFrameSnapshot {
+            frame: RdpFrame {
+                rgba: self.rgba.clone(), width: self.width, height: self.height,
+                generation: self.generation,
+            },
+            resize_epoch: self.resize_epoch,
+        })
+    }
+}
+
+impl std::ops::Deref for VncSurface {
+    type Target = Surface;
+    fn deref(&self) -> &Surface { &self.pixels }
+}
+impl std::ops::DerefMut for VncSurface {
+    fn deref_mut(&mut self) -> &mut Surface { &mut self.pixels }
+}
+
 /// Metadata only: never stores a password, key, clipboard body, or input text.
 #[derive(Clone, Debug, Default)]
 pub struct VncDiagnostics {
@@ -74,7 +111,7 @@ pub(super) struct VncClientHandle {
     stop: watch::Sender<bool>,
     events: std_mpsc::Receiver<RdpClientEvent>,
     errors: std_mpsc::Sender<RdpClientEvent>,
-    surface: Arc<Mutex<Surface>>,
+    surface: Arc<Mutex<VncSurface>>,
     state: Arc<Mutex<SharedState>>,
 }
 
@@ -202,16 +239,13 @@ impl VncClientHandle {
         self.events.try_recv().ok()
     }
     pub(super) fn frame_if_newer(&self, generation: u64) -> Option<RdpFrame> {
+        self.frame_snapshot_if_newer(generation).map(|snapshot| snapshot.frame)
+    }
+    pub(super) fn frame_snapshot_if_newer(&self, generation: u64) -> Option<VncFrameSnapshot> {
         let surface = self.surface.lock().ok()?;
-        (surface.generation != generation).then(|| {
-            self.state.lock().unwrap().diagnostics.sampled_generation = surface.generation;
-            RdpFrame {
-                rgba: surface.rgba.clone(),
-                width: surface.width,
-                height: surface.height,
-                generation: surface.generation,
-            }
-        })
+        let snapshot = surface.snapshot_if_newer(generation)?;
+        self.state.lock().unwrap().diagnostics.sampled_generation = snapshot.frame.generation;
+        Some(snapshot)
     }
 }
 impl Drop for VncClientHandle {
@@ -231,7 +265,7 @@ pub(super) fn spawn_vnc_session(
     let (stop, stopped) = watch::channel(false);
     let (events, event_rx) = std_mpsc::channel();
     let errors = events.clone();
-    let surface = Arc::new(Mutex::new(Surface::new(1, 1)));
+    let surface = Arc::new(Mutex::new(VncSurface::new(1, 1)));
     let state = Arc::new(Mutex::new(SharedState {
         options,
         cursor: None,
@@ -321,7 +355,7 @@ trait DesktopStream: Sync + tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin
 impl<T: Sync + tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> DesktopStream for T {}
 struct Worker {
     commands: Arc<CommandQueue>,
-    surface: Arc<Mutex<Surface>>,
+    surface: Arc<Mutex<VncSurface>>,
     state: Arc<Mutex<SharedState>>,
     stopped: watch::Receiver<bool>,
     events: std_mpsc::Sender<RdpClientEvent>,
@@ -810,7 +844,7 @@ fn decode_jpeg(rect: Rect, data: Vec<u8>) -> Result<Vec<u8>, VncError> {
         .into_raw())
 }
 
-fn resize(surface: &Arc<Mutex<Surface>>, width: u16, height: u16) -> Result<(), VncError> {
+fn resize(surface: &Arc<Mutex<VncSurface>>, width: u16, height: u16) -> Result<(), VncError> {
     if width == 0
         || height == 0
         || width > 8192
@@ -821,13 +855,15 @@ fn resize(surface: &Arc<Mutex<Surface>>, width: u16, height: u16) -> Result<(), 
     }
     if let Ok(mut surface) = surface.lock() {
         let generation = surface.generation.wrapping_add(1);
-        *surface = Surface::new(width, height);
+        let epoch = surface.resize_epoch.wrapping_add(1);
+        *surface = VncSurface::new(width, height);
         surface.generation = generation;
+        surface.resize_epoch = epoch;
     }
     Ok(())
 }
 
-fn copy_rect(surface: &Arc<Mutex<Surface>>, dst: Rect, src: Rect) -> Result<(), VncError> {
+fn copy_rect(surface: &Arc<Mutex<VncSurface>>, dst: Rect, src: Rect) -> Result<(), VncError> {
     if let Ok(mut surface) = surface.lock() {
         let valid = |rect: Rect| {
             u32::from(rect.x) + u32::from(rect.width) <= u32::from(surface.width)
@@ -860,6 +896,27 @@ fn copy_rect(surface: &Arc<Mutex<Surface>>, dst: Rect, src: Rect) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vnc_snapshot_keeps_resize_epoch_and_pixels_coherent_across_aba() {
+        let surface = Arc::new(Mutex::new(VncSurface::new(2, 2)));
+        {
+            let mut locked = surface.lock().unwrap();
+            locked.rgba.fill(255);
+            locked.generation = 10;
+        }
+        let first = surface.lock().unwrap().snapshot_if_newer(0).unwrap();
+        assert_eq!(first.resize_epoch, 0);
+        assert!(first.frame.rgba.iter().all(|byte| *byte == 255));
+        resize(&surface, 3, 2).unwrap();
+        resize(&surface, 2, 2).unwrap();
+        let current = surface.lock().unwrap().snapshot_if_newer(first.frame.generation).unwrap();
+        assert_eq!((current.frame.width, current.frame.height), (2, 2));
+        assert_eq!(current.resize_epoch, 2);
+        assert!(current.frame.rgba.iter().all(|byte| *byte == 0));
+        assert_ne!(current.frame.generation, first.frame.generation);
+        assert!(surface.lock().unwrap().snapshot_if_newer(current.frame.generation).is_none());
+    }
 
     #[test]
     fn failed_handshakes_and_short_connections_cannot_renew_the_retry_budget() {

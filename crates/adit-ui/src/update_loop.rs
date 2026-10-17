@@ -1,5 +1,47 @@
 use super::*;
 
+#[derive(Default)]
+pub(super) struct VncFrameCoverage {
+    resize_epoch: Option<u64>,
+    complete: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum VncPreviousLayer {
+    Keep,
+    Promote,
+    Retire,
+}
+
+impl VncFrameCoverage {
+    pub(super) fn observe(&mut self, epoch: u64, covered: impl FnOnce() -> bool) -> VncPreviousLayer {
+        let changed = self.resize_epoch != Some(epoch);
+        let was_complete = self.complete;
+        // Alpha becomes opaque monotonically within a VNC surface epoch.
+        // Scan only until coverage completes; steady desktop frames do no scan.
+        self.complete = (!changed && was_complete) || covered();
+        self.resize_epoch = Some(epoch);
+        if changed {
+            if was_complete { VncPreviousLayer::Promote } else { VncPreviousLayer::Keep }
+        } else if was_complete {
+            // The preceding complete upload has landed. The first complete
+            // upload itself still keeps the shield until this or the timer.
+            VncPreviousLayer::Retire
+        } else {
+            VncPreviousLayer::Keep
+        }
+    }
+
+    pub(super) fn may_retire(&self) -> bool { self.complete }
+}
+
+fn vnc_frame_covered(frame: &adit_session::RdpFrame) -> bool {
+    frame.width > 0 && frame.height > 0
+        && usize::from(frame.width).checked_mul(usize::from(frame.height))
+            .and_then(|pixels| pixels.checked_mul(4)) == Some(frame.rgba.len())
+        && frame.rgba.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255)
+}
+
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
     let task = update_message(app, message);
     // Focus can move locally without a WindowUnfocused event (settings, menus,
@@ -80,6 +122,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // shield, so time retires it instead — the swap's upload has long
             // landed, and the shield holds a whole framebuffer copy alive.
             if !app.rdp_tiles_prev.is_empty()
+                && (!app.manager.active_is_vnc() || app.vnc_frame_coverage.may_retire())
                 && app
                     .rdp_frame_uploaded
                     .is_some_and(|at| at.elapsed() > RDP_PREV_LAYER_LINGER)
@@ -225,6 +268,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_tiles_prev.clear();
                 app.rdp_surface_size = None;
                 app.rdp_surface_size_prev = None;
+                app.vnc_frame_coverage = VncFrameCoverage::default();
                 // Different session ⇒ forget the requested size so the next layout
                 // sync re-asserts the viewport for the newly-active desktop.
                 app.rdp_target_size = None;
@@ -262,7 +306,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 .rdp_frame_uploaded
                 .is_none_or(|at| at.elapsed() >= RDP_FRAME_MIN_INTERVAL);
             if due && !vnc_not_connected {
-                if let Some(frame) = app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation) {
+                let is_vnc = app.manager.active_is_vnc();
+                let sampled = if is_vnc {
+                    app.manager.active_vnc_frame_if_newer(app.rdp_frame_generation)
+                        .map(|snapshot| (snapshot.frame, Some(snapshot.resize_epoch)))
+                } else {
+                    app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation)
+                        .map(|frame| (frame, None))
+                };
+                if let Some((frame, vnc_epoch)) = sampled {
                     app.rdp_frame_generation = frame.generation;
                     app.rdp_frame_uploaded = Some(Instant::now());
                     let new_size = (frame.width, frame.height);
@@ -272,7 +324,21 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     // and without this the pane flashed black on every resize
                     // settle. A follow-up frame at the same size means the
                     // swap has certainly landed — drop the shield then.
-                    if app.rdp_surface_size != Some(new_size) && !app.rdp_tiles.is_empty() {
+                    if let Some(epoch) = vnc_epoch {
+                        match app.vnc_frame_coverage.observe(epoch, || vnc_frame_covered(&frame)) {
+                            VncPreviousLayer::Promote if !app.rdp_tiles.is_empty() => {
+                                app.rdp_tiles_prev = std::mem::take(&mut app.rdp_tiles);
+                                app.rdp_surface_size_prev = app.rdp_surface_size;
+                            }
+                            VncPreviousLayer::Retire => {
+                                app.rdp_tiles_prev.clear();
+                                app.rdp_surface_size_prev = None;
+                            }
+                            // A second resize can arrive before the first one
+                            // covers the screen. Keep the last complete shield.
+                            VncPreviousLayer::Keep | VncPreviousLayer::Promote => {}
+                        }
+                    } else if app.rdp_surface_size != Some(new_size) && !app.rdp_tiles.is_empty() {
                         app.rdp_tiles_prev = std::mem::take(&mut app.rdp_tiles);
                         app.rdp_surface_size_prev = app.rdp_surface_size;
                     } else if !app.rdp_tiles_prev.is_empty() {
@@ -3274,6 +3340,7 @@ fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
     app.rdp_tiles_prev.clear();
     app.rdp_surface_size = None;
     app.rdp_surface_size_prev = None;
+    app.vnc_frame_coverage = VncFrameCoverage::default();
     app.rdp_frame_generation = 0;
     app.rdp_frame_uploaded = None;
     app.vnc_cursor = None;
@@ -3287,4 +3354,90 @@ fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
     app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
     keyboard_hook::disarm();
     true
+}
+
+#[cfg(test)]
+mod vnc_resize_tests {
+    use super::*;
+
+    #[test]
+    fn captured_partial_resize_keeps_the_last_complete_shield() {
+        let capture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/vnc/results/2026-10-17-resize-frame-investigation.json"
+        )).unwrap();
+        let mut state = VncFrameCoverage::default();
+        state.observe(40, || true);
+        for (i, sample) in capture["selected_samples"].as_array().unwrap().iter().enumerate() {
+            let width = u16::try_from(sample["width"].as_u64().unwrap()).unwrap();
+            let height = u16::try_from(sample["height"].as_u64().unwrap()).unwrap();
+            let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
+            for run in sample["alpha_rle"].as_array().unwrap() {
+                let alpha = u8::try_from(run[0].as_u64().unwrap()).unwrap();
+                for _ in 0..run[1].as_u64().unwrap() { rgba.extend_from_slice(&[0, 0, 0, alpha]); }
+            }
+            let frame = adit_session::RdpFrame { width, height, rgba, generation: i as u64 };
+            let action = state.observe(41, || vnc_frame_covered(&frame));
+            assert_eq!(action, if i == 0 { VncPreviousLayer::Promote } else { VncPreviousLayer::Keep });
+            assert_eq!(state.may_retire(), sample["covered"] == sample["total"]);
+        }
+        assert_eq!(state.observe(41, || panic!("stable full frames must not scan")), VncPreviousLayer::Retire);
+    }
+
+    #[test]
+    fn repeated_incomplete_sizes_do_not_replace_the_complete_shield() {
+        let mut state = VncFrameCoverage::default();
+        state.observe(1, || true);
+        assert_eq!(state.observe(2, || false), VncPreviousLayer::Promote);
+        assert!(!state.may_retire());
+        // Epoch 3 may have the same dimensions as epoch 1 (A→B→A).
+        // It still needs coverage and must retain epoch 1's complete tiles.
+        assert_eq!(state.observe(3, || false), VncPreviousLayer::Keep);
+        assert_eq!(state.observe(4, || false), VncPreviousLayer::Keep);
+        assert!(!state.may_retire());
+        assert_eq!(state.observe(4, || true), VncPreviousLayer::Keep);
+        assert!(state.may_retire());
+        assert_eq!(state.observe(4, || panic!("stable full frame")), VncPreviousLayer::Retire);
+    }
+
+    #[test]
+    fn hidden_resize_epoch_rescans_and_initial_partial_is_not_a_shield() {
+        let mut state = VncFrameCoverage::default();
+        assert_eq!(state.observe(10, || false), VncPreviousLayer::Keep);
+        assert_eq!(state.observe(11, || false), VncPreviousLayer::Keep);
+        state.observe(11, || true);
+        assert_eq!(state.observe(13, || false), VncPreviousLayer::Promote);
+        assert!(!state.may_retire());
+        let fresh = VncFrameCoverage::default();
+        assert!(!fresh.may_retire());
+    }
+
+    #[test]
+    fn incomplete_or_invalid_rgba_never_counts_as_full_coverage() {
+        let mut frame = adit_session::RdpFrame { width: 2, height: 2, rgba: vec![255; 16], generation: 0 };
+        assert!(vnc_frame_covered(&frame));
+        frame.rgba[15] = 0;
+        assert!(!vnc_frame_covered(&frame));
+        frame.rgba.truncate(12);
+        assert!(!vnc_frame_covered(&frame));
+        frame.width = 0;
+        frame.height = 0;
+        frame.rgba.clear();
+        assert!(!vnc_frame_covered(&frame));
+    }
+
+    #[test]
+    fn legal_maximum_surface_is_scanned_only_during_transition() {
+        let frame = adit_session::RdpFrame {
+            width: 3840, height: 2160, rgba: vec![255; 3840 * 2160 * 4], generation: 1,
+        };
+        let mut state = VncFrameCoverage::default();
+        let started = Instant::now();
+        state.observe(1, || vnc_frame_covered(std::hint::black_box(&frame)));
+        println!("VNC max 8294400-pixel alpha scan: {:?}; debug_assertions={}; observation only",
+            started.elapsed(), cfg!(debug_assertions));
+        assert!(state.may_retire());
+        for _ in 0..1000 {
+            state.observe(1, || panic!("steady frames must not scan the maximum surface"));
+        }
+    }
 }

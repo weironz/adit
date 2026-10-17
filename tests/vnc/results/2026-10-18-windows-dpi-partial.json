@@ -1,0 +1,39 @@
+{
+  "date": "2026-10-18",
+  "scope": "Real Windows DPI acceptance was interrupted; original display state restored before further development.",
+  "restore_observation": {
+    "method": "Computer Use native Settings UI; four calls, final screenshot inspected by the operator agent",
+    "before_percent": 150,
+    "after_percent": 125,
+    "resolution": [
+      2240,
+      1400
+    ],
+    "orientation": "landscape",
+    "resolution_or_orientation_changed": false
+  },
+  "acceptance": {
+    "complete_os_dpi_matrix": false,
+    "os_100_percent": "partial arrow/I-beam/RGBA x Fit/1:1 observations",
+    "os_150_percent": "partial arrow/I-beam/RGBA x Fit/1:1 observations",
+    "os_200_percent": "not exercised",
+    "outlier_preserved": {
+      "os_percent": 150,
+      "shape": "I-beam",
+      "fit": true,
+      "target": [
+        300,
+        200
+      ],
+      "server_received": [
+        298,
+        197
+      ],
+      "cause": "unproven; not discarded or reclassified as a pass"
+    }
+  },
+  "binary_build_base": "711c5e7fc1ba40620444487740c0ee4c480b85fe",
+  "binary_sha256": "49f0c15e8c8a5d48167414dc7c5d922bc36403830eb778e3b75abb03b86b8a0c",
+  "current_uncommitted_resize_fix_covered": false,
+  "screenshots": "No user desktop screenshot archived."
+}
