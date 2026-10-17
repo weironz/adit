@@ -765,7 +765,12 @@ fn vnc_options_editor(app: &AditApp) -> Element<'_, Message> {
         text_field("TLS CA 证书（PEM，可空用内置公共根）", "证书文件路径", &option.tls_ca_file, Message::VncTlsCaChanged),
         row![button("无损文字").on_press(Message::VncQualityChanged(VncQuality::Lossless)),
              button("弱网 JPEG").on_press(Message::VncQualityChanged(VncQuality::Wan)),
-             text(if option.quality == VncQuality::Lossless { "当前：无损" } else { "当前：弱网（有损）" }).size(11)].spacing(6),
+             button("兼容无损 ZRLE").on_press(Message::VncQualityChanged(VncQuality::Zrle)),
+             text(match option.quality {
+                 VncQuality::Lossless => "当前：无损",
+                 VncQuality::Wan => "当前：弱网（有损）",
+                 VncQuality::Zrle => "当前：兼容无损（禁用 Tight/JPEG）",
+             }).size(11)].spacing(6).wrap(),
         checkbox(option.read_only).label("只读观察（禁止键鼠及发送剪贴板）").on_toggle(|v| Message::VncPolicyChanged(0,v)),
         checkbox(option.clipboard_send).label("允许本地文本发送到远端").on_toggle(|v| Message::VncPolicyChanged(1,v)),
         checkbox(option.clipboard_receive).label("允许接收远端文本剪贴板").on_toggle(|v| Message::VncPolicyChanged(2,v)),

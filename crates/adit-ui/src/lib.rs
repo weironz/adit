@@ -62,6 +62,8 @@ mod clipboard_files;
 /// leash is short.
 mod keyboard_hook;
 mod vnc_cursor;
+#[cfg(test)]
+mod vnc_input_wire_tests;
 mod vault_ui;
 mod workspace;
 use workspace::*;
@@ -422,6 +424,8 @@ pub struct AditApp {
     vnc_fit: bool,
     vnc_grab_keys: bool,
     vnc_preedit: Option<iced::advanced::input_method::Preedit>,
+    vnc_input_epoch: u64,
+    desktop_window_focused: bool,
     vnc_cursor: Option<adit_session::VncCursor>,
     vnc_cursor_handle: Option<iced::widget::image::Handle>,
     // Latest keyboard modifier state, so wheel handling can tell a plain scroll
@@ -726,7 +730,7 @@ pub enum Message {
     ToggleVncReadOnly,
     ToggleVncResize,
     ToggleVncGrab,
-    VncImeEvent(iced::advanced::input_method::Event),
+    VncImeEvent(SessionId, u64, iced::advanced::input_method::Event),
     VncSecurityChanged(VncSecurity),
     VncQualityChanged(VncQuality),
     VncTlsCaChanged(String),
@@ -1612,6 +1616,8 @@ impl AditApp {
             vnc_fit: true,
             vnc_grab_keys: false,
             vnc_preedit: None,
+            vnc_input_epoch: 0,
+            desktop_window_focused: true,
             vnc_cursor: None,
             vnc_cursor_handle: None,
             modifiers: keyboard::Modifiers::empty(),

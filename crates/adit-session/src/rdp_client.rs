@@ -26,6 +26,7 @@ pub enum RdpClientEvent {
     Connected { width: u16, height: u16 },
     Resized { width: u16, height: u16 },
     ClipboardText(String),
+    VncClipboardText(vnc::ClipboardText),
     /// The remote copied files. The app should offer them on the Windows
     /// clipboard; nothing crosses the wire until something here pastes.
     ClipboardFiles(Vec<ClipFile>),

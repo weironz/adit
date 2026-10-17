@@ -201,8 +201,9 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         stack(vec![content, Element::new(vnc_cursor::CursorLayer {
             cursor: app.vnc_cursor.clone(), handle: app.vnc_cursor_handle.clone(), scale_x, scale_y,
             logical_size: iced::Size::new(f32::from(sw)/scale_x, f32::from(sh)/scale_y),
-            ime_enabled: app.terminal_focused && !app.manager.active_vnc_read_only()
-                && !app.settings_open && app.profile_editor.is_none() && app.connection_dialog.is_none(),
+            session_id: app.manager.active_session().expect("live desktop has a session"),
+            input_epoch: app.vnc_input_epoch,
+            ime_enabled: vnc_accepts_text_input(app),
             preedit: app.vnc_preedit.clone(),
         })]).into()
     } else { content };

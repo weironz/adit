@@ -514,7 +514,7 @@ impl Worker {
                         VncEvent::Text(text) => {
                             let receive = { let state = self.state.lock().unwrap(); state.clipboard_enabled && state.options.clipboard_receive };
                             if receive {
-                                let _ = self.events.send(RdpClientEvent::ClipboardText(text));
+                                let _ = self.events.send(RdpClientEvent::VncClipboardText(text));
                             }
                         }
                         VncEvent::FenceSupported => { fence_supported = true; }
@@ -687,9 +687,13 @@ async fn connect(
         let mut connector = VncConnector::new(stream)
             .set_auth_method(async move { Ok(password) })
             .security_policy(policy)
-            .tight_quality(2, (options.quality == VncQuality::Wan).then_some(7))
-            .add_encoding(VncEncoding::FencePseudo)
-            .add_encoding(VncEncoding::Tight)
+            .add_encoding(VncEncoding::FencePseudo);
+        if options.quality != VncQuality::Zrle {
+            connector = connector
+                .tight_quality(2, (options.quality == VncQuality::Wan).then_some(7))
+                .add_encoding(VncEncoding::Tight);
+        }
+        connector = connector
             .add_encoding(VncEncoding::Zrle)
             .add_encoding(VncEncoding::CursorPseudo)
             .add_encoding(VncEncoding::CopyRect)
@@ -722,7 +726,10 @@ async fn connect(
             if via_ssh { "SSH + " } else { "" },
             client.security()
         );
-        state.diagnostics.encoding = format!("Tight/ZRLE ({:?})", options.quality);
+        state.diagnostics.encoding = match options.quality {
+            VncQuality::Zrle => "ZRLE/CopyRect/Raw（兼容无损）".into(),
+            quality => format!("Tight/ZRLE ({quality:?})"),
+        };
         Ok(client)
     };
     tokio::time::timeout(Duration::from_secs(60), connect)

@@ -375,6 +375,11 @@ impl Drop for VncGatewayCredentials {
     }
 }
 
+enum PendingDesktopClipboard {
+    Rdp(String),
+    Vnc(vnc::ClipboardText),
+}
+
 pub struct SessionManager {
     profiles: Vec<ConnectionProfile>,
     sessions: HashMap<SessionId, SessionRecord>,
@@ -401,7 +406,7 @@ pub struct SessionManager {
     /// Windows clipboard (only the UI process has one). Held here rather than
     /// per session because the system clipboard is itself a single slot: the
     /// most recent remote copy wins, exactly as it would between two local apps.
-    pending_rdp_clipboard: Option<String>,
+    pending_rdp_clipboard: Option<(SessionId, PendingDesktopClipboard)>,
     pending_desktop_notice: Option<(SessionId, String)>,
     /// Byte ranges the remote asked for, waiting for the UI to read them off
     /// disk. A `Vec` rather than the single slot the clipboard text uses: a
@@ -1356,7 +1361,14 @@ impl SessionManager {
     pub fn active_vnc_resize_remote(&self) -> bool { self.active_vnc().is_some_and(VncClientHandle::resize_remote) }
     pub fn set_active_vnc_resize_remote(&self, enabled: bool) { if let Some(vnc) = self.active_vnc() { vnc.set_resize_remote(enabled); } }
     pub fn set_active_vnc_quality(&self, quality: adit_domain::VncQuality) { if let Some(vnc) = self.active_vnc() { vnc.set_quality(quality); } }
-    pub fn active_vnc_cursor(&self) -> Option<VncCursor> { self.active_vnc().and_then(VncClientHandle::cursor) }
+    pub fn active_vnc_cursor(&self) -> Option<VncCursor> {
+        // The handle outlives a disconnect so the tab can be retried. Its last
+        // cursor belongs to that old transport, not the disconnected desktop.
+        if self.active_session_summary()?.status != SessionStatus::Connected {
+            return None;
+        }
+        self.active_vnc().and_then(VncClientHandle::cursor)
+    }
     pub fn active_vnc_diagnostics(&self) -> Option<VncDiagnostics> { self.active_vnc().map(VncClientHandle::diagnostics) }
 
     /// VNC has no SSH username. Validate its own fields rather than inventing
@@ -1913,7 +1925,13 @@ impl SessionManager {
     /// Returns `None` when nothing new arrived.
     #[must_use]
     pub fn take_rdp_clipboard(&mut self) -> Option<String> {
-        self.pending_rdp_clipboard.take()
+        self.pending_rdp_clipboard
+            .take()
+            .filter(|(id, _)| self.active_session == Some(*id))
+            .and_then(|(_, text)| match text {
+                PendingDesktopClipboard::Rdp(text) => Some(text),
+                PendingDesktopClipboard::Vnc(text) => text.into_current_text(),
+            })
     }
 
     /// Byte ranges the remote is waiting on. Drained, so each is answered once.
@@ -3312,9 +3330,16 @@ impl SessionManager {
                     // The helper has no Windows clipboard of its own (it is a
                     // windowless process with no message pump), so remote copies
                     // arrive here as text and the UI process owns the paste.
+                    RdpClientEvent::VncClipboardText(text) => {
+                        if self.active_session == Some(record.summary.id) && self.rdp_clipboard {
+                            self.pending_rdp_clipboard =
+                                Some((record.summary.id, PendingDesktopClipboard::Vnc(text)));
+                        }
+                    }
                     RdpClientEvent::ClipboardText(text) => {
                         if self.active_session == Some(record.summary.id) && self.rdp_clipboard {
-                            self.pending_rdp_clipboard = Some(text);
+                            self.pending_rdp_clipboard =
+                                Some((record.summary.id, PendingDesktopClipboard::Rdp(text)));
                         }
                     }
                     // Same split as the text above, for the same reason: only

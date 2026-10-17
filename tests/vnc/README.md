@@ -19,6 +19,18 @@ channel, handles the unknown-key trust conversation, authenticates VNC separatel
 and receives actual pixels. Wrong SSH password and rejected host key must fail.
 It uses a temporary known-hosts path and TrustOnce, leaving normal Adit trust alone.
 
+The gateway suite also starts a separate, unpublished TigerVNC display using
+`start-gateway.sh`. It reads actual X11 selections for bidirectional Unicode,
+observes input at the remote X11 window, and checks the actual SSH sockets after
+closing or cancelling. A host listener trap proves a refused target cannot fall
+back to a direct connection. The suite owns and cleans up only its separate display.
+
+`crates/adit-ui/tests/vault_connections.rs` exercises a cold-loaded protected
+credential store against SSH 12222 and TigerVNC 15903. It verifies migration
+backups, locked/wrong-password behavior, then authenticates with the unlocked
+secrets and reads SSH output and complete VNC pixels. Its RDP profile checks
+persistence only; real RDP and native settings controls require separate acceptance.
+
 ## Reproducible Linux load matrix
 
 The image contains Ubuntu 24.04's x11vnc/TigerVNC and the official TurboVNC 3.3.1
@@ -61,6 +73,11 @@ requires an explicit `--workload=scroll` or `--workload=drag` and accepts only
 localhost/127.0.0.1. Do not pass a real password as argv/env or use scripted input on
 an external host. Snapshot output is opt-in and should never be committed if it
 contains real desktop content.
+
+The per-profile **兼容无损 ZRLE** mode (probe flag `--zrle`) omits Tight and JPEG
+quality advertisements while retaining ZRLE/CopyRect/Raw. Select it explicitly
+when Tight/JPEG interoperability or the measured CPU/byte tradeoff is unsuitable.
+It does not retry failed security negotiation or silently downgrade authentication.
 
 ## Verified VeNCrypt interoperability
 
@@ -149,3 +166,16 @@ or Unix child resource usage), including initial transfer and the fixed steady
 window. They are a separate run with their own runner hash; they are not UI/GPU
 latency or FPS. Timeout cases preserve the output collected before terminating
 the probe.
+
+## Real cursor plane acceptance
+
+`cursor_target.py` uses X11/Xcursor in a dedicated `adit-vnc-cursor` container,
+with TigerVNC :111 published only at 127.0.0.1:15912. Copy the helper and
+`start-cursor.sh` into that container, start the script, and wait for its Unix
+control socket `/tmp/adit-vnc-cursor.sock`. Run
+`cargo test -p adit-session --test vnc_cursor_real -- --ignored`.
+The test observes actual arrow/I-beam/custom colour and transparency-mask changes,
+nonzero hotspots, hidden shapes, uniform framebuffer isolation, and same-tab
+reconnection. Tiny visible corner pixels preserve the custom image bounding box
+against legitimate server cropping. Native DPI and toolbars still need UI acceptance.
+The Ubuntu CI job runs this test and cleans up the owned container.

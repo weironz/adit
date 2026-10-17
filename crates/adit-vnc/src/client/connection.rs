@@ -281,6 +281,7 @@ impl VncInner {
     /// Stop the VNC engine and release resources
     ///
     fn close(&mut self) -> Result<(), VncError> {
+        self.clipboard.set_permissions(false, false);
         self.desktop.close();
         if self.net_conn_stop.is_some() {
             let net_conn_stop: oneshot::Sender<()> = self.net_conn_stop.take().unwrap();
@@ -770,7 +771,7 @@ where
                 }
             }
             ServerMsg::ServerCutText(text) => {
-                output_func(VncEvent::Text(text)).await?;
+                output_func(VncEvent::Text(clipboard.receipt(text))).await?;
             }
         }
     }

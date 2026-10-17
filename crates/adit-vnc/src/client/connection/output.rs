@@ -36,7 +36,7 @@ mod tests {
     async fn error_waits_for_capacity_and_preserves_event_order() {
         let (output, mut events) = channel(2);
         output.try_send(VncEvent::Bell).unwrap();
-        output.try_send(VncEvent::Text("queued".into())).unwrap();
+        output.try_send(VncEvent::Bell).unwrap();
         let (_stop, mut stopped) = oneshot::channel();
         let task = report_error(VncError::InvalidImageData, &output, &mut stopped);
         tokio::pin!(task);
@@ -45,7 +45,7 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(1), task)
             .await
             .unwrap();
-        assert!(matches!(events.try_recv(), Ok(VncEvent::Text(text)) if text == "queued"));
+        assert!(matches!(events.try_recv(), Ok(VncEvent::Bell)));
         assert!(
             matches!(events.try_recv(), Ok(VncEvent::Error(message)) if message == VncError::InvalidImageData.to_string())
         );

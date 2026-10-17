@@ -1,0 +1,15 @@
+{
+  "source_commit": "d76f7440515b65d1123ea42de338ca2eaa87b09d",
+  "probe_sha256": "bc9a0963960c3df8179b82a6a5ec9d27a6771c575464ef5af3519e7c1874f878",
+  "client_profile": "debug",
+  "client_os": "Windows-11-10.0.26300-SP0",
+  "rust": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "docker_image": "sha256:4419240efbf5dbd9932e34a1d3c96793b22a98a5b5de56a98711607c5631bae6",
+  "resolution": "800x600x24",
+  "network": "container egress delay180ms rate5mbit loss0.1pct; loopback unshaped",
+  "sampling_mode": "15s first coverage deadline then fixed5s steady",
+  "samples_per_cell": 10,
+  "scope": "synthetic loopback fixtures only; not GPU or Windows server acceptance",
+  "runner_sha256": "0b815fce2a740b40e4824761c0e5086b4b83458755ac578451599d43848f028a",
+  "measurement": "independent CPU supplement; loopback only; process user+kernel CPU milliseconds, not UI/GPU FPS"
+}

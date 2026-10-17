@@ -181,6 +181,8 @@ pub enum VncQuality {
     #[default]
     Lossless,
     Wan,
+    /// Explicit recovery path for Tight/JPEG interoperability problems.
+    Zrle,
 }
 
 /// A profile's deployment environment, used to colour-code its tab so an operator

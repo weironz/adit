@@ -9,6 +9,8 @@ use adit_session::SessionManager;
 fn main() {
     let all_args: Vec<_> = std::env::args().collect();
     let wan = all_args.iter().any(|a| a == "--wan");
+    let zrle = all_args.iter().any(|a| a == "--zrle");
+    assert!(!(wan && zrle), "choose only one VNC quality mode");
     let steady = all_args
         .iter()
         .find_map(|a| a.strip_prefix("--steady-seconds="))
@@ -49,6 +51,8 @@ fn main() {
     profile.vnc.auto_reconnect = false;
     if wan {
         profile.vnc.quality = adit_domain::VncQuality::Wan;
+    } else if zrle {
+        profile.vnc.quality = adit_domain::VncQuality::Zrle;
     }
     let id = profile.id;
     let mut password = zeroize::Zeroizing::new(String::new());

@@ -92,7 +92,7 @@ pub enum VncEvent {
     ///
     /// According to [RFC6143](https://www.rfc-editor.org/rfc/rfc6143.html#section-7.6.4)
     ///
-    Text(String),
+    Text(crate::ClipboardText),
     /// If any unexpected error happens in the async process routines
     /// This event will propagate the error to the current context
     Error(String),

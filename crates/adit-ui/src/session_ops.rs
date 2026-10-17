@@ -736,6 +736,7 @@ pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     if app.vnc_grab_keys { keyboard_hook::disarm(); }
     app.vnc_grab_keys = false;
     app.vnc_preedit = None;
+    app.vnc_input_epoch = app.vnc_input_epoch.wrapping_add(1);
     for (_, keysym) in app.vnc_pressed_keys.drain(..) {
         app.manager.send_vnc_key_to_active(keysym, false);
     }
@@ -745,6 +746,12 @@ pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     }
     for button in [RdpMouseButton::Left, RdpMouseButton::Middle, RdpMouseButton::Right] {
         app.manager.send_rdp_input_to_active(RdpInput::MouseButton { button, pressed: false });
+    }
+    // VNC tracks the exact logical symbols above, including AltGr. RDP's
+    // unconditional PC modifier reset would inject key-ups this viewer never
+    // owned into a shared VNC desktop.
+    if app.manager.active_is_vnc() {
+        return;
     }
     // (scancode, extended) for both halves of each pair; the right-hand ones are
     // the same code with the extended flag, exactly as rdp_scancode_for_code

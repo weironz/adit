@@ -23,3 +23,5 @@ mod flow;
 mod clipboard;
 
 pub use client::connection::ClipboardPolicy;
+
+pub use clipboard::ClipboardText;

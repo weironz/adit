@@ -1,0 +1,70 @@
+{
+  "date": "2026-10-17",
+  "scope": "Independent Python RFB 3.8 client and actual Tk/X11 STRING selection; no Rust client code; synthetic clipboard text only.",
+  "versions": {
+    "x11vnc": "0.9.16-10 (upstream 0.9.16)",
+    "libvncserver": "0.9.14+dfsg-1ubuntu0.2"
+  },
+  "configuration": {
+    "x_server": "Xvfb :110, 800x600x24, no window manager",
+    "server": "x11vnc -display :110 -rfbport 15911 -nopw -localhost -forever -shared -debug_sel",
+    "network": "container loopback only; no host port mapping",
+    "client_encodings": [
+      "Raw"
+    ],
+    "extended_clipboard_advertised_by_client": false
+  },
+  "observations": [
+    {
+      "variant": "default startup, client clipboard sent before selection window exists",
+      "ascii_and_latin1_server_callbacks_received": true,
+      "tk_string_changed": false,
+      "selection_window_created_during_attempt": false
+    },
+    {
+      "variant": "same isolated server startup with X11VNC_AVOID_WINDOWS=never",
+      "selection_window_log_elapsed_seconds_approx": 4,
+      "latin1_client_to_x11_pass": true,
+      "latin1_x11_to_client_pass": true,
+      "first_ascii_sent_before_selection_window_still_failed": true
+    },
+    {
+      "variant": "default startup, keep same RFB connection until created selwin log",
+      "selection_ready_elapsed_seconds": 45.686,
+      "ascii_client_to_x11_pass": true,
+      "latin1_client_to_x11_pass": true,
+      "latin1_x11_to_client_pass": true,
+      "client_cut_text_latin1_hex": "636166e90a4c6174696e2d31",
+      "tk_string_readback_reencoded_latin1_hex": "636166e90a4c6174696e2d31",
+      "tk_remote_latin1_hex": "72656d6f746520636166e90a7365636f6e64206c696e65",
+      "server_cut_text_latin1_hex": "72656d6f746520636166e90a7365636f6e64206c696e65",
+      "key_log_events": [
+        "created selwin (about 46 seconds after connection)",
+        "Own PRIMARY",
+        "Own CLIPBOARD",
+        "Set CLIPBOARD",
+        "selection_send: send-ing it"
+      ]
+    }
+  ],
+  "source_evidence": [
+    {
+      "url": "https://github.com/LibVNC/x11vnc/blob/0.9.16/src/xevents.c#L286",
+      "finding": "guess_dm_gone waits 45 seconds after last_client without a window manager; no clients means not ready."
+    },
+    {
+      "url": "https://github.com/LibVNC/x11vnc/blob/0.9.16/src/xevents.c#L388",
+      "finding": "initialize_xevents creates selwin only when guess_dm_gone(8,45) succeeds."
+    },
+    {
+      "url": "https://github.com/LibVNC/x11vnc/blob/0.9.16/src/xevents.c#L1798",
+      "finding": "xcut_receive claims CLIPBOARD only when selwin exists; recording text before that does not establish X11 ownership."
+    },
+    {
+      "url": "https://github.com/LibVNC/x11vnc/blob/0.9.16/src/selection.c#L51",
+      "finding": "sel_waittime defaults to 15 seconds, independently delaying initial server selection transmission."
+    }
+  ],
+  "conclusion": "The reproduced traditional Latin-1 failure is caused by the headless x11vnc selection-owner initialization window. Waiting for explicit selection readiness makes both directions pass without changing client code. This does not establish Extended Clipboard/Unicode/empty-text support or acceptance of the Rust integration test.",
+  "cleanup": "All diagnostic-owned Xvfb, x11vnc and Tk helper processes terminated; existing containers and matrix servers were not restarted."
+}

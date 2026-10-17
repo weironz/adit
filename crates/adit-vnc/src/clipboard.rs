@@ -15,6 +15,32 @@ const NOTIFY: u32 = 1 << 27;
 const PROVIDE: u32 = 1 << 28;
 const ACTIONS: u32 = CAPS | REQUEST | PEEK | NOTIFY | PROVIDE;
 const MAX: usize = crate::limits::MAX_TEXT;
+const SEND_EPOCH: u64 = ((1_u64 << 31) - 1) << 2;
+const RECEIVE_EPOCH: u64 = !((1_u64 << 33) - 1);
+
+/// A decoded receipt keeps its permission generation until the consumer takes
+/// it. Disabling then re-enabling sharing cannot revive a queued old receipt.
+#[derive(Clone)]
+pub struct ClipboardText {
+    text: String,
+    permissions: Arc<Permissions>,
+    epoch: u64,
+}
+impl std::fmt::Debug for ClipboardText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClipboardText")
+            .field("current", &self.is_current())
+            .finish_non_exhaustive()
+    }
+}
+impl ClipboardText {
+    pub fn is_current(&self) -> bool {
+        self.permissions.receives(self.epoch)
+    }
+    pub fn into_current_text(self) -> Option<String> {
+        self.is_current().then_some(self.text)
+    }
+}
 #[derive(Default)]
 pub(crate) struct Clipboard {
     pub enabled: AtomicBool,
@@ -41,12 +67,24 @@ impl Permissions {
                 if old & 3 == bits {
                     None
                 } else {
-                    Some(((old >> 2).wrapping_add(1) << 2) | bits)
+                    let mut next = (old & !3) | bits;
+                    if (old ^ bits) & 1 != 0 {
+                        next = (next & !SEND_EPOCH) | (old.wrapping_add(4) & SEND_EPOCH);
+                    }
+                    if (old ^ bits) & 2 != 0 {
+                        next =
+                            (next & !RECEIVE_EPOCH) | (old.wrapping_add(1 << 33) & RECEIVE_EPOCH);
+                    }
+                    Some(next)
                 }
             });
     }
     pub(crate) fn snapshot(&self) -> u64 {
         self.0.load(Ordering::Acquire)
+    }
+    fn receives(&self, epoch: u64) -> bool {
+        let value = self.snapshot();
+        value & 2 != 0 && (value & (RECEIVE_EPOCH | 2)) == (epoch & (RECEIVE_EPOCH | 2))
     }
     pub(crate) fn permits(&self, epoch: u64, message: &super::client::messages::ClientMsg) -> bool {
         use super::client::messages::ClientMsg;
@@ -55,15 +93,13 @@ impl Permissions {
         {
             return true;
         }
-        if value != epoch {
-            return false;
-        }
+        let sends = value & 1 != 0 && (value & (SEND_EPOCH | 1)) == (epoch & (SEND_EPOCH | 1));
         match message {
-            ClientMsg::LegacyCutText(_) => value & 1 != 0,
+            ClientMsg::LegacyCutText(_) => sends,
             ClientMsg::ExtendedCutText(bytes) if bytes.len() >= 4 => {
                 match u32::from_be_bytes(bytes[..4].try_into().unwrap()) & ACTIONS {
-                    PROVIDE | NOTIFY => value & 1 != 0,
-                    REQUEST => value & 2 != 0,
+                    PROVIDE | NOTIFY => sends,
+                    REQUEST => self.receives(epoch),
                     CAPS => true,
                     _ => false,
                 }
@@ -81,6 +117,16 @@ fn extended(flags: u32, data: &[u8]) -> Vec<u8> {
     bytes
 }
 impl Clipboard {
+    pub(crate) fn receipt(&self, text: String) -> ClipboardText {
+        self.receipt_at(text, self.permissions.snapshot())
+    }
+    fn receipt_at(&self, text: String, epoch: u64) -> ClipboardText {
+        ClipboardText {
+            text,
+            permissions: Arc::clone(&self.permissions),
+            epoch,
+        }
+    }
     pub fn set_permissions(&self, send: bool, receive: bool) {
         self.permissions.set(send, receive);
         if !send {
@@ -160,7 +206,7 @@ impl Clipboard {
     pub async fn receive(
         &self,
         payload: &[u8],
-    ) -> Result<(Option<String>, Option<bool>), VncError> {
+    ) -> Result<(Option<ClipboardText>, Option<bool>), VncError> {
         if payload.len() < 4 || payload.len() > MAX {
             return Err(VncError::InvalidImageData);
         }
@@ -240,7 +286,7 @@ impl Clipboard {
         if let (Some(reply), Some(sender)) = (reply, sender) {
             let action = u32::from_be_bytes(reply[..4].try_into().unwrap()) & ACTIONS;
             if matches!(action, PROVIDE | NOTIFY) && !self.permissions().0 {
-                return Ok((text, capability));
+                return Ok((text.map(|text| self.receipt_at(text, epoch)), capability));
             }
             sender
                 .send(self.guarded(
@@ -249,7 +295,7 @@ impl Clipboard {
                 ))
                 .await?;
         }
-        Ok((text, capability))
+        Ok((text.map(|text| self.receipt_at(text, epoch)), capability))
     }
 }
 
@@ -270,15 +316,15 @@ mod tests {
         let clip = Clipboard::default();
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
         *clip.sender.lock().unwrap() = Some(tx);
-        assert_eq!(
-            clip.receive(&extended(
+        let (text, capability) = clip
+            .receive(&extended(
                 CAPS | TEXT | REQUEST | PEEK | NOTIFY | PROVIDE,
-                &0_u32.to_be_bytes()
+                &0_u32.to_be_bytes(),
             ))
             .await
-            .unwrap(),
-            (None, Some(true))
-        );
+            .unwrap();
+        assert!(text.is_none());
+        assert_eq!(capability, Some(true));
         assert!(matches!(
             received(&mut rx).await,
             Some(ClientMsg::ExtendedCutText(_))
@@ -314,7 +360,12 @@ mod tests {
                 "clipboard stream must end in a sync flush"
             );
             assert_eq!(
-                clip.receive(&bytes).await.unwrap().0.as_deref(),
+                clip.receive(&bytes)
+                    .await
+                    .unwrap()
+                    .0
+                    .and_then(ClipboardText::into_current_text)
+                    .as_deref(),
                 Some(normalize(text).as_str())
             );
         }
@@ -340,7 +391,12 @@ mod tests {
         );
         // Losing remote text ownership is not an empty text payload.
         // Servers send this after accepting our local clipboard offer too.
-        assert_eq!(clip.receive(&extended(NOTIFY, &[])).await.unwrap().0, None);
+        assert!(clip
+            .receive(&extended(NOTIFY, &[]))
+            .await
+            .unwrap()
+            .0
+            .is_none());
         clip.set_permissions(true, false);
         clip.receive(&extended(NOTIFY | TEXT, &[])).await.unwrap();
         assert!(rx.try_recv().is_err());
@@ -390,6 +446,37 @@ mod tests {
         assert!(
             bytes.is_empty(),
             "old clipboard body crossed a sharing-policy change"
+        );
+    }
+    #[tokio::test]
+    async fn receive_receipts_and_requests_keep_independent_permission_generations() {
+        let (clip, mut rx) = negotiated().await;
+        let receipt = clip.receipt("synthetic remote text".into());
+        clip.receive(&extended(NOTIFY | TEXT, &[])).await.unwrap();
+        let queued_request = rx.recv().await.unwrap();
+        clip.set_permissions(false, true);
+        assert_eq!(
+            receipt.into_current_text().as_deref(),
+            Some("synthetic remote text")
+        );
+        let (mut writer, mut reader) = tokio::io::duplex(128);
+        queued_request.write(&mut writer).await.unwrap();
+        drop(writer);
+        use tokio::io::AsyncReadExt;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert!(
+            !bytes.is_empty(),
+            "read-only revoked an unrelated receive request"
+        );
+        let old = clip.receipt("revoked text".into());
+        assert!(!format!("{old:?}").contains("revoked text"));
+        clip.set_permissions(false, false);
+        clip.set_permissions(false, true);
+        assert!(old.into_current_text().is_none());
+        assert_eq!(
+            clip.receipt("fresh".into()).into_current_text().as_deref(),
+            Some("fresh")
         );
     }
 }

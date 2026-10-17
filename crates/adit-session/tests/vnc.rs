@@ -624,3 +624,108 @@ fn fence_keeps_an_idle_desktop_alive_and_detects_a_controlled_half_open_peer() {
     server.join().unwrap();
     assert!(manager.sessions().is_empty());
 }
+
+#[test]
+fn queued_remote_clipboard_does_not_survive_sharing_off_then_on() {
+    let (trigger, commands) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init(&mut stream);
+        while message(&mut stream).unwrap().0 != 3 {}
+        for _ in 0..2 {
+            let text: String = commands.recv_timeout(Duration::from_secs(5)).unwrap();
+            let mut packet = vec![3, 0, 0, 0];
+            packet.extend((text.len() as u32).to_be_bytes());
+            packet.extend(text.as_bytes());
+            // The following update is an observable decoder/worker barrier.
+            packet.extend([0, 0, 0, 0]);
+            stream.write_all(&packet).unwrap();
+        }
+        while message(&mut stream).is_some() {}
+    });
+    let (mut manager, id) = manager(port);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
+    trigger.send("queued old remote text".to_string()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while manager.active_vnc_diagnostics().unwrap().complete_updates < 1 {
+        assert!(
+            Instant::now() < deadline,
+            "worker did not pass the clipboard barrier"
+        );
+        thread::sleep(Duration::from_millis(5));
+    }
+    // No poll_events after the barrier: the decoded text is queued in the
+    // session event channel when the user changes the policy twice.
+    manager.set_rdp_clipboard(false);
+    manager.set_rdp_clipboard(true);
+    manager.poll_events();
+    assert!(
+        manager.take_rdp_clipboard().is_none(),
+        "old queued text crossed off/on"
+    );
+    trigger.send("fresh remote text".to_string()).unwrap();
+    wait(&mut manager, |m| {
+        m.take_rdp_clipboard().as_deref() == Some("fresh remote text")
+    });
+    manager.close(session);
+    server.join().unwrap();
+}
+
+#[test]
+fn zrle_compatibility_omits_tight_and_jpeg_and_paints_lossless_pixels() {
+    let (encoding_tx, encoding_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init(&mut stream);
+        loop {
+            let (tag, data) = message(&mut stream).unwrap();
+            if tag == 2 {
+                let encodings: Vec<_> = data
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|bytes| i32::from_be_bytes(*bytes))
+                    .collect();
+                encoding_tx.send(encodings).unwrap();
+            }
+            if tag == 3 {
+                break;
+            }
+        }
+        let mut packet = vec![0, 0, 0, 1];
+        for value in [0_u16, 0, 4, 2] {
+            packet.extend(value.to_be_bytes());
+        }
+        packet.extend(16_i32.to_be_bytes()); // ZRLE solid-color tile.
+        // Sync-flushed persistent zlib stream: subencoding 1 and one RGB pixel.
+        let compressed = [120, 156, 98, 228, 22, 83, 4, 0, 0, 0, 255, 255];
+        packet.extend((compressed.len() as u32).to_be_bytes());
+        packet.extend(compressed);
+        stream.write_all(&packet).unwrap();
+        while message(&mut stream).is_some() {}
+    });
+    let mut profile = ConnectionProfile::new("compatibility", "127.0.0.1", port, "");
+    profile.protocol = Protocol::Vnc;
+    profile.vnc.security = adit_domain::VncSecurity::AllowNone;
+    profile.vnc.quality = adit_domain::VncQuality::Zrle;
+    profile.vnc.auto_reconnect = false;
+    let id = profile.id;
+    let mut manager = SessionManager::with_profiles(vec![profile]);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    let encodings = encoding_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert!(encodings.contains(&16));
+    assert!(encodings.contains(&0) && encodings.contains(&1));
+    assert!(!encodings.contains(&7), "Tight was still advertised");
+    assert!(
+        !encodings.iter().any(|value| (-32..=-23).contains(value)),
+        "JPEG quality was still advertised"
+    );
+    wait(&mut manager, |m| {
+        m.active_vnc_diagnostics().unwrap().covered_pixels == 8
+    });
+    let frame = manager.active_rdp_frame_if_newer(0).unwrap();
+    assert_eq!(frame.rgba.as_slice(), [11, 22, 33, 255].repeat(8));
+    manager.close(session);
+    server.join().unwrap();
+}

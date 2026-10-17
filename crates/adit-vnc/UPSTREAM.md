@@ -5,3 +5,9 @@ Imported from the locked local Cargo source, including its existing decoder boun
 cancellation, and ExtendedDesktopSize fixes. Adit additions provide explicit security
 policy, certificate-validated VeNCrypt, bounded refresh, complete-update metadata,
 and negotiated UTF-8 clipboard. Keep changes in this directory, never Cargo cache.
+
+Clipboard text events carry a guarded `ClipboardText` receipt. Consumers keep it
+queued until use, then call `into_current_text()`; they must not turn it into an
+unguarded string while another queue still awaits delivery. Send and receive
+permission generations are independent, so read-only transitions preserve queued
+receive requests while disabling sharing revokes old incoming/outgoing text.

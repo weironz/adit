@@ -30,3 +30,9 @@ every server/workload. See [fixture method](../README.md).
 [2026-10-17 Linux report](2026-10-17-linux-steady-report.md) summarizes all 360
 successful observations with per-cell medians/min/max and explicit measurement
 limits. The raw JSON and fixed binary identity remain beside it.
+
+## Independent CPU supplement
+
+[2026-10-17 CPU report](2026-10-17-linux-cpu-report.md) summarizes 180 additional
+loopback observations with process CPU, first coverage and update bytes. The
+original 360-sample matrix has no retroactively generated CPU metrics.

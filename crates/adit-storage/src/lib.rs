@@ -1701,6 +1701,13 @@ Host db
         let loaded=store.load_profiles().unwrap();
         assert_eq!(serde_json::to_value(&loaded[0]).unwrap(),serde_json::to_value(&vnc).unwrap());
         assert_eq!(serde_json::to_value(&loaded[1]).unwrap(),serde_json::to_value(&gateway).unwrap());
+        for quality in [VncQuality::Lossless, VncQuality::Zrle] {
+            vnc.vnc.quality = quality;
+            store.save_profiles(&[vnc.clone(), gateway.clone()]).unwrap();
+            let loaded = store.load_profiles().unwrap();
+            assert_eq!(loaded[0].vnc.quality, quality);
+            assert_eq!(serde_json::to_value(&loaded[1]).unwrap(), serde_json::to_value(&gateway).unwrap());
+        }
         fs::remove_file(path).unwrap();
     }
 

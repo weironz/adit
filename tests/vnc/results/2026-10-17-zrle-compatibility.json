@@ -1,0 +1,28 @@
+{
+  "probe_sha256": "f4e090c8e1e8b6cc272840d220e36810b0aab5f36bdb4c46d63c26746ce06c8c",
+  "results": [
+    {
+      "server": "x11vnc",
+      "port": 15902,
+      "exit": 0,
+      "stdout": "connected_ms=488\nfirst_paint_ms=2155 size=800x600\nelapsed_ms=2155 generation=5 coverage=3.4%\ncomplete_paint_ms=2320 generation=131\ndiagnostics=Some(VncDiagnostics { tcp_ms: 3, handshake_ms: 478, first_pixel_ms: Some(2146), first_complete_ms: Some(1530), complete_updates: 2, wire_bytes: 1392670, pending_updates: 1, fence_rtt_ms: None, painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(2310), sampled_generation: 131, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(-239, 1), (16, 1)]\", clipboard_utf8: true, status: \"已连接\" })\ncomplete=true\nsample_ms=3322 steady_ms=1001\n",
+      "stderr": ""
+    },
+    {
+      "server": "TigerVNC",
+      "port": 15903,
+      "exit": 0,
+      "stdout": "connected_ms=42\nfirst_paint_ms=115 size=800x600\ncomplete_paint_ms=288 generation=196\ndiagnostics=Some(VncDiagnostics { tcp_ms: 3, handshake_ms: 31, first_pixel_ms: Some(105), first_complete_ms: Some(36), complete_updates: 2, wire_bytes: 1218226, pending_updates: 1, fence_rtt_ms: Some(19), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(272), sampled_generation: 196, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(16, 8), (-224, 1)]\", clipboard_utf8: true, status: \"已连接\" })\ncomplete=true\nsample_ms=1289 steady_ms=1000\n",
+      "stderr": ""
+    },
+    {
+      "server": "TurboVNC",
+      "port": 15904,
+      "exit": 0,
+      "stdout": "connected_ms=140\nfirst_paint_ms=313 size=800x600\nelapsed_ms=505 generation=93 coverage=75.5%\ncomplete_paint_ms=584 generation=131\ndiagnostics=Some(VncDiagnostics { tcp_ms: 4, handshake_ms: 134, first_pixel_ms: Some(296), first_complete_ms: Some(271), complete_updates: 2, wire_bytes: 1392049, pending_updates: 1, fence_rtt_ms: Some(389), painted_pixels: 480000, covered_pixels: 480000, framebuffer_pixels: 480000, first_covered_ms: Some(564), sampled_generation: 131, queue_high_water: 0, security: \"VncAuth\", encoding: \"[(-239, 1), (16, 1)]\", clipboard_utf8: true, status: \"已连接\" })\ncomplete=true\nsample_ms=1591 steady_ms=1006\n",
+      "stderr": ""
+    }
+  ],
+  "scope": "three real Linux servers, explicit ZRLE compatibility, one smoke sample per server; not a performance comparison",
+  "base_commit": "c43124b6efd16ede8c6a12c11d29df953c4cdba1"
+}

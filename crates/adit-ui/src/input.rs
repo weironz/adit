@@ -175,6 +175,36 @@ pub(super) fn encode_rdp_scancode(event: &keyboard::Event) -> Option<(u8, bool, 
     Some((scancode, extended, pressed))
 }
 
+/// Local overlays and text fields own input even when their ignored keys bubble
+/// to the runtime. Keep this VNC-only so the existing RDP focus contract stays intact.
+pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
+    app.manager.active_is_vnc()
+        && app.manager.active_session_summary().is_some_and(|s| s.status == SessionStatus::Connected)
+        && !app.manager.active_vnc_read_only()
+        && app.desktop_window_focused
+        && app.terminal_focused
+        && app.main_view == MainView::Terminal
+        && app.active_menu.is_none()
+        && !app.settings_open
+        && app.profile_editor.is_none()
+        && app.connection_dialog.is_none()
+        && app.manager.pending_host_key().is_none()
+        && app.auth_prompt.is_none()
+        && app.pending_hyperlink.is_none()
+        && !app.manager.sftp_is_open()
+        && !app.tunnels_open
+        && !app.about_open
+        && !app.update_dialog_open
+        && !app.paste_confirm_open
+        && app.renaming_session.is_none()
+        && !app.snippets_open
+        && !app.known_hosts_open
+        && !app.command_window_open
+        && !app.search_open
+        && app.editing_profile.is_none()
+        && app.editing_group.is_none()
+}
+
 /// VNC sends logical X11 keysyms. Keep the symbol chosen at key-down so a
 /// modifier/layout change before key-up cannot leave the original symbol held.
 pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {

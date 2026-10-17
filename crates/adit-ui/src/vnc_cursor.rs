@@ -7,6 +7,8 @@ use iced::{Rectangle, Size};
 pub(crate) struct CursorLayer {
     pub cursor: Option<adit_session::VncCursor>,
     pub ime_enabled: bool,
+    pub session_id: SessionId,
+    pub input_epoch: u64,
     pub preedit: Option<iced::advanced::input_method::Preedit>,
     pub handle: Option<iced::widget::image::Handle>,
     pub logical_size: Size,
@@ -86,7 +88,7 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
                 preedit: self.preedit.clone(),
             });
             if let iced::Event::InputMethod(event) = event {
-                shell.publish(Message::VncImeEvent(event.clone()));
+                shell.publish(Message::VncImeEvent(self.session_id, self.input_epoch, event.clone()));
                 shell.capture_event();
             }
         }

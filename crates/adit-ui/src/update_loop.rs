@@ -1,6 +1,22 @@
 use super::*;
 
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
+    let task = update_message(app, message);
+    // Focus can move locally without a WindowUnfocused event (settings, menus,
+    // sidebar fields). Release keys before returning even from early Task paths.
+    if app.manager.active_is_vnc() && !vnc_accepts_text_input(app) {
+        if !app.vnc_pressed_keys.is_empty() || app.vnc_grab_keys || app.vnc_preedit.is_some() {
+            release_rdp_modifiers(app);
+        } else {
+            // A commit can already be queued even when no preedit/key is held.
+            // Closing the local overlay must not revive that old input lease.
+            app.vnc_input_epoch = app.vnc_input_epoch.wrapping_add(1);
+        }
+    }
+    task
+}
+
+fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
     match message {
         Message::Vault(message) => return vault_ui::update(app, message),
         Message::Tick => {
@@ -354,12 +370,14 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.modifiers = modifiers;
         }
         Message::WindowUnfocused => {
+            app.desktop_window_focused = false;
             app.vnc_grab_keys = false;
             keyboard_hook::disarm();
             // Whatever is held right now gets released somewhere we cannot see.
             release_rdp_modifiers(app);
         }
         Message::WindowFocused => {
+            app.desktop_window_focused = true;
             // The startup maximize, deferred to the first moment the window is
             // provably visible. Creation-time `maximized` shows the hidden
             // window on Windows — the launch flash — so `run()` leaves it off
@@ -2182,7 +2200,9 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                     return Task::none();
                 }
                 if app.manager.active_is_vnc() {
-                    send_vnc_keyboard(app, &event);
+                    if vnc_accepts_text_input(app) {
+                        send_vnc_keyboard(app, &event);
+                    }
                     return Task::none();
                 }
                 if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
@@ -2911,9 +2931,12 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
                 String::from(t("已关闭：新主机密钥将逐个确认"))
             };
         }
-        Message::VncImeEvent(event) => {
+        Message::VncImeEvent(session_id, input_epoch, event) => {
             use iced::advanced::input_method::{Event, Preedit};
-            if app.manager.active_is_vnc() && !app.manager.active_vnc_read_only() {
+            if app.manager.active_session() == Some(session_id)
+                && app.vnc_input_epoch == input_epoch
+                && vnc_accepts_text_input(app)
+            {
                 match event {
                     Event::Commit(text) => {
                         app.vnc_preedit = None;
@@ -3256,6 +3279,7 @@ fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
     app.vnc_cursor = None;
     app.vnc_cursor_handle = None;
     app.vnc_pressed_keys.clear();
+    app.vnc_input_epoch = app.vnc_input_epoch.wrapping_add(1);
     app.vnc_preedit = None;
     app.vnc_grab_keys = false;
     app.rdp_clipboard_offered = None;

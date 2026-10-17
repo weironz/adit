@@ -159,6 +159,43 @@ jobs:
           ADIT_VNC_CLIP_LOCAL=1 ADIT_VNC_CLIP_PORT=15900 ADIT_VNC_CLIP_DISPLAY=99 \
             cargo test -p adit-session --test vnc_clipboard -- --ignored
 
+      - name: VNC SSH gateway and protected credential connections
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          docker build -t adit-vnc-integration:local tests/vnc
+          trap 'docker rm -f adit-vnc-integration adit-vnc-cursor 2>/dev/null || true' EXIT
+          docker run -d --name adit-vnc-integration --memory 1g \
+            -p 127.0.0.1:15901:15901 -p 127.0.0.1:12222:22 \
+            -p 127.0.0.1:15903:15903 adit-vnc-integration:local
+          for attempt in {1..100}; do
+            if docker exec adit-vnc-integration test -f /tmp/vnc-passwd \
+              && (echo > /dev/tcp/127.0.0.1/12222) 2>/dev/null; then break; fi
+            sleep 0.1
+          done
+          # A separate display supplies the vault's ordinary direct VNC path.
+          docker exec -d adit-vnc-integration Xtigervnc :108 -noreset \
+            -geometry 800x600 -depth 24 -rfbport 15903 \
+            -PasswordFile /tmp/vnc-passwd -SecurityTypes VncAuth -localhost=0
+          for attempt in {1..100}; do
+            if (echo > /dev/tcp/127.0.0.1/15903) 2>/dev/null; then break; fi
+            sleep 0.1
+          done
+          cargo test -p adit-session --test vnc_gateway -- --ignored --test-threads=1
+          cargo test -p adit-ui --test vault_connections -- --ignored --test-threads=1
+          docker create --name adit-vnc-cursor --memory 512m \
+            -p 127.0.0.1:15912:15912 --entrypoint /bin/sh \
+            adit-vnc-integration:local -c 'sleep 3600'
+          docker cp tests/vnc/cursor_target.py adit-vnc-cursor:/cursor_target.py
+          docker cp tests/vnc/start-cursor.sh adit-vnc-cursor:/start-cursor.sh
+          docker start adit-vnc-cursor
+          docker exec -d adit-vnc-cursor /bin/sh /start-cursor.sh
+          for attempt in {1..100}; do
+            if docker exec adit-vnc-cursor test -S /tmp/adit-vnc-cursor.sock; then break; fi
+            sleep 0.1
+          done
+          cargo test -p adit-session --test vnc_cursor_real -- --ignored
+
       # The RDP helper is excluded from the workspace (IronRDP's dependency pins
       # cannot coexist with russh's), so nothing above touches it — until now it
       # was built only at release time, where a break lands too late to be cheap.
