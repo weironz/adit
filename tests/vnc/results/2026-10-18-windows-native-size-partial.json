@@ -1,0 +1,248 @@
+{
+  "date": "2026-10-18",
+  "issue": 213,
+  "status": "partial native Windows size-change evidence; not acceptance completion",
+  "binary_build_base": "711c5e7fc1ba40620444487740c0ee4c480b85fe",
+  "binary_sha256": "49f0c15e8c8a5d48167414dc7c5d922bc36403830eb778e3b75abb03b86b8a0c",
+  "contains_39a3c3f_resize_coverage_fix": false,
+  "os_scale": 1.25,
+  "app_scale": 1.0,
+  "fixture": "Existing isolated real TigerVNC loopback15915, synthetic grid, clipboard disabled, no user profiles",
+  "observations": [
+    "Fresh isolated Windows process34104 restored a normal1102x791 logical screenshot; previous fixture54452 only yielded2x31 snapshots and was retired.",
+    "Explicit Remote resize changed actual Tiger1312x836 to1352x836.",
+    "Sky left-edge drag did not resize the OS window; it generated remote pointer/button input and is excluded.",
+    "Enabled native Alt+Space Size was selected, followed by Right. Subsequent Left encountered user-input interruption; all further UI input stopped when a separate authentication dialog appeared.",
+    "WindowResized events show real sizes changing and final surface1252x836; independent Tiger xrandr confirmed1252x836.",
+    "The complete sequence cannot be attributed exclusively to automation, and no post-change click or full-frame acceptance was performed."
+  ],
+  "source_event_sha256": "d4fb332c0bf86734e1259a9214ca4b0e0d7f12cfe48f764332b60980f33e493c",
+  "window_and_geometry_events": [
+    {
+      "line": 1,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "line": 2,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "line": 3,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1100.0
+    },
+    {
+      "line": 4,
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 1,
+        "height": 0,
+        "hotspot_x": 0,
+        "hotspot_y": 0,
+        "width": 0
+      },
+      "display_scale": 1.0,
+      "event": "geometry",
+      "os_scale": 1.0,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "line": 6,
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1312,
+        836
+      ]
+    },
+    {
+      "line": 10,
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1352,
+        836
+      ]
+    },
+    {
+      "line": 27,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1101.5999755859375
+    },
+    {
+      "line": 28,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1124.0
+    },
+    {
+      "line": 29,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1230.4000244140625
+    },
+    {
+      "line": 30,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1325.5999755859375
+    },
+    {
+      "line": 31,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1292.800048828125
+    },
+    {
+      "line": 32,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1280.0
+    },
+    {
+      "line": 33,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1276.0
+    },
+    {
+      "line": 34,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1256.800048828125
+    },
+    {
+      "line": 35,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1248.800048828125
+    },
+    {
+      "line": 36,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1248.0
+    },
+    {
+      "line": 37,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1246.4000244140625
+    },
+    {
+      "line": 38,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1106.4000244140625
+    },
+    {
+      "line": 39,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1101.5999755859375
+    },
+    {
+      "line": 40,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1102.4000244140625
+    },
+    {
+      "line": 41,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1103.199951171875
+    },
+    {
+      "line": 42,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1104.0
+    },
+    {
+      "line": 43,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1102.4000244140625
+    },
+    {
+      "line": 44,
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "width": 1020.0
+    },
+    {
+      "line": 45,
+      "app_scale": 1.0,
+      "cursor": {
+        "generation": 2,
+        "height": 16,
+        "hotspot_x": 5,
+        "hotspot_y": 7,
+        "width": 16
+      },
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1252,
+        836
+      ]
+    }
+  ],
+  "not_proven": [
+    "Controlled rapid border dragging",
+    "Complete100/150/200 OS DPI matrix",
+    "Current39a3c3f rendering fix on actual Windows GUI",
+    "Post-change coordinate and complete-frame acceptance"
+  ],
+  "current_fix_harness": "A fresh current-source feature-enabled Windows harness build completed successfully after3m25s; not launched while manual security UI is being operated."
+}
