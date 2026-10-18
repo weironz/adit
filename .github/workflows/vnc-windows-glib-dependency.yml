@@ -1,0 +1,287 @@
+name: Windows GLib matching dependency metadata (no execution)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-glib-layout']
+    paths:
+      - '.github/workflows/vnc-windows-glib-dependency.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify-metadata:
+    name: Verify signed 2.88.3 package and exact bundled DLL identity
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify official signature and inspect matching helper metadata only
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import re
+          import shutil
+          import signal
+          import struct
+          import subprocess
+          import sys
+          import time
+          import urllib.parse
+          import urllib.request
+
+          # Package data is never executed, installed or added to PATH. Every
+          # external tool is an existing Ubuntu runner tool, invoked with argv.
+          if (sys.platform != "linux" or os.environ.get("GITHUB_ACTIONS") != "true"
+              or os.environ.get("RUNNER_ENVIRONMENT") != "github-hosted"
+              or os.environ.get("RUNNER_OS") != "Linux"
+              or not os.environ.get("GITHUB_SHA")
+              or not os.environ.get("RUNNER_TEMP")):
+              raise SystemExit("Restricted to a disposable GitHub-hosted Linux runner")
+          runner_temp = Path(os.environ["RUNNER_TEMP"]).resolve(strict=True)
+          root = runner_temp / "adit-vnc-glib-dependency"
+          if root.exists() or root.parent != runner_temp:
+              raise SystemExit("A fresh RUNNER_TEMP directory is required")
+          root.mkdir(mode=0o700)
+          evidence = root / "metadata"
+          evidence.mkdir()
+          downloads = root / "downloads"
+          downloads.mkdir()
+          extracted = root / "selected-package-data"
+          extracted.mkdir()
+          gnupg = root / "gnupg"
+          gnupg.mkdir(mode=0o700)
+          deadline = time.monotonic() + 210
+
+          def alarm_expired(signum, frame):
+              raise TimeoutError("Overall metadata-only deadline (210 seconds)")
+
+          signal.signal(signal.SIGALRM, alarm_expired)
+          signal.alarm(210)
+          record = {
+              "outcome": "failed", "phase": "guard_passed",
+              "source_sha": os.environ["GITHUB_SHA"],
+              "run_id": os.environ.get("GITHUB_RUN_ID"),
+              "runner": os.environ.get("RUNNER_NAME"),
+              "scope": "Official signed package and PE metadata only; no QEMU, helper, installer, package script or VNC execution; no DLL replacement, PATH, system networking or protection changes.",
+              "vendor_binaries_executed": False,
+              "package_checksum_is_new_measurement_not_prepublished": True,
+              "dependency_execution_authorized": False,
+              "downloads": [],
+          }
+
+          def json_write(name, value):
+              (evidence / name).write_text(json.dumps(value, indent=2) + "\n", encoding="utf-8")
+
+          def phase(name):
+              record["phase"] = name
+              with (evidence / "phases.txt").open("a", encoding="utf-8") as out:
+                  out.write(datetime.datetime.now(datetime.timezone.utc).isoformat() + " " + name + "\n")
+              json_write("result.json", record)
+
+          def digest(data):
+              return hashlib.sha256(data).hexdigest()
+
+          def run(argv, label, timeout=20, save_stdout=True):
+              remaining = deadline - time.monotonic()
+              if remaining <= 0:
+                  raise TimeoutError("No time left for " + label)
+              try:
+                  result = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                          timeout=min(timeout, remaining), check=False)
+              except subprocess.TimeoutExpired as error:
+                  if save_stdout:
+                      (evidence / (label + ".stdout.txt")).write_bytes(error.stdout or b"")
+                  (evidence / (label + ".stderr.txt")).write_bytes(error.stderr or b"")
+                  raise
+              if save_stdout:
+                  (evidence / (label + ".stdout.txt")).write_bytes(result.stdout)
+              (evidence / (label + ".stderr.txt")).write_bytes(result.stderr)
+              if result.returncode != 0:
+                  raise RuntimeError(label + " failed with exit " + str(result.returncode))
+              return result.stdout
+
+          def fetch(url, name, maximum):
+              # No redirects to an unrelated host, keyservers or user keyring.
+              request = urllib.request.Request(url, headers={"User-Agent": "Adit-public-metadata-audit"})
+              with urllib.request.urlopen(request, timeout=25) as response:
+                  final_url = response.geturl()
+                  final = urllib.parse.urlsplit(final_url)
+                  if final.scheme != "https" or final.netloc != urllib.parse.urlsplit(url).netloc:
+                      raise RuntimeError("Unexpected download host redirect")
+                  data = response.read(maximum + 1)
+                  if len(data) > maximum:
+                      raise RuntimeError("Download size exceeds bound: " + name)
+                  item = {"name": name, "url": url, "final_url": final_url,
+                          "bytes": len(data), "measured_sha256": digest(data),
+                          "last_modified": response.headers.get("Last-Modified")}
+              path = downloads / name
+              path.write_bytes(data)
+              record["downloads"].append(item)
+              json_write("result.json", record)
+              return path
+
+          key_commit = "5d249077a0cfeec9dbf51515e5e01da413d28859"
+          source_commit = "716ee21e59851aa4d15e34c8353580334276b0e6"
+          key_base = "https://raw.githubusercontent.com/msys2/MSYS2-keyring/" + key_commit
+          package_name = "mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst"
+          package_url = "https://repo.msys2.org/mingw/mingw64/" + package_name
+          expected_signer = "5F944B027F7FE2091985AA2EFA11531AA0AA7F57"
+          expected_dll_sha256 = "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec"
+          masters = [
+              "D55E7A6D7CE9BA1587C0ACACF40D263ECA25678A",
+              "B91BCF3303284BF90CC043CA9F418C233E652008",
+              "9DD0D4217D75A33B896159E6DA7EF2ABAEEA755C",
+              "6E8FEAFF9644F54EED90EEA0790AE56A1D3CFDDC",
+              "69985C5EB351011C78DF7F6D755B8182ACD22879",
+          ]
+          sources = {
+              "package_url": package_url, "signature_url": package_url + ".sig",
+              "package_version": "2.88.3-1", "package_repository": "mingw64",
+              "package_expected_prepublished_checksum": None,
+              "keyring_commit": key_commit, "keyring_urls": [key_base + "/" + name for name in ("msys2.gpg", "msys2-trusted", "msys2-revoked")],
+              "official_master_fingerprints": masters,
+              "expected_developer_signer": expected_signer,
+              "pkgbuild_commit": source_commit,
+              "pkgbuild_url": "https://raw.githubusercontent.com/msys2/MINGW-packages/" + source_commit + "/mingw-w64-glib2/PKGBUILD",
+              "upstream_source_url": "https://download.gnome.org/sources/glib/2.88/glib-2.88.3.tar.xz",
+              "license_reference": "LGPL-2.1-or-later; signed package COPYING and pinned PKGBUILD archived as metadata",
+              "qemu_reference_run": 39150021676,
+              "qemu_reference_source_sha": "0ae745c50b73e7f7cc220a70c8907ce5dae04bfa",
+              "qemu_reference_glib_dll_sha256": expected_dll_sha256,
+              "trust_bootstrap": "Only the five official master fingerprints from the pinned msys2-trusted file are explicit GPG trust anchors (--trusted-key). Default GPG trust calculation/current time must validate the developer signer as TRUST_FULLY. No trust-model override or developer-key trust elevation. Official HTTPS commit content is the bootstrap source, not an independent out-of-band identity attestation.",
+              "references": ["https://www.msys2.org/dev/keyring/", "https://www.gnupg.org/documentation/manuals/gnupg/GPG-Configuration-Options.html"],
+          }
+          json_write("sources.json", sources)
+          try:
+              phase("require_existing_runner_tools")
+              for tool in ("gpg", "tar", "zstd", "objdump"):
+                  if not shutil.which(tool):
+                      raise RuntimeError("Required existing runner tool missing: " + tool)
+              run(["gpg", "--no-options", "--homedir", str(gnupg), "--version"], "gpg-version")
+              phase("download_pinned_official_key_metadata")
+              keyring = fetch(key_base + "/msys2.gpg", "msys2.gpg", 200000)
+              trusted = fetch(key_base + "/msys2-trusted", "msys2-trusted", 10000)
+              revoked = fetch(key_base + "/msys2-revoked", "msys2-revoked", 10000)
+              for path in (keyring, trusted, revoked):
+                  shutil.copyfile(path, evidence / path.name)
+              if trusted.read_text(encoding="utf-8").splitlines() != [key + ":4:" for key in masters]:
+                  raise RuntimeError("Pinned official master list differs from reviewed fingerprints")
+              revoked_fingerprints = revoked.read_text(encoding="utf-8").splitlines()
+              if any(not re.fullmatch(r"[A-F0-9]{40}", key) for key in revoked_fingerprints):
+                  raise RuntimeError("Unexpected official revoked-list format")
+              if expected_signer in revoked_fingerprints or set(masters) & set(revoked_fingerprints):
+                  raise RuntimeError("Expected signer or trust anchor is explicitly revoked")
+              phase("verify_signature_with_default_gpg_and_official_master_anchors")
+              gpg = ["gpg", "--no-options", "--homedir", str(gnupg), "--batch", "--no-tty",
+                     "--no-auto-key-retrieve", "--auto-key-locate", "clear"]
+              run(gpg + ["--import", str(keyring)], "key-import")
+              keys = run(gpg + ["--with-colons", "--fingerprint", "--list-keys"], "key-fingerprints").decode("utf-8")
+              fingerprints = [line.split(":")[9] for line in keys.splitlines() if line.startswith("fpr:")]
+              if not set(masters + [expected_signer]).issubset(fingerprints):
+                  raise RuntimeError("Official keyring lacks a required complete fingerprint")
+              package = fetch(package_url, package_name, 16000000)
+              signature = fetch(package_url + ".sig", package_name + ".sig", 10000)
+              anchors = [part for key in masters for part in ("--trusted-key", key)]
+              # Trust anchors are official masters, never the developer whose
+              # detached signature we are checking. Failed or unknown trust stops.
+              status = run(gpg + anchors + ["--status-fd", "1", "--verify", str(signature), str(package)],
+                           "package-signature").decode("utf-8")
+              statuses = [line[len("[GNUPG:] "):].split() for line in status.splitlines() if line.startswith("[GNUPG:] ")]
+              bad = {"BADSIG", "ERRSIG", "EXPSIG", "EXPKEYSIG", "REVKEYSIG", "KEYEXPIRED", "SIGEXPIRED", "NODATA", "NO_PUBKEY", "FAILURE", "TRUST_UNDEFINED", "TRUST_NEVER", "TRUST_MARGINAL"}
+              if any(fields and fields[0] in bad for fields in statuses):
+                  raise RuntimeError("Signature has a rejected GPG status")
+              valid = [fields for fields in statuses if fields[0] == "VALIDSIG"]
+              good = [fields for fields in statuses if fields[0] == "GOODSIG"]
+              trust = [fields for fields in statuses if fields[0].startswith("TRUST_")]
+              if (len(valid) != 1 or valid[0][1] != expected_signer
+                  or len(good) != 1 or good[0][1] != expected_signer[-16:]
+                  or len(trust) != 1 or trust[0][0] != "TRUST_FULLY"):
+                  raise RuntimeError("Require exact developer VALIDSIG/GOODSIG and default TRUST_FULLY")
+              record["signature_verified"] = True
+              record["verified_signer_fingerprint"] = valid[0][1]
+              record["gpg_trust_status"] = trust[0]
+              run(gpg + ["--export-ownertrust"], "effective-ownertrust")
+              run(gpg + ["--with-colons", "--check-sigs", expected_signer], "developer-certifications")
+              phase("inspect_signed_package_without_installation")
+              listing = run(["tar", "--zstd", "-tf", str(package)], "package-file-list").decode("utf-8").splitlines()
+
+              def extract_data(name):
+                  if listing.count(name) != 1:
+                      raise RuntimeError("Require exactly one signed package entry: " + name)
+                  data = run(["tar", "--zstd", "-xOf", str(package), "--", name],
+                             "extract-" + Path(name).name, save_stdout=False)
+                  target = extracted / Path(name).name
+                  target.write_bytes(data)
+                  return target
+
+              pkginfo = extract_data(".PKGINFO")
+              info = pkginfo.read_text(encoding="utf-8")
+              (evidence / "PKGINFO.txt").write_text(info, encoding="utf-8")
+              if "pkgname = mingw-w64-x86_64-glib2\n" not in info or "pkgver = 2.88.3-1\n" not in info:
+                  raise RuntimeError("Signed package identity differs from the exact version")
+              dll = extract_data("mingw64/bin/libglib-2.0-0.dll")
+              dll_hash = digest(dll.read_bytes())
+              record["package_glib_dll_sha256"] = dll_hash
+              record["exact_qemu_glib_dll_match"] = dll_hash == expected_dll_sha256
+              json_write("result.json", record)
+              if dll_hash != expected_dll_sha256:
+                  raise RuntimeError("Signed package DLL differs from actual QEMU DLL; stop before helper eligibility")
+              phase("inventory_matching_amd64_helpers_without_execution")
+              selected = [dll, extract_data("mingw64/bin/gspawn-win64-helper.exe"),
+                          extract_data("mingw64/bin/gspawn-win64-helper-console.exe")]
+              inventory = []
+              for path in selected:
+                  data = path.read_bytes()
+                  if len(data) < 64 or data[:2] != b"MZ":
+                      raise RuntimeError("Missing DOS/PE header: " + path.name)
+                  pe = struct.unpack_from("<I", data, 60)[0]
+                  if pe + 26 > len(data) or data[pe:pe + 4] != b"PE\0\0":
+                      raise RuntimeError("Invalid PE offset: " + path.name)
+                  machine = struct.unpack_from("<H", data, pe + 4)[0]
+                  optional_magic = struct.unpack_from("<H", data, pe + 24)[0]
+                  imports_raw = run(["objdump", "-p", str(path)], "pe-" + path.name).decode("utf-8")
+                  imports = re.findall(r"(?m)^\s*DLL Name:\s*(.+?)\s*$", imports_raw)
+                  item = {"package_path": "mingw64/bin/" + path.name, "bytes": len(data), "sha256": digest(data),
+                          "pe_machine": hex(machine), "pe_optional_magic": hex(optional_magic),
+                          "imports": imports, "executed": False}
+                  inventory.append(item)
+                  json_write("selected-file-metadata.json", inventory)
+                  if machine != 0x8664 or optional_magic != 0x20b:
+                      raise RuntimeError("Expected AMD64 PE32+ data: " + path.name)
+                  imports_lower = {name.lower() for name in imports}
+                  if "msvcrt.dll" not in imports_lower or any("ucrt" in name or "api-ms-win-crt" in name for name in imports_lower):
+                      raise RuntimeError("Expected mingw64/MSVCRT import identity: " + path.name)
+              license_file = extract_data("mingw64/share/licenses/glib2/COPYING")
+              shutil.copyfile(license_file, evidence / "COPYING.txt")
+              if listing.count(".BUILDINFO") == 1:
+                  shutil.copyfile(extract_data(".BUILDINFO"), evidence / "BUILDINFO.txt")
+              pkgbuild = fetch(sources["pkgbuild_url"], "PKGBUILD.txt", 100000)
+              shutil.copyfile(pkgbuild, evidence / "PKGBUILD.txt")
+              record["outcome"] = "verified_matching_dependency_metadata"
+              record["interpretation"] = "Signed exact-DLL package contains matching AMD64/MSVCRT helper candidates. Metadata only: root review and separate fake connection/EOF calibration remain required before any helper execution or VNC claim."
+              phase("complete_metadata_only")
+          except BaseException as error:
+              record["outcome"] = "failed"
+              record["error"] = type(error).__name__ + ": " + str(error)
+              (evidence / "failure.txt").write_text(record["error"] + "\n", encoding="utf-8")
+              raise
+          finally:
+              signal.alarm(0)
+              json_write("result.json", record)
+          PY
+      - name: Preserve metadata and original failures only (no package or executables)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-glib-matching-dependency-metadata
+          path: ${{ runner.temp }}/adit-vnc-glib-dependency/metadata/
+          if-no-files-found: warn
+          retention-days: 14
