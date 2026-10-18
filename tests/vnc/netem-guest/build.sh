@@ -2,6 +2,8 @@
 set -euo pipefail
 [[ ${GITHUB_ACTIONS:-} == true && ${RUNNER_ENVIRONMENT:-} == github-hosted && ${RUNNER_OS:-} == Linux ]] || { echo 'Disposable GitHub Linux runner only' >&2; exit 1; }
 src=$(cd -- "$(dirname -- "$0")" && pwd)
+mode=${2:-echo}
+case "$mode" in echo|direct-host-alias-fake) ;; *) echo 'Unknown fixed guest build mode' >&2; exit 1 ;; esac
 out=$(realpath -m -- "$1")
 [[ "$out" == "$RUNNER_TEMP"/* && ! -e "$out" ]] || { echo 'Fresh runner-temp output required' >&2; exit 1; }
 mkdir -p "$out/root" "$out/apks"
@@ -40,18 +42,27 @@ for module in e1000 virtio_net sch_netem; do
   sudo grep -Eq "(^|/)$module[.]ko[.]gz:" "$root/lib/modules/$kernel_version/modules.dep"
 done
 sudo cp "$root/lib/modules/$kernel_version/modules.dep" "$out/modules.dep"
-sudo cp "$src/init" "$root/init"
+if [[ "$mode" == direct-host-alias-fake ]]; then
+  sudo cp "$src/direct-init" "$root/init"
+  sudo cp "$src/direct_guest.py" "$root/guest.py"
+else
+  sudo cp "$src/init" "$root/init"
+  sudo cp "$src/guest.py" "$root/guest.py"
+fi
 sudo chmod 755 "$root/init"
-sudo cp "$src/guest.py" "$root/guest.py"
 # Bootstrap is serial-only. Packages are already installed; guest needs no DNS,
 # package network, cloud-init, SSH, login prompts, or persistent disk.
 sudo rm -f "$root/etc/resolv.conf"
 sudo rm -rf "$root/var/cache/apk" "$root/boot"
 (cd "$root" && sudo find . -print0 | sudo cpio --null --quiet -o --format=newc | gzip -1) > "$out/initramfs.cpio.gz"
-python3 - "$out" "${GITHUB_SHA:?}" <<'PY'
+python3 - "$out" "${GITHUB_SHA:?}" "$mode" <<'PY'
 import hashlib,json,pathlib,sys
 out=pathlib.Path(sys.argv[1])
 paths=[out/'vmlinuz-virt',out/'initramfs.cpio.gz',out/'modules.dep',*sorted((out/'apks').glob('*.apk'))]
 manifest={'source_sha':sys.argv[2],'scope':'Alpine rootfs and signed APKs assembled on Ubuntu runner; package dependencies frozen by artifact hashes, not a reproducible-build claim','files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
+if sys.argv[3] == 'direct-host-alias-fake':
+    manifest['build_mode']=sys.argv[3]
+    manifest['guest_source_files']={name:hashlib.sha256((out/'root'/name).read_bytes()).hexdigest() for name in ('init','guest.py')}
+    manifest['network_policy']={'address':'10.0.2.15/32','only_unicast_route':'10.0.2.2/32 dev eth0','default_route':False,'dns_configured':False,'qemu_restrict':False,'note':'Guest route narrowing is not complete host-port isolation. QEMU restrict=off differs from the original echo guest isolation.'}
 (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 PY
