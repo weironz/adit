@@ -2,6 +2,7 @@
 import json
 import os
 import selectors
+import shutil
 import socket
 import subprocess
 import threading
@@ -93,6 +94,15 @@ def snapshot(argv):
 def main():
     if os.name != "posix" or os.getpid() != 1:
         raise RuntimeError("Entry point is restricted to the disposable guest PID1")
+    ip_path = shutil.which("ip")
+    if ip_path is None:
+        raise RuntimeError("Fixed iproute2 tool is missing")
+    tool = subprocess.run([ip_path, "-Version"], capture_output=True, text=True, timeout=3, check=False)
+    emit({"event": "ip_tool", "path": ip_path, "resolved_path": os.path.realpath(ip_path),
+          "argv": [ip_path, "-Version"], "exit": tool.returncode, "stdout": tool.stdout, "stderr": tool.stderr})
+    if (tool.returncode != 0 or not tool.stdout.startswith("ip utility, iproute2-6.15.0")
+            or "busybox" in (tool.stdout + tool.stderr).lower()):
+        raise RuntimeError("Exact iproute2-6.15.0 version banner required; BusyBox is not accepted")
     snapshots = [snapshot(argv) for argv in (
         ["ip", "addr", "show", "dev", "eth0"], ["ip", "route", "show"], ["ip", "-6", "route", "show"],
         ["ip", "route", "get", "10.0.2.2"], ["tc", "-s", "-j", "qdisc", "show", "dev", "eth0"],

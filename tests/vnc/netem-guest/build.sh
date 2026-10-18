@@ -23,6 +23,11 @@ import json,sys
 print(json.load(open(sys.argv[1]))['apk_repository'])
 PY
 mapfile -t packages < <(python3 -c 'import json,sys; print("\n".join(json.load(open(sys.argv[1]))["packages"]))' "$src/sources.json")
+if [[ "$mode" == direct-host-alias-fake ]]; then
+  # iproute2-tc contains tc only; the strict IPv6 query must use real iproute2
+  # rather than the rootfs BusyBox applet's address-family handling.
+  packages+=(iproute2-minimal=6.15.0-r0)
+fi
 # APK checks the official index and package signatures against the keys from
 # the hash-pinned Alpine release. No allow-untrusted and no mutable container tag.
 sudo timeout 120 chroot "$root" /sbin/apk update
@@ -62,6 +67,7 @@ paths=[out/'vmlinuz-virt',out/'initramfs.cpio.gz',out/'modules.dep',*sorted((out
 manifest={'source_sha':sys.argv[2],'scope':'Alpine rootfs and signed APKs assembled on Ubuntu runner; package dependencies frozen by artifact hashes, not a reproducible-build claim','files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
 if sys.argv[3] == 'direct-host-alias-fake':
     manifest['build_mode']=sys.argv[3]
+    manifest['additional_fixed_packages']=['iproute2-minimal=6.15.0-r0']
     manifest['guest_source_files']={name:hashlib.sha256((out/'root'/name).read_bytes()).hexdigest() for name in ('init','guest.py')}
     manifest['network_policy']={'address':'10.0.2.15/32','only_unicast_route':'10.0.2.2/32 dev eth0','default_route':False,'dns_configured':False,'qemu_restrict':False,'note':'Guest route narrowing is not complete host-port isolation. QEMU restrict=off differs from the original echo guest isolation.'}
 (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
