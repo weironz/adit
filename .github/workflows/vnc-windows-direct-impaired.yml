@@ -89,7 +89,7 @@ jobs:
       - name: Calibrate same QEMU then baseline/impaired/restored real VNC gate
         timeout-minutes: 16
         shell: pwsh
-        run: ./tests/vnc/netem-guest/direct_windows.ps1 -Mode vnc -Guest "$env:RUNNER_TEMP/adit-netem-direct-guest" -Results "$env:RUNNER_TEMP/direct-impaired-gate" -Probe "$pwd/target/debug/examples/vnc_probe.exe" -Samples 1
+        run: ./tests/vnc/netem-guest/direct_windows.ps1 -Mode vnc -Guest "$env:RUNNER_TEMP/adit-netem-direct-guest" -Results "$env:RUNNER_TEMP/direct-impaired-gate" -Probe "$pwd/target/debug/examples/vnc_probe.exe" -Samples 1 -Quality wan -Workload drag
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -106,7 +106,7 @@ jobs:
     timeout-minutes: 18
     strategy:
       fail-fast: false
-      max-parallel: 3
+      max-parallel: 6
       matrix:
         quality: [lossless, wan]
         workload: [static, scroll, drag]

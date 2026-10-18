@@ -91,6 +91,11 @@ fn run_probe(all_args: Vec<String>, password: &str) -> bool {
     let mut input_at = Instant::now();
     let mut step = 0_u16;
     let mut drag_down = false;
+    let mut drag_release_requested = false;
+    // Leave the final third of the existing window connected after button-up.
+    // Closing the tab is only best-effort cleanup, not part of a complete drag.
+    let drag_window = steady.unwrap_or(duration);
+    let drag_release_after = drag_window - drag_window / 3;
     loop {
         // Poll before the time boundary: an error already delivered during the
         // last tick cannot be hidden by a completed first-frame/steady timer.
@@ -207,23 +212,34 @@ fn run_probe(all_args: Vec<String>, password: &str) -> bool {
                     delta: if step % 20 < 10 { -120 } else { 120 },
                 });
             } else if workload == "drag" {
-                if !drag_down {
-                    manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 400, y: 300 });
+                if drag_down
+                    && !drag_release_requested
+                    && completed_at.is_some_and(|at| at.elapsed() >= drag_release_after)
+                {
                     manager.send_rdp_input_to_active(RdpInput::MouseButton {
                         button: RdpMouseButton::Left,
-                        pressed: true,
+                        pressed: false,
                     });
-                    drag_down = true;
+                    drag_release_requested = true;
+                } else if !drag_release_requested {
+                    if !drag_down {
+                        manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 400, y: 300 });
+                        manager.send_rdp_input_to_active(RdpInput::MouseButton {
+                            button: RdpMouseButton::Left,
+                            pressed: true,
+                        });
+                        drag_down = true;
+                    }
+                    let offset = if step % 40 < 20 {
+                        step % 20
+                    } else {
+                        20 - step % 20
+                    };
+                    manager.send_rdp_input_to_active(RdpInput::MouseMove {
+                        x: 400 - offset * 8,
+                        y: 300 - offset * 8,
+                    });
                 }
-                let offset = if step % 40 < 20 {
-                    step % 20
-                } else {
-                    20 - step % 20
-                };
-                manager.send_rdp_input_to_active(RdpInput::MouseMove {
-                    x: 400 - offset * 8,
-                    y: 300 - offset * 8,
-                });
             }
             step = step.wrapping_add(1);
             input_at = Instant::now();
@@ -249,6 +265,9 @@ fn run_probe(all_args: Vec<String>, password: &str) -> bool {
         steady.is_none_or(|window| completed_at.is_some() && steady_elapsed >= window);
     println!("diagnostics={:?}", manager.active_vnc_diagnostics());
     println!("complete={complete}");
+    if workload == "drag" {
+        println!("drag_release_requested={drag_release_requested}");
+    }
     println!("final_connected={final_connected} disconnects={disconnections} connection_error={connection_error} steady_complete={steady_complete}");
     println!(
         "sample_ms={} steady_ms={}",
@@ -268,6 +287,7 @@ fn run_probe(all_args: Vec<String>, password: &str) -> bool {
         && disconnections == 0
         && final_connected
         && steady_complete
+        && (workload != "drag" || drag_release_requested)
 }
 
 #[cfg(test)]
@@ -286,6 +306,7 @@ mod tests {
         Hold,
         Close,
         Malformed,
+        ObserveDrag,
     }
     fn read<const N: usize>(s: &mut TcpStream) -> [u8; N] {
         let mut b = [0; N];
@@ -364,9 +385,53 @@ mod tests {
                         }
                     }
                 }
+                End::ObserveDrag => assert_complete_drag_before_close(&mut s),
             }
         });
         (port, painted, task)
+    }
+    fn assert_complete_drag_before_close(s: &mut TcpStream) {
+        let start = Instant::now();
+        let mut held = false;
+        let mut down_count = 0;
+        let mut released_at = None;
+        loop {
+            let mut tag = [0];
+            match s.read_exact(&mut tag) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(error) => panic!("drag wire ended unexpectedly: {error}"),
+            }
+            match tag[0] {
+                3 => {
+                    let _ = read::<9>(s);
+                }
+                5 => {
+                    let pointer = read::<5>(s);
+                    let down = pointer[0] & 1 != 0;
+                    if down && !held {
+                        assert!(released_at.is_none(), "new drag after completed button-up");
+                        down_count += 1;
+                    }
+                    if held && !down {
+                        released_at = Some(start.elapsed());
+                    }
+                    held = down;
+                }
+                tag => panic!("unexpected drag client message {tag}"),
+            }
+        }
+        assert_eq!(down_count, 1, "one actual wire drag must begin");
+        let released_at = released_at.expect("actual wire button-up must arrive");
+        assert!(
+            released_at < Duration::from_millis(2500),
+            "button-up must arrive inside the 3s window, not during close: {released_at:?}"
+        );
+        assert!(
+            start.elapsed() >= Duration::from_secs(3),
+            "transport must remain open for the original full observation window"
+        );
+        assert!(!held, "transport closed with a button still held");
     }
     fn probe(port: u16) -> bool {
         run_probe(
@@ -405,6 +470,23 @@ mod tests {
     fn actual_partial_frame_never_starts_or_satisfies_the_steady_window() {
         let (port, painted, server) = serve(End::Hold, true);
         assert!(!probe(port));
+        assert!(painted.load(Ordering::Acquire));
+        server.join().unwrap();
+    }
+    #[test]
+    fn actual_drag_releases_on_wire_during_steady_window_without_another_down() {
+        let (port, painted, server) = serve(End::ObserveDrag, false);
+        assert!(run_probe(
+            vec![
+                "vnc_probe".into(),
+                "127.0.0.1".into(),
+                port.to_string(),
+                "3".into(),
+                "--steady-seconds=3".into(),
+                "--workload=drag".into(),
+            ],
+            "public-synthetic-fixture",
+        ));
         assert!(painted.load(Ordering::Acquire));
         server.join().unwrap();
     }

@@ -27,10 +27,11 @@ The workflow gates execution in this order:
    orders and byte-identical 256 KiB tails after EOF.
 3. On one owned QEMU, measure baseline echo/bulk, 80 ms delay, 2 Mbit/s rate,
    100% loss, natural kernel recovery, and the combined impairment.
-4. Run baseline/impaired/restored real VNC with one normal sample per phase and
-   explicit wrong-password rejection. A failure prevents matrix execution.
+4. Run one normal WAN/drag sample in baseline and impaired modes, then one
+   restored lossless/static sample, each with explicit wrong-password rejection.
+   A failure prevents matrix execution.
 5. Run lossless/wan × static/scroll/drag, with ten normal baseline and ten
-   impaired samples per cell, then one restored sample. Preserve every failure;
+   impaired samples per cell, then one restored lossless/static sample. Preserve every failure;
    do not rerun individual samples to select a passing result.
 
 Impaired mode sets guest eth0 aggregate egress to 90 ms, 5 Mbit/s and 0.5%
@@ -38,7 +39,9 @@ random loss. Each ten-sample impaired cell requires actual qdisc drops. Every
 probe has before/after raw tc and TCP snapshots bound to this source/run,
 controller nonce, exact process lifetime, executable hashes and listener owners.
 Vendor fixture validation still requires actual full-frame RGB and target input
-consumption. Read each run's artifacts for its outcome; defining this workflow
+consumption. Drag includes an explicit button release during the existing steady
+window. Read
+each run's artifacts for its outcome; defining this workflow
 does not establish acceptance.
 
 Network changes require zero relay workers, no live kernel TCP states and empty
