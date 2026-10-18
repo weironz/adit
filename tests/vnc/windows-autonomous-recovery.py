@@ -9,6 +9,7 @@ import struct
 import subprocess
 import threading
 import time
+import zlib
 
 
 def main():
@@ -55,6 +56,7 @@ def main():
             conn.sendall(struct.pack('>HH', 800, 600)+pf+struct.pack('>I', 9)+b'SYNTHETIC')
             emit(event='handshake', connection=number, shared=shared, security='None')
             last_color = None
+            compressor = zlib.compressobj()
             while not stop.is_set():
                 tag = exact(conn, 1)[0]
                 response = b''
@@ -74,7 +76,10 @@ def main():
                     rgb = (0, 255, 0) if green.is_set() else ((0, 0, 255) if recovered.is_set() else (255, 0, 0))
                     if rgb != last_color:
                         pixels = bytes((*rgb, 0)) * (800*600)
-                        response = struct.pack('>BBHHHHHi', 0, 0, 1, 0, 0, 800, 600, 0)+pixels
+                        # ZRLE solid tiles, with the persistent stream required by RFB.
+                        tiles = (bytes((1,))+bytes(rgb)) * (13*10)
+                        encoded = compressor.compress(tiles)+compressor.flush(zlib.Z_SYNC_FLUSH)
+                        response = struct.pack('>BBHHHHHiI', 0, 0, 1, 0, 0, 800, 600, 16, len(encoded))+encoded
                         last_color = rgb
                         emit(event='frame', connection=number, rgb=rgb, sha256=hashlib.sha256(pixels).hexdigest())
                     else:

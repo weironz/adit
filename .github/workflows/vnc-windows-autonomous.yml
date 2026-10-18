@@ -2,20 +2,18 @@ name: VNC Windows autonomous desktop and recovery
 
 on:
   workflow_dispatch:
-  push:
-    branches: ['codex/vnc-windows-autonomous']
-    paths:
-      - '.github/workflows/vnc-windows-autonomous.yml'
-      - 'tests/vnc/windows-autonomous*.py'
-      - 'tests/vnc/native_rfb_fixture.py'
-      - 'crates/adit-ui/src/vnc_native_acceptance.rs'
-      - 'crates/adit-session/examples/vnc_recovery_probe.rs'
+    inputs:
+      scope:
+        type: choice
+        default: all
+        options: [all, capabilities, native, recovery]
 
 permissions:
   contents: read
 
 jobs:
   capabilities:
+    if: inputs.scope == 'all' || inputs.scope == 'capabilities'
     runs-on: windows-latest
     timeout-minutes: 5
     steps:
@@ -32,6 +30,10 @@ jobs:
           powercfg /a | Out-File "$resultDir/power-capabilities.txt"
           Get-CimInstance Win32_VideoController | Select-Object Name,CurrentHorizontalResolution,CurrentVerticalResolution,CurrentBitsPerPixel,VideoModeDescription | ConvertTo-Json | Set-Content "$resultDir/display.json"
           @{source_sha=$env:GITHUB_SHA;run_id=$env:GITHUB_RUN_ID;scope='Capability observation only; does not pass UAC, lock or sleep acceptance'} | ConvertTo-Json | Set-Content "$resultDir/scope.json"
+      - name: Inspect supported display settings controls and linked token
+        timeout-minutes: 2
+        shell: powershell
+        run: ./tests/vnc/windows-desktop-capabilities.ps1 -Results "$env:RUNNER_TEMP/vnc-autonomous-capabilities"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -39,6 +41,7 @@ jobs:
           path: ${{ runner.temp }}/vnc-autonomous-capabilities
 
   recovery:
+    if: inputs.scope == 'all' || inputs.scope == 'recovery'
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -64,6 +67,7 @@ jobs:
           path: ${{ runner.temp }}/vnc-autonomous-recovery
 
   native:
+    if: inputs.scope == 'all' || inputs.scope == 'native'
     runs-on: windows-latest
     timeout-minutes: 30
     env:
