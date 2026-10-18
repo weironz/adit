@@ -108,7 +108,7 @@ jobs:
         timeout-minutes: 7
         run: |
           $dpiArgs = @()
-          if ('${{ inputs.scope }}' -eq 'dpi') { $dpiArgs += '--os-dpi-matrix' }
+          if ('${{ inputs.scope }}' -eq 'dpi') { $dpiArgs += @('--os-dpi-matrix','--cursor-matrix') }
           python tests/vnc/windows-autonomous-native.py --app target/debug/examples/vnc_native_acceptance.exe --results "$env:RUNNER_TEMP/vnc-autonomous-native" @dpiArgs
       - uses: actions/upload-artifact@v4
         if: always()

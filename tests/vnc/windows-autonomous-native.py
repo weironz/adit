@@ -33,6 +33,98 @@ CALLBACK = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 U.EnumWindows.argtypes = [CALLBACK, W.LPARAM]
 
 
+class CURSORINFO(C.Structure):
+    _fields_=[('size',W.DWORD),('flags',W.DWORD),('cursor',W.HANDLE),('position',W.POINT)]
+
+
+def cursor_info():
+    value=CURSORINFO()
+    value.size=C.sizeof(value)
+    assert U.GetCursorInfo(C.byref(value))
+    return dict(flags=value.flags,position=[value.position.x,value.position.y])
+
+
+def magenta_bounds(image):
+    rgb=image.convert('RGB')
+    points=[(x,y) for y in range(rgb.height) for x in range(rgb.width)
+            if rgb.getpixel((x,y))[0]>180 and rgb.getpixel((x,y))[1]<100 and rgb.getpixel((x,y))[2]>180]
+    if not points:
+        return None
+    xs,ys=zip(*points)
+    return [min(xs),min(ys),max(xs),max(ys)]
+
+
+def cursor_checks(hwnd,state,log,directory,box,target,cross_width,result,case):
+    cx,cy=target
+    ratio=cross_width/25
+    absolute=(box[0]+cx,box[1]+cy)
+    for style in ('arrow','ibeam','color','hidden'):
+        previous=len(read_events(state/'events.jsonl'))
+        old_generation=max([e.get('cursor',{}).get('generation',0) for e in read_events(log)
+                            if e.get('cursor')],default=0)
+        temporary=state/'cursor.tmp'
+        temporary.write_text(style,encoding='utf-8')
+        deadline=time.monotonic()+1
+        while True:
+            try:
+                os.replace(temporary,state/'cursor.request')
+                break
+            except PermissionError:
+                assert time.monotonic()<deadline
+                time.sleep(.01)
+        metadata=wait_until(lambda: next((e for e in read_events(state/'events.jsonl')[previous:]
+                                         if e['event']=='cursor' and e['style']==style),None))
+        wait_until(lambda: any(e.get('cursor') and e['cursor']['generation']>old_generation
+                               for e in read_events(log)))
+        assert U.SetCursorPos(*absolute)
+        wait_until(lambda: cursor_info()['flags']==0)
+        region=(absolute[0]-40,absolute[1]-40,absolute[0]+40,absolute[1]+40)
+        expected=metadata['opaque_bounds']
+        def capture():
+            image=ImageGrab.grab(bbox=region)
+            bounds=magenta_bounds(image)
+            if expected is None:
+                return (image,bounds) if bounds is None else None
+            wanted=[40+(expected[0]-5)*ratio,40+(expected[1]-7)*ratio,
+                    40+(expected[2]-5)*ratio,40+(expected[3]-7)*ratio]
+            return (image,bounds) if bounds is not None and max(abs(a-b) for a,b in zip(bounds,wanted))<=2 else None
+        image,bounds=wait_until(capture)
+        image.save(directory/f'cursor-{style}.png')
+        info=cursor_info()
+        assert info['position']==list(absolute)
+        record=dict(case=case,style=style,actual_os_dpi=U.GetDpiForWindow(hwnd),cursor=info,
+                    remote_pixels_per_screen_pixel=1/ratio,observed_bounds=bounds,remote_opaque_bounds=expected)
+        result.setdefault('cursor_samples',[]).append(record)
+        if style=='color':
+            hole=image.convert('RGB').getpixel((round(40+3*ratio),round(40+ratio)))
+            record['transparent_hole_rgb']=hole
+            assert not (hole[0]>180 and hole[1]<100 and hole[2]>180), 'cursor mask hole was painted opaque'
+        # Every visible cursor uses the same real click target and nonzero hotspot.
+        if style!='hidden':
+            before=len(read_events(state/'events.jsonl'))
+            U.mouse_event(0x0002,0,0,0,0)
+            time.sleep(.08)
+            U.mouse_event(0x0004,0,0,0,0)
+            received=wait_until(lambda: next((e for e in read_events(state/'events.jsonl')[before:]
+                                             if e['event']=='button' and e['mask']==1),None))
+            wait_until(lambda: any(e['event']=='button' and e['mask']==0 for e in read_events(state/'events.jsonl')[before:]))
+            record['received_click']=received
+            assert max(abs(received['x']-100),abs(received['y']-100))<=2
+        if style=='color':
+            # Just above the framebuffer is the shipping tab/toolbar, not the
+            # synthetic test control strip. OS pointer must reappear there.
+            toolbar=(absolute[0],round(absolute[1]-100*ratio-8))
+            assert box[1]<toolbar[1]<absolute[1]
+            assert U.SetCursorPos(*toolbar)
+            wait_until(lambda: cursor_info()['flags']==1)
+            wait_until(lambda: magenta_bounds(ImageGrab.grab(bbox=region)) is None)
+            record['toolbar_cursor']=cursor_info()
+            assert U.SetCursorPos(*absolute)
+    assert U.SetCursorPos(0,0)
+    wait_until(lambda: cursor_info()['flags']==1)
+    result.setdefault('cursor_boundary_samples',[]).append(dict(case=case,outside=cursor_info()))
+
+
 def wait_until(function, seconds=15):
     deadline = time.monotonic()+seconds
     while True:
@@ -95,7 +187,7 @@ def crosshairs(image):
                     component.append(point)
         xs, ys = zip(*component)
         width, height = max(xs)-min(xs)+1, max(ys)-min(ys)+1
-        if min(width, height) < 10 or abs(width-height) > 3 or len(component) > width*12:
+        if min(width, height) < 10 or abs(width-height) > 3 or len(component) > width*height*.65:
             continue
         cx, cy = (min(xs)+max(xs))//2, (min(ys)+max(ys))//2
         row = sum(y == cy for x,y in component)
@@ -110,6 +202,7 @@ def main():
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--results', type=Path, required=True)
     parser.add_argument('--os-dpi-matrix', action='store_true')
+    parser.add_argument('--cursor-matrix', action='store_true')
     args = parser.parse_args()
     if os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('disposable hosted Windows runner required')
@@ -218,6 +311,8 @@ def main():
                     assert max(sample['error']) <= 2, sample
                     if not resize:
                         assert (received['width'],received['height']) == (1200,800)
+                    if args.cursor_matrix and index==0 and not resize:
+                        cursor_checks(hwnd,state,log,directory,box,(cx,cy),found[0][2],result,name)
                 U.PostMessageW(hwnd, 0x0010, 0, 0)
                 assert app.wait(timeout=10) == 0
                 (directory/'client-events.jsonl').write_bytes(log.read_bytes())
