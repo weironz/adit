@@ -35,6 +35,7 @@ jobs:
             ${{ runner.temp }}/adit-netem-guest/manifest.json
             ${{ runner.temp }}/adit-netem-guest/sources.json
             ${{ runner.temp }}/adit-netem-guest/package-versions.txt
+            ${{ runner.temp }}/adit-netem-guest/modules.dep
             ${{ runner.temp }}/adit-netem-guest/apks/
           if-no-files-found: warn
           retention-days: 14

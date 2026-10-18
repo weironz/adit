@@ -33,7 +33,13 @@ sudo chroot "$root" /sbin/apk info -vv | sort > "$out/package-versions.txt"
 sudo cp "$root/boot/vmlinuz-virt" "$out/vmlinuz-virt"
 kernel_version=$(find "$root/lib/modules" -mindepth 1 -maxdepth 1 -type d -printf '%f\n')
 [[ "$kernel_version" != *$'\n'* && -n "$kernel_version" ]]
-sudo depmod -b "$root" "$kernel_version"
+# Use the guest's kmod build: Ubuntu depmod can silently produce an empty
+# index for Alpine's .ko.gz modules even though the drivers are present.
+sudo chroot "$root" /sbin/depmod -a "$kernel_version"
+for module in e1000 virtio_net sch_netem; do
+  sudo grep -Eq "(^|/)$module[.]ko[.]gz:" "$root/lib/modules/$kernel_version/modules.dep"
+done
+sudo cp "$root/lib/modules/$kernel_version/modules.dep" "$out/modules.dep"
 sudo cp "$src/init" "$root/init"
 sudo chmod 755 "$root/init"
 sudo cp "$src/guest.py" "$root/guest.py"
@@ -45,7 +51,7 @@ sudo rm -rf "$root/var/cache/apk" "$root/boot"
 python3 - "$out" "${GITHUB_SHA:?}" <<'PY'
 import hashlib,json,pathlib,sys
 out=pathlib.Path(sys.argv[1])
-paths=[out/'vmlinuz-virt',out/'initramfs.cpio.gz',*sorted((out/'apks').glob('*.apk'))]
+paths=[out/'vmlinuz-virt',out/'initramfs.cpio.gz',out/'modules.dep',*sorted((out/'apks').glob('*.apk'))]
 manifest={'source_sha':sys.argv[2],'scope':'Alpine rootfs and signed APKs assembled on Ubuntu runner; package dependencies frozen by artifact hashes, not a reproducible-build claim','files':{str(p.relative_to(out)):hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
 (out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
 PY
