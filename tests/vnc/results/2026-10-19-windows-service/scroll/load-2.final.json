@@ -1,0 +1,72 @@
+{
+  "canaries": [
+    {
+      "point": [
+        40,
+        40
+      ],
+      "rgb": [
+        224,
+        48,
+        32
+      ]
+    },
+    {
+      "point": [
+        670,
+        470
+      ],
+      "rgb": [
+        32,
+        80,
+        224
+      ]
+    }
+  ],
+  "closed": false,
+  "counts": {
+    "button_press": 0,
+    "button_release": 0,
+    "drag_motion": 0,
+    "viewport_changes": 10,
+    "wheel_events": 28,
+    "wheel_units": 28
+  },
+  "elapsed_ms": 63141,
+  "focused": true,
+  "geometry": {
+    "height": 600,
+    "screen_height": 768,
+    "screen_width": 1024,
+    "width": 800,
+    "x": 0,
+    "y": 0
+  },
+  "pid": 4520,
+  "ready": true,
+  "reset_generation": 2,
+  "shared_probe": {
+    "clicks": 0,
+    "point": [
+      752,
+      52
+    ],
+    "protocol": "adit-public-shared-v1",
+    "rgb": [
+      16,
+      16,
+      16
+    ],
+    "sequence": 0
+  },
+  "viewport": {
+    "x": [
+      0.25,
+      0.75
+    ],
+    "y": [
+      0.5,
+      1.0
+    ]
+  }
+}

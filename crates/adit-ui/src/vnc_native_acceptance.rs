@@ -10,6 +10,7 @@ struct State {
     rescale_pending: bool,
     events: std::sync::mpsc::Sender<String>,
     geometry: Option<(u16, u16, u64)>,
+    native_dpi: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -18,14 +19,52 @@ enum NativeMessage {
     Scale(f32),
     Fit(bool),
     RemoteResize,
+    NativeDpi(Option<u32>),
 }
 
-fn log(state: &State, event: serde_json::Value) {
+#[cfg(windows)]
+fn native_dpi(window: window::Id) -> Task<NativeMessage> {
+    window::run(window, |native| {
+        use iced::window::raw_window_handle::RawWindowHandle;
+        let handle = native.window_handle().ok()?.as_raw();
+        let RawWindowHandle::Win32(handle) = handle else {
+            return None;
+        };
+        // Observe only our own live HWND; never change process or system DPI.
+        let dpi = unsafe {
+            windows::Win32::UI::HiDpi::GetDpiForWindow(windows::Win32::Foundation::HWND(
+                handle.hwnd.get() as *mut std::ffi::c_void,
+            ))
+        };
+        (dpi != 0).then_some(dpi)
+    })
+    .map(NativeMessage::NativeDpi)
+}
+
+#[cfg(not(windows))]
+fn native_dpi(_window: window::Id) -> Task<NativeMessage> {
+    Task::done(NativeMessage::NativeDpi(None))
+}
+
+fn log(state: &State, mut event: serde_json::Value) {
+    event["unix_ms"] = serde_json::json!(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
     let _ = state.events.send(event.to_string());
 }
 
 fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessage> {
     match message {
+        NativeMessage::NativeDpi(dpi) => {
+            state.native_dpi = dpi;
+            log(
+                state,
+                serde_json::json!({"event":"native_dpi", "dpi":dpi,
+                "scale":dpi.map(|v| v as f32 / 96.0), "api":"GetDpiForWindow"}),
+            );
+            Task::none()
+        }
         NativeMessage::Scale(scale) => {
             state.scale = scale;
             state.rescale_pending = true;
@@ -43,7 +82,13 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             Task::none()
         }
         NativeMessage::RemoteResize => {
-            update(&mut state.app, Message::ToggleVncResize).map(NativeMessage::App)
+            let task = update(&mut state.app, Message::ToggleVncResize).map(NativeMessage::App);
+            log(
+                state,
+                serde_json::json!({"event":"remote_resize_enabled",
+                "enabled":state.app.manager.active_vnc_resize_remote()}),
+            );
+            task
         }
         NativeMessage::App(mut message) => {
             match &mut message {
@@ -70,7 +115,15 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                 _ => {}
             }
             let rescale = state.rescale_pending && matches!(message, Message::RdpTick);
-            let task = update(&mut state.app, message).map(NativeMessage::App);
+            let dpi_probe = if let Message::WindowResized { window, .. } = &message {
+                native_dpi(*window)
+            } else {
+                Task::none()
+            };
+            let task = Task::batch([
+                update(&mut state.app, message).map(NativeMessage::App),
+                dpi_probe,
+            ]);
             if let Some((width, height)) = state.app.rdp_surface_size {
                 let generation = state
                     .app
@@ -134,9 +187,9 @@ fn view_native(state: &State) -> Element<'_, NativeMessage> {
                 controls,
             ].spacing(3)
         ).padding(5).style(container::rounded_box)]
-            .width(Fill)
-            .height(Fill)
-            .into(),
+        .width(Fill)
+        .height(Fill)
+        .into(),
     ])
     .into()
 }
@@ -146,7 +199,8 @@ pub fn run() -> iced::Result {
     // Change the process override before the app reads any settings or vault.
     let scratch =
         std::env::temp_dir().join(format!("adit-vnc-native-acceptance-{}", std::process::id()));
-    std::fs::create_dir_all(&scratch).expect("isolated acceptance directory");
+    // A reused PID directory must not silently import any previous run's state.
+    std::fs::create_dir(&scratch).expect("fresh isolated acceptance directory");
     std::env::set_var("ADIT_CONFIG_DIR", &scratch);
     let mut profile = ConnectionProfile::new("SYNTHETIC native acceptance", "127.0.0.1", 15915, "");
     profile.protocol = Protocol::Vnc;
@@ -192,16 +246,18 @@ pub fn run() -> iced::Result {
                 rescale_pending: false,
                 events: events.clone(),
                 geometry: None,
+                native_dpi: None,
             },
-            Task::none(),
+            window::latest().and_then(native_dpi),
         )
     };
     iced::application(boot, update_native, view_native)
         .title(|state: &State| {
             format!(
-                "Adit SYNTHETIC acceptance — app {}% / OS {:.2}",
+                "Adit SYNTHETIC acceptance — app {}% / OS {:.2} / native DPI {:?}",
                 state.scale * 100.0,
-                state.os_scale
+                state.os_scale,
+                state.native_dpi,
             )
         })
         .theme(|state: &State| app_theme(&state.app))

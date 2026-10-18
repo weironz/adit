@@ -6,8 +6,21 @@ use std::time::{Duration, Instant};
 use adit_domain::{ConnectionProfile, Protocol};
 use adit_session::SessionManager;
 
-fn main() {
+fn main() -> std::process::ExitCode {
     let all_args: Vec<_> = std::env::args().collect();
+    if all_args.iter().filter(|arg| !arg.starts_with("--")).count() < 3 {
+        eprintln!("usage: vnc_probe host port [seconds] [snapshot.ppm]; password on stdin");
+        return std::process::ExitCode::from(2);
+    }
+    let mut password = zeroize::Zeroizing::new(String::new());
+    io::stdin().lock().read_line(&mut password).unwrap();
+    std::process::ExitCode::from(u8::from(!run_probe(
+        all_args,
+        password.trim_end_matches(['\r', '\n']),
+    )))
+}
+
+fn run_probe(all_args: Vec<String>, password: &str) -> bool {
     let wan = all_args.iter().any(|a| a == "--wan");
     let zrle = all_args.iter().any(|a| a == "--zrle");
     let synthetic_canary = all_args.iter().any(|a| a == "--synthetic-canary");
@@ -32,7 +45,7 @@ fn main() {
         .collect();
     if args.len() < 3 {
         eprintln!("usage: vnc_probe host port [seconds] [snapshot.ppm]; password on stdin");
-        std::process::exit(2);
+        return false;
     }
     let mut profile = ConnectionProfile::new("VNC probe", &args[1], args[2].parse().unwrap(), "");
     profile.protocol = Protocol::Vnc;
@@ -60,13 +73,9 @@ fn main() {
         profile.vnc.quality = adit_domain::VncQuality::Zrle;
     }
     let id = profile.id;
-    let mut password = zeroize::Zeroizing::new(String::new());
-    io::stdin().lock().read_line(&mut password).unwrap();
     let mut manager = SessionManager::with_profiles(vec![profile]);
     let start = Instant::now();
-    let session = manager
-        .open_live_vnc_session(id, password.trim_end_matches(['\r', '\n']).into())
-        .unwrap();
+    let session = manager.open_live_vnc_session(id, password.into()).unwrap();
     let duration = Duration::from_secs(args.get(3).map_or(20, |s| s.parse().unwrap()));
     let mut generation = 0;
     let mut connected = false;
@@ -75,6 +84,7 @@ fn main() {
     let mut canary_matches = !synthetic_canary;
     let mut complete_size = None;
     let mut connection_error = false;
+    let mut disconnections = 0_u32;
     let mut completed_at: Option<Instant> = None;
     let mut report = Instant::now();
     let mut snapshot = args.get(4);
@@ -82,17 +92,28 @@ fn main() {
     let mut step = 0_u16;
     let mut drag_down = false;
     loop {
+        // Poll before the time boundary: an error already delivered during the
+        // last tick cannot be hidden by a completed first-frame/steady timer.
+        manager.poll_events();
+        if let Some(error) = manager.active_desktop_error() {
+            eprintln!("error: {error}");
+            connection_error = true;
+            break;
+        }
+        if connected
+            && !manager
+                .active_session_summary()
+                .is_some_and(|summary| summary.status == adit_domain::SessionStatus::Connected)
+        {
+            disconnections += 1;
+            eprintln!("error: VNC session left Connected during the observation window");
+            break;
+        }
         let finished = match (steady, completed_at) {
             (Some(window), Some(at)) => at.elapsed() >= window,
             _ => start.elapsed() >= duration,
         };
         if finished {
-            break;
-        }
-        manager.poll_events();
-        if let Some(error) = manager.active_desktop_error() {
-            eprintln!("error: {error}");
-            connection_error = true;
             break;
         }
         if !connected
@@ -209,12 +230,30 @@ fn main() {
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+    // Final state belongs to the measured window, before intentional cleanup.
+    manager.poll_events();
+    if let Some(error) = manager.active_desktop_error() {
+        if !connection_error {
+            eprintln!("error: {error}");
+        }
+        connection_error = true;
+    }
+    let final_connected = manager
+        .active_session_summary()
+        .is_some_and(|summary| summary.status == adit_domain::SessionStatus::Connected);
+    if connected && !final_connected && disconnections == 0 {
+        disconnections += 1;
+    }
+    let steady_elapsed = completed_at.map_or(Duration::ZERO, |at| at.elapsed());
+    let steady_complete =
+        steady.is_none_or(|window| completed_at.is_some() && steady_elapsed >= window);
     println!("diagnostics={:?}", manager.active_vnc_diagnostics());
     println!("complete={complete}");
+    println!("final_connected={final_connected} disconnects={disconnections} connection_error={connection_error} steady_complete={steady_complete}");
     println!(
         "sample_ms={} steady_ms={}",
         start.elapsed().as_millis(),
-        completed_at.map_or(0, |at| at.elapsed().as_millis())
+        steady_elapsed.as_millis()
     );
     if !complete && !connection_error {
         eprintln!("first_screen_timeout_s={}", duration.as_secs());
@@ -223,7 +262,150 @@ fn main() {
     // The GUI stays alive after closing a tab; a stand-alone probe must also
     // give its worker time to flush key/button releases before process exit.
     std::thread::sleep(Duration::from_millis(600));
-    if !complete || !canary_matches {
-        std::process::exit(1);
+    complete
+        && canary_matches
+        && !connection_error
+        && disconnections == 0
+        && final_connected
+        && steady_complete
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        io::Read,
+        net::{TcpListener, TcpStream},
+        sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        },
+        thread,
+    };
+    enum End {
+        Hold,
+        Close,
+        Malformed,
+    }
+    fn read<const N: usize>(s: &mut TcpStream) -> [u8; N] {
+        let mut b = [0; N];
+        s.read_exact(&mut b).unwrap();
+        b
+    }
+    fn serve(end: End, partial: bool) -> (u16, Arc<AtomicBool>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let painted = Arc::new(AtomicBool::new(false));
+        let observed = Arc::clone(&painted);
+        let task = thread::spawn(move || {
+            let (mut s, _) = listener.accept().unwrap();
+            s.set_read_timeout(Some(Duration::from_secs(4))).unwrap();
+            s.set_write_timeout(Some(Duration::from_secs(4))).unwrap();
+            s.write_all(b"RFB 003.008\n").unwrap();
+            assert_eq!(&read::<12>(&mut s), b"RFB 003.008\n");
+            s.write_all(&[1, 2]).unwrap();
+            assert_eq!(read::<1>(&mut s), [2]);
+            s.write_all(&[11; 16]).unwrap();
+            let _response = read::<16>(&mut s);
+            s.write_all(&0_u32.to_be_bytes()).unwrap();
+            assert_eq!(read::<1>(&mut s), [1]);
+            s.write_all(&[0, 2, 0, 2]).unwrap();
+            s.write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0])
+                .unwrap();
+            s.write_all(&4_u32.to_be_bytes()).unwrap();
+            s.write_all(b"test").unwrap();
+            // Parse real client setup until the initial framebuffer request.
+            loop {
+                match read::<1>(&mut s)[0] {
+                    0 => {
+                        let _ = read::<19>(&mut s);
+                    }
+                    2 => {
+                        let _ = read::<1>(&mut s);
+                        let n = u16::from_be_bytes(read::<2>(&mut s));
+                        for _ in 0..n {
+                            let _ = read::<4>(&mut s);
+                        }
+                    }
+                    3 => {
+                        let _ = read::<9>(&mut s);
+                        break;
+                    }
+                    tag => panic!("unexpected initial client message {tag}"),
+                }
+            }
+            let height = if partial { 1_u16 } else { 2 };
+            let mut update = vec![0, 0, 0, 1];
+            for value in [0_u16, 0, 2, height] {
+                update.extend(value.to_be_bytes());
+            }
+            update.extend(0_i32.to_be_bytes());
+            for _ in 0..2 * height {
+                update.extend([32, 64, 128, 0]);
+            }
+            s.write_all(&update).unwrap();
+            observed.store(true, Ordering::Release);
+            // The client has time to sample its full opaque first frame. The
+            // failure is deliberately later, inside its requested steady window.
+            match end {
+                End::Close => thread::sleep(Duration::from_millis(250)),
+                End::Malformed => {
+                    thread::sleep(Duration::from_millis(250));
+                    s.write_all(&[255]).unwrap();
+                    thread::sleep(Duration::from_millis(100));
+                }
+                End::Hold => {
+                    // Drain requests but leave them unanswered, as an idle real
+                    // VNC server may do. No unrelated pixels/inputs are forged.
+                    let mut b = [0; 4096];
+                    while let Ok(n) = s.read(&mut b) {
+                        if n == 0 {
+                            break;
+                        }
+                    }
+                }
+            }
+        });
+        (port, painted, task)
+    }
+    fn probe(port: u16) -> bool {
+        run_probe(
+            vec![
+                "vnc_probe".into(),
+                "127.0.0.1".into(),
+                port.to_string(),
+                "1".into(),
+                "--steady-seconds=1".into(),
+            ],
+            "public-synthetic-fixture",
+        )
+    }
+    #[test]
+    fn actual_first_frame_followed_by_transport_or_protocol_failure_cannot_pass() {
+        for end in [End::Close, End::Malformed] {
+            let (port, painted, server) = serve(end, false);
+            assert!(
+                !probe(port),
+                "opaque first pixels must not hide a later failure"
+            );
+            assert!(painted.load(Ordering::Acquire));
+            server.join().unwrap();
+        }
+    }
+    #[test]
+    fn actual_complete_frame_and_connected_full_steady_window_pass() {
+        let (port, painted, server) = serve(End::Hold, false);
+        let start = Instant::now();
+        assert!(probe(port));
+        assert!(start.elapsed() >= Duration::from_secs(1));
+        assert!(painted.load(Ordering::Acquire));
+        server.join().unwrap();
+    }
+    #[test]
+    fn actual_partial_frame_never_starts_or_satisfies_the_steady_window() {
+        let (port, painted, server) = serve(End::Hold, true);
+        assert!(!probe(port));
+        assert!(painted.load(Ordering::Acquire));
+        server.join().unwrap();
     }
 }

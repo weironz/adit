@@ -1,0 +1,21 @@
+{
+  "status": "failed_before_any_vnc_sample",
+  "run_url": "https://github.com/weironz/adit/actions/runs/39145306679",
+  "artifact_id": 12142844784,
+  "source_sha": "8fc0866307f8d99c4bd52f5a3f888942b6ad45b1",
+  "observed_failure": "QEMU TCP guestfwd backend eagerly connected to localhost15911 before an echo/backend listener existed; boot serial was empty and no VNC sample ran",
+  "scope": "Calibration infrastructure failure, not a measured VNC incompatibility or accepted weak-network case",
+  "original_download_files_sha256": {
+    "result.json": "9688739d0515b6e2e75c0d6f877e172a29f823dc0061a7fea1d87f04e43cd910",
+    "qemu-stderr.txt": "aff3971afbdccf80427561d513d539ea8610ecae249c5989fdd4e8227500a1e6",
+    "serial.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "provenance.json": "c38c6f36abc330da363737a2014c44507d4005efc74dfa41201cb6797bafd6ea"
+  },
+  "files_sha256": {
+    "result.json": "5a9470be55468a1b31d3eb9e3f822c3fc71add94878022500effe4452f42348a",
+    "qemu-stderr.txt": "04dc391242ab6a562da128453e3a70b66e950ae94dca6915777718b06340b157",
+    "serial.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "provenance.json": "90db1b594062b7a5da8f7effe2d68e4f64082ad491ab0b26586ed5fa901e7c77"
+  },
+  "artifact_byte_scope": "files_sha256 describes archived LF bytes; original_download_files_sha256 retains pre-normalization downloaded bytes."
+}

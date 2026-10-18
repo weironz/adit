@@ -1,0 +1,71 @@
+name: VNC Windows guest netem PoC
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-windows-shared-soak']
+    paths:
+      - '.github/workflows/vnc-windows-netem.yml'
+      - 'tests/vnc/netem-guest/**'
+
+permissions:
+  contents: read
+
+jobs:
+  guest:
+    name: Build auditable Linux packet guest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install assembly tools from signed Ubuntu repository
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y cpio kmod
+      - name: Assemble fixed-release rootfs and signed fixed-version primary packages
+        run: timeout --signal=TERM --kill-after=10s 420s bash tests/vnc/netem-guest/build.sh "$RUNNER_TEMP/adit-netem-guest"
+      - name: Preserve guest and verified package closure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-netem-guest
+          path: |
+            ${{ runner.temp }}/adit-netem-guest/vmlinuz-virt
+            ${{ runner.temp }}/adit-netem-guest/initramfs.cpio.gz
+            ${{ runner.temp }}/adit-netem-guest/manifest.json
+            ${{ runner.temp }}/adit-netem-guest/sources.json
+            ${{ runner.temp }}/adit-netem-guest/package-versions.txt
+            ${{ runner.temp }}/adit-netem-guest/modules.dep
+            ${{ runner.temp }}/adit-netem-guest/apks/
+          if-no-files-found: warn
+          retention-days: 14
+  packet_path:
+    name: Windows TCG echo and bulk packet-path controls
+    needs: guest
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: vnc-netem-guest
+          path: ${{ runner.temp }}/adit-netem-guest
+      - name: Extract pinned user-mode emulator and verify packet path
+        timeout-minutes: 7
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/windows.ps1 -Guest "$env:RUNNER_TEMP/adit-netem-guest" -Results "$env:RUNNER_TEMP/adit-netem-result"
+      - name: Preserve every outcome and provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-netem-windows-packet-path
+          path: |
+            ${{ runner.temp }}/adit-netem-result/
+            ${{ runner.temp }}/adit-netem-qemu-tools/provenance.json
+            ${{ runner.temp }}/adit-netem-qemu-tools/extraction.txt
+            ${{ runner.temp }}/adit-netem-qemu-tools/qemu-version.txt
+          if-no-files-found: warn
+          retention-days: 14

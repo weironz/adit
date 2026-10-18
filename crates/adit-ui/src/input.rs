@@ -234,6 +234,12 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
         .vnc_pressed_keys
         .iter()
         .position(|(code, _)| *code == physical);
+    // A local field may have owned the press, or focus cleanup / composition
+    // may already have released it. Do not manufacture an unowned key-up on a
+    // shared desktop from the current layout's logical symbol.
+    if !pressed && tracked.is_none() {
+        return;
+    }
     let keysym = if let Some(index) = tracked {
         let keysym = app.vnc_pressed_keys[index].1;
         if !pressed {
@@ -375,21 +381,58 @@ mod vnc_input_tests {
 
 /// Merge selectively swallowed system keys before the next ordinary window key.
 pub(crate) fn drain_vnc_system_keys(app: &mut AditApp) {
+    route_vnc_system_keys(
+        app,
+        keyboard_hook::drain()
+            .into_iter()
+            .map(|stroke| VncSystemStroke {
+                scancode: stroke.scancode,
+                extended: stroke.extended,
+                pressed: stroke.pressed,
+            }),
+    );
+}
+
+/// Value-only boundary so routing can be verified without a global OS hook.
+pub(crate) struct VncSystemStroke {
+    pub scancode: u8,
+    pub extended: bool,
+    pub pressed: bool,
+}
+
+pub(crate) fn route_vnc_system_keys(
+    app: &mut AditApp,
+    strokes: impl IntoIterator<Item = VncSystemStroke>,
+) {
     use keyboard::key::{Code, Physical};
-    for stroke in keyboard_hook::drain() {
+    for stroke in strokes {
         let key = match (stroke.scancode, stroke.extended) {
             (0x0f, _) => Some((0xff09, Physical::Code(Code::Tab))),
             (0x5b, true) => Some((0xffeb, Physical::Code(Code::SuperLeft))),
             (0x5c, true) => Some((0xffec, Physical::Code(Code::SuperRight))),
             _ => None,
         };
-        if let Some((symbol,physical)) = key {
+        if let Some((symbol, physical)) = key {
             if stroke.pressed {
-                if !app.vnc_pressed_keys.iter().any(|(code,_)| *code == physical) {
-                    app.vnc_pressed_keys.push((physical,symbol));
+                if !app
+                    .vnc_pressed_keys
+                    .iter()
+                    .any(|(code, _)| *code == physical)
+                {
+                    app.vnc_pressed_keys.push((physical, symbol));
                 }
-            } else { app.vnc_pressed_keys.retain(|(code,_)| *code != physical); }
-            app.manager.send_vnc_key_to_active(symbol,stroke.pressed);
+            } else if let Some(index) = app
+                .vnc_pressed_keys
+                .iter()
+                .position(|(code, _)| *code == physical)
+            {
+                app.vnc_pressed_keys.remove(index);
+            } else {
+                // The press may predate this grab and belong to a local app.
+                // Shared VNC desktops must not receive its orphaned release.
+                continue;
+            }
+            app.manager.send_vnc_key_to_active(symbol, stroke.pressed);
         }
     }
 }

@@ -1,0 +1,227 @@
+vnc-flow resolution 1024x768
+vnc-flow request incremental=0 rect=0,0,1024x768
+vnc-flow complete bytes=36 encodings=[(-308, 1)] coverage=0/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,1024x20
+vnc-flow raw rect=0,20,20x64
+vnc-flow raw rect=20,20,64x64
+vnc-flow raw rect=84,20,636x64
+vnc-flow raw rect=720,20,64x64
+vnc-flow raw rect=784,20,240x33
+vnc-flow raw rect=784,53,16x31
+vnc-flow raw rect=800,53,160x31
+vnc-flow raw rect=960,53,64x31
+vnc-flow raw rect=0,84,1024x9
+vnc-flow raw rect=0,93,800x30
+vnc-flow raw rect=800,93,224x30
+vnc-flow raw rect=0,123,1024x64
+vnc-flow raw rect=0,187,1024x43
+vnc-flow raw rect=0,230,800x26
+vnc-flow raw rect=800,230,224x26
+vnc-flow raw rect=0,256,1024x64
+vnc-flow raw rect=0,320,1024x24
+vnc-flow raw rect=0,344,800x26
+vnc-flow raw rect=800,344,224x26
+vnc-flow raw rect=0,370,1024x64
+vnc-flow raw rect=0,434,1024x16
+vnc-flow raw rect=0,450,650x64
+vnc-flow raw rect=650,450,64x64
+vnc-flow raw rect=714,450,310x27
+vnc-flow raw rect=714,477,86x26
+vnc-flow raw rect=800,477,224x26
+vnc-flow raw rect=714,503,310x11
+vnc-flow raw rect=0,514,1024x43
+vnc-flow raw rect=0,557,800x22
+vnc-flow raw rect=800,557,224x22
+vnc-flow raw rect=0,579,1024x64
+vnc-flow raw rect=0,643,554x9
+vnc-flow raw rect=0,652,52x27
+vnc-flow raw rect=52,652,502x27
+vnc-flow raw rect=554,643,470x36
+vnc-flow raw rect=0,679,1024x42
+vnc-flow raw rect=0,721,298x47
+vnc-flow raw rect=298,721,424x47
+vnc-flow raw rect=722,721,78x47
+vnc-flow raw rect=800,721,224x47
+vnc-flow complete bytes=632922 encodings=[(7, 41), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x15
+vnc-flow complete bytes=760137 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x15
+vnc-flow complete bytes=760033 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x15
+vnc-flow complete bytes=760038 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x15
+vnc-flow complete bytes=759971 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x15
+vnc-flow complete bytes=760027 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x7
+vnc-flow complete bytes=756418 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x7
+vnc-flow complete bytes=756378 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x7
+vnc-flow complete bytes=756380 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768
+vnc-flow raw rect=0,0,800x32
+vnc-flow raw rect=0,32,32x32
+vnc-flow raw rect=64,32,672x32
+vnc-flow raw rect=768,32,32x32
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,64,800x81
+vnc-flow raw rect=0,145,800x81
+vnc-flow raw rect=0,226,800x81
+vnc-flow raw rect=0,307,800x81
+vnc-flow raw rect=0,388,800x81
+vnc-flow raw rect=0,469,800x11
+vnc-flow raw rect=0,480,672x32
+vnc-flow raw rect=704,480,96x32
+vnc-flow raw rect=0,512,800x81
+vnc-flow raw rect=0,593,800x7
+vnc-flow complete bytes=756484 encodings=[(7, 18), (-224, 1)] coverage=786432/786432
+vnc-flow request incremental=1 rect=0,0,1024x768

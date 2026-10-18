@@ -1,0 +1,16 @@
+{
+  "tcp": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 15911,
+      "OwningProcess": 1440
+    }
+  ],
+  "udp": [
+    {
+      "LocalAddress": "0.0.0.0",
+      "LocalPort": 15911,
+      "OwningProcess": 1440
+    }
+  ]
+}

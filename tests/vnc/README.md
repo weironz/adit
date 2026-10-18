@@ -347,6 +347,43 @@ Those remain separately tracked in #212. Fixture credentials are disposable
 public constants, never a real target password in argv or environment.
 
 
+## Windows shared desktop stability
+
+`vnc-windows-shared.yml` calibrates the owned fixture with a short smoke on
+relevant pushes. An explicit workflow dispatch with `run_soak=true` also runs
+two production `SessionManager` clients against the same portable UltraVNC for
+at least 7,200 seconds. Each cycle includes 120 seconds without
+synthetic input, followed by one click from each client. The target consumes
+the clicks and advances a public sequence/color marker; both clients must
+receive newer, complete frames containing that color and the static canaries.
+Seeing two processes or an unchanged old frame never satisfies this check.
+
+The fixture uses only a disposable GitHub-hosted Windows runner, a fresh state
+directory and public `adit-ci` via stdin. It retains JSONL progress, actual
+target state, two established vendor sockets, post-close socket absence,
+probe/vendor memory and CPU observations, and exact process/firewall cleanup.
+The short calibration has `long_term_acceptance=false`; only the completed
+two-hour run with the required idle windows can set it true. This is loopback
+shared-desktop stability, not weak-network, native GPU presentation, service,
+UAC, OS DPI, OS sleep or physical-input acceptance.
+
+## Synthetic Windows native window observation
+
+`native_rfb_fixture.py` is a standard-library RFB 3.8 peer bound exclusively to
+`127.0.0.1:15915`. It supplies synthetic Raw grid frames, separate EDS updates,
+visible frame identifiers and wire input logs; it never captures a desktop.
+Run `python tests/vnc/native_rfb_fixture.py --self-test` to check its handshake,
+resize frame landmarks and input parsing. An interactive observation requires
+an absolute, fresh `--state-dir` and the opt-in `vnc_native_acceptance` example.
+The example uses a separate configuration and explicit synthetic None security.
+Its own HWND DPI is observed with `GetDpiForWindow`; app scale is not OS DPI.
+
+The [native observation record](results/2026-10-18-windows-native-loopback/result.json)
+includes the exact binary/source hashes, original events and settled screenshots.
+It preserves the restored-click discrepancy and unsuccessful border attempts.
+Synthetic peer observations do not establish vendor compatibility, every
+transient frame, physical keyboard behavior or the actual OS DPI matrix.
+
 ## Windows OS DPI acceptance attempt
 
 The [2026-10-17 OS DPI record](results/2026-10-17-windows-os-dpi.json)

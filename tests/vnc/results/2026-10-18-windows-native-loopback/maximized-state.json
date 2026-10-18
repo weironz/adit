@@ -1,0 +1,17 @@
+{
+  "unix_ms": 1792338840211,
+  "window": {
+    "app": "process:C:\\Users\\willz\\AppData\\Local\\Temp\\adit-vnc-loopback-69a26f7-154584f58a37.exe",
+    "id": 921638,
+    "title": "Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120)"
+  },
+  "screenshot": {
+    "id": "screenshot-1",
+    "width": 1792,
+    "height": 1072
+  },
+  "accessibility": {
+    "focused_element": "0 窗口 Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120) Secondary Actions: Raise",
+    "tree": "Window: \"Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120)\", App: adit-vnc-loopback-69a26f7-154584f58a37.exe.\n\t0 窗口 Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120) Secondary Actions: Raise\n\t\t1 标题栏 (settable, string) Value: Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120)\n\t\t\t2 菜单栏 系统 ID: MenuBar\n\t\t\t\t3 菜单项 系统\n\t\t\t4 按钮 最小化\n\t\t\t5 按钮 还原\n\t\t\t6 按钮 关闭\n\nThe focused UI element is 0 窗口 Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120) Secondary Actions: Raise."
+  }
+}

@@ -1,0 +1,199 @@
+{
+  "outcome": "passed",
+  "source_sha": "04df3170dc54ca182d7926fc4b9da0509eae09d6",
+  "run_id": "39142722306",
+  "scope": "Two concurrent production clients on UltraVNC1.8.3.0 Windows loopback; requested10s shared stability with1s no-input windows; not impaired-network or service acceptance",
+  "sample_count_requested": 0,
+  "workload": "static",
+  "quality": "lossless",
+  "synthetic_load": true,
+  "network": "native loopback baseline; no RTT/bandwidth/loss shaping",
+  "runner": "GitHub Actions 1000015457",
+  "os": {
+    "Caption": "Microsoft Windows Server 2025 Datacenter",
+    "Version": "10.0.26100",
+    "BuildNumber": "26100",
+    "OSArchitecture": "64-bit"
+  },
+  "target": "127.0.0.1:15911",
+  "samples": [],
+  "configuration_reference_commit": "0cd8b41aeb34e52e170b33e24411b3f805e303be",
+  "configuration_reference_note": "Pinned official reference source explains INI/password/CLI semantics; it is not a claim that the downloaded vendor binary was built from this commit.",
+  "previous_failed_run": "https://github.com/weironz/adit/actions/runs/39132780089",
+  "previous_failure_note": "Exact pinned archive started a wildcard UDP listener despite exclusive loopback reservation. No client sample ran; failure remains failed evidence, not compatibility acceptance.",
+  "sources": [
+    "https://uvnc.com/downloads/ultravnc/172-ultravnc-1-8-3-0.html",
+    "https://uvnc.com/docs/ultravnc-server/69-ultravnc-ini.html",
+    "https://uvnc.com/docs/ultravnc-server/51-ultravnc-server-commandline-parameters.html",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/common/inifile.cpp",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/vncauth.c",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/winvnc.cpp",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/UdpEchoServer.cpp",
+    "https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule",
+    "https://learn.microsoft.com/en-us/powershell/module/netsecurity/get-netfirewallrule"
+  ],
+  "limitations": [
+    "Not a Windows workstation/service, UAC, lock/unlock, keyboard, clipboard, DPI, sleep or physical-interface acceptance.",
+    "Loopback samples are a baseline, not the Windows weak-network matrix, latency percentiles or physical input acceptance.",
+    "Full framebuffer means opaque decoded pixels in production SessionManager, not GPU presentation. SyntheticLoad additionally requires decoded public canary colors and real Tk input consumption.",
+    "VncAuth is not transport encryption. Only a public synthetic fixture password is used.",
+    "TCP RFB is loopback-only, but the official binary also binds a wildcard UDP echo on15911 independently of LoopbackOnly. This disposable CI adds one temporary exact-program/UDP-port inbound Block rule on all enabled firewall profiles; not all vendor sockets are loopback.",
+    "The temporary UDP firewall rule is a CI containment measure, not a tested portable production configuration. No existing rule or profile is modified, no service is installed, and no user VM firewall is touched.",
+    "The hosted runner may not expose a capturable interactive desktop. A startup/listener alone never passes this test."
+  ],
+  "shared_soak_requested": true,
+  "duration_seconds_requested": 10,
+  "idle_seconds_requested": 1,
+  "long_term_acceptance": false,
+  "probe_sha256": "9ef6c4cc35bc57ea37334bd0d0c7b01138421ad25a278cfd94bc27c70782e6f9",
+  "load_script_sha256": "65bee392ad67f026f8c92c4057417da3b9e347cfde53fae40891877d009df41c",
+  "load_pid": 5268,
+  "load_ready": {
+    "canaries": [
+      {
+        "point": [
+          40,
+          40
+        ],
+        "rgb": [
+          224,
+          48,
+          32
+        ]
+      },
+      {
+        "point": [
+          670,
+          470
+        ],
+        "rgb": [
+          32,
+          80,
+          224
+        ]
+      }
+    ],
+    "closed": false,
+    "counts": {
+      "button_press": 0,
+      "button_release": 0,
+      "drag_motion": 0,
+      "viewport_changes": 0,
+      "wheel_events": 0,
+      "wheel_units": 0
+    },
+    "elapsed_ms": 2375,
+    "focused": true,
+    "geometry": {
+      "height": 600,
+      "screen_height": 768,
+      "screen_width": 1024,
+      "width": 800,
+      "x": 0,
+      "y": 0
+    },
+    "pid": 5268,
+    "ready": true,
+    "reset_generation": 0,
+    "shared_probe": {
+      "clicks": 0,
+      "point": [
+        752,
+        52
+      ],
+      "protocol": "adit-public-shared-v1",
+      "rgb": [
+        16,
+        16,
+        16
+      ],
+      "sequence": 0
+    },
+    "viewport": {
+      "x": [
+        0.25,
+        0.75
+      ],
+      "y": [
+        0.25,
+        0.75
+      ]
+    }
+  },
+  "archive": {
+    "actual_sha256": "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f",
+    "url": "https://uvnc.eu/download/1800/UltraVNC_1830.zip",
+    "expected_sha256": "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f"
+  },
+  "server": {
+    "pid": 1464,
+    "version": "1.8.3.0",
+    "mode": "portable user application, never installed as service",
+    "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+  },
+  "password_format": "Public synthetic adit-ci, zero-padded8; fixed-key VNC DES with reversed key bits; Win32 Write/GetPrivateProfileStruct8-byte readback verified; never argv/env.",
+  "udp_firewall_rule": "AditVncCiUdpBlock-d0684556be7c4c6dbd3148c6d428071c",
+  "shared_established_clients": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 15911,
+      "RemoteAddress": "127.0.0.1",
+      "RemotePort": 52567,
+      "OwningProcess": 1464
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 15911,
+      "RemoteAddress": "127.0.0.1",
+      "RemotePort": 52561,
+      "OwningProcess": 1464
+    }
+  ],
+  "shared_soak": {
+    "result": {
+      "close_requested_and_records_removed": true,
+      "cycles": 9,
+      "disconnects": [
+        0,
+        0
+      ],
+      "elapsed_ms": 13767,
+      "error": null,
+      "event": "result",
+      "idle_windows": 9,
+      "max_pending": [
+        1,
+        1
+      ],
+      "os_socket_cleanup_verified": false,
+      "passed": true,
+      "phase": "consumed_click_and_fresh_shared_rgb",
+      "resources": {
+        "cpu_sample_min_seconds": 1,
+        "probe_cpu_ms_since_first_sample": 750,
+        "probe_cpu_peak_percent_one_core": 35.53914261423564,
+        "probe_process_peak_working_set_bytes": 29683712,
+        "scope": "whole probe process, including both production clients; not per-client attribution"
+      },
+      "worker_shutdown_grace_ms": 600
+    },
+    "exit": 0,
+    "passed": true,
+    "completed": {
+      "actual_soak_ms": 10540,
+      "cycles": 9,
+      "event": "soak_completed",
+      "idle_seconds": 1,
+      "idle_windows": 9,
+      "long_term_acceptance": false,
+      "requested_seconds": 10,
+      "scope": "loopback Windows shared synthetic desktop; not weak network, OS sleep, service, DPI or physical input"
+    },
+    "consumed_clicks": 18,
+    "timed_out": false,
+    "vendor_established_sockets_after_close": 0
+  },
+  "server_cleanup": "owned vendor process exited",
+  "load_cleanup": "owned Python target exited; identity/path and script/state arguments verified before termination",
+  "firewall_cleanup": "exact owned GUID rule removed after owned server exit; PersistentStore and ActiveStore absence verified"
+}

@@ -17,3 +17,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 zeroize.workspace = true
 rustls-pemfile = "2"
 socket2 = "0.6"
+
+[dev-dependencies]
+serde_json.workspace = true
+
+[[example]]
+name = "vnc_probe"
+test = true

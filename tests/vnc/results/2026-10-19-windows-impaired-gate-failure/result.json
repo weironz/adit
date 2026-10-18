@@ -1,0 +1,14 @@
+{
+  "ok": false,
+  "source_sha": "8fc0866307f8d99c4bd52f5a3f888942b6ad45b1",
+  "scope": "Linux guest eth0 egress delay/rate/loss across TCP-terminating Slirp and byte relay; Windows endpoints use loopback TCP, not transparent TCP loss, physical NIC, OS sleep or GPU acceptance",
+  "network_condition": {
+    "guest_egress_delay_ms": 90,
+    "guest_egress_aggregate_rate_mbit": 5,
+    "configured_random_loss_percent": 0.1
+  },
+  "quality": "lossless",
+  "workload": "static",
+  "requested_samples": 1,
+  "error": "RuntimeError: Guest serial reader stopped: {'serial_reader_error': '[WinError 10054] An existing connection was forcibly closed by the remote host'}"
+}

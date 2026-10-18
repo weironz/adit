@@ -1,0 +1,62 @@
+{
+  "status": "passed_packet_path_only",
+  "run_url": "https://github.com/weironz/adit/actions/runs/39143875981",
+  "source_sha": "089fec3eedeb66a8d63f2996674b3e54adbbca61",
+  "independent_checks": {
+    "delay_ms_configured_on_guest_egress": 80,
+    "connection_plus_echo_median_increase_ms": 313.0,
+    "baseline_bulk_ms": 31,
+    "aggregate_2mbit_bulk_ms": 2203,
+    "drop_negative_wait_ms": 2000.0,
+    "actual_qdisc_drops": 2,
+    "recovery_payload_hash_verified": true
+  },
+  "retained_first_baseline_cold_ms": 5782.0,
+  "failed_attempts": [
+    {
+      "run_id": 39142924956,
+      "status": "failed",
+      "source_sha": "01e0ad47c313c6d3ce696ef63d5c21bb7ab3aa68",
+      "error": "RuntimeError: QEMU exited: 0",
+      "evidence_directory": "failed-39142924956"
+    },
+    {
+      "run_id": 39143396360,
+      "status": "failed",
+      "source_sha": "fb16696a1cff91144b852e47b7b718412675950d",
+      "error": "TimeoutError: Guest serial response deadline",
+      "evidence_directory": "failed-39143396360"
+    },
+    {
+      "run_id": 39143711481,
+      "status": "failed",
+      "source_sha": "06fa297a68d3922861577b4dcf4f86daac2b0fee",
+      "error": "RuntimeError: Guest command failed: {'id': 1, 'ok': False, 'error': \"[Errno 2] No such file or directory: 'tc'\"}",
+      "evidence_directory": "failed-39143711481"
+    }
+  ],
+  "earlier_apk_fetch_failure_run": "https://github.com/weironz/adit/actions/runs/39142827244",
+  "files_sha256": {
+    "qemu-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "result.json": "9835da8b0214f178f701f1d99aa04323bdbec90690d7981afdc105b7cf562797",
+    "serial.txt": "e45063719bb3a8c953cb3e9a0e0c77854b9afdfa3f0042f3ca21ea2b9830fb52",
+    "extraction.txt": "c832c62b124eb40708ddb976cb0264e9b6232e8c6dc76c8c09f0c206d5ba39ed",
+    "provenance.json": "90db1b594062b7a5da8f7effe2d68e4f64082ad491ab0b26586ed5fa901e7c77",
+    "qemu-version.txt": "94da3212a3f571d3fb18b253700883853e3ac0db1e72bc86a5f36adeb729ec19"
+  },
+  "limitations": [
+    "Echo/bulk path only, not VNC matrix or physical Windows NIC/sleep acceptance",
+    "TCP is terminated by Slirp and the byte relay; guest egress is aggregate and not symmetric end-to-end impairment",
+    "New connection is included in timing; first cold sample5782ms retained; Python3.12 Windows monotonic readings are coarse, including zero",
+    "Authenticode status UnknownError is retained; official fixed SHA512 verified, not called a valid signature"
+  ],
+  "original_download_files_sha256": {
+    "qemu-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "result.json": "53651996b32dc8f1c5e7f3840f387fe5dc18dc618c2446368f4d1d2793b7ec39",
+    "serial.txt": "5e8b0aac3e03b8afe0b1539d986475fb93077f52b02e1961af1ba36ceba39c5a",
+    "extraction.txt": "a11ed596f6d6daffe933a143abb8886e48289d57a56ac6c68fc1cf1b6d61ba09",
+    "provenance.json": "c38c6f36abc330da363737a2014c44507d4005efc74dfa41201cb6797bafd6ea",
+    "qemu-version.txt": "e7b39f6d8a73023856fe2fa3254802e12fc98c81991e486ef6177ddd96fa7f3d"
+  },
+  "artifact_byte_scope": "files_sha256 describes the Git-stored files after declared LF text normalization. original_download_files_sha256 preserves exact downloaded artifact bytes before normalization. Binary contents are unchanged."
+}

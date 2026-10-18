@@ -1,0 +1,2 @@
+D:\a\_temp\adit-netem-qemu-tools\extracted\qemu-system-x86_64.exe: -nic user,model=e1000,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:15912-:15912,guestfwd=tcp:10.0.2.100:15911-tcp:127.0.0.1:15911: Failed to connect to '127.0.0.1:15911': Unknown error
+D:\a\_temp\adit-netem-qemu-tools\extracted\qemu-system-x86_64.exe: -nic user,model=e1000,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:15912-:15912,guestfwd=tcp:10.0.2.100:15911-tcp:127.0.0.1:15911: Could not open guest forwarding device 'guestfwd.tcp.15911'

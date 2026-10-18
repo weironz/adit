@@ -1,0 +1,93 @@
+{
+  "outcome": "failed",
+  "run_id": 39146789704,
+  "run_url": "https://github.com/weironz/adit/actions/runs/39146789704",
+  "verified_ci_conclusion": "failure",
+  "host_helper_source_sha": "bebd3d0961eede24de4159b89cfd09dbbaeca7fc",
+  "guest_source_sha": "8fc0866307f8d99c4bd52f5a3f888942b6ad45b1",
+  "guest_build_run": 39145306679,
+  "guest_artifact_id": 12143371403,
+  "artifact": {
+    "id": 12142978418,
+    "name": "vnc-guestfwd-cmd-fake-only",
+    "github_reported_archive_digest": "sha256:53e4759bd7b58bfbf53ddf9c9f821727e83a3855e18e94e3a757d808442f6605",
+    "digest_note": "GitHub API metadata; extracted files were independently hashed, original archive bytes were not retained"
+  },
+  "scope": "Single fixed-QEMU unpacked Windows configuration, fake bytes only. No VNC, credentials, observed packet-loss or product acceptance.",
+  "findings": {
+    "guest_boot_ready": true,
+    "distinct_successful_guest_sessions": 0,
+    "actual_backend_tcp_accepts": 0,
+    "client_first_eof": "not reached",
+    "server_first_eof": "not reached",
+    "first_failure": "Early EOF before public fake marker",
+    "qemu_stderr_failure": "Slirp: fork_exec: Failed to execute helper program (No such file or directory)",
+    "elapsed_seconds": 14.578,
+    "reported_qemu_executable_sha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
+    "official_installer_sha512_record_matches_pinned_source": true
+  },
+  "interpretation": "The shipped unpacked configuration cannot launch the GLib guestfwd cmd helper chain. This occurs before the Python bridge opens fake TCP; it does not prove all Windows cmd forwarding is unsupported, nor does it exercise the suspected SOCKET-to-CRT-fd mismatch. Missing helper or helper search path remains unresolved.",
+  "decision": "Stop this path without retries, environment search-path changes, mux, guard relaxation or real-VNC execution. Preserve failed evidence; unvalidated real-VNC integration must not be counted as acceptance.",
+  "sources": [
+    "https://github.com/qemu/qemu/blob/v11.1.0/net/slirp.c#L1047",
+    "https://github.com/qemu/libslirp/blob/v4.9.1/src/misc.c",
+    "https://github.com/GNOME/glib/blob/2.84.0/glib/gspawn-win32-helper.c",
+    "https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/dup-dup2"
+  ],
+  "files": [
+    {
+      "download_relative_path": "adit-guestfwd-cmd/qemu-stderr.txt",
+      "download_sha256": "6352cb8bd0cedc32047371fb881d0c08907104269ebc0bf417dfb7cb0fb38543",
+      "download_bytes": 328,
+      "stored_path": "raw/adit-guestfwd-cmd/qemu-stderr.txt",
+      "stored_sha256": "9e884a5fec23f2f4bda1b6fb98e67d9a6a0631077e14860b6156066b95053894",
+      "stored_bytes": 326,
+      "normalization": "UTF-8 without BOM, LF; source bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-guestfwd-cmd/result.json",
+      "download_sha256": "ec7b97fc70d20d7d22c980238355dd3497b70e5fe36b47a1b2021331279bf92e",
+      "download_bytes": 1709,
+      "stored_path": "raw/adit-guestfwd-cmd/result.json",
+      "stored_sha256": "a7c2291cdf7f6c6184f8a1317a8894cc03b5d6139d70cac6dffd528386649ba0",
+      "stored_bytes": 1663,
+      "normalization": "UTF-8 without BOM, LF; source bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-guestfwd-cmd/serial.txt",
+      "download_sha256": "39895beb212d2cc0e8bfb722efaa17e286484bc3908361038dc54c2d77251739",
+      "download_bytes": 24060,
+      "stored_path": "raw/adit-guestfwd-cmd/serial.txt",
+      "stored_sha256": "d38fc440c6449c22e34b1be1a6e1460689f65c8057c73aa9e49704ccd670df09",
+      "stored_bytes": 23717,
+      "normalization": "UTF-8 without BOM, LF; source bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-qemu-tools/extraction.txt",
+      "download_sha256": "a11ed596f6d6daffe933a143abb8886e48289d57a56ac6c68fc1cf1b6d61ba09",
+      "download_bytes": 1959,
+      "stored_path": "raw/adit-netem-qemu-tools/extraction.txt",
+      "stored_sha256": "c832c62b124eb40708ddb976cb0264e9b6232e8c6dc76c8c09f0c206d5ba39ed",
+      "stored_bytes": 1882,
+      "normalization": "UTF-8 without BOM, LF; source bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-qemu-tools/provenance.json",
+      "download_sha256": "c38c6f36abc330da363737a2014c44507d4005efc74dfa41201cb6797bafd6ea",
+      "download_bytes": 647,
+      "stored_path": "raw/adit-netem-qemu-tools/provenance.json",
+      "stored_sha256": "90db1b594062b7a5da8f7effe2d68e4f64082ad491ab0b26586ed5fa901e7c77",
+      "stored_bytes": 638,
+      "normalization": "UTF-8 without BOM, LF; source bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-qemu-tools/qemu-version.txt",
+      "download_sha256": "e7b39f6d8a73023856fe2fa3254802e12fc98c81991e486ef6177ddd96fa7f3d",
+      "download_bytes": 131,
+      "stored_path": "raw/adit-netem-qemu-tools/qemu-version.txt",
+      "stored_sha256": "94da3212a3f571d3fb18b253700883853e3ac0db1e72bc86a5f36adeb729ec19",
+      "stored_bytes": 129,
+      "normalization": "UTF-8 without BOM, LF; source bytes separately hashed"
+    }
+  ]
+}

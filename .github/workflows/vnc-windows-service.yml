@@ -1,0 +1,101 @@
+name: VNC Windows service-mode calibration
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-windows-service']
+    paths:
+      - '.github/workflows/vnc-windows-service.yml'
+      - 'tests/vnc/windows-server-smoke.ps1'
+      - 'tests/vnc/windows-load.py'
+      - 'crates/adit-session/examples/vnc_probe.rs'
+      - 'crates/adit-session/src/vnc_client.rs'
+      - 'crates/adit-vnc/**'
+      - 'crates/adit-domain/**'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  calibration:
+    name: One attributed service, static lossless calibration
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 1
+      ADIT_VNC_TRACE_FLOW: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify synthetic desktop runtime
+        shell: pwsh
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+      - name: Build exact-source production SessionManager probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Calibrate actual service worker, full RGB and wrong-password rejection
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/adit-vnc-service-calibration" -ServiceMode -SyntheticLoad -Samples 1 -Quality lossless -Workload static
+      - name: Preserve raw calibration successes and original failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-service-calibration
+          path: ${{ runner.temp }}/adit-vnc-service-calibration
+          if-no-files-found: warn
+
+  compatibility:
+    name: Service basic compatibility (${{ matrix.workload }}, three samples)
+    needs: calibration
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        workload: [static, scroll, drag]
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 1
+      ADIT_VNC_TRACE_FLOW: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify synthetic desktop runtime
+        shell: pwsh
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+      - name: Build exact-source production SessionManager probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Three actual service connections with decoded RGB and consumed input
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/adit-vnc-service-${{ matrix.workload }}" -ServiceMode -SyntheticLoad -Samples 3 -Quality lossless -Workload '${{ matrix.workload }}'
+      - name: Preserve every success and original failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-service-${{ matrix.workload }}
+          path: ${{ runner.temp }}/adit-vnc-service-${{ matrix.workload }}
+          if-no-files-found: warn
