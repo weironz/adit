@@ -38,6 +38,9 @@ do {
     Start-Sleep -Milliseconds 200
 } while ([DateTime]::UtcNow -lt $deadline)
 $record = @{fresh_processes=@($found | Select-Object Id,StartTime);existing_pids=$before;controls=@();source_sha=$env:GITHUB_SHA}
+$uiDeadline = [DateTime]::UtcNow.AddSeconds(25)
+do {
+$record.controls = @()
 foreach ($process in $found) {
     $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)
     $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,$condition)
@@ -51,4 +54,7 @@ foreach ($process in $found) {
         }
     }
 }
+if ($record.controls.Count -gt 10) { break }
+Start-Sleep -Milliseconds 250
+} while ([DateTime]::UtcNow -lt $uiDeadline)
 $record | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $Results 'display-settings-controls.json') -Encoding UTF8
