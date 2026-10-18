@@ -1,0 +1,142 @@
+name: Windows VNC calibrated guest-egress matrix
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-direct-impaired']
+    paths:
+      - '.github/workflows/vnc-windows-direct-impaired.yml'
+      - 'tests/vnc/netem-guest/**'
+      - 'tests/vnc/windows-server-smoke.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  guest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install signed assembly tools
+        timeout-minutes: 3
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y cpio kmod
+      - name: Build current fixed guest with actual iproute2 and tc
+        timeout-minutes: 7
+        run: timeout --signal=TERM --kill-after=10s 400s bash tests/vnc/netem-guest/build.sh "$RUNNER_TEMP/adit-netem-direct-guest" direct-host-alias-fake
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-impaired-guest
+          path: |
+            ${{ runner.temp }}/adit-netem-direct-guest/vmlinuz-virt
+            ${{ runner.temp }}/adit-netem-direct-guest/initramfs.cpio.gz
+            ${{ runner.temp }}/adit-netem-direct-guest/manifest.json
+            ${{ runner.temp }}/adit-netem-direct-guest/sources.json
+            ${{ runner.temp }}/adit-netem-direct-guest/package-versions.txt
+            ${{ runner.temp }}/adit-netem-direct-guest/modules.dep
+            ${{ runner.temp }}/adit-netem-direct-guest/apks/
+          retention-days: 14
+
+  fake:
+    needs: guest
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: direct-impaired-guest
+          path: ${{ runner.temp }}/adit-netem-direct-guest
+      - name: Verify two real backends and both post-halfclose tails
+        timeout-minutes: 3
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/direct_windows.ps1 -Guest "$env:RUNNER_TEMP/adit-netem-direct-guest" -Results "$env:RUNNER_TEMP/direct-impaired-fake"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-impaired-fake
+          path: |
+            ${{ runner.temp }}/direct-impaired-fake/
+            ${{ runner.temp }}/adit-netem-direct-tools/*.json
+            ${{ runner.temp }}/adit-netem-direct-tools/*.txt
+          retention-days: 14
+
+  gate:
+    needs: fake
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build actual production VNC probe
+        run: cargo build -p adit-session --example vnc_probe --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: direct-impaired-production-probe
+          path: target/debug/examples/vnc_probe.exe
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/download-artifact@v4
+        with:
+          name: direct-impaired-guest
+          path: ${{ runner.temp }}/adit-netem-direct-guest
+      - name: Calibrate same QEMU then baseline/impaired/restored real VNC gate
+        timeout-minutes: 16
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/direct_windows.ps1 -Mode vnc -Guest "$env:RUNNER_TEMP/adit-netem-direct-guest" -Results "$env:RUNNER_TEMP/direct-impaired-gate" -Probe "$pwd/target/debug/examples/vnc_probe.exe" -Samples 1
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-impaired-gate
+          path: |
+            ${{ runner.temp }}/direct-impaired-gate/
+            ${{ runner.temp }}/adit-netem-direct-tools/*.json
+            ${{ runner.temp }}/adit-netem-direct-tools/*.txt
+          retention-days: 14
+
+  matrix:
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 18
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        quality: [lossless, wan]
+        workload: [static, scroll, drag]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: direct-impaired-guest
+          path: ${{ runner.temp }}/adit-netem-direct-guest
+      - uses: actions/download-artifact@v4
+        with:
+          name: direct-impaired-production-probe
+          path: ${{ runner.temp }}/direct-probe
+      - name: Calibrate then ten baseline and ten impaired samples; restore
+        timeout-minutes: 16
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/direct_windows.ps1 -Mode vnc -Guest "$env:RUNNER_TEMP/adit-netem-direct-guest" -Results "$env:RUNNER_TEMP/direct-impaired-matrix" -Probe "$env:RUNNER_TEMP/direct-probe/vnc_probe.exe" -Samples 10 -Quality '${{ matrix.quality }}' -Workload '${{ matrix.workload }}'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-impaired-${{ matrix.quality }}-${{ matrix.workload }}
+          path: |
+            ${{ runner.temp }}/direct-impaired-matrix/
+            ${{ runner.temp }}/adit-netem-direct-tools/*.json
+            ${{ runner.temp }}/adit-netem-direct-tools/*.txt
+          retention-days: 14

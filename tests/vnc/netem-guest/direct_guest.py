@@ -5,11 +5,23 @@ import selectors
 import shutil
 import socket
 import subprocess
+import sys
 import threading
 import time
 
 OUTPUT_LOCK = threading.Lock()
 BUFFER_LIMIT = 65536
+RELAY_LIFETIME_SECONDS = 120
+RELAY_DRAIN_SECONDS = 10
+ACTIVITY_LOCK = threading.Lock()
+ACTIVE_CONNECTIONS = 0
+MODES = {
+    "baseline": None,
+    "delay": ["delay", "80ms", "limit", "20000"],
+    "rate": ["rate", "2mbit", "limit", "20000"],
+    "drop": ["loss", "100%", "limit", "20000"],
+    "impaired": ["delay", "90ms", "rate", "5mbit", "loss", "0.5%", "limit", "20000"],
+}
 
 
 def emit(value):
@@ -17,7 +29,7 @@ def emit(value):
         print("ADIT_DIRECT " + json.dumps(value, separators=(",", ":")), flush=True)
 
 
-def relay_pair(client, upstream, lifetime=50, drain_timeout=5):
+def relay_pair(client, upstream, lifetime=RELAY_LIFETIME_SECONDS, drain_timeout=RELAY_DRAIN_SECONDS):
     """Bounded queues; EOF shuts down only the peer writer after queued bytes drain."""
     peers = {client: upstream, upstream: client}
     names = {client: "client", upstream: "upstream"}
@@ -87,13 +99,110 @@ def relay_pair(client, upstream, lifetime=50, drain_timeout=5):
 def snapshot(argv):
     completed = subprocess.run(argv, capture_output=True, text=True, timeout=3, check=False)
     if completed.returncode:
-        raise RuntimeError(f"Guest snapshot failed {argv}: {completed.stderr}")
-    return {"argv": argv, "stdout": completed.stdout, "stderr": completed.stderr}
+        raise RuntimeError(f"Guest snapshot failed {argv}: stdout={completed.stdout!r}, stderr={completed.stderr!r}")
+    return {"argv": argv, "exit": completed.returncode, "stdout": completed.stdout, "stderr": completed.stderr}
+
+
+def state_from_results(results, active_connections):
+    """Parse actual kernel/tool evidence; missing evidence cannot mean idle."""
+    qdiscs = None
+    tcp = None
+    sockets = None
+    for item in results:
+        if item.get("exit", 0) != 0:
+            raise RuntimeError("Failed command in guest state evidence")
+        argv = item["argv"]
+        if argv == ["tc", "-s", "-j", "qdisc", "show", "dev", "eth0"]:
+            qdiscs = json.loads(item["stdout"])
+            if not isinstance(qdiscs, list) or not qdiscs:
+                raise RuntimeError("Missing actual eth0 qdisc state")
+            if any(not all(type(q.get(key)) is int and q[key] >= 0 for key in ("qlen", "backlog", "drops")) for q in qdiscs):
+                raise RuntimeError("Missing numeric qdisc queue/drop counters")
+        elif argv == ["cat", "/proc/net/snmp"]:
+            lines = item["stdout"].splitlines()
+            for index in range(len(lines) - 1):
+                if lines[index].startswith("Tcp:") and lines[index + 1].startswith("Tcp:"):
+                    keys = lines[index].split()[1:]
+                    values = list(map(int, lines[index + 1].split()[1:]))
+                    if len(keys) != len(values):
+                        raise RuntimeError("Malformed kernel TCP counters")
+                    tcp = dict(zip(keys, values))
+        elif argv == ["cat", "/proc/net/tcp"]:
+            lines = item["stdout"].splitlines()
+            if not lines or "local_address" not in lines[0] or "rem_address" not in lines[0]:
+                raise RuntimeError("Missing kernel TCP socket header")
+            sockets = []
+            for line in lines[1:]:
+                fields = line.split()
+                if len(fields) < 4:
+                    raise RuntimeError("Malformed kernel TCP socket row")
+                sockets.append({"local": fields[1], "remote": fields[2], "state": fields[3]})
+    if qdiscs is None or tcp is None or sockets is None or "RetransSegs" not in tcp:
+        raise RuntimeError("Guest snapshot omitted actual qdisc/TCP/socket counters")
+    return {"qdiscs": qdiscs, "tcp": tcp, "tcp_sockets": sockets,
+            "drops": sum(item.get("drops", 0) for item in qdiscs),
+            "active_connections": active_connections}
+
+
+def state_is_idle(stats):
+    # A negative-loss SYN_RECV is not a relay thread; kernel state matters.
+    return (stats["active_connections"] == 0
+            and all(row["state"] in ("0A", "06") for row in stats["tcp_sockets"])
+            and all(item.get("qlen", 0) == 0 and item.get("backlog", 0) == 0 for item in stats["qdiscs"]))
+
+
+def collect_state():
+    results = [snapshot(argv) for argv in (
+        ["tc", "-s", "-j", "qdisc", "show", "dev", "eth0"],
+        ["cat", "/proc/net/snmp"], ["cat", "/proc/net/tcp"],
+    )]
+    with ACTIVITY_LOCK:
+        active = ACTIVE_CONNECTIONS
+    # Validate shape before handing the evidence to a host or changing qdisc.
+    state_from_results(results, active)
+    return {"active_connections": active, "results": results}
+
+
+def apply_control(request, current_mode, capture=collect_state, execute=snapshot):
+    """Only fixed commands are accepted, and queued/live traffic is never flushed."""
+    if (not isinstance(request, dict) or set(request) - {"id", "mode"}
+            or type(request.get("id")) is not int or request["id"] <= 0):
+        raise ValueError("Only positive id and optional fixed mode are accepted")
+    requested = request.get("mode")
+    if "mode" in request and requested not in MODES:
+        raise ValueError("Unknown fixed network mode")
+    response = {"id": request["id"], "ok": False, "mode": current_mode,
+                "requested_mode": requested, "before": None, "mutation": None,
+                "relay_lifetime_seconds": RELAY_LIFETIME_SECONDS}
+    try:
+        if requested is not None:
+            response["before"] = capture()
+            before = state_from_results(response["before"]["results"], response["before"]["active_connections"])
+            if not state_is_idle(before):
+                raise RuntimeError("Kernel TCP/relay/qdisc must be idle before replacing network mode")
+            if requested == "baseline":
+                if any(item["kind"] == "netem" for item in before["qdiscs"]):
+                    response["mutation"] = execute(["tc", "qdisc", "del", "dev", "eth0", "root"])
+            else:
+                response["mutation"] = execute(["tc", "qdisc", "replace", "dev", "eth0", "root", "netem", *MODES[requested]])
+            response["mode"] = requested
+        response.update(capture())
+        response["ok"] = True
+    except Exception as error:
+        response["error"] = f"{type(error).__name__}: {error}"
+    return response
 
 
 def main():
     if os.name != "posix" or os.getpid() != 1:
         raise RuntimeError("Entry point is restricted to the disposable guest PID1")
+    import termios
+
+    attrs = termios.tcgetattr(sys.stdin.fileno())
+    attrs[3] &= ~(termios.ECHO | termios.ICANON)
+    attrs[6][termios.VMIN] = 1
+    attrs[6][termios.VTIME] = 0
+    termios.tcsetattr(sys.stdin.fileno(), termios.TCSANOW, attrs)
     ip_path = shutil.which("ip")
     if ip_path is None:
         raise RuntimeError("Fixed iproute2 tool is missing")
@@ -122,6 +231,7 @@ def main():
         raise RuntimeError("IPv6 routes must be absent in the direct fake guest")
 
     def connection(client, identity, peer):
+        global ACTIVE_CONNECTIONS
         result = {"event": "relay_closed", "connection_id": identity, "ok": False, "client_peer": list(peer)}
         try:
             with client:
@@ -135,20 +245,42 @@ def main():
         except Exception as error:
             result["error"] = f"{type(error).__name__}: {error}"
         finally:
+            with ACTIVITY_LOCK:
+                ACTIVE_CONNECTIONS -= 1
             emit(result)
 
-    with socket.socket() as server:
-        server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        server.bind(("10.0.2.15", 15912))
-        server.listen(4)
-        emit({"event": "ready", "target": "10.0.2.2:15911", "address": "10.0.2.15/32",
-              "restrict": False, "no_default_route": True, "dns_configured": False, "ipv6_routes_empty": True,
-              "scope": "Separate fake TCP lifecycle calibration; no netem impairment or VNC matrix", "snapshots": snapshots})
+    server = socket.socket()
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("10.0.2.15", 15912))
+    server.listen(4)
+
+    def serve():
+        global ACTIVE_CONNECTIONS
         identity = 0
         while True:
             client, peer = server.accept()
+            with ACTIVITY_LOCK:
+                ACTIVE_CONNECTIONS += 1
             identity += 1
             threading.Thread(target=connection, args=(client, identity, peer), daemon=True).start()
+
+    with server:
+        threading.Thread(target=serve, daemon=True).start()
+        emit({"event": "ready", "target": "10.0.2.2:15911", "address": "10.0.2.15/32",
+              "restrict": False, "no_default_route": True, "dns_configured": False, "ipv6_routes_empty": True,
+              "scope": "Host-alias TCP relay; optional fixed guest-egress modes, not transparent Windows networking", "snapshots": snapshots,
+              "control_protocol": "adit-direct-netem-v1", "relay_lifetime_seconds": RELAY_LIFETIME_SECONDS})
+        current_mode = "baseline"
+        for line in sys.stdin:
+            request = None
+            try:
+                request = json.loads(line)
+                response = apply_control(request, current_mode)
+                current_mode = response["mode"]
+            except Exception as error:
+                response = {"id": request.get("id") if isinstance(request, dict) else None,
+                            "ok": False, "error": f"{type(error).__name__}: {error}"}
+            emit(response)
 
 
 if __name__ == "__main__":
