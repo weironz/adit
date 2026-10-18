@@ -251,9 +251,10 @@ fn wait(manager: &mut SessionManager, mut ready: impl FnMut(&mut SessionManager)
         }
         assert!(
             Instant::now() < deadline,
-            "VNC timed out: {:?}, {:?}",
+            "VNC timed out: {:?}, {:?}, diagnostics={:?}",
             manager.active_session_summary(),
-            manager.active_desktop_error()
+            manager.active_desktop_error(),
+            manager.active_vnc_diagnostics()
         );
         thread::sleep(Duration::from_millis(5));
     }
@@ -470,6 +471,7 @@ fn real_vnc_server_authenticates_and_paints() {
     let password = std::env::var("ADIT_VNC_TEST_PASSWORD").unwrap();
     let (mut manager, id) = manager(port);
     let session = manager.open_live_vnc_session(id, password).unwrap();
+    eprintln!("real VNC: awaiting complete framebuffer");
     wait(&mut manager, |m| {
         m.active_session_summary().unwrap().status == SessionStatus::Connected
             // Tight can deliver the white input window before the red background.
@@ -489,6 +491,7 @@ fn real_vnc_server_authenticates_and_paints() {
     manager.send_vnc_key_to_active(0x61, true);
     manager.send_vnc_key_to_active(0x61, false);
     if let Ok(path) = std::env::var("ADIT_VNC_TEST_EVENTS") {
+        eprintln!("real VNC: awaiting target keyboard, button release and pointer events");
         wait(&mut manager, |_| {
             let events = std::fs::read_to_string(&path).unwrap_or_default();
             events.contains("keysym 0x61, a") && events.contains("ButtonRelease")

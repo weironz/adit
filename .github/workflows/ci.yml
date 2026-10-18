@@ -110,6 +110,8 @@ jobs:
       - name: VNC integration against x11vnc and TigerVNC
         if: matrix.os == 'ubuntu-latest'
         shell: bash
+        env:
+          ADIT_VNC_TRACE_FLOW: '1'
         run: |
           sudo apt-get install -y --no-install-recommends \
             xvfb x11vnc tigervnc-standalone-server tigervnc-tools x11-xserver-utils x11-utils xdotool xauth python3-tk
@@ -161,6 +163,18 @@ jobs:
           cargo test -p adit-session --test vnc real_vnc_server_authenticates_and_paints -- --ignored
           ADIT_VNC_CLIP_LOCAL=1 ADIT_VNC_CLIP_PORT=15900 ADIT_VNC_CLIP_DISPLAY=99 \
             cargo test -p adit-session --test vnc_clipboard -- --ignored
+
+      - name: Preserve real VNC server and input diagnostics
+        if: always() && matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-linux-server-diagnostics
+          path: |
+            /tmp/adit-xvfb.log
+            /tmp/adit-x11vnc.log
+            /tmp/adit-tigervnc.log
+            /tmp/adit-vnc-events.log
+          if-no-files-found: warn
 
       - name: Build the VNC recovery probe
         if: matrix.os == 'ubuntu-latest'
