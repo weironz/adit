@@ -181,7 +181,13 @@ def calibrate(guest, records):
     dropped = guest.control()
     require(dropped["stats"]["drops"] > 0, "No actual qdisc drops during negative control")
     records.append({"phase": "100_percent_loss_snapshot", "snapshot": dropped})
-    guest.idle()
+    # An accepted SLIRP host socket cannot cancel the guest's unanswered SYNACK.
+    # Linux's default passive-open timeout is 63s; retain 100% loss and wait
+    # for actual kernel expiry instead of deleting queued/live traffic.
+    # https://docs.kernel.org/6.12/networking/ip-sysctl.html#tcp-synack-retries-integer
+    recovery_started = time.monotonic()
+    recovered = guest.idle(seconds=90)
+    records.append({"phase": "100_percent_loss_natural_kernel_recovery", "deadline_seconds": 90, "elapsed_ms": round((time.monotonic() - recovery_started) * 1000, 3), "snapshot": recovered})
     guest.control("baseline")
     records.append({"phase": "loss_control_restored", "echo": exchange(b"restored-after-loss")})
     guest.idle()

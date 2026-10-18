@@ -247,13 +247,14 @@ class DirectGuest:
     def control(self, mode=None):
         return self._control(mode, min(25, self.deadline - time.monotonic()))
 
-    def idle(self):
-        end = min(self.deadline, time.monotonic() + 12)
+    def idle(self, seconds=12):
+        require(seconds in (12, 90), "Only normal or negative-loss kernel recovery deadline is allowed")
+        end = min(self.deadline, time.monotonic() + seconds)
         while time.monotonic() < end:
-            snapshot = self._control(None, end - time.monotonic())
+            snapshot = self._control(None, min(25, end - time.monotonic()))
             if state_is_idle(snapshot["stats"]):
                 return snapshot
-            time.sleep(min(0.2, max(0, end - time.monotonic())))
+            time.sleep(min(1 if seconds == 90 else 0.2, max(0, end - time.monotonic())))
         raise TimeoutError("Relay count, kernel TCP states or qdisc queue did not become idle")
 
     def close(self):
