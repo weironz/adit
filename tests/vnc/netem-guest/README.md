@@ -41,7 +41,7 @@ this first PoC. No transparent, end-to-end Windows TCP-loss claim is valid.
 The experiment requires all of these before success:
 
 - byte-identical small echo and 256 KiB bulk control;
-- fixed 80 ms guest-egress delay with independent echo RTT increase;
+- fixed 80 ms guest-egress delay with independent connection-plus-echo elapsed increase;
 - 2 Mbit/s aggregate guest-egress shaping with a slower measured bulk transfer;
 - 100% loss prevents payload delivery and increments actual netem drop counters;
 - restoring baseline allows a new byte-identical echo;
@@ -54,6 +54,9 @@ does not retry failing phases. TCG load and timer resolution limit performance
 interpretation; the conservative assertions establish a working impairment
 path, not reliable WAN latency percentiles. Random loss, symmetric impairment,
 VNC integration and full workload matrices require additional evidence.
+Each exchange includes a new TCP connection as well as its echo. Keep the cold
+first observation and coarse Windows timer readings, including zero readings,
+in the raw result; these are not pure payload RTT or submillisecond measurements.
 
 Official references:
 
