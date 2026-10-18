@@ -28,7 +28,7 @@ jobs:
       - name: Attributed service, real desktop, WTS lock and fresh lock-screen capture
         timeout-minutes: 8
         shell: pwsh
-        run: ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/vnc-service-lock" -ServiceMode -SyntheticLoad -Samples 1 -LockScreen
+        run: ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/vnc-service-lock" -ServiceMode -SyntheticLoad -Samples 1 -DisplayResize -LockScreen
       - uses: actions/upload-artifact@v4
         if: always()
         with:

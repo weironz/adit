@@ -27,6 +27,10 @@ U.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
 U.SetForegroundWindow.argtypes = [W.HWND]
 U.PostMessageW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
 U.IsWindowVisible.argtypes = [W.HWND]
+U.WindowFromPoint.argtypes=[W.POINT]
+U.WindowFromPoint.restype=W.HWND
+U.GetAncestor.argtypes=[W.HWND,W.UINT]
+U.GetAncestor.restype=W.HWND
 U.GetWindowTextW.argtypes = [W.HWND,W.LPWSTR,C.c_int]
 U.GetClassNameW.argtypes = [W.HWND,W.LPWSTR,C.c_int]
 CALLBACK = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
@@ -41,7 +45,9 @@ def cursor_info():
     value=CURSORINFO()
     value.size=C.sizeof(value)
     assert U.GetCursorInfo(C.byref(value))
-    return dict(flags=value.flags,position=[value.position.x,value.position.y])
+    under=U.WindowFromPoint(value.position)
+    return dict(flags=value.flags,cursor_handle=value.cursor,position=[value.position.x,value.position.y],
+                root_window=U.GetAncestor(under,2))
 
 
 def magenta_bounds(image):
@@ -76,8 +82,16 @@ def cursor_checks(hwnd,state,log,directory,box,target,cross_width,result,case):
                                          if e['event']=='cursor' and e['style']==style),None))
         wait_until(lambda: any(e.get('cursor') and e['cursor']['generation']>old_generation
                                for e in read_events(log)))
+        startup=cursor_info()
+        result.setdefault('cursor_startup_observations',[]).append(dict(case=case,style=style,state=startup))
+        before_move=len(read_events(state/'events.jsonl'))
+        assert U.SetCursorPos(absolute[0]+3,absolute[1]+3)
+        wait_until(lambda: any(e['event']=='pointer' for e in read_events(state/'events.jsonl')[before_move:]))
         assert U.SetCursorPos(*absolute)
-        wait_until(lambda: cursor_info()['flags']==0)
+        try:
+            wait_until(lambda: cursor_info()['flags']==0)
+        finally:
+            result.setdefault('cursor_visibility_observations',[]).append(dict(case=case,style=style,state=cursor_info(),expected_hwnd=hwnd))
         region=(absolute[0]-40,absolute[1]-40,absolute[0]+40,absolute[1]+40)
         expected=metadata['opaque_bounds']
         def capture():
