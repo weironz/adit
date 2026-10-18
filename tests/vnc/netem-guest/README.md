@@ -94,3 +94,15 @@ PATH changes, mux protocols, guard relaxation or protection exceptions.
 [Archived raw cmd failure and independent audit](../results/2026-10-19-windows-guestfwd-cmd/independent-audit.json)
 include original download and LF-normalized stored hashes separately. The
 real gate failure remains separately preserved in repository result history.
+
+The later isolated dependency investigation found that the fixed QEMU package
+omits both GLib spawn helpers. An official MSYS2 package was authenticated
+against its signed keyring, and its GLib DLL exactly matched QEMU's bundled DLL.
+One fresh fake-only run with the two matching helpers then failed at
+`Slirp: fork_exec: Failed to dup() in child process (Bad file descriptor)`.
+It accepted **zero** backend connections; neither EOF lifecycle case passed.
+This is a different, later failure than the original missing-helper error.
+The preparation success is not fake-gate or VNC acceptance. No further retries
+or product changes followed. See the [exact raw failure and source](../results/2026-10-19-windows-guestfwd-matched-failure/independent-audit.json),
+[package inventory](../results/2026-10-19-windows-qemu-glib-layout/independent-audit.json)
+and [dependency authenticity audit](../results/2026-10-19-windows-glib-matching-dependency/independent-audit.json).

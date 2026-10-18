@@ -1,0 +1,25 @@
+{
+  "outcome": "inventoried",
+  "source_sha": "0ae745c50b73e7f7cc220a70c8907ce5dae04bfa",
+  "run_id": "39150021676",
+  "runner": "GitHub Actions 1000015708",
+  "scope": "Read-only metadata inventory of the fixed official Windows QEMU package. No QEMU, helper or installer execution; no VNC, credentials, dependency/PATH, route, firewall or protection changes.",
+  "phase": "complete_metadata_only",
+  "vendor_binaries_executed": false,
+  "source": {
+    "url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.exe",
+    "sha512": "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543",
+    "checksum_source": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.sha512",
+    "upstream_reference": "https://www.qemu.org/download/#windows",
+    "note": "Upstream-listed Windows build, not an upstream reproducible build attestation. Installer is only extracted on disposable Windows CI; never executed."
+  },
+  "sources_json_sha256": "b17621f239ed96474b38656c544abf3c82fd28ebafa1500d48beef9831fb8417",
+  "actual_installer_sha512": "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543",
+  "installer_bytes": 206615928,
+  "extracted_file_count": 3389,
+  "qemu_x86_64_count": 1,
+  "glib_dll_count": 1,
+  "slirp_dll_count": 1,
+  "gspawn_helpers": [],
+  "interpretation": "Helper absence is an inventory fact, not proof Windows cmd forwarding is unsupported. Helper search behavior depends on the bundled GLib version and directory layout; no spawn/fd test is executed here."
+}

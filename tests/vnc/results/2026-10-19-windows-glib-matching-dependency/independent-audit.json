@@ -1,0 +1,439 @@
+{
+  "outcome": "verified_matching_dependency_metadata",
+  "run_id": 39151046882,
+  "run_url": "https://github.com/weironz/adit/actions/runs/39151046882",
+  "verified_ci_conclusion": "success",
+  "source_sha": "175ab8136362e29269ea326bbba596db8c8d67e0",
+  "artifact": {
+    "id": 12144993696,
+    "name": "windows-glib-matching-dependency-metadata",
+    "github_reported_archive_digest": "sha256:a50a2caeb523f46d1761b046f37aa28cd129541bb7be67d682bbfd40b260edca",
+    "digest_note": "GitHub-reported archive digest; ZIP bytes were not retained. Original downloaded metadata and stored LF bytes are independently hashed below."
+  },
+  "scope": "Official package signature, exact DLL identity and PE metadata only. No helper/QEMU/installer/VNC execution and no dependency installation or replacement.",
+  "trust": {
+    "keyring_commit": "5d249077a0cfeec9dbf51515e5e01da413d28859",
+    "bootstrap": "Five explicitly pinned official MSYS2 master fingerprints passed via --trusted-key, default GPG pgp trust model and current-time validation; developer signer was not elevated.",
+    "validsig_fingerprint": "5F944B027F7FE2091985AA2EFA11531AA0AA7F57",
+    "status": "TRUST_FULLY 0 pgp",
+    "independently_read_valid_developer_certifications_by_master": [
+      "D55E7A6D7CE9BA1587C0ACACF40D263ECA25678A",
+      "69985C5EB351011C78DF7F6D755B8182ACD22879",
+      "6E8FEAFF9644F54EED90EEA0790AE56A1D3CFDDC"
+    ],
+    "sha1_third_party_signatures_rejected_by_default": true,
+    "weak_signature_override_used": false
+  },
+  "findings": {
+    "package_sha256_measured_after_signature_verification": "5aa850934d0216f5b7237bd54c3ec660ebfc3a42fd992bc7abbd611bd9cc7663",
+    "package_hash_is_prepublished_checksum": false,
+    "package_bytes": 5402063,
+    "glib_dll_exact_qemu_match": true,
+    "glib_dll_sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+    "selected_files": [
+      {
+        "package_path": "mingw64/bin/libglib-2.0-0.dll",
+        "bytes": 1566649,
+        "sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+        "pe_machine": "0x8664",
+        "pe_optional_magic": "0x20b",
+        "imports": [
+          "ADVAPI32.dll",
+          "libintl-8.dll",
+          "KERNEL32.dll",
+          "msvcrt.dll",
+          "ole32.dll",
+          "SHELL32.dll",
+          "USER32.dll",
+          "WS2_32.dll",
+          "libpcre2-8-0.dll"
+        ],
+        "executed": false
+      },
+      {
+        "package_path": "mingw64/bin/gspawn-win64-helper.exe",
+        "bytes": 26808,
+        "sha256": "87113f2bf18d694910a1e6791282aea4da3611d41a8397434e43fed6deec72a5",
+        "pe_machine": "0x8664",
+        "pe_optional_magic": "0x20b",
+        "imports": [
+          "KERNEL32.dll",
+          "msvcrt.dll",
+          "SHELL32.dll",
+          "libglib-2.0-0.dll"
+        ],
+        "executed": false
+      },
+      {
+        "package_path": "mingw64/bin/gspawn-win64-helper-console.exe",
+        "bytes": 26185,
+        "sha256": "c8734364a23a2af11660efba3d4c9b82bcdc604f15816cfd92ed2697ee30cdaf",
+        "pe_machine": "0x8664",
+        "pe_optional_magic": "0x20b",
+        "imports": [
+          "KERNEL32.dll",
+          "msvcrt.dll",
+          "SHELL32.dll",
+          "libglib-2.0-0.dll"
+        ],
+        "executed": false
+      }
+    ],
+    "non_system_imports_present_in_prior_qemu_root_inventory": [
+      "libglib-2.0-0.dll",
+      "libintl-8.dll",
+      "libpcre2-8-0.dll"
+    ]
+  },
+  "interpretation": "The signed mingw64 2.88.3-1 package contains the exact QEMU GLib DLL and two corresponding AMD64/MSVCRT helpers. This establishes matching dependency provenance, not successful helper spawn, socket/fd interoperability, fresh-backend EOF lifecycle or real VNC weak-network acceptance.",
+  "remaining_evidence": [
+    "one matched-helper fake calibration with two actual backend connections and client-first/server-first EOF",
+    "VNC acceptance only after the fake gate succeeds"
+  ],
+  "files": [
+    {
+      "download_relative_path": "BUILDINFO.txt",
+      "download_sha256": "77f27dc89f73ae9a6fd4ee78dbdf6a58e5f48de5c5f6f9917fe39b30f8af3ac9",
+      "download_bytes": 6720,
+      "stored_path": "raw/BUILDINFO.txt",
+      "stored_sha256": "77f27dc89f73ae9a6fd4ee78dbdf6a58e5f48de5c5f6f9917fe39b30f8af3ac9",
+      "stored_bytes": 6720,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "COPYING.txt",
+      "download_sha256": "fa6f36630bb1e0c571d34b2bbdf188d08495c9dbf58f28cac112f303fc1f58fb",
+      "download_bytes": 25967,
+      "stored_path": "raw/COPYING.txt",
+      "stored_sha256": "fa6f36630bb1e0c571d34b2bbdf188d08495c9dbf58f28cac112f303fc1f58fb",
+      "stored_bytes": 25967,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "PKGBUILD.txt",
+      "download_sha256": "79703d0e70f2b78826985d290197499d3327fda5b65f1f725a612a1ad008544e",
+      "download_bytes": 5284,
+      "stored_path": "raw/PKGBUILD.txt",
+      "stored_sha256": "79703d0e70f2b78826985d290197499d3327fda5b65f1f725a612a1ad008544e",
+      "stored_bytes": 5284,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "PKGINFO.txt",
+      "download_sha256": "bd0b25097ad0ab82ed1e17106c57ed4fa41ed29f8f17f73b84b324ee959fc385",
+      "download_bytes": 930,
+      "stored_path": "raw/PKGINFO.txt",
+      "stored_sha256": "bd0b25097ad0ab82ed1e17106c57ed4fa41ed29f8f17f73b84b324ee959fc385",
+      "stored_bytes": 930,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "developer-certifications.stderr.txt",
+      "download_sha256": "4fe7197e60e98eb0d950f90303947b41bf90f8ace80da0c72d9f8a24d70abc71",
+      "download_bytes": 408,
+      "stored_path": "raw/developer-certifications.stderr.txt",
+      "stored_sha256": "4fe7197e60e98eb0d950f90303947b41bf90f8ace80da0c72d9f8a24d70abc71",
+      "stored_bytes": 408,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "developer-certifications.stdout.txt",
+      "download_sha256": "a849d13bb4bcc3e1be9461f2bf37f223e535e7276814188b160869c80b324c3f",
+      "download_bytes": 1306,
+      "stored_path": "raw/developer-certifications.stdout.txt",
+      "stored_sha256": "a849d13bb4bcc3e1be9461f2bf37f223e535e7276814188b160869c80b324c3f",
+      "stored_bytes": 1306,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "effective-ownertrust.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/effective-ownertrust.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "effective-ownertrust.stdout.txt",
+      "download_sha256": "1b1505eb59b54411ed3067299ebf083267a65ffad054393962eb044ee6678eb1",
+      "download_bytes": 119,
+      "stored_path": "raw/effective-ownertrust.stdout.txt",
+      "stored_sha256": "1b1505eb59b54411ed3067299ebf083267a65ffad054393962eb044ee6678eb1",
+      "stored_bytes": 119,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extract-.BUILDINFO.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/extract-.BUILDINFO.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extract-.PKGINFO.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/extract-.PKGINFO.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extract-COPYING.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/extract-COPYING.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extract-gspawn-win64-helper-console.exe.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/extract-gspawn-win64-helper-console.exe.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extract-gspawn-win64-helper.exe.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/extract-gspawn-win64-helper.exe.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extract-libglib-2.0-0.dll.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/extract-libglib-2.0-0.dll.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "gpg-version.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/gpg-version.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "gpg-version.stdout.txt",
+      "download_sha256": "22a4b2f69f1b7d7f962e29099e0432f51a1b9e1fc7ca9189dd89ecbe0d704c88",
+      "download_bytes": 591,
+      "stored_path": "raw/gpg-version.stdout.txt",
+      "stored_sha256": "22a4b2f69f1b7d7f962e29099e0432f51a1b9e1fc7ca9189dd89ecbe0d704c88",
+      "stored_bytes": 591,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "key-fingerprints.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/key-fingerprints.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "key-fingerprints.stdout.txt",
+      "download_sha256": "4f3c12ce033eb74c46f142b80d4255961c44dc7913895683f21e56c65911c9b8",
+      "download_bytes": 4372,
+      "stored_path": "raw/key-fingerprints.stdout.txt",
+      "stored_sha256": "4f3c12ce033eb74c46f142b80d4255961c44dc7913895683f21e56c65911c9b8",
+      "stored_bytes": 4372,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "key-import.stderr.txt",
+      "download_sha256": "9afa689bdd9863a0cc1b4fc2f32f7a4847592e161fc0810c362ce90aeacca7fc",
+      "download_bytes": 2399,
+      "stored_path": "raw/key-import.stderr.txt",
+      "stored_sha256": "9afa689bdd9863a0cc1b4fc2f32f7a4847592e161fc0810c362ce90aeacca7fc",
+      "stored_bytes": 2399,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "key-import.stdout.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/key-import.stdout.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "msys2-revoked",
+      "download_sha256": "62b67ba0217745c7df189092a70d6b7a5781577f6428a5391dccd897edb5756a",
+      "download_bytes": 164,
+      "stored_path": "raw/msys2-revoked",
+      "stored_sha256": "62b67ba0217745c7df189092a70d6b7a5781577f6428a5391dccd897edb5756a",
+      "stored_bytes": 164,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "msys2-trusted",
+      "download_sha256": "a8d39040a7b6cc14bf4394b5d9c838443925c32b00a7d34e8729c972392dca04",
+      "download_bytes": 220,
+      "stored_path": "raw/msys2-trusted",
+      "stored_sha256": "a8d39040a7b6cc14bf4394b5d9c838443925c32b00a7d34e8729c972392dca04",
+      "stored_bytes": 220,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "msys2.gpg",
+      "download_sha256": "1257d4ccc536c53333445a618039af4c3ea3f56b96601de9af89151ea529c19a",
+      "download_bytes": 54878,
+      "stored_path": "raw/msys2.gpg",
+      "stored_sha256": "1257d4ccc536c53333445a618039af4c3ea3f56b96601de9af89151ea529c19a",
+      "stored_bytes": 54878,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "package-file-list.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/package-file-list.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "package-file-list.stdout.txt",
+      "download_sha256": "52abec7bf206a23cf537f7bc60f54a075c6ef1271227975df0412e0e40e60a8f",
+      "download_bytes": 30388,
+      "stored_path": "raw/package-file-list.stdout.txt",
+      "stored_sha256": "52abec7bf206a23cf537f7bc60f54a075c6ef1271227975df0412e0e40e60a8f",
+      "stored_bytes": 30388,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "package-signature.stderr.txt",
+      "download_sha256": "a5491fa709e315d3b6bea4bf96d56d9e68e4f87bab1d23e31d49fd786ebf962c",
+      "download_bytes": 911,
+      "stored_path": "raw/package-signature.stderr.txt",
+      "stored_sha256": "a5491fa709e315d3b6bea4bf96d56d9e68e4f87bab1d23e31d49fd786ebf962c",
+      "stored_bytes": 911,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "package-signature.stdout.txt",
+      "download_sha256": "84ce3562927b5b9013cb6093abce566b27fa41f1464bd0626e4f566b5e87b3d7",
+      "download_bytes": 1622,
+      "stored_path": "raw/package-signature.stdout.txt",
+      "stored_sha256": "84ce3562927b5b9013cb6093abce566b27fa41f1464bd0626e4f566b5e87b3d7",
+      "stored_bytes": 1622,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "pe-gspawn-win64-helper-console.exe.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/pe-gspawn-win64-helper-console.exe.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "pe-gspawn-win64-helper-console.exe.stdout.txt",
+      "download_sha256": "621983532972e4d489e545a5af3c24918e04a212627d91e2736a789c05a597e3",
+      "download_bytes": 21860,
+      "stored_path": "raw/pe-gspawn-win64-helper-console.exe.stdout.txt",
+      "stored_sha256": "621983532972e4d489e545a5af3c24918e04a212627d91e2736a789c05a597e3",
+      "stored_bytes": 21860,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "pe-gspawn-win64-helper.exe.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/pe-gspawn-win64-helper.exe.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "pe-gspawn-win64-helper.exe.stdout.txt",
+      "download_sha256": "a7fc8d2b365d77f322d0dedc5cda56068ed87f032e077f5e27bbd37803b728df",
+      "download_bytes": 22384,
+      "stored_path": "raw/pe-gspawn-win64-helper.exe.stdout.txt",
+      "stored_sha256": "a7fc8d2b365d77f322d0dedc5cda56068ed87f032e077f5e27bbd37803b728df",
+      "stored_bytes": 22384,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "pe-libglib-2.0-0.dll.stderr.txt",
+      "download_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "download_bytes": 0,
+      "stored_path": "raw/pe-libglib-2.0-0.dll.stderr.txt",
+      "stored_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_bytes": 0,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "pe-libglib-2.0-0.dll.stdout.txt",
+      "download_sha256": "61c6d3ae4958473069343024e00c45fd3c318845a8888f1f4ceb83bb2ad63344",
+      "download_bytes": 1024712,
+      "stored_path": "raw/pe-libglib-2.0-0.dll.stdout.txt",
+      "stored_sha256": "61c6d3ae4958473069343024e00c45fd3c318845a8888f1f4ceb83bb2ad63344",
+      "stored_bytes": 1024712,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "phases.txt",
+      "download_sha256": "dbe9f999ef968151f89f2bd0e58a5a4d2b9031d9354730c48318ed66aea832ca",
+      "download_bytes": 446,
+      "stored_path": "raw/phases.txt",
+      "stored_sha256": "dbe9f999ef968151f89f2bd0e58a5a4d2b9031d9354730c48318ed66aea832ca",
+      "stored_bytes": 446,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "result.json",
+      "download_sha256": "1c458222991bad679eff955ad5782cef946ffba961dd012f9d03cba66c782921",
+      "download_bytes": 3814,
+      "stored_path": "raw/result.json",
+      "stored_sha256": "1c458222991bad679eff955ad5782cef946ffba961dd012f9d03cba66c782921",
+      "stored_bytes": 3814,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "selected-file-metadata.json",
+      "download_sha256": "ca7cb18f8cdf105e80c8c9e272e896190db05265cda99ea4b18a80f7a9feaab7",
+      "download_bytes": 1211,
+      "stored_path": "raw/selected-file-metadata.json",
+      "stored_sha256": "ca7cb18f8cdf105e80c8c9e272e896190db05265cda99ea4b18a80f7a9feaab7",
+      "stored_bytes": 1211,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "sources.json",
+      "download_sha256": "c8cafc5d070925f35113da52977760fc10478c37835f535fb61aec32a0eac0d8",
+      "download_bytes": 2310,
+      "stored_path": "raw/sources.json",
+      "stored_sha256": "c8cafc5d070925f35113da52977760fc10478c37835f535fb61aec32a0eac0d8",
+      "stored_bytes": 2310,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    }
+  ],
+  "archived_workflow": {
+    "origin": "Git blob, not downloaded artifact",
+    "source_sha": "175ab8136362e29269ea326bbba596db8c8d67e0",
+    "repository_path": ".github/workflows/vnc-windows-glib-dependency.yml",
+    "git_blob_sha256": "cebb369ab2cc80b55a4abc054618ac6084e1dbe44915aca30caeaf612cfe5f72",
+    "git_blob_bytes": 17474,
+    "stored_path": "source/workflow.yml",
+    "stored_sha256": "cebb369ab2cc80b55a4abc054618ac6084e1dbe44915aca30caeaf612cfe5f72",
+    "stored_bytes": 17474,
+    "normalization": "UTF-8 without BOM, LF"
+  }
+}

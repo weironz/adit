@@ -1,0 +1,6 @@
+2026-10-18T17:45:37.216122+00:00 require_existing_runner_tools
+2026-10-18T17:45:37.222121+00:00 download_pinned_official_key_metadata
+2026-10-18T17:45:37.698722+00:00 verify_signature_with_default_gpg_and_official_master_anchors
+2026-10-18T17:45:40.379712+00:00 inspect_signed_package_without_installation
+2026-10-18T17:45:40.501189+00:00 inventory_matching_amd64_helpers_without_execution
+2026-10-18T17:45:40.848395+00:00 complete_metadata_only

@@ -1,0 +1,3 @@
+# Preserve original diagnostic whitespace.
+*.log -whitespace
+*.txt -whitespace

@@ -1,0 +1,153 @@
+{
+  "outcome": "inventoried_metadata_only",
+  "run_id": 39150021676,
+  "run_url": "https://github.com/weironz/adit/actions/runs/39150021676",
+  "verified_ci_conclusion": "success",
+  "source_sha": "0ae745c50b73e7f7cc220a70c8907ce5dae04bfa",
+  "artifact": {
+    "id": 12144697995,
+    "name": "vnc-windows-glib-layout-metadata",
+    "github_reported_archive_digest": "sha256:dcba92153a0de357f04dfb9f7c3e72de0b759d9bb040b16b923f297e25272b87",
+    "digest_note": "GitHub-reported archive digest; original ZIP bytes were not retained. Downloaded extracted metadata and stored normalized bytes are independently hashed below."
+  },
+  "scope": "Read-only inventory of the fixed QEMU Windows installer after checksum verification. No QEMU, GLib helper, installer or package execution; no credentials, VNC, fd compatibility, weak-network matrix or product acceptance.",
+  "findings": {
+    "total_extracted_files": 3389,
+    "gspawn_occurrences_in_complete_extracted_file_paths": 0,
+    "gspawn_occurrences_in_original_archive_listing": 0,
+    "glib_dll_version": "2.88.3",
+    "glib_dll_sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+    "qemu_executable_sha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
+    "vendor_binaries_executed": false,
+    "target_files": [
+      {
+        "path": "libglib-2.0-0.dll",
+        "bytes": 1566649,
+        "sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+        "file_version": "2.88.3",
+        "product_version": "2.88.3",
+        "original_filename": "libglib-2.0-0.dll",
+        "description": "GLib is a general-purpose, portable utility library"
+      },
+      {
+        "path": "libslirp-0.dll",
+        "bytes": 217294,
+        "sha256": "098093db72095516c877c371942444a508aaa3c546de563bd2ea36ba2e88a646",
+        "file_version": null,
+        "product_version": null,
+        "original_filename": null,
+        "description": null
+      },
+      {
+        "path": "qemu-system-x86_64.exe",
+        "bytes": 25457048,
+        "sha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
+        "file_version": "Aug 11 2026, 21:01:49",
+        "product_version": "11.1.0",
+        "original_filename": "",
+        "description": "QEMU machine emulators and tools"
+      }
+    ]
+  },
+  "interpretation": "Both complete listings show the two GLib gspawn helpers are absent from this exact QEMU package. The prior helper-launch ENOENT is consistent with missing helpers, but no successful spawn, Python argv or SOCKET/CRT fd compatibility has been demonstrated. Windows cmd forwarding cannot be declared unsupported from this result.",
+  "bounded_next_step": "Inspect the official signed mingw64 GLib 2.88.3-1 package using the pinned official MSYS2 keyring. Require its libglib DLL to match the recorded QEMU DLL exactly before proposing corresponding helper candidates. No dependency execution is authorized by this archive.",
+  "next_step_not_yet_proven": [
+    "MSYS2 package detached signature and current trust validity",
+    "exact GLib DLL match in signed package",
+    "AMD64/MSVCRT helper imports",
+    "fake per-connection client/server EOF lifecycle",
+    "real VNC through guest impairment"
+  ],
+  "references": [
+    "https://github.com/GNOME/glib/blob/2.88.3/glib/gwin32.c#L1449",
+    "https://github.com/GNOME/glib/blob/2.88.3/glib/gspawn-win32.c",
+    "https://github.com/qemu/qemu/blob/v11.1.0/scripts/nsis.py",
+    "https://github.com/qemu/qemu/blob/v11.1.0/qemu.nsi",
+    "https://www.msys2.org/dev/keyring/"
+  ],
+  "files": [
+    {
+      "download_relative_path": "all-files.json",
+      "download_sha256": "7b964237513f20b277885489ac431d5e3520cfafe01c003fa7f4a597967b1ef4",
+      "download_bytes": 339836,
+      "stored_path": "raw/all-files.json",
+      "stored_sha256": "477d9eed489f2f4631c7bb83e347c52ad92da7422bfb57f35103124517fa2018",
+      "stored_bytes": 326279,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "all-files.tsv",
+      "download_sha256": "57a736d548db9327c48ef521c92190d254cbf7aab73d1fbb481363a84d9a4864",
+      "download_bytes": 200894,
+      "stored_path": "raw/all-files.tsv",
+      "stored_sha256": "57a736d548db9327c48ef521c92190d254cbf7aab73d1fbb481363a84d9a4864",
+      "stored_bytes": 200894,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "archive-listing.txt",
+      "download_sha256": "e473a68f23617a00bf7faf61d66c9b5b7279a6b532e64c708d0009897fd60583",
+      "download_bytes": 673064,
+      "stored_path": "raw/archive-listing.txt",
+      "stored_sha256": "bb5f90ca132caf8b7bd46f143096b71d56ba68cdfdb234f82839e94133a7ac13",
+      "stored_bytes": 642489,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "extraction.txt",
+      "download_sha256": "dc61578cf534ee73c01149442623b994f58edfe1a3c2cb51764dc1300f1d43fd",
+      "download_bytes": 1957,
+      "stored_path": "raw/extraction.txt",
+      "stored_sha256": "a44513057db2ccd1bb94ff5a66a655dec02a9a4f9d5356fa8f902dd728c7a9fd",
+      "stored_bytes": 1880,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "phases.txt",
+      "download_sha256": "5f21d65292c18341bbfa9139e82988dbd8dfead969e8a1c52d64aacf3759d04a",
+      "download_bytes": 380,
+      "stored_path": "raw/phases.txt",
+      "stored_sha256": "5f21d65292c18341bbfa9139e82988dbd8dfead969e8a1c52d64aacf3759d04a",
+      "stored_bytes": 380,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "result.json",
+      "download_sha256": "6c43794ad2b6b85feb5255fcd8d386fd547d090f44c7b2fa2ec0f412f4dea7c6",
+      "download_bytes": 1654,
+      "stored_path": "raw/result.json",
+      "stored_sha256": "31bcf7a5b644616181ce6206571aedc041047be8fad5358fe7d9751c48da1d84",
+      "stored_bytes": 1630,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "source.json",
+      "download_sha256": "4d64efb05eb46e5cb74f654be1ae2bae62423230009c7d9b2acff3d6a56e7fc2",
+      "download_bytes": 534,
+      "stored_path": "raw/source.json",
+      "stored_sha256": "acf1373dc4e7f5c6dc14b382c07229e85ea3000d8931c1c3c83dbc5552165d90",
+      "stored_bytes": 528,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "target-files.json",
+      "download_sha256": "345750255f891a98d43f9b54cc6c5527ff1d56ec796270559521efefaafd6749",
+      "download_bytes": 924,
+      "stored_path": "raw/target-files.json",
+      "stored_sha256": "9df7c2c9773afad6ef7bc192d4f2f91de0987be0027412e0ee91418ae5f0cc20",
+      "stored_bytes": 896,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    }
+  ],
+  "archived_workflow": {
+    "origin": "Git blob, not downloaded artifact",
+    "source_sha": "0ae745c50b73e7f7cc220a70c8907ce5dae04bfa",
+    "repository_path": ".github/workflows/vnc-windows-glib-layout.yml",
+    "git_blob_sha256": "a9fb8899854bde40a5b837d01ae3ff662089ed10e1b69d0bae86bb917cdb523c",
+    "git_blob_bytes": 8766,
+    "stored_path": "source/workflow.yml",
+    "stored_sha256": "a9fb8899854bde40a5b837d01ae3ff662089ed10e1b69d0bae86bb917cdb523c",
+    "stored_bytes": 8766,
+    "normalization": "UTF-8 without BOM, LF"
+  }
+}

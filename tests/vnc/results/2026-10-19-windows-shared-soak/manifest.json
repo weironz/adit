@@ -1,0 +1,123 @@
+{
+  "run_id": 39142722306,
+  "run_url": "https://github.com/weironz/adit/actions/runs/39142722306",
+  "source_sha": "04df3170dc54ca182d7926fc4b9da0509eae09d6",
+  "head_branch": "codex/vnc-windows-shared-soak",
+  "job_id": 117721098430,
+  "run_conclusion": "success",
+  "job_conclusions": [
+    {
+      "id": 117720261444,
+      "name": "Two real clients and fresh shared pixels",
+      "conclusion": "success"
+    },
+    {
+      "id": 117721098430,
+      "name": "Two hours of real shared Windows VNC",
+      "conclusion": "success"
+    }
+  ],
+  "artifact_id": 12145846836,
+  "artifact_name": "vnc-windows-shared-two-hours",
+  "artifact_created_at": "2026-10-18T18:05:12Z",
+  "artifact_zip_bytes": 28361,
+  "api_zip_digest": "sha256:169ec4887674d04e82d5f38bb6f688e4d04653ee86072821a7380ad6121a4feb",
+  "independently_downloaded_zip_sha256": "169ec4887674d04e82d5f38bb6f688e4d04653ee86072821a7380ad6121a4feb",
+  "zip_digest_verified": true,
+  "normalization": "Only CRLF pairs become LF; other bytes and empty files are preserved. Downloaded raw and Git-LF file hashes differ when CRLF was present. ZIP digest is a separate complete-download check.",
+  "omitted_members": [
+    "WinVNC.log",
+    "fixture.ini",
+    "mslogon.log"
+  ],
+  "files": [
+    {
+      "path": "listeners.json",
+      "downloaded_raw_bytes": 250,
+      "downloaded_raw_sha256": "d3bd6516774db621b3b2076c98c968760a60bfefe6b37356b0d31d19a79890e8",
+      "stored_lf_bytes": 235,
+      "stored_lf_sha256": "986e021d032b96219ea083ac37951fa965e86297eac47dd6fee5f6c822a25a02",
+      "crlf_pairs_replaced": 15
+    },
+    {
+      "path": "result.json",
+      "downloaded_raw_bytes": 7958,
+      "downloaded_raw_sha256": "f4df9ec956a524a02708945b5ae22d1ca737f8a8950b5d9f6f7b79508df7b257",
+      "stored_lf_bytes": 7754,
+      "stored_lf_sha256": "6ffc0342bd190b13a01b0d2fd493e7fb0a7dc68cc26c2fb83bc78fd45697b77a",
+      "crlf_pairs_replaced": 204
+    },
+    {
+      "path": "runner.log",
+      "downloaded_raw_bytes": 23694,
+      "downloaded_raw_sha256": "b321f863423ac7933c56320ca0b8e9029cb319f845d9ba2809bbe57689ebafc4",
+      "stored_lf_bytes": 23694,
+      "stored_lf_sha256": "b321f863423ac7933c56320ca0b8e9029cb319f845d9ba2809bbe57689ebafc4",
+      "crlf_pairs_replaced": 0
+    },
+    {
+      "path": "shared.stderr.txt",
+      "downloaded_raw_bytes": 0,
+      "downloaded_raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_lf_bytes": 0,
+      "stored_lf_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "crlf_pairs_replaced": 0
+    },
+    {
+      "path": "shared.stdout.jsonl",
+      "downloaded_raw_bytes": 570091,
+      "downloaded_raw_sha256": "3db8bf9adf465a893722a08b84151c0cbf00eb72949b555bf0366367137a5d9a",
+      "stored_lf_bytes": 570091,
+      "stored_lf_sha256": "3db8bf9adf465a893722a08b84151c0cbf00eb72949b555bf0366367137a5d9a",
+      "crlf_pairs_replaced": 0
+    },
+    {
+      "path": "shared.target.final.json",
+      "downloaded_raw_bytes": 1050,
+      "downloaded_raw_sha256": "688470aa46982cd584ea2893a41b298e3517a5014a08d256c42f9d3fa7746d31",
+      "stored_lf_bytes": 979,
+      "stored_lf_sha256": "13ba3dd12664de4cb9f2ea539a43664b39a4db4657714f1c1ed0a1bee3b84023",
+      "crlf_pairs_replaced": 71
+    },
+    {
+      "path": "target.final.json",
+      "downloaded_raw_bytes": 626,
+      "downloaded_raw_sha256": "5db841d0f291c6b6dde0898a25eb91728c549140be4c8021026e91c7418b7885",
+      "stored_lf_bytes": 625,
+      "stored_lf_sha256": "4f23bc73d613688ea54f6383569b2ec0278e2b50ad591c981bac89e505b3577c",
+      "crlf_pairs_replaced": 1
+    },
+    {
+      "path": "target.ready.json",
+      "downloaded_raw_bytes": 1042,
+      "downloaded_raw_sha256": "d13c4f4274ff8bc2679d070291e81ce19bb5b96ff4ae830e64716405d4d166ff",
+      "stored_lf_bytes": 971,
+      "stored_lf_sha256": "18eb6e3fd4baa77170a649f3500c692d68594cb135c8656c1a34ce56cbdec3b6",
+      "crlf_pairs_replaced": 71
+    },
+    {
+      "path": "target.stderr.txt",
+      "downloaded_raw_bytes": 0,
+      "downloaded_raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_lf_bytes": 0,
+      "stored_lf_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "crlf_pairs_replaced": 0
+    },
+    {
+      "path": "target.stdout.txt",
+      "downloaded_raw_bytes": 0,
+      "downloaded_raw_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_lf_bytes": 0,
+      "stored_lf_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "crlf_pairs_replaced": 0
+    },
+    {
+      "path": "udp-firewall.json",
+      "downloaded_raw_bytes": 1020,
+      "downloaded_raw_sha256": "f5c51a6ef4fa177a71bc11e269d9d02fe4a2c608cf62724f92ccb37690cfeb0a",
+      "stored_lf_bytes": 967,
+      "stored_lf_sha256": "177089a62676b28399fb7808386504af5b8c558ac3e2d2b27cfd42b81b8c8c0a",
+      "crlf_pairs_replaced": 53
+    }
+  ]
+}

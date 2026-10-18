@@ -1,0 +1,49 @@
+[
+  {
+    "package_path": "mingw64/bin/libglib-2.0-0.dll",
+    "bytes": 1566649,
+    "sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+    "pe_machine": "0x8664",
+    "pe_optional_magic": "0x20b",
+    "imports": [
+      "ADVAPI32.dll",
+      "libintl-8.dll",
+      "KERNEL32.dll",
+      "msvcrt.dll",
+      "ole32.dll",
+      "SHELL32.dll",
+      "USER32.dll",
+      "WS2_32.dll",
+      "libpcre2-8-0.dll"
+    ],
+    "executed": false
+  },
+  {
+    "package_path": "mingw64/bin/gspawn-win64-helper.exe",
+    "bytes": 26808,
+    "sha256": "87113f2bf18d694910a1e6791282aea4da3611d41a8397434e43fed6deec72a5",
+    "pe_machine": "0x8664",
+    "pe_optional_magic": "0x20b",
+    "imports": [
+      "KERNEL32.dll",
+      "msvcrt.dll",
+      "SHELL32.dll",
+      "libglib-2.0-0.dll"
+    ],
+    "executed": false
+  },
+  {
+    "package_path": "mingw64/bin/gspawn-win64-helper-console.exe",
+    "bytes": 26185,
+    "sha256": "c8734364a23a2af11660efba3d4c9b82bcdc604f15816cfd92ed2697ee30cdaf",
+    "pe_machine": "0x8664",
+    "pe_optional_magic": "0x20b",
+    "imports": [
+      "KERNEL32.dll",
+      "msvcrt.dll",
+      "SHELL32.dll",
+      "libglib-2.0-0.dll"
+    ],
+    "executed": false
+  }
+]

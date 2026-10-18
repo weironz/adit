@@ -1,0 +1,7 @@
+gpg: checking the trustdb
+gpg: marginals needed: 3  completes needed: 1  trust model: pgp
+gpg: Note: third-party key signatures using the SHA1 algorithm are rejected
+gpg: (use option "--allow-weak-key-signatures" to override)
+gpg: depth: 0  valid:   5  signed:   3  trust: 0-, 0q, 0n, 0m, 0f, 5u
+gpg: depth: 1  valid:   3  signed:   1  trust: 3-, 0q, 0n, 0m, 0f, 0u
+gpg: next trustdb check due at 2027-02-10

@@ -1,0 +1,15 @@
+gpg: Signature made Fri Jul 31 12:31:50 2026 UTC
+gpg:                using RSA key 5F944B027F7FE2091985AA2EFA11531AA0AA7F57
+gpg: key 755B8182ACD22879 marked as ultimately trusted
+gpg: key 790AE56A1D3CFDDC marked as ultimately trusted
+gpg: key DA7EF2ABAEEA755C marked as ultimately trusted
+gpg: key 9F418C233E652008 marked as ultimately trusted
+gpg: key F40D263ECA25678A marked as ultimately trusted
+gpg: checking the trustdb
+gpg: marginals needed: 3  completes needed: 1  trust model: pgp
+gpg: Note: third-party key signatures using the SHA1 algorithm are rejected
+gpg: (use option "--allow-weak-key-signatures" to override)
+gpg: depth: 0  valid:   5  signed:   3  trust: 0-, 0q, 0n, 0m, 0f, 5u
+gpg: depth: 1  valid:   3  signed:   1  trust: 3-, 0q, 0n, 0m, 0f, 0u
+gpg: next trustdb check due at 2027-02-10
+gpg: Good signature from "Christoph Reiter (MSYS2 development key) <reiter.christoph@gmail.com>" [full]

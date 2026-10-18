@@ -1,0 +1,71 @@
+{
+  "outcome": "verified_matching_dependency_metadata",
+  "phase": "complete_metadata_only",
+  "source_sha": "175ab8136362e29269ea326bbba596db8c8d67e0",
+  "run_id": "39151046882",
+  "runner": "GitHub Actions 1000015709",
+  "scope": "Official signed package and PE metadata only; no QEMU, helper, installer, package script or VNC execution; no DLL replacement, PATH, system networking or protection changes.",
+  "vendor_binaries_executed": false,
+  "package_checksum_is_new_measurement_not_prepublished": true,
+  "dependency_execution_authorized": false,
+  "downloads": [
+    {
+      "name": "msys2.gpg",
+      "url": "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2.gpg",
+      "final_url": "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2.gpg",
+      "bytes": 54878,
+      "measured_sha256": "1257d4ccc536c53333445a618039af4c3ea3f56b96601de9af89151ea529c19a",
+      "last_modified": null
+    },
+    {
+      "name": "msys2-trusted",
+      "url": "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2-trusted",
+      "final_url": "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2-trusted",
+      "bytes": 220,
+      "measured_sha256": "a8d39040a7b6cc14bf4394b5d9c838443925c32b00a7d34e8729c972392dca04",
+      "last_modified": null
+    },
+    {
+      "name": "msys2-revoked",
+      "url": "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2-revoked",
+      "final_url": "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2-revoked",
+      "bytes": 164,
+      "measured_sha256": "62b67ba0217745c7df189092a70d6b7a5781577f6428a5391dccd897edb5756a",
+      "last_modified": null
+    },
+    {
+      "name": "mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst",
+      "final_url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst",
+      "bytes": 5402063,
+      "measured_sha256": "5aa850934d0216f5b7237bd54c3ec660ebfc3a42fd992bc7abbd611bd9cc7663",
+      "last_modified": "Thu, 30 Jul 2026 07:05:45 GMT"
+    },
+    {
+      "name": "mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst.sig",
+      "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst.sig",
+      "final_url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst.sig",
+      "bytes": 566,
+      "measured_sha256": "3a836ae540998c2ed4625ef0987e20808045d958406f0e7b4f27cba1945c00f3",
+      "last_modified": "Fri, 31 Jul 2026 12:31:50 GMT"
+    },
+    {
+      "name": "PKGBUILD.txt",
+      "url": "https://raw.githubusercontent.com/msys2/MINGW-packages/716ee21e59851aa4d15e34c8353580334276b0e6/mingw-w64-glib2/PKGBUILD",
+      "final_url": "https://raw.githubusercontent.com/msys2/MINGW-packages/716ee21e59851aa4d15e34c8353580334276b0e6/mingw-w64-glib2/PKGBUILD",
+      "bytes": 5284,
+      "measured_sha256": "79703d0e70f2b78826985d290197499d3327fda5b65f1f725a612a1ad008544e",
+      "last_modified": null
+    }
+  ],
+  "signature_verified": true,
+  "verified_signer_fingerprint": "5F944B027F7FE2091985AA2EFA11531AA0AA7F57",
+  "gpg_trust_status": [
+    "TRUST_FULLY",
+    "0",
+    "pgp"
+  ],
+  "package_glib_dll_sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+  "exact_qemu_glib_dll_match": true,
+  "interpretation": "Signed exact-DLL package contains matching AMD64/MSVCRT helper candidates. Metadata only: root review and separate fake connection/EOF calibration remain required before any helper execution or VNC claim."
+}

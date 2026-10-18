@@ -1,0 +1,131 @@
+name: Windows QEMU GLib package layout (metadata only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-glib-layout']
+    paths:
+      - '.github/workflows/vnc-windows-glib-layout.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Inventory pinned archive without executing vendor code
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify pinned source, extract and inventory only
+        timeout-minutes: 3
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Set-StrictMode -Version Latest
+          if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
+              $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows' -or
+              -not $env:RUNNER_NAME -or -not $env:RUNNER_TEMP -or -not $env:GITHUB_SHA) {
+              throw 'Metadata inventory is restricted to a disposable GitHub-hosted Windows runner.'
+          }
+          $runnerRoot = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
+          $evidence = [IO.Path]::GetFullPath((Join-Path $env:RUNNER_TEMP 'adit-vnc-glib-layout'))
+          if (-not $evidence.StartsWith($runnerRoot, [StringComparison]::OrdinalIgnoreCase) -or
+              (Test-Path -LiteralPath $evidence)) { throw 'A fresh absolute RUNNER_TEMP evidence directory is required.' }
+          [void][IO.Directory]::CreateDirectory($evidence)
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          $record = [ordered]@{
+              outcome='failed'; source_sha=$env:GITHUB_SHA; run_id=$env:GITHUB_RUN_ID; runner=$env:RUNNER_NAME
+              scope='Read-only metadata inventory of the fixed official Windows QEMU package. No QEMU, helper or installer execution; no VNC, credentials, dependency/PATH, route, firewall or protection changes.'
+              phase='guard_passed'; vendor_binaries_executed=$false
+          }
+          function Write-InventoryRecord {
+              [IO.File]::WriteAllText((Join-Path $evidence 'result.json'), ($record | ConvertTo-Json -Depth 10) + "`n", $utf8)
+          }
+          function Set-InventoryPhase([string]$Name) {
+              $record.phase = $Name
+              [IO.File]::AppendAllText((Join-Path $evidence 'phases.txt'), ([DateTimeOffset]::UtcNow.ToString('o') + ' ' + $Name + "`n"), $utf8)
+              Write-InventoryRecord
+          }
+          try {
+              Set-InventoryPhase 'verify_fixed_source'
+              $sourcePath = Join-Path $env:GITHUB_WORKSPACE 'tests/vnc/netem-guest/sources.json'
+              $sources = [IO.File]::ReadAllText($sourcePath, $utf8) | ConvertFrom-Json -AsHashtable
+              $expectedUrl = 'https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.exe'
+              $expectedSha512 = '5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543'
+              if ($sources.qemu.url -ne $expectedUrl -or $sources.qemu.sha512 -ne $expectedSha512) {
+                  throw 'Source JSON no longer identifies the explicitly approved fixed package.'
+              }
+              $record.source = $sources.qemu
+              $record.sources_json_sha256 = (Get-FileHash -LiteralPath $sourcePath -Algorithm SHA256).Hash.ToLowerInvariant()
+              [IO.File]::WriteAllText((Join-Path $evidence 'source.json'), ($sources.qemu | ConvertTo-Json -Depth 5) + "`n", $utf8)
+              $archive = Join-Path $evidence 'qemu-installer.exe'
+              Set-InventoryPhase 'download_without_execution'
+              Invoke-WebRequest -Uri $expectedUrl -OutFile $archive -TimeoutSec 120
+              $record.actual_installer_sha512 = (Get-FileHash -LiteralPath $archive -Algorithm SHA512).Hash.ToLowerInvariant()
+              $record.installer_bytes = (Get-Item -LiteralPath $archive).Length
+              if ($record.actual_installer_sha512 -ne $expectedSha512) { throw 'Official fixed installer checksum mismatch; stop without extraction.' }
+              Set-InventoryPhase 'archive_listing_without_execution'
+              & 7z l -slt $archive 2>&1 | Out-File -LiteralPath (Join-Path $evidence 'archive-listing.txt') -Encoding utf8
+              if ($LASTEXITCODE -ne 0) { throw "Archive metadata listing failed: $LASTEXITCODE" }
+              $extracted = Join-Path $evidence 'extracted'
+              if (Test-Path -LiteralPath $extracted) { throw 'Refuse to share an existing extraction directory.' }
+              Set-InventoryPhase 'extract_without_installation'
+              & 7z x $archive "-o$extracted" -y 2>&1 | Out-File -LiteralPath (Join-Path $evidence 'extraction.txt') -Encoding utf8
+              if ($LASTEXITCODE -ne 0) { throw "Extraction failed: $LASTEXITCODE" }
+              Set-InventoryPhase 'inventory_relative_paths_and_target_hashes'
+              $files = @(Get-ChildItem -LiteralPath $extracted -File -Recurse -ErrorAction Stop | Sort-Object FullName)
+              $all = @($files | ForEach-Object {
+                  [ordered]@{ path=[IO.Path]::GetRelativePath($extracted, $_.FullName).Replace('\','/'); bytes=$_.Length }
+              })
+              [IO.File]::WriteAllText((Join-Path $evidence 'all-files.json'), ($all | ConvertTo-Json -Depth 5) + "`n", $utf8)
+              $readable = @($all | ForEach-Object { "{0}`t{1}" -f $_.bytes, $_.path })
+              [IO.File]::WriteAllText((Join-Path $evidence 'all-files.tsv'), ("bytes`tpath`n" + ($readable -join "`n") + "`n"), $utf8)
+              $targets = @($files | Where-Object {
+                  $_.Name -ieq 'qemu-system-x86_64.exe' -or
+                  $_.Name -match '(?i)(glib|slirp).*\.dll$' -or
+                  $_.Name -match '(?i)^gspawn-win(?:32|64)-helper(?:-console)?\.exe$'
+              } | ForEach-Object {
+                  $version = $_.VersionInfo
+                  [ordered]@{
+                      path=[IO.Path]::GetRelativePath($extracted, $_.FullName).Replace('\','/'); bytes=$_.Length
+                      sha256=(Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+                      file_version=$version.FileVersion; product_version=$version.ProductVersion
+                      original_filename=$version.OriginalFilename; description=$version.FileDescription
+                  }
+              })
+              [IO.File]::WriteAllText((Join-Path $evidence 'target-files.json'), ($targets | ConvertTo-Json -Depth 6) + "`n", $utf8)
+              $record.extracted_file_count = $files.Count
+              $record.qemu_x86_64_count = @($targets | Where-Object { [IO.Path]::GetFileName($_.path) -ieq 'qemu-system-x86_64.exe' }).Count
+              $record.glib_dll_count = @($targets | Where-Object { [IO.Path]::GetFileName($_.path) -match '(?i)glib.*\.dll$' }).Count
+              $record.slirp_dll_count = @($targets | Where-Object { [IO.Path]::GetFileName($_.path) -match '(?i)slirp.*\.dll$' }).Count
+              $record.gspawn_helpers = @($targets | Where-Object { [IO.Path]::GetFileName($_.path) -match '(?i)^gspawn-' })
+              $record.interpretation = 'Helper absence is an inventory fact, not proof Windows cmd forwarding is unsupported. Helper search behavior depends on the bundled GLib version and directory layout; no spawn/fd test is executed here.'
+              if ($record.qemu_x86_64_count -ne 1) { throw 'Inventory does not contain exactly one expected x86_64 emulator.' }
+              $record.outcome = 'inventoried'
+              Set-InventoryPhase 'complete_metadata_only'
+          } catch {
+              $record.outcome = 'failed'
+              $record.error = $_.Exception.Message
+              [IO.File]::WriteAllText((Join-Path $evidence 'failure.txt'), ($_ | Out-String), $utf8)
+              throw
+          } finally {
+              Write-InventoryRecord
+          }
+      - name: Preserve all metadata and original failures without vendor executables
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-glib-layout-metadata
+          path: |
+            ${{ runner.temp }}/adit-vnc-glib-layout/result.json
+            ${{ runner.temp }}/adit-vnc-glib-layout/source.json
+            ${{ runner.temp }}/adit-vnc-glib-layout/phases.txt
+            ${{ runner.temp }}/adit-vnc-glib-layout/archive-listing.txt
+            ${{ runner.temp }}/adit-vnc-glib-layout/extraction.txt
+            ${{ runner.temp }}/adit-vnc-glib-layout/all-files.json
+            ${{ runner.temp }}/adit-vnc-glib-layout/all-files.tsv
+            ${{ runner.temp }}/adit-vnc-glib-layout/target-files.json
+            ${{ runner.temp }}/adit-vnc-glib-layout/failure.txt
+          if-no-files-found: warn
+          retention-days: 14

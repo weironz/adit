@@ -1,0 +1,29 @@
+[
+  {
+    "path": "libglib-2.0-0.dll",
+    "bytes": 1566649,
+    "sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+    "file_version": "2.88.3",
+    "product_version": "2.88.3",
+    "original_filename": "libglib-2.0-0.dll",
+    "description": "GLib is a general-purpose, portable utility library"
+  },
+  {
+    "path": "libslirp-0.dll",
+    "bytes": 217294,
+    "sha256": "098093db72095516c877c371942444a508aaa3c546de563bd2ea36ba2e88a646",
+    "file_version": null,
+    "product_version": null,
+    "original_filename": null,
+    "description": null
+  },
+  {
+    "path": "qemu-system-x86_64.exe",
+    "bytes": 25457048,
+    "sha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
+    "file_version": "Aug 11 2026, 21:01:49",
+    "product_version": "11.1.0",
+    "original_filename": "",
+    "description": "QEMU machine emulators and tools"
+  }
+]

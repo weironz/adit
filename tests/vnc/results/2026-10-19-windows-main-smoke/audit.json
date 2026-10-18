@@ -1,0 +1,120 @@
+{
+  "status": "passed: main merge commit portable loopback smoke only",
+  "run_url": "https://github.com/weironz/adit/actions/runs/39148755751",
+  "run_id": 39148755751,
+  "artifact_id": 12145000244,
+  "source_sha": "fa5904bbe9dbc1126cf270242fd70f168531503f",
+  "probe_sha256": "f6179c47ffb7437babf1b769182bd3accca988e1f4cd6cc781a954ce1a93c5c1",
+  "normal_vncauth_complete_samples": 3,
+  "complete_paint_ms": [
+    997,
+    2214,
+    1181
+  ],
+  "explicit_wrong_password_rejections": 1,
+  "normal_steady_minimum_ms": 1000,
+  "normal_final_connected": true,
+  "normal_disconnects": 0,
+  "server_pid": 4176,
+  "server_sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe",
+  "server_cleanup": "owned vendor process exited",
+  "firewall_cleanup": "exact owned GUID rule removed after owned server exit; PersistentStore and ActiveStore absence verified",
+  "independent_root_check": "Downloaded result, all four original stdout/stderr pairs, listeners and wrapper cleanup strings reviewed; normal full coverage/security/final/steady and explicit wrong-auth failure independently asserted. No separately archived post-cleanup OS snapshot.",
+  "scope": "UltraVNC1.8.3.0 user-mode portable, Windows hosted CI loopback; no GPU/native UI, service/UAC/lock, n10 weak network, physical input, DPI, sleep or long-term acceptance.",
+  "archive_scope": "Allowlisted raw text; only CRLF byte pairs normalized to LF; source and Git-stored hashes distinguished. Fixture INI and authentication/vendor logs omitted.",
+  "files": [
+    {
+      "path": "raw/result.json",
+      "downloaded_sha256": "f42d076749b830d70ba48e1b82a46545896e93d7371db97d5f35f9efe4edd27a",
+      "downloaded_bytes": 5977,
+      "stored_lf_sha256": "fc9a218062a6c4a6fa3bee981fbef1adeefc360ee5ff71a69868d910d8f5f1ab",
+      "stored_lf_bytes": 5850
+    },
+    {
+      "path": "raw/listeners.json",
+      "downloaded_sha256": "3626c0dd8f06bfd3b51d35e257a7ef13849a918f598ded915703892e21a4edcf",
+      "downloaded_bytes": 250,
+      "stored_lf_sha256": "cd19bae85372617b870a872fc951c2a24969eaa08ff692f0bfe295b451aef6c9",
+      "stored_lf_bytes": 235
+    },
+    {
+      "path": "raw/udp-firewall.json",
+      "downloaded_sha256": "19b94ea830100937ba31852fab2b1fa871eb62a3a213a6ac4299d75b19f5ceab",
+      "downloaded_bytes": 1020,
+      "stored_lf_sha256": "a3a993370c83491357fbac389e7c75bd7a6c141526351ec6d36701d672b883b6",
+      "stored_lf_bytes": 967
+    },
+    {
+      "path": "raw/runner.log",
+      "downloaded_sha256": "80642c69dd587350057fbec2eaeabcdc58649b571652554eb7a9a2c486ad17ea",
+      "downloaded_bytes": 840,
+      "stored_lf_sha256": "80642c69dd587350057fbec2eaeabcdc58649b571652554eb7a9a2c486ad17ea",
+      "stored_lf_bytes": 840
+    },
+    {
+      "path": "raw/probe-1.stdout.txt",
+      "downloaded_sha256": "314f74fecc4eb21c22a9da4cf65f93d0bd1bc9b1039eea9d6051db3af2ae43ba",
+      "downloaded_bytes": 737,
+      "stored_lf_sha256": "314f74fecc4eb21c22a9da4cf65f93d0bd1bc9b1039eea9d6051db3af2ae43ba",
+      "stored_lf_bytes": 737
+    },
+    {
+      "path": "raw/probe-1.stderr.txt",
+      "downloaded_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloaded_bytes": 0,
+      "stored_lf_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_lf_bytes": 0
+    },
+    {
+      "path": "raw/probe-2.stdout.txt",
+      "downloaded_sha256": "472d1cee63a0bfc4f4c485f0d9572c8abd80513912ae1556406c90c28e3a6524",
+      "downloaded_bytes": 739,
+      "stored_lf_sha256": "472d1cee63a0bfc4f4c485f0d9572c8abd80513912ae1556406c90c28e3a6524",
+      "stored_lf_bytes": 739
+    },
+    {
+      "path": "raw/probe-2.stderr.txt",
+      "downloaded_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloaded_bytes": 0,
+      "stored_lf_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_lf_bytes": 0
+    },
+    {
+      "path": "raw/probe-3.stdout.txt",
+      "downloaded_sha256": "35c017786ccb5ddb4a1e8c8ba921537dee219a7f19f409802b903afb874ab2ee",
+      "downloaded_bytes": 742,
+      "stored_lf_sha256": "35c017786ccb5ddb4a1e8c8ba921537dee219a7f19f409802b903afb874ab2ee",
+      "stored_lf_bytes": 742
+    },
+    {
+      "path": "raw/probe-3.stderr.txt",
+      "downloaded_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "downloaded_bytes": 0,
+      "stored_lf_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stored_lf_bytes": 0
+    },
+    {
+      "path": "raw/probe-4.stdout.txt",
+      "downloaded_sha256": "22785cb107c59c6bb3465ccd2ede1cd204c61dbc9ec796660cdbd7b21f77a80a",
+      "downloaded_bytes": 499,
+      "stored_lf_sha256": "22785cb107c59c6bb3465ccd2ede1cd204c61dbc9ec796660cdbd7b21f77a80a",
+      "stored_lf_bytes": 499
+    },
+    {
+      "path": "raw/probe-4.stderr.txt",
+      "downloaded_sha256": "4e26f6a14e9d53e5b45971f7bdd841f7760b269ce178c13979e03ebab443002c",
+      "downloaded_bytes": 59,
+      "stored_lf_sha256": "4e26f6a14e9d53e5b45971f7bdd841f7760b269ce178c13979e03ebab443002c",
+      "stored_lf_bytes": 59
+    }
+  ],
+  "full_main_ci": {
+    "source_sha": "fa5904bbe9dbc1126cf270242fd70f168531503f",
+    "skipped_jobs": 0,
+    "status": "completed",
+    "conclusion": "success",
+    "run_id": 39148755827,
+    "successful_jobs": 12,
+    "url": "https://github.com/weironz/adit/actions/runs/39148755827"
+  }
+}
