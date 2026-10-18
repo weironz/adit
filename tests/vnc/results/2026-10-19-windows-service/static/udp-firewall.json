@@ -1,0 +1,54 @@
+{
+  "rule": {
+    "Name": "AditVncCiUdpBlock-c37937afaa6f48c7b2a3fa642b6e737b",
+    "Enabled": 1,
+    "Direction": 1,
+    "Action": 4,
+    "Profile": 0,
+    "PrimaryStatus": 1,
+    "EnforcementStatus": [
+      "ProfileInactive",
+      "Enforced"
+    ],
+    "PolicyStoreSourceType": 1
+  },
+  "ports": [
+    {
+      "Protocol": "UDP",
+      "LocalPort": "15911",
+      "RemotePort": "Any"
+    }
+  ],
+  "applications": [
+    {
+      "Program": "D:\\a\\_temp\\adit-ultravnc-fee36b4af1984f6a9d00dfaa71da9d94\\portable\\x64\\winvnc.exe"
+    }
+  ],
+  "profiles": [
+    {
+      "Name": "Domain",
+      "Enabled": 1,
+      "AllowLocalFirewallRules": 1
+    },
+    {
+      "Name": "Private",
+      "Enabled": 1,
+      "AllowLocalFirewallRules": 1
+    },
+    {
+      "Name": "Public",
+      "Enabled": 1,
+      "AllowLocalFirewallRules": 1
+    }
+  ],
+  "services": [
+    {
+      "Name": "BFE",
+      "Status": 4
+    },
+    {
+      "Name": "MpsSvc",
+      "Status": 4
+    }
+  ]
+}

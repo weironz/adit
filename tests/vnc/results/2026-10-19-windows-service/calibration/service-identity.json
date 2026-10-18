@@ -1,0 +1,31 @@
+{
+  "scm": {
+    "path": "\"D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\winvnc.exe\" -service",
+    "state": "Running",
+    "name": "aditvncci_ac438cfe49474a7c8e8be0d264dac690",
+    "start_name": "LocalSystem",
+    "pid": 2044
+  },
+  "root": {
+    "pid": 2044,
+    "parent_pid": 976,
+    "executable": "D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\winvnc.exe",
+    "command_line": "\"D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\winvnc.exe\" -service",
+    "created_utc": "2026-10-18T16:51:23.9259340Z",
+    "session_id": 0,
+    "owner_sid": "S-1-5-18",
+    "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+  },
+  "worker": {
+    "pid": 8100,
+    "parent_pid": 2044,
+    "executable": "D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\winvnc.exe",
+    "command_line": "D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\winvnc.exe -config \"D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\aditvncci_ac438cfe49474a7c8e8be0d264dac690.ini\" -service_run",
+    "created_utc": "2026-10-18T16:51:27.9740800Z",
+    "session_id": 2,
+    "owner_sid": "S-1-5-18",
+    "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+  },
+  "ini": "D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\AditVncCi_ac438cfe49474a7c8e8be0d264dac690.ini",
+  "portable_marker": "D:\\a\\_temp\\adit-ultravnc-64b70a7c8cb147acbabe8f9efaa9ecee\\portable\\x64\\ultravnc.portable"
+}

@@ -1,0 +1,294 @@
+{
+  "audited_at_utc": "2026-10-18T17:01:40.980350+00:00",
+  "run_id": 39146480475,
+  "source_sha": "897d129b76489501b9db526fe6f4cd2912a85803",
+  "run_conclusion": "success",
+  "status": "passed: basic service compatibility on disposable Windows Server2025 runners, lossless/native loopback only",
+  "successful_vncauth_connections": 10,
+  "basic_matrix_connections": 9,
+  "calibration_connections": 1,
+  "explicit_wrong_password_rejections": 4,
+  "same_vendor_executable_sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe",
+  "independently_built_production_probe_sha256": [
+    "2704a4737df5a7d9da226917c205e754f71297b5d8154c3d1ecdf15f0fee853e",
+    "6b08ab9e40dc5438135beea7dabf176c16c865e065fc40f402210d587480db69",
+    "83b2b76c48813142f54c75572d02717bc2632554c4559ad2133be47b2699802c",
+    "c748fd255cadae41a9b7f2a82e45951af171d0235ce0edd5068b80c4fe77d883"
+  ],
+  "artifacts": [
+    {
+      "label": "calibration",
+      "job_id": 117731236093,
+      "job_conclusion": "success",
+      "artifact_id": 12143259388,
+      "artifact_name": "vnc-windows-service-calibration",
+      "artifact_created_at": "2026-10-18T16:51:45Z",
+      "artifact_zip_bytes": 13312,
+      "independently_built_production_probe_sha256": "c748fd255cadae41a9b7f2a82e45951af171d0235ce0edd5068b80c4fe77d883",
+      "api_zip_digest": "sha256:9246feacad9c2ade5f52d528a5f602882e72a995146ed8d03f9d8be64951f13b",
+      "independently_downloaded_zip_sha256": "9246feacad9c2ade5f52d528a5f602882e72a995146ed8d03f9d8be64951f13b",
+      "zip_digest_verified": true,
+      "accepted_samples": 1,
+      "wrong_password_rejections": 1,
+      "service_name": "AditVncCi_ac438cfe49474a7c8e8be0d264dac690",
+      "root_pid": 2044,
+      "worker_pid": 8100,
+      "worker_parent_pid": 2044,
+      "console_and_worker_session": 2,
+      "root_and_worker_owner_sid": "S-1-5-18",
+      "sample_details": [
+        {
+          "index": 1,
+          "first_complete_ms": 1030,
+          "steady_ms": 3000,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 0,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 1
+        }
+      ],
+      "cleanup_runtime_assertions_passed": true,
+      "closed_kernel_time_wait_count": 0,
+      "excluded_members": [
+        "fixture.ini",
+        "mslogon.log",
+        "service-install.stderr.txt",
+        "service-install.stdout.txt",
+        "WinVNC.log"
+      ]
+    },
+    {
+      "label": "static",
+      "job_id": 117732733435,
+      "job_conclusion": "success",
+      "artifact_id": 12143712273,
+      "artifact_name": "vnc-windows-service-static",
+      "artifact_created_at": "2026-10-18T16:58:50Z",
+      "artifact_zip_bytes": 17891,
+      "independently_built_production_probe_sha256": "6b08ab9e40dc5438135beea7dabf176c16c865e065fc40f402210d587480db69",
+      "api_zip_digest": "sha256:764d602185e828d3b817842074cd64e896f6619a6c58d245dba6c096875f7280",
+      "independently_downloaded_zip_sha256": "764d602185e828d3b817842074cd64e896f6619a6c58d245dba6c096875f7280",
+      "zip_digest_verified": true,
+      "accepted_samples": 3,
+      "wrong_password_rejections": 1,
+      "service_name": "AditVncCi_5f2d4525e22b40a1a07e8dc3c570aff4",
+      "root_pid": 212,
+      "worker_pid": 8212,
+      "worker_parent_pid": 212,
+      "console_and_worker_session": 2,
+      "root_and_worker_owner_sid": "S-1-5-18",
+      "sample_details": [
+        {
+          "index": 1,
+          "first_complete_ms": 1003,
+          "steady_ms": 3006,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 0,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 1
+        },
+        {
+          "index": 2,
+          "first_complete_ms": 1915,
+          "steady_ms": 3009,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 0,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 2
+        },
+        {
+          "index": 3,
+          "first_complete_ms": 906,
+          "steady_ms": 3002,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 0,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 3
+        }
+      ],
+      "cleanup_runtime_assertions_passed": true,
+      "closed_kernel_time_wait_count": 0,
+      "excluded_members": [
+        "fixture.ini",
+        "mslogon.log",
+        "service-install.stderr.txt",
+        "service-install.stdout.txt",
+        "WinVNC.log"
+      ]
+    },
+    {
+      "label": "scroll",
+      "job_id": 117732733361,
+      "job_conclusion": "success",
+      "artifact_id": 12143707325,
+      "artifact_name": "vnc-windows-service-scroll",
+      "artifact_created_at": "2026-10-18T16:58:24Z",
+      "artifact_zip_bytes": 18480,
+      "independently_built_production_probe_sha256": "83b2b76c48813142f54c75572d02717bc2632554c4559ad2133be47b2699802c",
+      "api_zip_digest": "sha256:5325d6d325b710a6b4f1193ec3b70da4917f6d0ba18477713a513a450be07c25",
+      "independently_downloaded_zip_sha256": "5325d6d325b710a6b4f1193ec3b70da4917f6d0ba18477713a513a450be07c25",
+      "zip_digest_verified": true,
+      "accepted_samples": 3,
+      "wrong_password_rejections": 1,
+      "service_name": "AditVncCi_cadb8abec3614fe1963fa781b3a34d8a",
+      "root_pid": 8528,
+      "worker_pid": 1440,
+      "worker_parent_pid": 8528,
+      "console_and_worker_session": 2,
+      "root_and_worker_owner_sid": "S-1-5-18",
+      "sample_details": [
+        {
+          "index": 1,
+          "first_complete_ms": 1064,
+          "steady_ms": 3008,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 10,
+            "wheel_events": 28,
+            "wheel_units": 28
+          },
+          "reset_generation": 1
+        },
+        {
+          "index": 2,
+          "first_complete_ms": 1015,
+          "steady_ms": 3002,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 10,
+            "wheel_events": 28,
+            "wheel_units": 28
+          },
+          "reset_generation": 2
+        },
+        {
+          "index": 3,
+          "first_complete_ms": 1004,
+          "steady_ms": 3000,
+          "input_counts": {
+            "button_press": 0,
+            "button_release": 0,
+            "drag_motion": 0,
+            "viewport_changes": 10,
+            "wheel_events": 28,
+            "wheel_units": 28
+          },
+          "reset_generation": 3
+        }
+      ],
+      "cleanup_runtime_assertions_passed": true,
+      "closed_kernel_time_wait_count": 0,
+      "excluded_members": [
+        "fixture.ini",
+        "mslogon.log",
+        "service-install.stderr.txt",
+        "service-install.stdout.txt",
+        "WinVNC.log"
+      ]
+    },
+    {
+      "label": "drag",
+      "job_id": 117732733424,
+      "job_conclusion": "success",
+      "artifact_id": 12143703508,
+      "artifact_name": "vnc-windows-service-drag",
+      "artifact_created_at": "2026-10-18T16:57:47Z",
+      "artifact_zip_bytes": 19677,
+      "independently_built_production_probe_sha256": "2704a4737df5a7d9da226917c205e754f71297b5d8154c3d1ecdf15f0fee853e",
+      "api_zip_digest": "sha256:febe3c9487c54f3d0f04767c8553e9ee678d11881e011f73471e9240942bc8d3",
+      "independently_downloaded_zip_sha256": "febe3c9487c54f3d0f04767c8553e9ee678d11881e011f73471e9240942bc8d3",
+      "zip_digest_verified": true,
+      "accepted_samples": 3,
+      "wrong_password_rejections": 1,
+      "service_name": "AditVncCi_6bad52febe8d4435bda20ab37e4a43e0",
+      "root_pid": 5792,
+      "worker_pid": 8044,
+      "worker_parent_pid": 5792,
+      "console_and_worker_session": 2,
+      "root_and_worker_owner_sid": "S-1-5-18",
+      "sample_details": [
+        {
+          "index": 1,
+          "first_complete_ms": 1010,
+          "steady_ms": 3008,
+          "input_counts": {
+            "button_press": 1,
+            "button_release": 1,
+            "drag_motion": 27,
+            "viewport_changes": 27,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 1
+        },
+        {
+          "index": 2,
+          "first_complete_ms": 937,
+          "steady_ms": 3001,
+          "input_counts": {
+            "button_press": 1,
+            "button_release": 1,
+            "drag_motion": 27,
+            "viewport_changes": 27,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 2
+        },
+        {
+          "index": 3,
+          "first_complete_ms": 1973,
+          "steady_ms": 3002,
+          "input_counts": {
+            "button_press": 1,
+            "button_release": 1,
+            "drag_motion": 27,
+            "viewport_changes": 27,
+            "wheel_events": 0,
+            "wheel_units": 0
+          },
+          "reset_generation": 3
+        }
+      ],
+      "cleanup_runtime_assertions_passed": true,
+      "closed_kernel_time_wait_count": 0,
+      "excluded_members": [
+        "fixture.ini",
+        "mslogon.log",
+        "service-install.stderr.txt",
+        "service-install.stdout.txt",
+        "WinVNC.log"
+      ]
+    }
+  ],
+  "evidence_limits": [
+    "SCM/registry/process/port and firewall absence are runtime assertions in the pinned wrapper; no independent post-cleanup native snapshot was emitted. Raw SC stop/delete outputs are retained.",
+    "Active-console and worker session numbers are retained; Tk session equality is a pinned-wrapper runtime assertion, not a separate raw Tk session identity record.",
+    "Basic native-loopback synthetic service compatibility only: no UAC/lock/login, physical input, native Adit presentation, keyboard/IME, clipboard, DPI/sleep, impaired network or long-term service soak.",
+    "One calibration plus3 samples per workload; not10 samples per workload/quality and no latency percentiles."
+  ]
+}
