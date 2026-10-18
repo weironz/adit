@@ -24,8 +24,10 @@ mapfile -t packages < <(python3 -c 'import json,sys; print("\n".join(json.load(o
 # APK checks the official index and package signatures against the keys from
 # the hash-pinned Alpine release. No allow-untrusted and no mutable container tag.
 sudo timeout 120 chroot "$root" /sbin/apk update
-sudo timeout 120 chroot "$root" /sbin/apk fetch --recursive --output /var/cache/apk "${packages[@]}"
-sudo timeout 120 chroot "$root" /bin/sh -c '/sbin/apk add --no-scripts --no-network /var/cache/apk/*.apk'
+# apk 2 fetch matches package names rather than version constraints. Let add
+# solve the exact pins while retaining its signature-verified downloads.
+sudo mkdir -p "$root/var/cache/apk"
+sudo timeout 120 chroot "$root" /sbin/apk --cache-dir /var/cache/apk add --no-scripts "${packages[@]}"
 sudo cp "$root"/var/cache/apk/*.apk "$out/apks/"
 sudo chroot "$root" /sbin/apk info -vv | sort > "$out/package-versions.txt"
 sudo cp "$root/boot/vmlinuz-virt" "$out/vmlinuz-virt"
