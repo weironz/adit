@@ -75,7 +75,8 @@ def grid(width, height, pixel_format, sequence):
                 pixel(x + stroke, y + delta, white)
         # A small coloured quadrant identifies each crosshair without a font dependency.
         for delta in range(5):
-            pixel(x + 18 + delta, y - 18, yellow)
+            for dy in range(5):
+                pixel(x + 18 + delta, y - 18 + dy, yellow)
     # A visible right/bottom border makes stale-size stretching easier to identify.
     for x in range(width):
         for dy in (1, 2, 3):

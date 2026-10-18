@@ -220,7 +220,14 @@ def crosshairs(image):
         row = sum(y == cy for x,y in component)
         column = sum(x == cx for x,y in component)
         if row >= width*.7 and column >= height*.7:
-            crosses.append((cx, cy, width, height))
+            ratio=width/25
+            # Chinese menu glyphs can also contain long crossed strokes at high
+            # DPI. The public yellow quadrant identifies actual framebuffer marks.
+            marker=any(pixels[x,y][0]>180 and pixels[x,y][1]>110 and pixels[x,y][2]<100
+                       for y in range(max(0,round(cy-19*ratio)-2),min(rgb.height,round(cy-12*ratio)+3))
+                       for x in range(max(0,round(cx+17*ratio)-2),min(rgb.width,round(cx+24*ratio)+3)))
+            if marker:
+                crosses.append((cx, cy, width, height))
     return sorted(crosses, key=lambda item: (item[1], item[0]))
 
 
