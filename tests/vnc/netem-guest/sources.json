@@ -1,0 +1,16 @@
+{
+  "rootfs": {
+    "url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/alpine-minirootfs-3.22.2-x86_64.tar.gz",
+    "sha256": "412454ed98025ad9cd910d13f3d448b184e81502baa83180e89f98d0f13674be",
+    "checksum_source": "https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/alpine-minirootfs-3.22.2-x86_64.tar.gz.sha256"
+  },
+  "apk_repository": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main",
+  "packages": ["linux-virt=6.12.113-r0", "python3=3.12.15-r0", "iproute2-tc=6.15.0-r0"],
+  "qemu": {
+    "url": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.exe",
+    "sha512": "5bcf9eed634e8575a37b74f445af41a2fe4106da512d0c30c368301d4c105037fdfab40a5287367a28a957624cddebbc8c07e16c88ab6634f554cdf3d16bf543",
+    "checksum_source": "https://qemu.weilnetz.de/w64/qemu-w64-setup-20260811.sha512",
+    "upstream_reference": "https://www.qemu.org/download/#windows",
+    "note": "Upstream-listed Windows build, not an upstream reproducible build attestation. Installer is only extracted on disposable Windows CI; never executed."
+  }
+}

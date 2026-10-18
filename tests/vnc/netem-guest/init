@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+mount -t proc proc /proc
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /run /tmp
+mount -t devpts devpts /dev/pts
+modprobe e1000
+modprobe sch_netem
+ip link set lo up
+ip link set eth0 up
+ip addr add 10.0.2.15/24 dev eth0
+ip route add default via 10.0.2.2
+exec /usr/bin/python3 -u /guest.py </dev/ttyS0 >/dev/ttyS0 2>&1
