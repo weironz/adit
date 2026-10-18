@@ -470,10 +470,12 @@ impl Worker {
         let mut keys = HashSet::new();
         let mut connected = false;
         // The initial request is already on the wire. A metadata-only reply
-        // releases its credit but does not make incremental updates sufficient
-        // to populate the desktop. Wait until the frontend has applied a reply
-        // before choosing the next request, including any automatic resize one.
+        // releases its credit but does not populate the desktop. TigerVNC sends
+        // layout metadata for every full request, so metadata must be followed
+        // by an incremental request to receive the pixels marked dirty by it.
+        // An incomplete pixel reply, however, needs another full request.
         let mut refresh_ready = false;
+        let mut refresh_full = false;
         let trace_flow = cfg!(debug_assertions)
             && std::env::var_os("ADIT_VNC_TRACE_FLOW").is_some();
         let mut fence_supported = false;
@@ -607,6 +609,8 @@ impl Worker {
                             state.diagnostics.first_complete_ms.get_or_insert(start.elapsed().as_millis() as u64);
                             state.diagnostics.status="已连接".into();
                             if trace_flow { eprintln!("vnc-flow complete bytes={} encodings={:?} coverage={}/{}", stats.wire_bytes, stats.encodings, state.diagnostics.covered_pixels, state.diagnostics.framebuffer_pixels); }
+                            refresh_full = state.diagnostics.first_covered_ms.is_none()
+                                && stats.encodings.iter().any(|(encoding, count)| *encoding >= 0 && *count != 0);
                             refresh_ready = client.pending_updates() == 0;
                         }
                         VncEvent::ClipboardCapabilities {utf8} => self.state.lock().unwrap().diagnostics.clipboard_utf8=utf8,
@@ -626,8 +630,7 @@ impl Worker {
                     if refresh_ready {
                         refresh_ready = false;
                         if client.pending_updates() == 0 {
-                            let incomplete = self.state.lock().unwrap().diagnostics.first_covered_ms.is_none();
-                            self.send_event(client, if incomplete { X11Event::FullRefresh } else { X11Event::Refresh }).await?;
+                            self.send_event(client, if refresh_full { X11Event::FullRefresh } else { X11Event::Refresh }).await?;
                         }
                     }
                     self.state.lock().unwrap().diagnostics.pending_updates = client.pending_updates();
