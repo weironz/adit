@@ -10,7 +10,9 @@ param(
     [switch]$SharedSoak,
     [switch]$ServiceMode,
     [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
-    [ValidateRange(1,600)][int]$IdleSeconds = 120
+    [ValidateRange(1,600)][int]$IdleSeconds = 120,
+    [ValidateSet(15911,15912)][int]$ProbePort = 15911,
+    [string]$GuestNetworkEvidence
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -19,6 +21,8 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
     -not $env:RUNNER_NAME -or -not $env:RUNNER_TEMP -or -not $env:GITHUB_SHA) {
     throw 'Only a disposable GitHub-hosted Windows runner may execute this vendor fixture.'
 }
+if (($ProbePort -eq 15912) -ne (-not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence))) { throw 'Guest port15912 requires its owned network evidence; native port15911 excludes guest evidence.' }
+if ($ProbePort -eq 15912 -and (-not $SyntheticLoad -or $ServiceMode -or $SharedSoak)) { throw 'Guest network samples require the isolated synthetic target and exclude service/shared-soak modes.' }
 if ($ServiceMode -and ($SharedSoak -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes SharedSoak.' }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
 if ($SharedSoak -and (-not $SyntheticLoad -or $Workload -ne 'static' -or $Quality -ne 'lossless')) {
@@ -51,6 +55,9 @@ $serviceWorkers = @{}
 $serviceIni = $null
 $serviceLaunchUtc = $null
 $serviceConsoleSession = $null
+$guestNetwork = $null
+$guestQemuCommandLine = $null
+$guestControllerCommandLine = $null
 $source = '0cd8b41aeb34e52e170b33e24411b3f805e303be'
 $record = [ordered]@{
     outcome = 'failed'; source_sha = $env:GITHUB_SHA; run_id = $env:GITHUB_RUN_ID
@@ -58,7 +65,7 @@ $record = [ordered]@{
     sample_count_requested = $Samples; workload = $Workload; quality = $Quality; synthetic_load = [bool]$SyntheticLoad
     network = 'native loopback baseline; no RTT/bandwidth/loss shaping'
     runner = $env:RUNNER_NAME; os = [Environment]::OSVersion.VersionString
-    target = "127.0.0.1:$port"; samples = @(); configuration_reference_commit = $source
+    target = "127.0.0.1:$ProbePort"; vendor_listener = "127.0.0.1:$port"; samples = @(); configuration_reference_commit = $source
     configuration_reference_note = 'Pinned official reference source explains INI/password/CLI semantics; it is not a claim that the downloaded vendor binary was built from this commit.'
     previous_failed_run = 'https://github.com/weironz/adit/actions/runs/39132780089'
     previous_failure_note = 'Exact pinned archive started a wildcard UDP listener despite exclusive loopback reservation. No client sample ran; failure remains failed evidence, not compatibility acceptance.'
@@ -102,6 +109,161 @@ if ($SharedSoak) {
 }
 function Write-Evidence {
     [IO.File]::WriteAllText((Join-Path $resultPath 'result.json'), ($record | ConvertTo-Json -Depth 12) + "`n", $utf8)
+}
+function Get-GuestArguments([string]$CommandLine) {
+    if (-not ('AditVncGuestArgv' -as [type])) {
+        Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class AditVncGuestArgv {
+    [DllImport("shell32.dll", CharSet=CharSet.Unicode, SetLastError=true)]
+    private static extern IntPtr CommandLineToArgvW(string command, out int count);
+    [DllImport("kernel32.dll")] private static extern IntPtr LocalFree(IntPtr pointer);
+    public static string[] Parse(string command) {
+        int count; IntPtr pointer = CommandLineToArgvW(command, out count);
+        if (pointer == IntPtr.Zero) throw new InvalidOperationException("Could not parse owned process arguments.");
+        try {
+            var result = new string[count];
+            for (int i = 0; i < count; i++) result[i] = Marshal.PtrToStringUni(Marshal.ReadIntPtr(pointer, i * IntPtr.Size));
+            return result;
+        } finally { LocalFree(pointer); }
+    }
+}
+'@
+    }
+    return [AditVncGuestArgv]::Parse($CommandLine)
+}
+function Assert-GuestIdentity {
+    $evidence = $script:guestNetwork
+    $qemu = Get-Process -Id ([int]$evidence.qemu_pid) -ErrorAction Stop
+    $controller = Get-Process -Id ([int]$evidence.controller_pid) -ErrorAction Stop
+    try {
+        $qemuInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($qemu.Id)" -ErrorAction Stop
+        $controllerInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($controller.Id)" -ErrorAction Stop
+        if ($qemu.Id -eq $controller.Id -or $qemuInfo.ParentProcessId -ne $controller.Id -or
+            $qemu.ProcessName -ne 'qemu-system-x86_64' -or
+            -not [string]::Equals($qemu.Path, [string]$evidence.qemu_path, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals($controller.Path, [string]$evidence.controller_path, [StringComparison]::OrdinalIgnoreCase) -or
+            $qemu.StartTime.ToUniversalTime().ToFileTimeUtc() -ne [long]$evidence.qemu_creation_filetime -or
+            $controller.StartTime.ToUniversalTime().ToFileTimeUtc() -ne [long]$evidence.controller_creation_filetime -or
+            (Get-FileHash -LiteralPath $qemu.Path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $evidence.qemu_sha256 -or
+            (Get-FileHash -LiteralPath $controller.Path -Algorithm SHA256).Hash.ToLowerInvariant() -ne $evidence.controller_sha256 -or
+            (Get-FileHash -LiteralPath $evidence.controller_script -Algorithm SHA256).Hash.ToLowerInvariant() -ne $evidence.controller_script_sha256) {
+            throw 'Guest QEMU/controller path, hash, creation time or direct ancestry does not match this invocation.'
+        }
+        $actual = @(Get-GuestArguments ([string]$qemuInfo.CommandLine))
+        $expected = @($evidence.qemu_argv)
+        if ($actual.Count -ne $expected.Count -or $actual.Count -lt 3 -or
+            -not [string]::Equals([string]$expected[0], [string]$evidence.qemu_path, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals($actual[0], [string]$evidence.qemu_path, [StringComparison]::OrdinalIgnoreCase)) { throw 'Owned QEMU argument vector does not match the evidence.' }
+        for ($i = 1; $i -lt $actual.Count; $i++) {
+            if ($actual[$i] -cne [string]$expected[$i]) { throw 'Owned QEMU argument vector changed.' }
+        }
+        $nic = @($actual | Where-Object { $_ -ceq '-nic' })
+        $nicIndex = [Array]::IndexOf($actual, '-nic')
+        if ($nic.Count -ne 1 -or $nicIndex + 1 -ge $actual.Count -or
+            $actual[$nicIndex + 1] -cne 'user,model=e1000,restrict=off,ipv6=off,hostfwd=tcp:127.0.0.1:15912-10.0.2.15:15912' -or
+            @($actual | Where-Object { $_ -in @('-netdev','-net') -or $_ -match 'guestfwd=' }).Count -ne 0) { throw 'Expected only the fixed direct host-alias NIC mapping, without guestfwd or additional NICs.' }
+        $controllerArguments = @(Get-GuestArguments ([string]$controllerInfo.CommandLine))
+        $scriptMatched = @($controllerArguments | Where-Object {
+            [string]::Equals([IO.Path]::GetFullPath($_), [IO.Path]::GetFullPath([string]$evidence.controller_script), [StringComparison]::OrdinalIgnoreCase)
+        }).Count -eq 1
+        if (-not $scriptMatched) { throw 'Controller command line does not identify the exact owned script.' }
+        if ($null -ne $script:guestQemuCommandLine -and
+            ($script:guestQemuCommandLine -cne $qemuInfo.CommandLine -or $script:guestControllerCommandLine -cne $controllerInfo.CommandLine)) { throw 'Guest process command line changed between snapshots.' }
+        $script:guestQemuCommandLine = [string]$qemuInfo.CommandLine
+        $script:guestControllerCommandLine = [string]$controllerInfo.CommandLine
+        foreach ($binding in @(@{port=15912;pid=$qemu.Id}, @{port=15914;pid=$controller.Id})) {
+            $listeners = @(Get-NetTCPConnection -State Listen -LocalPort $binding.port -ErrorAction Stop)
+            if ($listeners.Count -ne 1 -or $listeners[0].LocalAddress -ne '127.0.0.1' -or $listeners[0].OwningProcess -ne $binding.pid) { throw 'Guest frontend/control listener is not the unique owned loopback process.' }
+        }
+    } finally { $qemu.Dispose(); $controller.Dispose() }
+}
+function ConvertTo-GuestCanonical($Value) {
+    if ($Value -is [Collections.IDictionary]) {
+        $map = [ordered]@{}
+        foreach ($key in @($Value.Keys | Sort-Object -CaseSensitive)) { $map[$key] = ConvertTo-GuestCanonical $Value[$key] }
+        return $map
+    }
+    if ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
+        $items = @()
+        foreach ($item in $Value) { $items += ,(ConvertTo-GuestCanonical $item) }
+        return ,$items
+    }
+    return $Value
+}
+function Assert-GuestQdisc($Snapshot) {
+    if ($Snapshot.raw.ok -isnot [bool] -or -not $Snapshot.raw.ok -or $Snapshot.raw.mode -ne $script:guestNetwork.mode -or
+        @($Snapshot.raw.results | Where-Object { $_.exit -ne 0 }).Count -ne 0) { throw 'Guest snapshot failed or changed network mode.' }
+    $rawQdisc = @($Snapshot.raw.results | Where-Object { ($_.argv -join ' ') -ceq 'tc -s -j qdisc show dev eth0' })
+    if ($rawQdisc.Count -ne 1) { throw 'Actual guest tc command/output is missing or ambiguous.' }
+    $parsedQdisc = @($rawQdisc[0].stdout | ConvertFrom-Json -AsHashtable)
+    if ((ConvertTo-Json -InputObject (ConvertTo-GuestCanonical $parsedQdisc) -Depth 20 -Compress) -cne
+        (ConvertTo-Json -InputObject (ConvertTo-GuestCanonical @($Snapshot.stats.qdiscs)) -Depth 20 -Compress)) { throw 'Guest parsed qdisc stats differ from the preserved raw tc result.' }
+    $netem = @($Snapshot.stats.qdiscs | Where-Object { $_.kind -eq 'netem' })
+    if ($script:guestNetwork.mode -eq 'impaired') {
+        if ($netem.Count -ne 1 -or [Math]::Abs([double]$netem[0].options.delay.delay - 0.09) -gt 0.000001 -or
+            $netem[0].options.rate.rate -ne 625000 -or $netem[0].options.limit -ne 20000 -or
+            [Math]::Abs([double]$netem[0].options.'loss-random'.loss - 0.005) -gt 0.000001) { throw 'Actual guest qdisc must remain90ms/5mbit/0.5% aggregate egress impairment.' }
+    } elseif ($netem.Count -ne 0) { throw 'Baseline guest snapshot unexpectedly contains netem.' }
+}
+function Assert-GuestNetwork {
+    if ($ProbePort -eq 15911) { return }
+    $path = [IO.Path]::GetFullPath($GuestNetworkEvidence)
+    if (-not [IO.Path]::IsPathFullyQualified($GuestNetworkEvidence) -or
+        -not $path.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-Path -LiteralPath $path -PathType Leaf) -or (Get-Item -LiteralPath $path).Length -gt 131072) { throw 'Guest evidence must be a bounded absolute file beneath RUNNER_TEMP.' }
+    $evidence = [IO.File]::ReadAllText($path, [Text.UTF8Encoding]::new($false, $true)) | ConvertFrom-Json -AsHashtable
+    if ($evidence.protocol -cne 'adit-direct-netem-v1' -or $evidence.source_sha -cne $env:GITHUB_SHA -or
+        [string]$evidence.run_id -cne $env:GITHUB_RUN_ID -or $evidence.calibration_passed -isnot [bool] -or -not $evidence.calibration_passed -or
+        $evidence.controller_id -cnotmatch '^[0-9a-f]{32}$' -or $evidence.qemu_pid -le 0 -or $evidence.controller_pid -le 0 -or
+        $evidence.qemu_creation_filetime -le 0 -or $evidence.controller_creation_filetime -le 0 -or
+        $evidence.guest_manifest.source_sha -cne $env:GITHUB_SHA -or $evidence.mode -cnotin @('baseline','impaired') -or
+        $evidence.vendor_port -ne 15911 -or $evidence.probe_port -ne 15912 -or $evidence.control_port -ne 15914 -or
+        -not [IO.Path]::IsPathFullyQualified([string]$evidence.qemu_path) -or
+        -not [IO.Path]::GetFullPath([string]$evidence.qemu_path).StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase)) { throw 'Guest evidence does not identify this source/run and isolated direct-netem controller.' }
+    $script:guestNetwork = $evidence
+    Assert-GuestIdentity
+    Assert-GuestQdisc $evidence.before
+    $record.network = $evidence
+    $record.scope = "UltraVNC1.8.3.0 Windows portable through calibrated direct host-alias guest $($evidence.mode); $Samples $Quality/$Workload samples; aggregate guest egress, not Windows NIC impairment"
+    $record.limitations[1] = 'The Linux guest relay has aggregate eth0 egress impairment across TCP-terminating QEMU/Slirp; not transparent Windows TCP-loss, physical NIC, OS sleep or native Adit GUI acceptance.'
+    [IO.File]::WriteAllText((Join-Path $resultPath 'guest-network.json'), ($evidence | ConvertTo-Json -Depth 24) + "`n", $utf8)
+}
+function Get-GuestSnapshot([ValidatePattern('^network-\d+-(before|after)\.json$')][string]$Name) {
+    if ($ProbePort -eq 15911) { return $null }
+    Assert-GuestIdentity
+    $evidence = $script:guestNetwork
+    $client = [Net.Sockets.TcpClient]::new()
+    $clock = [Diagnostics.Stopwatch]::StartNew()
+    try {
+        if (-not $client.ConnectAsync('127.0.0.1', 15914).Wait(3000)) { throw 'Owned guest snapshot connection exceeded3s.' }
+        $stream = $client.GetStream(); $stream.WriteTimeout = 3000
+        $request = @{protocol='adit-direct-netem-v1';controller_id=$evidence.controller_id;command='snapshot'} | ConvertTo-Json -Compress
+        $bytes = $utf8.GetBytes($request + "`n"); $stream.Write($bytes, 0, $bytes.Length)
+        $line = [IO.MemoryStream]::new()
+        try {
+            while ($true) {
+                $remaining = 15000 - [int]$clock.ElapsedMilliseconds
+                if ($remaining -le 0) { throw 'Owned guest snapshot exceeded its absolute15s deadline.' }
+                $stream.ReadTimeout = $remaining
+                $value = $stream.ReadByte()
+                if ($value -lt 0) { throw 'Guest controller closed without one complete response line.' }
+                if ($line.Length -eq 131072) { throw 'Guest response exceeded128KiB.' }
+                $line.WriteByte([byte]$value)
+                if ($value -eq 10) { break }
+            }
+            $raw = $line.ToArray()
+            $reply = [Text.UTF8Encoding]::new($false, $true).GetString($raw) | ConvertFrom-Json -AsHashtable
+        } finally { [IO.File]::WriteAllBytes((Join-Path $resultPath $Name), $line.ToArray()); $line.Dispose() }
+        if ($reply.ok -isnot [bool] -or -not $reply.ok -or $reply.protocol -cne 'adit-direct-netem-v1' -or
+            $reply.controller_id -cne $evidence.controller_id -or $reply.source_sha -cne $env:GITHUB_SHA -or
+            [string]$reply.run_id -cne $env:GITHUB_RUN_ID -or $reply.qemu_pid -ne $evidence.qemu_pid -or
+            [long]$reply.qemu_creation_filetime -ne [long]$evidence.qemu_creation_filetime) { throw 'Snapshot does not match this source/run/controller and exact QEMU lifetime.' }
+        Assert-GuestIdentity
+        Assert-GuestQdisc $reply.snapshot
+        return $reply.snapshot
+    } finally { $client.Dispose() }
 }
 function Write-Phase([string]$Message) {
     $line = "{0:o} {1}" -f [DateTimeOffset]::UtcNow, $Message
@@ -516,7 +678,7 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
     $info.StandardOutputEncoding = $utf8
     $info.StandardErrorEncoding = $utf8
     $steady = if ($SyntheticLoad -and -not $WrongPassword) { 3 } else { 1 }
-    foreach ($argument in @('127.0.0.1', [string]$port, '15', "--steady-seconds=$steady")) { $info.ArgumentList.Add($argument) }
+    foreach ($argument in @('127.0.0.1', [string]$ProbePort, '15', "--steady-seconds=$steady")) { $info.ArgumentList.Add($argument) }
     if ($Quality -eq 'wan') { $info.ArgumentList.Add('--wan') }
     if ($SyntheticLoad -and -not $WrongPassword) {
         $info.ArgumentList.Add("--workload=$Workload")
@@ -525,7 +687,12 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
     $started = $false
+    $networkAfterAttempted = $false
+    $networkBefore = $null
+    $stdout = $null
+    $stderr = $null
     try {
+        $networkBefore = Get-GuestSnapshot "network-$Index-before.json"
         $started = $process.Start()
         if (-not $started) { throw 'Client probe did not start.' }
         $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -582,6 +749,12 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
                 $err -notmatch '(?im)^error:'
             $sample.passed = $sample.passed -and $sample.steady_and_connected
         }
+        if ($ProbePort -eq 15912) {
+            $sample.network_before = $networkBefore
+            $networkAfterAttempted = $true
+            try { $sample.network_after = Get-GuestSnapshot "network-$Index-after.json" }
+            catch { $sample.network_error = $_.Exception.Message; $sample.passed = $false }
+        }
         $record.samples += $sample
         Write-Evidence
         if (-not $sample.passed) { throw "Probe $Index failed its acceptance assertions; original stdout/stderr retained." }
@@ -590,10 +763,26 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
             $process.Kill($true)
             [void]$process.WaitForExit(5000)
         }
+        if ($ProbePort -eq 15912 -and $started -and -not $networkAfterAttempted) {
+            # Preserve the original failed probe and make one post-failure
+            # observation; never rerun the VNC sample or retry a snapshot.
+            $observation = [ordered]@{index=$Index;before=$networkBefore;after=$null}
+            try { $observation.after = Get-GuestSnapshot "network-$Index-after.json" }
+            catch { $observation.error = $_.Exception.Message }
+            foreach ($capture in @(@{task=$stdout;name="probe-$Index.stdout.txt"}, @{task=$stderr;name="probe-$Index.stderr.txt"})) {
+                if ($null -ne $capture.task -and $capture.task.IsCompleted -and -not (Test-Path -LiteralPath (Join-Path $resultPath $capture.name))) {
+                    [IO.File]::WriteAllText((Join-Path $resultPath $capture.name), $capture.task.GetAwaiter().GetResult(), $utf8)
+                }
+            }
+            if (-not $record.Contains('guest_failed_probe_snapshots')) { $record.guest_failed_probe_snapshots = @() }
+            $record.guest_failed_probe_snapshots += $observation
+            Write-Evidence
+        }
         $process.Dispose()
     }
 }
 try {
+    Assert-GuestNetwork
     Write-Phase 'Validate runner, probe and unused fixture port'
     if ($ServiceMode) {
         $existing = @(Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object {

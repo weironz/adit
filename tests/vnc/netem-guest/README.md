@@ -1,4 +1,70 @@
-# Disposable Windows guest netem packet-path PoC
+# Disposable Windows guest netem tests
+
+## Direct host-alias VNC test path
+
+`vnc-windows-direct-impaired.yml` uses a separate `direct-host-alias-fake`
+guest build and the `direct_*` controllers. The original guestfwd experiment
+below is retained as historical evidence; the direct path does not use its
+persistent character-device backend or spawn helpers.
+
+```text
+Windows production VNC probe -> 127.0.0.1:15912 -> QEMU hostfwd/Slirp
+    -> guest TCP byte relay -> 10.0.2.2:15911 host alias
+    -> fresh Windows TCP connection -> owned UltraVNC synthetic fixture
+```
+
+The guest has `10.0.2.15/32`, only a `10.0.2.2/32` unicast route, no default
+route or DNS configuration, and IPv6 disabled. QEMU uses `restrict=off` for
+host-alias access; this is not an additional host firewall or transparent TCP
+router. The original TCP-termination and aggregate-egress limitations below
+still apply. The fixed 90 ms queue setting is not a measured WAN RTT.
+
+The workflow gates execution in this order:
+
+1. Build and hash the current guest, including actual iproute2 rather than
+   BusyBox's incompatible IPv6 route reporting.
+2. Verify two independently accepted host TCP connections, opposite half-close
+   orders and byte-identical 256 KiB tails after EOF.
+3. On one owned QEMU, measure baseline echo/bulk, 80 ms delay, 2 Mbit/s rate,
+   100% loss, natural kernel recovery, and the combined impairment.
+4. Run one normal WAN/drag sample in baseline and impaired modes, then one
+   restored lossless/static sample, each with explicit wrong-password rejection.
+   A failure prevents matrix execution.
+5. Run lossless/wan × static/scroll/drag, with ten normal baseline and ten
+   impaired samples per cell, then one restored lossless/static sample. Preserve every failure;
+   do not rerun individual samples to select a passing result.
+
+Impaired mode sets guest eth0 aggregate egress to 90 ms, 5 Mbit/s and 0.5%
+random loss. Each ten-sample impaired cell requires actual qdisc drops. Every
+probe has before/after raw tc and TCP snapshots bound to this source/run,
+controller nonce, exact process lifetime, executable hashes and listener owners.
+Vendor fixture validation still requires actual full-frame RGB and target input
+consumption. Drag includes an explicit button release during the existing steady
+window. Read
+each run's artifacts for its outcome; defining this workflow
+does not establish acceptance.
+
+Network changes require zero relay workers, no live kernel TCP states and empty
+qdisc queues. Changing modes recreates an already idle qdisc because `replace`
+inherits omitted netem options. The 100%-loss negative control can leave a
+passive SYN_RECV after the host client aborts. It retains loss and waits up to
+90 seconds for actual kernel expiry, checking the same strict idle conditions;
+it does not flush a live connection. Normal idle remains bounded to 12 seconds.
+[Linux documents the default passive-open timeout as 63 seconds](https://docs.kernel.org/6.12/networking/ip-sysctl.html#tcp-synack-retries-integer).
+
+Only disposable GitHub-hosted Windows runners may invoke these controllers.
+After merge, start the manual workflow with
+`gh workflow run vnc-windows-direct-impaired.yml --ref main`; ordinary code or
+documentation pushes do not start the costly matrix.
+QEMU is extracted from the fixed checksum-verified official package; its
+installer is not executed. Process, serial, command and whole-context deadlines
+are bounded. Kernel diagnostics use a separate serial console and are retained
+in `kernel-console.txt`; they cannot be interleaved into strict JSON RPC lines.
+Cleanup queries the native Windows TCP table for the four owned
+ports (15911–15914); only TIME_WAIT may remain. This does not validate Windows
+physical NIC loss, OS sleep, UAC/lock screens, native GUI DPI or physical input.
+
+## Original guestfwd echo/bulk PoC
 
 This is an **echo/bulk feasibility experiment**, not VNC acceptance, a physical
 Windows NIC test, or an OS sleep test. It runs only on disposable GitHub-hosted

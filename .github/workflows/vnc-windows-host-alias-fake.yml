@@ -1,0 +1,77 @@
+name: Windows guest host-alias TCP lifecycle (fake only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-guest-host-alias']
+    paths:
+      - '.github/workflows/vnc-windows-host-alias-fake.yml'
+      - 'tests/vnc/netem-guest/build.sh'
+      - 'tests/vnc/netem-guest/direct-init'
+      - 'tests/vnc/netem-guest/direct_guest.py'
+      - 'tests/vnc/netem-guest/direct_probe.py'
+      - 'tests/vnc/netem-guest/direct_windows.ps1'
+
+permissions:
+  contents: read
+
+jobs:
+  guest:
+    name: Build separate fixed host-alias guest; original echo mode unchanged
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install assembly tools from signed Ubuntu repository
+        timeout-minutes: 3
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y cpio kmod
+      - name: Build fixed /32 host-alias mode, no default route or DNS
+        timeout-minutes: 7
+        run: timeout --signal=TERM --kill-after=10s 400s bash tests/vnc/netem-guest/build.sh "$RUNNER_TEMP/adit-netem-direct-guest" direct-host-alias-fake
+      - name: Preserve auditable separate guest and original build failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-direct-host-alias-guest
+          path: |
+            ${{ runner.temp }}/adit-netem-direct-guest/vmlinuz-virt
+            ${{ runner.temp }}/adit-netem-direct-guest/initramfs.cpio.gz
+            ${{ runner.temp }}/adit-netem-direct-guest/manifest.json
+            ${{ runner.temp }}/adit-netem-direct-guest/sources.json
+            ${{ runner.temp }}/adit-netem-direct-guest/package-versions.txt
+            ${{ runner.temp }}/adit-netem-direct-guest/modules.dep
+            ${{ runner.temp }}/adit-netem-direct-guest/apks/
+          if-no-files-found: warn
+          retention-days: 14
+  fake:
+    name: One 60s fake calibration; two fresh backends and post-halfclose tails
+    needs: guest
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: vnc-direct-host-alias-guest
+          path: ${{ runner.temp }}/adit-netem-direct-guest
+      - name: Extract fixed QEMU and run host-alias fake lifecycle once
+        timeout-minutes: 3
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/direct_windows.ps1 -Guest "$env:RUNNER_TEMP/adit-netem-direct-guest" -Results "$env:RUNNER_TEMP/adit-direct-host-alias"
+      - name: Preserve raw result/serial/errors and owned process/port cleanup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-direct-host-alias-fake-only
+          path: |
+            ${{ runner.temp }}/adit-direct-host-alias/
+            ${{ runner.temp }}/adit-netem-direct-tools/provenance.json
+            ${{ runner.temp }}/adit-netem-direct-tools/extraction.txt
+            ${{ runner.temp }}/adit-netem-direct-tools/failure.txt
+          if-no-files-found: warn
+          retention-days: 14
