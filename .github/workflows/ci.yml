@@ -164,6 +164,26 @@ jobs:
           ADIT_VNC_CLIP_LOCAL=1 ADIT_VNC_CLIP_PORT=15900 ADIT_VNC_CLIP_DISPLAY=99 \
             cargo test -p adit-session --test vnc_clipboard -- --ignored
 
+      - name: VNC shared clients follow real desktop resize
+        if: matrix.os == 'ubuntu-latest'
+        timeout-minutes: 2
+        shell: bash
+        env:
+          ADIT_VNC_TRACE_FLOW: '1'
+        run: |
+          Xtigervnc :104 -noreset -geometry 800x600 -depth 24 -rfbport 15908 \
+            -PasswordFile /tmp/adit-vnc-passwd -SecurityTypes VncAuth -localhost \
+            > /tmp/adit-vnc-resize.log 2>&1 &
+          server_pid=$!
+          trap 'kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in {1..50}; do
+            if DISPLAY=:104 xsetroot -solid red 2>/dev/null; then ready=true; break; fi
+            sleep 0.1
+          done
+          "$ready"
+          cargo test -p adit-session --test vnc_resize -- --ignored --test-threads=1
+
       - name: Preserve real VNC server and input diagnostics
         if: always() && matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v4
@@ -174,6 +194,7 @@ jobs:
             /tmp/adit-x11vnc.log
             /tmp/adit-tigervnc.log
             /tmp/adit-vnc-events.log
+            /tmp/adit-vnc-resize.log
           if-no-files-found: warn
 
       - name: Build the VNC recovery probe
