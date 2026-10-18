@@ -89,7 +89,9 @@ def cursor_checks(hwnd,state,log,directory,box,target,cross_width,result,case):
         wait_until(lambda: any(e['event']=='pointer' for e in read_events(state/'events.jsonl')[before_move:]))
         assert U.SetCursorPos(*absolute)
         try:
-            wait_until(lambda: cursor_info()['flags']==0)
+            # CURSOR_SUPPRESSED (2) also means the OS is not drawing a pointer;
+            # CURSOR_SHOWING is the positive visibility bit, not flags != 0.
+            wait_until(lambda: cursor_info()['flags'] & 1 == 0)
         finally:
             result.setdefault('cursor_visibility_observations',[]).append(dict(case=case,style=style,state=cursor_info(),expected_hwnd=hwnd))
         region=(absolute[0]-40,absolute[1]-40,absolute[0]+40,absolute[1]+40)
