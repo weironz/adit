@@ -1,0 +1,36 @@
+name: VNC Windows actual service lock screen
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-windows-autonomous']
+    paths:
+      - '.github/workflows/vnc-windows-lock.yml'
+      - 'tests/vnc/windows-service-lock.py'
+      - 'tests/vnc/windows-server-smoke.ps1'
+permissions:
+  contents: read
+jobs:
+  lock:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build production probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Attributed service, real desktop, WTS lock and fresh lock-screen capture
+        timeout-minutes: 8
+        shell: pwsh
+        run: ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/vnc-service-lock" -ServiceMode -SyntheticLoad -Samples 1 -LockScreen
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vnc-service-lock
+          path: ${{ runner.temp }}/vnc-service-lock

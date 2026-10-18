@@ -9,6 +9,7 @@ param(
     [switch]$SyntheticLoad,
     [switch]$SharedSoak,
     [switch]$ServiceMode,
+    [switch]$LockScreen,
     [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
     [ValidateRange(1,600)][int]$IdleSeconds = 120,
     [ValidateSet(15911,15912)][int]$ProbePort = 15911,
@@ -24,6 +25,7 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
 if (($ProbePort -eq 15912) -ne (-not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence))) { throw 'Guest port15912 requires its owned network evidence; native port15911 excludes guest evidence.' }
 if ($ProbePort -eq 15912 -and (-not $SyntheticLoad -or $ServiceMode -or $SharedSoak)) { throw 'Guest network samples require the isolated synthetic target and exclude service/shared-soak modes.' }
 if ($ServiceMode -and ($SharedSoak -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes SharedSoak.' }
+if ($LockScreen -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'LockScreen requires the owned service and direct loopback probe.' }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
 if ($SharedSoak -and (-not $SyntheticLoad -or $Workload -ne 'static' -or $Quality -ne 'lossless')) {
     throw 'SharedSoak requires the owned synthetic target, static workload and lossless quality.'
@@ -1010,6 +1012,14 @@ public static class AditVncFixtureIni {
     }
     $ownedReady = Assert-OwnedListeners
     if ($ServiceMode -and -not $ownedReady) { throw 'SCM service/worker/listener chain disappeared before the final acceptance check.' }
+    if ($LockScreen) {
+        Write-Phase 'Measure actual WTS lock state and fresh VncAuth full frames; disposable runner only'
+        & $pythonPath (Join-Path $PSScriptRoot 'windows-service-lock.py') --probe $probePath --results (Join-Path $resultPath 'lock-screen')
+        if ($LASTEXITCODE -ne 0) { throw 'Actual lock-screen acceptance failed; inspect original evidence.' }
+        $record.lock_screen = Get-Content -LiteralPath (Join-Path $resultPath 'lock-screen/result.json') -Raw | ConvertFrom-Json -AsHashtable
+        if ($record.lock_screen.outcome -ne 'passed') { throw 'Lock-screen result did not pass.' }
+        if (-not (Assert-OwnedListeners)) { throw 'Service/worker attribution lost after lock-screen acceptance.' }
+    }
     if ($ServiceMode) { $record.service_acceptance = $true }
     $record.outcome = 'passed'
 } catch {
