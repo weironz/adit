@@ -295,6 +295,38 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     assert!(!app.vnc_grab_keys);
     assert!(app.vnc_pressed_keys.is_empty());
     assert!(keyboard_hook::drain().is_empty());
+    let stroke = |scancode, pressed| VncSystemStroke {
+        scancode,
+        extended: scancode != 0x0f,
+        pressed,
+    };
+    route_vnc_system_keys(
+        &mut app,
+        [
+            stroke(0x0f, false),
+            stroke(0x5b, false),
+            stroke(0x5c, false),
+        ],
+    );
+    // Repeat key-downs stay on the wire, while one physical ownership record
+    // remains responsible for the eventual release.
+    route_vnc_system_keys(
+        &mut app,
+        [stroke(0x0f, true), stroke(0x0f, true), stroke(0x0f, false)],
+    );
+    assert!(app.vnc_pressed_keys.is_empty());
+    route_vnc_system_keys(&mut app, [stroke(0x5c, true), stroke(0x5c, false)]);
+    assert!(app.vnc_pressed_keys.is_empty());
+    app.vnc_grab_keys = true;
+    route_vnc_system_keys(&mut app, [stroke(0x0f, true), stroke(0x5b, true)]);
+    assert_eq!(app.vnc_pressed_keys.len(), 2);
+    let _ = update(&mut app, Message::ToggleFullscreen);
+    assert!(app.fullscreen);
+    assert!(!app.vnc_grab_keys);
+    assert!(app.vnc_pressed_keys.is_empty());
+    // A release captured at the old grab boundary cannot release anyone else's
+    // key after the fullscreen path already released our own tracked downs.
+    route_vnc_system_keys(&mut app, [stroke(0x0f, false), stroke(0x5b, false)]);
     let current_epoch = app.vnc_input_epoch;
     let _ = update(
         &mut app,
@@ -326,6 +358,15 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
         (1, 0xffe1, false),
         (1, 0xffe4, true),
         (1, 0xffe4, false),
+        (1, 0xff09, true),
+        (1, 0xff09, true),
+        (1, 0xff09, false),
+        (1, 0xffec, true),
+        (1, 0xffec, false),
+        (1, 0xff09, true),
+        (1, 0xffeb, true),
+        (1, 0xff09, false),
+        (1, 0xffeb, false),
         (1, adit_session::unicode_keysym('☃'), true),
         (1, adit_session::unicode_keysym('☃'), false),
     ]);
