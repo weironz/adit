@@ -11,6 +11,7 @@ struct State {
     events: std::sync::mpsc::Sender<String>,
     geometry: Option<(u16, u16, u64)>,
     native_dpi: Option<u32>,
+    pointer_sequence: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -20,6 +21,79 @@ enum NativeMessage {
     Fit(bool),
     RemoteResize,
     NativeDpi(Option<u32>),
+    NativePointerSnapshot(serde_json::Value),
+}
+
+fn unix_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+}
+
+#[cfg(windows)]
+fn native_pointer_snapshot(
+    window: window::Id,
+    sequence: u64,
+    remote: Point,
+    requested: u128,
+) -> Task<NativeMessage> {
+    window::run(window, move |native| {
+        use iced::window::raw_window_handle::RawWindowHandle;
+        use windows::Win32::Foundation::{HWND, POINT};
+        use windows::Win32::UI::{HiDpi::GetDpiForWindow, WindowsAndMessaging::{GetCursorPos, GetPhysicalCursorPos, GetWindowInfo, WINDOWINFO}};
+        let mut observation = serde_json::json!({
+            "event":"native_pointer_snapshot", "sequence":sequence,
+            "remote_x":remote.x, "remote_y":remote.y,
+            "requested_unix_ms":requested, "capture_started_unix_ms":unix_ms(),
+            "scope":"asynchronous current cursor and own-window state; not the original OS event or physical-input proof",
+            "atomic":false, "sampling":"sequential API reads; the pointer may move between reads",
+            "apis":["GetCursorPos","GetPhysicalCursorPos","GetWindowInfo","GetDpiForWindow"],
+        });
+        let handle = native.window_handle().ok().map(|handle| handle.as_raw());
+        if let Some(RawWindowHandle::Win32(handle)) = handle {
+            // Use only the live handle supplied by iced; never retain a HWND.
+            let hwnd = HWND(handle.hwnd.get() as *mut std::ffi::c_void);
+            let mut cursor = POINT::default();
+            let mut physical_cursor = POINT::default();
+            let mut info = WINDOWINFO { cbSize: std::mem::size_of::<WINDOWINFO>() as u32, ..Default::default() };
+            // These APIs observe current position/geometry and do not inject
+            // input, change focus, or alter process/system DPI awareness.
+            let cursor_result = unsafe { GetCursorPos(&mut cursor) };
+            let physical_cursor_result = unsafe { GetPhysicalCursorPos(&mut physical_cursor) };
+            let info_result = unsafe { GetWindowInfo(hwnd, &mut info) };
+            let dpi = unsafe { GetDpiForWindow(hwnd) };
+            observation["cursor_screen"] = if cursor_result.is_ok() { serde_json::json!([cursor.x,cursor.y]) } else { serde_json::Value::Null };
+            observation["physical_cursor_screen"] = if physical_cursor_result.is_ok() { serde_json::json!([physical_cursor.x,physical_cursor.y]) } else { serde_json::Value::Null };
+            if info_result.is_ok() {
+                observation["client_rect_screen"] = serde_json::json!([info.rcClient.left,info.rcClient.top,info.rcClient.right,info.rcClient.bottom]);
+                observation["window_rect_screen"] = serde_json::json!([info.rcWindow.left,info.rcWindow.top,info.rcWindow.right,info.rcWindow.bottom]);
+            }
+            observation["cursor_api_ok"] = serde_json::json!(cursor_result.is_ok());
+            observation["physical_cursor_api_ok"] = serde_json::json!(physical_cursor_result.is_ok());
+            observation["window_info_api_ok"] = serde_json::json!(info_result.is_ok());
+            observation["dpi"] = if dpi == 0 { serde_json::Value::Null } else { serde_json::json!(dpi) };
+        } else {
+            observation["unavailable"] = serde_json::json!("no live Win32 window handle");
+        }
+        observation["captured_unix_ms"] = serde_json::json!(unix_ms());
+        observation
+    }).map(NativeMessage::NativePointerSnapshot)
+}
+
+#[cfg(not(windows))]
+fn native_pointer_snapshot(
+    _window: window::Id,
+    sequence: u64,
+    remote: Point,
+    requested: u128,
+) -> Task<NativeMessage> {
+    Task::done(NativeMessage::NativePointerSnapshot(serde_json::json!({
+        "event":"native_pointer_snapshot", "sequence":sequence,
+        "remote_x":remote.x, "remote_y":remote.y, "requested_unix_ms":requested,
+        "scope":"asynchronous observation unavailable on this platform; not physical-input proof",
+        "unavailable":"Win32 observation only",
+    })))
 }
 
 #[cfg(windows)]
@@ -56,6 +130,11 @@ fn log(state: &State, mut event: serde_json::Value) {
 
 fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessage> {
     match message {
+        NativeMessage::NativePointerSnapshot(mut observation) => {
+            observation["completed_unix_ms"] = serde_json::json!(unix_ms());
+            log(state, observation);
+            Task::none()
+        }
         NativeMessage::NativeDpi(dpi) => {
             state.native_dpi = dpi;
             log(
@@ -91,19 +170,30 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             task
         }
         NativeMessage::App(mut message) => {
+            let mut pointer_probe = Task::none();
             match &mut message {
                 Message::DisplayScale(scale) => {
                     state.os_scale = *scale;
                     *scale *= state.scale;
                 }
-                Message::RdpPointerMoved(point) => log(
-                    state,
-                    serde_json::json!({
-                        "event":"pointer", "remote_x":point.x, "remote_y":point.y,
-                        "app_scale":state.scale, "os_scale":state.os_scale, "fit":state.app.vnc_fit,
-                        "surface":state.app.rdp_surface_size,
-                    }),
-                ),
+                Message::RdpPointerMoved(point) => {
+                    state.pointer_sequence = state.pointer_sequence.wrapping_add(1);
+                    let sequence = state.pointer_sequence;
+                    let remote = *point;
+                    let requested = unix_ms();
+                    pointer_probe = window::latest().and_then(move |id| {
+                        native_pointer_snapshot(id, sequence, remote, requested)
+                    });
+                    log(
+                        state,
+                        serde_json::json!({
+                            "event":"pointer", "remote_x":point.x, "remote_y":point.y,
+                            "sequence":sequence, "snapshot_requested_unix_ms":requested,
+                            "app_scale":state.scale, "os_scale":state.os_scale, "fit":state.app.vnc_fit,
+                            "surface":state.app.rdp_surface_size,
+                        }),
+                    );
+                }
                 Message::RdpPressed(button) => log(
                     state,
                     serde_json::json!({"event":"button", "button":format!("{button:?}"), "app_scale":state.scale}),
@@ -123,6 +213,7 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             let task = Task::batch([
                 update(&mut state.app, message).map(NativeMessage::App),
                 dpi_probe,
+                pointer_probe,
             ]);
             if let Some((width, height)) = state.app.rdp_surface_size {
                 let generation = state
@@ -247,6 +338,7 @@ pub fn run() -> iced::Result {
                 events: events.clone(),
                 geometry: None,
                 native_dpi: None,
+                pointer_sequence: 0,
             },
             window::latest().and_then(native_dpi),
         )
