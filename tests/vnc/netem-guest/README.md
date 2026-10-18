@@ -19,8 +19,10 @@ The Windows job obtains the fixed upstream-listed Weilnetz QEMU build and
 checks the official published SHA512 before extracting with 7-Zip. It records
 Authenticode status rather than calling an expired certificate valid. The
 installer is never executed. QEMU uses TCG (software CPU emulation), a serial
-control channel and restricted user-mode networking. Both Windows listeners
-bind only to loopback.
+control channel and restricted user-mode networking. All three Windows listeners
+bind only to loopback: the two payload endpoints below and the Python-owned
+15913 serial character backend to which QEMU connects. The latter is not a
+guest management IP service; it carries the guest serial console bytes.
 
 ```text
 Windows echo client -> 127.0.0.1:15912 -> QEMU hostfwd/Slirp

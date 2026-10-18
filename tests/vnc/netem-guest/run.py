@@ -92,6 +92,9 @@ def main():
     phases = []
     qemu = None
     listener = socket.socket()
+    serial_listener = socket.socket()
+    serial_socket = None
+    reader = None
     result = {"ok": False, "source_sha": os.environ["GITHUB_SHA"], "scope": "Windows loopback TCP endpoints via TCP-terminating Slirp/guest byte relay with Linux guest-egress packet impairment; not physical NIC, transparent TCP routing, OS sleep, or VNC acceptance", "phases": phases}
     try:
         qemu_exe = pathlib.Path(args.qemu).resolve()
@@ -101,15 +104,25 @@ def main():
         listener.bind(("127.0.0.1", 15911))
         listener.listen(8)
         threading.Thread(target=echo_service, args=(listener,), daemon=True).start()
-        command = [str(qemu_exe), "-L", str(bios[0].parent), "-accel", "tcg,thread=multi", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "512", "-display", "none", "-monitor", "none", "-serial", "stdio", "-no-reboot", "-kernel", str(guest / "vmlinuz-virt"), "-initrd", str(guest / "initramfs.cpio.gz"), "-append", "console=ttyS0 rdinit=/init panic=-1", "-nic", "user,model=e1000,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:15912-:15912,guestfwd=tcp:10.0.2.100:15911-tcp:127.0.0.1:15911"]
+        # Windows QEMU stdio delivered boot output but consumed no piped input
+        # in the original failed CI. Use its serial socket character backend;
+        # QEMU connects to our already-owned loopback listener, never a guest IP.
+        serial_listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        serial_listener.bind(("127.0.0.1", 15913))
+        serial_listener.listen(1)
+        serial_listener.settimeout(15)
+        command = [str(qemu_exe), "-L", str(bios[0].parent), "-accel", "tcg,thread=multi", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "512", "-display", "none", "-monitor", "none", "-chardev", "socket,id=control,host=127.0.0.1,port=15913", "-serial", "chardev:control", "-no-reboot", "-kernel", str(guest / "vmlinuz-virt"), "-initrd", str(guest / "initramfs.cpio.gz"), "-append", "console=ttyS0 rdinit=/init panic=-1", "-nic", "user,model=e1000,restrict=on,ipv6=off,hostfwd=tcp:127.0.0.1:15912-:15912,guestfwd=tcp:10.0.2.100:15911-tcp:127.0.0.1:15911"]
         result["qemu_argv"] = command
         result["guest_manifest"] = manifest
         with (out / "qemu-stderr.txt").open("w", encoding="utf-8") as stderr:
-            qemu = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr, text=True, encoding="utf-8", errors="replace", bufsize=1, creationflags=subprocess.CREATE_NO_WINDOW)
+            qemu = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=stderr, creationflags=subprocess.CREATE_NO_WINDOW)
+            serial_socket, address = serial_listener.accept()
+            require(address[0] == "127.0.0.1", "Serial backend must connect over loopback")
+            serial_listener.close()
 
             def serial_reader():
-                with (out / "serial.txt").open("w", encoding="utf-8") as log:
-                    for line in qemu.stdout:
+                with (out / "serial.txt").open("w", encoding="utf-8") as log, serial_socket.makefile("r", encoding="utf-8", errors="replace") as serial:
+                    for line in serial:
                         log.write(line)
                         log.flush()
                         if line.startswith("ADIT_NETEM "):
@@ -142,8 +155,7 @@ def main():
                 request = {"id": sequence}
                 if mode is not None:
                     request["mode"] = mode
-                qemu.stdin.write(json.dumps(request) + "\n")
-                qemu.stdin.flush()
+                serial_socket.sendall(json.dumps(request).encode("utf-8") + b"\n")
                 response = wait_message(lambda message: message.get("id") == sequence, 20)
                 phases.append({"control": request, "evidence": response})
                 require(response.get("ok"), f"Guest command failed: {response}")
@@ -196,6 +208,11 @@ def main():
                     qemu.wait(timeout=5)
             result["qemu_exit"] = qemu.returncode
         listener.close()
+        serial_listener.close()
+        if serial_socket is not None:
+            serial_socket.close()
+        if reader is not None:
+            reader.join(timeout=2)
         (out / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
 
 
