@@ -189,7 +189,9 @@ def crosshairs(image):
         width, height = max(xs)-min(xs)+1, max(ys)-min(ys)+1
         if min(width, height) < 10 or abs(width-height) > 3 or len(component) > width*height*.65:
             continue
-        cx, cy = (min(xs)+max(xs))//2, (min(ys)+max(ys))//2
+        # Native cursor coordinates name pixel boundaries; the centre of an
+        # inclusive raster span includes its final pixel's full extent.
+        cx, cy = round((min(xs)+max(xs)+1)/2), round((min(ys)+max(ys)+1)/2)
         row = sum(y == cy for x,y in component)
         column = sum(x == cx for x,y in component)
         if row >= width*.7 and column >= height*.7:
@@ -218,6 +220,10 @@ def main():
                   limitations=['Application scales 100/150/200 are not OS DPI changes.',
                                'Injected pointer is not physical keyboard/IME acceptance.',
                                'Synthetic None peer is not vendor compatibility or secure desktop acceptance.'])
+    provenance=args.app.parent/'provenance.json'
+    if provenance.exists():
+        result['binary_provenance']=json.loads(provenance.read_text(encoding='utf-8-sig'))
+        assert result['binary_provenance']['binary_sha256']==result['app_sha256']
     policy = r'SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System'
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, policy) as key:
         result['uac_policy'] = {}

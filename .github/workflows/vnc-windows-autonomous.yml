@@ -7,9 +7,14 @@ on:
         type: choice
         default: all
         options: [all, capabilities, native, dpi, recovery]
+      binary_run:
+        description: 'Optional prior run of this workflow; binary hash, Rust inputs and compiler must match'
+        type: string
+        default: ''
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   capabilities:
@@ -99,17 +104,38 @@ jobs:
       - name: Install capture dependency
         run: python -m pip install Pillow==11.3.0
       - name: Build isolated native window with production view and dispatcher
+        if: inputs.binary_run == ''
         shell: pwsh
         run: |
           cargo build -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save executable with complete Rust input and compiler provenance
+        if: inputs.binary_run == ''
+        shell: pwsh
+        run: ./tests/vnc/windows-native-binary.ps1 -Directory "$env:RUNNER_TEMP/native-binary" -Produce
+      - uses: actions/upload-artifact@v4
+        if: inputs.binary_run == ''
+        with:
+          name: vnc-native-binary
+          path: ${{ runner.temp }}/native-binary
+          retention-days: 7
+      - uses: actions/download-artifact@v4
+        if: inputs.binary_run != ''
+        with:
+          name: vnc-native-binary
+          path: ${{ runner.temp }}/native-binary
+          run-id: ${{ inputs.binary_run }}
+          github-token: ${{ github.token }}
+      - name: Verify exact binary and unchanged Rust build inputs
+        shell: pwsh
+        run: ./tests/vnc/windows-native-binary.ps1 -Directory "$env:RUNNER_TEMP/native-binary"
       - name: Actual native resize and framebuffer-coordinate acceptance
         shell: pwsh
         timeout-minutes: 7
         run: |
           $dpiArgs = @()
           if ('${{ inputs.scope }}' -eq 'dpi') { $dpiArgs += @('--os-dpi-matrix','--cursor-matrix') }
-          python tests/vnc/windows-autonomous-native.py --app target/debug/examples/vnc_native_acceptance.exe --results "$env:RUNNER_TEMP/vnc-autonomous-native" @dpiArgs
+          python tests/vnc/windows-autonomous-native.py --app "$env:RUNNER_TEMP/native-binary/vnc_native_acceptance.exe" --results "$env:RUNNER_TEMP/vnc-autonomous-native" @dpiArgs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
