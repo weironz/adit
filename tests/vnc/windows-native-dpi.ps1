@@ -17,6 +17,16 @@ $root = [System.Windows.Automation.AutomationElement]::RootElement
 $nameCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty,'Settings')
 $comboCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::AutomationIdProperty,'SystemSettings_Display_Scaling_ItemSizeOverride_ComboBox')
 $itemCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty,[System.Windows.Automation.ControlType]::ListItem)
+# Reopen the page after changing physical resolution. Settings otherwise keeps
+# the scale choices calculated for the original 1024x768 desktop.
+foreach ($oldWindow in $root.FindAll([System.Windows.Automation.TreeScope]::Children,$nameCondition)) {
+    if ($null -ne $oldWindow.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$comboCondition)) {
+        $oldWindow.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+    }
+}
+$closeDeadline=[DateTime]::UtcNow.AddSeconds(5)
+while ($root.FindAll([System.Windows.Automation.TreeScope]::Children,$nameCondition).Count -gt 0 -and [DateTime]::UtcNow -lt $closeDeadline) { Start-Sleep -Milliseconds 100 }
+Start-Process explorer.exe -ArgumentList 'ms-settings:display' -WindowStyle Hidden
 $deadline = [DateTime]::UtcNow.AddSeconds(30)
 $record = @{outcome='failed';target_percent=$Scale;source_sha=$env:GITHUB_SHA;choices=@();observations=@()}
 try {
@@ -33,6 +43,7 @@ try {
     if ($null -eq $combo -or -not $combo.Current.IsEnabled) { throw 'No enabled Settings scale ComboBox' }
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $record.before_dpi = [AditDpiObservation]::GetDpiForWindow([IntPtr]$window.Current.NativeWindowHandle)
+    $record.selected_before=@($combo.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection() | ForEach-Object {$_.Current.Name})
     $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     $target = $null
     do {

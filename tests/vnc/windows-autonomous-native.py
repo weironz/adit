@@ -109,10 +109,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--app', type=Path, required=True)
     parser.add_argument('--results', type=Path, required=True)
+    parser.add_argument('--os-dpi-matrix', action='store_true')
     args = parser.parse_args()
     if os.name != 'nt' or os.environ.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('disposable hosted Windows runner required')
     args.results.mkdir(exist_ok=False)
+    def native_control(script, name, *arguments):
+        with (args.results/f'{name}.stdout.txt').open('w',encoding='utf-8') as out, (args.results/f'{name}.stderr.txt').open('w',encoding='utf-8') as err:
+            subprocess.run(['powershell','-NoProfile','-ExecutionPolicy','Bypass','-File',
+                            str(Path(__file__).with_name(script)),*map(str,arguments)],
+                           check=True,timeout=90,stdout=out,stderr=err)
     result = dict(outcome='failed', source_sha=os.environ['GITHUB_SHA'], run_id=os.environ['GITHUB_RUN_ID'],
                   app_sha256=hashlib.sha256(args.app.read_bytes()).hexdigest(), samples=[],
                   scope='Actual Windows HWND, native SetWindowPos, screen pixels, injected mouse and production view/dispatcher against synthetic RFB peer',
@@ -133,10 +139,24 @@ def main():
     peer = subprocess.Popen([sys.executable, '-u', str(Path(__file__).with_name('native_rfb_fixture.py')),
                              '--state-dir', str(state.resolve())], stdout=peer_out, stderr=peer_err)
     app = None
+    initial_display = None
     try:
         wait_until(lambda: (state/'ready.json').exists())
-        for scale, fit, resize in [(s,f,False) for s in (1,1.5,2) for f in (True,False)] + [(1,True,True)]:
-            name = f'scale-{scale}-fit-{fit}-resize-{resize}'
+        if args.os_dpi_matrix:
+            native_control('windows-desktop-capabilities.ps1','settings','-Results',args.results.resolve())
+            native_control('windows-native-display.ps1','display-test-mode','-Width',1600,'-Height',1200,
+                           '-Evidence',(args.results/'display-test-mode.json').resolve())
+            initial_display=json.loads((args.results/'display-test-mode.json').read_text(encoding='utf-8-sig'))['before']
+            cases=[(os_scale,1,fit,False) for os_scale in (100,150,200) for fit in (True,False)] + [(100,1,True,True)]
+        else:
+            cases=[(100,s,f,False) for s in (1,1.5,2) for f in (True,False)] + [(100,1,True,True)]
+        current_os_scale=None
+        for os_scale, scale, fit, resize in cases:
+            if args.os_dpi_matrix and current_os_scale != os_scale:
+                native_control('windows-native-dpi.ps1',f'dpi-{os_scale}','-Scale',os_scale,
+                               '-Evidence',(args.results/f'dpi-{os_scale}.json').resolve())
+                current_os_scale=os_scale
+            name = f'os-{os_scale}-scale-{scale}-fit-{fit}-resize-{resize}'
             directory = args.results/name
             directory.mkdir()
             env = dict(os.environ, ADIT_NATIVE_SCALE=str(scale), ADIT_NATIVE_FIT='1' if fit else '0',
@@ -186,6 +206,7 @@ def main():
                                   actual_os_dpi=U.GetDpiForWindow(hwnd), screenshot_target=[cx,cy],
                                   candidates=found, remote=received, error=[abs(received['x']-100),abs(received['y']-100)])
                     result['samples'].append(sample)
+                    assert sample['actual_os_dpi'] == 96*os_scale//100, sample
                     assert max(sample['error']) <= 2, sample
                     if not resize:
                         assert (received['width'],received['height']) == (1200,800)
@@ -215,8 +236,18 @@ def main():
             peer.wait(timeout=5)
         peer_out.close()
         peer_err.close()
+        if initial_display is not None:
+            try:
+                native_control('windows-native-dpi.ps1','restore-dpi','-Scale',100,
+                               '-Evidence',(args.results/'restore-dpi.json').resolve())
+                native_control('windows-native-display.ps1','restore-display','-Width',initial_display['width'],
+                               '-Height',initial_display['height'],'-Evidence',(args.results/'restore-display.json').resolve())
+            except Exception as error:
+                result['restore_error']=repr(error)
+                result['outcome']='failed'
         result['cleanup'] = dict(app_exited=app is None or app.poll() is not None, peer_exit=peer.returncode)
         (args.results/'result.json').write_text(json.dumps(result, indent=2)+'\n', encoding='utf-8')
+        assert 'restore_error' not in result, result.get('restore_error')
 
 
 def get_rect(hwnd):

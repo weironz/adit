@@ -6,7 +6,7 @@ on:
       scope:
         type: choice
         default: all
-        options: [all, capabilities, native, recovery]
+        options: [all, capabilities, native, dpi, recovery]
 
 permissions:
   contents: read
@@ -40,7 +40,7 @@ jobs:
         run: |
           $original = Get-Content "$env:RUNNER_TEMP/vnc-autonomous-capabilities/display.json" -Raw | ConvertFrom-Json
           try {
-            ./tests/vnc/windows-native-display.ps1 -Width 1920 -Height 1080 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/resolution-1920.json"
+            ./tests/vnc/windows-native-display.ps1 -Width 1600 -Height 1200 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/resolution-1600.json"
             ./tests/vnc/windows-native-dpi.ps1 -Scale 150 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-150.json"
             ./tests/vnc/windows-native-dpi.ps1 -Scale 200 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-200.json"
           } finally {
@@ -82,7 +82,7 @@ jobs:
           path: ${{ runner.temp }}/vnc-autonomous-recovery
 
   native:
-    if: inputs.scope == 'all' || inputs.scope == 'native'
+    if: inputs.scope == 'all' || inputs.scope == 'native' || inputs.scope == 'dpi'
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -106,7 +106,10 @@ jobs:
       - name: Actual native resize and framebuffer-coordinate acceptance
         shell: pwsh
         timeout-minutes: 7
-        run: python tests/vnc/windows-autonomous-native.py --app target/debug/examples/vnc_native_acceptance.exe --results "$env:RUNNER_TEMP/vnc-autonomous-native"
+        run: |
+          $dpiArgs = @()
+          if ('${{ inputs.scope }}' -eq 'dpi') { $dpiArgs += '--os-dpi-matrix' }
+          python tests/vnc/windows-autonomous-native.py --app target/debug/examples/vnc_native_acceptance.exe --results "$env:RUNNER_TEMP/vnc-autonomous-native" @dpiArgs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
