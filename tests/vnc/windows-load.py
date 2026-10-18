@@ -59,6 +59,30 @@ def run(state_dir):
             {"point": [40, 40], "rgb": [224, 48, 32]},
             {"point": [670, 470], "rgb": [32, 80, 224]},
         ]
+        def shared_color(sequence):
+            return [16 + 32 * ((sequence >> shift) & 7) for shift in (0, 3, 6)]
+
+        state["shared_probe"] = {
+            "protocol": "adit-public-shared-v1", "sequence": 0, "clicks": 0,
+            "point": [752, 52], "rgb": shared_color(0),
+        }
+        shared_patch = tk.Frame(root, background="#101010", borderwidth=0,
+                                highlightthickness=0)
+        shared_patch.place(x=720, y=20, width=64, height=64)
+
+        def advance_shared(_event):
+            nonlocal dirty
+            shared = state["shared_probe"]
+            if shared["sequence"] >= 511:
+                raise RuntimeError("synthetic shared marker exhausted; never wrap evidence")
+            shared["sequence"] += 1
+            shared["clicks"] += 1
+            shared["rgb"] = shared_color(shared["sequence"])
+            shared_patch.configure(background="#%02x%02x%02x" % tuple(shared["rgb"]))
+            dirty = True
+            return "break"
+
+        shared_patch.bind("<ButtonRelease-1>", advance_shared)
         # Root-owned patches stay fixed while the canvas scrolls or drags.
         for x, y, color in [(20, 20, "#e03020"), (650, 450, "#2050e0")]:
             tk.Frame(root, background=color, borderwidth=0, highlightthickness=0).place(

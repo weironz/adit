@@ -347,6 +347,25 @@ Those remain separately tracked in #212. Fixture credentials are disposable
 public constants, never a real target password in argv or environment.
 
 
+## Windows shared desktop stability
+
+`vnc-windows-shared.yml` first calibrates the owned fixture with a short smoke,
+then runs two production `SessionManager` clients against the same portable
+UltraVNC for at least 7,200 seconds. Each cycle includes 120 seconds without
+synthetic input, followed by one click from each client. The target consumes
+the clicks and advances a public sequence/color marker; both clients must
+receive newer, complete frames containing that color and the static canaries.
+Seeing two processes or an unchanged old frame never satisfies this check.
+
+The fixture uses only a disposable GitHub-hosted Windows runner, a fresh state
+directory and public `adit-ci` via stdin. It retains JSONL progress, actual
+target state, two established vendor sockets, post-close socket absence,
+probe/vendor memory and CPU observations, and exact process/firewall cleanup.
+The short calibration has `long_term_acceptance=false`; only the completed
+two-hour run with the required idle windows can set it true. This is loopback
+shared-desktop stability, not weak-network, native GPU presentation, service,
+UAC, OS DPI, OS sleep or physical-input acceptance.
+
 ## Windows OS DPI acceptance attempt
 
 The [2026-10-17 OS DPI record](results/2026-10-17-windows-os-dpi.json)

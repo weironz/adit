@@ -1,0 +1,87 @@
+name: VNC Windows shared stability
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-windows-shared-soak']
+    paths:
+      - '.github/workflows/vnc-windows-shared.yml'
+      - 'tests/vnc/windows-server-smoke.ps1'
+      - 'tests/vnc/windows-load.py'
+      - 'crates/adit-session/examples/vnc_windows_shared_probe.rs'
+      - 'crates/adit-session/src/vnc_client.rs'
+      - 'crates/adit-session/Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: Two real clients and fresh shared pixels
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build production two-client probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_windows_shared_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Short fixture calibration is not long-term acceptance
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_windows_shared_probe.exe -Results "$env:RUNNER_TEMP/adit-vnc-shared-smoke" -SyntheticLoad -SharedSoak -DurationSeconds 10 -IdleSeconds 1
+      - name: Preserve original calibration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-shared-smoke
+          path: ${{ runner.temp }}/adit-vnc-shared-smoke
+          if-no-files-found: warn
+
+  soak:
+    name: Two hours of real shared Windows VNC
+    needs: smoke
+    runs-on: windows-latest
+    timeout-minutes: 180
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build exact-source production two-client probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_windows_shared_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Two hours, idle windows, actual consumed inputs and fresh RGB on both clients
+        timeout-minutes: 130
+        shell: pwsh
+        run: |
+          ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_windows_shared_probe.exe -Results "$env:RUNNER_TEMP/adit-vnc-shared-soak" -SyntheticLoad -SharedSoak -DurationSeconds 7200 -IdleSeconds 120
+      - name: Preserve every success and original failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-shared-two-hours
+          path: ${{ runner.temp }}/adit-vnc-shared-soak
+          if-no-files-found: warn

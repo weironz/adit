@@ -6,7 +6,10 @@ param(
     [ValidateRange(1,10)][int]$Samples = 3,
     [ValidateSet('static','scroll','drag')][string]$Workload = 'static',
     [ValidateSet('lossless','wan')][string]$Quality = 'lossless',
-    [switch]$SyntheticLoad
+    [switch]$SyntheticLoad,
+    [switch]$SharedSoak,
+    [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
+    [ValidateRange(1,600)][int]$IdleSeconds = 120
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -16,6 +19,9 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
     throw 'Only a disposable GitHub-hosted Windows runner may execute this vendor fixture.'
 }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
+if ($SharedSoak -and (-not $SyntheticLoad -or $Workload -ne 'static' -or $Quality -ne 'lossless')) {
+    throw 'SharedSoak requires the owned synthetic target, static workload and lossless quality.'
+}
 $resultPath = [IO.Path]::GetFullPath($Results)
 $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 if (-not $resultPath.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase) -or
@@ -66,6 +72,14 @@ $record = [ordered]@{
         'The temporary UDP firewall rule is a CI containment measure, not a tested portable production configuration. No existing rule or profile is modified, no service is installed, and no user VM firewall is touched.',
         'The hosted runner may not expose a capturable interactive desktop. A startup/listener alone never passes this test.'
     )
+}
+if ($SharedSoak) {
+    $record.scope = "Two concurrent production clients on UltraVNC1.8.3.0 Windows loopback; requested${DurationSeconds}s shared stability with${IdleSeconds}s no-input windows; not impaired-network or service acceptance"
+    $record.shared_soak_requested = $true
+    $record.duration_seconds_requested = $DurationSeconds
+    $record.idle_seconds_requested = $IdleSeconds
+    $record.long_term_acceptance = $false
+    $record.sample_count_requested = 0
 }
 function Write-Evidence {
     [IO.File]::WriteAllText((Join-Path $resultPath 'result.json'), ($record | ConvertTo-Json -Depth 12) + "`n", $utf8)
@@ -169,6 +183,126 @@ function Test-ConsumedInput($State, [long]$Generation) {
         'drag' { return $counts.button_press -gt 0 -and $counts.drag_motion -gt 0 -and $counts.button_release -gt 0 -and $counts.viewport_changes -gt 0 }
     }
     return $false
+}
+function Invoke-SharedSoak {
+    Assert-LoadAlive
+    $initial = Read-LoadState 'state.json'
+    if ($null -eq $initial -or $initial.shared_probe.protocol -ne 'adit-public-shared-v1' -or
+        $initial.shared_probe.sequence -ne 0 -or $initial.shared_probe.clicks -ne 0) {
+        throw 'Shared test must begin with the fresh owned public marker.'
+    }
+    $info = [Diagnostics.ProcessStartInfo]::new($script:probePath)
+    $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $info.RedirectStandardInput = $true; $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = $utf8; $info.StandardErrorEncoding = $utf8
+    foreach ($argument in @("--port=$port", "--state-dir=$loadStateDir", "--target-pid=$($loadProcess.Id)",
+        "--duration-seconds=$DurationSeconds", "--idle-seconds=$IdleSeconds")) { $info.ArgumentList.Add($argument) }
+    $process = [Diagnostics.Process]::new(); $process.StartInfo = $info
+    $started = $false
+    $stdoutPath = Join-Path $resultPath 'shared.stdout.jsonl'
+    $stderrPath = Join-Path $resultPath 'shared.stderr.txt'
+    $stderr = $null
+    $events = [Collections.Generic.List[object]]::new()
+    $snapshotClock = [Diagnostics.Stopwatch]::StartNew()
+    $deadline = [DateTime]::UtcNow.AddSeconds($DurationSeconds + $IdleSeconds + 120)
+    $timedOut = $false
+    try {
+        $started = $process.Start()
+        if (-not $started) { throw 'Shared production probe did not start.' }
+        $stderr = $process.StandardError.ReadToEndAsync()
+        $process.StandardInput.WriteLine('adit-ci')
+        $process.StandardInput.Close()
+        $lineTask = $process.StandardOutput.ReadLineAsync()
+        $eof = $false
+        while (-not $eof) {
+            if ($lineTask.Wait(1000)) {
+                $line = $lineTask.GetAwaiter().GetResult()
+                if ($null -eq $line) { $eof = $true }
+                else {
+                    [IO.File]::AppendAllText($stdoutPath, $line + "`n", $utf8)
+                    $sharedEvent = $line | ConvertFrom-Json -AsHashtable
+                    if ($sharedEvent.event -ne 'progress') { $events.Add($sharedEvent) }
+                    if ($sharedEvent.event -eq 'two_clients_ready') {
+                        $connections = @(Get-NetTCPConnection -OwningProcess $server.Id -LocalPort $port -State Established -ErrorAction Stop)
+                        if ($connections.Count -ne 2 -or @($connections | Where-Object { $_.RemoteAddress -ne '127.0.0.1' }).Count -ne 0) {
+                            throw 'Vendor socket table does not prove two concurrent loopback clients.'
+                        }
+                        $record.shared_established_clients = @($connections | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, OwningProcess)
+                        Write-Phase 'Two VncAuth clients have actual complete RGB desktops and two vendor TCP connections'
+                    }
+                    $lineTask = $process.StandardOutput.ReadLineAsync()
+                }
+            }
+            if ([DateTime]::UtcNow -ge $deadline) { $timedOut = $true; throw 'Shared stability probe exceeded its absolute deadline.' }
+            if ($snapshotClock.Elapsed.TotalSeconds -ge 30) {
+                Assert-LoadAlive
+                $server.Refresh()
+                if ($server.HasExited) { throw 'Owned vendor exited during shared acceptance.' }
+                [void](Assert-OwnedListeners)
+                $record.shared_supervision = @{
+                    utc = [DateTimeOffset]::UtcNow.ToString('o')
+                    vendor_peak_working_set_bytes = $server.PeakWorkingSet64
+                    vendor_cpu_ms_since_start = $server.TotalProcessorTime.TotalMilliseconds
+                    target_peak_working_set_bytes = $loadProcess.PeakWorkingSet64
+                }
+                Write-Evidence
+                Write-Phase "Shared stability still running; non-progress evidence events=$($events.Count)"
+                $snapshotClock.Restart()
+            }
+        }
+        if (-not $process.WaitForExit(5000)) { throw 'Shared probe closed stdout without exiting within5s.' }
+        [IO.File]::WriteAllText($stderrPath, $stderr.GetAwaiter().GetResult(), $utf8)
+        $readyEvents = @($events | Where-Object event -eq 'two_clients_ready')
+        $completed = @($events | Where-Object event -eq 'soak_completed')
+        $result = @($events | Where-Object event -eq 'result')
+        $clicks = @($events | Where-Object event -eq 'shared_click')
+        $idles = @($events | Where-Object event -eq 'idle_completed')
+        if ($process.ExitCode -ne 0 -or $readyEvents.Count -ne 1 -or $completed.Count -ne 1 -or $result.Count -ne 1) {
+            throw 'Shared probe did not finish exactly one complete acceptance result; original logs retained.'
+        }
+        $final = $result[0]; $soak = $completed[0]
+        $longTerm = $DurationSeconds -ge 7200 -and $IdleSeconds -ge 120
+        if (-not $final.passed -or -not $final.close_requested_and_records_removed -or
+            $final.cycles -lt 1 -or $final.idle_windows -ne $final.cycles -or $idles.Count -ne $final.cycles -or
+            $clicks.Count -ne 2 * $final.cycles -or $soak.actual_soak_ms -lt 1000L * $DurationSeconds -or
+            $soak.requested_seconds -ne $DurationSeconds -or $soak.idle_seconds -ne $IdleSeconds -or
+            $soak.long_term_acceptance -ne $longTerm -or $readyEvents[0].security -ne 'VncAuth' -or
+            @($final.disconnects).Count -ne 2 -or @($final.disconnects | Where-Object { $_ -ne 0 }).Count -ne 0 -or
+            @($final.max_pending).Count -ne 2 -or @($final.max_pending | Where-Object { $_ -gt 1 }).Count -ne 0 -or
+            @($idles | Where-Object { -not $_.no_synthetic_input -or $_.idle_ms -lt 1000L * $IdleSeconds }).Count -ne 0) {
+            throw 'Shared duration, idle, concurrency, policy or cleanup assertions failed.'
+        }
+        for ($index = 0; $index -lt $clicks.Count; $index++) {
+            if ($clicks[$index].actor -ne ($index % 2) -or $clicks[$index].sequence -ne ($index + 1) -or
+                $clicks[$index].consumed_clicks -ne ($index + 1) -or -not $clicks[$index].both_fresh_rgb -or
+                -not $clicks[$index].full_coverage_and_static_canaries) { throw 'A shared input was not consumed and freshly painted by both clients in order.' }
+        }
+        Assert-LoadAlive
+        $target = Read-LoadState 'state.json'
+        if ($null -eq $target -or $target.pid -ne $loadProcess.Id -or $target.closed -or
+            $target.shared_probe.sequence -ne $clicks.Count -or $target.shared_probe.clicks -ne $clicks.Count) {
+            throw 'Final actual target state does not match every consumed input.'
+        }
+        [IO.File]::WriteAllText((Join-Path $resultPath 'shared.target.final.json'), ($target | ConvertTo-Json -Depth 8) + "`n", $utf8)
+        $disconnectDeadline = [DateTime]::UtcNow.AddSeconds(5)
+        do {
+            $remaining = @(Get-NetTCPConnection -OwningProcess $server.Id -LocalPort $port -State Established -ErrorAction SilentlyContinue)
+            if ($remaining.Count -eq 0) { break }
+            Start-Sleep -Milliseconds 100
+        } while ([DateTime]::UtcNow -lt $disconnectDeadline)
+        if ($remaining.Count -ne 0) { throw 'Vendor still has established clients after probe cleanup.' }
+        $record.shared_soak = @{ passed = $true; exit = $process.ExitCode; timed_out = $timedOut
+            completed = $soak; result = $final; consumed_clicks = $clicks.Count
+            vendor_established_sockets_after_close = $remaining.Count }
+        $record.long_term_acceptance = $longTerm
+        Write-Evidence
+    } finally {
+        if ($started -and -not $process.HasExited) { $process.Kill($true); [void]$process.WaitForExit(5000) }
+        if ($null -ne $stderr -and $stderr.IsCompleted) {
+            [IO.File]::WriteAllText($stderrPath, $stderr.GetAwaiter().GetResult(), $utf8)
+        }
+        $process.Dispose()
+    }
 }
 function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
     $resetGeneration = 0L
@@ -405,13 +539,18 @@ public static class AditVncFixtureIni {
         Start-Sleep -Milliseconds 250
     }
     if (-not $ready) { throw 'No owned loopback RFB listener within25s; startup is not acceptance.' }
-    for ($sample = 1; $sample -le $Samples; $sample++) {
-        Write-Phase "Full framebuffer $Quality/$Workload sample $sample of$Samples; synthetic target=$SyntheticLoad"
-        [void](Assert-OwnedListeners)
-        Invoke-Probe $sample 'adit-ci' $false
+    if ($SharedSoak) {
+        Write-Phase "Shared stability experiment for${DurationSeconds}s with${IdleSeconds}s input-idle windows"
+        Invoke-SharedSoak
+    } else {
+        for ($sample = 1; $sample -le $Samples; $sample++) {
+            Write-Phase "Full framebuffer $Quality/$Workload sample $sample of$Samples; synthetic target=$SyntheticLoad"
+            [void](Assert-OwnedListeners)
+            Invoke-Probe $sample 'adit-ci' $false
+        }
+        Write-Phase 'Wrong password must explicitly fail authentication, not merely time out'
+        Invoke-Probe ($Samples + 1) 'wrong-ci' $true
     }
-    Write-Phase 'Wrong password must explicitly fail authentication, not merely time out'
-    Invoke-Probe ($Samples + 1) 'wrong-ci' $true
     [void](Assert-OwnedListeners)
     $record.outcome = 'passed'
 } catch {
