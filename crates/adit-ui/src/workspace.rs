@@ -505,11 +505,18 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
 /// transport details in the connection form's normal interaction path.
 fn vnc_connection_info(app: &AditApp) -> Element<'_, Message> {
     let d = app.manager.active_vnc_diagnostics().unwrap_or_default();
+    let cursor_status = match app.vnc_cursor.as_ref() {
+        None => "光标：本地箭头；服务端尚未提供形状，桌面画面中仍可能包含远端光标",
+        Some(cursor) if cursor.width == 0 || cursor.height == 0 => {
+            "光标：服务端要求隐藏；移到工具栏或离开桌面后恢复本地指针"
+        }
+        Some(_) => "光标：远端形状在本地跟随鼠标绘制；桌面内隐藏系统箭头以避免重叠",
+    };
     let coverage = if d.framebuffer_pixels == 0 { 0.0 } else { d.covered_pixels as f64 * 100.0 / d.framebuffer_pixels as f64 };
-    let details = format!("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {:?} ms；完整更新 {:?} ms；覆盖完成 {:?} ms\n首屏覆盖 {:.1}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {:?} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}",
+    let details = format!("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {:?} ms；完整更新 {:?} ms；覆盖完成 {:?} ms\n首屏覆盖 {:.1}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {:?} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}\n{}",
         d.security, d.tcp_ms, d.handshake_ms, d.first_pixel_ms, d.first_complete_ms, d.first_covered_ms,
         coverage, d.covered_pixels, d.framebuffer_pixels, d.complete_updates, d.wire_bytes, d.pending_updates,
-        d.fence_rtt_ms, d.queue_high_water, d.encoding, d.clipboard_utf8, d.status);
+        d.fence_rtt_ms, d.queue_high_water, d.encoding, d.clipboard_utf8, cursor_status, d.status);
     let label = if d.security.is_empty() { "连接信息".to_owned() } else { d.security };
     tooltip(container(text(label).size(10)).padding([4,6]),
         container(text(details).size(11)).padding(8).style(|_| tooltip_style()),

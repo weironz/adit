@@ -65,6 +65,10 @@ pixel coverage, traffic, encoding, Fence RTT and the bounded input queue. A comp
 RFB update can contain only metadata; it is distinct from complete screen coverage
 and from the UI sampling a frame. The cursor is drawn locally from the remote RGBA
 shape and mask, with the negotiated hotspot and hide semantics.
+The connection tooltip identifies local rendering of a remote shape, a server-requested
+hidden cursor, or the local-arrow fallback while no shape has been received. With
+that fallback, the server's desktop pixels may still contain a second remote pointer;
+the client cannot infer or remove a cursor already embedded in the image.
 
 A profile explicitly chooses password authentication (default), permission to use
 None authentication, or required verified TLS. Password authentication wins over
