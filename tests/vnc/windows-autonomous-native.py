@@ -184,10 +184,18 @@ def main():
                                                for e in read_events(log)))
                     # Wait for both a stable screenshot and a native window event.
                     wait_until(lambda: any(e['event']=='window' for e in read_events(log)[client_before:]))
+                    stable = [None, time.monotonic()]
                     def capture_cross():
                         image = ImageGrab.grab(bbox=client_box(hwnd))
                         found = crosshairs(image)
-                        return (image, found) if found else None
+                        signature = (image.size, tuple(found), hashlib.sha256(image.tobytes()).digest())
+                        if signature != stable[0]:
+                            stable[:] = [signature,time.monotonic()]
+                            return None
+                        # WM_SIZE reaches the event loop before DWM presents the
+                        # new framebuffer. Clicking the previous GPU image would
+                        # compare coordinates from two different window layouts.
+                        return (image, found) if found and time.monotonic()-stable[1] >= .4 else None
                     image, found = wait_until(capture_cross, 20)
                     # The first visible grid cross is the public (100,100) target.
                     cx,cy,_,_ = found[0]

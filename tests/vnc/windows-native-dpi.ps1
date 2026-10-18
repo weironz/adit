@@ -43,7 +43,6 @@ try {
     if ($null -eq $combo -or -not $combo.Current.IsEnabled) { throw 'No enabled Settings scale ComboBox' }
     $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).SetWindowVisualState([System.Windows.Automation.WindowVisualState]::Maximized)
     $record.before_dpi = [AditDpiObservation]::GetDpiForWindow([IntPtr]$window.Current.NativeWindowHandle)
-    $record.selected_before=@($combo.GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection() | ForEach-Object {$_.Current.Name})
     $combo.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand()
     $target = $null
     do {
