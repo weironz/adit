@@ -1,0 +1,9 @@
+2026-10-18T16:56:27.9791944+00:00 Validate runner, probe and unused fixture port
+2026-10-18T16:56:33.5290085+00:00 Start owned public synthetic Tk target; its fresh state directory is created only by Python
+2026-10-18T16:56:36.9378298+00:00 Download pinned official portable archive
+2026-10-18T16:57:12.7487014+00:00 Create and verify one owned exact-program UDP15911 inbound block; existing profiles/rules remain unchanged
+2026-10-18T16:57:13.6553450+00:00 Register and auto-start one fresh exact-name service; never fall back to portable mode
+2026-10-18T16:57:20.7670906+00:00 Full framebuffer lossless/drag sample 1 of3; synthetic target=True
+2026-10-18T16:57:26.1499109+00:00 Full framebuffer lossless/drag sample 2 of3; synthetic target=True
+2026-10-18T16:57:31.3652862+00:00 Full framebuffer lossless/drag sample 3 of3; synthetic target=True
+2026-10-18T16:57:37.6700945+00:00 Wrong password must explicitly fail authentication, not merely time out
