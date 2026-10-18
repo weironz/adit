@@ -26,6 +26,7 @@ jobs:
     env:
       CARGO_TERM_COLOR: always
       CARGO_BUILD_JOBS: 2
+      ADIT_VNC_TRACE_FLOW: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
