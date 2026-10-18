@@ -1,11 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$Guest,
     [Parameter(Mandatory)][string]$Results,
-    [ValidateSet('echo','vnc','cmd-probe')][string]$Mode = 'echo',
-    [string]$Probe,
-    [ValidateRange(1,10)][int]$Samples = 1,
-    [ValidateSet('lossless','wan')][string]$Quality = 'lossless',
-    [ValidateSet('static','scroll','drag')][string]$Workload = 'static'
+    [ValidateSet('echo','cmd-probe')][string]$Mode = 'echo'
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') { throw 'Disposable Windows GitHub runner only' }
@@ -28,9 +24,6 @@ if ($qemu.Count -ne 1) { throw 'Expected exactly one extracted x86_64 system emu
 if ($LASTEXITCODE -ne 0) { throw "QEMU version failed: $LASTEXITCODE" }
 if ($Mode -eq 'cmd-probe') {
     & python "$PSScriptRoot/cmd_probe.py" --qemu $qemu[0].FullName --guest $Guest --results $Results
-} elseif ($Mode -eq 'vnc') {
-    if ([string]::IsNullOrWhiteSpace($Probe)) { throw 'VNC mode requires a production probe.' }
-    & python "$PSScriptRoot/vnc_run.py" --qemu $qemu[0].FullName --guest $Guest --results $Results --probe $Probe --samples $Samples --quality $Quality --workload $Workload
 } else {
     & python "$PSScriptRoot/run.py" --qemu $qemu[0].FullName --guest $Guest --results $Results
 }

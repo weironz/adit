@@ -67,38 +67,30 @@ Official references:
 - [Alpine rootfs checksum](https://dl-cdn.alpinelinux.org/alpine/v3.22/releases/x86_64/alpine-minirootfs-3.22.2-x86_64.tar.gz.sha256)
 - [Upstream netem manual and limitations](https://github.com/iproute2/iproute2/blob/main/man/man8/tc-netem.8)
 
-## Real VNC integration after calibration
+## Failed real-VNC integration and stopped cmd experiment
 
-The separate `vnc-windows-impaired.yml` workflow first gates one lossless/static
-sample, then permits six independent jobs (two quality presets by three workloads,
-ten fresh sessions each). Every job calibrates its own **same QEMU instance** with
-echo/bulk controls before replacing its owned echo listener with the pinned
-UltraVNC portable server. The normal probe connects to QEMU port15912; UltraVNC
-continues to listen on15911 under the existing containment checks. A fresh
-same-source network evidence file ties the forwarder to its live QEMU PID,
-executable path/hash, loopback mappings and actual tc settings.
+The real-VNC gate [39145306679](https://github.com/weironz/adit/actions/runs/39145306679)
+failed before any VNC/authentication sample: the persistent guestfwd socket
+backend connected to the not-yet-started listener during QEMU initialization.
+More fundamentally, that backend is a single character device, not a fresh
+host TCP connection for each new guest connection. The prior successful echo
+PoC does not establish independent RFB session lifecycle.
 
-The VNC condition is guest-egress delay90ms, aggregate5Mbit/s and random loss0.1%.
-This is **not** a90ms end-to-end RTT or a per-direction5Mbit/s link. The Slirp and
-relay TCP termination limits above still apply. Quality `wan` is an independent
-VNC pixel-encoding preset, not a network profile. Before and after each actual
-VNC probe the owning controller records raw tc/SNMP snapshots; the final summary
-separately reports configured loss and observed qdisc drops. Zero drops are
-reported as **loss not observed**, never changed to a higher-loss passing run.
+A single fake-only [cmd experiment39146789704](https://github.com/weironz/adit/actions/runs/39146789704)
+then booted the guest successfully but failed before the first public marker.
+QEMU reported `Slirp: fork_exec: Failed to execute helper program (No such file or directory)`;
+there were zero fake backend TCP accepts, so neither EOF lifecycle case ran.
+This establishes a helper-launch failure in this unpacked Windows configuration,
+not that all Windows cmd forwarding is unsupported or that the suspected
+SOCKET/CRT-fd incompatibility was actually exercised.
 
-Existing15-second complete-RGB and actual Tk consumption requirements remain.
-Each job first runs the same quality/workload and sample count with guest netem
-removed (ten matched controls in full jobs, one in the narrow gate), then the
-impaired phase. Normal probes additionally need the entire requested steady window, an actual
-Connected final state, zero disconnects and no connection error. Drag consumption
-is the existing end-of-probe target assertion; it does not establish that release
-happened inside the steady timing window. A wrong password must explicitly fail
-VncAuth rather than time out. After every requested impaired sample finishes,
-all relay connections and qdisc queues must drain before netem is removed.
-Raw `/proc/net/tcp` snapshots also require all non-LISTEN/non-TIME_WAIT guest
-sockets (including calibration SYN_RECV) to disappear within12 seconds before
-the next condition; no negative-control retransmits may contaminate VNC drops. A
-fresh real VNC full-RGB sample and explicit wrong-auth rejection then verify the
-restored baseline. Both the impaired phase and restored phase retain original
-failures and cleanup outcomes. This is still SessionManager/RFB proof, not GPU,
-physical input, transparent Windows TCP congestion or Windows OS sleep acceptance.
+The unvalidated real-VNC workflow/controller/port hooks have been removed. No
+VNC weak-network matrix ran or passed. The working echo PoC remains an echo
+packet-path experiment only. The bounded fake tool and
+[architecture reference](guestfwd-cmd-reference.md) remain for reproducibility,
+but the fake workflow is manual-only and this path is stopped without retries,
+PATH changes, mux protocols, guard relaxation or protection exceptions.
+
+[Archived raw cmd failure and independent audit](../results/2026-10-19-windows-guestfwd-cmd/independent-audit.json)
+include original download and LF-normalized stored hashes separately. The
+real gate failure remains separately preserved in repository result history.

@@ -53,3 +53,19 @@ observe EOF. Exactly two real backend TCP accepts, no extra bytes or errors,
 and both closed sessions are required. Original serial/stderr/result evidence
 is kept whether the platform succeeds or fails. A failure ends this experiment;
 it is not accepted as VNC or weak-network coverage.
+
+## Recorded outcome and stop decision
+
+The single [run39146789704](https://github.com/weironz/adit/actions/runs/39146789704)
+on host-helper sourcebebd3d0961eede24de4159b89cfd09dbbaeca7fc failed after14.578s.
+The guest booted with e1000/netem ready. The first fake connection reached early
+EOF before its public marker; no backend TCP connection was accepted, and neither
+the client-first nor server-first EOF assertion ran. QEMU's exact error was
+`Slirp: fork_exec: Failed to execute helper program (No such file or directory)`.
+
+This is an observed GLib helper-launch failure of the pinned unpacked QEMU
+configuration. It does not prove universal Windows incompatibility or that the
+suspected SOCKET-to-CRT-fd failure was reached. No PATH/environment changes,
+alternative packaging, retries, mux or real-VNC execution followed. The fake
+workflow is now manual-only. The unvalidated real-VNC integration was removed.
+See the [raw evidence and independent dual-hash audit](../results/2026-10-19-windows-guestfwd-cmd/independent-audit.json).

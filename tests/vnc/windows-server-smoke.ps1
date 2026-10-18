@@ -10,9 +10,7 @@ param(
     [switch]$SharedSoak,
     [switch]$ServiceMode,
     [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
-    [ValidateRange(1,600)][int]$IdleSeconds = 120,
-    [ValidateSet(15911,15912)][int]$ProbePort = 15911,
-    [string]$GuestNetworkEvidence
+    [ValidateRange(1,600)][int]$IdleSeconds = 120
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -21,12 +19,8 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
     -not $env:RUNNER_NAME -or -not $env:RUNNER_TEMP -or -not $env:GITHUB_SHA) {
     throw 'Only a disposable GitHub-hosted Windows runner may execute this vendor fixture.'
 }
-if ($ServiceMode -and ($SharedSoak -or $ProbePort -ne 15911 -or -not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence) -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes Guest/SharedSoak.' }
+if ($ServiceMode -and ($SharedSoak -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes SharedSoak.' }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
-if (($ProbePort -eq 15912) -ne (-not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence))) {
-    throw 'Guest port15912 requires its owned fresh network evidence; baseline15911 must not use guest evidence.'
-}
-if ($SharedSoak -and $ProbePort -ne 15911) { throw 'SharedSoak does not accept guest-network mode.' }
 if ($SharedSoak -and (-not $SyntheticLoad -or $Workload -ne 'static' -or $Quality -ne 'lossless')) {
     throw 'SharedSoak requires the owned synthetic target, static workload and lossless quality.'
 }
@@ -64,7 +58,7 @@ $record = [ordered]@{
     sample_count_requested = $Samples; workload = $Workload; quality = $Quality; synthetic_load = [bool]$SyntheticLoad
     network = 'native loopback baseline; no RTT/bandwidth/loss shaping'
     runner = $env:RUNNER_NAME; os = [Environment]::OSVersion.VersionString
-    target = "127.0.0.1:$ProbePort"; vendor_listener = "127.0.0.1:$port"; samples = @(); configuration_reference_commit = $source
+    target = "127.0.0.1:$port"; samples = @(); configuration_reference_commit = $source
     configuration_reference_note = 'Pinned official reference source explains INI/password/CLI semantics; it is not a claim that the downloaded vendor binary was built from this commit.'
     previous_failed_run = 'https://github.com/weironz/adit/actions/runs/39132780089'
     previous_failure_note = 'Exact pinned archive started a wildcard UDP listener despite exclusive loopback reservation. No client sample ran; failure remains failed evidence, not compatibility acceptance.'
@@ -108,67 +102,6 @@ if ($SharedSoak) {
 }
 function Write-Evidence {
     [IO.File]::WriteAllText((Join-Path $resultPath 'result.json'), ($record | ConvertTo-Json -Depth 12) + "`n", $utf8)
-}
-function Assert-GuestNetwork {
-    if ($ProbePort -eq 15911) { return }
-    $evidencePath = [IO.Path]::GetFullPath($GuestNetworkEvidence)
-    if (-not [IO.Path]::IsPathFullyQualified($GuestNetworkEvidence) -or
-        -not $evidencePath.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase) -or
-        -not (Test-Path -LiteralPath $evidencePath -PathType Leaf)) { throw 'Guest evidence must be an absolute existing file under fresh RUNNER_TEMP.' }
-    $item = Get-Item -LiteralPath $evidencePath
-    $age = ([DateTime]::UtcNow - $item.CreationTimeUtc).TotalSeconds
-    if ($age -lt -5 -or $age -gt 900) { throw 'Guest evidence is not fresh for this runner invocation.' }
-    $evidence = [IO.File]::ReadAllText($evidencePath, $utf8) | ConvertFrom-Json -AsHashtable
-    $qemu = Get-Process -Id ([int]$evidence.qemu_pid) -ErrorAction Stop
-    $qemuInfo = Get-CimInstance Win32_Process -Filter "ProcessId=$($qemu.Id)" -ErrorAction Stop
-    $qemuPath = [IO.Path]::GetFullPath([string]$qemu.Path)
-    if ($evidence.protocol -ne 'adit-guest-netem-v1' -or $evidence.source_sha -ne $env:GITHUB_SHA -or
-        $evidence.run_id -ne $env:GITHUB_RUN_ID -or $evidence.probe_port -ne 15912 -or $evidence.vendor_port -ne 15911 -or
-        $evidence.mode -notin @('impaired','baseline') -or -not $evidence.calibration_passed -or
-        $evidence.guest_manifest.source_sha -ne $env:GITHUB_SHA -or
-        -not $qemuPath.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase) -or
-        -not [string]::Equals($qemuPath, [string]$evidence.qemu_path, [StringComparison]::OrdinalIgnoreCase) -or
-        (Get-FileHash -LiteralPath $qemuPath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $evidence.qemu_sha256 -or
-        $qemuInfo.CommandLine -notlike '*tcg,thread=multi*' -or
-        $qemuInfo.CommandLine -notlike '*restrict=on*' -or
-        $qemuInfo.CommandLine -notlike '*hostfwd=tcp:127.0.0.1:15912-:15912*' -or
-        $qemuInfo.CommandLine -notlike '*guestfwd=tcp:10.0.2.100:15911-tcp:127.0.0.1:15911*') {
-        throw 'Guest evidence does not prove the same-source live owned QEMU mapping.'
-    }
-    $forward = @(Get-NetTCPConnection -OwningProcess $qemu.Id -State Listen -LocalPort 15912 -ErrorAction Stop)
-    if ($forward.Count -ne 1 -or $forward[0].LocalAddress -ne '127.0.0.1') { throw 'Guest probe port is not the exact live loopback QEMU listener.' }
-    $netem = @($evidence.before.stats.qdiscs | Where-Object { $_.kind -eq 'netem' })
-    if ($evidence.mode -eq 'impaired') {
-        if ($netem.Count -ne 1 -or [Math]::Abs([double]$netem[0].options.delay.delay - 0.09) -gt 0.000001 -or
-            $netem[0].options.rate.rate -ne 625000 -or
-            [Math]::Abs([double]$netem[0].options.'loss-random'.loss - 0.001) -gt 0.000001 -or
-            $netem[0].options.limit -ne 20000) { throw 'Guest evidence lacks actual90ms/5mbit/0.1% tc configuration.' }
-    } elseif ($netem.Count -ne 0) { throw 'Restored baseline still reports netem.' }
-    $record.scope = "UltraVNC1.8.3.0 Windows portable via calibrated Linux guest egress $($evidence.mode); $Samples $Quality/$Workload full-RGB samples plus wrong-password rejection; TCP terminating Slirp/relay, not physical NIC or OS sleep"
-    $record.network = $evidence
-    $record.limitations[1] = 'Guest eth0 egress impairment across TCP-terminating Slirp/relay; Windows loopback TCP segments are not impaired. Not transparent Windows TCP-loss, physical LAN/NIC, native GUI or OS sleep acceptance.'
-    [IO.File]::WriteAllText((Join-Path $resultPath 'guest-network.json'), ($evidence | ConvertTo-Json -Depth 18) + "`n", $utf8)
-}
-function Get-GuestSnapshot([string]$Name) {
-    if ($ProbePort -eq 15911) { return $null }
-    $evidence = $record.network
-    if ($evidence.control_port -ne 15914) { throw 'Unexpected owned snapshot control port.' }
-    $client = [Net.Sockets.TcpClient]::new()
-    try {
-        if (-not $client.ConnectAsync('127.0.0.1', 15914).Wait(3000)) { throw 'Owned snapshot connection deadline.' }
-        $stream = $client.GetStream(); $stream.ReadTimeout = 25000; $stream.WriteTimeout = 3000
-        $request = @{ protocol='adit-guest-netem-v1'; controller_id=$evidence.controller_id; command='snapshot' } | ConvertTo-Json -Compress
-        $bytes = $utf8.GetBytes($request + "`n"); $stream.Write($bytes, 0, $bytes.Length)
-        $reader = [IO.StreamReader]::new($stream, $utf8)
-        $line = $reader.ReadLine()
-        if ([string]::IsNullOrEmpty($line) -or $line.Length -gt 100000) { throw 'Missing or oversized guest snapshot response.' }
-        $snapshot = $line | ConvertFrom-Json -AsHashtable
-        if (-not $snapshot.ok -or $snapshot.source_sha -ne $env:GITHUB_SHA -or $snapshot.qemu_pid -ne $evidence.qemu_pid) {
-            throw 'Snapshot does not belong to this source and live QEMU.'
-        }
-        [IO.File]::WriteAllText((Join-Path $resultPath $Name), $line + "`n", $utf8)
-        return $snapshot.snapshot
-    } finally { $client.Dispose() }
 }
 function Write-Phase([string]$Message) {
     $line = "{0:o} {1}" -f [DateTimeOffset]::UtcNow, $Message
@@ -572,8 +505,6 @@ function Invoke-SharedSoak {
     }
 }
 function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
-    Assert-GuestNetwork
-    $networkBefore = Get-GuestSnapshot "probe-$Index.network-before.json"
     $resetGeneration = 0L
     if ($SyntheticLoad -and -not $WrongPassword) { $resetGeneration = Reset-SyntheticLoad $Index }
     $info = [Diagnostics.ProcessStartInfo]::new($script:probePath)
@@ -585,7 +516,7 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
     $info.StandardOutputEncoding = $utf8
     $info.StandardErrorEncoding = $utf8
     $steady = if ($SyntheticLoad -and -not $WrongPassword) { 3 } else { 1 }
-    foreach ($argument in @('127.0.0.1', [string]$ProbePort, '15', "--steady-seconds=$steady")) { $info.ArgumentList.Add($argument) }
+    foreach ($argument in @('127.0.0.1', [string]$port, '15', "--steady-seconds=$steady")) { $info.ArgumentList.Add($argument) }
     if ($Quality -eq 'wan') { $info.ArgumentList.Add('--wan') }
     if ($SyntheticLoad -and -not $WrongPassword) {
         $info.ArgumentList.Add("--workload=$Workload")
@@ -608,15 +539,6 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
         [IO.File]::WriteAllText((Join-Path $resultPath "probe-$Index.stdout.txt"), $out, $utf8)
         [IO.File]::WriteAllText((Join-Path $resultPath "probe-$Index.stderr.txt"), $err, $utf8)
         $sample = [ordered]@{ index = $Index; wrong_password = $WrongPassword; exit = $process.ExitCode; timed_out = $timedOut; workload = $(if ($WrongPassword) { 'static' } else { $Workload }); quality = $Quality }
-        if ($ProbePort -eq 15912) {
-            $networkAfter = Get-GuestSnapshot "probe-$Index.network-after.json"
-            $sample.guest_network = @{ before=$networkBefore; after=$networkAfter
-                observed_drop_delta=([long]$networkAfter.stats.drops - [long]$networkBefore.stats.drops)
-                tcp_retrans_seg_delta=([long]$networkAfter.stats.tcp.RetransSegs - [long]$networkBefore.stats.tcp.RetransSegs)
-                loss_condition=$record.network.mode
-                loss_observed=([long]$networkAfter.stats.drops -gt [long]$networkBefore.stats.drops)
-                note='0.1% configuration is not an observation of loss unless drop counters increased; guest-egress TCP-terminating path only.' }
-        }
         $complete = $out -match '(?m)^complete=true\r?$'
         if ($WrongPassword) {
             $sample.passed = -not $timedOut -and $process.ExitCode -ne 0 -and -not $complete -and
@@ -672,7 +594,6 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
     }
 }
 try {
-    Assert-GuestNetwork
     Write-Phase 'Validate runner, probe and unused fixture port'
     if ($ServiceMode) {
         $existing = @(Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object {

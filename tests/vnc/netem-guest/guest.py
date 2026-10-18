@@ -6,19 +6,14 @@ import subprocess
 import sys
 import termios
 import threading
-import itertools
 
 PREFIX = "ADIT_NETEM "
 OUTPUT_LOCK = threading.Lock()
-CONNECTION_LOCK = threading.Lock()
-CONNECTION_IDS = itertools.count(1)
-ACTIVE_CONNECTIONS = set()
 MODES = {
     "baseline": None,
     "delay": ["delay", "80ms", "limit", "20000"],
     "rate": ["rate", "2mbit", "limit", "20000"],
     "drop": ["loss", "100%", "limit", "20000"],
-    "impaired": ["delay", "90ms", "rate", "5mbit", "loss", "0.1%", "limit", "20000"],
 }
 
 
@@ -35,23 +30,18 @@ def command(*args, allow_failure=False):
 
 
 def relay(client):
-    connection_id = next(CONNECTION_IDS)
-    reason = "peer_eof"
-    with CONNECTION_LOCK:
-        ACTIVE_CONNECTIONS.add(connection_id)
     try:
         with client, socket.create_connection(("10.0.2.100", 15911), timeout=5) as upstream:
             # Bounded buffers and send deadlines propagate backpressure. This
             # relay deliberately terminates TCP; it does not simulate transparent routing.
-            client.settimeout(45)
-            upstream.settimeout(45)
+            client.settimeout(8)
+            upstream.settimeout(8)
             with selectors.DefaultSelector() as poll:
                 poll.register(client, selectors.EVENT_READ, upstream)
                 poll.register(upstream, selectors.EVENT_READ, client)
                 while True:
-                    ready = poll.select(45)
+                    ready = poll.select(8)
                     if not ready:
-                        reason = "idle_deadline_45s"
                         return
                     for key, _ in ready:
                         chunk = key.fileobj.recv(16384)
@@ -59,11 +49,7 @@ def relay(client):
                             return
                         key.data.sendall(chunk)
     except OSError as error:
-        reason = f"socket_error: {error}"
-    finally:
-        with CONNECTION_LOCK:
-            ACTIVE_CONNECTIONS.discard(connection_id)
-        emit({"event": "relay_close", "connection_id": connection_id, "reason": reason, "timeout_seconds": 45})
+        emit({"event": "relay_close", "error": str(error)})
 
 
 def serve():
@@ -102,10 +88,7 @@ def main():
                     results.append(command("tc", "qdisc", "add", "dev", "eth0", "root", "netem", *MODES[mode]))
             results.append(command("tc", "-s", "-j", "qdisc", "show", "dev", "eth0"))
             results.append(command("cat", "/proc/net/snmp"))
-            results.append(command("cat", "/proc/net/tcp"))
-            with CONNECTION_LOCK:
-                active = sorted(ACTIVE_CONNECTIONS)
-            emit({"id": request_id, "ok": True, "mode": mode, "active_connections": active, "results": results})
+            emit({"id": request_id, "ok": True, "mode": mode, "results": results})
         except Exception as error:
             emit({"id": request.get("id") if isinstance(request, dict) else None, "ok": False, "error": str(error)})
 

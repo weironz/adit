@@ -1,0 +1,77 @@
+
+7-Zip 26.04 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-10-05
+
+Scanning the drive for archives:
+1 file, 206615928 bytes (198 MiB)
+
+Extracting archive: D:\a\_temp\adit-netem-qemu-tools\qemu-installer.exe
+--
+Path = D:\a\_temp\adit-netem-qemu-tools\qemu-installer.exe
+Type = PE
+Physical Size = 206615928
+CPU = x86
+Characteristics = Executable 32-bit NoRelocs NoLineNums NoLocalSyms NoDebugInfo
+Created = 2025-04-02 06:31:17
+Headers Size = 1024
+Checksum = 206665519
+Name = qemu-setup-11.1.0.exe
+Image Size = 442368
+Section Alignment = 4096
+File Alignment = 512
+Code Size = 37888
+Initialized Data Size = 63488
+Uninitialized Data Size = 129024
+Linker Version = 2.44
+OS Version = 4.0
+Image Version = 6.0
+Subsystem Version = 4.0
+Subsystem = Windows GUI
+DLL Characteristics = Relocated NX-Compatible NoSEH TerminalServerAware
+Stack Reserve = 2097152
+Stack Commit = 4096
+Heap Reserve = 1048576
+Heap Commit = 4096
+Virtual Address = 0x400000
+Comment = 
+{
+FileVersion: 11.1.0.34852
+FileVersion: 2026-08-11-21-28-36
+ProductVersion: 11.1.0.34852
+ProductVersion: 11.1.0
+Comments: patched version provided by Stefan Weil
+CompanyName: https://qemu.weilnetz.de
+FileDescription: QEMU machine emulators and tools
+InternalName: QEMU
+LegalCopyright: GNU General Public License version 2
+LegalTrademarks: QEMU is a trademark of Fabrice Bellard.
+OriginalFilename: qemu-setup-11.1.0.exe
+ProductName: QEMU
+Data Directories: 16
+{
+index=1 name=IMPORT VA=0x39000 Size=5040
+index=2 name=RESOURCE VA=0x69000 Size=11544
+index=4 name=SECURITY VA=0xC507FE0 Size=13720
+}
+}
+----
+Path = [0]
+Size = 206492640
+Packed Size = 206492640
+Virtual Size = 206492640
+Offset = 109568
+--
+Path = [0]
+Type = Nsis
+Physical Size = 206492638
+Tail Size = 2
+Method = LZMA:23
+Solid = +
+Headers Size = 493214
+Embedded Stub Size = 0
+SubType = NSIS-3 Unicode
+
+Everything is Ok
+
+Files: 3389
+Size:       1256205208
+Compressed: 206615928
