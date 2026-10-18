@@ -2,6 +2,11 @@ name: VNC Windows shared stability
 
 on:
   workflow_dispatch:
+    inputs:
+      run_soak:
+        description: Run the full two-hour test after calibration
+        type: boolean
+        default: true
   push:
     branches: ['codex/vnc-windows-shared-soak']
     paths:
@@ -54,6 +59,7 @@ jobs:
   soak:
     name: Two hours of real shared Windows VNC
     needs: smoke
+    if: github.event_name == 'workflow_dispatch' && inputs.run_soak
     runs-on: windows-latest
     timeout-minutes: 180
     env:

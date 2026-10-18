@@ -617,8 +617,10 @@
     },
     {
       "file": "server-events.jsonl",
-      "bytes": 4722,
-      "sha256": "2da26822da8206948b5ce1e24deafc28cb250388a9c8300bab841154c9f8beee"
+      "bytes": 4693,
+      "sha256": "4481f2ced0e3fdc58e8d9ce2a2efddf53fc5588f21e9f580c9bb28e8eff6f7e6",
+      "original_download_sha256": "2da26822da8206948b5ce1e24deafc28cb250388a9c8300bab841154c9f8beee",
+      "original_download_bytes": 4722
     }
   ],
   "clippy": {
@@ -631,5 +633,6 @@
     "owned_fixture_pid9876": "normal stop.request exit",
     "port15915_listening": false,
     "os_settings_changed": false
-  }
+  },
+  "artifact_byte_scope": "artifacts sha256/bytes describe Git-stored files after declared LF text normalization; original_download fields retain the original CRLF bytes where different. Built source_sha256 values retain the originally observed source file bytes."
 }

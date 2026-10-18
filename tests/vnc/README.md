@@ -349,9 +349,10 @@ public constants, never a real target password in argv or environment.
 
 ## Windows shared desktop stability
 
-`vnc-windows-shared.yml` first calibrates the owned fixture with a short smoke,
-then runs two production `SessionManager` clients against the same portable
-UltraVNC for at least 7,200 seconds. Each cycle includes 120 seconds without
+`vnc-windows-shared.yml` calibrates the owned fixture with a short smoke on
+relevant pushes. An explicit workflow dispatch with `run_soak=true` also runs
+two production `SessionManager` clients against the same portable UltraVNC for
+at least 7,200 seconds. Each cycle includes 120 seconds without
 synthetic input, followed by one click from each client. The target consumes
 the clicks and advances a public sequence/color marker; both clients must
 receive newer, complete frames containing that color and the static canaries.

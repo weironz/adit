@@ -38,16 +38,25 @@
   "earlier_apk_fetch_failure_run": "https://github.com/weironz/adit/actions/runs/39142827244",
   "files_sha256": {
     "qemu-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "result.json": "53651996b32dc8f1c5e7f3840f387fe5dc18dc618c2446368f4d1d2793b7ec39",
-    "serial.txt": "5e8b0aac3e03b8afe0b1539d986475fb93077f52b02e1961af1ba36ceba39c5a",
-    "extraction.txt": "a11ed596f6d6daffe933a143abb8886e48289d57a56ac6c68fc1cf1b6d61ba09",
-    "provenance.json": "c38c6f36abc330da363737a2014c44507d4005efc74dfa41201cb6797bafd6ea",
-    "qemu-version.txt": "e7b39f6d8a73023856fe2fa3254802e12fc98c81991e486ef6177ddd96fa7f3d"
+    "result.json": "9835da8b0214f178f701f1d99aa04323bdbec90690d7981afdc105b7cf562797",
+    "serial.txt": "e45063719bb3a8c953cb3e9a0e0c77854b9afdfa3f0042f3ca21ea2b9830fb52",
+    "extraction.txt": "c832c62b124eb40708ddb976cb0264e9b6232e8c6dc76c8c09f0c206d5ba39ed",
+    "provenance.json": "90db1b594062b7a5da8f7effe2d68e4f64082ad491ab0b26586ed5fa901e7c77",
+    "qemu-version.txt": "94da3212a3f571d3fb18b253700883853e3ac0db1e72bc86a5f36adeb729ec19"
   },
   "limitations": [
     "Echo/bulk path only, not VNC matrix or physical Windows NIC/sleep acceptance",
     "TCP is terminated by Slirp and the byte relay; guest egress is aggregate and not symmetric end-to-end impairment",
     "New connection is included in timing; first cold sample5782ms retained; Python3.12 Windows monotonic readings are coarse, including zero",
     "Authenticode status UnknownError is retained; official fixed SHA512 verified, not called a valid signature"
-  ]
+  ],
+  "original_download_files_sha256": {
+    "qemu-stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "result.json": "53651996b32dc8f1c5e7f3840f387fe5dc18dc618c2446368f4d1d2793b7ec39",
+    "serial.txt": "5e8b0aac3e03b8afe0b1539d986475fb93077f52b02e1961af1ba36ceba39c5a",
+    "extraction.txt": "a11ed596f6d6daffe933a143abb8886e48289d57a56ac6c68fc1cf1b6d61ba09",
+    "provenance.json": "c38c6f36abc330da363737a2014c44507d4005efc74dfa41201cb6797bafd6ea",
+    "qemu-version.txt": "e7b39f6d8a73023856fe2fa3254802e12fc98c81991e486ef6177ddd96fa7f3d"
+  },
+  "artifact_byte_scope": "files_sha256 describes the Git-stored files after declared LF text normalization. original_download_files_sha256 preserves exact downloaded artifact bytes before normalization. Binary contents are unchanged."
 }
