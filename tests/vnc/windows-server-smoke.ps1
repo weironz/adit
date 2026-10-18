@@ -8,6 +8,7 @@ param(
     [ValidateSet('lossless','wan')][string]$Quality = 'lossless',
     [switch]$SyntheticLoad,
     [switch]$SharedSoak,
+    [switch]$ServiceMode,
     [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
     [ValidateRange(1,600)][int]$IdleSeconds = 120,
     [ValidateSet(15911,15912)][int]$ProbePort = 15911,
@@ -20,6 +21,7 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
     -not $env:RUNNER_NAME -or -not $env:RUNNER_TEMP -or -not $env:GITHUB_SHA) {
     throw 'Only a disposable GitHub-hosted Windows runner may execute this vendor fixture.'
 }
+if ($ServiceMode -and ($SharedSoak -or $ProbePort -ne 15911 -or -not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence) -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes Guest/SharedSoak.' }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
 if (($ProbePort -eq 15912) -ne (-not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence))) {
     throw 'Guest port15912 requires its owned fresh network evidence; baseline15911 must not use guest evidence.'
@@ -36,6 +38,7 @@ if (-not $resultPath.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCa
 }
 [void][IO.Directory]::CreateDirectory($resultPath)
 $work = Join-Path $env:RUNNER_TEMP ('adit-ultravnc-' + [guid]::NewGuid().ToString('N'))
+if ($ServiceMode -and $work -match '\s') { throw 'Service calibration requires a fresh executable/config path without whitespace.' }
 [void][IO.Directory]::CreateDirectory($work)
 $utf8 = [Text.UTF8Encoding]::new($false)
 $port = 15911
@@ -47,6 +50,13 @@ $loadStateDir = Join-Path $work 'synthetic-state'
 $firewallRuleName = 'AditVncCiUdpBlock-' + [guid]::NewGuid().ToString('N')
 $firewallRuleOwned = $false
 $failed = $false
+$serviceName = 'AditVncCi_' + [guid]::NewGuid().ToString('N')
+$serviceInstallAttempted = $false
+$serviceRootIdentity = $null
+$serviceWorkers = @{}
+$serviceIni = $null
+$serviceLaunchUtc = $null
+$serviceConsoleSession = $null
 $source = '0cd8b41aeb34e52e170b33e24411b3f805e303be'
 $record = [ordered]@{
     outcome = 'failed'; source_sha = $env:GITHUB_SHA; run_id = $env:GITHUB_RUN_ID
@@ -78,6 +88,15 @@ $record = [ordered]@{
         'The temporary UDP firewall rule is a CI containment measure, not a tested portable production configuration. No existing rule or profile is modified, no service is installed, and no user VM firewall is touched.',
         'The hosted runner may not expose a capturable interactive desktop. A startup/listener alone never passes this test.'
     )
+}
+if ($ServiceMode) {
+    $record.scope = "UltraVNC1.8.3.0 self-owned Windows service; $Samples $Quality/$Workload loopback basic samples; service-to-worker RFB attribution required; not UAC/lock or weak-network acceptance"
+    $record.service_name = $serviceName
+    $record.service_acceptance = $false
+    $record.expected_worker_identity = 'Direct SCM-root child via LaunchProcessWin/CreateProcessAsUser using GetSessionUserTokenWin/get_winlogon_handle duplicated winlogon primary token; SYSTEM SID and active-console SessionId required. TerminalServer IPC fallback is outside this calibration and must fail attribution.'
+    $record.limitations[0] = 'Only uniquely owned SCM service plus its attributed worker/real synthetic desktop; no UAC, lock/unlock, login, keyboard, clipboard, DPI, sleep or physical-interface acceptance.'
+    $record.limitations[5] = 'One fresh GUID service and exact executable UDP block are created only in disposable hosted CI; existing services, rules, profiles and system protection are not changed.'
+    $record.sources += "https://github.com/ultravnc/UltraVNC/blob/$source/winvnc/winvnc/UltraVNCService.cpp"
 }
 if ($SharedSoak) {
     $record.scope = "Two concurrent production clients on UltraVNC1.8.3.0 Windows loopback; requested${DurationSeconds}s shared stability with${IdleSeconds}s no-input windows; not impaired-network or service acceptance"
@@ -190,7 +209,188 @@ function Assert-UdpFirewallBlock {
     }
     $record.udp_firewall_rule = $firewallRuleName
 }
+function Get-ServiceProcessIdentity([int]$ProcessId) {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$ProcessId" -ErrorAction Stop
+    if ($null -eq $process) { throw "Owned service process $ProcessId disappeared during identity check." }
+    $sid = Invoke-CimMethod -InputObject $process -MethodName GetOwnerSid -ErrorAction Stop
+    if ($sid.ReturnValue -ne 0 -or $sid.Sid -ne 'S-1-5-18' -or
+        -not [string]::Equals([string]$process.ExecutablePath, $serverPath, [StringComparison]::OrdinalIgnoreCase) -or
+        (Get-FileHash -LiteralPath $process.ExecutablePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $record.server.sha256) {
+        throw "Service process $ProcessId is not the owned pinned LocalSystem executable."
+    }
+    return [ordered]@{ pid=[int]$process.ProcessId; parent_pid=[int]$process.ParentProcessId
+        executable=[string]$process.ExecutablePath; command_line=[string]$process.CommandLine
+        created_utc=([DateTime]$process.CreationDate).ToUniversalTime().ToString('o')
+        session_id=[int]$process.SessionId; owner_sid=[string]$sid.Sid; sha256=$record.server.sha256 }
+}
+function Get-OwnedService {
+    $service = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop
+    if ($null -eq $service) { return $null }
+    $expected = '"' + $serverPath + '" -service'
+    if ($service.Name -ne $serviceName -or $service.Name -notmatch '^AditVncCi_[0-9a-f]{32}$' -or
+        $service.PathName -cne $expected -or $service.StartName -ne 'LocalSystem') {
+        throw 'SCM service identity/path/account differs from this exact owned registration; no service action permitted.'
+    }
+    return $service
+}
+function Capture-ServiceProcesses([switch]$DuringStop) {
+    $service = Get-OwnedService
+    if (-not $DuringStop -and $null -ne $service -and $service.ProcessId -gt 0) {
+        $root = Get-ServiceProcessIdentity ([int]$service.ProcessId)
+        if ($root.session_id -ne 0 -or [DateTime]$root.created_utc -lt $serviceLaunchUtc -or
+            $root.command_line -notmatch ('^"?' + [regex]::Escape($serverPath) + '"? -service$')) {
+            throw 'SCM root process does not prove newly started service mode in session0.'
+        }
+        if ($null -ne $script:serviceRootIdentity -and
+            ($root.pid -ne $script:serviceRootIdentity.pid -or $root.created_utc -ne $script:serviceRootIdentity.created_utc)) {
+            throw 'SCM root process changed unexpectedly during acceptance.'
+        }
+        $script:serviceRootIdentity = $root
+        $record.service_captured_root = $root
+    }
+    if ($null -eq $serviceRootIdentity) { return }
+    $root = $serviceRootIdentity
+    $workers = @(Get-CimInstance Win32_Process -Filter "ParentProcessId=$($root.pid)" -ErrorAction Stop |
+        Where-Object { [string]::Equals([string]$_.ExecutablePath, $serverPath, [StringComparison]::OrdinalIgnoreCase) })
+    $parentAlive = $false
+    if (@($workers | Where-Object { -not $serviceWorkers.ContainsKey([string]$_.ProcessId) }).Count -gt 0) {
+        $parentAlive = Test-OwnedProcessStillSame $root
+    }
+    foreach ($candidate in $workers) {
+        try { $worker = Get-ServiceProcessIdentity ([int]$candidate.ProcessId) }
+        catch {
+            if ($DuringStop -and $null -eq (Get-CimInstance Win32_Process -Filter "ProcessId=$($candidate.ProcessId)" -ErrorAction Stop)) { continue }
+            throw
+        }
+        if ([DateTime]$worker.created_utc -lt [DateTime]$root.created_utc) { throw 'Worker creation predates its attributed SCM parent.' }
+        $key = [string]$worker.pid
+        if ($script:serviceWorkers.ContainsKey($key) -and $script:serviceWorkers[$key].created_utc -ne $worker.created_utc) { throw 'Worker PID was reused.' }
+        if (-not $script:serviceWorkers.ContainsKey($key) -and -not $parentAlive) { throw 'An unrecorded child outlived its root before ancestry could be proven; forced cleanup is not authorized.' }
+        # Capture identity before testing desktop/config semantics, so a failed
+        # readiness check can still retire this exact child after SCM stop.
+        $script:serviceWorkers[$key] = $worker
+        $record.service_captured_workers = @($serviceWorkers.Values)
+    }
+}
+function Assert-ServiceWorker {
+    if ([AditVncFixtureConsole]::WTSGetActiveConsoleSessionId() -ne $serviceConsoleSession -or
+        $loadProcess.SessionId -ne $serviceConsoleSession) { throw 'Active console/Tk session changed during service acceptance.' }
+    Capture-ServiceProcesses
+    $service = Get-OwnedService
+    if ($null -eq $service -or $service.State -ne 'Running' -or $service.ProcessId -eq 0 -or $null -eq $serviceRootIdentity) { return $false }
+    $root = $serviceRootIdentity
+    $workers = @($serviceWorkers.Values | Where-Object { Test-OwnedProcessStillSame $_ })
+    if ($workers.Count -eq 0) { return $false }
+    if ($workers.Count -ne 1) { throw 'Expected exactly one service-generated RFB worker, without helper or fallback instances.' }
+    $worker = $workers[0]
+    if ($worker.session_id -ne $serviceConsoleSession -or $worker.parent_pid -ne $root.pid -or
+        [DateTime]$worker.created_utc -lt [DateTime]$root.created_utc -or
+        $worker.command_line -notmatch ('^"?' + [regex]::Escape($serverPath) + '"? -config "' + [regex]::Escape($serviceIni) + '" -service_run$')) {
+        throw 'Worker session, ancestry, creation or exact private INI command line is not the expected service child.'
+    }
+    if ($null -eq $script:server) { $script:server = Get-Process -Id $worker.pid -ErrorAction Stop }
+    elseif ($script:server.Id -ne $worker.pid) { throw 'Service worker changed during the measured connection; no silent restart accepted.' }
+    $record.service_identity = [ordered]@{
+        scm=@{ name=$service.Name; path=$service.PathName; state=$service.State; start_name=$service.StartName; pid=$service.ProcessId }
+        root=$root; worker=$worker; ini=$serviceIni; portable_marker=(Join-Path $serverFolder 'ultravnc.portable')
+    }
+    [IO.File]::WriteAllText((Join-Path $resultPath 'service-identity.json'), ($record.service_identity | ConvertTo-Json -Depth 8) + "`n", $utf8)
+    return $true
+}
+function Test-OwnedProcessStillSame($Identity) {
+    $process = Get-CimInstance Win32_Process -Filter "ProcessId=$($Identity.pid)" -ErrorAction Stop
+    if ($null -eq $process) { return $false }
+    try { $actual = Get-ServiceProcessIdentity ([int]$Identity.pid) }
+    catch {
+        if ($null -eq (Get-CimInstance Win32_Process -Filter "ProcessId=$($Identity.pid)" -ErrorAction Stop)) { return $false }
+        throw
+    }
+    if ($actual.created_utc -ne $Identity.created_utc -or $actual.command_line -cne $Identity.command_line -or
+        $actual.parent_pid -ne $Identity.parent_pid -or $actual.session_id -ne $Identity.session_id) { throw 'Recorded process identity changed; cleanup refused.' }
+    return $true
+}
+function Invoke-OwnedScControl([ValidateSet('stop','delete')][string]$Control) {
+    [void](Get-OwnedService)
+    $info = [Diagnostics.ProcessStartInfo]::new((Join-Path $env:SystemRoot 'System32/sc.exe'))
+    $info.UseShellExecute = $false; $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true; $info.RedirectStandardError = $true
+    $info.ArgumentList.Add($Control); $info.ArgumentList.Add($serviceName)
+    $process = [Diagnostics.Process]::new(); $process.StartInfo = $info
+    try {
+        if (-not $process.Start()) { throw "SCM $Control command failed to start." }
+        $stdout = $process.StandardOutput.ReadToEndAsync(); $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit(5000)) {
+            $process.Kill(); [void]$process.WaitForExit(5000)
+            throw "Exact SCM $Control command exceeded5s."
+        }
+        [IO.File]::WriteAllText((Join-Path $resultPath "service-$Control.stdout.txt"), $stdout.GetAwaiter().GetResult(), $utf8)
+        [IO.File]::WriteAllText((Join-Path $resultPath "service-$Control.stderr.txt"), $stderr.GetAwaiter().GetResult(), $utf8)
+        if ($process.ExitCode -ne 0) { throw "Exact SCM $Control command returned $($process.ExitCode)." }
+    } finally { $process.Dispose() }
+}
+function Stop-OwnedService {
+    $service = Get-OwnedService
+    $abnormal = $null -ne $serviceRootIdentity -and ($null -eq $service -or $service.State -eq 'Stopped')
+    # Attribution failures must fail acceptance, but must not bypass a safe
+    # stop of the exact GUID/path registration that this invocation created.
+    try { Capture-ServiceProcesses }
+    catch { $record.service_capture_cleanup_error = $_.Exception.Message; $abnormal = $true }
+    if ($null -ne $service -and $service.State -ne 'Stopped') {
+        try { Invoke-OwnedScControl 'stop' }
+        catch { $record.service_stop_error = $_.Exception.Message; $abnormal = $true }
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
+    $remaining = @()
+    do {
+        $service = Get-OwnedService
+        try { Capture-ServiceProcesses -DuringStop }
+        catch { $record.service_capture_cleanup_error = $_.Exception.Message; $abnormal = $true }
+        $remaining = @()
+        $identities = @($serviceWorkers.Values)
+        if ($null -ne $serviceRootIdentity) { $identities += $serviceRootIdentity }
+        foreach ($identity in $identities) {
+            if (Test-OwnedProcessStillSame $identity) { $remaining += $identity }
+        }
+        if (($null -eq $service -or $service.State -eq 'Stopped') -and $remaining.Count -eq 0) { break }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    $abnormal = $abnormal -or $remaining.Count -gt 0 -or ($null -ne $service -and $service.State -ne 'Stopped')
+    if ($abnormal) {
+        $record.service_abnormal_cleanup = 'SCM stop did not retire every attributed process; exact recorded identities only are eligible for forced cleanup, acceptance failed.'
+        $script:failed = $true; $record.outcome = 'failed'; $record.service_acceptance = $false
+        foreach ($identity in $remaining) {
+            if (Test-OwnedProcessStillSame $identity) {
+                Stop-Process -Id ([int]$identity.pid) -Force -ErrorAction Stop
+                $owned = Get-Process -Id ([int]$identity.pid) -ErrorAction SilentlyContinue
+                if ($null -ne $owned -and -not $owned.WaitForExit(5000)) { throw 'An exactly recorded service-owned process survived forced cleanup.' }
+            }
+        }
+    }
+    foreach ($identity in $identities) {
+        if (Test-OwnedProcessStillSame $identity) { throw 'Recorded service process remains after cleanup.' }
+    }
+    $tcpRemaining = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue)
+    $record.service_closed_tcp = @($tcpRemaining | Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess)
+    if (@(Get-CimInstance Win32_Process -Filter "Name='winvnc.exe'" -ErrorAction Stop | Where-Object { [string]::Equals([string]$_.ExecutablePath, $serverPath, [StringComparison]::OrdinalIgnoreCase) }).Count -ne 0 -or
+        @($tcpRemaining | Where-Object { $_.State -ne 'TimeWait' -or $_.OwningProcess -ne 0 }).Count -ne 0 -or
+        @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue).Count -ne 0) { throw 'Service worker or TCP/UDP port remains; service deletion and firewall removal refused.' }
+    $service = Get-OwnedService
+    if ($null -ne $service) {
+        if ($service.State -ne 'Stopped') { throw 'Owned service is not stopped before deletion.' }
+        Invoke-OwnedScControl 'delete'
+    }
+    $deadline = [DateTime]::UtcNow.AddSeconds(10)
+    do {
+        $exists = Get-CimInstance Win32_Service -Filter "Name='$serviceName'" -ErrorAction Stop
+        $keyExists = Test-Path -LiteralPath "Registry::HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\$serviceName"
+        if ($null -eq $exists -and -not $keyExists) { break }
+        Start-Sleep -Milliseconds 100
+    } while ([DateTime]::UtcNow -lt $deadline)
+    if ($null -ne $exists -or $keyExists) { throw 'Exact service still exists in SCM or registry after deletion.' }
+    $record.service_cleanup = 'Exact GUID SCM registration and key absent; attributed root/workers and all live TCP/UDP endpoints absent before protective-rule removal; only recorded PID0 TIME_WAIT may remain as closed kernel state'
+}
 function Assert-OwnedListeners {
+    if ($ServiceMode -and -not (Assert-ServiceWorker)) { return $false }
     $tcp = @(Get-NetTCPConnection -OwningProcess $server.Id -State Listen -ErrorAction SilentlyContinue)
     $udp = @(Get-NetUDPEndpoint -OwningProcess $server.Id -ErrorAction SilentlyContinue)
     $snapshot = [ordered]@{
@@ -474,6 +674,22 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
 try {
     Assert-GuestNetwork
     Write-Phase 'Validate runner, probe and unused fixture port'
+    if ($ServiceMode) {
+        $existing = @(Get-CimInstance Win32_Service -ErrorAction Stop | Where-Object {
+            $_.Name -eq 'uvnc_service' -or $_.Name -eq $serviceName -or $_.Name -match '(?i)ultravnc|uvnc' -or $_.PathName -match '(?i)winvnc\.exe'
+        })
+        if ($existing.Count -ne 0 -or @(Get-CimInstance Win32_Process -Filter "Name='winvnc.exe'" -ErrorAction Stop).Count -ne 0) { throw 'Fresh service calibration refuses every existing UltraVNC registration or winvnc process.' }
+        Add-Type @'
+using System.Runtime.InteropServices;
+public static class AditVncFixtureConsole {
+    [DllImport("kernel32.dll")] public static extern uint WTSGetActiveConsoleSessionId();
+}
+'@
+        $script:serviceConsoleSession = [AditVncFixtureConsole]::WTSGetActiveConsoleSessionId()
+        if ($serviceConsoleSession -eq [uint32]::MaxValue -or $serviceConsoleSession -eq 0 -or
+            (Get-Process -Id $PID).SessionId -ne $serviceConsoleSession) { throw 'Hosted runner has no matching nonzero active console session for the owned Tk target.' }
+        $record.console_session = $serviceConsoleSession
+    }
     $script:probePath = (Resolve-Path -LiteralPath $Probe).Path
     $record.probe_sha256 = (Get-FileHash -LiteralPath $probePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $record.os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture
@@ -504,10 +720,16 @@ try {
             Start-Sleep -Milliseconds 100
         }
         if (-not $loadReady) { throw 'Synthetic target did not become ready within20s.' }
+        if ($ServiceMode -and $loadProcess.SessionId -ne $serviceConsoleSession) { throw 'Owned Tk process is not in the checked active console session.' }
     }
+    $existingTcp = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue)
+    $record.initial_closed_tcp = @($existingTcp | Where-Object { $_.State -eq 'TimeWait' -and $_.OwningProcess -eq 0 } |
+        Select-Object LocalAddress, LocalPort, RemoteAddress, RemotePort, State, OwningProcess)
+    # Sequential fresh fixtures can inherit closed PID0 TCP TIME_WAIT from an
+    # earlier wrong-password rejection; that kernel state is not a live server.
     if (@(Get-Process winvnc -ErrorAction SilentlyContinue).Count -ne 0 -or
         @(Get-Service -Name '*uvnc*' -ErrorAction SilentlyContinue).Count -ne 0 -or
-        @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).Count -ne 0 -or
+        @($existingTcp | Where-Object { $_.State -ne 'TimeWait' -or $_.OwningProcess -ne 0 }).Count -ne 0 -or
         @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue).Count -ne 0) {
         throw 'Refusing to share or replace an existing server/service/fixture port.'
     }
@@ -602,6 +824,12 @@ public static class AditVncFixtureIni {
         [Convert]::ToHexString($readback) -ne [Convert]::ToHexString($encrypted)) { throw 'Native password structure readback failed.' }
     $record.password_format = 'Public synthetic adit-ci, zero-padded8; fixed-key VNC DES with reversed key bits; Win32 Write/GetPrivateProfileStruct8-byte readback verified; never argv/env.'
     Copy-Item -LiteralPath $ini -Destination (Join-Path $resultPath 'fixture.ini')
+    if ($ServiceMode) {
+        $script:serviceIni = Join-Path $serverFolder ($serviceName + '.ini')
+        Copy-Item -LiteralPath $ini -Destination $serviceIni
+        [IO.File]::WriteAllText((Join-Path $serverFolder 'ultravnc.portable'), '', $utf8)
+        $record.service_configuration = @{ bootstrap=$ini; service_ini=$serviceIni; bootstrap_sha256=(Get-FileHash -LiteralPath $ini -Algorithm SHA256).Hash.ToLowerInvariant(); service_ini_sha256=(Get-FileHash -LiteralPath $serviceIni -Algorithm SHA256).Hash.ToLowerInvariant(); marker='ultravnc.portable' }
+    }
     # The official binary unconditionally starts UDP echo and ignores LoopbackOnly
     # for that socket. Contain only this new CI executable/UDP port before launch.
     if (@(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop | Where-Object { $_.Name -eq $firewallRuleName }).Count -ne 0) {
@@ -613,14 +841,46 @@ public static class AditVncFixtureIni {
         -Description 'Disposable Adit hosted-CI UltraVNC echo containment; removed after owned process exits.' `
         -Program $serverPath -Protocol UDP -LocalPort $port -Direction Inbound -Action Block -Profile Any -Enabled True -ErrorAction Stop)
     Assert-UdpFirewallBlock
-    Write-Phase 'Start portable user-mode server with explicit private INI; no installer or service action'
-    $server = Start-Process -FilePath $serverPath -ArgumentList @('-config', ('"' + $ini + '"'), '-run') -WorkingDirectory $serverFolder -WindowStyle Hidden -PassThru
-    $record.server.pid = $server.Id
+    if ($ServiceMode) {
+        Write-Phase 'Register and auto-start one fresh exact-name service; never fall back to portable mode'
+        $record.server.mode = 'unique SCM service with independently attributed LocalSystem RFB worker'
+        $script:serviceLaunchUtc = [DateTime]::UtcNow
+        $script:serviceInstallAttempted = $true
+        $installArguments = @('-config', ('"' + $ini + '"'), '-install', $serviceName)
+        $record.service_install_arguments = $installArguments
+        $installer = Start-Process -FilePath $serverPath -ArgumentList $installArguments -WorkingDirectory $serverFolder -WindowStyle Hidden -PassThru `
+            -RedirectStandardOutput (Join-Path $resultPath 'service-install.stdout.txt') -RedirectStandardError (Join-Path $resultPath 'service-install.stderr.txt')
+        try {
+            $installDeadline = [DateTime]::UtcNow.AddSeconds(15)
+            do {
+                $installExited = $installer.WaitForExit(100)
+                # The CLI auto-starts the service before it returns. Capture the
+                # root while it is alive, even if startup later leaves an orphan.
+                try { Capture-ServiceProcesses }
+                catch { $record.service_install_capture_error = $_.Exception.Message }
+            } while (-not $installExited -and [DateTime]::UtcNow -lt $installDeadline)
+            if (-not $installExited) {
+                if (-not [string]::Equals($installer.Path, $serverPath, [StringComparison]::OrdinalIgnoreCase)) { throw 'Install process ownership changed.' }
+                Stop-Process -InputObject $installer -Force
+                [void]$installer.WaitForExit(5000)
+                throw 'Service install CLI did not finish within15s; no helper or interactive fallback permitted.'
+            }
+            $record.service_install_exit = $installer.ExitCode
+            if ($installer.ExitCode -ne 0) { throw 'Service install CLI returned failure.' }
+            if ($record.Contains('service_install_capture_error')) { throw 'Service identity capture during automatic startup failed; original error retained.' }
+        } finally { $installer.Dispose() }
+    } else {
+        Write-Phase 'Start portable user-mode server with explicit private INI; no installer or service action'
+        $server = Start-Process -FilePath $serverPath -ArgumentList @('-config', ('"' + $ini + '"'), '-run') -WorkingDirectory $serverFolder -WindowStyle Hidden -PassThru
+        $record.server.pid = $server.Id
+    }
     $ready = $false
     $deadline = [DateTime]::UtcNow.AddSeconds(25)
     while ([DateTime]::UtcNow -lt $deadline) {
-        $server.Refresh()
-        if ($server.HasExited) { throw "Vendor process exited before listener readiness: $($server.ExitCode)" }
+        if ($null -ne $server) {
+            $server.Refresh()
+            if ($server.HasExited) { throw "Vendor process exited before listener readiness: $($server.ExitCode)" }
+        }
         if (Assert-OwnedListeners) { $ready = $true; break }
         Start-Sleep -Milliseconds 250
     }
@@ -631,20 +891,28 @@ public static class AditVncFixtureIni {
     } else {
         for ($sample = 1; $sample -le $Samples; $sample++) {
             Write-Phase "Full framebuffer $Quality/$Workload sample $sample of$Samples; synthetic target=$SyntheticLoad"
-            [void](Assert-OwnedListeners)
+            $ownedReady = Assert-OwnedListeners
+            if ($ServiceMode -and -not $ownedReady) { throw 'SCM service/worker/listener chain disappeared before a measured sample.' }
             Invoke-Probe $sample 'adit-ci' $false
         }
         Write-Phase 'Wrong password must explicitly fail authentication, not merely time out'
         Invoke-Probe ($Samples + 1) 'wrong-ci' $true
     }
-    [void](Assert-OwnedListeners)
+    $ownedReady = Assert-OwnedListeners
+    if ($ServiceMode -and -not $ownedReady) { throw 'SCM service/worker/listener chain disappeared before the final acceptance check.' }
+    if ($ServiceMode) { $record.service_acceptance = $true }
     $record.outcome = 'passed'
 } catch {
     $failed = $true
     $record.error = $_.Exception.Message
     Write-Phase ('FAILED: ' + $_.Exception.Message)
 } finally {
-    if ($null -ne $server) {
+    if ($ServiceMode -and $serviceInstallAttempted) {
+        try { Stop-OwnedService }
+        catch { $failed = $true; $record.outcome = 'failed'; $record.cleanup_error = $_.Exception.Message }
+        finally { if ($null -ne $server) { $server.Dispose(); $server = $null } }
+    }
+    if (-not $ServiceMode -and $null -ne $server) {
         try {
             $server.Refresh()
             if (-not $server.HasExited) {
@@ -685,8 +953,9 @@ public static class AditVncFixtureIni {
             $record.firewall_cleanup = 'exact owned GUID rule removed after owned server exit; PersistentStore and ActiveStore absence verified'
         } catch { $failed = $true; $record.outcome = 'failed'; $record.firewall_cleanup_error = $_.Exception.Message }
     }
+    if ($ServiceMode -and $failed) { $record.service_acceptance = $false }
     # All temporary vendor files belong to this ephemeral runner; no user path is
-    # deleted, no service/profile is changed, and only our one rule is removed.
+    # deleted; ServiceMode removes only its fresh exact GUID service and our rule.
     Write-Evidence
 }
 if ($failed) { throw 'Windows VNC smoke failed; inspect retained result and raw logs.' }
