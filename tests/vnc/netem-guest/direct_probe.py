@@ -230,7 +230,7 @@ def main():
             reserved.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
             reserved.bind(("127.0.0.1", 15912))
         network = "user,model=e1000,restrict=off,ipv6=off,hostfwd=tcp:127.0.0.1:15912-10.0.2.15:15912"
-        command = [str(exe), "-L", str(firmware[0].parent), "-accel", "tcg,thread=multi", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "512", "-display", "none", "-monitor", "none", "-chardev", "socket,id=control,host=127.0.0.1,port=15913", "-serial", "chardev:control", "-no-reboot", "-kernel", str(guest / "vmlinuz-virt"), "-initrd", str(guest / "initramfs.cpio.gz"), "-append", "console=ttyS0 rdinit=/init panic=-1 ipv6.disable=1", "-nic", network]
+        command = [str(exe), "-L", str(firmware[0].parent), "-accel", "tcg,thread=multi", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "512", "-display", "none", "-monitor", "none", "-chardev", "socket,id=control,host=127.0.0.1,port=15913", "-serial", "chardev:control", "-serial", "file:" + str(out / "kernel-console.txt"), "-no-reboot", "-kernel", str(guest / "vmlinuz-virt"), "-initrd", str(guest / "initramfs.cpio.gz"), "-append", "console=ttyS1 rdinit=/init panic=-1 ipv6.disable=1", "-nic", network]
         result["qemu_argv"] = command
         result["phase"] = "start_owned_qemu"
         save()

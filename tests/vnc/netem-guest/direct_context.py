@@ -160,7 +160,7 @@ class DirectGuest:
             with socket.socket() as reserved:
                 reserved.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
                 reserved.bind(("127.0.0.1", 15912))
-            self.argv = [str(self.executable), "-L", str(firmware[0].parent), "-accel", "tcg,thread=multi", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "512", "-display", "none", "-monitor", "none", "-chardev", "socket,id=control,host=127.0.0.1,port=15913", "-serial", "chardev:control", "-no-reboot", "-kernel", str(self.guest / "vmlinuz-virt"), "-initrd", str(self.guest / "initramfs.cpio.gz"), "-append", "console=ttyS0 rdinit=/init panic=-1 ipv6.disable=1", "-nic", "user,model=e1000,restrict=off,ipv6=off,hostfwd=tcp:127.0.0.1:15912-10.0.2.15:15912"]
+            self.argv = [str(self.executable), "-L", str(firmware[0].parent), "-accel", "tcg,thread=multi", "-machine", "q35", "-cpu", "max", "-smp", "2", "-m", "512", "-display", "none", "-monitor", "none", "-chardev", "socket,id=control,host=127.0.0.1,port=15913", "-serial", "chardev:control", "-serial", "file:" + str(self.out / "kernel-console.txt"), "-no-reboot", "-kernel", str(self.guest / "vmlinuz-virt"), "-initrd", str(self.guest / "initramfs.cpio.gz"), "-append", "console=ttyS1 rdinit=/init panic=-1 ipv6.disable=1", "-nic", "user,model=e1000,restrict=off,ipv6=off,hostfwd=tcp:127.0.0.1:15912-10.0.2.15:15912"]
             self.record.update(phase="boot", argv=self.argv)
             self._save()
             self.stderr = (self.out / "qemu-stderr.txt").open("wb")
