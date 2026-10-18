@@ -129,13 +129,22 @@ def cursor_checks(hwnd,state,log,directory,box,target,cross_width,result,case):
         if style=='color':
             # Just above the framebuffer is the shipping tab/toolbar, not the
             # synthetic test control strip. OS pointer must reappear there.
-            toolbar=(absolute[0],round(absolute[1]-100*ratio-8))
+            toolbar=(absolute[0],box[1]+5)
             assert box[1]<toolbar[1]<absolute[1]
             assert U.SetCursorPos(*toolbar)
-            wait_until(lambda: cursor_info()['flags']==1)
+            # A real relative mouse input also exits Windows' touch/pen cursor
+            # suppression; SetCursorPos alone only warps the pointer position.
+            U.mouse_event(0x0001,1,0,0,0)
+            assert U.SetCursorPos(*toolbar)
+            try:
+                wait_until(lambda: cursor_info()['flags']==1)
+            finally:
+                record['toolbar_cursor']=cursor_info()
             wait_until(lambda: magenta_bounds(ImageGrab.grab(bbox=region)) is None)
             record['toolbar_cursor']=cursor_info()
             assert U.SetCursorPos(*absolute)
+    assert U.SetCursorPos(0,0)
+    U.mouse_event(0x0001,1,0,0,0)
     assert U.SetCursorPos(0,0)
     wait_until(lambda: cursor_info()['flags']==1)
     result.setdefault('cursor_boundary_samples',[]).append(dict(case=case,outside=cursor_info()))

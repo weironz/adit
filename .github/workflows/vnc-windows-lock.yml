@@ -6,6 +6,8 @@ on:
     paths:
       - '.github/workflows/vnc-windows-lock.yml'
       - 'tests/vnc/windows-service-lock.py'
+      - 'tests/vnc/windows-service-uac.py'
+      - 'tests/vnc/windows-uac-cancel.ps1'
       - 'tests/vnc/windows-server-smoke.ps1'
 permissions:
   contents: read
@@ -28,7 +30,7 @@ jobs:
       - name: Attributed service, real desktop, WTS lock and fresh lock-screen capture
         timeout-minutes: 8
         shell: pwsh
-        run: ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/vnc-service-lock" -ServiceMode -SyntheticLoad -Samples 1 -DisplayResize -LockScreen
+        run: ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/vnc-service-lock" -ServiceMode -SyntheticLoad -Samples 1 -DisplayResize -Uac -LockScreen
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -11,6 +11,7 @@ param(
     [switch]$ServiceMode,
     [switch]$LockScreen,
     [switch]$DisplayResize,
+    [switch]$Uac,
     [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
     [ValidateRange(1,600)][int]$IdleSeconds = 120,
     [ValidateSet(15911,15912)][int]$ProbePort = 15911,
@@ -28,6 +29,7 @@ if ($ProbePort -eq 15912 -and (-not $SyntheticLoad -or $ServiceMode -or $SharedS
 if ($ServiceMode -and ($SharedSoak -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes SharedSoak.' }
 if ($LockScreen -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'LockScreen requires the owned service and direct loopback probe.' }
 if ($DisplayResize -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'DisplayResize requires the owned service and direct loopback probe.' }
+if ($Uac -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'Uac requires the owned service and direct loopback probe.' }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
 if ($SharedSoak -and (-not $SyntheticLoad -or $Workload -ne 'static' -or $Quality -ne 'lossless')) {
     throw 'SharedSoak requires the owned synthetic target, static workload and lossless quality.'
@@ -1033,9 +1035,17 @@ public static class AditVncFixtureIni {
         }
         $displayOriginal=$null
     }
+    if ($Uac) {
+        & $pythonPath (Join-Path $PSScriptRoot 'windows-service-uac.py') --probe $probePath --results (Join-Path $resultPath 'uac')
+        if ($LASTEXITCODE -ne 0) { throw 'Actual filtered-token UAC capture failed; original evidence retained.' }
+        $record.uac = Get-Content -LiteralPath (Join-Path $resultPath 'uac/result.json') -Raw | ConvertFrom-Json -AsHashtable
+        if ($record.uac.outcome -ne 'passed') { throw 'UAC capture did not pass.' }
+        if (-not (Assert-OwnedListeners)) { throw 'Owned service attribution lost after UAC capture.' }
+        $record.scope += '; actual filtered-token UAC capture, with independent cleanup cancellation'
+    }
     if ($LockScreen) {
         $record.scope += '; actual WTS lock state and fresh complete lock-screen capture'
-        $record.limitations[0] = 'Actual service attribution and fresh lock-screen capture only; no unlock/password entry, UAC, secure attention or uninterrupted existing-session transition.'
+        $record.limitations[0] = 'Actual service attribution and fresh lock-screen capture; optional Uac records rendering separately. No unlock/password entry, elevation approval, secure attention or uninterrupted existing-session transition.'
         Write-Phase 'Measure actual WTS lock state and fresh VncAuth full frames; disposable runner only'
         & $pythonPath (Join-Path $PSScriptRoot 'windows-service-lock.py') --probe $probePath --results (Join-Path $resultPath 'lock-screen')
         if ($LASTEXITCODE -ne 0) { throw 'Actual lock-screen acceptance failed; inspect original evidence.' }
