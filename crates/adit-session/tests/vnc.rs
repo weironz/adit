@@ -37,18 +37,252 @@ fn version(stream: &mut TcpStream) {
 }
 
 fn init(stream: &mut TcpStream) {
+    init_size(stream, 4, 2);
+}
+
+fn init_size(stream: &mut TcpStream, width: u16, height: u16) {
     version(stream);
     stream.write_all(&[1, 1]).unwrap(); // one offered type: None
     assert_eq!(read::<1>(stream), [1]);
     stream.write_all(&0_u32.to_be_bytes()).unwrap();
     assert_eq!(read::<1>(stream), [1]); // shared session, never evict another viewer
-    stream.write_all(&4_u16.to_be_bytes()).unwrap();
-    stream.write_all(&2_u16.to_be_bytes()).unwrap();
+    stream.write_all(&width.to_be_bytes()).unwrap();
+    stream.write_all(&height.to_be_bytes()).unwrap();
     stream
         .write_all(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0])
         .unwrap();
     stream.write_all(&4_u32.to_be_bytes()).unwrap();
     stream.write_all(b"test").unwrap();
+}
+
+#[test]
+fn metadata_only_initial_update_recovers_full_coverage_without_refresh_storm() {
+    // A completed metadata update does not establish that the desktop pixels
+    // requested by the initial non-incremental request have been received.
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = requests.clone();
+    let (incremental_tx, incremental_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init_size(&mut stream, 64, 64);
+        let mut metadata_sent = false;
+        let mut partial_sent = false;
+        let mut full_sent = false;
+        let mut outstanding = false;
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag != 3 {
+                continue;
+            }
+            let rect = std::array::from_fn::<_, 4, _>(|i| {
+                u16::from_be_bytes([data[1 + i * 2], data[2 + i * 2]])
+            });
+            recorded.lock().unwrap().push((data[0], rect));
+            assert!(
+                !outstanding,
+                "second request while the previous one is unanswered"
+            );
+            assert_eq!(rect, [0, 0, 64, 64]);
+            if !metadata_sent {
+                assert_eq!(data[0], 0, "initial request must be non-incremental");
+                // UltraVNC can acknowledge ExtendedDesktopSize support before
+                // sending any framebuffer pixels, despite the full request.
+                let mut metadata = vec![0, 0, 0, 1];
+                for v in [0_u16, 0, 64, 64] {
+                    metadata.extend(v.to_be_bytes());
+                }
+                metadata.extend((-308_i32).to_be_bytes());
+                metadata.extend([1, 0, 0, 0]);
+                metadata.extend(0_u32.to_be_bytes());
+                for v in [0_u16, 0, 64, 64] {
+                    metadata.extend(v.to_be_bytes());
+                }
+                metadata.extend(0_u32.to_be_bytes());
+                stream.write_all(&metadata).unwrap();
+                metadata_sent = true;
+            } else if full_sent {
+                assert_eq!(
+                    data[0], 1,
+                    "complete coverage must restore incremental requests"
+                );
+                incremental_tx.send(()).unwrap();
+                outstanding = true;
+            } else if data[0] == 0 || !partial_sent {
+                let size = if data[0] == 0 { 64_u16 } else { 32_u16 };
+                let mut pixels = vec![0, 0, 0, 1];
+                for v in [0, 0, size, size] {
+                    pixels.extend(v.to_be_bytes());
+                }
+                pixels.extend(0_i32.to_be_bytes());
+                for _ in 0..usize::from(size).pow(2) {
+                    pixels.extend([20, 40, 60, 0]);
+                }
+                stream.write_all(&pixels).unwrap();
+                full_sent = size == 64;
+                partial_sent = true;
+            } else {
+                // Nothing is dirty after the small tile. Keep this incremental
+                // request unanswered, as an idle server may legitimately do.
+                outstanding = true;
+            }
+        }
+    });
+    // None is explicitly allowed only for this synthetic loopback peer.
+    let (mut manager, profile) = manager(port);
+    let session = manager
+        .open_live_vnc_session(profile, String::new())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut covered = false;
+    let mut incremental_after_full = false;
+    let mut max_pending = 0;
+    let mut stable_since = None;
+    while Instant::now() < deadline {
+        manager.poll_events();
+        if let Some(diagnostics) = manager.active_vnc_diagnostics() {
+            max_pending = max_pending.max(diagnostics.pending_updates);
+            covered = diagnostics.covered_pixels == 4096;
+        }
+        incremental_after_full |= incremental_rx.try_recv().is_ok();
+        if covered && incremental_after_full {
+            let since = stable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_millis(150) {
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let diagnostics = manager.active_vnc_diagnostics();
+    let complete_frame = manager.active_rdp_frame_if_newer(0).is_some_and(|frame| {
+        (frame.width, frame.height) == (64, 64)
+            && frame
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|pixel| *pixel == [20, 40, 60, 255])
+    });
+    manager.disconnect(session).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Disconnected
+    });
+    server.join().unwrap();
+    let requests = requests.lock().unwrap();
+    eprintln!("coverage recovery requests={requests:?}; diagnostics={diagnostics:?}");
+    assert!(
+        covered && complete_frame,
+        "initial full coverage was not recovered: {requests:?}"
+    );
+    assert!(
+        incremental_after_full,
+        "no incremental request after complete coverage"
+    );
+    assert!(max_pending <= 1);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|(incremental, _)| *incremental == 0)
+            .count(),
+        2
+    );
+    assert_eq!(requests.last().map(|request| request.0), Some(1));
+}
+
+#[test]
+fn desktop_metadata_on_every_full_request_advances_to_incremental_pixels() {
+    // TigerVNC answers a non-incremental request with desktop metadata first;
+    // another non-incremental request repeats that metadata instead of pixels.
+    let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let recorded = requests.clone();
+    let (incremental_tx, incremental_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init_size(&mut stream, 64, 64);
+        let mut painted = false;
+        let mut outstanding = false;
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag != 3 {
+                continue;
+            }
+            let rect = std::array::from_fn::<_, 4, _>(|i| {
+                u16::from_be_bytes([data[1 + i * 2], data[2 + i * 2]])
+            });
+            recorded.lock().unwrap().push((data[0], rect));
+            assert!(!outstanding, "request piled up behind an unanswered update");
+            assert_eq!(rect, [0, 0, 64, 64]);
+            if data[0] == 0 {
+                // Same-size ExtendedDesktopSize, one screen, server reason.
+                let mut metadata = vec![0, 0, 0, 1];
+                for v in [0_u16, 0, 64, 64] {
+                    metadata.extend(v.to_be_bytes());
+                }
+                metadata.extend((-308_i32).to_be_bytes());
+                metadata.extend([1, 0, 0, 0]);
+                metadata.extend(0_u32.to_be_bytes());
+                for v in [0_u16, 0, 64, 64] {
+                    metadata.extend(v.to_be_bytes());
+                }
+                metadata.extend(0_u32.to_be_bytes());
+                stream.write_all(&metadata).unwrap();
+            } else if !painted {
+                assert_eq!(data[0], 1);
+                let mut pixels = vec![0, 0, 0, 1];
+                for v in [0_u16, 0, 64, 64] {
+                    pixels.extend(v.to_be_bytes());
+                }
+                pixels.extend(0_i32.to_be_bytes());
+                for _ in 0..4096 {
+                    pixels.extend([20, 40, 60, 0]);
+                }
+                stream.write_all(&pixels).unwrap();
+                painted = true;
+            } else {
+                assert_eq!(data[0], 1);
+                incremental_tx.send(()).unwrap();
+                // Leave the idle incremental request unanswered to detect any
+                // new request storm after complete framebuffer coverage.
+                outstanding = true;
+            }
+        }
+    });
+    // None is explicitly allowed only for this synthetic loopback peer.
+    let (mut manager, profile) = manager(port);
+    let session = manager.open_live_vnc_session(profile, String::new()).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut covered = false;
+    let mut incremental_after_pixels = false;
+    let mut max_pending = 0;
+    let mut stable_since = None;
+    while Instant::now() < deadline {
+        manager.poll_events();
+        if let Some(diagnostics) = manager.active_vnc_diagnostics() {
+            covered = diagnostics.covered_pixels == 4096;
+            max_pending = max_pending.max(diagnostics.pending_updates);
+        }
+        incremental_after_pixels |= incremental_rx.try_recv().is_ok();
+        if covered && incremental_after_pixels {
+            let since = stable_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_millis(150) {
+                break;
+            }
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    let diagnostics = manager.active_vnc_diagnostics();
+    let complete_frame = manager.active_rdp_frame_if_newer(0).is_some_and(|frame| {
+        (frame.width, frame.height) == (64, 64)
+            && frame.rgba.as_chunks::<4>().0.iter().all(|p| *p == [20, 40, 60, 255])
+    });
+    manager.disconnect(session).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Disconnected
+    });
+    server.join().unwrap();
+    let requests = requests.lock().unwrap();
+    eprintln!("desktop metadata recovery requests={requests:?}; diagnostics={diagnostics:?}");
+    assert!(covered && complete_frame, "metadata loop prevented full coverage: {requests:?}");
+    assert!(incremental_after_pixels);
+    assert!(max_pending <= 1);
+    assert_eq!(requests.first().map(|r| r.0), Some(0));
+    assert!(requests.iter().filter(|r| r.0 == 0).count() <= 2);
+    assert_eq!(requests.last().map(|r| r.0), Some(1));
 }
 
 fn message(stream: &mut TcpStream) -> Option<(u8, Vec<u8>)> {
@@ -116,9 +350,10 @@ fn wait(manager: &mut SessionManager, mut ready: impl FnMut(&mut SessionManager)
         }
         assert!(
             Instant::now() < deadline,
-            "VNC timed out: {:?}, {:?}",
+            "VNC timed out: {:?}, {:?}, diagnostics={:?}",
             manager.active_session_summary(),
-            manager.active_desktop_error()
+            manager.active_desktop_error(),
+            manager.active_vnc_diagnostics()
         );
         thread::sleep(Duration::from_millis(5));
     }
@@ -335,6 +570,7 @@ fn real_vnc_server_authenticates_and_paints() {
     let password = std::env::var("ADIT_VNC_TEST_PASSWORD").unwrap();
     let (mut manager, id) = manager(port);
     let session = manager.open_live_vnc_session(id, password).unwrap();
+    eprintln!("real VNC: awaiting complete framebuffer");
     wait(&mut manager, |m| {
         m.active_session_summary().unwrap().status == SessionStatus::Connected
             // Tight can deliver the white input window before the red background.
@@ -354,6 +590,7 @@ fn real_vnc_server_authenticates_and_paints() {
     manager.send_vnc_key_to_active(0x61, true);
     manager.send_vnc_key_to_active(0x61, false);
     if let Ok(path) = std::env::var("ADIT_VNC_TEST_EVENTS") {
+        eprintln!("real VNC: awaiting target keyboard, button release and pointer events");
         wait(&mut manager, |_| {
             let events = std::fs::read_to_string(&path).unwrap_or_default();
             events.contains("keysym 0x61, a") && events.contains("ButtonRelease")

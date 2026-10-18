@@ -25,6 +25,15 @@ These are interoperability smoke samples, not the Windows weak-network matrix
 or reliable latency percentiles. They do not cover service mode, UAC, lock
 screens, physical keys, native IME, OS DPI, sleep, or physical NIC changes.
 
+`VNC Windows loopback baseline` extends this fixture to ten connections for
+each lossless/WAN-quality and static/scroll/drag combination. Its owned Tk
+target resets before each sample and records events consumed by the actual
+application and viewport movement. The probe's loopback-only
+`--synthetic-canary` option also checks two decoded color patches, so an opaque
+empty capture cannot pass. Raw probe and target records survive failures.
+This baseline is neither a physical LAN test nor controlled packet loss;
+the WAN label selects image quality only.
+
 ## SSH gateway and ordinary x11vnc
 
 ```powershell

@@ -2,7 +2,11 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Probe,
-    [Parameter(Mandatory)][string]$Results
+    [Parameter(Mandatory)][string]$Results,
+    [ValidateRange(1,10)][int]$Samples = 3,
+    [ValidateSet('static','scroll','drag')][string]$Workload = 'static',
+    [ValidateSet('lossless','wan')][string]$Quality = 'lossless',
+    [switch]$SyntheticLoad
 )
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
@@ -11,6 +15,7 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
     -not $env:RUNNER_NAME -or -not $env:RUNNER_TEMP -or -not $env:GITHUB_SHA) {
     throw 'Only a disposable GitHub-hosted Windows runner may execute this vendor fixture.'
 }
+if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
 $resultPath = [IO.Path]::GetFullPath($Results)
 $runnerTemp = [IO.Path]::GetFullPath($env:RUNNER_TEMP).TrimEnd([IO.Path]::DirectorySeparatorChar) + [IO.Path]::DirectorySeparatorChar
 if (-not $resultPath.StartsWith($runnerTemp, [StringComparison]::OrdinalIgnoreCase) -or
@@ -23,13 +28,19 @@ $work = Join-Path $env:RUNNER_TEMP ('adit-ultravnc-' + [guid]::NewGuid().ToStrin
 $utf8 = [Text.UTF8Encoding]::new($false)
 $port = 15911
 $server = $null
+$loadProcess = $null
+$pythonPath = $null
+$loadScript = $null
+$loadStateDir = Join-Path $work 'synthetic-state'
 $firewallRuleName = 'AditVncCiUdpBlock-' + [guid]::NewGuid().ToString('N')
 $firewallRuleOwned = $false
 $failed = $false
 $source = '0cd8b41aeb34e52e170b33e24411b3f805e303be'
 $record = [ordered]@{
     outcome = 'failed'; source_sha = $env:GITHUB_SHA; run_id = $env:GITHUB_RUN_ID
-    scope = 'UltraVNC 1.8.3.0 portable application on disposable Windows CI; 3 full-frame VncAuth samples and 1 wrong-password rejection only'
+    scope = "UltraVNC1.8.3.0 portable Windows hosted CI; $Samples $Quality/$Workload loopback samples plus1 wrong-password rejection; not impaired-network or service acceptance"
+    sample_count_requested = $Samples; workload = $Workload; quality = $Quality; synthetic_load = [bool]$SyntheticLoad
+    network = 'native loopback baseline; no RTT/bandwidth/loss shaping'
     runner = $env:RUNNER_NAME; os = [Environment]::OSVersion.VersionString
     target = "127.0.0.1:$port"; samples = @(); configuration_reference_commit = $source
     configuration_reference_note = 'Pinned official reference source explains INI/password/CLI semantics; it is not a claim that the downloaded vendor binary was built from this commit.'
@@ -48,8 +59,8 @@ $record = [ordered]@{
     )
     limitations = @(
         'Not a Windows workstation/service, UAC, lock/unlock, keyboard, clipboard, DPI, sleep or physical-interface acceptance.',
-        'Three loopback samples are smoke evidence, not the Windows weak-network matrix or latency percentiles.',
-        'Full framebuffer means opaque decoded pixels in production SessionManager, not GPU presentation or proof of desktop content.',
+        'Loopback samples are a baseline, not the Windows weak-network matrix, latency percentiles or physical input acceptance.',
+        'Full framebuffer means opaque decoded pixels in production SessionManager, not GPU presentation. SyntheticLoad additionally requires decoded public canary colors and real Tk input consumption.',
         'VncAuth is not transport encryption. Only a public synthetic fixture password is used.',
         'TCP RFB is loopback-only, but the official binary also binds a wildcard UDP echo on15911 independently of LoopbackOnly. This disposable CI adds one temporary exact-program/UDP-port inbound Block rule on all enabled firewall profiles; not all vendor sockets are loopback.',
         'The temporary UDP firewall rule is a CI containment measure, not a tested portable production configuration. No existing rule or profile is modified, no service is installed, and no user VM firewall is touched.',
@@ -119,7 +130,49 @@ function Assert-OwnedListeners {
     Assert-UdpFirewallBlock
     return @($tcp | Where-Object { $_.LocalAddress -eq '127.0.0.1' -and $_.LocalPort -eq $port }).Count -gt 0
 }
+function Read-LoadState([string]$Name) {
+    $path = Join-Path $loadStateDir $Name
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try { return [IO.File]::ReadAllText($path, $utf8) | ConvertFrom-Json -AsHashtable }
+    catch [IO.IOException] { return $null }
+}
+function Assert-LoadAlive {
+    $loadProcess.Refresh()
+    if ($loadProcess.HasExited) { throw "Synthetic target exited: $($loadProcess.ExitCode); inspect target stdout/stderr." }
+}
+function Reset-SyntheticLoad([int]$Index) {
+    Assert-LoadAlive
+    $state = Read-LoadState 'state.json'
+    if ($null -eq $state) { throw 'Synthetic target has no readable state before reset.' }
+    $generation = [long]$state.reset_generation
+    [IO.File]::WriteAllText((Join-Path $loadStateDir 'reset.request'), "$Index`n", $utf8)
+    $deadline = [DateTime]::UtcNow.AddSeconds(5)
+    while ([DateTime]::UtcNow -lt $deadline) {
+        Assert-LoadAlive
+        $ack = Read-LoadState 'reset-ack.json'
+        if ($null -ne $ack -and [long]$ack.reset_generation -gt $generation) {
+            if (-not $ack.ready -or $ack.closed -or -not $ack.focused -or
+                @($ack.counts.Values | Where-Object { $_ -ne 0 }).Count -ne 0) { throw 'Synthetic reset did not restore focused, empty input counters.' }
+            [IO.File]::WriteAllText((Join-Path $resultPath "load-$Index.reset.json"), ($ack | ConvertTo-Json -Depth 8) + "`n", $utf8)
+            return [long]$ack.reset_generation
+        }
+        Start-Sleep -Milliseconds 50
+    }
+    throw 'Synthetic reset acknowledgement did not advance within5s.'
+}
+function Test-ConsumedInput($State, [long]$Generation) {
+    if ($null -eq $State -or -not $State.ready -or $State.closed -or [long]$State.reset_generation -ne $Generation) { return $false }
+    $counts = $State.counts
+    switch ($Workload) {
+        'static' { return @($counts.Values | Where-Object { $_ -ne 0 }).Count -eq 0 }
+        'scroll' { return $counts.wheel_events -gt 0 -and $counts.viewport_changes -gt 0 }
+        'drag' { return $counts.button_press -gt 0 -and $counts.drag_motion -gt 0 -and $counts.button_release -gt 0 -and $counts.viewport_changes -gt 0 }
+    }
+    return $false
+}
 function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
+    $resetGeneration = 0L
+    if ($SyntheticLoad -and -not $WrongPassword) { $resetGeneration = Reset-SyntheticLoad $Index }
     $info = [Diagnostics.ProcessStartInfo]::new($script:probePath)
     $info.UseShellExecute = $false
     $info.CreateNoWindow = $true
@@ -128,7 +181,13 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
     $info.RedirectStandardError = $true
     $info.StandardOutputEncoding = $utf8
     $info.StandardErrorEncoding = $utf8
-    foreach ($argument in @('127.0.0.1', [string]$port, '15', '--steady-seconds=1')) { $info.ArgumentList.Add($argument) }
+    $steady = if ($SyntheticLoad -and -not $WrongPassword) { 3 } else { 1 }
+    foreach ($argument in @('127.0.0.1', [string]$port, '15', "--steady-seconds=$steady")) { $info.ArgumentList.Add($argument) }
+    if ($Quality -eq 'wan') { $info.ArgumentList.Add('--wan') }
+    if ($SyntheticLoad -and -not $WrongPassword) {
+        $info.ArgumentList.Add("--workload=$Workload")
+        $info.ArgumentList.Add('--synthetic-canary')
+    }
     $process = [Diagnostics.Process]::new()
     $process.StartInfo = $info
     $started = $false
@@ -139,13 +198,13 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
         $stderr = $process.StandardError.ReadToEndAsync()
         $process.StandardInput.WriteLine($Password)
         $process.StandardInput.Close()
-        $timedOut = -not $process.WaitForExit(23000)
+        $timedOut = -not $process.WaitForExit(25000)
         if ($timedOut) { $process.Kill($true); $process.WaitForExit() }
         $out = $stdout.GetAwaiter().GetResult()
         $err = $stderr.GetAwaiter().GetResult()
         [IO.File]::WriteAllText((Join-Path $resultPath "probe-$Index.stdout.txt"), $out, $utf8)
         [IO.File]::WriteAllText((Join-Path $resultPath "probe-$Index.stderr.txt"), $err, $utf8)
-        $sample = [ordered]@{ index = $Index; wrong_password = $WrongPassword; exit = $process.ExitCode; timed_out = $timedOut }
+        $sample = [ordered]@{ index = $Index; wrong_password = $WrongPassword; exit = $process.ExitCode; timed_out = $timedOut; workload = $(if ($WrongPassword) { 'static' } else { $Workload }); quality = $Quality }
         $complete = $out -match '(?m)^complete=true\r?$'
         if ($WrongPassword) {
             $sample.passed = -not $timedOut -and $process.ExitCode -ne 0 -and -not $complete -and
@@ -157,6 +216,23 @@ function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
             $sample.passed = -not $timedOut -and $process.ExitCode -eq 0 -and $complete -and
                 $connected.Success -and $first.Success -and $paint.Success -and
                 $out -match 'security: "VncAuth"' -and [int]$first.Groups[2].Value -gt 0 -and [int]$first.Groups[3].Value -gt 0
+            if ($SyntheticLoad) {
+                $sample.synthetic_canary = $out -match '(?m)^synthetic_canary=true\r?$'
+                $sample.reset_generation = $resetGeneration
+                $consumed = $false
+                $deadline = [DateTime]::UtcNow.AddSeconds(2)
+                do {
+                    Assert-LoadAlive
+                    $loadState = Read-LoadState 'state.json'
+                    $consumed = Test-ConsumedInput $loadState $resetGeneration
+                    if ($consumed) { break }
+                    Start-Sleep -Milliseconds 50
+                } while ([DateTime]::UtcNow -lt $deadline)
+                $sample.load_state = $loadState
+                $sample.tk_consumption_passed = $consumed
+                [IO.File]::WriteAllText((Join-Path $resultPath "load-$Index.final.json"), ($loadState | ConvertTo-Json -Depth 8) + "`n", $utf8)
+                $sample.passed = $sample.passed -and $sample.synthetic_canary -and $consumed
+            }
             if ($sample.passed) {
                 $sample.connected_ms = [long]$connected.Groups[1].Value
                 $sample.first_paint_ms = [long]$first.Groups[1].Value
@@ -181,6 +257,34 @@ try {
     $script:probePath = (Resolve-Path -LiteralPath $Probe).Path
     $record.probe_sha256 = (Get-FileHash -LiteralPath $probePath -Algorithm SHA256).Hash.ToLowerInvariant()
     $record.os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture
+    if ($SyntheticLoad) {
+        Write-Phase 'Start owned public synthetic Tk target; its fresh state directory is created only by Python'
+        $pythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
+        $loadScript = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-load.py')).Path
+        $record.load_script_sha256 = (Get-FileHash -LiteralPath $loadScript -Algorithm SHA256).Hash.ToLowerInvariant()
+        $loadProcess = Start-Process -FilePath $pythonPath -ArgumentList @('-u', ('"' + $loadScript + '"'), '--state-dir', ('"' + $loadStateDir + '"')) `
+            -RedirectStandardOutput (Join-Path $resultPath 'target.stdout.txt') -RedirectStandardError (Join-Path $resultPath 'target.stderr.txt') -WindowStyle Hidden -PassThru
+        $record.load_pid = $loadProcess.Id
+        $deadline = [DateTime]::UtcNow.AddSeconds(20)
+        $loadReady = $false
+        while ([DateTime]::UtcNow -lt $deadline) {
+            Assert-LoadAlive
+            $metadata = Read-LoadState 'ready.json'
+            if ($null -ne $metadata) {
+                $record.load_ready = $metadata
+                [IO.File]::WriteAllText((Join-Path $resultPath 'target.ready.json'), ($metadata | ConvertTo-Json -Depth 8) + "`n", $utf8)
+                if (-not $metadata.ready -or $metadata.closed -or -not $metadata.focused -or
+                    $metadata.geometry.width -ne 800 -or $metadata.geometry.height -ne 600 -or
+                    $metadata.geometry.x -ne 0 -or $metadata.geometry.y -ne 0 -or $metadata.pid -ne $loadProcess.Id) {
+                    throw 'Synthetic target ready metadata does not prove focused800x600 at0,0 with ownedPID.'
+                }
+                $loadReady = $true
+                break
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $loadReady) { throw 'Synthetic target did not become ready within20s.' }
+    }
     if (@(Get-Process winvnc -ErrorAction SilentlyContinue).Count -ne 0 -or
         @(Get-Service -Name '*uvnc*' -ErrorAction SilentlyContinue).Count -ne 0 -or
         @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue).Count -ne 0 -or
@@ -202,6 +306,7 @@ try {
         sha256 = (Get-FileHash -LiteralPath $serverPath -Algorithm SHA256).Hash.ToLowerInvariant(); mode = 'portable user application, never installed as service' }
     if ($record.server.version -notmatch '^1[.,]8[.,]3[.,]0(?:\D|$)') { throw 'Unexpected server file version in pinned archive.' }
     $ini = Join-Path $serverFolder 'ultravnc.ini'
+    $inputsEnabled = if ($SyntheticLoad) { 1 } else { 0 }
     @"
 [admin]
 UseRegistry=0
@@ -223,7 +328,7 @@ RequireMSLogonIII=0
 NewMSLogon=0
 UseDSMPlugin=0
 FileTransferEnabled=0
-InputsEnabled=0
+InputsEnabled=$inputsEnabled
 LocalInputsDisabled=0
 BlankMonitorEnabled=0
 LockSetting=0
@@ -300,13 +405,13 @@ public static class AditVncFixtureIni {
         Start-Sleep -Milliseconds 250
     }
     if (-not $ready) { throw 'No owned loopback RFB listener within25s; startup is not acceptance.' }
-    for ($sample = 1; $sample -le 3; $sample++) {
-        Write-Phase "Read-only full framebuffer sample $sample of3"
+    for ($sample = 1; $sample -le $Samples; $sample++) {
+        Write-Phase "Full framebuffer $Quality/$Workload sample $sample of$Samples; synthetic target=$SyntheticLoad"
         [void](Assert-OwnedListeners)
         Invoke-Probe $sample 'adit-ci' $false
     }
     Write-Phase 'Wrong password must explicitly fail authentication, not merely time out'
-    Invoke-Probe 4 'wrong-ci' $true
+    Invoke-Probe ($Samples + 1) 'wrong-ci' $true
     [void](Assert-OwnedListeners)
     $record.outcome = 'passed'
 } catch {
@@ -325,6 +430,25 @@ public static class AditVncFixtureIni {
             $record.server_cleanup = 'owned vendor process exited'
         } catch { $failed = $true; $record.outcome = 'failed'; $record.cleanup_error = $_.Exception.Message }
         $server.Dispose()
+    }
+    if ($null -ne $loadProcess) {
+        try {
+            if (Test-Path -LiteralPath (Join-Path $loadStateDir 'state.json')) {
+                Copy-Item -LiteralPath (Join-Path $loadStateDir 'state.json') -Destination (Join-Path $resultPath 'target.final.json')
+            }
+            $loadProcess.Refresh()
+            if (-not $loadProcess.HasExited) {
+                $owned = Get-CimInstance Win32_Process -Filter "ProcessId=$($loadProcess.Id)" -ErrorAction Stop
+                if (-not [string]::Equals($loadProcess.Path, $pythonPath, [StringComparison]::OrdinalIgnoreCase) -or
+                    $null -eq $owned -or [string]::IsNullOrEmpty($owned.CommandLine) -or
+                    $owned.CommandLine.IndexOf($loadScript, [StringComparison]::OrdinalIgnoreCase) -lt 0 -or
+                    $owned.CommandLine.IndexOf($loadStateDir, [StringComparison]::OrdinalIgnoreCase) -lt 0) { throw 'Synthetic target process ownership not proven; cleanup refused.' }
+                Stop-Process -InputObject $loadProcess -Force
+                if (-not $loadProcess.WaitForExit(5000)) { throw 'Owned synthetic target did not exit within5s.' }
+            }
+            $record.load_cleanup = 'owned Python target exited; identity/path and script/state arguments verified before termination'
+        } catch { $failed = $true; $record.outcome = 'failed'; $record.load_cleanup_error = $_.Exception.Message }
+        $loadProcess.Dispose()
     }
     if ($firewallRuleOwned) {
         try {

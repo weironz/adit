@@ -10,6 +10,7 @@ fn main() {
     let all_args: Vec<_> = std::env::args().collect();
     let wan = all_args.iter().any(|a| a == "--wan");
     let zrle = all_args.iter().any(|a| a == "--zrle");
+    let synthetic_canary = all_args.iter().any(|a| a == "--synthetic-canary");
     assert!(!(wan && zrle), "choose only one VNC quality mode");
     let steady = all_args
         .iter()
@@ -49,6 +50,10 @@ fn main() {
     );
     profile.vnc.read_only = workload == "static";
     profile.vnc.auto_reconnect = false;
+    assert!(
+        !synthetic_canary || matches!(args[1].as_str(), "127.0.0.1" | "localhost"),
+        "synthetic pixel checks are restricted to local isolated fixtures"
+    );
     if wan {
         profile.vnc.quality = adit_domain::VncQuality::Wan;
     } else if zrle {
@@ -67,6 +72,7 @@ fn main() {
     let mut connected = false;
     let mut first = false;
     let mut complete = false;
+    let mut canary_matches = !synthetic_canary;
     let mut complete_size = None;
     let mut connection_error = false;
     let mut completed_at: Option<Instant> = None;
@@ -128,6 +134,27 @@ fn main() {
                 complete_size = Some((frame.width, frame.height));
                 completed_at = Some(Instant::now());
                 input_at = Instant::now();
+                if synthetic_canary {
+                    // Fixed, solid overlays distinguish the actual synthetic
+                    // desktop from an opaque but empty capture. JPEG may vary
+                    // channels slightly, so sample well inside both squares.
+                    canary_matches = [
+                        ((40_usize, 40_usize), [224_u8, 48, 32]),
+                        ((670, 470), [32, 80, 224]),
+                    ]
+                    .into_iter()
+                    .all(|((x, y), expected)| {
+                        if x >= usize::from(frame.width) || y >= usize::from(frame.height) {
+                            return false;
+                        }
+                        let offset = (y * usize::from(frame.width) + x) * 4;
+                        frame.rgba[offset..offset + 3]
+                            .iter()
+                            .zip(expected)
+                            .all(|(&actual, wanted)| actual.abs_diff(wanted) <= 24)
+                    });
+                    println!("synthetic_canary={canary_matches}");
+                }
                 if let Some(path) = snapshot.take() {
                     let mut file = std::fs::File::create(path).unwrap();
                     write!(file, "P6\n{} {}\n255\n", frame.width, frame.height).unwrap();
@@ -196,7 +223,7 @@ fn main() {
     // The GUI stays alive after closing a tab; a stand-alone probe must also
     // give its worker time to flush key/button releases before process exit.
     std::thread::sleep(Duration::from_millis(600));
-    if !complete {
+    if !complete || !canary_matches {
         std::process::exit(1);
     }
 }

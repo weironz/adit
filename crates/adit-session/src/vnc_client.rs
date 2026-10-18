@@ -469,6 +469,15 @@ impl Worker {
         let mut pointer = Pointer::default();
         let mut keys = HashSet::new();
         let mut connected = false;
+        // The initial request is already on the wire. A metadata-only reply
+        // releases its credit but does not populate the desktop. TigerVNC sends
+        // layout metadata for every full request, so metadata must be followed
+        // by an incremental request to receive the pixels marked dirty by it.
+        // An incomplete pixel reply, however, needs another full request.
+        let mut refresh_ready = false;
+        let mut refresh_full = false;
+        let trace_flow = cfg!(debug_assertions)
+            && std::env::var_os("ADIT_VNC_TRACE_FLOW").is_some();
         let mut fence_supported = false;
         let mut fence_pending: Option<(u64, Instant)> = None;
         let mut next_fence = Instant::now();
@@ -531,6 +540,7 @@ impl Worker {
                 event = client.recv_event() => {
                     match event? {
                         VncEvent::SetResolution(screen) => {
+                            if trace_flow { eprintln!("vnc-flow resolution {}x{}", screen.width, screen.height); }
                             resize(&self.surface, screen.width, screen.height)?;
                             {
                                 let mut state = self.state.lock().unwrap();
@@ -543,10 +553,12 @@ impl Worker {
                             let _ = self.events.send(event);
                         }
                         VncEvent::RawImage(rect, mut rgba) => {
+                            if trace_flow { eprintln!("vnc-flow raw rect={},{},{}x{}", rect.x, rect.y, rect.width, rect.height); }
                             for pixel in rgba.as_chunks_mut::<4>().0 { pixel[3] = 255; }
                             self.paint(rect, &rgba, start);
                         }
                         VncEvent::JpegImage(rect, data) => {
+                            if trace_flow { eprintln!("vnc-flow jpeg rect={},{},{}x{} bytes={}", rect.x, rect.y, rect.width, rect.height, data.len()); }
                             let rgba = decode_jpeg(rect, data)?;
                             self.paint(rect, &rgba, start);
                         }
@@ -596,6 +608,10 @@ impl Worker {
                             state.diagnostics.encoding = format!("{:?}", stats.encodings);
                             state.diagnostics.first_complete_ms.get_or_insert(start.elapsed().as_millis() as u64);
                             state.diagnostics.status="已连接".into();
+                            if trace_flow { eprintln!("vnc-flow complete bytes={} encodings={:?} coverage={}/{}", stats.wire_bytes, stats.encodings, state.diagnostics.covered_pixels, state.diagnostics.framebuffer_pixels); }
+                            refresh_full = state.diagnostics.first_covered_ms.is_none()
+                                && stats.encodings.iter().any(|(encoding, count)| *encoding >= 0 && *count != 0);
+                            refresh_ready = client.pending_updates() == 0;
                         }
                         VncEvent::ClipboardCapabilities {utf8} => self.state.lock().unwrap().diagnostics.clipboard_utf8=utf8,
                         VncEvent::DesktopUpdate(update) => {
@@ -611,7 +627,12 @@ impl Worker {
                     }
                 }
                 _ = tick.tick() => {
-                    self.send_event(client,X11Event::Refresh).await?;
+                    if refresh_ready {
+                        refresh_ready = false;
+                        if client.pending_updates() == 0 {
+                            self.send_event(client, if refresh_full { X11Event::FullRefresh } else { X11Event::Refresh }).await?;
+                        }
+                    }
                     self.state.lock().unwrap().diagnostics.pending_updates = client.pending_updates();
                     if fence_pending.is_some_and(|(_, at)| at.elapsed() > Duration::from_secs(15)) {
                         return Err(std::io::Error::new(std::io::ErrorKind::TimedOut,"VNC Fence heartbeat timeout").into());

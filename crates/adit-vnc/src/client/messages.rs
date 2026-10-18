@@ -92,6 +92,13 @@ impl ClientMsg {
                 payload.extend_from_slice(&rect.width.to_be_bytes());
                 payload.extend_from_slice(&rect.height.to_be_bytes());
                 writer.write_all(&payload).await?;
+                #[cfg(debug_assertions)]
+                if std::env::var_os("ADIT_VNC_TRACE_FLOW").is_some() {
+                    eprintln!(
+                        "vnc-flow request incremental={incremental} rect={},{},{}x{}",
+                        rect.x, rect.y, rect.width, rect.height
+                    );
+                }
                 Ok(())
             }
             ClientMsg::Fence(flags, payload) => {

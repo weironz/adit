@@ -1,0 +1,64 @@
+name: VNC Windows loopback baseline
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-windows-matrix']
+    paths:
+      - '.github/workflows/vnc-windows-matrix.yml'
+      - 'tests/vnc/windows-server-smoke.ps1'
+      - 'tests/vnc/windows-load.py'
+      - 'crates/adit-session/examples/vnc_probe.rs'
+      - 'crates/adit-session/src/vnc_client.rs'
+      - 'crates/adit-session/tests/vnc.rs'
+      - 'crates/adit-vnc/**'
+      - 'crates/adit-domain/**'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: UltraVNC loopback (${{ matrix.quality }}, ${{ matrix.workload }})
+    runs-on: windows-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        quality: [lossless, wan]
+        workload: [static, scroll, drag]
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 2
+      ADIT_VNC_TRACE_FLOW: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify synthetic desktop runtime
+        shell: pwsh
+        run: python -c "import tkinter; print('Tk', tkinter.TkVersion)"
+      - name: Build current production SessionManager probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Ten fresh connections with decoded pixel and consumed-input evidence
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/adit-vnc-windows-result" -SyntheticLoad -Samples 10 -Quality '${{ matrix.quality }}' -Workload '${{ matrix.workload }}'
+      - name: Preserve every success and original failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-loopback-${{ matrix.quality }}-${{ matrix.workload }}
+          path: ${{ runner.temp }}/adit-vnc-windows-result
+          if-no-files-found: warn
