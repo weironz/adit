@@ -163,7 +163,7 @@ def collect_state():
     return {"active_connections": active, "results": results}
 
 
-def apply_control(request, current_mode, capture=collect_state, execute=snapshot):
+def apply_control(request, current_mode, capture=collect_state, execute=None):
     """Only fixed commands are accepted, and queued/live traffic is never flushed."""
     if (not isinstance(request, dict) or set(request) - {"id", "mode"}
             or type(request.get("id")) is not int or request["id"] <= 0):
@@ -172,8 +172,28 @@ def apply_control(request, current_mode, capture=collect_state, execute=snapshot
     if "mode" in request and requested not in MODES:
         raise ValueError("Unknown fixed network mode")
     response = {"id": request["id"], "ok": False, "mode": current_mode,
-                "requested_mode": requested, "before": None, "mutation": None,
+                "requested_mode": requested, "before": None, "reset": None, "mutation": None,
                 "relay_lifetime_seconds": RELAY_LIFETIME_SECONDS}
+
+    def change(field, argv):
+        response[field] = {"argv": argv, "exit": None, "stdout": "", "stderr": ""}
+        try:
+            if execute is None:
+                completed = subprocess.run(argv, capture_output=True, text=True, timeout=3, check=False)
+                response[field].update(exit=completed.returncode, stdout=completed.stdout, stderr=completed.stderr)
+            else:
+                response[field].update(execute(argv))
+            if response[field]["exit"] != 0:
+                raise RuntimeError("Fixed qdisc command failed")
+        except subprocess.TimeoutExpired as error:
+            response[field]["stdout"] = (error.stdout or b"").decode("utf-8", errors="replace") if isinstance(error.stdout, bytes) else (error.stdout or "")
+            response[field]["stderr"] = (error.stderr or b"").decode("utf-8", errors="replace") if isinstance(error.stderr, bytes) else (error.stderr or "")
+            response[field]["error"] = "Qdisc command exceeded3s"
+            raise
+        except Exception as error:
+            response[field]["error"] = f"{type(error).__name__}: {error}"
+            raise
+
     try:
         if requested is not None:
             response["before"] = capture()
@@ -182,9 +202,14 @@ def apply_control(request, current_mode, capture=collect_state, execute=snapshot
                 raise RuntimeError("Kernel TCP/relay/qdisc must be idle before replacing network mode")
             if requested == "baseline":
                 if any(item["kind"] == "netem" for item in before["qdiscs"]):
-                    response["mutation"] = execute(["tc", "qdisc", "del", "dev", "eth0", "root"])
+                    change("mutation", ["tc", "qdisc", "del", "dev", "eth0", "root"])
             else:
-                response["mutation"] = execute(["tc", "qdisc", "replace", "dev", "eth0", "root", "netem", *MODES[requested]])
+                if any(item["kind"] == "netem" for item in before["qdiscs"]):
+                    # netem replace inherits omitted rate/delay options. Only
+                    # after proven idle, remove it before creating a fresh mode.
+                    change("reset", ["tc", "qdisc", "del", "dev", "eth0", "root"])
+                    response["mode"] = "baseline"
+                change("mutation", ["tc", "qdisc", "replace", "dev", "eth0", "root", "netem", *MODES[requested]])
             response["mode"] = requested
         response.update(capture())
         response["ok"] = True

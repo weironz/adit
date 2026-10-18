@@ -78,6 +78,8 @@ jobs:
           python-version: '3.12'
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
       - name: Build actual production VNC probe
         run: cargo build -p adit-session --example vnc_probe --locked
       - uses: actions/upload-artifact@v4
