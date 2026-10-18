@@ -1,0 +1,25 @@
+{
+  "source_build": "bf0ac781313c3294896d67bb49410c7cb3ec2f07 local full just ci",
+  "binary_sha256": "b5be02f260a8a1543fffff7ee9b361fb28358cdf2cb4dfa9b8dab40b46a7590f",
+  "exit": 0,
+  "stdout": "\nrunning 1 test\ntest real_resize_is_opt_in_and_both_shared_clients_follow_changes ... ok\n\ntest result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.88s\n\n",
+  "stderr": "",
+  "fixture_preparation": "existing stopped container initially lacked startup script; initial readiness failed without executing test. Current tracked start-resize.sh copied into this owned container, then real Tiger readiness confirmed.",
+  "date": "2026-10-18",
+  "issue": 213,
+  "scope": "actual TigerVNC controller/observer shared single-screen resize; headless production SessionManager",
+  "source_sha": "bf0ac781313c3294896d67bb49410c7cb3ec2f07",
+  "current_tree_sha": "f3a49ba7734a53127a4062d8a3d5d46af62ebfce",
+  "source_note": "Test binary was built by the complete local just ci on bf0ac78; later f3a49ba changes evidence only. Native UI example was separately rebuilt on f3a49ba.",
+  "fixture": "owned Docker adit-vnc-resize, loopback127.0.0.1:15908, real TigerVNC, public synthetic credential",
+  "assertions": [
+    "Default local scaling does not resize server.",
+    "Explicitly enabled controller resizes800x600 to1024x768 and both clients receive full opaque frames.",
+    "Observer changes back to800x600 and controller follows.",
+    "Same-size requests leave the session connected; pending updates remain bounded."
+  ],
+  "limitations": [
+    "Does not exercise Windows native border dragging or OS DPI changes.",
+    "Initial missing-script fixture preparation failure is recorded; not counted as a passed test."
+  ]
+}
