@@ -34,6 +34,16 @@ jobs:
         timeout-minutes: 2
         shell: powershell
         run: ./tests/vnc/windows-desktop-capabilities.ps1 -Results "$env:RUNNER_TEMP/vnc-autonomous-capabilities"
+      - name: Verify actual OS DPI through supported Settings controls and restore 100 percent
+        timeout-minutes: 3
+        shell: powershell
+        run: |
+          try {
+            ./tests/vnc/windows-native-dpi.ps1 -Scale 150 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-150.json"
+            ./tests/vnc/windows-native-dpi.ps1 -Scale 200 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-200.json"
+          } finally {
+            ./tests/vnc/windows-native-dpi.ps1 -Scale 100 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-restored-100.json"
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
