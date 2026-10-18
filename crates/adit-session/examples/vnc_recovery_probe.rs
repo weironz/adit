@@ -30,7 +30,8 @@ fn marker(dir: &Path, name: &str, start: Instant) -> io::Result<()> {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() != 4 {
+    let synthetic_none = args.get(4).is_some_and(|value| value == "--synthetic-none");
+    if args.len() != 4 && !(args.len() == 5 && synthetic_none) {
         return Err(
             "usage: vnc_recovery_probe private-ip port owned-marker-dir; password on stdin".into(),
         );
@@ -48,6 +49,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut profile =
         ConnectionProfile::new("isolated network recovery", &args[1], args[2].parse()?, "");
     profile.protocol = Protocol::Vnc;
+    if synthetic_none {
+        if !ip.is_loopback() {
+            return Err("synthetic None acceptance requires loopback".into());
+        }
+        profile.vnc.security = adit_domain::VncSecurity::AllowNone;
+    }
     profile.vnc.read_only = true;
     profile.vnc.clipboard_send = false;
     profile.vnc.clipboard_receive = false;
@@ -115,13 +122,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let diagnostics = manager
                 .active_vnc_diagnostics()
                 .ok_or("missing diagnostics")?;
-            assert_eq!(diagnostics.security, "VncAuth");
+            assert_eq!(
+                diagnostics.security,
+                if synthetic_none { "None" } else { "VncAuth" }
+            );
             assert!(
                 diagnostics.encoding.contains("(16,"),
                 "ZRLE policy was not preserved"
             );
             assert!(diagnostics.pending_updates <= 1);
-            println!("recovered_policy=VncAuth,ZRLE,readonly; session_count=1");
+            println!(
+                "recovered_policy={},ZRLE,readonly; session_count=1",
+                diagnostics.security
+            );
             marker(dir, "recovered", start)?;
         } else if recovered && connected && solid(&manager, [0, 255, 0]) {
             assert!(manager.active_vnc_read_only());
