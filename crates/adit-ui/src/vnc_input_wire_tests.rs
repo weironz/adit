@@ -107,6 +107,16 @@ fn press(key: Key, physical: keyboard::key::Code, modifiers: keyboard::Modifiers
     })
 }
 
+fn release(key: Key, physical: keyboard::key::Code) -> Message {
+    Message::KeyboardInput(keyboard::Event::KeyReleased {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: keyboard::key::Physical::Code(physical),
+        location: keyboard::Location::Standard,
+        modifiers: keyboard::Modifiers::empty(),
+    })
+}
+
 #[test]
 fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     use iced::advanced::input_method::Event as Ime;
@@ -167,6 +177,29 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     }
     app.main_view = MainView::Terminal;
     app.terminal_focused = true;
+    let _ = update(&mut app, release(Key::Character("q".into()), Code::KeyQ));
+    // Windows dead-key composition can emit several scalars in one key event,
+    // then a normal physical release. Its transient pairs already own key-up.
+    let mut composed = press(
+        Key::Character("e".into()),
+        Code::KeyE,
+        keyboard::Modifiers::empty(),
+    );
+    if let Message::KeyboardInput(keyboard::Event::KeyPressed { text, .. }) = &mut composed {
+        *text = Some("e\u{301}".into());
+    }
+    let _ = update(&mut app, composed);
+    let _ = update(&mut app, release(Key::Character("e".into()), Code::KeyE));
+    // A real owned physical release still reaches the peer exactly once.
+    let _ = update(
+        &mut app,
+        press(
+            Key::Character("q".into()),
+            Code::KeyQ,
+            keyboard::Modifiers::empty(),
+        ),
+    );
+    let _ = update(&mut app, release(Key::Character("q".into()), Code::KeyQ));
     let epoch = app.vnc_input_epoch;
     let _ = update(
         &mut app,
@@ -178,6 +211,7 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
         Message::VncImeEvent(second, epoch, Ime::Commit(text.into())),
     );
     let _ = update(&mut app, Message::ToggleMenu(MenuKind::File));
+    let _ = update(&mut app, release(Key::Named(Named::Shift), Code::ShiftLeft));
     let _ = update(&mut app, Message::ToggleMenu(MenuKind::File));
     let _ = update(
         &mut app,
@@ -226,6 +260,41 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
         Message::VncImeEvent(second, background_epoch, Ime::Commit("后台".into())),
     );
     let _ = update(&mut app, Message::WindowFocused);
+    let _ = update(&mut app, release(Key::Named(Named::Shift), Code::ShiftLeft));
+    // A toolbar fullscreen switch shares the shipping dispatcher. Build the
+    // captured-state precondition without installing a global hook or injecting
+    // any Windows key; the peer must observe the release before the next key.
+    app.vnc_grab_keys = true;
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::Shift),
+            Code::ShiftLeft,
+            keyboard::Modifiers::SHIFT,
+        ),
+    );
+    let _ = update(&mut app, Message::ToggleFullscreen);
+    assert!(app.fullscreen);
+    assert!(
+        !app.vnc_grab_keys,
+        "fullscreen must not retain a disarmed VNC grab"
+    );
+    assert!(app.vnc_pressed_keys.is_empty());
+    assert!(keyboard_hook::drain().is_empty());
+    app.vnc_grab_keys = true;
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::Control),
+            Code::ControlRight,
+            keyboard::Modifiers::CTRL,
+        ),
+    );
+    let _ = update(&mut app, Message::ToggleFullscreen);
+    assert!(!app.fullscreen);
+    assert!(!app.vnc_grab_keys);
+    assert!(app.vnc_pressed_keys.is_empty());
+    assert!(keyboard_hook::drain().is_empty());
     let current_epoch = app.vnc_input_epoch;
     let _ = update(
         &mut app,
@@ -242,8 +311,9 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
             break;
         }
     }
-    let mut expected: Vec<_> = text
+    let mut expected: Vec<_> = "e\u{301}q"
         .chars()
+        .chain(text.chars())
         .flat_map(|ch| {
             let symbol = adit_session::unicode_keysym(ch);
             [(1, symbol, true), (1, symbol, false)]
@@ -252,6 +322,10 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     expected.extend([
         (1, 0xffe1, true),
         (1, 0xffe1, false),
+        (1, 0xffe1, true),
+        (1, 0xffe1, false),
+        (1, 0xffe4, true),
+        (1, 0xffe4, false),
         (1, adit_session::unicode_keysym('☃'), true),
         (1, adit_session::unicode_keysym('☃'), false),
     ]);

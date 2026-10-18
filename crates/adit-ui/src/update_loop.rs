@@ -2118,6 +2118,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ToggleFullscreen => {
+            // The RDP fullscreen policy below disarms the hook for VNC. End
+            // that grab's ownership first, including keys already forwarded;
+            // otherwise the toolbar remains active while Windows owns the keys.
+            if app.manager.active_is_vnc() {
+                release_rdp_modifiers(app);
+            }
             app.fullscreen = !app.fullscreen;
             // Collapsed either way. Fullscreen over a desktop now hides the tab
             // strip and the status bar as well, so an expanded bar would be the

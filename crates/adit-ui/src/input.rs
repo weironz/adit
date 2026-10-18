@@ -234,6 +234,12 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
         .vnc_pressed_keys
         .iter()
         .position(|(code, _)| *code == physical);
+    // A local field may have owned the press, or focus cleanup / composition
+    // may already have released it. Do not manufacture an unowned key-up on a
+    // shared desktop from the current layout's logical symbol.
+    if !pressed && tracked.is_none() {
+        return;
+    }
     let keysym = if let Some(index) = tracked {
         let keysym = app.vnc_pressed_keys[index].1;
         if !pressed {
