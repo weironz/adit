@@ -98,6 +98,9 @@ def main():
         ["ip", "route", "get", "10.0.2.2"], ["tc", "-s", "-j", "qdisc", "show", "dev", "eth0"],
         ["cat", "/proc/net/snmp"],
     )]
+    # Preserve the actual kernel/tool output before a strict policy assertion
+    # can terminate PID1; a failed ready must not hide the evidence it checked.
+    emit({"event": "network_snapshot", "snapshots": snapshots})
     if "default" in snapshots[1]["stdout"] or os.path.exists("/etc/resolv.conf"):
         raise RuntimeError("No guest default route or DNS configuration permitted")
     routes = snapshots[1]["stdout"].splitlines()
