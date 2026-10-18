@@ -23,7 +23,8 @@ $work = Join-Path $env:RUNNER_TEMP ('adit-ultravnc-' + [guid]::NewGuid().ToStrin
 $utf8 = [Text.UTF8Encoding]::new($false)
 $port = 15911
 $server = $null
-$reservation = $null
+$firewallRuleName = 'AditVncCiUdpBlock-' + [guid]::NewGuid().ToString('N')
+$firewallRuleOwned = $false
 $failed = $false
 $source = '0cd8b41aeb34e52e170b33e24411b3f805e303be'
 $record = [ordered]@{
@@ -32,6 +33,8 @@ $record = [ordered]@{
     runner = $env:RUNNER_NAME; os = [Environment]::OSVersion.VersionString
     target = "127.0.0.1:$port"; samples = @(); configuration_reference_commit = $source
     configuration_reference_note = 'Pinned official reference source explains INI/password/CLI semantics; it is not a claim that the downloaded vendor binary was built from this commit.'
+    previous_failed_run = 'https://github.com/weironz/adit/actions/runs/39132780089'
+    previous_failure_note = 'Exact pinned archive started a wildcard UDP listener despite exclusive loopback reservation. No client sample ran; failure remains failed evidence, not compatibility acceptance.'
     sources = @(
         'https://uvnc.com/downloads/ultravnc/172-ultravnc-1-8-3-0.html',
         'https://uvnc.com/docs/ultravnc-server/69-ultravnc-ini.html',
@@ -39,14 +42,17 @@ $record = [ordered]@{
         "https://github.com/ultravnc/UltraVNC/blob/$source/common/inifile.cpp",
         "https://github.com/ultravnc/UltraVNC/blob/$source/winvnc/winvnc/vncauth.c",
         "https://github.com/ultravnc/UltraVNC/blob/$source/winvnc/winvnc/winvnc.cpp",
-        "https://github.com/ultravnc/UltraVNC/blob/$source/winvnc/winvnc/UdpEchoServer.cpp"
+        "https://github.com/ultravnc/UltraVNC/blob/$source/winvnc/winvnc/UdpEchoServer.cpp",
+        'https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule',
+        'https://learn.microsoft.com/en-us/powershell/module/netsecurity/get-netfirewallrule'
     )
     limitations = @(
         'Not a Windows workstation/service, UAC, lock/unlock, keyboard, clipboard, DPI, sleep or physical-interface acceptance.',
         'Three loopback samples are smoke evidence, not the Windows weak-network matrix or latency percentiles.',
         'Full framebuffer means opaque decoded pixels in production SessionManager, not GPU presentation or proof of desktop content.',
         'VncAuth is not transport encryption. Only a public synthetic fixture password is used.',
-        'Upstream enables a wildcard UDP echo independently of LoopbackOnly. An exclusive loopback-only UDP reservation attempts to prevent that unused listener; unexpected vendor non-loopback endpoints fail the fixture.',
+        'TCP RFB is loopback-only, but the official binary also binds a wildcard UDP echo on15911 independently of LoopbackOnly. This disposable CI adds one temporary exact-program/UDP-port inbound Block rule on all enabled firewall profiles; not all vendor sockets are loopback.',
+        'The temporary UDP firewall rule is a CI containment measure, not a tested portable production configuration. No existing rule or profile is modified, no service is installed, and no user VM firewall is touched.',
         'The hosted runner may not expose a capturable interactive desktop. A startup/listener alone never passes this test.'
     )
 }
@@ -58,6 +64,40 @@ function Write-Phase([string]$Message) {
     [IO.File]::AppendAllText((Join-Path $resultPath 'runner.log'), $line + "`n", $utf8)
     Write-Host $line
 }
+function Assert-UdpFirewallBlock {
+    $profiles = @(Get-NetFirewallProfile -PolicyStore ActiveStore -ErrorAction Stop)
+    $rule = @(Get-NetFirewallRule -PolicyStore ActiveStore -Name $firewallRuleName -ErrorAction Stop)
+    if ($rule.Count -ne 1) { throw 'Owned UDP block is not unique in the effective firewall policy.' }
+    $ports = @($rule[0] | Get-NetFirewallPortFilter -ErrorAction Stop)
+    $applications = @($rule[0] | Get-NetFirewallApplicationFilter -ErrorAction Stop)
+    $services = @(Get-Service -Name MpsSvc, BFE -ErrorAction Stop)
+    $snapshot = [ordered]@{
+        rule = $rule | Select-Object Name, Enabled, Direction, Action, Profile, PrimaryStatus, EnforcementStatus, PolicyStoreSourceType
+        ports = @($ports | Select-Object Protocol, LocalPort, RemotePort)
+        applications = @($applications | Select-Object Program)
+        profiles = @($profiles | Select-Object Name, Enabled, AllowLocalFirewallRules)
+        services = @($services | Select-Object Name, Status)
+    }
+    [IO.File]::WriteAllText((Join-Path $resultPath 'udp-firewall.json'), ($snapshot | ConvertTo-Json -Depth 8) + "`n", $utf8)
+    foreach ($profileName in @('Domain', 'Private', 'Public')) {
+        $profile = @($profiles | Where-Object { $_.Name -eq $profileName })
+        if ($profile.Count -ne 1 -or [string]$profile[0].Enabled -ne 'True' -or
+            [string]$profile[0].AllowLocalFirewallRules -eq 'False') {
+            throw "Cannot establish enabled effective firewall and permitted local rules for $profileName profile."
+        }
+    }
+    if ($services.Count -ne 2 -or @($services | Where-Object { $_.Status -ne 'Running' }).Count -ne 0 -or
+        [string]$rule[0].Enabled -ne 'True' -or [string]$rule[0].Direction -ne 'Inbound' -or
+        [string]$rule[0].Action -ne 'Block' -or [string]$rule[0].Profile -ne 'Any' -or
+        [string]$rule[0].PrimaryStatus -ne 'OK' -or
+        $ports.Count -ne 1 -or [string]$ports[0].Protocol -notin @('UDP', '17') -or
+        @($ports[0].LocalPort).Count -ne 1 -or [string]$ports[0].LocalPort -ne [string]$port -or
+        $applications.Count -ne 1 -or
+        -not [string]::Equals([string]$applications[0].Program, $serverPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Owned effective firewall rule does not prove the exact enabled program/UDP15911 inbound block.'
+    }
+    $record.udp_firewall_rule = $firewallRuleName
+}
 function Assert-OwnedListeners {
     $tcp = @(Get-NetTCPConnection -OwningProcess $server.Id -State Listen -ErrorAction SilentlyContinue)
     $udp = @(Get-NetUDPEndpoint -OwningProcess $server.Id -ErrorAction SilentlyContinue)
@@ -66,11 +106,17 @@ function Assert-OwnedListeners {
         udp = @($udp | Select-Object LocalAddress, LocalPort, OwningProcess)
     }
     [IO.File]::WriteAllText((Join-Path $resultPath 'listeners.json'), ($snapshot | ConvertTo-Json -Depth 5) + "`n", $utf8)
-    foreach ($endpoint in @($tcp) + @($udp)) {
+    foreach ($endpoint in $tcp) {
         if ($endpoint.LocalAddress -notin @('127.0.0.1', '::1') -or $endpoint.LocalPort -ne $port) {
-            throw "Unexpected vendor endpoint: $($endpoint.LocalAddress):$($endpoint.LocalPort)"
+            throw "Unexpected vendor TCP endpoint: $($endpoint.LocalAddress):$($endpoint.LocalPort)"
         }
     }
+    foreach ($endpoint in $udp) {
+        if ($endpoint.LocalPort -ne $port -or $endpoint.LocalAddress -notin @('0.0.0.0', '127.0.0.1')) {
+            throw "Unexpected vendor UDP endpoint: $($endpoint.LocalAddress):$($endpoint.LocalPort)"
+        }
+    }
+    Assert-UdpFirewallBlock
     return @($tcp | Where-Object { $_.LocalAddress -eq '127.0.0.1' -and $_.LocalPort -eq $port }).Count -gt 0
 }
 function Invoke-Probe([int]$Index, [string]$Password, [bool]$WrongPassword) {
@@ -231,11 +277,18 @@ public static class AditVncFixtureIni {
         [Convert]::ToHexString($readback) -ne [Convert]::ToHexString($encrypted)) { throw 'Native password structure readback failed.' }
     $record.password_format = 'Public synthetic adit-ci, zero-padded8; fixed-key VNC DES with reversed key bits; Win32 Write/GetPrivateProfileStruct8-byte readback verified; never argv/env.'
     Copy-Item -LiteralPath $ini -Destination (Join-Path $resultPath 'fixture.ini')
-    $reservation = [Net.Sockets.Socket]::new([Net.Sockets.AddressFamily]::InterNetwork, [Net.Sockets.SocketType]::Dgram, [Net.Sockets.ProtocolType]::Udp)
-    $reservation.ExclusiveAddressUse = $true
-    $reservation.Bind([Net.IPEndPoint]::new([Net.IPAddress]::Loopback, $port))
-    $record.udp_reservation = 'exclusive127.0.0.1:15911, no receive/send; blocks upstream wildcard echo if Windows exclusivity applies'
-    Write-Phase 'Start portable user-mode server with explicit private INI; no installer/service/firewall action'
+    # The official binary unconditionally starts UDP echo and ignores LoopbackOnly
+    # for that socket. Contain only this new CI executable/UDP port before launch.
+    if (@(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop | Where-Object { $_.Name -eq $firewallRuleName }).Count -ne 0) {
+        throw 'Generated firewall name unexpectedly exists; refusing to modify it.'
+    }
+    Write-Phase 'Create and verify one owned exact-program UDP15911 inbound block; existing profiles/rules remain unchanged'
+    $firewallRuleOwned = $true
+    [void](New-NetFirewallRule -PolicyStore PersistentStore -Name $firewallRuleName -DisplayName $firewallRuleName `
+        -Description 'Disposable Adit hosted-CI UltraVNC echo containment; removed after owned process exits.' `
+        -Program $serverPath -Protocol UDP -LocalPort $port -Direction Inbound -Action Block -Profile Any -Enabled True -ErrorAction Stop)
+    Assert-UdpFirewallBlock
+    Write-Phase 'Start portable user-mode server with explicit private INI; no installer or service action'
     $server = Start-Process -FilePath $serverPath -ArgumentList @('-config', ('"' + $ini + '"'), '-run') -WorkingDirectory $serverFolder -WindowStyle Hidden -PassThru
     $record.server.pid = $server.Id
     $ready = $false
@@ -267,15 +320,24 @@ public static class AditVncFixtureIni {
             if (-not $server.HasExited) {
                 if ($server.Path -ne $serverPath) { throw 'Owned process identity changed; cleanup refused.' }
                 Stop-Process -InputObject $server -Force
-                [void]$server.WaitForExit(5000)
+                if (-not $server.WaitForExit(5000)) { throw 'Owned vendor process did not exit within5s.' }
             }
             $record.server_cleanup = 'owned vendor process exited'
         } catch { $failed = $true; $record.outcome = 'failed'; $record.cleanup_error = $_.Exception.Message }
         $server.Dispose()
     }
-    if ($null -ne $reservation) { $reservation.Dispose() }
+    if ($firewallRuleOwned) {
+        try {
+            if ($record.Contains('cleanup_error')) { throw 'Vendor shutdown unproven; retaining the owned protective block until runner disposal.' }
+            Remove-NetFirewallRule -PolicyStore PersistentStore -Name $firewallRuleName -ErrorAction Stop
+            $remainingPersistent = @(Get-NetFirewallRule -PolicyStore PersistentStore -ErrorAction Stop | Where-Object { $_.Name -eq $firewallRuleName })
+            $remainingActive = @(Get-NetFirewallRule -PolicyStore ActiveStore -ErrorAction Stop | Where-Object { $_.Name -eq $firewallRuleName })
+            if ($remainingPersistent.Count -ne 0 -or $remainingActive.Count -ne 0) { throw 'Owned firewall rule remains after exact-name cleanup.' }
+            $record.firewall_cleanup = 'exact owned GUID rule removed after owned server exit; PersistentStore and ActiveStore absence verified'
+        } catch { $failed = $true; $record.outcome = 'failed'; $record.firewall_cleanup_error = $_.Exception.Message }
+    }
     # All temporary vendor files belong to this ephemeral runner; no user path is
-    # deleted and no service or firewall configuration was installed or changed.
+    # deleted, no service/profile is changed, and only our one rule is removed.
     Write-Evidence
 }
 if ($failed) { throw 'Windows VNC smoke failed; inspect retained result and raw logs.' }

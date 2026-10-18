@@ -10,8 +10,12 @@ No screen or clipboard from the user's actual desktop is captured.
 The `VNC Windows vendor smoke` GitHub workflow runs the portable UltraVNC
 1.8.3.0 server on a disposable Windows runner. It builds the current
 `vnc_probe`, verifies the official archive's SHA-256, and uses only public
-synthetic credentials with loopback listeners. The script refuses local use;
-it does not install a service or change the developer's firewall or desktop.
+synthetic credentials with loopback TCP listeners. UltraVNC also opens a UDP
+echo socket independently of its loopback option, so the disposable runner
+blocks inbound UDP on that executable and fixture port with a temporary,
+verified firewall rule. The fixture stops the owned server before removing
+only that rule. The script refuses local use; it does not install a service
+or change the developer's firewall or desktop.
 
 Run it from Actions with `workflow_dispatch`. The evidence artifact retains
 the exact source and executable hashes, server/OS versions, raw probe output,
