@@ -1,10 +1,12 @@
 param(
     [Parameter(Mandatory)][string]$Guest,
     [Parameter(Mandatory)][string]$Results,
-    [ValidateSet('echo','cmd-probe')][string]$Mode = 'echo'
+    [ValidateSet('echo','cmd-probe')][string]$Mode = 'echo',
+    [switch]$MatchingHelpers
 )
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') { throw 'Disposable Windows GitHub runner only' }
+if ($MatchingHelpers -and $Mode -ne 'cmd-probe') { throw 'Matching helpers are restricted to the fake-only cmd-probe experiment' }
 $sources = Get-Content -LiteralPath "$PSScriptRoot/sources.json" -Raw | ConvertFrom-Json
 $toolsRoot = Join-Path $env:RUNNER_TEMP 'adit-netem-qemu-tools'
 if (Test-Path -LiteralPath $toolsRoot) { throw 'Fresh tools directory required' }
@@ -20,6 +22,9 @@ $signature = Get-AuthenticodeSignature -LiteralPath $installer
 if ($LASTEXITCODE -ne 0) { throw "QEMU extraction failed: $LASTEXITCODE" }
 $qemu = @(Get-ChildItem -LiteralPath (Join-Path $toolsRoot 'extracted') -Filter qemu-system-x86_64.exe -File -Recurse)
 if ($qemu.Count -ne 1) { throw 'Expected exactly one extracted x86_64 system emulator' }
+if ($MatchingHelpers) {
+    & "$PSScriptRoot/matching_helpers.ps1" -Qemu $qemu[0].FullName
+}
 & $qemu[0].FullName --version | Out-File -LiteralPath (Join-Path $toolsRoot 'qemu-version.txt') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "QEMU version failed: $LASTEXITCODE" }
 if ($Mode -eq 'cmd-probe') {
