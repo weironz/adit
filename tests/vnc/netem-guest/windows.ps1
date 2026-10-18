@@ -1,4 +1,12 @@
-param([Parameter(Mandatory)][string]$Guest, [Parameter(Mandatory)][string]$Results)
+param(
+    [Parameter(Mandatory)][string]$Guest,
+    [Parameter(Mandatory)][string]$Results,
+    [ValidateSet('echo','vnc')][string]$Mode = 'echo',
+    [string]$Probe,
+    [ValidateRange(1,10)][int]$Samples = 1,
+    [ValidateSet('lossless','wan')][string]$Quality = 'lossless',
+    [ValidateSet('static','scroll','drag')][string]$Workload = 'static'
+)
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or $env:RUNNER_ENVIRONMENT -ne 'github-hosted' -or $env:RUNNER_OS -ne 'Windows') { throw 'Disposable Windows GitHub runner only' }
 $sources = Get-Content -LiteralPath "$PSScriptRoot/sources.json" -Raw | ConvertFrom-Json
@@ -18,5 +26,10 @@ $qemu = @(Get-ChildItem -LiteralPath (Join-Path $toolsRoot 'extracted') -Filter 
 if ($qemu.Count -ne 1) { throw 'Expected exactly one extracted x86_64 system emulator' }
 & $qemu[0].FullName --version | Out-File -LiteralPath (Join-Path $toolsRoot 'qemu-version.txt') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "QEMU version failed: $LASTEXITCODE" }
-& python "$PSScriptRoot/run.py" --qemu $qemu[0].FullName --guest $Guest --results $Results
+if ($Mode -eq 'vnc') {
+    if ([string]::IsNullOrWhiteSpace($Probe)) { throw 'VNC mode requires a production probe.' }
+    & python "$PSScriptRoot/vnc_run.py" --qemu $qemu[0].FullName --guest $Guest --results $Results --probe $Probe --samples $Samples --quality $Quality --workload $Workload
+} else {
+    & python "$PSScriptRoot/run.py" --qemu $qemu[0].FullName --guest $Guest --results $Results
+}
 if ($LASTEXITCODE -ne 0) { throw "Packet-path PoC failed: $LASTEXITCODE" }
