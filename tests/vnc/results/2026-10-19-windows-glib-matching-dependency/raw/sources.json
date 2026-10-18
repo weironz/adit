@@ -1,0 +1,33 @@
+{
+  "package_url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst",
+  "signature_url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst.sig",
+  "package_version": "2.88.3-1",
+  "package_repository": "mingw64",
+  "package_expected_prepublished_checksum": null,
+  "keyring_commit": "5d249077a0cfeec9dbf51515e5e01da413d28859",
+  "keyring_urls": [
+    "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2.gpg",
+    "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2-trusted",
+    "https://raw.githubusercontent.com/msys2/MSYS2-keyring/5d249077a0cfeec9dbf51515e5e01da413d28859/msys2-revoked"
+  ],
+  "official_master_fingerprints": [
+    "D55E7A6D7CE9BA1587C0ACACF40D263ECA25678A",
+    "B91BCF3303284BF90CC043CA9F418C233E652008",
+    "9DD0D4217D75A33B896159E6DA7EF2ABAEEA755C",
+    "6E8FEAFF9644F54EED90EEA0790AE56A1D3CFDDC",
+    "69985C5EB351011C78DF7F6D755B8182ACD22879"
+  ],
+  "expected_developer_signer": "5F944B027F7FE2091985AA2EFA11531AA0AA7F57",
+  "pkgbuild_commit": "716ee21e59851aa4d15e34c8353580334276b0e6",
+  "pkgbuild_url": "https://raw.githubusercontent.com/msys2/MINGW-packages/716ee21e59851aa4d15e34c8353580334276b0e6/mingw-w64-glib2/PKGBUILD",
+  "upstream_source_url": "https://download.gnome.org/sources/glib/2.88/glib-2.88.3.tar.xz",
+  "license_reference": "LGPL-2.1-or-later; signed package COPYING and pinned PKGBUILD archived as metadata",
+  "qemu_reference_run": 39150021676,
+  "qemu_reference_source_sha": "0ae745c50b73e7f7cc220a70c8907ce5dae04bfa",
+  "qemu_reference_glib_dll_sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+  "trust_bootstrap": "Only the five official master fingerprints from the pinned msys2-trusted file are explicit GPG trust anchors (--trusted-key). Default GPG trust calculation/current time must validate the developer signer as TRUST_FULLY. No trust-model override or developer-key trust elevation. Official HTTPS commit content is the bootstrap source, not an independent out-of-band identity attestation.",
+  "references": [
+    "https://www.msys2.org/dev/keyring/",
+    "https://www.gnupg.org/documentation/manuals/gnupg/GPG-Configuration-Options.html"
+  ]
+}

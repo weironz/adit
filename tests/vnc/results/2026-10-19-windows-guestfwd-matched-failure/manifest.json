@@ -1,0 +1,167 @@
+{
+  "run_id": 39151818574,
+  "host_source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+  "artifact": {
+    "id": 12144524688,
+    "name": "vnc-guestfwd-matching-helpers-fake-only",
+    "github_reported_archive_digest": "sha256:cfed9c4db9c4c0f3f59d097611124d5027c72e66936ca085ea1ab284bcfc51bf",
+    "digest_note": "GitHub API reported digest. Original ZIP bytes were not retained; the extracted original download bytes and normalized stored bytes are independently hashed in manifest.json.",
+    "github_reported_archive_bytes": 24788
+  },
+  "raw_allowlist_file_count": 11,
+  "source_file_count": 4,
+  "raw_files": [
+    {
+      "download_relative_path": "adit-guestfwd-matched/qemu-stderr.txt",
+      "download_sha256": "944c29376029dc7a0a85b0ec5120c0206558159caa9b646df6196f2377ec0937",
+      "download_bytes": 322,
+      "stored_path": "raw/adit-guestfwd-matched/qemu-stderr.txt",
+      "stored_sha256": "33c5b9de8a6bb2e7359772444597f110193e3b2ff67a5473d54212be38e3d414",
+      "stored_bytes": 320,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-guestfwd-matched/result.json",
+      "download_sha256": "d50fd72b145c0097a702f46baed5c3c4ac6b5671b82e9e7a138b512d5a8829ad",
+      "download_bytes": 1709,
+      "stored_path": "raw/adit-guestfwd-matched/result.json",
+      "stored_sha256": "e59b596655732c00cee6f012dc0beaf8a3bf2aa05f0b94ecc2887a762effa2a7",
+      "stored_bytes": 1663,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-guestfwd-matched/serial.txt",
+      "download_sha256": "a0bc8d2c58bfc9a28d6d8348b3755eb4a181726ca0d5669a2fc2aef3c5909ddf",
+      "download_bytes": 23976,
+      "stored_path": "raw/adit-guestfwd-matched/serial.txt",
+      "stored_sha256": "0ce989306afac59dd881879e6e6590b3e0e97229741b8d094dfb3103a0938a47",
+      "stored_bytes": 23634,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-matching-helpers/decompression.txt",
+      "download_sha256": "bc0b74c076a9b280cf94d034fea72e42b0bd83c26132d2a90819a39a9b8bcca2",
+      "download_bytes": 458,
+      "stored_path": "raw/adit-netem-matching-helpers/decompression.txt",
+      "stored_sha256": "c4d2086c851ce52732d916e245987615de6df5731a10f15cbf635b7f09ddcd10",
+      "stored_bytes": 442,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-matching-helpers/extraction.txt",
+      "download_sha256": "d6fece5837f1240780fa636de804cb929097ebd0b914b6602ba656b746a94291",
+      "download_bytes": 494,
+      "stored_path": "raw/adit-netem-matching-helpers/extraction.txt",
+      "stored_sha256": "4add03ffc1feb3c7d830b6e1dda9f8601b83d61c684883817777de1ce213225b",
+      "stored_bytes": 474,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-matching-helpers/package-listing.txt",
+      "download_sha256": "387f1f016c741f5c9dc75ff80648f287cea2bdbf6be2773de971b80ca1e36a4a",
+      "download_bytes": 257074,
+      "stored_path": "raw/adit-netem-matching-helpers/package-listing.txt",
+      "stored_sha256": "89d7fa7b398f1ffb9c74d495efe109f3b3af9c2f41243b67ccaf32d1c099f61c",
+      "stored_bytes": 242560,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-matching-helpers/phases.txt",
+      "download_sha256": "c3b6b278b4eb4f1928b8aa1add5c44bdaf6fd1cbac1f3445fb6afd823c3163d2",
+      "download_bytes": 452,
+      "stored_path": "raw/adit-netem-matching-helpers/phases.txt",
+      "stored_sha256": "c3b6b278b4eb4f1928b8aa1add5c44bdaf6fd1cbac1f3445fb6afd823c3163d2",
+      "stored_bytes": 452,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-matching-helpers/result.json",
+      "download_sha256": "7fd35c9893347d403e6b5ae2ea8c796019e78c25664c4d9e4a515e5675e3b2fe",
+      "download_bytes": 4291,
+      "stored_path": "raw/adit-netem-matching-helpers/result.json",
+      "stored_sha256": "16fcfc79fe04900345dd3b786bfbd8770c1744c249a0e45515a04fc647254213",
+      "stored_bytes": 4203,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-qemu-tools/extraction.txt",
+      "download_sha256": "a11ed596f6d6daffe933a143abb8886e48289d57a56ac6c68fc1cf1b6d61ba09",
+      "download_bytes": 1959,
+      "stored_path": "raw/adit-netem-qemu-tools/extraction.txt",
+      "stored_sha256": "c832c62b124eb40708ddb976cb0264e9b6232e8c6dc76c8c09f0c206d5ba39ed",
+      "stored_bytes": 1882,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-qemu-tools/provenance.json",
+      "download_sha256": "c38c6f36abc330da363737a2014c44507d4005efc74dfa41201cb6797bafd6ea",
+      "download_bytes": 647,
+      "stored_path": "raw/adit-netem-qemu-tools/provenance.json",
+      "stored_sha256": "90db1b594062b7a5da8f7effe2d68e4f64082ad491ab0b26586ed5fa901e7c77",
+      "stored_bytes": 638,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    },
+    {
+      "download_relative_path": "adit-netem-qemu-tools/qemu-version.txt",
+      "download_sha256": "e7b39f6d8a73023856fe2fa3254802e12fc98c81991e486ef6177ddd96fa7f3d",
+      "download_bytes": 131,
+      "stored_path": "raw/adit-netem-qemu-tools/qemu-version.txt",
+      "stored_sha256": "94da3212a3f571d3fb18b253700883853e3ac0db1e72bc86a5f36adeb729ec19",
+      "stored_bytes": 129,
+      "normalization": "UTF-8 without BOM, LF; original downloaded bytes separately hashed"
+    }
+  ],
+  "exact_source_files": [
+    {
+      "origin": "Git blob at exact run source, not downloaded artifact",
+      "source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+      "repository_path": ".github/workflows/vnc-windows-guestfwd-matched.yml",
+      "git_blob_sha256": "e8eb465c83ff91642fc503540857190f1499cadf3879d542ec1b0cf1372a7b90",
+      "git_blob_bytes": 2213,
+      "stored_path": "source/workflow.yml",
+      "stored_sha256": "e8eb465c83ff91642fc503540857190f1499cadf3879d542ec1b0cf1372a7b90",
+      "stored_bytes": 2213,
+      "normalization": "UTF-8 without BOM, LF"
+    },
+    {
+      "origin": "Git blob at exact run source, not downloaded artifact",
+      "source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+      "repository_path": "tests/vnc/netem-guest/matching_helpers.ps1",
+      "git_blob_sha256": "6280bfd6cbd6273a8a71fdc35331e1bdf82f15afc06da496a79d9c6bef7fd46e",
+      "git_blob_bytes": 12688,
+      "stored_path": "source/matching_helpers.ps1",
+      "stored_sha256": "6280bfd6cbd6273a8a71fdc35331e1bdf82f15afc06da496a79d9c6bef7fd46e",
+      "stored_bytes": 12688,
+      "normalization": "UTF-8 without BOM, LF"
+    },
+    {
+      "origin": "Git blob at exact run source, not downloaded artifact",
+      "source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+      "repository_path": "tests/vnc/netem-guest/windows.ps1",
+      "git_blob_sha256": "59c9f2ca2bd70268f54dcb1ce12fcc3c9d7609983be5b60b3d75141384362658",
+      "git_blob_bytes": 2815,
+      "stored_path": "source/windows.ps1",
+      "stored_sha256": "59c9f2ca2bd70268f54dcb1ce12fcc3c9d7609983be5b60b3d75141384362658",
+      "stored_bytes": 2815,
+      "normalization": "UTF-8 without BOM, LF"
+    },
+    {
+      "origin": "Git blob at exact run source, not downloaded artifact",
+      "source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+      "repository_path": "tests/vnc/netem-guest/cmd_probe.py",
+      "git_blob_sha256": "642bbe24b3430cd95359e5955d8112413690a74e2c68fe2b59aa1d88b71a9c5f",
+      "git_blob_bytes": 12877,
+      "stored_path": "source/cmd_probe.py",
+      "stored_sha256": "642bbe24b3430cd95359e5955d8112413690a74e2c68fe2b59aa1d88b71a9c5f",
+      "stored_bytes": 12877,
+      "normalization": "UTF-8 without BOM, LF"
+    }
+  ],
+  "generated_audit": {
+    "stored_path": "independent-audit.json",
+    "sha256": "7daca91f47b6c26ad796271da48fdad68f01e208af9eb5f2c45e7ebb2418d669",
+    "bytes": 5445,
+    "origin": "Independent review of the archived raw evidence; not an original downloaded file"
+  },
+  "manifest_note": "This manifest intentionally does not hash itself. Raw download hashes refer to unchanged TEMP extraction; Git source hashes refer to exact blob bytes. Stored hashes refer to UTF-8 without BOM, LF bytes."
+}

@@ -1,0 +1,32 @@
+gpg: keybox '/home/runner/work/_temp/adit-vnc-glib-dependency/gnupg/pubring.kbx' created
+gpg: key F40D263ECA25678A: 3 signatures not checked due to missing keys
+gpg: /home/runner/work/_temp/adit-vnc-glib-dependency/gnupg/trustdb.gpg: trustdb created
+gpg: key F40D263ECA25678A: public key "Alexey Pavlov (Alexpux) <alexey.pawlow@gmail.com>" imported
+gpg: key 790AE56A1D3CFDDC: 1 signature not checked due to a missing key
+gpg: key 790AE56A1D3CFDDC: public key "David Macek (MSYS2 master key) <david.macek.0@gmail.com>" imported
+gpg: Note: third-party key signatures using the SHA1 algorithm are rejected
+gpg: (use option "--allow-weak-key-signatures" to override)
+gpg: key DA7EF2ABAEEA755C: 2 signatures not checked due to missing keys
+gpg: key DA7EF2ABAEEA755C: 1 bad signature
+gpg: key DA7EF2ABAEEA755C: public key "Martell Malone (martell) <martellmalone@gmail.com>" imported
+gpg: key 755B8182ACD22879: 1 signature not checked due to a missing key
+gpg: key 755B8182ACD22879: public key "Christoph Reiter (MSYS2 master key) <reiter.christoph@gmail.com>" imported
+gpg: key 9F418C233E652008: 1 signature not checked due to a missing key
+gpg: key 9F418C233E652008: 1 bad signature
+gpg: key 9F418C233E652008: public key "Ignacio Casal Quinteiro <icquinteiro@gmail.com>" imported
+gpg: key BBE514E53E0D0813: 2 bad signatures
+gpg: key BBE514E53E0D0813: public key "Ray Donnelly (MSYS2 Developer - master key) <mingw.android@gmail.com>" imported
+gpg: key 5F92EFC1A47D45A1: 4 bad signatures
+gpg: key 5F92EFC1A47D45A1: public key "Alexey Pavlov (Alexpux) <alexpux@gmail.com>" imported
+gpg: key 974C8BE49078F532: public key "David Macek <david.macek.0@gmail.com>" imported
+gpg: key FA11531AA0AA7F57: public key "Christoph Reiter (MSYS2 development key) <reiter.christoph@gmail.com>" imported
+gpg: key 794DCF97F93FC717: 1 signature not checked due to a missing key
+gpg: key 794DCF97F93FC717: 3 bad signatures
+gpg: key 794DCF97F93FC717: public key "Martell Malone (martell) <me@martellmalone.com>" imported
+gpg: key D595C9AB2C51581E: 3 bad signatures
+gpg: key D595C9AB2C51581E: public key "Martell Malone (MSYS2 Developer) <martellmalone@gmail.com>" imported
+gpg: key 4DF3B7664CA56930: 3 bad signatures
+gpg: key 4DF3B7664CA56930: public key "Ray Donnelly (MSYS2 Developer) <mingw.android@gmail.com>" imported
+gpg: Total number processed: 12
+gpg:               imported: 12
+gpg: no ultimately trusted keys found

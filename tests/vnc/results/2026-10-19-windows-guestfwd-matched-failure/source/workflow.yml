@@ -1,0 +1,54 @@
+name: Windows guestfwd matching GLib helpers (fake only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-glib-layout']
+    paths:
+      - '.github/workflows/vnc-windows-guestfwd-matched.yml'
+      - 'tests/vnc/netem-guest/matching_helpers.ps1'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fake_matched:
+    name: One matching-helper calibration; two fake TCP lifecycles, no VNC
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reuse exact guest with original source attribution
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 39145306679
+          artifact-ids: 12143371403
+          merge-multiple: true
+          path: ${{ runner.temp }}/adit-netem-guest
+      - name: Prepare authenticated matching helpers and run unchanged fake gate once
+        timeout-minutes: 3
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/windows.ps1 -Guest "$env:RUNNER_TEMP/adit-netem-guest" -Results "$env:RUNNER_TEMP/adit-guestfwd-matched" -Mode cmd-probe -MatchingHelpers
+      - name: Preserve original fake result and dependency metadata without vendor binaries
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-guestfwd-matching-helpers-fake-only
+          path: |
+            ${{ runner.temp }}/adit-guestfwd-matched/
+            ${{ runner.temp }}/adit-netem-matching-helpers/result.json
+            ${{ runner.temp }}/adit-netem-matching-helpers/phases.txt
+            ${{ runner.temp }}/adit-netem-matching-helpers/decompression.txt
+            ${{ runner.temp }}/adit-netem-matching-helpers/package-listing.txt
+            ${{ runner.temp }}/adit-netem-matching-helpers/extraction.txt
+            ${{ runner.temp }}/adit-netem-matching-helpers/failure.txt
+            ${{ runner.temp }}/adit-netem-qemu-tools/provenance.json
+            ${{ runner.temp }}/adit-netem-qemu-tools/extraction.txt
+            ${{ runner.temp }}/adit-netem-qemu-tools/qemu-version.txt
+          if-no-files-found: warn
+          retention-days: 14

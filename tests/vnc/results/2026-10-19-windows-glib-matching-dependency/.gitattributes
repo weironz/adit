@@ -1,0 +1,2 @@
+# Retain raw tool whitespace; file hashes document captured content.
+raw/** -whitespace

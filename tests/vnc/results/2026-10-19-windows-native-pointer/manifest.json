@@ -1,0 +1,78 @@
+{
+  "format": 1,
+  "byte_policy": "exact original bytes, including JPEG; no conversion or normalization",
+  "files": [
+    {
+      "path": "raw/normal-frame2.jpg",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "c85ce79e078d3441e269eaffb8381addf0b696dd01328d8ae3d3eed314e22b1f",
+      "bytes": 69016
+    },
+    {
+      "path": "raw/normal-frame2-state.json",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "5d27f2df58e20b8326f047b066b3557ebab96e31affb9ffc52d1d666e19b9d5e",
+      "bytes": 669
+    },
+    {
+      "path": "raw/restored-frame4.jpg",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "84da41fe4c1dabe0b4342ad5542726fc558360dd1d3e7ade042b81a15e6cf60d",
+      "bytes": 68570
+    },
+    {
+      "path": "raw/restored-frame4-state.json",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "b14ad3fd78aa7a0947ee2bd33960f4d35a685cbe03c6b3af10ba7f2c43ac7bd5",
+      "bytes": 458
+    },
+    {
+      "path": "raw/cleanup.json",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "60a6b21cd4814f417fdcc8d66a0547c7c5f964e77f844b58793cf807b142e2b6",
+      "bytes": 602
+    },
+    {
+      "path": "raw/listener-cleanup.json",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "e9c1606da4415ed35e99f589f3c977984034160263ed8ba99f6a369dc93248d1",
+      "bytes": 118
+    },
+    {
+      "path": "raw/client-events.jsonl",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "ff701eeb28c96bc99fdd8adfcf9212a1efd7d93b89a0bc8b19b611db69c656d6",
+      "bytes": 13339
+    },
+    {
+      "path": "raw/peer-events.jsonl",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "23586bd3fb23ce372817e269a559efac145e172880913057119d7214af8c62a9",
+      "bytes": 5905
+    },
+    {
+      "path": "raw/peer-ready.json",
+      "origin": "local owned synthetic acceptance, exact bytes",
+      "sha256": "2c81417f85f6b9c59b3eca350ce72b94d2f5511726de49885a7269b3322e4f7c",
+      "bytes": 91
+    },
+    {
+      "path": "source/vnc_native_acceptance.rs",
+      "origin": "git ee3ab5157bcb19a1be2f2e491605b516c02a1d12:crates/adit-ui/src/vnc_native_acceptance.rs",
+      "sha256": "97d186890f6308d331579802300a561bc0a261bed5f083973912c3c472ee9db9",
+      "bytes": 15249
+    },
+    {
+      "path": "source/native_rfb_fixture.py",
+      "origin": "git ee3ab5157bcb19a1be2f2e491605b516c02a1d12:tests/vnc/native_rfb_fixture.py",
+      "sha256": "b67dd97395399138fb057258fd54b2c2eb38ae76162ecbf03b825d6a02feb255",
+      "bytes": 12189
+    },
+    {
+      "path": "audit.json",
+      "origin": "root analysis of allowlisted raw events",
+      "sha256": "a8a4bfea1c99e51908d27a0aabf809bde79e8b410d459b95a362cca95e3de9d7",
+      "bytes": 6972
+    }
+  ]
+}

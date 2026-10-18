@@ -1,0 +1,282 @@
+{
+  "status": "partial; observation only, no production mapping change",
+  "source_sha": "ee3ab5157bcb19a1be2f2e491605b516c02a1d12",
+  "binary_sha256": "a7e0d4ad61aa029fb0e068beb2094f5efb39b001b190d665caf95900cd7ddc89",
+  "actual_os_dpi": 120,
+  "actual_os_scale": 1.25,
+  "app_scale": 1,
+  "security": "None; loopback synthetic grid only",
+  "selected_native_snapshots": [
+    {
+      "apis": [
+        "GetCursorPos",
+        "GetPhysicalCursorPos",
+        "GetWindowInfo",
+        "GetDpiForWindow"
+      ],
+      "atomic": false,
+      "capture_started_unix_ms": 1792345850646,
+      "captured_unix_ms": 1792345850646,
+      "client_rect_screen": [
+        201,
+        230,
+        1576,
+        1180
+      ],
+      "completed_unix_ms": 1792345850657,
+      "cursor_api_ok": true,
+      "cursor_screen": [
+        519,
+        508
+      ],
+      "dpi": 120,
+      "event": "native_pointer_snapshot",
+      "physical_cursor_api_ok": true,
+      "physical_cursor_screen": [
+        519,
+        508
+      ],
+      "remote_x": 297.4662780761719,
+      "remote_y": 200.14089965820312,
+      "requested_unix_ms": 1792345850628,
+      "sampling": "sequential API reads; the pointer may move between reads",
+      "scope": "asynchronous current cursor and own-window state; not the original OS event or physical-input proof",
+      "sequence": 3,
+      "unix_ms": 1792345850657,
+      "window_info_api_ok": true,
+      "window_rect_screen": [
+        192,
+        192,
+        1585,
+        1189
+      ]
+    },
+    {
+      "apis": [
+        "GetCursorPos",
+        "GetPhysicalCursorPos",
+        "GetWindowInfo",
+        "GetDpiForWindow"
+      ],
+      "atomic": false,
+      "capture_started_unix_ms": 1792345962010,
+      "captured_unix_ms": 1792345962010,
+      "client_rect_screen": [
+        201,
+        230,
+        1576,
+        1180
+      ],
+      "completed_unix_ms": 1792345962012,
+      "cursor_api_ok": true,
+      "cursor_screen": [
+        522,
+        508
+      ],
+      "dpi": 120,
+      "event": "native_pointer_snapshot",
+      "physical_cursor_api_ok": true,
+      "physical_cursor_screen": [
+        522,
+        508
+      ],
+      "remote_x": 300.4609069824219,
+      "remote_y": 200.14089965820312,
+      "requested_unix_ms": 1792345961991,
+      "sampling": "sequential API reads; the pointer may move between reads",
+      "scope": "asynchronous current cursor and own-window state; not the original OS event or physical-input proof",
+      "sequence": 4,
+      "unix_ms": 1792345962012,
+      "window_info_api_ok": true,
+      "window_rect_screen": [
+        192,
+        192,
+        1585,
+        1189
+      ]
+    },
+    {
+      "apis": [
+        "GetCursorPos",
+        "GetPhysicalCursorPos",
+        "GetWindowInfo",
+        "GetDpiForWindow"
+      ],
+      "atomic": false,
+      "capture_started_unix_ms": 1792346019047,
+      "captured_unix_ms": 1792346019047,
+      "client_rect_screen": [
+        0,
+        29,
+        2240,
+        1340
+      ],
+      "completed_unix_ms": 1792346019060,
+      "cursor_api_ok": true,
+      "cursor_screen": [
+        320,
+        306
+      ],
+      "dpi": 120,
+      "event": "native_pointer_snapshot",
+      "physical_cursor_api_ok": true,
+      "physical_cursor_screen": [
+        320,
+        306
+      ],
+      "remote_x": 300.0,
+      "remote_y": 198.37496948242188,
+      "requested_unix_ms": 1792346019030,
+      "sampling": "sequential API reads; the pointer may move between reads",
+      "scope": "asynchronous current cursor and own-window state; not the original OS event or physical-input proof",
+      "sequence": 8,
+      "unix_ms": 1792346019060,
+      "window_info_api_ok": true,
+      "window_rect_screen": [
+        -9,
+        -9,
+        2249,
+        1349
+      ]
+    },
+    {
+      "apis": [
+        "GetCursorPos",
+        "GetPhysicalCursorPos",
+        "GetWindowInfo",
+        "GetDpiForWindow"
+      ],
+      "atomic": false,
+      "capture_started_unix_ms": 1792346209206,
+      "captured_unix_ms": 1792346209206,
+      "client_rect_screen": [
+        201,
+        230,
+        1576,
+        1180
+      ],
+      "completed_unix_ms": 1792346209285,
+      "cursor_api_ok": true,
+      "cursor_screen": [
+        522,
+        508
+      ],
+      "dpi": 120,
+      "event": "native_pointer_snapshot",
+      "physical_cursor_api_ok": true,
+      "physical_cursor_screen": [
+        522,
+        508
+      ],
+      "remote_x": 300.4609069824219,
+      "remote_y": 200.14089965820312,
+      "requested_unix_ms": 1792346209185,
+      "sampling": "sequential API reads; the pointer may move between reads",
+      "scope": "asynchronous current cursor and own-window state; not the original OS event or physical-input proof",
+      "sequence": 9,
+      "unix_ms": 1792346209285,
+      "window_info_api_ok": true,
+      "window_rect_screen": [
+        192,
+        192,
+        1585,
+        1189
+      ]
+    }
+  ],
+  "observations": [
+    {
+      "frame": 2,
+      "screenshot_request": [
+        256,
+        253
+      ],
+      "native_pointer": [
+        519,
+        508
+      ],
+      "frontend": [
+        297.4662780761719,
+        200.14089965820312
+      ],
+      "peer": [
+        297,
+        200
+      ]
+    },
+    {
+      "frame": 2,
+      "screenshot_request": [
+        258,
+        253
+      ],
+      "native_pointer": [
+        522,
+        508
+      ],
+      "frontend": [
+        300.4609069824219,
+        200.14089965820312
+      ],
+      "peer": [
+        300,
+        200
+      ]
+    },
+    {
+      "frame": 3,
+      "screenshot_request": [
+        256,
+        245
+      ],
+      "native_pointer": [
+        320,
+        306
+      ],
+      "frontend": [
+        300,
+        198.37496948242188
+      ],
+      "peer": [
+        300,
+        198
+      ]
+    },
+    {
+      "frame": 4,
+      "screenshot_request": [
+        258,
+        253
+      ],
+      "native_pointer": [
+        522,
+        508
+      ],
+      "frontend": [
+        300.4609069824219,
+        200.14089965820312
+      ],
+      "peer": [
+        300,
+        200
+      ]
+    }
+  ],
+  "border_drag": {
+    "request": [
+      1101,
+      400,
+      1001,
+      400
+    ],
+    "outcome": "canvas input only, no native window size or remote size change; not passed"
+  },
+  "cleanup": "owned GUI normal exit 0; owned fixture exited after stop.request; independent LISTEN snapshot 0; no force termination",
+  "limitations": [
+    "Native snapshots are asynchronous sequential current-state API reads, not original OS events.",
+    "JPEG and screenshot logical coordinates have sampling/quantization limits; input is injected.",
+    "Old 3px outlier reproduced and preserved; adjacent physical steps explain corresponding remote steps, but exact screenshot-to-input discrepancy is not definitively attributed.",
+    "No evidence for actual OS DPI 100/150/200, physical keys/IME, custom cursor or all transient frames.",
+    "No geometry/threshold modifications; does not close #207 or #213."
+  ]
+}

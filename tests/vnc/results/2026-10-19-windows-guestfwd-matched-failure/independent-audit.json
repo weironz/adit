@@ -1,0 +1,103 @@
+{
+  "outcome": "failed",
+  "run_id": 39151818574,
+  "run_url": "https://github.com/weironz/adit/actions/runs/39151818574",
+  "verified_ci_conclusion": "failure",
+  "job_id": 117746850540,
+  "host_source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+  "guest_source_sha": "8fc0866307f8d99c4bd52f5a3f888942b6ad45b1",
+  "guest_build_run": 39145306679,
+  "guest_artifact_id": 12143371403,
+  "artifact": {
+    "id": 12144524688,
+    "name": "vnc-guestfwd-matching-helpers-fake-only",
+    "github_reported_archive_digest": "sha256:cfed9c4db9c4c0f3f59d097611124d5027c72e66936ca085ea1ab284bcfc51bf",
+    "digest_note": "GitHub API reported digest. Original ZIP bytes were not retained; the extracted original download bytes and normalized stored bytes are independently hashed in manifest.json.",
+    "github_reported_archive_bytes": 24788
+  },
+  "scope": "One bounded fake-only Windows QEMU guestfwd=cmd calibration after copying matching official GLib helpers. No VNC, real credentials, weak-network VNC matrix, physical NIC, OS sleep/resume or product acceptance.",
+  "preparation": {
+    "outcome": "prepared_matching_helpers_for_fake_calibration",
+    "package_sha256": "5aa850934d0216f5b7237bd54c3ec660ebfc3a42fd992bc7abbd611bd9cc7663",
+    "package_hash_matches_prior_signature_verified_bytes": true,
+    "signature_verification_repeated_in_this_windows_run": false,
+    "prior_gpg_source_sha": "175ab8136362e29269ea326bbba596db8c8d67e0",
+    "prior_gpg_run": 39151046882,
+    "prior_gpg_artifact_id": 12144993696,
+    "qemu_sha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd",
+    "glib_sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec",
+    "selected_helpers": [
+      {
+        "package_path": "mingw64/bin/gspawn-win64-helper.exe",
+        "extracted_path": "D:\\a\\_temp\\adit-netem-matching-helpers\\selected\\mingw64\\bin\\gspawn-win64-helper.exe",
+        "bytes": 26808,
+        "sha256": "87113f2bf18d694910a1e6791282aea4da3611d41a8397434e43fed6deec72a5",
+        "pe": {
+          "machine": "0x8664",
+          "optional_magic": "0x20b",
+          "imports": [
+            "KERNEL32.dll",
+            "msvcrt.dll",
+            "SHELL32.dll",
+            "libglib-2.0-0.dll"
+          ],
+          "expected_runtime": "mingw64/MSVCRT"
+        }
+      },
+      {
+        "package_path": "mingw64/bin/gspawn-win64-helper-console.exe",
+        "extracted_path": "D:\\a\\_temp\\adit-netem-matching-helpers\\selected\\mingw64\\bin\\gspawn-win64-helper-console.exe",
+        "bytes": 26185,
+        "sha256": "c8734364a23a2af11660efba3d4c9b82bcdc604f15816cfd92ed2697ee30cdaf",
+        "pe": {
+          "machine": "0x8664",
+          "optional_magic": "0x20b",
+          "imports": [
+            "KERNEL32.dll",
+            "msvcrt.dll",
+            "SHELL32.dll",
+            "libglib-2.0-0.dll"
+          ],
+          "expected_runtime": "mingw64/MSVCRT"
+        }
+      }
+    ],
+    "copied_helpers": [
+      {
+        "path": "D:\\a\\_temp\\adit-netem-qemu-tools\\extracted\\gspawn-win64-helper.exe",
+        "bytes": 26808,
+        "sha256": "87113f2bf18d694910a1e6791282aea4da3611d41a8397434e43fed6deec72a5"
+      },
+      {
+        "path": "D:\\a\\_temp\\adit-netem-qemu-tools\\extracted\\gspawn-win64-helper-console.exe",
+        "bytes": 26185,
+        "sha256": "c8734364a23a2af11660efba3d4c9b82bcdc604f15816cfd92ed2697ee30cdaf"
+      }
+    ],
+    "copied_file_hashes_and_sizes_match_authenticated_source_metadata": true,
+    "copied_helpers_colocated_with_exact_glib_dll": true,
+    "overwrite_prevention": "Source enforces an existing-file rejection plus FileMode.CreateNew. This fresh-directory run exercised successful exclusive creation; it did not execute a destination-already-exists negative test.",
+    "dll_replacement": false,
+    "path_global_install_or_protection_changes": false
+  },
+  "fake_gate": {
+    "guest_ready_observed": true,
+    "ok": false,
+    "actual_backend_tcp_connections": 0,
+    "successful_fresh_guest_sessions": 0,
+    "distinct_backend_ids": [],
+    "client_first_eof": "not reached",
+    "server_first_eof": "not reached",
+    "backends": [],
+    "clients": [],
+    "backend_errors": [],
+    "error": "RuntimeError: Early EOF before public fake marker",
+    "final_backend_error": "Final state does not prove exactly two cleanly closed actual backend TCP sessions",
+    "elapsed_seconds": 14.671,
+    "qemu_stderr_failure": "Slirp: fork_exec: Failed to dup() in child process (Bad file descriptor)",
+    "qemu_stderr_warning": "GLib: passing a child setup function to the g_spawn functions is pointless on Windows and it is ignored"
+  },
+  "interpretation": "Matching-helper preparation succeeded, but the fixed configuration failed in child descriptor duplication before the first fake backend connection. This supersedes only the earlier helper-launch ENOENT stage; it does not establish successful stdio/socket interoperability, two fresh backend lifecycles or any VNC acceptance. The raw failure does not prove every Windows QEMU cmd configuration unsupported.",
+  "decision": "Stop this execution path and preserve the failed result. No retry, code adjustment, new tool, real-VNC run or CI dispatch is included in this archive.",
+  "archive_contents": "Eleven public text/JSON raw files, four exact host-source Git blobs, this independent audit and manifest; no executable, package, guest binary, payload capture or real credential."
+}

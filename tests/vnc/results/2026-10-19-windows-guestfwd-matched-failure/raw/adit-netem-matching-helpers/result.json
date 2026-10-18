@@ -1,0 +1,89 @@
+{
+  "outcome": "prepared_matching_helpers_for_fake_calibration",
+  "phase": "complete_no_execution_in_preparation",
+  "source_sha": "657803df43c2e04bff3a0f8177f7fad2e20fbb64",
+  "run_id": "39151818574",
+  "scope": "Only two matching official GLib helper EXEs copied next to the exact QEMU DLL for the existing fake-only cmd lifecycle calibration. No DLL replacement, PATH/global install, protection/network changes, real VNC or credentials.",
+  "preparation_executes_vendor_binaries": false,
+  "copied_helpers": [
+    {
+      "path": "D:\\a\\_temp\\adit-netem-qemu-tools\\extracted\\gspawn-win64-helper.exe",
+      "bytes": 26808,
+      "sha256": "87113f2bf18d694910a1e6791282aea4da3611d41a8397434e43fed6deec72a5"
+    },
+    {
+      "path": "D:\\a\\_temp\\adit-netem-qemu-tools\\extracted\\gspawn-win64-helper-console.exe",
+      "bytes": 26185,
+      "sha256": "c8734364a23a2af11660efba3d4c9b82bcdc604f15816cfd92ed2697ee30cdaf"
+    }
+  ],
+  "selected_helpers": [
+    {
+      "package_path": "mingw64/bin/gspawn-win64-helper.exe",
+      "extracted_path": "D:\\a\\_temp\\adit-netem-matching-helpers\\selected\\mingw64\\bin\\gspawn-win64-helper.exe",
+      "bytes": 26808,
+      "sha256": "87113f2bf18d694910a1e6791282aea4da3611d41a8397434e43fed6deec72a5",
+      "pe": {
+        "machine": "0x8664",
+        "optional_magic": "0x20b",
+        "imports": [
+          "KERNEL32.dll",
+          "msvcrt.dll",
+          "SHELL32.dll",
+          "libglib-2.0-0.dll"
+        ],
+        "expected_runtime": "mingw64/MSVCRT"
+      }
+    },
+    {
+      "package_path": "mingw64/bin/gspawn-win64-helper-console.exe",
+      "extracted_path": "D:\\a\\_temp\\adit-netem-matching-helpers\\selected\\mingw64\\bin\\gspawn-win64-helper-console.exe",
+      "bytes": 26185,
+      "sha256": "c8734364a23a2af11660efba3d4c9b82bcdc604f15816cfd92ed2697ee30cdaf",
+      "pe": {
+        "machine": "0x8664",
+        "optional_magic": "0x20b",
+        "imports": [
+          "KERNEL32.dll",
+          "msvcrt.dll",
+          "SHELL32.dll",
+          "libglib-2.0-0.dll"
+        ],
+        "expected_runtime": "mingw64/MSVCRT"
+      }
+    }
+  ],
+  "prior_gpg": {
+    "source_sha": "175ab8136362e29269ea326bbba596db8c8d67e0",
+    "run_id": 39151046882,
+    "artifact_id": 12144993696,
+    "run_url": "https://github.com/weironz/adit/actions/runs/39151046882",
+    "artifact_github_reported_digest": "sha256:a50a2caeb523f46d1761b046f37aa28cd129541bb7be67d682bbfd40b260edca",
+    "keyring_commit": "5d249077a0cfeec9dbf51515e5e01da413d28859",
+    "verified_developer_fingerprint": "5F944B027F7FE2091985AA2EFA11531AA0AA7F57",
+    "trust": "TRUST_FULLY 0 pgp",
+    "note": "Package hash was measured after successful default-GPG signature verification with pinned official master trust anchors in that run. This Windows preparation strictly matches those authenticated bytes; it does not repeat GPG verification."
+  },
+  "package": {
+    "url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst",
+    "signature_url": "https://repo.msys2.org/mingw/mingw64/mingw-w64-x86_64-glib2-2.88.3-1-any.pkg.tar.zst.sig",
+    "expected_sha256": "5aa850934d0216f5b7237bd54c3ec660ebfc3a42fd992bc7abbd611bd9cc7663",
+    "checksum_origin": "Prior signature-verified package measurement, not an MSYS2 prepublished checksum",
+    "source_commit": "716ee21e59851aa4d15e34c8353580334276b0e6",
+    "source_url": "https://github.com/msys2/MINGW-packages/blob/716ee21e59851aa4d15e34c8353580334276b0e6/mingw-w64-glib2/PKGBUILD",
+    "license": "LGPL-2.1-or-later",
+    "license_package_path": "mingw64/share/licenses/glib2/COPYING",
+    "license_metadata_artifact": 12144993696,
+    "license_metadata_file": "COPYING.txt",
+    "actual_sha256": "5aa850934d0216f5b7237bd54c3ec660ebfc3a42fd992bc7abbd611bd9cc7663",
+    "actual_bytes": 5402063
+  },
+  "existing_qemu": {
+    "path": "D:\\a\\_temp\\adit-netem-qemu-tools\\extracted\\qemu-system-x86_64.exe",
+    "sha256": "47d57a6072e0bb3bd98f87926eb129eb1736dfe818c67b3b81ef7ce4edd0b3cd"
+  },
+  "existing_glib": {
+    "path": "D:\\a\\_temp\\adit-netem-qemu-tools\\extracted\\libglib-2.0-0.dll",
+    "sha256": "7b5c19f5540857ec2288323f3b1654cbe5655fc3ea21417a25da69bece489eec"
+  }
+}

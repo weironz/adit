@@ -1,0 +1,20 @@
+
+7-Zip 26.04 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-10-05
+
+Scanning the drive for archives:
+1 file, 42311680 bytes (41 MiB)
+
+Extracting archive: D:\a\_temp\adit-netem-matching-helpers\tar-container\glib2.pkg.tar
+--
+Path = D:\a\_temp\adit-netem-matching-helpers\tar-container\glib2.pkg.tar
+Type = tar
+Physical Size = 42311680
+Headers Size = 400896
+Code Page = UTF-8
+Characteristics = POSIX ASCII
+
+Everything is Ok
+
+Files: 2
+Size:       52993
+Compressed: 42311680

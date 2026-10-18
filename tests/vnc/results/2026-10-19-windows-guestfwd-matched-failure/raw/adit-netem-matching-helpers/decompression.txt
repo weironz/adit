@@ -1,0 +1,16 @@
+
+7-Zip 26.04 (x64) : Copyright (c) 1999-2026 Igor Pavlov : 2026-10-05
+
+Scanning the drive for archives:
+1 file, 5402063 bytes (5276 KiB)
+
+Extracting archive: D:\a\_temp\adit-netem-matching-helpers\glib2.pkg.tar.zst
+--
+Path = D:\a\_temp\adit-netem-matching-helpers\glib2.pkg.tar.zst
+Type = zstd
+Method = header-open-only: XXH64 wnd-desc-log-MAX:25 wnd-MAX:32MiB unknown-content-size
+
+Everything is Ok
+
+Size:       42311680
+Compressed: 5402063

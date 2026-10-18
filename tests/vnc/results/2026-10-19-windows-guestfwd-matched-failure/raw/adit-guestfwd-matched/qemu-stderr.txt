@@ -1,0 +1,2 @@
+D:\a\_temp\adit-netem-qemu-tools\extracted\qemu-system-x86_64.exe: warning: GLib: passing a child setup function to the g_spawn functions is pointless on Windows and it is ignored
+D:\a\_temp\adit-netem-qemu-tools\extracted\qemu-system-x86_64.exe: Slirp: fork_exec: Failed to dup() in child process (Bad file descriptor)

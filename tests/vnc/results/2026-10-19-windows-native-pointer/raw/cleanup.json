@@ -1,0 +1,22 @@
+{
+  "processes": [
+    {
+      "pid": 26940,
+      "query_handle": true,
+      "winerror": null,
+      "exit_code": 0
+    },
+    {
+      "pid": 2624,
+      "query_handle": false,
+      "winerror": 87
+    }
+  ],
+  "loopback_port_15915_connect_ex": 10035,
+  "no_accepting_listener": null,
+  "normal_close_requested_via_owned_window": true,
+  "fixture_stop_request_written": true,
+  "forced_termination": false,
+  "os_dpi_changed": false,
+  "connect_ex_interpretation": "10035 is not a conclusive refused connection; separate Get-NetTCPConnection LISTEN snapshot is authoritative"
+}

@@ -1,0 +1,20 @@
+{
+  "unix_ms": 1792346208842,
+  "window": {
+    "app": "process:C:\\Users\\willz\\AppData\\Local\\Temp\\adit-vnc-native-ee3ab51-a7e0d4ad61aa.exe",
+    "id": 17173690,
+    "title": "Adit SYNTHETIC acceptance — app 100% / OS 1.25 / native DPI Some(120)"
+  },
+  "screenshot": {
+    "id": "screenshot-0",
+    "width": 1102,
+    "height": 791,
+    "originX": 200,
+    "originY": 192,
+    "format": "JPEG"
+  },
+  "next_requested_click": [
+    258,
+    253
+  ]
+}

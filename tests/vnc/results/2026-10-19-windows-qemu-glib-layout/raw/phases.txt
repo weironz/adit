@@ -1,0 +1,6 @@
+2026-10-18T17:32:12.0404576+00:00 verify_fixed_source
+2026-10-18T17:32:12.1304761+00:00 download_without_execution
+2026-10-18T17:32:23.3699006+00:00 archive_listing_without_execution
+2026-10-18T17:32:24.6296747+00:00 extract_without_installation
+2026-10-18T17:32:34.2839623+00:00 inventory_relative_paths_and_target_hashes
+2026-10-18T17:32:34.9051147+00:00 complete_metadata_only
