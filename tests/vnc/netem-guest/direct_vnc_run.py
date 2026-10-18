@@ -104,7 +104,9 @@ class OwnedEcho:
         deadline = time.monotonic() + 2
         for worker in self.workers:
             worker.join(timeout=max(0, deadline - time.monotonic()))
-        require(not clients and not self.thread.is_alive() and all(not worker.is_alive() for worker in self.workers), "Calibration backend retained active clients or workers")
+        with self.lock:
+            remaining_clients = len(self.clients)
+        require(remaining_clients == 0 and not self.thread.is_alive() and all(not worker.is_alive() for worker in self.workers), "Calibration backend retained active clients or workers")
 
 
 def loss_stall():
