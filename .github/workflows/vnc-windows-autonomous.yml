@@ -38,11 +38,14 @@ jobs:
         timeout-minutes: 3
         shell: powershell
         run: |
+          $original = Get-Content "$env:RUNNER_TEMP/vnc-autonomous-capabilities/display.json" -Raw | ConvertFrom-Json
           try {
+            ./tests/vnc/windows-native-display.ps1 -Width 1920 -Height 1080 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/resolution-1920.json"
             ./tests/vnc/windows-native-dpi.ps1 -Scale 150 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-150.json"
             ./tests/vnc/windows-native-dpi.ps1 -Scale 200 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-200.json"
           } finally {
             ./tests/vnc/windows-native-dpi.ps1 -Scale 100 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-restored-100.json"
+            ./tests/vnc/windows-native-display.ps1 -Width $original.CurrentHorizontalResolution -Height $original.CurrentVerticalResolution -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/resolution-restored.json"
           }
       - uses: actions/upload-artifact@v4
         if: always()
