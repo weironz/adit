@@ -2,12 +2,6 @@ name: Windows VNC calibrated guest-egress matrix
 
 on:
   workflow_dispatch:
-  push:
-    branches: ['codex/vnc-direct-impaired']
-    paths:
-      - '.github/workflows/vnc-windows-direct-impaired.yml'
-      - 'tests/vnc/netem-guest/**'
-      - 'tests/vnc/windows-server-smoke.ps1'
 
 permissions:
   contents: read
