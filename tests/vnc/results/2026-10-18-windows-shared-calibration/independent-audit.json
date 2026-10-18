@@ -1,0 +1,23 @@
+{
+  "status": "passed_short_calibration_only",
+  "run_url": "https://github.com/weironz/adit/actions/runs/39142722306",
+  "source_sha": "04df3170dc54ca182d7926fc4b9da0509eae09d6",
+  "artifact_id": 12142700906,
+  "independent_checks": {
+    "consumed_and_both_fresh_clicks": 18,
+    "verified_idle_windows": 9,
+    "long_term_acceptance": false,
+    "actual_soak_ms": 10540,
+    "post_close_established_sockets": 0
+  },
+  "files_sha256": {
+    "result.json": "6654a570b6eb529fa8f42afafdf660069f186060424ead2ff344a5392b51bc85",
+    "shared.stdout.jsonl": "7d0726c2e38ff1817d8e8c738c31bbbb8e25fc8ce3f3d12402991be5522c8992",
+    "shared.target.final.json": "62ae3350cf020a135cc03011525fae19882e9e4ab0e26cac1db846f74f7ef8a2",
+    "shared.stderr.txt": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+  },
+  "limitations": [
+    "Short fixture calibration only; the separate7200s job remains pending",
+    "Loopback decoded pixels, not native GPU, service/UAC, actual OS DPI or impaired-network acceptance"
+  ]
+}

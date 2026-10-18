@@ -1,0 +1,32 @@
+{"auto_reconnect":false,"elapsed_ms":2624,"event":"two_clients_ready","full_coverage_and_static_canaries":true,"security":"VncAuth","shared":true}
+{"event":"idle_completed","idle_ms":1013,"no_synthetic_input":true,"window":1}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":1,"elapsed_ms":3862,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":1}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":2,"elapsed_ms":3889,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":2}
+{"event":"idle_completed","idle_ms":1013,"no_synthetic_input":true,"window":2}
+{"cycles":1,"elapsed_ms":5005,"event":"progress","max_pending":[1,1],"phase":"consumed_click_and_fresh_shared_rgb","resources":{"cpu_sample_min_seconds":1,"probe_cpu_ms_since_first_sample":516,"probe_cpu_peak_percent_one_core":35.53914261423564,"probe_process_peak_working_set_bytes":29683712,"scope":"whole probe process, including both production clients; not per-client attribution"}}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":3,"elapsed_ms":5052,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":3}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":4,"elapsed_ms":5099,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":4}
+{"event":"idle_completed","idle_ms":1013,"no_synthetic_input":true,"window":3}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":5,"elapsed_ms":6180,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":5}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":6,"elapsed_ms":6247,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":6}
+{"event":"idle_completed","idle_ms":1013,"no_synthetic_input":true,"window":4}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":7,"elapsed_ms":7328,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":7}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":8,"elapsed_ms":7375,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":8}
+{"event":"idle_completed","idle_ms":1014,"no_synthetic_input":true,"window":5}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":9,"elapsed_ms":8437,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":9}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":10,"elapsed_ms":8484,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":10}
+{"event":"idle_completed","idle_ms":1015,"no_synthetic_input":true,"window":6}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":11,"elapsed_ms":9567,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":11}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":12,"elapsed_ms":9614,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":12}
+{"cycles":6,"elapsed_ms":10021,"event":"progress","max_pending":[1,1],"phase":"idle_without_input","resources":{"cpu_sample_min_seconds":1,"probe_cpu_ms_since_first_sample":688,"probe_cpu_peak_percent_one_core":35.53914261423564,"probe_process_peak_working_set_bytes":29683712,"scope":"whole probe process, including both production clients; not per-client attribution"}}
+{"event":"idle_completed","idle_ms":1014,"no_synthetic_input":true,"window":7}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":13,"elapsed_ms":10655,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":13}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":14,"elapsed_ms":10702,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":14}
+{"event":"idle_completed","idle_ms":1016,"no_synthetic_input":true,"window":8}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":15,"elapsed_ms":11867,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":15}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":16,"elapsed_ms":12015,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":16}
+{"event":"idle_completed","idle_ms":1016,"no_synthetic_input":true,"window":9}
+{"actor":0,"both_fresh_rgb":true,"consumed_clicks":17,"elapsed_ms":13098,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":17}
+{"actor":1,"both_fresh_rgb":true,"consumed_clicks":18,"elapsed_ms":13165,"event":"shared_click","full_coverage_and_static_canaries":true,"sequence":18}
+{"actual_soak_ms":10540,"cycles":9,"event":"soak_completed","idle_seconds":1,"idle_windows":9,"long_term_acceptance":false,"requested_seconds":10,"scope":"loopback Windows shared synthetic desktop; not weak network, OS sleep, service, DPI or physical input"}
+{"close_requested_and_records_removed":true,"cycles":9,"disconnects":[0,0],"elapsed_ms":13767,"error":null,"event":"result","idle_windows":9,"max_pending":[1,1],"os_socket_cleanup_verified":false,"passed":true,"phase":"consumed_click_and_fresh_shared_rgb","resources":{"cpu_sample_min_seconds":1,"probe_cpu_ms_since_first_sample":750,"probe_cpu_peak_percent_one_core":35.53914261423564,"probe_process_peak_working_set_bytes":29683712,"scope":"whole probe process, including both production clients; not per-client attribution"},"worker_shutdown_grace_ms":600}
