@@ -1,5 +1,9 @@
 #!/bin/sh
 set -eu
+# PID1 inherits no login environment. Export sbin for Python subprocesses too;
+# the shell's own fallback lookup found ip while subprocess could not find tc.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+command -v tc
 mount -t proc proc /proc
 mount -t sysfs sysfs /sys
 mount -t devtmpfs devtmpfs /dev
