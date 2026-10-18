@@ -27,6 +27,8 @@ U.GetWindowThreadProcessId.argtypes = [W.HWND, C.POINTER(W.DWORD)]
 U.SetForegroundWindow.argtypes = [W.HWND]
 U.PostMessageW.argtypes = [W.HWND, W.UINT, W.WPARAM, W.LPARAM]
 U.IsWindowVisible.argtypes = [W.HWND]
+U.GetWindowTextW.argtypes = [W.HWND,W.LPWSTR,C.c_int]
+U.GetClassNameW.argtypes = [W.HWND,W.LPWSTR,C.c_int]
 CALLBACK = C.WINFUNCTYPE(W.BOOL, W.HWND, W.LPARAM)
 U.EnumWindows.argtypes = [CALLBACK, W.LPARAM]
 
@@ -57,7 +59,10 @@ def find_window(pid):
         owner = W.DWORD()
         U.GetWindowThreadProcessId(hwnd, C.byref(owner))
         if owner.value == pid and U.IsWindowVisible(hwnd):
-            found.append(hwnd)
+            title = C.create_unicode_buffer(512)
+            U.GetWindowTextW(hwnd,title,512)
+            if title.value.startswith('Adit SYNTHETIC acceptance'):
+                found.append(hwnd)
         return True
     U.EnumWindows(visit, 0)
     return found[0] if len(found) == 1 else None
@@ -90,7 +95,7 @@ def crosshairs(image):
                     component.append(point)
         xs, ys = zip(*component)
         width, height = max(xs)-min(xs)+1, max(ys)-min(ys)+1
-        if min(width, height) < 10 or abs(width-height) > 3 or len(component) > width*6:
+        if min(width, height) < 10 or abs(width-height) > 3 or len(component) > width*12:
             continue
         cx, cy = (min(xs)+max(xs))//2, (min(ys)+max(ys))//2
         row = sum(y == cy for x,y in component)
@@ -140,11 +145,16 @@ def main():
                 app = subprocess.Popen([str(args.app.resolve())], env=env, stdout=out, stderr=err)
                 log = Path(tempfile.gettempdir())/f'adit-vnc-native-acceptance-{app.pid}'/'events.jsonl'
                 hwnd = wait_until(lambda: find_window(app.pid), 30)
+                title, window_class = C.create_unicode_buffer(512), C.create_unicode_buffer(128)
+                U.GetWindowTextW(hwnd,title,512)
+                U.GetClassNameW(hwnd,window_class,128)
+                (directory/'hwnd.json').write_text(json.dumps(dict(hwnd=hwnd,title=title.value,window_class=window_class.value,pid=app.pid)),encoding='utf-8')
                 U.SetForegroundWindow(hwnd)
                 wait_until(lambda: any(e['event']=='geometry' for e in read_events(log)), 30)
                 for index, (width,height) in enumerate(((1000,700),(1200,820),(900,640))):
                     assert app.poll() is None and peer.poll() is None
                     previous = len(read_events(state/'events.jsonl'))
+                    client_before = len(read_events(log))
                     assert U.SetWindowPos(hwnd, None, 10, 10, width, height, 0x0040)
                     wait_until(lambda: (lambda r: r.right-r.left == width and r.bottom-r.top == height)(get_rect(hwnd)))
                     if resize:
@@ -153,7 +163,7 @@ def main():
                         wait_until(lambda: any(e['event']=='geometry' and e['surface']==[changed['width'],changed['height']]
                                                for e in read_events(log)))
                     # Wait for both a stable screenshot and a native window event.
-                    wait_until(lambda: any(e['event']=='window' for e in read_events(log)))
+                    wait_until(lambda: any(e['event']=='window' for e in read_events(log)[client_before:]))
                     def capture_cross():
                         image = ImageGrab.grab(bbox=client_box(hwnd))
                         found = crosshairs(image)

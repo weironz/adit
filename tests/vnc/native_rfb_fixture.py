@@ -68,8 +68,11 @@ def grid(width, height, pixel_format, sequence):
 
     for x, y in ((100, 100), (300, 200), (500, 400), (700, 500)):
         for delta in range(-12, 13):
-            pixel(x + delta, y, white)
-            pixel(x, y + delta, white)
+            # Keep crosshairs observable after real GPU minification; a 1px line
+            # can land between sample centres and disappear at a fit scale.
+            for stroke in range(-2, 3):
+                pixel(x + delta, y + stroke, white)
+                pixel(x + stroke, y + delta, white)
         # A small coloured quadrant identifies each crosshair without a font dependency.
         for delta in range(5):
             pixel(x + 18 + delta, y - 18, yellow)

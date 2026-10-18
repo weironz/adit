@@ -43,7 +43,14 @@ do {
 $record.controls = @()
 foreach ($process in $found) {
     $condition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty,$process.Id)
-    $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,$condition)
+    # UWP can be hosted by ApplicationFrameHost. Match its actual owning child,
+    # rather than assuming the top-level HWND shares SystemSettings's PID.
+    $roots = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children,[System.Windows.Automation.Condition]::TrueCondition)
+    $record.top_level_windows = @($roots | ForEach-Object { @{name=$_.Current.Name;pid=$_.Current.ProcessId} })
+    $windows = @($roots | Where-Object {
+        $_.Current.ProcessId -eq $process.Id -or
+        ($_.Current.Name -eq 'Settings' -and $null -ne $_.FindFirst([System.Windows.Automation.TreeScope]::Descendants,$condition))
+    })
     foreach ($window in $windows) {
         $nodes = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
         foreach ($node in $nodes | Select-Object -First 200) {
