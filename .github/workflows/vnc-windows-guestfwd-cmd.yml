@@ -1,0 +1,48 @@
+name: Windows guestfwd cmd feasibility (fake only)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['codex/vnc-windows-shared-soak', 'codex/vnc-guestfwd-cmd']
+    paths:
+      - '.github/workflows/vnc-windows-guestfwd-cmd.yml'
+      - 'tests/vnc/netem-guest/cmd_probe.py'
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  fake_cmd:
+    name: Single bounded fake-service experiment; no VNC or credentials
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Reuse exact previously built guest with its original source attribution
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: 39145306679
+          artifact-ids: 12143371403
+          merge-multiple: true
+          path: ${{ runner.temp }}/adit-netem-guest
+      - name: Extract same pinned QEMU and try two fake per-connection cmd lifecycles once
+        timeout-minutes: 3
+        shell: pwsh
+        run: ./tests/vnc/netem-guest/windows.ps1 -Guest "$env:RUNNER_TEMP/adit-netem-guest" -Results "$env:RUNNER_TEMP/adit-guestfwd-cmd" -Mode cmd-probe
+      - name: Preserve the original result including all failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-guestfwd-cmd-fake-only
+          path: |
+            ${{ runner.temp }}/adit-guestfwd-cmd/
+            ${{ runner.temp }}/adit-netem-qemu-tools/provenance.json
+            ${{ runner.temp }}/adit-netem-qemu-tools/extraction.txt
+            ${{ runner.temp }}/adit-netem-qemu-tools/qemu-version.txt
+          if-no-files-found: warn
+          retention-days: 14

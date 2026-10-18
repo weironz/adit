@@ -1,7 +1,7 @@
 param(
     [Parameter(Mandatory)][string]$Guest,
     [Parameter(Mandatory)][string]$Results,
-    [ValidateSet('echo','vnc')][string]$Mode = 'echo',
+    [ValidateSet('echo','vnc','cmd-probe')][string]$Mode = 'echo',
     [string]$Probe,
     [ValidateRange(1,10)][int]$Samples = 1,
     [ValidateSet('lossless','wan')][string]$Quality = 'lossless',
@@ -26,7 +26,9 @@ $qemu = @(Get-ChildItem -LiteralPath (Join-Path $toolsRoot 'extracted') -Filter 
 if ($qemu.Count -ne 1) { throw 'Expected exactly one extracted x86_64 system emulator' }
 & $qemu[0].FullName --version | Out-File -LiteralPath (Join-Path $toolsRoot 'qemu-version.txt') -Encoding utf8
 if ($LASTEXITCODE -ne 0) { throw "QEMU version failed: $LASTEXITCODE" }
-if ($Mode -eq 'vnc') {
+if ($Mode -eq 'cmd-probe') {
+    & python "$PSScriptRoot/cmd_probe.py" --qemu $qemu[0].FullName --guest $Guest --results $Results
+} elseif ($Mode -eq 'vnc') {
     if ([string]::IsNullOrWhiteSpace($Probe)) { throw 'VNC mode requires a production probe.' }
     & python "$PSScriptRoot/vnc_run.py" --qemu $qemu[0].FullName --guest $Guest --results $Results --probe $Probe --samples $Samples --quality $Quality --workload $Workload
 } else {
