@@ -259,7 +259,7 @@ try {
     $record.os = Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber, OSArchitecture
     if ($SyntheticLoad) {
         Write-Phase 'Start owned public synthetic Tk target; its fresh state directory is created only by Python'
-        $pythonPath = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+        $pythonPath = (Get-Command python.exe -CommandType Application -ErrorAction Stop | Select-Object -First 1).Source
         $loadScript = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot 'windows-load.py')).Path
         $record.load_script_sha256 = (Get-FileHash -LiteralPath $loadScript -Algorithm SHA256).Hash.ToLowerInvariant()
         $loadProcess = Start-Process -FilePath $pythonPath -ArgumentList @('-u', ('"' + $loadScript + '"'), '--state-dir', ('"' + $loadStateDir + '"')) `

@@ -20,7 +20,18 @@ def pattern_row(y, width=1600):
 def atomic_json(path, data):
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(temporary, path)
+    # Windows readers may briefly deny replacement; retry only sharing/permission
+    # failures, retaining a finite deadline so permanent write failures surface.
+    deadline = time.monotonic() + .3
+    while True:
+        try:
+            os.replace(temporary, path)
+            return
+        except PermissionError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise
+            time.sleep(min(.005, remaining))
 
 
 def run(state_dir):
