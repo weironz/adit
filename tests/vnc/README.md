@@ -5,6 +5,22 @@ server. All published ports bind to host loopback. `adit-ci` and
 `adit-test-isolated` are public synthetic fixture passwords, not deployable secrets.
 No screen or clipboard from the user's actual desktop is captured.
 
+## Isolated Windows vendor smoke
+
+The `VNC Windows vendor smoke` GitHub workflow runs the portable UltraVNC
+1.8.3.0 server on a disposable Windows runner. It builds the current
+`vnc_probe`, verifies the official archive's SHA-256, and uses only public
+synthetic credentials with loopback listeners. The script refuses local use;
+it does not install a service or change the developer's firewall or desktop.
+
+Run it from Actions with `workflow_dispatch`. The evidence artifact retains
+the exact source and executable hashes, server/OS versions, raw probe output,
+and failures. Three fresh read-only connections must negotiate VncAuth and
+cover the complete framebuffer; a wrong password must fail authentication.
+These are interoperability smoke samples, not the Windows weak-network matrix
+or reliable latency percentiles. They do not cover service mode, UAC, lock
+screens, physical keys, native IME, OS DPI, sleep, or physical NIC changes.
+
 ## SSH gateway and ordinary x11vnc
 
 ```powershell

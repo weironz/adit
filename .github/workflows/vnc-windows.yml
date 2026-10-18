@@ -1,0 +1,43 @@
+name: VNC Windows vendor smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, 'codex/vnc-windows-ci']
+    paths:
+      - '.github/workflows/vnc-windows.yml'
+      - 'tests/vnc/windows-server-smoke.ps1'
+      - 'crates/adit-session/examples/vnc_probe.rs'
+
+permissions:
+  contents: read
+
+jobs:
+  ultravnc:
+    name: UltraVNC portable loopback VncAuth smoke
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build existing read-only production SessionManager probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Actual portable Windows server and strict VncAuth assertions
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          ./tests/vnc/windows-server-smoke.ps1 -Probe ./target/debug/examples/vnc_probe.exe -Results "$env:RUNNER_TEMP/adit-vnc-windows-result"
+      - name: Preserve original success and failure evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-windows-ultravnc-smoke
+          path: ${{ runner.temp }}/adit-vnc-windows-result
+          if-no-files-found: warn
