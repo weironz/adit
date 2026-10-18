@@ -1,0 +1,100 @@
+{
+  "audited_at_utc": "2026-10-18T18:09:19.688746+00:00",
+  "status": "passed: original portable/native-loopback two-client shared soak only",
+  "source_sha": "04df3170dc54ca182d7926fc4b9da0509eae09d6",
+  "source_probe_url": "https://github.com/weironz/adit/blob/04df3170dc54ca182d7926fc4b9da0509eae09d6/crates/adit-session/examples/vnc_windows_shared_probe.rs",
+  "source_wrapper_url": "https://github.com/weironz/adit/blob/04df3170dc54ca182d7926fc4b9da0509eae09d6/tests/vnc/windows-server-smoke.ps1",
+  "run_id": 39142722306,
+  "job_id": 117721098430,
+  "artifact_id": 12145846836,
+  "run_conclusion": "success",
+  "checks": {
+    "actual_soak_at_least_7200s": true,
+    "all_60_idle_windows_at_least_120s_no_input": true,
+    "two_production_session_managers_source_reviewed": true,
+    "two_distinct_actual_vendor_established_connections": true,
+    "all_120_clicks_sequential_alternating_actors_and_real_target_consumption": true,
+    "every_click_both_fresh_rgb_full_opaque_frame_static_canaries": true,
+    "both_clients_disconnects_zero": true,
+    "both_clients_pending_at_most_one": true,
+    "shared_stderr_empty": true,
+    "target_final_counts_match": true,
+    "client_records_removed": true,
+    "vendor_established_after_close_zero": true,
+    "owned_vendor_target_firewall_cleanup_reported_without_errors": true
+  },
+  "actual_soak_ms": 7240451,
+  "probe_elapsed_ms": 7243593,
+  "event_counts": {
+    "two_clients_ready": 1,
+    "progress": 1445,
+    "idle_completed": 60,
+    "shared_click": 120,
+    "soak_completed": 1,
+    "result": 1
+  },
+  "idle_min_ms": 120000,
+  "idle_max_ms": 120044,
+  "clicks_per_actor": [
+    60,
+    60
+  ],
+  "largest_progress_gap_ms": 5113,
+  "disconnects": [
+    0,
+    0
+  ],
+  "max_pending": [
+    1,
+    1
+  ],
+  "two_vendor_established_connections": [
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 15911,
+      "RemoteAddress": "127.0.0.1",
+      "RemotePort": 56550,
+      "OwningProcess": 7844
+    },
+    {
+      "LocalAddress": "127.0.0.1",
+      "LocalPort": 15911,
+      "RemoteAddress": "127.0.0.1",
+      "RemotePort": 56551,
+      "OwningProcess": 7844
+    }
+  ],
+  "probe_resources": {
+    "cpu_sample_min_seconds": 1,
+    "probe_cpu_ms_since_first_sample": 64312,
+    "probe_cpu_peak_percent_one_core": 38.749322506250685,
+    "probe_process_peak_working_set_bytes": 29777920,
+    "scope": "whole probe process, including both production clients; not per-client attribution"
+  },
+  "approximate_whole_probe_cpu_percent_one_core_over_total_probe_elapsed": 0.8878466805078641,
+  "vendor_and_target_last_supervision": {
+    "utc": "2026-10-18T18:05:03.7669971+00:00",
+    "vendor_cpu_ms_since_start": 33218.75,
+    "vendor_peak_working_set_bytes": 36147200,
+    "target_peak_working_set_bytes": 49188864
+  },
+  "cleanup": {
+    "probe_close_requested_records_removed": true,
+    "probe_os_socket_cleanup_verified": false,
+    "wrapper_vendor_established_after_close": 0,
+    "server_cleanup": "owned vendor process exited",
+    "load_cleanup": "owned Python target exited; identity/path and script/state arguments verified before termination",
+    "firewall_cleanup": "exact owned GUID rule removed after owned server exit; PersistentStore and ActiveStore absence verified"
+  },
+  "probe_binary_sha256": "02fd20fa3365f26402c053542bca9293d6c4419c5a01ce169c891ffa359b7417",
+  "vendor_binary_sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe",
+  "limitations": [
+    "Tested original source04df, not a fresh two-hour run of current main.",
+    "Two independent production SessionManagers in one probe process, not two native Adit GUI processes.",
+    "Windows PeakWorkingSet is cumulative high-water working set, not current RSS series or leak exclusion.",
+    "CPU peak and approximate mean are whole probe including both clients, one-core equivalent; no per-client attribution or added pass thresholds.",
+    "Vendor resource fields are last-supervision cumulative CPUms and peak working set; target has peak working set only.",
+    "Probe intentionally does not claim kernel socket ack; wrapper separately checks vendor Established=0 and owned processes/rule cleanup. No independent post-cleanup system snapshot.",
+    "No physical input, OS sleep/resume, UAC/lock, service, weak-network or native GPU-presentation acceptance."
+  ]
+}
