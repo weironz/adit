@@ -1,0 +1,635 @@
+{
+  "schema": 1,
+  "status": "partial",
+  "scope": "Windows native maximize/restore with synthetic loopback RFB; not vendor or OS DPI matrix acceptance",
+  "source_head": "69a26f735d934cf8118fe5396c226ea686eebc21",
+  "worktree_delta": "Native acceptance observation code plus UI HiDpi dependency feature; shipping UI/dispatcher unchanged",
+  "binary": {
+    "name": "adit-vnc-loopback-69a26f7-154584f58a37.exe",
+    "sha256": "154584f58a37d1415a3e697cc57de0d3e27620727ef489c9337cfa765b3787fb",
+    "pid": 25980,
+    "window_id": 921638
+  },
+  "build": "cargo rustc -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance -- -C debuginfo=0 -C link-arg=/DEBUG:NONE; CARGO_BUILD_JOBS=1; passed 4m41s",
+  "safety": {
+    "listener": "127.0.0.1:15915",
+    "security": "explicit AllowNone / synthetic None peer",
+    "clipboard": false,
+    "os_settings_changed": false,
+    "app_scale": 1.0,
+    "config": "fresh PID-specific TEMP; no default user configuration/credentials"
+  },
+  "dpi": {
+    "api": "GetDpiForWindow",
+    "actual_dpi": 120,
+    "actual_scale": 1.25,
+    "os_dpi_matrix_100_150_200": "not tested"
+  },
+  "self_test": {
+    "command": "python tests/vnc/native_rfb_fixture.py --self-test",
+    "status": "passed",
+    "proof": [
+      "RFB3.8 None handshake",
+      "separate EDS update then complete Raw framebuffer",
+      "1200x800 initial and 900x600 resize landmarks",
+      "300,200 wire button"
+    ]
+  },
+  "maximized": {
+    "status": "observed",
+    "client_before": [
+      1100,
+      760
+    ],
+    "client_after": [
+      1792,
+      1048.800048828125
+    ],
+    "server_before": [
+      1352,
+      836
+    ],
+    "server_after": [
+      2220,
+      1196
+    ],
+    "frame": 3,
+    "stable_screenshot": "maximized-stable.png",
+    "visible": "New frame identifier 3, blue grid, right/bottom cyan border; no large black areas in observed settled viewport",
+    "click": {
+      "screenshot_point": [
+        256,
+        246
+      ],
+      "target": [
+        300,
+        200
+      ],
+      "client_float": [
+        300.0,
+        199.37496948242188
+      ],
+      "server": [
+        300,
+        199
+      ],
+      "error_pixels": [
+        0,
+        -1
+      ]
+    }
+  },
+  "restored": {
+    "status": "observed with minimize recovery",
+    "tool_sequence": [
+      "Click current native Restore accessibility button",
+      "Tool reported minimized; client logged0x0",
+      "activate exact owned window, rehydrate get_window, fresh state",
+      "client returned1100x760; server acknowledged1352x836"
+    ],
+    "client_after": [
+      1100,
+      760
+    ],
+    "server_after": [
+      1352,
+      836
+    ],
+    "frame": 4,
+    "stable_screenshot": "restored-stable.png",
+    "visible": "New frame identifier4 and complete blue grid/right-bottom border in observed settled viewport",
+    "click": {
+      "screenshot_point": [
+        256,
+        253
+      ],
+      "target": [
+        300,
+        200
+      ],
+      "client_float": [
+        297.4662780761719,
+        200.14089965820312
+      ],
+      "server": [
+        297,
+        200
+      ],
+      "error_pixels": [
+        -3,
+        0
+      ],
+      "root_cause": "unproven; preserve outlier without adjusting threshold"
+    }
+  },
+  "rapid_border": {
+    "status": "not verified",
+    "attempts": [
+      {
+        "from": [
+          1101,
+          400
+        ],
+        "to": [
+          981,
+          400
+        ]
+      },
+      {
+        "from": [
+          1100,
+          790
+        ],
+        "to": [
+          980,
+          690
+        ]
+      }
+    ],
+    "screenshot_before_after": [
+      1102,
+      791
+    ],
+    "actual_window_resize_events": 0,
+    "actual_server_resize_requests": 0,
+    "observed_canvas_buttons": [
+      [
+        1201,
+        383
+      ],
+      [
+        1200,
+        745
+      ]
+    ],
+    "screenshot": "border-attempts-unchanged.png",
+    "stopped_after_two": true
+  },
+  "limitations": [
+    "Synthetic Raw peer is not TigerVNC/UltraVNC vendor acceptance",
+    "Server send/geometry alone does not establish GUI alpha coverage; settled screenshots are visual evidence only",
+    "No proof that every transient frame during resize was artifact-free",
+    "3px restored click discrepancy unresolved",
+    "No successful rapid border resize",
+    "No OS DPI change or100/150/200 matrix; no cursor-shape/focus or physical keyboard/IME acceptance"
+  ],
+  "diagnostic_history": [
+    {
+      "initial_fixture": "Combined EDS+Raw in one update was rejected by existing decoder; corrected fixture to separate updates, preserving initial failure rather than changing production code",
+      "old_fixture_pid": 29784,
+      "old_harness_pid": 25884
+    },
+    {
+      "capture": "First occluded state returned unrelated background; excluded and not saved. Activating owned harness produced correct window capture"
+    },
+    {
+      "reconnect": "Production reconnect opened VNC password modal; no authentication controls touched. Exact own process25884 stopped and same-hash isolated preconfigured None harness relaunched"
+    }
+  ],
+  "server_relevant_events": [
+    {
+      "monotonic": 6674.9429287,
+      "unix_ms": 1792338741610,
+      "event": "connected",
+      "security": "None",
+      "shared": 1
+    },
+    {
+      "monotonic": 6674.9818733,
+      "unix_ms": 1792338741649,
+      "event": "full_frame_sent",
+      "sequence": 1,
+      "width": 1200,
+      "height": 800,
+      "pixel_bytes": 3840000,
+      "sha256": "7ea82b9f20080932a1427215241d82727648a7504ee1709e31fce2832e4f3909",
+      "eds_reason": 0
+    },
+    {
+      "monotonic": 6696.748926,
+      "unix_ms": 1792338763416,
+      "event": "set_desktop_size",
+      "width": 1352,
+      "height": 836,
+      "screens": [
+        [
+          42,
+          0,
+          0,
+          1352,
+          836,
+          0
+        ]
+      ],
+      "previous": [
+        1200,
+        800
+      ]
+    },
+    {
+      "monotonic": 6696.8031017,
+      "unix_ms": 1792338763470,
+      "event": "full_frame_sent",
+      "sequence": 2,
+      "width": 1352,
+      "height": 836,
+      "pixel_bytes": 4521088,
+      "sha256": "169fdd36cb84349729187f553838612454a7ef173f730cf96758f86383ee0cd7",
+      "eds_reason": 1
+    },
+    {
+      "monotonic": 6721.3075199,
+      "unix_ms": 1792338787975,
+      "event": "set_desktop_size",
+      "width": 2220,
+      "height": 1196,
+      "screens": [
+        [
+          42,
+          0,
+          0,
+          2220,
+          1196,
+          0
+        ]
+      ],
+      "previous": [
+        1352,
+        836
+      ]
+    },
+    {
+      "monotonic": 6721.90641,
+      "unix_ms": 1792338788574,
+      "event": "full_frame_sent",
+      "sequence": 3,
+      "width": 2220,
+      "height": 1196,
+      "pixel_bytes": 10620480,
+      "sha256": "598dc9d03d39cb9f5af83eaefada462b5af2db582327d02842c1eabf0aa1b176",
+      "eds_reason": 1
+    },
+    {
+      "monotonic": 6774.3229719,
+      "unix_ms": 1792338840990,
+      "event": "button",
+      "mask": 1,
+      "x": 300,
+      "y": 199,
+      "width": 2220,
+      "height": 1196,
+      "frame": 3
+    },
+    {
+      "monotonic": 6774.3236061,
+      "unix_ms": 1792338840991,
+      "event": "button",
+      "mask": 0,
+      "x": 300,
+      "y": 199,
+      "width": 2220,
+      "height": 1196,
+      "frame": 3
+    },
+    {
+      "monotonic": 6808.577108,
+      "unix_ms": 1792338875244,
+      "event": "set_desktop_size",
+      "width": 1352,
+      "height": 836,
+      "screens": [
+        [
+          42,
+          0,
+          0,
+          1352,
+          836,
+          0
+        ]
+      ],
+      "previous": [
+        2220,
+        1196
+      ]
+    },
+    {
+      "monotonic": 6808.7384342,
+      "unix_ms": 1792338875406,
+      "event": "full_frame_sent",
+      "sequence": 4,
+      "width": 1352,
+      "height": 836,
+      "pixel_bytes": 4521088,
+      "sha256": "e600f4fb031a6160e187a555edcf899ef24f06ce468ca98e653b85b774e9fdc9",
+      "eds_reason": 1
+    },
+    {
+      "monotonic": 6830.3337027,
+      "unix_ms": 1792338897001,
+      "event": "button",
+      "mask": 1,
+      "x": 297,
+      "y": 200,
+      "width": 1352,
+      "height": 836,
+      "frame": 4
+    },
+    {
+      "monotonic": 6830.3344952,
+      "unix_ms": 1792338897002,
+      "event": "button",
+      "mask": 0,
+      "x": 297,
+      "y": 200,
+      "width": 1352,
+      "height": 836,
+      "frame": 4
+    },
+    {
+      "monotonic": 6851.1966943,
+      "unix_ms": 1792338917864,
+      "event": "button",
+      "mask": 1,
+      "x": 1201,
+      "y": 383,
+      "width": 1352,
+      "height": 836,
+      "frame": 4
+    },
+    {
+      "monotonic": 6851.2478896,
+      "unix_ms": 1792338917915,
+      "event": "button",
+      "mask": 0,
+      "x": 1201,
+      "y": 383,
+      "width": 1352,
+      "height": 836,
+      "frame": 4
+    },
+    {
+      "monotonic": 6867.3719656,
+      "unix_ms": 1792338934039,
+      "event": "button",
+      "mask": 1,
+      "x": 1200,
+      "y": 745,
+      "width": 1352,
+      "height": 836,
+      "frame": 4
+    },
+    {
+      "monotonic": 6867.372106,
+      "unix_ms": 1792338934039,
+      "event": "button",
+      "mask": 0,
+      "x": 1200,
+      "y": 745,
+      "width": 1352,
+      "height": 836,
+      "frame": 4
+    }
+  ],
+  "client_relevant_events": [
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "unix_ms": 1792338743286,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "unix_ms": 1792338743286,
+      "width": 1100.0
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "unix_ms": 1792338743286,
+      "width": 1100.0
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338743287
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": null,
+      "display_scale": 1.0,
+      "event": "geometry",
+      "os_scale": 1.0,
+      "surface": [
+        1200,
+        800
+      ],
+      "unix_ms": 1792338743306
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338743306
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338743306
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338743306
+    },
+    {
+      "enabled": true,
+      "event": "remote_resize_enabled",
+      "unix_ms": 1792338763037
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": null,
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1352,
+        836
+      ],
+      "unix_ms": 1792338763492
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 1048.800048828125,
+      "unix_ms": 1792338787475,
+      "width": 1792.0
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338787485
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": null,
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        2220,
+        1196
+      ],
+      "unix_ms": 1792338788598
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button",
+      "unix_ms": 1792338840906
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 0.0,
+      "unix_ms": 1792338865375,
+      "width": 0.0
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338865395
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 1048.800048828125,
+      "unix_ms": 1792338874484,
+      "width": 1792.0
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338874547
+    },
+    {
+      "app_scale": 1.0,
+      "event": "window",
+      "height": 760.0,
+      "unix_ms": 1792338874818,
+      "width": 1100.0
+    },
+    {
+      "api": "GetDpiForWindow",
+      "dpi": 120,
+      "event": "native_dpi",
+      "scale": 1.25,
+      "unix_ms": 1792338874851
+    },
+    {
+      "app_scale": 1.0,
+      "cursor": null,
+      "display_scale": 1.25,
+      "event": "geometry",
+      "os_scale": 1.25,
+      "surface": [
+        1352,
+        836
+      ],
+      "unix_ms": 1792338875381
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button",
+      "unix_ms": 1792338896842
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button",
+      "unix_ms": 1792338917731
+    },
+    {
+      "app_scale": 1.0,
+      "button": "Left",
+      "event": "button",
+      "unix_ms": 1792338933856
+    }
+  ],
+  "source_sha256": {
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "19aa2a67fef6e7e4880888398e091d213401d03219d0548d33c2842453c3d4d0",
+    "crates/adit-ui/Cargo.toml": "bf668a9a86f1c1e6dda72f5af4d05e5843e5d61170ec09a9606918a134014cf3",
+    "tests/vnc/native_rfb_fixture.py": "b67dd97395399138fb057258fd54b2c2eb38ae76162ecbf03b825d6a02feb255"
+  },
+  "artifacts": [
+    {
+      "file": "border-attempts-state.json",
+      "bytes": 1177,
+      "sha256": "e1b1b701cb46c2193fac7cb58a1300dcf2bc9bbd3ab45865cfd620a1bf5288da"
+    },
+    {
+      "file": "border-attempts-unchanged.png",
+      "bytes": 69065,
+      "sha256": "8d44b87bb05706d83a3064bcb2bce5ed8c21d1b46486cc44b1a65f19ed88afb0"
+    },
+    {
+      "file": "client-events.jsonl",
+      "bytes": 3575,
+      "sha256": "59cd168bf33b8104a4d24bd2d7f172e53fa5bef259ac062eb46cab617faecbd2"
+    },
+    {
+      "file": "maximized-stable.png",
+      "bytes": 87775,
+      "sha256": "fa28f4a16dad910b9b627ddb44cda7eb264a012487830dae75df31343baf8b2e"
+    },
+    {
+      "file": "maximized-state.json",
+      "bytes": 1150,
+      "sha256": "f85ff49bc197ab5140ef779ff9e321932a7d7079696a96c54f49da37b07a913f"
+    },
+    {
+      "file": "restored-stable.png",
+      "bytes": 68576,
+      "sha256": "7926e93b1a728d349783cd50669535bc0e6794b69fdee3667929cebf805f4905"
+    },
+    {
+      "file": "restored-state.json",
+      "bytes": 1152,
+      "sha256": "f6c3138c32f0cefe6d67b5d549e387a8a63145080395bbef18db2d52c3678c66"
+    },
+    {
+      "file": "server-events.jsonl",
+      "bytes": 4722,
+      "sha256": "2da26822da8206948b5ce1e24deafc28cb250388a9c8300bab841154c9f8beee"
+    }
+  ],
+  "clippy": {
+    "command": "cargo clippy -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance -- -D warnings",
+    "status": "passed",
+    "seconds": 29
+  },
+  "cleanup": {
+    "owned_harness_pid25980": "exact executable path verified; stopped",
+    "owned_fixture_pid9876": "normal stop.request exit",
+    "port15915_listening": false,
+    "os_settings_changed": false
+  }
+}

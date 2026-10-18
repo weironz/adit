@@ -366,6 +366,23 @@ two-hour run with the required idle windows can set it true. This is loopback
 shared-desktop stability, not weak-network, native GPU presentation, service,
 UAC, OS DPI, OS sleep or physical-input acceptance.
 
+## Synthetic Windows native window observation
+
+`native_rfb_fixture.py` is a standard-library RFB 3.8 peer bound exclusively to
+`127.0.0.1:15915`. It supplies synthetic Raw grid frames, separate EDS updates,
+visible frame identifiers and wire input logs; it never captures a desktop.
+Run `python tests/vnc/native_rfb_fixture.py --self-test` to check its handshake,
+resize frame landmarks and input parsing. An interactive observation requires
+an absolute, fresh `--state-dir` and the opt-in `vnc_native_acceptance` example.
+The example uses a separate configuration and explicit synthetic None security.
+Its own HWND DPI is observed with `GetDpiForWindow`; app scale is not OS DPI.
+
+The [native observation record](results/2026-10-18-windows-native-loopback/result.json)
+includes the exact binary/source hashes, original events and settled screenshots.
+It preserves the restored-click discrepancy and unsuccessful border attempts.
+Synthetic peer observations do not establish vendor compatibility, every
+transient frame, physical keyboard behavior or the actual OS DPI matrix.
+
 ## Windows OS DPI acceptance attempt
 
 The [2026-10-17 OS DPI record](results/2026-10-17-windows-os-dpi.json)
