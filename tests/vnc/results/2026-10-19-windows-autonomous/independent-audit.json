@@ -1,0 +1,54 @@
+{
+  "outcome": "passed",
+  "scope": "Independent raw-result/timeline/native-socket/decoded-image/DPI audit; not an overall VNC feature acceptance",
+  "recovery_phases_ms": {
+    "ready": 69,
+    "disconnected": 50186,
+    "recovered": 51239,
+    "resumed": 51318
+  },
+  "lock_changed_channels": 0.9940100775824653,
+  "lock_image_note": "Original PPM decoded to lossless PNG with identical RGB pixels; original pixel hashes retained.",
+  "actual_settings_dpi": [
+    96,
+    144,
+    192,
+    96
+  ],
+  "original_failures": [
+    {
+      "run": 39175900470,
+      "outcome": "failed",
+      "kind": "native",
+      "file": "original-failures\\native-39175900470.json"
+    },
+    {
+      "run": 39176543035,
+      "outcome": "failed",
+      "kind": "native",
+      "file": "original-failures\\native-39176543035.json"
+    },
+    {
+      "run": 39177239348,
+      "outcome": "failed",
+      "kind": "native",
+      "file": "original-failures\\native-39177239348.json"
+    },
+    {
+      "run": 39177435224,
+      "outcome": "failed",
+      "kind": "native",
+      "file": "original-failures\\native-39177435224.json"
+    },
+    {
+      "run": 39175900470,
+      "outcome": "failed",
+      "kind": "recovery",
+      "file": "original-failures\\recovery-39175900470.json"
+    }
+  ],
+  "limitations": [
+    "No physical keyboard/IME, real OS sleep, physical NIC switch, UAC or unlock acceptance.",
+    "DPI capability observation does not by itself pass native Adit DPI/cursor acceptance."
+  ]
+}

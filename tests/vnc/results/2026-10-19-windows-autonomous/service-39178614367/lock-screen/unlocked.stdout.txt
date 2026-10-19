@@ -1,0 +1,11 @@
+connected_ms=2271
+elapsed_ms=2276 generation=1 coverage=0.0%
+first_paint_ms=3576 size=1024x768
+elapsed_ms=3576 generation=2 coverage=0.1%
+elapsed_ms=7608 generation=4 coverage=9.7%
+complete_paint_ms=7652 generation=44
+elapsed_ms=9884 generation=47 coverage=100.0%
+diagnostics=Some(VncDiagnostics { tcp_ms: 1, handshake_ms: 2262, first_pixel_ms: Some(3567), first_complete_ms: Some(2515), complete_updates: 6, wire_bytes: 190953, pending_updates: 1, fence_rtt_ms: None, painted_pixels: 790528, covered_pixels: 786432, framebuffer_pixels: 786432, first_covered_ms: Some(7637), sampled_generation: 47, queue_high_water: 0, security: "VncAuth", encoding: "[(7, 1)]", clipboard_utf8: true, status: "已连接" })
+complete=true
+final_connected=true disconnects=0 connection_error=false steady_complete=true
+sample_ms=10663 steady_ms=3010

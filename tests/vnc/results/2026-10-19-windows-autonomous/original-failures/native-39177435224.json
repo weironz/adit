@@ -1,0 +1,84 @@
+{
+  "outcome": "failed",
+  "source_sha": "3e4ee05eb7179d8403296986bf253c04ef4e94cf",
+  "run_id": "39177435224",
+  "app_sha256": "fd750506ab0636d91e5ed021f30e995c8e956e8c716abf9740a3890f3f740d6a",
+  "samples": [
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "index": 0,
+      "window": [
+        1000,
+        700
+      ],
+      "client_box": [
+        18,
+        41,
+        1002,
+        702
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        143,
+        133
+      ],
+      "candidates": [
+        [
+          143,
+          133,
+          17,
+          18
+        ],
+        [
+          285,
+          204,
+          18,
+          18
+        ],
+        [
+          427,
+          347,
+          18,
+          17
+        ],
+        [
+          570,
+          418,
+          18,
+          18
+        ]
+      ],
+      "remote": {
+        "monotonic": 724.765,
+        "unix_ms": 1792366962076,
+        "event": "button",
+        "mask": 1,
+        "x": 100,
+        "y": 99,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        0,
+        1
+      ]
+    }
+  ],
+  "scope": "Actual Windows HWND, native SetWindowPos, screen pixels, injected mouse and production view/dispatcher against synthetic RFB peer",
+  "limitations": [
+    "Application scales 100/150/200 are not OS DPI changes.",
+    "Injected pointer is not physical keyboard/IME acceptance.",
+    "Synthetic None peer is not vendor compatibility or secure desktop acceptance."
+  ],
+  "uac_policy": {
+    "EnableLUA": 1,
+    "ConsentPromptBehaviorAdmin": 0,
+    "PromptOnSecureDesktop": 1
+  },
+  "error": "TimeoutError('condition not satisfied: <function cursor_checks.<locals>.<lambda> at 0x000001A81E9B7B00>')",
+  "cleanup": {
+    "app_exited": true,
+    "peer_exit": 0
+  }
+}

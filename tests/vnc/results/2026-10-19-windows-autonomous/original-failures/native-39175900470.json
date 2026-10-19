@@ -1,0 +1,72 @@
+{
+  "outcome": "failed",
+  "source_sha": "232db4ee321b5280c0ecbdfc270eaff4a7bdb2ae",
+  "run_id": "39175900470",
+  "app_sha256": "e10c7a90021774385c1633d9da3a8da67a123125e953f6cbcedbb7b29c75df67",
+  "samples": [
+    {
+      "case": "scale-1-fit-True-resize-False",
+      "index": 0,
+      "window": [
+        1000,
+        700
+      ],
+      "client_box": [
+        10,
+        10,
+        1010,
+        710
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        550,
+        496
+      ],
+      "candidates": [
+        [
+          550,
+          496,
+          21,
+          21
+        ],
+        [
+          718,
+          580,
+          21,
+          21
+        ]
+      ],
+      "remote": {
+        "monotonic": 534.218,
+        "unix_ms": 1792365842338,
+        "event": "button",
+        "mask": 1,
+        "x": 499,
+        "y": 400,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        399,
+        300
+      ]
+    }
+  ],
+  "scope": "Actual Windows HWND, native SetWindowPos, screen pixels, injected mouse and production view/dispatcher against synthetic RFB peer",
+  "limitations": [
+    "Application scales 100/150/200 are not OS DPI changes.",
+    "Injected pointer is not physical keyboard/IME acceptance.",
+    "Synthetic None peer is not vendor compatibility or secure desktop acceptance."
+  ],
+  "uac_policy": {
+    "EnableLUA": 1,
+    "ConsentPromptBehaviorAdmin": 0,
+    "PromptOnSecureDesktop": 1
+  },
+  "error": "AssertionError({'case': 'scale-1-fit-True-resize-False', 'index': 0, 'window': [1000, 700], 'client_box': (10, 10, 1010, 710), 'actual_os_dpi': 96, 'screenshot_target': [550, 496], 'candidates': [(550, 496, 21, 21), (718, 580, 21, 21)], 'remote': {'monotonic': 534.218, 'unix_ms': 1792365842338, 'event': 'button', 'mask': 1, 'x': 499, 'y': 400, 'width': 1200, 'height': 800, 'frame': 1}, 'error': [399, 300]})",
+  "cleanup": {
+    "app_exited": true,
+    "peer_exit": 0
+  }
+}

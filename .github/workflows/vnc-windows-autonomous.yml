@@ -136,6 +136,11 @@ jobs:
           $dpiArgs = @()
           if ('${{ inputs.scope }}' -eq 'dpi') { $dpiArgs += @('--os-dpi-matrix','--cursor-matrix') }
           python tests/vnc/windows-autonomous-native.py --app "$env:RUNNER_TEMP/native-binary/vnc_native_acceptance.exe" --results "$env:RUNNER_TEMP/vnc-autonomous-native" @dpiArgs
+      - name: Include actual OS DPI and cursor matrix in all scope
+        if: inputs.scope == 'all'
+        shell: pwsh
+        timeout-minutes: 7
+        run: python tests/vnc/windows-autonomous-native.py --app "$env:RUNNER_TEMP/native-binary/vnc_native_acceptance.exe" --results "$env:RUNNER_TEMP/vnc-autonomous-native/os-dpi" --os-dpi-matrix --cursor-matrix
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -1,0 +1,20 @@
+{
+  "outcome": "failed",
+  "source_sha": "232db4ee321b5280c0ecbdfc270eaff4a7bdb2ae",
+  "run_id": "39175900470",
+  "scope": "Windows production SessionManager, real loopback TCP; synthetic None peer; application response blackhole with TCP still established",
+  "limitations": [
+    "Not UltraVNC/TigerVNC compatibility or encrypted/authenticated transport proof.",
+    "Application response blackhole is not packet loss, OS TCP keepalive failure, NIC switching or OS sleep."
+  ],
+  "probe_sha256": "6aefc48cee029b23ac0b8da828d268601ef65e0d668cc4e2398748a16e11ce70",
+  "port": 53864,
+  "static_idle_seconds": 35.06200000000001,
+  "idle_fence_replies": 7,
+  "error": "AssertionError('probe exited 101 before recovered')",
+  "cleanup": {
+    "threads_stopped": true,
+    "client_exited": true
+  },
+  "server_errors": []
+}

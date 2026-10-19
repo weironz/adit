@@ -2016,6 +2016,20 @@ mod tests {
     use iced::keyboard::key::{Code, Physical};
 
     #[test]
+    fn small_high_dpi_resize_updates_live_geometry_but_minimized_size_does_not() {
+        let mut app = drag_test_app();
+        let window = window::Id::unique();
+        // The runner's 1000x700 physical window at 200% has this logical client.
+        let _ = update(&mut app, Message::WindowResized { width: 487.0, height: 314.5, window });
+        assert_eq!((app.window_width, app.window_height), (487.0, 314.5));
+        for (width, height) in [(0.0, 0.0), (487.0, 0.0), (f32::NAN, 314.5), (487.0, f32::INFINITY)] {
+            let _ = update(&mut app, Message::WindowResized { width, height, window });
+            assert_eq!((app.window_width, app.window_height), (487.0, 314.5));
+        }
+        assert_eq!(sane_window_size(487.0, 314.5), DEFAULT_WINDOW_SIZE);
+    }
+
+    #[test]
     fn avatar_initials_takes_up_to_two_tokens() {
         assert_eq!(avatar_initials("prod-web-01"), "PW");
         assert_eq!(avatar_initials("local lab"), "LL");
