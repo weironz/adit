@@ -1,0 +1,41 @@
+{
+  "outcome": "passed",
+  "source_sha": "1bf3a1b75a9057521811b7dce6f06c4880d4bd05",
+  "run_id": "39229588182",
+  "scope": "Fresh production SessionManager VncAuth connections to attributed UltraVNC service before/after actual WTS workstation lock",
+  "limitations": [
+    "Does not prove unlock, password entry, UAC, secure attention or uninterrupted existing-session transition.",
+    "Disposable runner remains locked until destruction; no user workstation state is changed."
+  ],
+  "references": [
+    "https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/ns-wtsapi32-wtsinfoex_level1_w",
+    "https://learn.microsoft.com/en-us/windows/win32/shutdown/how-to-lock-the-workstation"
+  ],
+  "before_state": {
+    "session_id": 2,
+    "connection_state": 0,
+    "flags": 1,
+    "locked": false,
+    "unlocked": true
+  },
+  "before_frame": {
+    "width": 1024,
+    "height": 768,
+    "sha256": "41ef43cdeb049175ba8c18145df89c65f4b9605846da7852995d1aaa0adbee28",
+    "colours": 57851
+  },
+  "locked_state": {
+    "session_id": 2,
+    "connection_state": 0,
+    "flags": 0,
+    "locked": true,
+    "unlocked": false
+  },
+  "locked_frame": {
+    "width": 1024,
+    "height": 768,
+    "sha256": "c116f3fd1c1a70410377b3b81e42dac2392206a3a515a1d3c19c495abd5aba63",
+    "colours": 28430
+  },
+  "changed_channel_fraction": 0.9939558241102431
+}

@@ -208,6 +208,16 @@ pub fn run() -> iced::Result {
     profile.vnc.clipboard_send = false;
     profile.vnc.clipboard_receive = false;
     profile.vnc.auto_reconnect = false;
+    profile.vnc.resize_remote = std::env::var("ADIT_NATIVE_RESIZE").as_deref() == Ok("1");
+    let scale: f32 = std::env::var("ADIT_NATIVE_SCALE")
+        .unwrap_or_else(|_| "1".into())
+        .parse()
+        .expect("acceptance scale");
+    assert!(
+        matches!(scale, 1.0 | 1.5 | 2.0),
+        "acceptance scale must be 1/1.5/2"
+    );
+    let fit = std::env::var("ADIT_NATIVE_FIT").as_deref() != Ok("0");
     ProfileStore::default()
         .save_profiles(&[profile.clone()])
         .expect("synthetic profile");
@@ -232,6 +242,8 @@ pub fn run() -> iced::Result {
             terminal_focused: true,
             window_width: 1100.0,
             window_height: 760.0,
+            vnc_fit: fit,
+            display_scale: scale,
             ..AditApp::default()
         };
         app.manager.set_rdp_clipboard(false);
@@ -241,7 +253,7 @@ pub fn run() -> iced::Result {
         (
             State {
                 app,
-                scale: 1.0,
+                scale,
                 os_scale: 1.0,
                 rescale_pending: false,
                 events: events.clone(),

@@ -68,11 +68,15 @@ def grid(width, height, pixel_format, sequence):
 
     for x, y in ((100, 100), (300, 200), (500, 400), (700, 500)):
         for delta in range(-12, 13):
-            pixel(x + delta, y, white)
-            pixel(x, y + delta, white)
+            # Keep crosshairs observable after real GPU minification; a 1px line
+            # can land between sample centres and disappear at a fit scale.
+            for stroke in range(-2, 3):
+                pixel(x + delta, y + stroke, white)
+                pixel(x + stroke, y + delta, white)
         # A small coloured quadrant identifies each crosshair without a font dependency.
         for delta in range(5):
-            pixel(x + 18 + delta, y - 18, yellow)
+            for dy in range(5):
+                pixel(x + 18 + delta, y - 18 + dy, yellow)
     # A visible right/bottom border makes stale-size stretching easier to identify.
     for x in range(width):
         for dy in (1, 2, 3):
@@ -89,8 +93,30 @@ def grid(width, height, pixel_format, sequence):
     return bytes(full)
 
 
+def cursor_packet(style, pixel_format):
+    if style == 'hidden':
+        return rect(0, 0, 0, 0, -239), None
+    if style not in ('arrow', 'ibeam', 'color'):
+        raise ValueError('unknown synthetic cursor style')
+    bits, _, big, true, rm, gm, bm, rs, gs, bs = struct.unpack('>BBBBHHHBBB3x', pixel_format)
+    if bits not in (16, 32) or not true:
+        raise ValueError('unsupported cursor pixel format')
+    value = (rm << rs) | (bm << bs)
+    pixel_value = value.to_bytes(bits//8, 'big' if big else 'little')
+    mask, opaque = bytearray(32), []
+    for y in range(16):
+        for x in range(16):
+            visible = ((y < 12 and x <= y//2) or (5 <= x <= 8 and 7 <= y)) if style == 'arrow' else (
+                (3 <= x <= 12 and (y <= 2 or y >= 13)) or x in (7,8)) if style == 'ibeam' else not (6 <= x <= 10 and 6 <= y <= 10)
+            if visible:
+                opaque.append((x,y))
+                mask[y*2+x//8] |= 1 << (7-x%8)
+    xs,ys=zip(*opaque)
+    return rect(5,7,16,16,-239)+pixel_value*256+mask, [min(xs),min(ys),max(xs),max(ys)]
+
+
 class Peer:
-    def __init__(self, emit):
+    def __init__(self, emit, cursor_request=lambda: None):
         self.emit = emit
         self.width, self.height = 1200, 800
         self.pf = PF
@@ -99,6 +125,8 @@ class Peer:
         self.dirty = True
         self.first = True
         self.mask = 0
+        self.cursor_request = cursor_request
+        self.cursor_style = None
 
     def frame(self, conn, reason=None):
         self.sequence += 1
@@ -141,6 +169,15 @@ class Peer:
                 self.emit({"event": "encodings", "values": self.encodings})
             elif tag == 3:
                 incremental, x, y, width, height = struct.unpack(">BHHHH", exact(conn, 9))
+                style = self.cursor_request()
+                if style is not None and style != self.cursor_style:
+                    if -239 not in self.encodings:
+                        raise ValueError('CursorPseudo not negotiated')
+                    packet, opaque_bounds = cursor_packet(style, self.pf)
+                    conn.sendall(b'\x00\x00\x00\x01'+packet)
+                    self.cursor_style = style
+                    self.emit({'event':'cursor', 'style':style, 'hotspot':[5,7] if opaque_bounds else [0,0],
+                               'opaque_bounds':opaque_bounds,'wire_sha256':hashlib.sha256(packet).hexdigest()})
                 if self.dirty or not incremental:
                     reason = 0 if self.first and EDS in self.encodings else None
                     self.frame(conn, reason)
@@ -272,7 +309,22 @@ def main():
                 with conn:
                     conn.settimeout(60)
                     try:
-                        Peer(emit).serve(conn, lambda: time.monotonic() >= deadline
+                        def cursor_request():
+                            request = args.state_dir / 'cursor.request'
+                            cursor_deadline = time.monotonic() + 1
+                            while True:
+                                try:
+                                    return request.read_text(encoding='utf-8').strip()
+                                except FileNotFoundError:
+                                    return None
+                                except PermissionError:
+                                    # Windows can deny an open while the driver atomically
+                                    # replaces this public control file. Keep that race out
+                                    # of the peer while retaining a strict failure bound.
+                                    if time.monotonic() >= cursor_deadline:
+                                        raise
+                                    time.sleep(.01)
+                        Peer(emit, cursor_request).serve(conn, lambda: time.monotonic() >= deadline
                                          or (args.state_dir / "stop.request").exists())
                     except (EOFError, ConnectionError, TimeoutError) as error:
                         emit({"event": "disconnected", "reason": type(error).__name__})

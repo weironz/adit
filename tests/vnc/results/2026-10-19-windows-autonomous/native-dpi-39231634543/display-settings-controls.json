@@ -1,0 +1,669 @@
+﻿{
+    "existing_pids":  [
+
+                      ],
+    "top_level_windows":  [
+                              {
+                                  "name":  "",
+                                  "pid":  848
+                              },
+                              {
+                                  "name":  "Settings",
+                                  "pid":  2832
+                              },
+                              {
+                                  "name":  "C:\\ProgramData\\GitHub\\HostedComputeAgent\\hosted-compute-agent",
+                                  "pid":  7792
+                              },
+                              {
+                                  "name":  "Program Manager",
+                                  "pid":  848
+                              }
+                          ],
+    "fresh_processes":  [
+                            {
+                                "Id":  7624,
+                                "StartTime":  "\/Date(1792402847627)\/"
+                            }
+                        ],
+    "controls":  [
+                     {
+                         "type":  "ControlType.Window",
+                         "name":  "Settings",
+                         "offscreen":  false,
+                         "automation_id":  "TitleBar",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.MenuBar",
+                         "name":  "System",
+                         "offscreen":  false,
+                         "automation_id":  "SystemMenuBar",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.MenuItem",
+                         "name":  "System",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Minimize Settings",
+                         "offscreen":  false,
+                         "automation_id":  "Minimize",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Maximize Settings",
+                         "offscreen":  false,
+                         "automation_id":  "Maximize",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Close Settings",
+                         "offscreen":  false,
+                         "automation_id":  "Close",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Window",
+                         "name":  "Settings",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Settings",
+                         "offscreen":  false,
+                         "automation_id":  "SettingsLabel",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Edit",
+                         "name":  "Search box, Find a setting",
+                         "offscreen":  false,
+                         "automation_id":  "CommandSearchTextBox",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Custom",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "PermanentNavigationView",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Back",
+                         "offscreen":  false,
+                         "automation_id":  "NavigationViewBackButton",
+                         "enabled":  false
+                     },
+                     {
+                         "type":  "ControlType.Window",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "PaneRoot",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "runneradmin Local Account",
+                         "offscreen":  false,
+                         "automation_id":  "UserProfileControlButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "User profile picture",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "runneradmin",
+                         "offscreen":  false,
+                         "automation_id":  "UserName",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Local Account",
+                         "offscreen":  false,
+                         "automation_id":  "UserAccount",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Pane",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "MenuItemsScrollViewer",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "MenuItemsHost",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "System",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Bluetooth \u0026 devices",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Network \u0026 internet",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Personalization",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Apps",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Accounts",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Time \u0026 language",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Accessibility",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Privacy \u0026 security",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Windows Update",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Image",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Pane",
+                         "name":  "",
+                         "offscreen":  true,
+                         "automation_id":  "FooterItemsScrollViewer",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "",
+                         "offscreen":  true,
+                         "automation_id":  "FooterMenuItemsHost",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "PermanentNavigationViewBreadcrumbBar",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "System",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "System",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Display",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Display",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Pane",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "ItemsControlScrollViewer",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Brightness \u0026 color",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Brightness \u0026 color",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Color profile",
+                         "offscreen":  false,
+                         "automation_id":  "SystemSettings_Display_ColorProfileSetting_EntityItem",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Color profile",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Determine how colors appear on your screen",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Color profile",
+                         "offscreen":  false,
+                         "automation_id":  "EntityItemButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "HDR",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "HDR",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "More about HDR ",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Hyperlink",
+                         "name":  "More about HDR",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "HDR",
+                         "offscreen":  false,
+                         "automation_id":  "EntityItemButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Scale \u0026 layout",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Scale \u0026 layout",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Scale",
+                         "offscreen":  false,
+                         "automation_id":  "SystemSettings_Display_Scaling_ItemSizeOverride_EntityItem",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Scale",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Change the size of text, apps, and other items",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ComboBox",
+                         "name":  "Scale",
+                         "offscreen":  false,
+                         "automation_id":  "SystemSettings_Display_Scaling_ItemSizeOverride_ComboBox",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "100% (Recommended)",
+                         "offscreen":  false,
+                         "automation_id":  "ContentPresenter",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Scale",
+                         "offscreen":  false,
+                         "automation_id":  "EntityItemButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Display resolution",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Adjust the resolution to fit your connected display",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ComboBox",
+                         "name":  "Display resolution",
+                         "offscreen":  false,
+                         "automation_id":  "SystemSettings_Display_Resolution_ComboBox",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "1024 × 768 (Recommended)",
+                         "offscreen":  false,
+                         "automation_id":  "ContentPresenter",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Display orientation",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ComboBox",
+                         "name":  "Display orientation",
+                         "offscreen":  false,
+                         "automation_id":  "SystemSettings_Display_Orientation_ComboBox",
+                         "enabled":  false
+                     },
+                     {
+                         "type":  "ControlType.ListItem",
+                         "name":  "Landscape",
+                         "offscreen":  false,
+                         "automation_id":  "ContentPresenter",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Multiple displays",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Multiple displays",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Choose the presentation mode for your displays",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Show more settings",
+                         "offscreen":  true,
+                         "automation_id":  "EntityItemButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Related settings",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Related settings",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Advanced display",
+                         "offscreen":  true,
+                         "automation_id":  "SystemSettings_Display_AdvancedDisplaySettings_ButtonEntityItem",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Advanced display",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Display information, refresh rate",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Advanced display",
+                         "offscreen":  true,
+                         "automation_id":  "EntityItemButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Graphics",
+                         "offscreen":  true,
+                         "automation_id":  "SettingsPageGpuPreferenceView2_ButtonEntityItem",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Graphics",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Button",
+                         "name":  "Graphics",
+                         "offscreen":  true,
+                         "automation_id":  "EntityItemButton",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Group",
+                         "name":  "Give feedback",
+                         "offscreen":  true,
+                         "automation_id":  "BonusBarEntityGiveFeedbackGroup",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Hyperlink",
+                         "name":  "Give feedback",
+                         "offscreen":  true,
+                         "automation_id":  "",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Text",
+                         "name":  "Give feedback",
+                         "offscreen":  true,
+                         "automation_id":  "BonusBarWindowsInsiderLink",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.ScrollBar",
+                         "name":  "Vertical",
+                         "offscreen":  true,
+                         "automation_id":  "VerticalScrollBar",
+                         "enabled":  true
+                     },
+                     {
+                         "type":  "ControlType.Pane",
+                         "name":  "",
+                         "offscreen":  false,
+                         "automation_id":  "",
+                         "enabled":  true
+                     }
+                 ],
+    "source_sha":  "797f7121d977f2522da1717ad4ddbc3bee7f9832"
+}

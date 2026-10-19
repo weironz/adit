@@ -1,0 +1,25 @@
+﻿{
+    "before_dpi":  192,
+    "target_percent":  100,
+    "after_dpi":  96,
+    "selected_label":  "100% (Recommended)",
+    "observations":  [
+                         {
+                             "utc":  "2026-10-19T09:41:49.6207920Z",
+                             "dpi":  192
+                         },
+                         {
+                             "utc":  "2026-10-19T09:41:49.7794594Z",
+                             "dpi":  96
+                         }
+                     ],
+    "choices":  [
+                    "100% (Recommended)",
+                    "125%",
+                    "150%",
+                    "175%",
+                    "200%"
+                ],
+    "outcome":  "passed",
+    "source_sha":  "797f7121d977f2522da1717ad4ddbc3bee7f9832"
+}

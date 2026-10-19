@@ -9,6 +9,9 @@ param(
     [switch]$SyntheticLoad,
     [switch]$SharedSoak,
     [switch]$ServiceMode,
+    [switch]$LockScreen,
+    [switch]$DisplayResize,
+    [switch]$Uac,
     [ValidateRange(1,28800)][int]$DurationSeconds = 7200,
     [ValidateRange(1,600)][int]$IdleSeconds = 120,
     [ValidateSet(15911,15912)][int]$ProbePort = 15911,
@@ -24,6 +27,9 @@ if (-not $IsWindows -or $env:GITHUB_ACTIONS -ne 'true' -or
 if (($ProbePort -eq 15912) -ne (-not [string]::IsNullOrWhiteSpace($GuestNetworkEvidence))) { throw 'Guest port15912 requires its owned network evidence; native port15911 excludes guest evidence.' }
 if ($ProbePort -eq 15912 -and (-not $SyntheticLoad -or $ServiceMode -or $SharedSoak)) { throw 'Guest network samples require the isolated synthetic target and exclude service/shared-soak modes.' }
 if ($ServiceMode -and ($SharedSoak -or -not $SyntheticLoad)) { throw 'ServiceMode requires the owned synthetic target and excludes SharedSoak.' }
+if ($LockScreen -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'LockScreen requires the owned service and direct loopback probe.' }
+if ($DisplayResize -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'DisplayResize requires the owned service and direct loopback probe.' }
+if ($Uac -and (-not $ServiceMode -or $ProbePort -ne 15911)) { throw 'Uac requires the owned service and direct loopback probe.' }
 if (-not $SyntheticLoad -and $Workload -ne 'static') { throw 'Input workloads require the owned synthetic target.' }
 if ($SharedSoak -and (-not $SyntheticLoad -or $Workload -ne 'static' -or $Quality -ne 'lossless')) {
     throw 'SharedSoak requires the owned synthetic target, static workload and lossless quality.'
@@ -58,6 +64,7 @@ $serviceConsoleSession = $null
 $guestNetwork = $null
 $guestQemuCommandLine = $null
 $guestControllerCommandLine = $null
+$displayOriginal = $null
 $source = '0cd8b41aeb34e52e170b33e24411b3f805e303be'
 $record = [ordered]@{
     outcome = 'failed'; source_sha = $env:GITHUB_SHA; run_id = $env:GITHUB_RUN_ID
@@ -1010,6 +1017,45 @@ public static class AditVncFixtureIni {
     }
     $ownedReady = Assert-OwnedListeners
     if ($ServiceMode -and -not $ownedReady) { throw 'SCM service/worker/listener chain disappeared before the final acceptance check.' }
+    if ($DisplayResize) {
+        $record.scope += '; three measured real Windows display sizes via supported native mode changes and fresh VncAuth connections'
+        $displayScript=Join-Path $PSScriptRoot 'windows-native-display.ps1'
+        & $displayScript -Evidence (Join-Path $resultPath 'display-original.json')
+        $displayOriginal=(Get-Content -LiteralPath (Join-Path $resultPath 'display-original.json') -Raw | ConvertFrom-Json).before
+        $record.display_resize=@()
+        $index=100
+        foreach ($dimensions in @(@(1280,1024),@(1600,1200),@([int]$displayOriginal.width,[int]$displayOriginal.height))) {
+            $index++
+            & $displayScript -Width $dimensions[0] -Height $dimensions[1] -Evidence (Join-Path $resultPath "display-$index.json")
+            if (-not (Assert-OwnedListeners)) { throw 'Owned service/listener disappeared during native display resize.' }
+            Invoke-Probe $index 'adit-ci' $false
+            $sample=$record.samples[-1]
+            if ($sample.framebuffer[0] -ne $dimensions[0] -or $sample.framebuffer[1] -ne $dimensions[1]) { throw 'Real vendor framebuffer differs from actual Windows display dimensions.' }
+            $record.display_resize+=@{sample=$index;dimensions=$dimensions;full_frame=$true;real_canaries=$sample.synthetic_canary}
+        }
+        $displayOriginal=$null
+    }
+    if ($Uac) {
+        $inputDriver = Join-Path (Split-Path -Parent $probePath) 'vnc_fixture_driver.exe'
+        if (-not (Test-Path -LiteralPath $inputDriver)) { throw 'UAC requires the separately built production input fixture driver.' }
+        & $pythonPath (Join-Path $PSScriptRoot 'windows-service-uac.py') --probe $probePath --input-driver $inputDriver --results (Join-Path $resultPath 'uac')
+        if ($LASTEXITCODE -ne 0) { throw 'Actual filtered-token UAC capture failed; original evidence retained.' }
+        $record.uac = Get-Content -LiteralPath (Join-Path $resultPath 'uac/result.json') -Raw | ConvertFrom-Json -AsHashtable
+        if ($record.uac.outcome -ne 'passed') { throw 'UAC capture did not pass.' }
+        if (-not (Assert-OwnedListeners)) { throw 'Owned service attribution lost after UAC capture.' }
+        $record.scope += '; actual filtered-token UAC capture and production SessionManager Escape cancellation'
+        if ($SyntheticLoad) { $null = Reset-SyntheticLoad 104 }
+    }
+    if ($LockScreen) {
+        $record.scope += '; actual WTS lock state and fresh complete lock-screen capture'
+        $record.limitations[0] = 'Actual service attribution and fresh lock-screen capture; optional Uac records rendering separately. No unlock/password entry, elevation approval, secure attention or uninterrupted existing-session transition.'
+        Write-Phase 'Measure actual WTS lock state and fresh VncAuth full frames; disposable runner only'
+        & $pythonPath (Join-Path $PSScriptRoot 'windows-service-lock.py') --probe $probePath --results (Join-Path $resultPath 'lock-screen')
+        if ($LASTEXITCODE -ne 0) { throw 'Actual lock-screen acceptance failed; inspect original evidence.' }
+        $record.lock_screen = Get-Content -LiteralPath (Join-Path $resultPath 'lock-screen/result.json') -Raw | ConvertFrom-Json -AsHashtable
+        if ($record.lock_screen.outcome -ne 'passed') { throw 'Lock-screen result did not pass.' }
+        if (-not (Assert-OwnedListeners)) { throw 'Service/worker attribution lost after lock-screen acceptance.' }
+    }
     if ($ServiceMode) { $record.service_acceptance = $true }
     $record.outcome = 'passed'
 } catch {
@@ -1017,6 +1063,10 @@ public static class AditVncFixtureIni {
     $record.error = $_.Exception.Message
     Write-Phase ('FAILED: ' + $_.Exception.Message)
 } finally {
+    if ($null -ne $displayOriginal) {
+        try { & $displayScript -Width $displayOriginal.width -Height $displayOriginal.height -Evidence (Join-Path $resultPath 'display-emergency-restore.json') }
+        catch { $failed=$true; $record.outcome='failed'; $record.display_restore_error=$_.Exception.Message }
+    }
     if ($ServiceMode -and $serviceInstallAttempted) {
         try { Stop-OwnedService }
         catch { $failed = $true; $record.outcome = 'failed'; $record.cleanup_error = $_.Exception.Message }

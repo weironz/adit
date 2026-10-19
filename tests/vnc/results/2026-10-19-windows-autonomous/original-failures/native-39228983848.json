@@ -1,0 +1,809 @@
+{
+  "outcome": "failed",
+  "source_sha": "f04b34ca3af7049e8d437363a6ac3ebdbb1ca0b2",
+  "run_id": "39228983848",
+  "app_sha256": "fbf181626423a4462cc852b836598faa63eb8590b30175a5cdee114d2c89d4f9",
+  "samples": [
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "index": 0,
+      "window": [
+        1000,
+        700
+      ],
+      "client_box": [
+        18,
+        41,
+        1002,
+        702
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        144,
+        134
+      ],
+      "candidates": [
+        [
+          144,
+          134,
+          17,
+          18
+        ],
+        [
+          286,
+          205,
+          18,
+          18
+        ],
+        [
+          428,
+          348,
+          18,
+          17
+        ],
+        [
+          571,
+          419,
+          18,
+          18
+        ]
+      ],
+      "remote": {
+        "monotonic": 210.546,
+        "unix_ms": 1792401565464,
+        "event": "button",
+        "mask": 1,
+        "x": 101,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        1,
+        0
+      ]
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "index": 1,
+      "window": [
+        1200,
+        820
+      ],
+      "client_box": [
+        18,
+        41,
+        1202,
+        822
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        169,
+        149
+      ],
+      "candidates": [
+        [
+          169,
+          149,
+          22,
+          22
+        ],
+        [
+          342,
+          235,
+          21,
+          22
+        ],
+        [
+          514,
+          408,
+          22,
+          22
+        ],
+        [
+          687,
+          494,
+          22,
+          22
+        ]
+      ],
+      "remote": {
+        "monotonic": 215.343,
+        "unix_ms": 1792401570264,
+        "event": "button",
+        "mask": 1,
+        "x": 101,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        1,
+        0
+      ]
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "index": 2,
+      "window": [
+        900,
+        640
+      ],
+      "client_box": [
+        18,
+        41,
+        902,
+        642
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        130,
+        126
+      ],
+      "candidates": [
+        [
+          130,
+          126,
+          16,
+          16
+        ],
+        [
+          258,
+          190,
+          17,
+          16
+        ],
+        [
+          387,
+          318,
+          16,
+          16
+        ],
+        [
+          514,
+          382,
+          16,
+          16
+        ]
+      ],
+      "remote": {
+        "monotonic": 217.265,
+        "unix_ms": 1792401572187,
+        "event": "button",
+        "mask": 1,
+        "x": 99,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        1,
+        0
+      ]
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "index": 0,
+      "window": [
+        1000,
+        700
+      ],
+      "client_box": [
+        18,
+        41,
+        1002,
+        702
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        116,
+        162
+      ],
+      "candidates": [
+        [
+          116,
+          162,
+          25,
+          25
+        ],
+        [
+          316,
+          262,
+          25,
+          25
+        ],
+        [
+          516,
+          462,
+          25,
+          25
+        ],
+        [
+          716,
+          562,
+          25,
+          25
+        ]
+      ],
+      "remote": {
+        "monotonic": 220.046,
+        "unix_ms": 1792401574967,
+        "event": "button",
+        "mask": 1,
+        "x": 100,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        0,
+        0
+      ]
+    }
+  ],
+  "scope": "Actual Windows HWND, native SetWindowPos, screen pixels, injected mouse and production view/dispatcher against synthetic RFB peer",
+  "limitations": [
+    "Application scales 100/150/200 are not OS DPI changes.",
+    "Injected pointer is not physical keyboard/IME acceptance.",
+    "Synthetic None peer is not vendor compatibility or secure desktop acceptance."
+  ],
+  "binary_provenance": {
+    "source_sha": "a656c1a7a044e3991a1df55eaed62e8bebf3354b",
+    "compiler": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-pc-windows-msvc\nrelease: 1.98.0\nLLVM version: 22.1.8",
+    "producer_run": "39177637548",
+    "binary_sha256": "fbf181626423a4462cc852b836598faa63eb8590b30175a5cdee114d2c89d4f9",
+    "rust_inputs_sha256": "1501353d2a3f9857625cc07316ef7a90c7b061712ff50b62a46004c966c50f24"
+  },
+  "uac_policy": {
+    "EnableLUA": 1,
+    "ConsentPromptBehaviorAdmin": 0,
+    "PromptOnSecureDesktop": 1
+  },
+  "cursor_startup_observations": [
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "arrow",
+      "state": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "ibeam",
+      "state": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "color",
+      "state": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "hidden",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "arrow",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "ibeam",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "color",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "hidden",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      }
+    }
+  ],
+  "cursor_visibility_observations": [
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "arrow",
+      "state": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "expected_hwnd": 131648
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "ibeam",
+      "state": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "expected_hwnd": 131648
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "color",
+      "state": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "expected_hwnd": 131648
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "hidden",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "expected_hwnd": 131648
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "arrow",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "expected_hwnd": 524472
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "ibeam",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "expected_hwnd": 524472
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "color",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "expected_hwnd": 524472
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "hidden",
+      "state": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "expected_hwnd": 524472
+    }
+  ],
+  "cursor_samples": [
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "arrow",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "remote_pixels_per_screen_pixel": 1.4705882352941175,
+      "observed_bounds": [
+        36,
+        35,
+        42,
+        45
+      ],
+      "remote_opaque_bounds": [
+        0,
+        0,
+        8,
+        15
+      ],
+      "received_click": {
+        "monotonic": 211.218,
+        "unix_ms": 1792401566133,
+        "event": "button",
+        "mask": 1,
+        "x": 101,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "ibeam",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "remote_pixels_per_screen_pixel": 1.4705882352941175,
+      "observed_bounds": [
+        39,
+        35,
+        45,
+        45
+      ],
+      "remote_opaque_bounds": [
+        3,
+        0,
+        12,
+        15
+      ],
+      "received_click": {
+        "monotonic": 212.093,
+        "unix_ms": 1792401567011,
+        "event": "button",
+        "mask": 1,
+        "x": 101,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "color",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 2,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "remote_pixels_per_screen_pixel": 1.4705882352941175,
+      "observed_bounds": [
+        36,
+        35,
+        47,
+        45
+      ],
+      "remote_opaque_bounds": [
+        0,
+        0,
+        15,
+        15
+      ],
+      "transparent_hole_rgb": [
+        23,
+        50,
+        77
+      ],
+      "received_click": {
+        "monotonic": 212.656,
+        "unix_ms": 1792401567582,
+        "event": "button",
+        "mask": 1,
+        "x": 101,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "toolbar_cursor": {
+        "flags": 1,
+        "cursor_handle": 65567,
+        "position": [
+          162,
+          46
+        ],
+        "root_window": 131648
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "style": "hidden",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          162,
+          175
+        ],
+        "root_window": 131648
+      },
+      "remote_pixels_per_screen_pixel": 1.4705882352941175,
+      "observed_bounds": null,
+      "remote_opaque_bounds": null
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "arrow",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "remote_pixels_per_screen_pixel": 1.0,
+      "observed_bounds": [
+        35,
+        33,
+        43,
+        48
+      ],
+      "remote_opaque_bounds": [
+        0,
+        0,
+        8,
+        15
+      ],
+      "received_click": {
+        "monotonic": 220.781,
+        "unix_ms": 1792401575698,
+        "event": "button",
+        "mask": 1,
+        "x": 100,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "ibeam",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "remote_pixels_per_screen_pixel": 1.0,
+      "observed_bounds": [
+        38,
+        33,
+        47,
+        48
+      ],
+      "remote_opaque_bounds": [
+        3,
+        0,
+        12,
+        15
+      ],
+      "received_click": {
+        "monotonic": 221.359,
+        "unix_ms": 1792401576283,
+        "event": "button",
+        "mask": 1,
+        "x": 100,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "color",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "remote_pixels_per_screen_pixel": 1.0,
+      "observed_bounds": [
+        35,
+        33,
+        50,
+        48
+      ],
+      "remote_opaque_bounds": [
+        0,
+        0,
+        15,
+        15
+      ],
+      "transparent_hole_rgb": [
+        255,
+        255,
+        255
+      ],
+      "received_click": {
+        "monotonic": 222.234,
+        "unix_ms": 1792401577152,
+        "event": "button",
+        "mask": 1,
+        "x": 100,
+        "y": 100,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "toolbar_cursor": {
+        "flags": 1,
+        "cursor_handle": 65567,
+        "position": [
+          134,
+          46
+        ],
+        "root_window": 524472
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "style": "hidden",
+      "actual_os_dpi": 96,
+      "cursor": {
+        "flags": 0,
+        "cursor_handle": null,
+        "position": [
+          134,
+          203
+        ],
+        "root_window": 524472
+      },
+      "remote_pixels_per_screen_pixel": 1.0,
+      "observed_bounds": null,
+      "remote_opaque_bounds": null
+    }
+  ],
+  "cursor_boundary_samples": [
+    {
+      "case": "os-100-scale-1-fit-True-resize-False",
+      "outside": {
+        "flags": 1,
+        "cursor_handle": 65539,
+        "position": [
+          0,
+          0
+        ],
+        "root_window": 131646
+      }
+    },
+    {
+      "case": "os-100-scale-1-fit-False-resize-False",
+      "outside": {
+        "flags": 1,
+        "cursor_handle": 65539,
+        "position": [
+          0,
+          0
+        ],
+        "root_window": 131646
+      }
+    }
+  ],
+  "error": "TimeoutError('condition not satisfied: <function main.<locals>.<lambda> at 0x0000013CE0837A60>')",
+  "cleanup": {
+    "app_exited": true,
+    "peer_exit": 0
+  }
+}

@@ -1,0 +1,155 @@
+name: VNC Windows autonomous desktop and recovery
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        type: choice
+        default: all
+        options: [all, capabilities, native, dpi, recovery]
+      binary_run:
+        description: 'Optional prior run of this workflow; binary hash, Rust inputs and compiler must match'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  capabilities:
+    if: inputs.scope == 'all' || inputs.scope == 'capabilities'
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record actual desktop, token, display and power capabilities
+        shell: pwsh
+        run: |
+          $resultDir = "$env:RUNNER_TEMP/vnc-autonomous-capabilities"
+          New-Item -ItemType Directory -Path $resultDir -ErrorAction Stop | Out-Null
+          Get-CimInstance Win32_OperatingSystem | Select-Object Caption,Version,BuildNumber | ConvertTo-Json | Set-Content "$resultDir/os.json"
+          Get-ItemProperty 'HKLM:/SOFTWARE/Microsoft/Windows/CurrentVersion/Policies/System' | Select-Object EnableLUA,ConsentPromptBehaviorAdmin,PromptOnSecureDesktop | ConvertTo-Json | Set-Content "$resultDir/uac.json"
+          whoami /groups | Out-File "$resultDir/token-groups.txt"
+          query session | Out-File "$resultDir/sessions.txt"
+          powercfg /a | Out-File "$resultDir/power-capabilities.txt"
+          Get-CimInstance Win32_VideoController | Select-Object Name,CurrentHorizontalResolution,CurrentVerticalResolution,CurrentBitsPerPixel,VideoModeDescription | ConvertTo-Json | Set-Content "$resultDir/display.json"
+          @{source_sha=$env:GITHUB_SHA;run_id=$env:GITHUB_RUN_ID;scope='Capability observation only; does not pass UAC, lock or sleep acceptance'} | ConvertTo-Json | Set-Content "$resultDir/scope.json"
+      - name: Inspect supported display settings controls and linked token
+        timeout-minutes: 2
+        shell: powershell
+        run: ./tests/vnc/windows-desktop-capabilities.ps1 -Results "$env:RUNNER_TEMP/vnc-autonomous-capabilities"
+      - name: Verify actual OS DPI through supported Settings controls and restore 100 percent
+        timeout-minutes: 3
+        shell: powershell
+        run: |
+          $original = Get-Content "$env:RUNNER_TEMP/vnc-autonomous-capabilities/display.json" -Raw | ConvertFrom-Json
+          try {
+            ./tests/vnc/windows-native-display.ps1 -Width 1600 -Height 1200 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/resolution-1600.json"
+            ./tests/vnc/windows-native-dpi.ps1 -Scale 150 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-150.json"
+            ./tests/vnc/windows-native-dpi.ps1 -Scale 200 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-200.json"
+          } finally {
+            ./tests/vnc/windows-native-dpi.ps1 -Scale 100 -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/dpi-restored-100.json"
+            ./tests/vnc/windows-native-display.ps1 -Width $original.CurrentHorizontalResolution -Height $original.CurrentVerticalResolution -Evidence "$env:RUNNER_TEMP/vnc-autonomous-capabilities/resolution-restored.json"
+          }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vnc-autonomous-capabilities
+          path: ${{ runner.temp }}/vnc-autonomous-capabilities
+
+  recovery:
+    if: inputs.scope == 'all' || inputs.scope == 'recovery'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build production recovery probe
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_recovery_probe --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Actual Windows socket idle, application blackhole and recovery
+        shell: pwsh
+        timeout-minutes: 4
+        run: python tests/vnc/windows-autonomous-recovery.py --probe target/debug/examples/vnc_recovery_probe.exe --results "$env:RUNNER_TEMP/vnc-autonomous-recovery"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vnc-autonomous-recovery
+          path: ${{ runner.temp }}/vnc-autonomous-recovery
+
+  native:
+    if: inputs.scope == 'all' || inputs.scope == 'native' || inputs.scope == 'dpi'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    env:
+      CARGO_BUILD_JOBS: 2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install capture dependency
+        run: python -m pip install Pillow==11.3.0
+      - name: Verify fixture syntax and RFB contract before building
+        shell: pwsh
+        run: |
+          python -c "import ast,pathlib; [ast.parse((pathlib.Path('tests/vnc')/name).read_text(encoding='utf-8')) for name in ('native_rfb_fixture.py','windows-autonomous-native.py','windows-autonomous-recovery.py','windows-service-lock.py','windows-service-uac.py')]"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/vnc/native_rfb_fixture.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build isolated native window with production view and dispatcher
+        if: inputs.binary_run == ''
+        shell: pwsh
+        run: |
+          cargo build -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Save executable with complete Rust input and compiler provenance
+        if: inputs.binary_run == ''
+        shell: pwsh
+        run: ./tests/vnc/windows-native-binary.ps1 -Directory "$env:RUNNER_TEMP/native-binary" -Produce
+      - uses: actions/upload-artifact@v4
+        if: inputs.binary_run == ''
+        with:
+          name: vnc-native-binary
+          path: ${{ runner.temp }}/native-binary
+          retention-days: 7
+      - uses: actions/download-artifact@v4
+        if: inputs.binary_run != ''
+        with:
+          name: vnc-native-binary
+          path: ${{ runner.temp }}/native-binary
+          run-id: ${{ inputs.binary_run }}
+          github-token: ${{ github.token }}
+      - name: Verify exact binary and unchanged Rust build inputs
+        shell: pwsh
+        run: ./tests/vnc/windows-native-binary.ps1 -Directory "$env:RUNNER_TEMP/native-binary"
+      - name: Actual native resize and framebuffer-coordinate acceptance
+        shell: pwsh
+        timeout-minutes: 7
+        run: |
+          $dpiArgs = @()
+          if ('${{ inputs.scope }}' -eq 'dpi') { $dpiArgs += @('--os-dpi-matrix','--cursor-matrix') }
+          python tests/vnc/windows-autonomous-native.py --app "$env:RUNNER_TEMP/native-binary/vnc_native_acceptance.exe" --results "$env:RUNNER_TEMP/vnc-autonomous-native" @dpiArgs
+      - name: Include actual OS DPI and cursor matrix in all scope
+        if: inputs.scope == 'all'
+        shell: pwsh
+        timeout-minutes: 7
+        run: python tests/vnc/windows-autonomous-native.py --app "$env:RUNNER_TEMP/native-binary/vnc_native_acceptance.exe" --results "$env:RUNNER_TEMP/vnc-autonomous-native/os-dpi" --os-dpi-matrix --cursor-matrix
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vnc-autonomous-native
+          path: ${{ runner.temp }}/vnc-autonomous-native

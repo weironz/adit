@@ -1,0 +1,221 @@
+[
+  {
+    "elapsed_ms": 47,
+    "event": "accept",
+    "connection": 1,
+    "remote": [
+      "127.0.0.1",
+      56265
+    ]
+  },
+  {
+    "elapsed_ms": 63,
+    "event": "handshake",
+    "connection": 1,
+    "shared": 1,
+    "security": "None"
+  },
+  {
+    "elapsed_ms": 63,
+    "event": "encodings",
+    "connection": 1,
+    "values": [
+      -312,
+      16,
+      -239,
+      1,
+      0,
+      -223,
+      -308,
+      -224,
+      -1063131698
+    ]
+  },
+  {
+    "elapsed_ms": 63,
+    "event": "frame",
+    "connection": 1,
+    "rgb": [
+      255,
+      0,
+      0
+    ],
+    "sha256": "801e2877d4686e4229a3045c3cf6ece24421827dcf523ff95c12d18eff5606f6"
+  },
+  {
+    "elapsed_ms": 94,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 141,
+    "event": "marker",
+    "name": "ready"
+  },
+  {
+    "elapsed_ms": 5141,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 10141,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 15157,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 20172,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 25188,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 30203,
+    "event": "fence",
+    "connection": 1,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 35141,
+    "event": "blackhole_begin"
+  },
+  {
+    "elapsed_ms": 35219,
+    "event": "application_blackhole",
+    "connection": 1,
+    "message": 3,
+    "withheld_bytes": 4
+  },
+  {
+    "elapsed_ms": 35219,
+    "event": "fence",
+    "connection": 1,
+    "blocked": true,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 35219,
+    "event": "application_blackhole",
+    "connection": 1,
+    "message": 248,
+    "withheld_bytes": 17
+  },
+  {
+    "elapsed_ms": 50235,
+    "event": "socket_closed",
+    "connection": 1,
+    "reason": "EOFError"
+  },
+  {
+    "elapsed_ms": 50266,
+    "event": "marker",
+    "name": "disconnected"
+  },
+  {
+    "elapsed_ms": 51235,
+    "event": "accept",
+    "connection": 2,
+    "remote": [
+      "127.0.0.1",
+      56289
+    ]
+  },
+  {
+    "elapsed_ms": 51235,
+    "event": "handshake",
+    "connection": 2,
+    "shared": 1,
+    "security": "None"
+  },
+  {
+    "elapsed_ms": 51235,
+    "event": "encodings",
+    "connection": 2,
+    "values": [
+      -312,
+      16,
+      -239,
+      1,
+      0,
+      -223,
+      -308,
+      -224,
+      -1063131698
+    ]
+  },
+  {
+    "elapsed_ms": 51235,
+    "event": "frame",
+    "connection": 2,
+    "rgb": [
+      0,
+      0,
+      255
+    ],
+    "sha256": "419254c43f2c7556eec87dcd1f89637ce2979f92aa08c10e7d92d57c002fa80e"
+  },
+  {
+    "elapsed_ms": 51235,
+    "event": "fence",
+    "connection": 2,
+    "blocked": false,
+    "flags": 2147483648,
+    "payload_bytes": 8
+  },
+  {
+    "elapsed_ms": 51297,
+    "event": "marker",
+    "name": "recovered"
+  },
+  {
+    "elapsed_ms": 51313,
+    "event": "frame",
+    "connection": 2,
+    "rgb": [
+      0,
+      255,
+      0
+    ],
+    "sha256": "4f5612c8077bb1b68b230ad487e6afefc7b9724925ecf733e9b6c9f40c84ffc9"
+  },
+  {
+    "elapsed_ms": 51375,
+    "event": "socket_closed",
+    "connection": 2,
+    "reason": "EOFError"
+  },
+  {
+    "elapsed_ms": 51407,
+    "event": "marker",
+    "name": "resumed"
+  }
+]

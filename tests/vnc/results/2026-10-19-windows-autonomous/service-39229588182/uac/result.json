@@ -1,0 +1,36 @@
+{
+  "outcome": "passed",
+  "source_sha": "1bf3a1b75a9057521811b7dce6f06c4880d4bd05",
+  "run_id": "39229588182",
+  "scope": "Fresh disposable standard administrator with a filtered medium token; actual UAC secure-desktop rendering through production Adit SessionManager",
+  "account": "AditCi_2032fdcf71b7",
+  "public_state": "C:\\Users\\Public\\AditCi_2032fdcf71b7",
+  "original_consent_policy": 0,
+  "limitations": [
+    "Prompt is cancelled by an independent public-fixture RFB cleanup client; does not pass Adit keyboard routing or elevation approval.",
+    "No user password is read. Synthetic account password exists only in process memory, never argv, environment, files or logs."
+  ],
+  "active_consent_policy": 5,
+  "secure_desktop_policy": 1,
+  "medium_token": {
+    "elevation_type": 3,
+    "pid": 1276
+  },
+  "consent": {
+    "ProcessId": 5564,
+    "SessionId": 2,
+    "ExecutablePath": "C:\\Windows\\system32\\consent.exe"
+  },
+  "input_desktop": {
+    "access_denied": true,
+    "error": 5
+  },
+  "snapshot_sha256": "5311affe9815ee8f928e57837cb2e2b84c6d233494dca7774c466916e4b4936c",
+  "prompt_result": {
+    "return_value": 5,
+    "error": 1223,
+    "cancelled": true
+  },
+  "restored_consent_policy": 0,
+  "account_delete_status": 0
+}

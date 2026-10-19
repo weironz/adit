@@ -2371,9 +2371,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::WindowResized { width, height, window } => {
-            // Minimizing reports a 0x0 size on Windows; ignore it so we never
-            // persist (and later restore) an invisible window.
-            if width >= MIN_WINDOW_DIM && height >= MIN_WINDOW_DIM {
+            // Minimizing reports 0x0. A visible high-DPI window can legitimately
+            // be below the persisted-size minimum in logical points; ignoring
+            // that resize leaves desktop rendering and input on stale geometry.
+            if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
                 app.window_width = width;
                 app.window_height = height;
                 sync_terminal_size(app);

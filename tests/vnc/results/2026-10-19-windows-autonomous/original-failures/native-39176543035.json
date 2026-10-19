@@ -1,0 +1,144 @@
+{
+  "outcome": "failed",
+  "source_sha": "d51a6c7268b217bed448163d99c6a3725bf79cd2",
+  "run_id": "39176543035",
+  "app_sha256": "61738e3c69ea3b72ca56bcaf35fbaa1e23715d12ac041f1b54e63b8565410544",
+  "samples": [
+    {
+      "case": "scale-1-fit-True-resize-False",
+      "index": 0,
+      "window": [
+        1000,
+        700
+      ],
+      "client_box": [
+        18,
+        41,
+        1002,
+        702
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        143,
+        133
+      ],
+      "candidates": [
+        [
+          143,
+          133,
+          17,
+          18
+        ],
+        [
+          285,
+          204,
+          18,
+          18
+        ],
+        [
+          427,
+          347,
+          18,
+          17
+        ],
+        [
+          570,
+          418,
+          18,
+          18
+        ]
+      ],
+      "remote": {
+        "monotonic": 1910.062,
+        "unix_ms": 1792366479556,
+        "event": "button",
+        "mask": 1,
+        "x": 100,
+        "y": 99,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        0,
+        1
+      ]
+    },
+    {
+      "case": "scale-1-fit-True-resize-False",
+      "index": 1,
+      "window": [
+        1200,
+        820
+      ],
+      "client_box": [
+        18,
+        41,
+        1202,
+        822
+      ],
+      "actual_os_dpi": 96,
+      "screenshot_target": [
+        243,
+        193
+      ],
+      "candidates": [
+        [
+          243,
+          193,
+          17,
+          18
+        ],
+        [
+          385,
+          264,
+          18,
+          18
+        ],
+        [
+          527,
+          407,
+          18,
+          17
+        ],
+        [
+          670,
+          478,
+          18,
+          18
+        ]
+      ],
+      "remote": {
+        "monotonic": 1911.437,
+        "unix_ms": 1792366480923,
+        "event": "button",
+        "mask": 1,
+        "x": 186,
+        "y": 151,
+        "width": 1200,
+        "height": 800,
+        "frame": 1
+      },
+      "error": [
+        86,
+        51
+      ]
+    }
+  ],
+  "scope": "Actual Windows HWND, native SetWindowPos, screen pixels, injected mouse and production view/dispatcher against synthetic RFB peer",
+  "limitations": [
+    "Application scales 100/150/200 are not OS DPI changes.",
+    "Injected pointer is not physical keyboard/IME acceptance.",
+    "Synthetic None peer is not vendor compatibility or secure desktop acceptance."
+  ],
+  "uac_policy": {
+    "EnableLUA": 1,
+    "ConsentPromptBehaviorAdmin": 0,
+    "PromptOnSecureDesktop": 1
+  },
+  "error": "AssertionError({'case': 'scale-1-fit-True-resize-False', 'index': 1, 'window': [1200, 820], 'client_box': (18, 41, 1202, 822), 'actual_os_dpi': 96, 'screenshot_target': [243, 193], 'candidates': [(243, 193, 17, 18), (385, 264, 18, 18), (527, 407, 18, 17), (670, 478, 18, 18)], 'remote': {'monotonic': 1911.437, 'unix_ms': 1792366480923, 'event': 'button', 'mask': 1, 'x': 186, 'y': 151, 'width': 1200, 'height': 800, 'frame': 1}, 'error': [86, 51]})",
+  "cleanup": {
+    "app_exited": true,
+    "peer_exit": 0
+  }
+}

@@ -1,0 +1,18 @@
+Traceback (most recent call last):
+  File "D:\a\adit\adit\tests\vnc\native_rfb_fixture.py", line 322, in <module>
+    main()
+  File "D:\a\adit\adit\tests\vnc\native_rfb_fixture.py", line 315, in main
+    Peer(emit, cursor_request).serve(conn, lambda: time.monotonic() >= deadline
+  File "D:\a\adit\adit\tests\vnc\native_rfb_fixture.py", line 172, in serve
+    style = self.cursor_request()
+            ^^^^^^^^^^^^^^^^^^^^^
+  File "D:\a\adit\adit\tests\vnc\native_rfb_fixture.py", line 314, in cursor_request
+    return request.read_text(encoding='utf-8').strip() if request.exists() else None
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\pathlib.py", line 1027, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\hostedtoolcache\windows\Python\3.12.10\x64\Lib\pathlib.py", line 1013, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+PermissionError: [Errno 13] Permission denied: 'D:\\a\\_temp\\vnc-autonomous-native\\os-dpi\\peer-state\\cursor.request'

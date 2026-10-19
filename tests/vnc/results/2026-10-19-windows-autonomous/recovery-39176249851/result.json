@@ -1,0 +1,28 @@
+{
+  "outcome": "passed",
+  "source_sha": "ea0afeb78e618eb440d8f669b9c6593c08fb63af",
+  "run_id": "39176249851",
+  "scope": "Windows production SessionManager, real loopback TCP; synthetic None peer; application response blackhole with TCP still established",
+  "limitations": [
+    "Not UltraVNC/TigerVNC compatibility or encrypted/authenticated transport proof.",
+    "Application response blackhole is not packet loss, OS TCP keepalive failure, NIC switching or OS sleep."
+  ],
+  "probe_sha256": "c5d5601a79366b21c85498ae938a577473559943709e7ca4b0536ae6b289b8c9",
+  "port": 56264,
+  "static_idle_seconds": 35.0,
+  "idle_fence_replies": 7,
+  "connections": 2,
+  "client_pid": 4184,
+  "assertions": [
+    "35s static desktop stayed connected with real Fence replies",
+    "withheld responses on established Windows TCP caused heartbeat timeout",
+    "stale red framebuffer withdrawn, same tab and one session",
+    "fresh blue full frame and read-only/None/encoding policy preserved",
+    "fresh green full frame after recovery"
+  ],
+  "cleanup": {
+    "threads_stopped": true,
+    "client_exited": true
+  },
+  "server_errors": []
+}
