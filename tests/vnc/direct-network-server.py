@@ -9,6 +9,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -17,6 +18,14 @@ import time
 
 def command(argv, check=True):
     return subprocess.run(argv, capture_output=True, text=True, check=check)
+
+
+def rules_sha256(saved):
+    # iptables-save includes timestamps and live policy counters without -c.
+    # Compare rule semantics, retaining the original snapshots for inspection.
+    rules = '\n'.join(re.sub(r' \[\d+:\d+\]$', '', line)
+                      for line in saved.splitlines() if not line.startswith('#'))
+    return hashlib.sha256(rules.encode()).hexdigest()
 
 
 def cleanup(directory):
@@ -41,7 +50,7 @@ def cleanup(directory):
     (directory/'after-filter.txt').write_text(after)
     result = {'owned_chain_absent': command(['iptables', '-w', '5', '-S', state['chain']], check=False).returncode != 0,
               'filter_rules_sha256_before': state['filter_sha256'],
-              'filter_rules_sha256_after': hashlib.sha256(after.encode()).hexdigest()}
+              'filter_rules_sha256_after': rules_sha256(after)}
     result['original_filter_rules_unchanged'] = result['filter_rules_sha256_before'] == result['filter_rules_sha256_after']
     (directory/'cleanup.json').write_text(json.dumps(result, indent=2)+'\n')
 
@@ -52,6 +61,7 @@ def main():
     p.add_argument('--client-ip')
     p.add_argument('--bind')
     p.add_argument('--run-id')
+    p.add_argument('--port', type=int, default=15916)
     p.add_argument('--cleanup-only', action='store_true')
     args = p.parse_args()
     directory = args.directory.resolve()
@@ -60,6 +70,8 @@ def main():
         cleanup(directory)
         return
     assert os.geteuid() == 0 and args.run_id.isdigit()
+    assert 1 <= args.port <= 65535
+    port = str(args.port)
     client = str(ipaddress.IPv4Address(args.client_ip))
     bind = str(ipaddress.IPv4Address(args.bind))
     chain = 'ADITVNC'+args.run_id
@@ -67,7 +79,7 @@ def main():
     before = command(['iptables-save', '-t', 'filter']).stdout
     (directory/'before-filter.txt').write_text(before)
     state = dict(directory=str(directory), chain=chain, chain_created=False, rules=[], controller_pid=os.getpid(),
-                 filter_sha256=hashlib.sha256(before.encode()).hexdigest())
+                 filter_sha256=rules_sha256(before))
     result = dict(outcome='failed', scope='Direct hosted Windows client to Linux TCP; no application proxy; Linux INPUT/OUTPUT packet drop', client_ip=client)
     server = None
     timer = 'adit-vnc-cleanup-'+args.run_id
@@ -109,21 +121,21 @@ def main():
         save()
         command(['iptables', '-w', '5', '-A', chain, '-s', client, '-j', 'ACCEPT'])
         command(['iptables', '-w', '5', '-A', chain, '-j', 'DROP'])
-        jump = ['-p', 'tcp', '--dport', '15916', '-m', 'comment', '--comment', chain, '-j', chain]
+        jump = ['-p', 'tcp', '--dport', port, '-m', 'comment', '--comment', chain, '-j', chain]
         insert('INPUT', jump)
-        insert('OUTPUT', ['-d', client, '-p', 'tcp', '--sport', '15916', '-m', 'comment', '--comment', chain, '-j', 'ACCEPT'])
+        insert('OUTPUT', ['-d', client, '-p', 'tcp', '--sport', port, '-m', 'comment', '--comment', chain, '-j', 'ACCEPT'])
         command(['systemd-run', '--quiet', '--unit='+timer, '--on-active=15min', '--collect',
                  sys.executable, str(directory/'direct-network-server.py'), '--directory', str(directory), '--cleanup-only'])
         with (directory/'peer.stdout.txt').open('w') as out, (directory/'peer.stderr.txt').open('w') as err:
             server = subprocess.Popen([sys.executable, str(directory/'windows-vm-network-peer.py'),
-                '--bind', bind, '--port', '15916', '--directory', str(directory/'peer'), '--public-fixture'], stdout=out, stderr=err)
+                '--bind', bind, '--port', port, '--directory', str(directory/'peer'), '--public-fixture'], stdout=out, stderr=err)
             state['server_pid'] = server.pid
             save()
             await_event(lambda e: e['event']=='frame' and e['rgb']==[255, 0, 0], 600)
             emit('red_frame')
             time.sleep(40)
-            drops = [('INPUT', ['-s', client, '-p', 'tcp', '--dport', '15916', '-m', 'comment', '--comment', chain+'DROP', '-j', 'DROP']),
-                     ('OUTPUT', ['-d', client, '-p', 'tcp', '--sport', '15916', '-m', 'comment', '--comment', chain+'DROP', '-j', 'DROP'])]
+            drops = [('INPUT', ['-s', client, '-p', 'tcp', '--dport', port, '-m', 'comment', '--comment', chain+'DROP', '-j', 'DROP']),
+                     ('OUTPUT', ['-d', client, '-p', 'tcp', '--sport', port, '-m', 'comment', '--comment', chain+'DROP', '-j', 'DROP'])]
             for target, rule in drops:
                 insert(target, rule)
             emit('packet_blackhole_started')
