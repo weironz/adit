@@ -135,6 +135,10 @@ def run(state_dir):
 
         def reset():
             nonlocal dirty
+            # Returning from a secure desktop may foreground the runner console.
+            # Restore this owned target before checking its fixed public canaries.
+            root.lift()
+            canvas.focus_force()
             canvas.xview_moveto(.25)
             canvas.yview_moveto(.25)
             root.update_idletasks()

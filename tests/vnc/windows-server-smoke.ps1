@@ -1042,6 +1042,7 @@ public static class AditVncFixtureIni {
         if ($record.uac.outcome -ne 'passed') { throw 'UAC capture did not pass.' }
         if (-not (Assert-OwnedListeners)) { throw 'Owned service attribution lost after UAC capture.' }
         $record.scope += '; actual filtered-token UAC capture, with independent cleanup cancellation'
+        if ($SyntheticLoad) { $null = Reset-SyntheticLoad 104 }
     }
     if ($LockScreen) {
         $record.scope += '; actual WTS lock state and fresh complete lock-screen capture'

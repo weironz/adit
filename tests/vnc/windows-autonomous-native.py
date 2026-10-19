@@ -333,7 +333,11 @@ def main():
                     box = client_box(hwnd)
                     before = len(read_events(state/'events.jsonl'))
                     assert U.SetCursorPos(box[0]+cx, box[1]+cy)
-                    time.sleep(.15)
+                    U.mouse_event(0x0001,1,0,0,0)
+                    assert U.SetCursorPos(box[0]+cx, box[1]+cy)
+                    result['pending_click']=dict(case=name,index=index,box=box,target=[cx,cy],
+                                                 cursor=cursor_info(),expected_hwnd=hwnd,candidates=found)
+                    wait_until(lambda: any(e['event']=='pointer' for e in read_events(state/'events.jsonl')[before:]))
                     U.mouse_event(0x0002,0,0,0,0)
                     time.sleep(.08)
                     U.mouse_event(0x0004,0,0,0,0)
@@ -357,6 +361,8 @@ def main():
                 app = None
         result['outcome'] = 'passed'
     except Exception as error:
+        import traceback
+        result['traceback']=traceback.format_exc()
         result['error'] = repr(error)
         ImageGrab.grab().save(args.results/'failure-screen.png')
         raise
