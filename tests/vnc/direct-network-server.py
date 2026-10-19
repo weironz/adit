@@ -28,6 +28,24 @@ def rules_sha256(saved):
     return hashlib.sha256(rules.encode()).hexdigest()
 
 
+def nft_input(table):
+    return json.loads(command(['nft', '-j', 'list', 'chain', 'inet', table, 'input']).stdout)
+
+
+def nft_sha256(snapshot):
+    entries = []
+    for entry in snapshot['nftables']:
+        if 'metainfo' in entry:
+            continue
+        for item in entry.values():
+            item.pop('handle', None)
+            for expr in item.get('expr', []):
+                if 'counter' in expr:
+                    expr['counter'] = {}
+        entries.append(entry)
+    return hashlib.sha256(json.dumps(entries, sort_keys=True).encode()).hexdigest()
+
+
 def cleanup(directory):
     state = json.loads((directory/'owner.json').read_text())
     assert state['directory'] == str(directory) and state['chain'].startswith('ADITVNC')
@@ -47,6 +65,11 @@ def cleanup(directory):
     if state.get('chain_created'):
         command(['iptables', '-w', '5', '-F', state['chain']], check=False)
         command(['iptables', '-w', '5', '-X', state['chain']], check=False)
+    if state.get('nft_table'):
+        for item in nft_input(state['nft_table'])['nftables']:
+            rule = item.get('rule', {})
+            if rule.get('comment') == state['chain']:
+                command(['nft', 'delete', 'rule', 'inet', state['nft_table'], 'input', 'handle', str(rule['handle'])])
     after = command(['iptables-save', '-t', 'filter']).stdout
     (directory/'after-filter.txt').write_text(after)
     result = {'owned_chain_absent': command(['iptables', '-w', '5', '-S', state['chain']], check=False).returncode != 0,
@@ -57,6 +80,8 @@ def cleanup(directory):
         nat = command(['iptables-save', '-t', 'nat']).stdout
         (directory/'after-nat.txt').write_text(nat)
         result['original_nat_rules_unchanged'] = state['nat_sha256'] == rules_sha256(nat)
+    if state.get('nft_table'):
+        result['original_native_input_rules_unchanged'] = state['nft_sha256'] == nft_sha256(nft_input(state['nft_table']))
     (directory/'cleanup.json').write_text(json.dumps(result, indent=2)+'\n')
 
 
@@ -67,7 +92,7 @@ def main():
     p.add_argument('--bind')
     p.add_argument('--run-id')
     p.add_argument('--port', type=int, default=15916)
-    p.add_argument('--ingress-port', type=int)
+    p.add_argument('--nft-input-table')
     p.add_argument('--cleanup-only', action='store_true')
     args = p.parse_args()
     directory = args.directory.resolve()
@@ -78,7 +103,7 @@ def main():
     assert os.geteuid() == 0 and args.run_id.isdigit()
     assert 1 <= args.port <= 65535
     port = str(args.port)
-    assert args.ingress_port is None or 1 <= args.ingress_port <= 65535
+    assert args.nft_input_table is None or re.fullmatch(r'[A-Za-z0-9_]+', args.nft_input_table)
     client = str(ipaddress.IPv4Address(args.client_ip))
     bind = str(ipaddress.IPv4Address(args.bind))
     chain = 'ADITVNC'+args.run_id
@@ -89,6 +114,8 @@ def main():
     (directory/'before-nat.txt').write_text(nat)
     state = dict(directory=str(directory), chain=chain, chain_created=False, rules=[], controller_pid=os.getpid(),
                  filter_sha256=rules_sha256(before), nat_sha256=rules_sha256(nat))
+    if args.nft_input_table:
+        state.update(nft_table=args.nft_input_table, nft_sha256=nft_sha256(nft_input(args.nft_input_table)))
     result = dict(outcome='failed', scope='Direct hosted Windows client to Linux TCP; no application proxy; Linux INPUT/OUTPUT packet drop', client_ip=client)
     server = None
     timer = 'adit-vnc-cleanup-'+args.run_id
@@ -135,12 +162,12 @@ def main():
         insert('OUTPUT', ['-d', client, '-p', 'tcp', '--sport', port, '-m', 'comment', '--comment', chain, '-j', 'ACCEPT'])
         command(['systemd-run', '--quiet', '--unit='+timer, '--on-active=15min', '--collect',
                  sys.executable, str(directory/'direct-network-server.py'), '--directory', str(directory), '--cleanup-only'])
-        if args.ingress_port is not None:
-            # Exact disposable runner source only. Existing desktop service and
-            # other clients remain on their original socket; kernel NAT is not
-            # an application TCP terminator such as the NetBird VM gateway.
-            insert('PREROUTING', ['-s', client, '-d', bind, '-p', 'tcp', '--dport', str(args.ingress_port),
-                   '-m', 'comment', '--comment', chain, '-j', 'REDIRECT', '--to-ports', port], table='nat')
+        if args.nft_input_table:
+            # Hosts may also have a native nft input policy before iptables.
+            # Permit only this disposable source/port; no global policy change.
+            command(['nft', 'insert', 'rule', 'inet', args.nft_input_table, 'input',
+                     'ip', 'saddr', client, 'ip', 'daddr', bind, 'tcp', 'dport', port,
+                     'counter', 'accept', 'comment', '"'+chain+'"'])
         with (directory/'peer.stdout.txt').open('w') as out, (directory/'peer.stderr.txt').open('w') as err:
             server = subprocess.Popen([sys.executable, str(directory/'windows-vm-network-peer.py'),
                 '--bind', bind, '--port', port, '--directory', str(directory/'peer'), '--public-fixture'], stdout=out, stderr=err)

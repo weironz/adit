@@ -5,6 +5,7 @@ from pathlib import Path
 import socket
 import sys
 import time
+import traceback
 
 from pypsrp.client import Client
 
@@ -35,10 +36,13 @@ def main():
         try:
             with socket.create_connection((args.host, 5985), timeout=2):
                 pass
-        except OSError:
+        except OSError as error:
+            state.update(last_stage='tcp_connect', last_error_type=type(error).__name__)
+            save()
             time.sleep(15)
             continue
         try:
+            state['last_stage'] = 'encrypted_psrp'
             with Client(args.host, username=args.user, password=password, ssl=False,
                         auth='ntlm', encryption='always', connection_timeout=10,
                         read_timeout=90, operation_timeout=60) as client:
@@ -56,6 +60,7 @@ def main():
                         # Missing optional evidence must not postpone cleanup.
                         pass
                 remote_script = args.remote_directory+'\\cleanup-owned.ps1'
+                state['last_stage'] = 'copy_cleanup'
                 client.copy(str(args.cleanup_script.resolve()), remote_script, configuration_name=args.endpoint)
                 directory = args.remote_directory.replace("'", "''")
                 script = ("Set-ExecutionPolicy -Scope Process Bypass -Force;$ErrorActionPreference='Stop';"
@@ -63,6 +68,7 @@ def main():
                           "$a=New-ScheduledTaskAction -Execute powershell.exe -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File '+$d+'\\cleanup-owned.ps1 -Directory '+$d);"
                           "$p=New-ScheduledTaskPrincipal -UserId SYSTEM -LogonType ServiceAccount -RunLevel Highest;"
                           "Register-ScheduledTask -TaskName ($b.name+'-cleanup') -Action $a -Principal $p -Trigger (New-ScheduledTaskTrigger -Once -At (Get-Date).AddSeconds(5)) -Settings (New-ScheduledTaskSettingsSet -StartWhenAvailable)|Out-Null")
+                state['last_stage'] = 'dispatch_cleanup'
                 _, streams, failed = client.execute_ps(script, configuration_name=args.endpoint)
                 if failed:
                     raise RuntimeError('Cleanup dispatch failed')
@@ -71,6 +77,10 @@ def main():
                 return
         except Exception as error:
             state['last_error_type'] = type(error).__name__
+            # Locations diagnose automation faults without retaining exception
+            # messages, request contents, stack locals or the stdin credential.
+            state['error_locations'] = [{'function': f.name, 'line': f.lineno}
+                                        for f in traceback.extract_tb(error.__traceback__)]
             save()
             time.sleep(15)
     state['outcome'] = 'timeout_vm_unreachable_cleanup_not_completed'
