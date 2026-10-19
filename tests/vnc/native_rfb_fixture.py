@@ -311,19 +311,19 @@ def main():
                     try:
                         def cursor_request():
                             request = args.state_dir / 'cursor.request'
-                deadline = time.monotonic() + 1
-                while True:
-                    try:
-                        return request.read_text(encoding='utf-8').strip()
-                    except FileNotFoundError:
-                        return None
-                    except PermissionError:
-                        # Windows can deny an open while the driver atomically
-                        # replaces this public control file. Keep that race out
-                        # of the RFB peer while retaining a strict failure bound.
-                        if time.monotonic() >= deadline:
-                            raise
-                        time.sleep(.01)
+                            cursor_deadline = time.monotonic() + 1
+                            while True:
+                                try:
+                                    return request.read_text(encoding='utf-8').strip()
+                                except FileNotFoundError:
+                                    return None
+                                except PermissionError:
+                                    # Windows can deny an open while the driver atomically
+                                    # replaces this public control file. Keep that race out
+                                    # of the peer while retaining a strict failure bound.
+                                    if time.monotonic() >= cursor_deadline:
+                                        raise
+                                    time.sleep(.01)
                         Peer(emit, cursor_request).serve(conn, lambda: time.monotonic() >= deadline
                                          or (args.state_dir / "stop.request").exists())
                     except (EOFError, ConnectionError, TimeoutError) as error:
