@@ -34,6 +34,41 @@ empty capture cannot pass. Raw probe and target records survive failures.
 This baseline is neither a physical LAN test nor controlled packet loss;
 the WAN label selects image quality only.
 
+## Autonomous Windows desktop and recovery acceptance
+
+The manually dispatched `vnc-windows-autonomous.yml` runs entirely on disposable
+GitHub-hosted Windows. `scope=all` runs recovery, capability observation, native
+application scaling, and actual OS DPI/cursor acceptance. For focused reruns use
+`scope=recovery`, `capabilities`, `native`, or `dpi`. The native driver observes
+real HWND DPI, window dimensions, compositor pixels and production RFB input;
+its screen-coordinate calibration requires public white crosses with adjacent
+yellow marks. It checks distinct wire movement before returning to a click
+target, since 1:1 preserves the same target across resizes and pointer deduplication
+can legitimately remove a coalesced out-and-back movement.
+
+`scope=dpi` changes Settings scale to 100/150/200% with a supported 1600x1200
+display mode, then restores scale and the original mode. This never changes the
+developer's workstation. `binary_run` can reuse a prior native executable only
+when its complete Rust/resource input fingerprint, compiler identity and binary
+hash match; result metadata separates build provenance from test-script provenance.
+Change a Rust input and omit `binary_run` to build a fresh binary.
+
+`vnc-windows-lock.yml` owns an independent UltraVNC service and verifies native
+server display changes, actual UAC secure-desktop rendering and WTS lock-screen
+capture. UAC creates a disposable administrator with a verified filtered token;
+its password stays in process memory. A separate cleanup client cancels the
+prompt, then the fixture restores the exact policy and deletes its account.
+The wrapper verifies service/worker/port and owned firewall cleanup even on failure.
+Never invoke these system-changing scripts on a user desktop or self-hosted runner.
+
+The recovery fixture withholds RFB replies on a real established Windows TCP
+connection. This tests application liveness and same-tab recovery, not Windows
+packet blackholes, physical NIC switches or OS sleep. Hosted power capability
+evidence records that sleep/hibernate are unavailable. Injected pointer tests do
+not certify physical keyboard hooks, native IME or secure attention sequences.
+For reproducible raw records and an independent hash/pixel audit see
+[the archived runner evidence](results/2026-10-19-windows-autonomous/README.md).
+
 ## SSH gateway and ordinary x11vnc
 
 ```powershell
