@@ -862,6 +862,60 @@ fn fence_keeps_an_idle_desktop_alive_and_detects_a_controlled_half_open_peer() {
     assert!(manager.sessions().is_empty());
 }
 
+#[cfg(windows)]
+#[test]
+fn a_quiet_no_fence_desktop_survives_the_windows_retransmission_limit() {
+    let (quiet_tx, quiet_rx) = mpsc::channel();
+    let (resume_tx, resume_rx) = mpsc::channel();
+    let (port, server) = peer(move |mut stream| {
+        init(&mut stream);
+        let mut requests = 0;
+        while let Some((tag, data)) = message(&mut stream) {
+            if tag != 3 {
+                continue;
+            }
+            requests += 1;
+            if requests > 2 {
+                continue;
+            }
+            if requests == 2 {
+                assert_eq!(data[0], 1);
+                quiet_tx.send(()).unwrap();
+                // RFB may leave an incremental request unanswered indefinitely.
+                // The OS still ACKs TCP; this is not a packet blackhole.
+                resume_rx.recv_timeout(Duration::from_secs(45)).unwrap();
+            }
+            let mut frame = vec![0, 0, 0, 1];
+            for value in [0_u16, 0, 4, 2] {
+                frame.extend(value.to_be_bytes());
+            }
+            frame.extend(0_i32.to_be_bytes());
+            let rgb = if requests == 1 { [1, 2, 3, 0] } else { [4, 5, 6, 0] };
+            for _ in 0..8 {
+                frame.extend(rgb);
+            }
+            stream.write_all(&frame).unwrap();
+        }
+    });
+    let (mut manager, id) = manager(port);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    wait(&mut manager, |m| m.active_rdp_frame_if_newer(0).is_some());
+    quiet_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+    let start = Instant::now();
+    while start.elapsed() < Duration::from_secs(35) {
+        manager.poll_events();
+        assert_eq!(manager.active_session_summary().unwrap().status, SessionStatus::Connected);
+        assert_eq!(manager.active_session_summary().unwrap().id, session);
+        assert!(manager.active_vnc_diagnostics().unwrap().fence_rtt_ms.is_none());
+        thread::sleep(Duration::from_millis(20));
+    }
+    resume_tx.send(()).unwrap();
+    wait(&mut manager, |m| m.active_rdp_frame_if_newer(0).is_some_and(|frame| frame.rgba[..4] == [4, 5, 6, 255]));
+    assert_eq!(manager.sessions().len(), 1);
+    manager.close(session);
+    server.join().unwrap();
+}
+
 #[test]
 fn queued_remote_clipboard_does_not_survive_sharing_off_then_on() {
     let (trigger, commands) = mpsc::channel();

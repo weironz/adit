@@ -1,0 +1,56 @@
+[
+  {
+    "unix_ms": 1792407215913,
+    "message": 256,
+    "vk": 69,
+    "scan": 18,
+    "flags": 0,
+    "injected": false,
+    "layout": 134481924
+  },
+  {
+    "unix_ms": 1792407216048,
+    "message": 257,
+    "vk": 69,
+    "scan": 18,
+    "flags": 128,
+    "injected": false,
+    "layout": 134481924
+  },
+  {
+    "unix_ms": 1792407216244,
+    "message": 256,
+    "vk": 78,
+    "scan": 49,
+    "flags": 0,
+    "injected": false,
+    "layout": 134481924
+  },
+  {
+    "unix_ms": 1792407216416,
+    "message": 257,
+    "vk": 78,
+    "scan": 49,
+    "flags": 128,
+    "injected": false,
+    "layout": 134481924
+  },
+  {
+    "unix_ms": 1792407257519,
+    "message": 256,
+    "vk": 32,
+    "scan": 57,
+    "flags": 0,
+    "injected": false,
+    "layout": 134481924
+  },
+  {
+    "unix_ms": 1792407257852,
+    "message": 257,
+    "vk": 32,
+    "scan": 57,
+    "flags": 128,
+    "injected": false,
+    "layout": 134481924
+  }
+]

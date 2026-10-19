@@ -1,0 +1,9 @@
+{
+  "request_id": "wake-capability",
+  "pipeline_outcome": "passed",
+  "observation": {
+    "scope": "Capability only; no suspend request",
+    "native_error": 0,
+    "set_resume_timer": true
+  }
+}

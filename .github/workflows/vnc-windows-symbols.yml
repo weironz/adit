@@ -1,0 +1,32 @@
+name: VNC Windows native symbol recovery
+on:
+  push:
+    branches: ['codex/vnc-recovered-windows-acceptance']
+    paths: ['.github/workflows/vnc-windows-symbols.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  symbols:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Exact runtime sources of the executable used for recovered-VM input.
+          ref: 7f088a1fc2e69da1e0b8941f02af99df0912f96a
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Rebuild original native fixture with matching PDB
+        shell: pwsh
+        run: |
+          cargo build -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -Type Directory "$env:RUNNER_TEMP/native-symbols" | Out-Null
+          Copy-Item target/debug/examples/vnc_native_acceptance.exe,target/debug/examples/vnc_native_acceptance.pdb "$env:RUNNER_TEMP/native-symbols/"
+          @{source_sha=(git rev-parse HEAD); compiler=(rustc -Vv) -join "`n"; hashes=@(Get-ChildItem "$env:RUNNER_TEMP/native-symbols" | Get-FileHash -Algorithm SHA256 | Select Path,Hash)} | ConvertTo-Json -Depth 5 | Set-Content "$env:RUNNER_TEMP/native-symbols/provenance.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vnc-native-symbols
+          path: ${{ runner.temp }}/native-symbols
+          retention-days: 7

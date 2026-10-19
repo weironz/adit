@@ -1,0 +1,47 @@
+[
+  {
+    "name": "ime-preedit",
+    "original_sha256": "f96e92a26d5cb06455c6588a71e82b6fbd3d04fa29da3acd43153426e6460b79",
+    "original_size": [
+      1280,
+      800
+    ],
+    "lossless_crop": [
+      34,
+      28,
+      1133,
+      748
+    ],
+    "scope": "Only synthetic client pixels; excluded background console/user profile"
+  },
+  {
+    "name": "ime-commit",
+    "original_sha256": "062d298af7b2bf168c5b11f86424d5574f8178cc4798bc2b40ecd5530acf44c6",
+    "original_size": [
+      1280,
+      800
+    ],
+    "lossless_crop": [
+      34,
+      28,
+      1133,
+      748
+    ],
+    "scope": "Only synthetic client pixels; excluded background console/user profile"
+  },
+  {
+    "name": "german-focus",
+    "original_sha256": "e7c30e01f42b74c495c0fba4afaea912c955f64cbd2e4c412b451eeb9cdf5c7c",
+    "original_size": [
+      1280,
+      800
+    ],
+    "lossless_crop": [
+      40,
+      0,
+      1240,
+      748
+    ],
+    "scope": "Only synthetic client pixels; excluded background console/user profile"
+  }
+]

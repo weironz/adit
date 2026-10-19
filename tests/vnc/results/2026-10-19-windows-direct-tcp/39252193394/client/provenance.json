@@ -1,0 +1,5 @@
+{
+  "probe_sha256": "8AF8B97927718B9625867AE9F0FE823C459C4F0640B06D8D98BF1A1E94B3AEAF",
+  "source_sha": "7c4747a0ecd288de682a472e012f546775258baa",
+  "path_scope": "Direct hosted Windows TCP to source-restricted synthetic public fixture; no SSH/QEMU/NetBird TCP forwarder"
+}

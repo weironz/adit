@@ -1,0 +1,22 @@
+[
+  {
+    "elapsed_ms": 55069,
+    "event": "red_frame"
+  },
+  {
+    "elapsed_ms": 95142,
+    "event": "packet_blackhole_started"
+  },
+  {
+    "elapsed_ms": 140182,
+    "event": "packet_blackhole_removed"
+  },
+  {
+    "elapsed_ms": 141191,
+    "event": "blue_frame"
+  },
+  {
+    "elapsed_ms": 144395,
+    "event": "green_frame"
+  }
+]

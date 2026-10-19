@@ -18,6 +18,9 @@ zeroize.workspace = true
 rustls-pemfile = "2"
 socket2 = "0.6"
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }
+
 [dev-dependencies]
 serde_json.workspace = true
 

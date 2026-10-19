@@ -31,13 +31,15 @@ fn marker(dir: &Path, name: &str, start: Instant) -> io::Result<()> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     let synthetic_none = args.get(4).is_some_and(|value| value == "--synthetic-none");
-    if args.len() != 4 && !(args.len() == 5 && synthetic_none) {
+    let public_fixture = args.get(4).is_some_and(|value| value == "--public-no-fence-fixture");
+    let no_fence = public_fixture || args.get(4).is_some_and(|value| value == "--no-fence");
+    if args.len() != 4 && !(args.len() == 5 && (synthetic_none || no_fence)) {
         return Err(
-            "usage: vnc_recovery_probe private-ip port owned-marker-dir; password on stdin".into(),
+            "usage: vnc_recovery_probe host port owned-marker-dir [--synthetic-none|--no-fence|--public-no-fence-fixture]; password on stdin".into(),
         );
     }
     let ip: std::net::Ipv4Addr = args[1].parse()?;
-    if !ip.is_private() && !ip.is_loopback() {
+    if ip.is_multicast() || ip.is_unspecified() || ip.is_broadcast() || (!ip.is_private() && !ip.is_loopback() && !public_fixture) {
         return Err(
             "recovery acceptance is limited to an isolated private/loopback fixture".into(),
         );
@@ -100,9 +102,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if !ready
             && connected
             && solid(&manager, [255, 0, 0])
-            && manager
-                .active_vnc_diagnostics()
-                .is_some_and(|diagnostics| diagnostics.fence_rtt_ms.is_some())
+            && manager.active_vnc_diagnostics().is_some_and(|diagnostics| {
+                no_fence || diagnostics.fence_rtt_ms.is_some()
+            })
         {
             ready = true;
             marker(dir, "ready", start)?;
@@ -141,7 +143,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             marker(dir, "resumed", start)?;
             break Ok(());
         }
-        if start.elapsed() > Duration::from_secs(140) {
+        // An OS keepalive failure without Fence can require ten Windows probes.
+        let deadline = if no_fence { 240 } else { 140 };
+        if start.elapsed() > Duration::from_secs(deadline) {
             break Err(format!(
                 "recovery deadline; phase=({ready},{disconnected},{recovered}); diagnostics={:?}",
                 manager.active_vnc_diagnostics()

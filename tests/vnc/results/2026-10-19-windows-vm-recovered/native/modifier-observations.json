@@ -1,0 +1,216 @@
+{
+  "request_id": "altgr-and-unicode",
+  "pipeline_outcome": "passed",
+  "observation": [
+    {
+      "monotonic": 112210.671,
+      "unix_ms": 1792407425556,
+      "event": "key",
+      "down": true,
+      "keysym": 65535
+    },
+    {
+      "monotonic": 112210.671,
+      "unix_ms": 1792407425556,
+      "event": "key",
+      "down": false,
+      "keysym": 65535
+    },
+    {
+      "monotonic": 112210.671,
+      "unix_ms": 1792407425556,
+      "event": "key",
+      "down": false,
+      "keysym": 65513
+    },
+    {
+      "monotonic": 112210.671,
+      "unix_ms": 1792407425556,
+      "event": "key",
+      "down": false,
+      "keysym": 65507
+    },
+    {
+      "monotonic": 112479.046,
+      "unix_ms": 1792407693924,
+      "event": "key",
+      "down": true,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112479.343,
+      "unix_ms": 1792407694222,
+      "event": "key",
+      "down": false,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112512.671,
+      "unix_ms": 1792407727547,
+      "event": "key",
+      "down": true,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112513.031,
+      "unix_ms": 1792407727911,
+      "event": "key",
+      "down": false,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112570.218,
+      "unix_ms": 1792407785097,
+      "event": "key",
+      "down": true,
+      "keysym": 65507
+    },
+    {
+      "monotonic": 112570.343,
+      "unix_ms": 1792407785215,
+      "event": "key",
+      "down": true,
+      "keysym": 97
+    },
+    {
+      "monotonic": 112570.578,
+      "unix_ms": 1792407785456,
+      "event": "key",
+      "down": false,
+      "keysym": 97
+    },
+    {
+      "monotonic": 112570.843,
+      "unix_ms": 1792407785729,
+      "event": "key",
+      "down": false,
+      "keysym": 65507
+    },
+    {
+      "monotonic": 112571.015,
+      "unix_ms": 1792407785889,
+      "event": "key",
+      "down": true,
+      "keysym": 65508
+    },
+    {
+      "monotonic": 112571.218,
+      "unix_ms": 1792407786093,
+      "event": "key",
+      "down": true,
+      "keysym": 97
+    },
+    {
+      "monotonic": 112571.281,
+      "unix_ms": 1792407786166,
+      "event": "key",
+      "down": false,
+      "keysym": 97
+    },
+    {
+      "monotonic": 112571.578,
+      "unix_ms": 1792407786452,
+      "event": "key",
+      "down": false,
+      "keysym": 65508
+    },
+    {
+      "monotonic": 112571.703,
+      "unix_ms": 1792407786587,
+      "event": "key",
+      "down": true,
+      "keysym": 65505
+    },
+    {
+      "monotonic": 112571.968,
+      "unix_ms": 1792407786843,
+      "event": "key",
+      "down": true,
+      "keysym": 65
+    },
+    {
+      "monotonic": 112572.078,
+      "unix_ms": 1792407786955,
+      "event": "key",
+      "down": false,
+      "keysym": 65
+    },
+    {
+      "monotonic": 112572.64,
+      "unix_ms": 1792407787514,
+      "event": "key",
+      "down": false,
+      "keysym": 65505
+    },
+    {
+      "monotonic": 112572.828,
+      "unix_ms": 1792407787706,
+      "event": "key",
+      "down": true,
+      "keysym": 65
+    },
+    {
+      "monotonic": 112572.89,
+      "unix_ms": 1792407787768,
+      "event": "key",
+      "down": false,
+      "keysym": 65
+    },
+    {
+      "monotonic": 112573.14,
+      "unix_ms": 1792407788017,
+      "event": "key",
+      "down": true,
+      "keysym": 65513
+    },
+    {
+      "monotonic": 112573.265,
+      "unix_ms": 1792407788143,
+      "event": "key",
+      "down": true,
+      "keysym": 113
+    },
+    {
+      "monotonic": 112573.453,
+      "unix_ms": 1792407788329,
+      "event": "key",
+      "down": false,
+      "keysym": 113
+    },
+    {
+      "monotonic": 112573.64,
+      "unix_ms": 1792407788516,
+      "event": "key",
+      "down": false,
+      "keysym": 65513
+    },
+    {
+      "monotonic": 112573.765,
+      "unix_ms": 1792407788642,
+      "event": "key",
+      "down": true,
+      "keysym": 65514
+    },
+    {
+      "monotonic": 112573.953,
+      "unix_ms": 1792407788826,
+      "event": "key",
+      "down": true,
+      "keysym": 113
+    },
+    {
+      "monotonic": 112574.093,
+      "unix_ms": 1792407788965,
+      "event": "key",
+      "down": false,
+      "keysym": 113
+    },
+    {
+      "monotonic": 112574.281,
+      "unix_ms": 1792407789155,
+      "event": "key",
+      "down": false,
+      "keysym": 65514
+    }
+  ]
+}

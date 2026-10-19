@@ -1,7 +1,7 @@
 //! Manual RDP fixture driver. Password and optional input commands arrive on stdin.
 //! argv: helper-path host username [timeout-seconds]. Never pass a password in argv/env.
 //! Commands: WAIT milliseconds, KEY hex-scancode extended pressed, TEXT text, ASCII US-layout-text,
-//! CLICK x y, SNAP absolute-png-path, CLOSE. Optional --fixture-report enables clipboard
+//! CLICK x y, CLIP text, SNAP absolute-png-path, CLOSE. Optional --fixture-report enables clipboard
 //! transport and prints only reports starting with ADIT_VNC_TEST:, never arbitrary text.
 use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg, InputEvent};
 use std::{
@@ -205,6 +205,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     typed.extend(text.chars().map(|ch| (ch, false)));
                 } else if let Some(text) = command.strip_prefix("ASCII ") {
                     typed.extend(text.chars().map(|ch| (ch, true)));
+                } else if let Some(text) = command.strip_prefix("CLIP ") {
+                    if !args.iter().any(|arg| arg == "--fixture-report") {
+                        return Err("CLIP requires --fixture-report".into());
+                    }
+                    write_msg(
+                        &mut wire,
+                        &ClientMsg::Input(InputEvent::ClipboardText(text.to_owned())),
+                    )?;
                 } else if let Some(key) = command.strip_prefix("KEY ") {
                     let parts: Vec<_> = key.split_whitespace().collect();
                     if parts.len() != 3 {

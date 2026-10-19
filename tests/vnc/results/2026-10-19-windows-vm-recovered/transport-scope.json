@@ -1,0 +1,7 @@
+{
+  "path": "NetBird userspace Windows routing peer to the VM",
+  "tcp_termination_boundary": "The routing peer terminates and re-establishes routed TCP",
+  "direct_tcp_keepalive_proven_by_vm_run": false,
+  "accepted_scope": "VM-side OS packet drop, gateway-path same-tab recovery and exact firewall restoration",
+  "reference": "https://github.com/netbirdio/netbird/blob/main/AGENTS.md"
+}
