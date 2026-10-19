@@ -1,0 +1,8 @@
+{
+  "INPUT": [
+    "       8      371 DROP       tcp  --  *      *       57.154.6.33          0.0.0.0/0            tcp dpt:15916 /* ADITVNC39253156937DROP */"
+  ],
+  "OUTPUT": [
+    "       8      352 DROP       tcp  --  *      *       0.0.0.0/0            57.154.6.33          tcp spt:15916 /* ADITVNC39253156937DROP */"
+  ]
+}

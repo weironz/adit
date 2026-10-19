@@ -1,0 +1,7 @@
+{
+  "outcome": "waiting_for_vm",
+  "scope": "cleanup only; no host power/reset command",
+  "updated_utc": "2026-10-19T12:40:39Z",
+  "last_stage": "tcp_connect",
+  "last_error_type": "TimeoutError"
+}

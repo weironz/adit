@@ -1,0 +1,5 @@
+{
+  "outcome": "failed",
+  "scope": "Direct hosted Windows client to Linux TCP; no application proxy; Linux INPUT/OUTPUT packet drop",
+  "client_ip": "52.240.168.192"
+}

@@ -1,0 +1,7 @@
+{
+  "owned_chain_absent": true,
+  "filter_rules_sha256_before": "a8ad8d099ed7c5de869f7d9b5959399ab046eb94defcea3275c5dad3ad1a736c",
+  "filter_rules_sha256_after": "a8ad8d099ed7c5de869f7d9b5959399ab046eb94defcea3275c5dad3ad1a736c",
+  "original_filter_rules_unchanged": true,
+  "original_nat_rules_unchanged": true
+}

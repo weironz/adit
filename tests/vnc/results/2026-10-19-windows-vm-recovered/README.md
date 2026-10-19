@@ -100,3 +100,6 @@ python tests/vnc/results/2026-10-19-windows-vm-recovered/audit.py
 Microsoft 的 [TCP socket 选项说明](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-tcp-socket-options)
 是 TCP_MAXRT 与 TCP_KEEPCNT 的接口依据；实际参数作用范围另由真实 Windows
 socket 回读和未修改的对照 socket 回归验证。
+
+后续直连补验已通过，见 [Windows 直连 TCP 原始记录](../2026-10-19-windows-direct-tcp/README.md)。
+VM 经网关结果的范围不变，真实睡眠恢复和整个 VM 环境最终清理仍未通过。

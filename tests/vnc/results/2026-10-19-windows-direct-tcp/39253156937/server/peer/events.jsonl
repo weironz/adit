@@ -1,0 +1,12 @@
+{"elapsed_ms": 54734, "event": "accepted", "connection": 1}
+{"elapsed_ms": 54808, "event": "closed", "connection": 1, "reason": "EOFError"}
+{"elapsed_ms": 54911, "event": "accepted", "connection": 2}
+{"elapsed_ms": 54944, "event": "authenticated", "connection": 2, "security": "VncAuth", "shared": 1, "fence": false}
+{"elapsed_ms": 54952, "event": "encodings", "connection": 2, "values": [-312, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"elapsed_ms": 54954, "event": "frame", "connection": 2, "rgb": [255, 0, 0]}
+{"elapsed_ms": 140988, "event": "accepted", "connection": 3}
+{"elapsed_ms": 141027, "event": "authenticated", "connection": 3, "security": "VncAuth", "shared": 1, "fence": false}
+{"elapsed_ms": 141035, "event": "encodings", "connection": 3, "values": [-312, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"elapsed_ms": 141070, "event": "frame", "connection": 3, "rgb": [0, 0, 255]}
+{"elapsed_ms": 144183, "event": "frame", "connection": 3, "rgb": [0, 255, 0]}
+{"elapsed_ms": 144346, "event": "closed", "connection": 3, "reason": "EOFError"}
