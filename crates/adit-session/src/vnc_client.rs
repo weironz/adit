@@ -741,11 +741,7 @@ async fn connect(
         } else {
             let tcp = tokio::net::TcpStream::connect((host, port)).await?;
             tcp.set_nodelay(true)?;
-            socket2::SockRef::from(&tcp).set_tcp_keepalive(
-                &socket2::TcpKeepalive::new()
-                    .with_time(Duration::from_secs(15))
-                    .with_interval(Duration::from_secs(5)),
-            )?;
+            configure_tcp_liveness(&tcp)?;
             Box::new(tcp)
         };
         state.lock().unwrap().diagnostics.tcp_ms = start.elapsed().as_millis() as u64;
@@ -811,6 +807,81 @@ async fn connect(
                 "VNC connect/handshake timeout",
             ))
         })?
+}
+
+fn configure_tcp_liveness(tcp: &tokio::net::TcpStream) -> std::io::Result<()> {
+    socket2::SockRef::from(tcp).set_tcp_keepalive(
+        &socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(15))
+            .with_interval(Duration::from_secs(5)),
+    )?;
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawSocket;
+        use windows_sys::Win32::Networking::WinSock::{
+            setsockopt, WSAGetLastError, IPPROTO_TCP, SOCKET_ERROR, TCP_KEEPCNT, TCP_MAXRT,
+        };
+        // Keepalive alone does not bound an outstanding framebuffer request:
+        // Windows can keep retransmitting unacknowledged data for minutes.
+        // TCP_MAXRT caps that wait per socket without changing OS TCP policy.
+        for (option, value) in [(TCP_KEEPCNT, 3_u32), (TCP_MAXRT, 30_u32)] {
+            // SAFETY: tcp owns a live socket, and value remains valid for the
+            // synchronous setsockopt call with exactly its DWORD byte length.
+            let result = unsafe {
+                setsockopt(
+                    tcp.as_raw_socket() as usize,
+                    IPPROTO_TCP,
+                    option,
+                    (&value as *const u32).cast(),
+                    std::mem::size_of_val(&value) as i32,
+                )
+            };
+            if result == SOCKET_ERROR {
+                // SAFETY: read this thread's error immediately after failure.
+                return Err(std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() }));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(all(test, windows))]
+#[tokio::test]
+async fn windows_liveness_limits_are_local_to_the_vnc_socket() {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{
+        getsockopt, IPPROTO_TCP, TCP_KEEPCNT, TCP_MAXRT,
+    };
+    fn option(tcp: &tokio::net::TcpStream, name: i32) -> u32 {
+        let mut value = 0_u32;
+        let mut length = std::mem::size_of_val(&value) as i32;
+        // SAFETY: both output pointers refer to live, correctly sized values.
+        let result = unsafe {
+            getsockopt(
+                tcp.as_raw_socket() as usize,
+                IPPROTO_TCP,
+                name,
+                (&mut value as *mut u32).cast(),
+                &mut length,
+            )
+        };
+        assert_eq!(result, 0, "read back the actual Windows socket option");
+        assert_eq!(length, 4);
+        value
+    }
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let configured = tokio::net::TcpStream::connect(address).await.unwrap();
+    let control = tokio::net::TcpStream::connect(address).await.unwrap();
+    let defaults = (option(&control, TCP_MAXRT), option(&control, TCP_KEEPCNT));
+    configure_tcp_liveness(&configured).unwrap();
+    assert_eq!(option(&configured, TCP_MAXRT), 30);
+    assert_eq!(option(&configured, TCP_KEEPCNT), 3);
+    assert_eq!(
+        (option(&control, TCP_MAXRT), option(&control, TCP_KEEPCNT)),
+        defaults,
+        "unrelated sockets must retain their original OS policy"
+    );
 }
 
 fn gateway_error(error: adit_ssh::SshError) -> VncError {

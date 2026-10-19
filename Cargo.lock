@@ -60,6 +60,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "vnc-rs",
+ "windows-sys 0.61.2",
  "zeroize",
 ]
 
