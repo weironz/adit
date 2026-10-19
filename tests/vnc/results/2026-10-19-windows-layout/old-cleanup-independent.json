@@ -1,0 +1,44 @@
+{
+  "stage": "old_cleanup_independent_verification",
+  "utc": "2026-10-19T13:38:42.6162215Z",
+  "cleanup_file": {
+    "outcome": "passed",
+    "firewall_absent": true,
+    "service_status": "Stopped",
+    "endpoint_absent": true
+  },
+  "bootstrap_original_status": "Stopped",
+  "bootstrap_original_start_type": "Manual",
+  "winrm_status": "Stopped",
+  "winrm_start_type": "Manual",
+  "endpoint_registry_present": false,
+  "owned_rules": [],
+  "owned_tasks": [],
+  "owned_processes": [],
+  "test_listeners": [],
+  "firewall_profiles": [
+    {
+      "Name": "Domain",
+      "Enabled": 1
+    },
+    {
+      "Name": "Private",
+      "Enabled": 0
+    },
+    {
+      "Name": "Public",
+      "Enabled": 0
+    }
+  ],
+  "power_result": {
+    "outcome": "returned",
+    "before_utc": "2026-10-19T11:27:09.4168942Z",
+    "scope": "Actual isolated VM OS suspend with a requested 30 second hardware wake timer",
+    "wake_timer_accepted": true,
+    "wake_timer_error": 0,
+    "suspend_return": true,
+    "suspend_error": 0,
+    "elapsed_ms": 7506030,
+    "after_utc": "2026-10-19T13:32:15.6495269Z"
+  }
+}

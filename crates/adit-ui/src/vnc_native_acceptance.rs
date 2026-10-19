@@ -11,6 +11,7 @@ struct State {
     events: std::sync::mpsc::Sender<String>,
     geometry: Option<(u16, u16, u64)>,
     native_dpi: Option<u32>,
+    hook_diagnostics: Option<(bool, bool, [u32; 5])>,
 }
 
 #[derive(Debug, Clone)]
@@ -91,6 +92,24 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             task
         }
         NativeMessage::App(mut message) => {
+            let toggling_grab = matches!(message, Message::ToggleVncGrab);
+            #[cfg(windows)]
+            if matches!(message, Message::ToggleVncGrab) {
+                // The hook must be installed on a thread which pumps Win32
+                // messages. Observe the real dispatcher rather than assuming
+                // iced's update callback runs on its native window thread.
+                let (dispatcher, foreground) = unsafe {
+                    (
+                        windows::Win32::System::Threading::GetCurrentThreadId(),
+                        windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+                            windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow(),
+                            None,
+                        ),
+                    )
+                };
+                log(state, serde_json::json!({"event":"hook_dispatcher", "dispatcher_thread":dispatcher,
+                    "foreground_window_thread":foreground, "grab_before":state.app.vnc_grab_keys}));
+            }
             match &mut message {
                 Message::DisplayScale(scale) => {
                     state.os_scale = *scale;
@@ -124,6 +143,15 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                 update(&mut state.app, message).map(NativeMessage::App),
                 dpi_probe,
             ]);
+            if toggling_grab {
+                log(state, serde_json::json!({"event":"grab_state", "enabled":state.app.vnc_grab_keys}));
+            }
+            let hook = keyboard_hook::diagnostics();
+            if state.hook_diagnostics != Some(hook) {
+                state.hook_diagnostics = Some(hook);
+                log(state, serde_json::json!({"event":"hook_diagnostics", "armed":hook.0,
+                    "vnc":hook.1,"counters":hook.2}));
+            }
             if let Some((width, height)) = state.app.rdp_surface_size {
                 let generation = state
                     .app
@@ -259,6 +287,7 @@ pub fn run() -> iced::Result {
                 events: events.clone(),
                 geometry: None,
                 native_dpi: None,
+                hook_diagnostics: None,
             },
             window::latest().and_then(native_dpi),
         )

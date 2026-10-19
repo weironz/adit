@@ -36,6 +36,19 @@ jobs:
           fi
           echo 'every tracked file is stored as .gitattributes declares'
 
+  vnc-evidence:
+    name: VNC captured Windows evidence audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      # This audits saved native observations; it does not claim a new live
+      # Windows keyboard test ran on this Linux job.
+      - name: Verify archive hashes, input sequences and acceptance boundaries
+        run: python tests/vnc/analyze_windows_layout.py tests/vnc/results/2026-10-19-windows-layout
+
   build:
     name: build · clippy · test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

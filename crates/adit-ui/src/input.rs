@@ -221,15 +221,23 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
             return;
         }
     }
-    let (key, physical, pressed) = match event {
+    let (key, physical, pressed, modifiers) = match event {
         keyboard::Event::KeyPressed {
-            modified_key, physical_key, ..
-        } => (modified_key, *physical_key, true),
+            modified_key, physical_key, modifiers, ..
+        } => (modified_key, *physical_key, true, modifiers),
         keyboard::Event::KeyReleased {
-            modified_key, physical_key, ..
-        } => (modified_key, *physical_key, false),
+            modified_key, physical_key, modifiers, ..
+        } => (modified_key, *physical_key, false, modifiers),
         _ => return,
     };
+    // In local mode Windows owns Win+Space/Win+letter. Forwarding just
+    // Super-down while Windows consumes the rest opens the remote Start menu.
+    // Owned releases below must still pass, even while a local shortcut is held.
+    if pressed && !app.vnc_grab_keys
+        && (modifiers.logo() || matches!(physical, keyboard::key::Physical::Code(
+            keyboard::key::Code::SuperLeft | keyboard::key::Code::SuperRight))) {
+        return;
+    }
     let tracked = app
         .vnc_pressed_keys
         .iter()

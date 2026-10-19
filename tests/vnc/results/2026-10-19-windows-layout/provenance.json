@@ -1,0 +1,27 @@
+{
+  "base_commit": "212713df13f3a97eceeb1b8037c343dc81c601a2",
+  "native_binary_sha256": "2dff3d9b74f6e8777c358fd8d67a522bfc061c14b9e747c3b6b24848c5357121",
+  "native_binary_bytes": 63959040,
+  "native_runtime_patch_sha256": "c7537e68912f7dd8d4199c49fe5ce8f9c65d17eb02241972f631087886f2a2ed",
+  "native_runtime_sources": {
+    "crates/adit-ui/src/input.rs": "47b6ce5c8d0ee8a227ac658c2b1e7a05a9f5181d1b5571b56a6aceef0d19a256",
+    "crates/adit-ui/src/keyboard_hook.rs": "404807dd5c4dbecee21458f69c66b8d766582d6cdd80c3ba61807733bcc9fa9b",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "5023f4b8f266cbebd4a35867933a5454a006cfc965eb534a2325863ead367cde"
+  },
+  "observer_source_sha256": "cf94c7f8bde1c8a23ab7aeb40e32435fb20884f2984bba379b9e1678ac00b124",
+  "rustc": "1.98.0 (88d9e12ae 2026-08-18)",
+  "rust_target": "x86_64-pc-windows-msvc",
+  "native_build_command": "cargo build -p adit-ui --features native-vnc-acceptance --example vnc_native_acceptance --locked",
+  "transport": "RDP scan codes for keyboard acceptance; TEXT only for fixture control; synthetic loopback RFB None peer, clipboard disabled",
+  "local_ci": {
+    "command": "just ci",
+    "exit_code": 0,
+    "passed": 414,
+    "failed": 0,
+    "ignored": 11,
+    "rdp_workspace_tests": "not run by just ci; separate RDP clippy included"
+  },
+  "text_transport": "PowerShell Get-Content UTF8 may strip BOM; manifest hashes archived bytes, not original VM JSON file bytes",
+  "just_ci_original_file_sha256": "50baeeaa3b2a955367fcdf0608a3129c9146a6fb7b74cb856302c4f3a304bff9",
+  "just_ci_archive_encoding": "UTF-8; content transcoded from original log if UTF-16 BOM was present"
+}

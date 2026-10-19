@@ -1,0 +1,31 @@
+{
+    "windows_build":  "10.0.26300.0",
+    "utc":  "2026-10-19T15:25:08.4568778Z",
+    "passed":  true,
+    "computer":  "WIN11-VM",
+    "actual":  [
+                   {
+                       "LanguageTag":  "zh-Hans-CN",
+                       "InputMethodTips":  [
+                                               "0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}"
+                                           ],
+                       "Spellchecking":  true,
+                       "Handwriting":  true
+                   }
+               ],
+    "owned_processes_remaining":  [
+
+                                  ],
+    "baseline":  [
+                     {
+                         "LanguageTag":  "zh-Hans-CN",
+                         "InputMethodTips":  [
+                                                 "0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}"
+                                             ],
+                         "Spellchecking":  true,
+                         "Handwriting":  true
+                     }
+                 ],
+    "winrm_status":  "Stopped",
+    "stage":  "language_verification"
+}

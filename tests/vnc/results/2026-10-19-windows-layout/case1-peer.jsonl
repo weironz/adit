@@ -1,0 +1,19 @@
+{"monotonic": 122705.718, "unix_ms": 1792417920598, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 122705.718, "unix_ms": 1792417920598, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 122705.718, "unix_ms": 1792417920598, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 122705.75, "unix_ms": 1792417920624, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 122740.39, "unix_ms": 1792417955273, "event": "key", "down": true, "keysym": 65507}
+{"monotonic": 122740.625, "unix_ms": 1792417955500, "event": "key", "down": true, "keysym": 118}
+{"monotonic": 122740.89, "unix_ms": 1792417955771, "event": "key", "down": false, "keysym": 118}
+{"monotonic": 122741.265, "unix_ms": 1792417956142, "event": "key", "down": false, "keysym": 65507}
+{"monotonic": 122741.593, "unix_ms": 1792417956472, "event": "key", "down": true, "keysym": 65293}
+{"monotonic": 122741.875, "unix_ms": 1792417956753, "event": "key", "down": false, "keysym": 65293}
+{"monotonic": 122810.328, "unix_ms": 1792418025200, "event": "pointer", "mask": 0, "x": 578, "y": 304, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 122810.687, "unix_ms": 1792418025562, "event": "button", "mask": 1, "x": 578, "y": 304, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 122810.687, "unix_ms": 1792418025562, "event": "button", "mask": 0, "x": 578, "y": 304, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 122810.812, "unix_ms": 1792418025695, "event": "key", "down": true, "keysym": 65515}
+{"monotonic": 122847.156, "unix_ms": 1792418062035, "event": "key", "down": true, "keysym": 65515}
+{"monotonic": 122962.984, "unix_ms": 1792418177860, "event": "key", "down": false, "keysym": 65515}
+{"monotonic": 122962.984, "unix_ms": 1792418177860, "event": "pointer", "mask": 0, "x": 578, "y": 304, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 122962.984, "unix_ms": 1792418177860, "event": "pointer", "mask": 0, "x": 578, "y": 304, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 122962.984, "unix_ms": 1792418177860, "event": "pointer", "mask": 0, "x": 578, "y": 304, "width": 1200, "height": 800, "frame": 1}

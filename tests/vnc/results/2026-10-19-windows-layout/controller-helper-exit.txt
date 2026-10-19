@@ -1,0 +1,2 @@
+helper_exit=exit code: 101
+Error: "helper closed"

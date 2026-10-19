@@ -177,6 +177,14 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     }
     app.main_view = MainView::Terminal;
     app.terminal_focused = true;
+    // Local layout/OS shortcuts must not leak a bare Super into the peer,
+    // even if Windows delivers a constituent letter to this window.
+    for physical in [Code::SuperLeft, Code::SuperRight] {
+        let _ = update(&mut app, press(Key::Named(Named::Super), physical, keyboard::Modifiers::LOGO));
+        let _ = update(&mut app, press(Key::Character("r".into()), Code::KeyR, keyboard::Modifiers::LOGO));
+        let _ = update(&mut app, release(Key::Character("r".into()), Code::KeyR));
+        let _ = update(&mut app, release(Key::Named(Named::Super), physical));
+    }
     let _ = update(&mut app, release(Key::Character("q".into()), Code::KeyQ));
     // Windows dead-key composition can emit several scalars in one key event,
     // then a normal physical release. Its transient pairs already own key-up.
@@ -190,7 +198,8 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     }
     let _ = update(&mut app, composed);
     let _ = update(&mut app, release(Key::Character("e".into()), Code::KeyE));
-    // A real owned physical release still reaches the peer exactly once.
+    // A real owned release must still reach the peer while a local Win shortcut
+    // is held; filtering the whole event by modifiers would leave Q stuck.
     let _ = update(
         &mut app,
         press(
@@ -199,7 +208,11 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
             keyboard::Modifiers::empty(),
         ),
     );
-    let _ = update(&mut app, release(Key::Character("q".into()), Code::KeyQ));
+    let mut owned_release = release(Key::Character("q".into()), Code::KeyQ);
+    if let Message::KeyboardInput(keyboard::Event::KeyReleased { modifiers, .. }) = &mut owned_release {
+        *modifiers = keyboard::Modifiers::LOGO;
+    }
+    let _ = update(&mut app, owned_release);
     let epoch = app.vnc_input_epoch;
     let _ = update(
         &mut app,
