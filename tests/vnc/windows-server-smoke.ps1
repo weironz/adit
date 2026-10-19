@@ -1036,12 +1036,14 @@ public static class AditVncFixtureIni {
         $displayOriginal=$null
     }
     if ($Uac) {
-        & $pythonPath (Join-Path $PSScriptRoot 'windows-service-uac.py') --probe $probePath --results (Join-Path $resultPath 'uac')
+        $inputDriver = Join-Path (Split-Path -Parent $probePath) 'vnc_fixture_driver.exe'
+        if (-not (Test-Path -LiteralPath $inputDriver)) { throw 'UAC requires the separately built production input fixture driver.' }
+        & $pythonPath (Join-Path $PSScriptRoot 'windows-service-uac.py') --probe $probePath --input-driver $inputDriver --results (Join-Path $resultPath 'uac')
         if ($LASTEXITCODE -ne 0) { throw 'Actual filtered-token UAC capture failed; original evidence retained.' }
         $record.uac = Get-Content -LiteralPath (Join-Path $resultPath 'uac/result.json') -Raw | ConvertFrom-Json -AsHashtable
         if ($record.uac.outcome -ne 'passed') { throw 'UAC capture did not pass.' }
         if (-not (Assert-OwnedListeners)) { throw 'Owned service attribution lost after UAC capture.' }
-        $record.scope += '; actual filtered-token UAC capture, with independent cleanup cancellation'
+        $record.scope += '; actual filtered-token UAC capture and production SessionManager Escape cancellation'
         if ($SyntheticLoad) { $null = Reset-SyntheticLoad 104 }
     }
     if ($LockScreen) {

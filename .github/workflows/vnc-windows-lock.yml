@@ -25,7 +25,7 @@ jobs:
       - name: Build production probe
         shell: pwsh
         run: |
-          cargo build -p adit-session --example vnc_probe --locked
+          cargo build -p adit-session --example vnc_probe --example vnc_fixture_driver --locked
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Attributed service, real desktop, WTS lock and fresh lock-screen capture
         timeout-minutes: 8

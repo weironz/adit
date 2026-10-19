@@ -85,9 +85,9 @@ def main(args):
     key=winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,policy,0,winreg.KEY_QUERY_VALUE|winreg.KEY_SET_VALUE)
     original,kind=winreg.QueryValueEx(key,'ConsentPromptBehaviorAdmin')
     result=dict(outcome='failed',source_sha=os.environ['GITHUB_SHA'],run_id=os.environ['GITHUB_RUN_ID'],
-                scope='Fresh disposable standard administrator with a filtered medium token; actual UAC secure-desktop rendering through production Adit SessionManager',
+                scope='Fresh disposable standard administrator with a filtered medium token; actual UAC secure-desktop rendering and Escape cancellation through production Adit SessionManager',
                 account=account,public_state=str(public),original_consent_policy=original,
-                limitations=['Prompt is cancelled by an independent public-fixture RFB cleanup client; does not pass Adit keyboard routing or elevation approval.',
+                limitations=['Prompt cancellation uses production SessionManager keysyms; does not pass native UI/physical keyboard hooks, IME or elevation approval.',
                              'No user password is read. Synthetic account password exists only in process memory, never argv, environment, files or logs.'])
     created=False
     process=PROCESSINFO()
@@ -162,8 +162,12 @@ def main(args):
         assert completed.returncode==0 and 'complete=true' in stdout and 'security: "VncAuth"' in stdout
         assert 'final_connected=true disconnects=0 connection_error=false steady_complete=true' in stdout
         result['snapshot_sha256']=hashlib.sha256(snapshot.read_bytes()).hexdigest()
-        subprocess.run(['pwsh','-NoProfile','-File',str(Path(__file__).with_name('windows-uac-cancel.ps1'))],check=True,timeout=15,
-                       stdout=(args.results/'cleanup.stdout.txt').open('w',encoding='utf-8'),stderr=(args.results/'cleanup.stderr.txt').open('w',encoding='utf-8'))
+        result['input_driver_sha256']=hashlib.sha256(args.input_driver.read_bytes()).hexdigest()
+        with (args.results/'input.stdout.txt').open('w',encoding='utf-8') as out,(args.results/'input.stderr.txt').open('w',encoding='utf-8') as err:
+            subprocess.run([str(args.input_driver.resolve()),'127.0.0.1','15911','20'],check=True,timeout=25,
+                           input='adit-ci\nKEY ff1b 1\nWAIT 100\nKEY ff1b 0\nWAIT 500\nCLOSE\n',
+                           text=True,stdout=out,stderr=err)
+        result['cancellation_path']='production SessionManager VncAuth keysyms Escape down/up'
         deadline=time.monotonic()+15
         while not (public/'prompt-result.json').exists():
             assert time.monotonic()<deadline, 'UAC cancellation not acknowledged'
@@ -203,5 +207,6 @@ if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--medium',action='store_true')
     parser.add_argument('--probe',type=Path)
+    parser.add_argument('--input-driver',type=Path)
     parser.add_argument('--results',type=Path,required=True)
     sys.exit(main(parser.parse_args()))
