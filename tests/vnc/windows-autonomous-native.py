@@ -332,11 +332,16 @@ def main():
                     cx,cy,_,_ = found[0]
                     box = client_box(hwnd)
                     before = len(read_events(state/'events.jsonl'))
-                    assert U.SetCursorPos(box[0]+cx, box[1]+cy)
-                    U.mouse_event(0x0001,1,0,0,0)
-                    assert U.SetCursorPos(box[0]+cx, box[1]+cy)
                     result['pending_click']=dict(case=name,index=index,box=box,target=[cx,cy],
                                                  cursor=cursor_info(),expected_hwnd=hwnd,candidates=found)
+                    # 1:1 keeps this target at the same screen AND remote point
+                    # across resizes. A one-pixel out-and-back can be coalesced
+                    # into the previous remote point and correctly deduplicated.
+                    # Observe a distinct wire movement before returning to target.
+                    assert U.SetCursorPos(box[0]+cx+12, box[1]+cy+12)
+                    wait_until(lambda: any(e['event']=='pointer' for e in read_events(state/'events.jsonl')[before:]))
+                    before=len(read_events(state/'events.jsonl'))
+                    assert U.SetCursorPos(box[0]+cx, box[1]+cy)
                     wait_until(lambda: any(e['event']=='pointer' for e in read_events(state/'events.jsonl')[before:]))
                     U.mouse_event(0x0002,0,0,0,0)
                     time.sleep(.08)
