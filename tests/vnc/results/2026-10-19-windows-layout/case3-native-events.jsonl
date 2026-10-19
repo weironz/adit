@@ -1,0 +1,16 @@
+{"app_scale":1.0,"event":"window","height":760.0,"unix_ms":1792419598118,"width":1100.0}
+{"app_scale":1.0,"event":"window","height":760.0,"unix_ms":1792419598118,"width":1100.0}
+{"app_scale":1.0,"event":"window","height":760.0,"unix_ms":1792419598118,"width":1100.0}
+{"app_scale":1.0,"cursor":null,"display_scale":1.0,"event":"geometry","os_scale":1.0,"surface":[1200,800],"unix_ms":1792419598172}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792419598200}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792419598200}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792419598200}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792419598200}
+{"app_scale":1.0,"event":"pointer","fit":true,"os_scale":1.0,"remote_x":1182.6866455078125,"remote_y":275.8209228515625,"surface":[1200,800],"unix_ms":1792419651848}
+{"app_scale":1.0,"button":"Left","event":"button","unix_ms":1792419652222}
+{"app_scale":1.0,"event":"window","height":729.0,"unix_ms":1792419652972,"width":1280.0}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792419653037}
+{"dispatcher_thread":2652,"event":"hook_dispatcher","foreground_window_thread":2652,"grab_before":false,"unix_ms":1792419656754}
+{"dispatcher_thread":2652,"event":"hook_dispatcher","foreground_window_thread":2652,"grab_before":true,"unix_ms":1792419696472}
+{"app_scale":1.0,"event":"pointer","fit":true,"os_scale":1.0,"remote_x":602.19091796875,"remote_y":419.40533447265625,"surface":[1200,800],"unix_ms":1792419697411}
+{"app_scale":1.0,"button":"Left","event":"button","unix_ms":1792419697441}

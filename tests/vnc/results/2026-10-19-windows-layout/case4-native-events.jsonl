@@ -1,0 +1,16 @@
+{"app_scale":1.0,"event":"window","height":760.0,"unix_ms":1792420604401,"width":1100.0}
+{"app_scale":1.0,"event":"window","height":760.0,"unix_ms":1792420604401,"width":1100.0}
+{"app_scale":1.0,"event":"window","height":760.0,"unix_ms":1792420604401,"width":1100.0}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792420604401}
+{"app_scale":1.0,"cursor":null,"display_scale":1.0,"event":"geometry","os_scale":1.0,"surface":[1200,800],"unix_ms":1792420604452}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792420604476}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792420604476}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792420604476}
+{"app_scale":1.0,"event":"window","height":729.0,"unix_ms":1792420656724,"width":1280.0}
+{"app_scale":1.0,"event":"pointer","fit":true,"os_scale":1.0,"remote_x":1160.0001220703125,"remote_y":9.552239418029785,"surface":[1200,800],"unix_ms":1792420656726}
+{"app_scale":1.0,"event":"pointer","fit":true,"os_scale":1.0,"remote_x":1186.8544921875,"remote_y":10.015649795532227,"surface":[1200,800],"unix_ms":1792420656727}
+{"api":"GetDpiForWindow","dpi":96,"event":"native_dpi","scale":1.0,"unix_ms":1792420656787}
+{"dispatcher_thread":2560,"event":"hook_dispatcher","foreground_window_thread":2560,"grab_before":false,"unix_ms":1792420853754}
+{"enabled":true,"event":"grab_state","unix_ms":1792420853754}
+{"app_scale":1.0,"event":"pointer","fit":true,"os_scale":1.0,"remote_x":602.19091796875,"remote_y":419.40533447265625,"surface":[1200,800],"unix_ms":1792420855754}
+{"app_scale":1.0,"button":"Left","event":"button","unix_ms":1792420856067}

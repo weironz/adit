@@ -1,0 +1,14 @@
+[
+  {
+    "id": "stop-diag-for-control",
+    "outcome": "failed",
+    "error": "Exception calling \"WriteAllText\" with \"2\" argument(s): \"�ļ�����Ŀ¼��������﷨����ȷ�� : 'C:\\data\\codes\\adit\\Vncdfb19f70:\\results\\native-stop.request'.\"",
+    "source": "share4.stdout.jsonl"
+  },
+  {
+    "id": "diag-stop-record",
+    "outcome": "failed",
+    "error": "Cannot find path 'Vncdfb19f70:\\results\\native-stopped.json' because it does not exist.",
+    "source": "share4.stdout.jsonl"
+  }
+]

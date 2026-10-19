@@ -1,0 +1,21 @@
+{
+  "audit_passed": true,
+  "accepted_native_key_records": {
+    "german_baseline": 4,
+    "german_to_us": 4,
+    "us_to_german_altgr_dead_key": 22,
+    "pinyin_preedit": 0,
+    "pinyin_commit": 4,
+    "emoji_picker_commit": 2
+  },
+  "native_system_capture_acceptance": "open_not_passed",
+  "discarded_experiments": {
+    "5": "not_passed_no_callbacks",
+    "6": "not_passed_no_callbacks"
+  },
+  "independent_observer": "non_injected_tab_observed",
+  "second_observer_matrix": "incomplete_empty_capture_stale_focus_not_accepted",
+  "cleanup": "independently_verified",
+  "suspend_resume": "no_automatic_30s_wake_proof",
+  "vendor_text_consumption": "not_tested_by_synthetic_peer"
+}

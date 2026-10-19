@@ -48,6 +48,17 @@ mod imp {
     static ARMED: AtomicBool = AtomicBool::new(false);
     static VNC: AtomicBool = AtomicBool::new(false);
 
+    // Synthetic native acceptance only: count delivery without logging keys or
+    // changing injected-key filtering. An installed handle alone proves no input.
+    #[cfg(feature = "native-vnc-acceptance")]
+    static COUNTERS: [std::sync::atomic::AtomicU32; 5] = [const { std::sync::atomic::AtomicU32::new(0) }; 5];
+
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn diagnostics() -> (bool, bool, [u32; 5]) {
+        (ARMED.load(Ordering::Relaxed), VNC.load(Ordering::Relaxed),
+            std::array::from_fn(|i| COUNTERS[i].load(Ordering::Relaxed)))
+    }
+
     /// Keystrokes the callback swallowed, waiting for the UI thread to forward
     /// them. A channel rather than a lock the callback might contend on: the
     /// send is wait-free in the uncontended case, and the callback must never
@@ -91,17 +102,23 @@ mod imp {
     /// Called by Windows with `lparam` pointing at a `KBDLLHOOKSTRUCT` whenever
     /// `code == HC_ACTION` (0).
     unsafe extern "system" fn callback(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
+        #[cfg(feature = "native-vnc-acceptance")]
+        COUNTERS[0].fetch_add(1, Ordering::Relaxed);
         // Anything but HC_ACTION must be passed on untouched, per the API
         // contract — and the struct is only valid then.
         if code != 0 || !ARMED.load(Ordering::Relaxed) {
             return CallNextHookEx(None, code, wparam, lparam);
         }
         let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
+        #[cfg(feature = "native-vnc-acceptance")]
+        COUNTERS[1].fetch_add(1, Ordering::Relaxed);
 
         // Injected keys are left alone: `SendInput` from another tool would
         // otherwise loop back through here.
         const LLKHF_INJECTED: u32 = 0x10;
         if info.flags.0 & LLKHF_INJECTED != 0 {
+            #[cfg(feature = "native-vnc-acceptance")]
+            COUNTERS[2].fetch_add(1, Ordering::Relaxed);
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
@@ -126,6 +143,8 @@ mod imp {
             if !matches!(info.vkCode, VK_TAB | VK_LWIN | VK_RWIN) {
                 return CallNextHookEx(None, code, wparam, lparam);
             }
+            #[cfg(feature = "native-vnc-acceptance")]
+            COUNTERS[3].fetch_add(1, Ordering::Relaxed);
         }
         const LLKHF_EXTENDED: u32 = 0x01;
         let stroke = Stroke {
@@ -138,6 +157,8 @@ mod imp {
         if queue().0.send(stroke).is_err() {
             return CallNextHookEx(None, code, wparam, lparam);
         }
+        #[cfg(feature = "native-vnc-acceptance")]
+        COUNTERS[4].fetch_add(1, Ordering::Relaxed);
         // Swallowed: a non-zero return stops the key reaching hotkey dispatch
         // and every window below.
         LRESULT(1)
@@ -199,6 +220,8 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn diagnostics() -> (bool, bool, [u32; 5]) { (false, false, [0; 5]) }
     /// The hook is a Win32 mechanism and RDP ships on Windows only, so the other
     /// platforms get a shape that compiles and does nothing.
     #[derive(Debug, Clone, Copy)]
@@ -219,3 +242,5 @@ mod imp {
 // `Stroke` stays inside the module: callers read its fields off whatever
 // `drain` hands back and never name the type.
 pub(crate) use imp::{arm, arm_vnc, disarm, drain};
+#[cfg(feature = "native-vnc-acceptance")]
+pub(crate) use imp::diagnostics;

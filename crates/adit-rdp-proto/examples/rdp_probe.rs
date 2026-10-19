@@ -1,8 +1,12 @@
 //! Manual RDP fixture driver. Password and optional input commands arrive on stdin.
 //! argv: helper-path host username [timeout-seconds]. Never pass a password in argv/env.
 //! Commands: WAIT milliseconds, KEY hex-scancode extended pressed, TEXT text, ASCII US-layout-text,
-//! CLICK x y, CLIP text, SNAP absolute-png-path, CLOSE. Optional --fixture-report enables clipboard
+//! CLICK x y, MOVE x y, CLIP text, SNAP absolute-png-path, ACK token, CLOSE.
+//! Optional --fixture-report enables clipboard
 //! transport and prints only reports starting with ADIT_VNC_TEST:, never arbitrary text.
+//! ACK confirms driver command processing, not remote execution. Verify the
+//! remote effect separately. Remote clipboard updates can replace CLIP offers;
+//! TEXT is useful for fixture control, but never proves native keyboard/IME input.
 use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg, InputEvent};
 use std::{
     io::{self, BufRead},
@@ -28,7 +32,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut child = Command::new(&args[1])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(if args.iter().any(|arg| arg == "--fixture-report") {
+            Stdio::inherit()
+        } else {
+            Stdio::null()
+        })
         .env("RUST_LOG", "warn")
         .spawn()?;
     let mut wire = child.stdin.take().ok_or("helper stdin missing")?;
@@ -226,10 +234,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             pressed: parts[2] == "1",
                         }),
                     )?;
-                } else if let Some(point) = command.strip_prefix("CLICK ") {
+                } else if let Some(token) = command.strip_prefix("ACK ") {
+                    if token.is_empty() || token.len() > 64
+                        || !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                        return Err("ACK requires a short alphanumeric token".into());
+                    }
+                    println!("command_ack={token}");
+                } else if let Some(point) = command.strip_prefix("CLICK ").or_else(|| command.strip_prefix("MOVE ")) {
                     let parts: Vec<_> = point.split_whitespace().collect();
                     if parts.len() != 2 {
-                        return Err("CLICK requires x y".into());
+                        return Err("pointer command requires x y".into());
                     }
                     write_msg(
                         &mut wire,
@@ -238,7 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             y: parts[1].parse()?,
                         }),
                     )?;
-                    for pressed in [true, false] {
+                    for pressed in [true, false].into_iter().filter(|_| command.starts_with("CLICK ")) {
                         write_msg(
                             &mut wire,
                             &ClientMsg::Input(InputEvent::MouseButton {
@@ -279,13 +293,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     drop(wire);
     drop(received);
     for _ in 0..50 {
-        if child.try_wait()?.is_some() {
+        if let Some(status) = child.try_wait()? {
+            eprintln!("helper_exit={status}");
             return result;
         }
         std::thread::sleep(Duration::from_millis(10));
     }
     let _ = child.kill();
-    let _ = child.wait();
+    if let Ok(status) = child.wait() { eprintln!("helper_exit={status}"); }
     result
 }
 
