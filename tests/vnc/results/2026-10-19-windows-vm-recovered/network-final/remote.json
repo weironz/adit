@@ -1,0 +1,48 @@
+[
+  {
+    "elapsed_ms": 6051,
+    "output": "[{\"Name\":\"Domain\",\"Enabled\":1},{\"Name\":\"Private\",\"Enabled\":1},{\"Name\":\"Public\",\"Enabled\":1}]",
+    "errors": [],
+    "failed": false
+  },
+  {
+    "elapsed_ms": 10075,
+    "marker": "ready"
+  },
+  {
+    "elapsed_ms": 51750,
+    "output": "\u5bb8\u53c9\u574a\u9354\u72b5\u74eb\u95ab\u590a\u6ad2\u9286?\n\n\u7481\u677f\u7d8d\u7ecb\u5b2a\u7c2d\u9359\u509b\u669f:\n    \u7481\u677f\u7d8d\u7ecb\u5b2a\u7c2d\u935a\u5d87\u041e:        PktMon\n    \u93c3\u30e5\u7e54\u59af\u2033\u7d21:       \u5bf0\ue046\u5e46\n    \u93c3\u30e5\u7e54\u93c2\u56e6\u6b22:           C:\\ProgramData\\AditVncAcceptance20261019\\results\\network-drop-actual.etl\n    \u93c8\u20ac\u6fb6\u0444\u6783\u6d60\u8dfa\u3047\u704f?      16 MB\n    \u5bb8\u832c\u6564\u9350\u546d\u74e8:        128 MB\n\n\u93c0\u5815\u6ce6\u9428\u52ec\u669f\u93b9?\n    \u93c1\u7248\u5d41\u9356\u5470\ue178\u93c1\u677f\u6ad2\u951b\u5c7e\u669f\u93b9\ue1bc\u5bd8\u93b9\u66e1\u5e4f\n\n\u93b9\u66e1\u5e4f\u7eeb\u8bf2\u7037:\n    \u93b5\u20ac\u93c8\u590b\u669f\u93b9\ue1bc\u5bd8\n\n\u9429\u6223\ue74b\u9428\u52ed\u7c8d\u6d60?\n    \u934f\u3129\u5134\n\n\u93c1\u7248\u5d41\u9356\u546f\u74eb\u95ab\u590a\u6ad2:\n     # \u935a\u5d87\u041e                        \u7ed4\ue21a\u5f5b \n     - --                        -- \n     1 AditVncAcceptance15916 15916 \n{\"State\":5,\"OwningProcess\":11448}",
+    "errors": [],
+    "failed": false
+  },
+  {
+    "elapsed_ms": 69606,
+    "marker": "disconnected"
+  },
+  {
+    "elapsed_ms": 75545,
+    "output": "",
+    "errors": [],
+    "failed": false
+  },
+  {
+    "elapsed_ms": 80169,
+    "marker": "recovered"
+  },
+  {
+    "elapsed_ms": 84265,
+    "output": "",
+    "errors": [],
+    "failed": false
+  },
+  {
+    "elapsed_ms": 84265,
+    "marker": "resumed"
+  },
+  {
+    "elapsed_ms": 93602,
+    "output": "\nNIC: vmxnet3 Ethernet Adapter\n ID \u935a\u5d87\u041e                         \u7481\u2103\u669f\u9363?     \u93c2\u7470\u609c               \u93c1\u7248\u5d41\u9356?            \u701b\u6944\u59ad | \u93c2\u7470\u609c               \u93c1\u7248\u5d41\u9356?            \u701b\u6944\u59ad \n -- --                         ---      --               ---             -- | --               ---             -- \n  9 vmxnet3 Ethernet Adapter   Upper    Rx                50          3,170 | Tx                31          1,877 \n                                                                            |                                     \n 18 WFP Native Filter          Lower    Rx                50          3,170 | Tx                31          1,877 \n                               Upper    Rx                50          3,170 | Tx                31          1,877 \n                                                                            |                                     \n 39 TCPIP                      \u6d93\u3220\u7d14       Rx                12            337 | Tx                15            412 \n                               Lower    Rx                50          3,170 | Tx                31          1,877 \n\n\u59dd\uff45\u6e6a\u9352\u950b\u67ca\u93c3\u30e5\u7e54...\n\u59dd\uff45\u6e6a\u935a\u581d\u82df\u934f\u51a9\u669f\u93b9?..\n\u93c3\u30e5\u7e54\u93c2\u56e6\u6b22: C:\\ProgramData\\AditVncAcceptance20261019\\results\\network-drop-actual.etl (\u93c3\u72b1\u7c28\u6d60\u6735\u6daa\u6fb6?\n\u59dd\uff45\u6e6a\u6fb6\u52ed\u608a...\n\n\u5bb8\u53c9\u7278\u5bee\u5fd3\u5bf2\u6d5c\u5b29\u6b22\u93c1?    3\n\u5bb8\u8336\ue195\u7f03\ue1bd\u7278\u5bee\u5fd5\u6b91\u93c2\u56e6\u6b22:      C:\\ProgramData\\AditVncAcceptance20261019\\results\\network-drop-actual.txt\n\u5bb8\u63d2\u57b9\u95c4\u3086\u588d\u93c8\u590c\u74eb\u95ab\u590a\u6ad2\u9286?\n[{\"Name\":\"Domain\",\"Enabled\":true},{\"Name\":\"Private\",\"Enabled\":false},{\"Name\":\"Public\",\"Enabled\":false}]",
+    "errors": [],
+    "failed": false
+  }
+]

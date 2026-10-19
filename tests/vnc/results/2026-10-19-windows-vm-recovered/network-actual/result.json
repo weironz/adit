@@ -1,0 +1,6 @@
+{
+  "outcome": "failed",
+  "scope": "Windows client TCP keepalive; actual Windows VM firewall packet loss; synthetic VncAuth/ZRLE server without Fence",
+  "static_idle_seconds": 35.06392529999721,
+  "error": "AssertionError('Deadline waiting for disconnected')"
+}

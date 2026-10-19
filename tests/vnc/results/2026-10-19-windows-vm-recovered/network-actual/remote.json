@@ -1,0 +1,26 @@
+[
+  {
+    "elapsed_ms": 9648,
+    "output": "[{\"Name\":\"Domain\",\"Enabled\":1},{\"Name\":\"Private\",\"Enabled\":1},{\"Name\":\"Public\",\"Enabled\":1}]",
+    "errors": [],
+    "failed": false
+  },
+  {
+    "elapsed_ms": 13525,
+    "marker": "ready"
+  },
+  {
+    "elapsed_ms": 55352,
+    "output": "\u5bb8\u53c9\u574a\u9354\u72b5\u74eb\u95ab\u590a\u6ad2\u9286?\n\n\u7481\u677f\u7d8d\u7ecb\u5b2a\u7c2d\u9359\u509b\u669f:\n    \u7481\u677f\u7d8d\u7ecb\u5b2a\u7c2d\u935a\u5d87\u041e:        PktMon\n    \u93c3\u30e5\u7e54\u59af\u2033\u7d21:       \u5bf0\ue046\u5e46\n    \u93c3\u30e5\u7e54\u93c2\u56e6\u6b22:           C:\\ProgramData\\AditVncAcceptance20261019\\results\\network-drop-actual.etl\n    \u93c8\u20ac\u6fb6\u0444\u6783\u6d60\u8dfa\u3047\u704f?      16 MB\n    \u5bb8\u832c\u6564\u9350\u546d\u74e8:        128 MB\n\n\u93c0\u5815\u6ce6\u9428\u52ec\u669f\u93b9?\n    \u93c1\u7248\u5d41\u9356\u5470\ue178\u93c1\u677f\u6ad2\u951b\u5c7e\u669f\u93b9\ue1bc\u5bd8\u93b9\u66e1\u5e4f\n\n\u93b9\u66e1\u5e4f\u7eeb\u8bf2\u7037:\n    \u93b5\u20ac\u93c8\u590b\u669f\u93b9\ue1bc\u5bd8\n\n\u9429\u6223\ue74b\u9428\u52ed\u7c8d\u6d60?\n    \u934f\u3129\u5134\n\n\u93c1\u7248\u5d41\u9356\u546f\u74eb\u95ab\u590a\u6ad2:\n     # \u935a\u5d87\u041e                        \u7ed4\ue21a\u5f5b \n     - --                        -- \n     1 AditVncAcceptance15916 15916 \n{\"State\":5,\"OwningProcess\":11448}",
+    "errors": [],
+    "failed": false
+  },
+  {
+    "elapsed_ms": 167397,
+    "output": "",
+    "errors": [
+      "Cannot process argument transformation on parameter 'Enabled'. Cannot convert value \"True\" to type \"Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetSecurity.GpoBoolean\". Error: \"Invalid cast from 'System.Boolean' to 'Microsoft.PowerShell.Cmdletization.GeneratedTypes.NetSecurity.GpoBoolean'.\""
+    ],
+    "failed": true
+  }
+]

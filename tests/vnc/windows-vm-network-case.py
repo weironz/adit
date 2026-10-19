@@ -4,6 +4,7 @@ Credential arrives on stdin. The VM bootstrap endpoint must already be owned by
 this test. Never run against a production desktop or an existing evidence folder.
 """
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -32,7 +33,8 @@ def main():
     records = []
     process = None
     started = time.monotonic()
-    result = {'outcome': 'failed', 'scope': 'Windows client TCP keepalive; actual Windows VM firewall packet loss; synthetic VncAuth/ZRLE server without Fence'}
+    result = {'outcome': 'failed', 'scope': 'Windows client TCP keepalive; actual Windows VM firewall packet loss; synthetic VncAuth/ZRLE server without Fence',
+              'probe_sha256': hashlib.sha256(args.probe.read_bytes()).hexdigest()}
     remote = args.remote_directory.replace("'", "''")
 
     def ps(script):

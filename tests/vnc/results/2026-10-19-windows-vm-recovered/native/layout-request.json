@@ -1,0 +1,11 @@
+{
+  "request_id": "layout-acl-fix",
+  "pipeline_outcome": "passed",
+  "observation": {
+    "pid": 3752,
+    "before": 134481924,
+    "desired": 67568647,
+    "klid": "00000407",
+    "observed": 67568647
+  }
+}

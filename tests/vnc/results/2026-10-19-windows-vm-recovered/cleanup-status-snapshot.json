@@ -1,0 +1,6 @@
+{
+  "outcome": "waiting_for_vm",
+  "scope": "cleanup only; no host power/reset command",
+  "updated_utc": "2026-10-19T11:56:17Z",
+  "last_error_type": "AttributeError"
+}

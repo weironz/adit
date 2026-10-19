@@ -1,0 +1,48 @@
+{
+  "request_id": "one-win",
+  "pipeline_outcome": "passed",
+  "observation": [
+    {
+      "monotonic": 112210.671,
+      "unix_ms": 1792407425556,
+      "event": "key",
+      "down": false,
+      "keysym": 65513
+    },
+    {
+      "monotonic": 112210.671,
+      "unix_ms": 1792407425556,
+      "event": "key",
+      "down": false,
+      "keysym": 65507
+    },
+    {
+      "monotonic": 112479.046,
+      "unix_ms": 1792407693924,
+      "event": "key",
+      "down": true,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112479.343,
+      "unix_ms": 1792407694222,
+      "event": "key",
+      "down": false,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112512.671,
+      "unix_ms": 1792407727547,
+      "event": "key",
+      "down": true,
+      "keysym": 65515
+    },
+    {
+      "monotonic": 112513.031,
+      "unix_ms": 1792407727911,
+      "event": "key",
+      "down": false,
+      "keysym": 65515
+    }
+  ]
+}

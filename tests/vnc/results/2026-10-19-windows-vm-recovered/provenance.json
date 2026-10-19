@@ -1,0 +1,11 @@
+{
+  "runtime_source_commit": "aaec5ce7f102b04f21fefda5060f18cc5c7f4ca3",
+  "native_source_equivalent_commit": "7f088a1fc2e69da1e0b8941f02af99df0912f96a",
+  "native_producer_run": 39230932522,
+  "native_sha256": "896b2731bb63562f797d5e822e2319101f0e823b175c214810c2918fd323bed5",
+  "python_version": "3.12.10",
+  "python_zip_sha256": "4acbed6dd1c744b0376e3b1cf57ce906f9dc9e95e68824584c8099a63025a3c3",
+  "python_authenticode": "Valid; Python Software Foundation",
+  "tcp_probe_binary_hash": "not captured before launch; later clippy relinked the file; do not substitute current executable hash",
+  "current_probe_sha256_after_ci": "eae7bfde38db3ded2ab91af75f25d3d565e69a97a040706e2ad0df878cfd3699"
+}

@@ -1,0 +1,14 @@
+{
+  "compiler": "rustc 1.98.0 (88d9e12ae 2026-08-18)\nbinary: rustc\ncommit-hash: 88d9e12ae178fab0fb5cc050a94da85685d449ea\ncommit-date: 2026-08-18\nhost: x86_64-pc-windows-msvc\nrelease: 1.98.0\nLLVM version: 22.1.8",
+  "hashes": [
+    {
+      "Path": "D:\\a\\_temp\\native-symbols\\vnc_native_acceptance.exe",
+      "Hash": "36CE92DECF04026D6CA9F1F407A3885FE0CCB269EEC0EB30CEAE0975F6A49FF6"
+    },
+    {
+      "Path": "D:\\a\\_temp\\native-symbols\\vnc_native_acceptance.pdb",
+      "Hash": "4D3810163E1F2CCC0DD189A1DCD2876B12C26CA17E42E8BEA1F53917F98A8AEF"
+    }
+  ],
+  "source_sha": "7f088a1fc2e69da1e0b8941f02af99df0912f96a"
+}

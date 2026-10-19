@@ -1,0 +1,14 @@
+{
+  "scope": "Private dump context and candidate code addresses; not a fully unwound call stack or proven Adit root cause",
+  "thread_id": 6940,
+  "instruction": "win32u.dll+0x1384 (inside NtUserMessageCall)",
+  "message_rdx": "0x50 (WM_INPUTLANGCHANGEREQUEST)",
+  "layout_r9": "0x04070407",
+  "candidate_stack_rva": "0x1430081",
+  "symbol": "winit::platform_impl::windows::event_loop::public_window_callback_inner",
+  "source": "winit 0.30.13 platform_impl/windows/event_loop.rs:2470 DefWindowProcW",
+  "original_and_rebuilt_text_sha256": "cf6e8b3c379b1cb5af001f12ede13eb87a5cc40b1bbff00dc1ebbdcffa2471c3",
+  "private_dump_sha256": "5fdcfee5c01a121047faf9b49b4e83407cef5b6ea383b60cbafe9b1ce70c587a",
+  "private_dump_bytes": 224410,
+  "raw_dumps_published": false
+}

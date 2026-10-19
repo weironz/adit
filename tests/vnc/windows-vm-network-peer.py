@@ -33,9 +33,10 @@ def main():
     parser.add_argument('--bind', required=True)
     parser.add_argument('--port', type=int, required=True)
     parser.add_argument('--directory', type=Path, required=True)
+    parser.add_argument('--public-fixture', action='store_true')
     args = parser.parse_args()
     address = ipaddress.IPv4Address(args.bind)
-    if not (address.is_private or address.is_loopback):
+    if address.is_multicast or (not args.public_fixture and (address.is_unspecified or not (address.is_private or address.is_loopback))):
         raise ValueError('Only an authorized private test interface is accepted')
     args.directory.mkdir(exist_ok=False)
     stopping = threading.Event()

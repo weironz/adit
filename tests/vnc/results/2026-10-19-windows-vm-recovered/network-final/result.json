@@ -1,0 +1,6 @@
+{
+  "outcome": "passed",
+  "scope": "Windows client TCP keepalive; actual Windows VM firewall packet loss; synthetic VncAuth/ZRLE server without Fence",
+  "static_idle_seconds": 35.08183750000171,
+  "firewall_restored": true
+}

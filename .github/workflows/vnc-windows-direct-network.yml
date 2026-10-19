@@ -1,0 +1,63 @@
+name: VNC Windows direct TCP recovery
+on:
+  push:
+    branches: ['codex/vnc-recovered-windows-acceptance']
+    paths: ['.github/workflows/vnc-windows-direct-network.yml']
+  workflow_dispatch:
+    inputs:
+      fixture_host:
+        description: Authorized synthetic public IPv4 fixture, never a real desktop
+        required: true
+permissions:
+  contents: read
+jobs:
+  direct:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Publish disposable client rendezvous
+        shell: pwsh
+        run: |
+          $dir=Join-Path $env:RUNNER_TEMP 'direct-rendezvous'
+          New-Item -Type Directory $dir | Out-Null
+          @{run_id=$env:GITHUB_RUN_ID;source_sha=$env:GITHUB_SHA;client_ip=(Invoke-RestMethod https://api.ipify.org);port=15916} | ConvertTo-Json | Set-Content "$dir/rendezvous.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: direct-rendezvous
+          path: ${{ runner.temp }}/direct-rendezvous
+      - name: Build production recovery client
+        shell: pwsh
+        run: |
+          cargo build -p adit-session --example vnc_recovery_probe --locked
+          if($LASTEXITCODE -ne 0){exit $LASTEXITCODE}
+      - name: Direct Windows TCP, no Fence, server-side OS packet loss
+        env:
+          FIXTURE_HOST: ${{ inputs.fixture_host }}
+        shell: pwsh
+        timeout-minutes: 6
+        run: |
+          $dir=Join-Path $env:RUNNER_TEMP 'direct-network'
+          New-Item -Type Directory $dir,(Join-Path $dir 'markers') | Out-Null
+          $exe=(Resolve-Path target/debug/examples/vnc_recovery_probe.exe).Path
+          @{source_sha=$env:GITHUB_SHA;probe_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash;path_scope='Direct hosted Windows TCP to source-restricted synthetic public fixture; no SSH/QEMU/NetBird TCP forwarder'} | ConvertTo-Json | Set-Content "$dir/provenance.json"
+          $s=[Diagnostics.ProcessStartInfo]::new($exe)
+          $s.UseShellExecute=$false;$s.CreateNoWindow=$true;$s.RedirectStandardInput=$true;$s.RedirectStandardOutput=$true;$s.RedirectStandardError=$true
+          foreach($a in @($env:FIXTURE_HOST,'15916',"$dir/markers",'--public-no-fence-fixture')){$s.ArgumentList.Add($a)}
+          $p=[Diagnostics.Process]::Start($s)
+          $out=$p.StandardOutput.ReadToEndAsync();$err=$p.StandardError.ReadToEndAsync()
+          # Public synthetic fixture value; never a real host credential.
+          $p.StandardInput.WriteLine('adit-ci');$p.StandardInput.Close()
+          if(-not $p.WaitForExit(270000)){$p.Kill();throw 'Recovery deadline'}
+          $out.GetAwaiter().GetResult() | Set-Content "$dir/client.stdout.txt"
+          $err.GetAwaiter().GetResult() | Set-Content "$dir/client.stderr.txt"
+          @{exit_code=$p.ExitCode;ready=(Test-Path "$dir/markers/ready");disconnected=(Test-Path "$dir/markers/disconnected");recovered=(Test-Path "$dir/markers/recovered");resumed=(Test-Path "$dir/markers/resumed")} | ConvertTo-Json | Set-Content "$dir/result.json"
+          if($p.ExitCode -ne 0){exit $p.ExitCode}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: direct-network
+          path: ${{ runner.temp }}/direct-network

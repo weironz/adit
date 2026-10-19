@@ -31,14 +31,15 @@ fn marker(dir: &Path, name: &str, start: Instant) -> io::Result<()> {
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
     let synthetic_none = args.get(4).is_some_and(|value| value == "--synthetic-none");
-    let no_fence = args.get(4).is_some_and(|value| value == "--no-fence");
+    let public_fixture = args.get(4).is_some_and(|value| value == "--public-no-fence-fixture");
+    let no_fence = public_fixture || args.get(4).is_some_and(|value| value == "--no-fence");
     if args.len() != 4 && !(args.len() == 5 && (synthetic_none || no_fence)) {
         return Err(
-            "usage: vnc_recovery_probe private-ip port owned-marker-dir [--synthetic-none|--no-fence]; password on stdin".into(),
+            "usage: vnc_recovery_probe host port owned-marker-dir [--synthetic-none|--no-fence|--public-no-fence-fixture]; password on stdin".into(),
         );
     }
     let ip: std::net::Ipv4Addr = args[1].parse()?;
-    if !ip.is_private() && !ip.is_loopback() {
+    if ip.is_multicast() || ip.is_unspecified() || ip.is_broadcast() || (!ip.is_private() && !ip.is_loopback() && !public_fixture) {
         return Err(
             "recovery acceptance is limited to an isolated private/loopback fixture".into(),
         );
