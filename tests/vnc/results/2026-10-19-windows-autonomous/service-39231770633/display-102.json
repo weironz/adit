@@ -1,0 +1,157 @@
+{
+  "references": [
+    "https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-enumdisplaysettingsw",
+    "https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-changedisplaysettingsexw"
+  ],
+  "native_return": 0,
+  "source_sha": "aa527cb6e35156a96ee40c8362bbd6168850073d",
+  "requested": [
+    1600,
+    1200
+  ],
+  "after": {
+    "device": "CDD",
+    "spec": 1025,
+    "driver": 1025,
+    "size": 188,
+    "extra": 0,
+    "fields": 544997536,
+    "x": 0,
+    "y": 0,
+    "orientation": 0,
+    "fixedOutput": 0,
+    "color": 0,
+    "duplex": 0,
+    "yResolution": 0,
+    "ttOption": 0,
+    "collate": 0,
+    "form": "",
+    "logPixels": 96,
+    "bits": 32,
+    "width": 1600,
+    "height": 1200,
+    "flags": 0,
+    "frequency": 64,
+    "icmMethod": 0,
+    "icmIntent": 0,
+    "media": 0,
+    "dither": 0,
+    "reserved1": 0,
+    "reserved2": 0,
+    "panningWidth": 0,
+    "panningHeight": 0
+  },
+  "before": {
+    "device": "CDD",
+    "spec": 1025,
+    "driver": 1025,
+    "size": 188,
+    "extra": 0,
+    "fields": 544997536,
+    "x": 0,
+    "y": 0,
+    "orientation": 0,
+    "fixedOutput": 0,
+    "color": 0,
+    "duplex": 0,
+    "yResolution": 0,
+    "ttOption": 0,
+    "collate": 0,
+    "form": "",
+    "logPixels": 96,
+    "bits": 32,
+    "width": 1280,
+    "height": 1024,
+    "flags": 0,
+    "frequency": 64,
+    "icmMethod": 0,
+    "icmIntent": 0,
+    "media": 0,
+    "dither": 0,
+    "reserved1": 0,
+    "reserved2": 0,
+    "panningWidth": 0,
+    "panningHeight": 0
+  },
+  "supported_modes": [
+    {
+      "width": 640,
+      "height": 480,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 800,
+      "height": 600,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1024,
+      "height": 768,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1152,
+      "height": 864,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1280,
+      "height": 720,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1280,
+      "height": 800,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1280,
+      "height": 1024,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1366,
+      "height": 768,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1440,
+      "height": 900,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1600,
+      "height": 900,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1600,
+      "height": 1200,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1680,
+      "height": 1050,
+      "bits": 32,
+      "frequency": 64
+    },
+    {
+      "width": 1920,
+      "height": 1080,
+      "bits": 32,
+      "frequency": 64
+    }
+  ],
+  "outcome": "passed"
+}

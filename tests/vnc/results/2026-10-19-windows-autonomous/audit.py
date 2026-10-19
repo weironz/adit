@@ -25,7 +25,7 @@ def main():
     assert actual == set(manifest['files']), actual ^ set(manifest['files'])
     recovery = read('recovery-39176249851/result.json')
     assert recovery['outcome'] == 'passed'
-    for folder in ('lock-39176083194', 'service-39177975803', 'service-39229588182'):
+    for folder in ('lock-39176083194', 'service-39177975803', 'service-39229588182', 'service-39231770633'):
         result = read(f'{folder}/result.json')
         assert result['outcome'] == 'passed'
         lock = read(f'{folder}/lock-screen/result.json')
@@ -57,7 +57,51 @@ def main():
     assert passed['medium_token']['elevation_type'] == 3
     assert passed['prompt_result']['cancelled'] and passed['account_delete_status'] == 0
     assert passed['original_consent_policy'] == passed['restored_consent_policy']
-    print(f"PASS: {len(manifest['files'])} byte hashes; scoped recovery, service, resize, lock and UAC evidence")
+    native = read('native-app-39230932522/result.json')
+    assert native['outcome'] == 'passed' and len(native['samples']) == 21
+    assert native['app_sha256'] == native['binary_provenance']['binary_sha256']
+    for sample in native['samples']:
+        assert max(abs(sample['remote'][axis] - 100) for axis in ('x', 'y')) <= 2
+        assert sample['actual_os_dpi'] == 96
+        frame = Image.open(ROOT / 'native-app-39230932522' / sample['case'] / f"window-{sample['index']}.png")
+        assert min(frame.convert('RGB').getpixel(tuple(sample['screenshot_target']))) >= 245
+    small = [s for s in native['samples'] if 'scale-2-' in s['case'] and s['index'] == 2]
+    assert len(small) == 2 and all((s['client_box'][3] - s['client_box'][1]) / 2 < 320 for s in small)
+    current_recovery = read('recovery-39230932522/result.json')
+    assert current_recovery['outcome'] == 'passed' and current_recovery['connections'] == 2
+    dpi = read('native-dpi-39231634543/result.json')
+    assert dpi['outcome'] == 'passed' and len(dpi['samples']) == 21
+    assert dpi['app_sha256'] == native['app_sha256']
+    assert {s['actual_os_dpi'] for s in dpi['samples']} == {96, 144, 192}
+    for sample in dpi['samples']:
+        assert max(abs(sample['remote'][axis] - 100) for axis in ('x', 'y')) <= 2
+    assert len(dpi['cursor_samples']) == 24 and len(dpi['cursor_boundary_samples']) == 6
+    for sample in dpi['cursor_samples']:
+        assert sample['cursor']['flags'] & 1 == 0
+        cursor = Image.open(ROOT / 'native-dpi-39231634543' / sample['case'] / f"cursor-{sample['style']}.png").convert('RGB')
+        points = [(x, y) for y in range(cursor.height) for x in range(cursor.width)
+                  if (lambda c: c[0] > 180 and c[1] < 100 and c[2] > 180)(cursor.getpixel((x, y)))]
+        if sample['style'] == 'hidden':
+            assert not points and sample['observed_bounds'] is None
+        else:
+            xs, ys = zip(*points)
+            assert [min(xs), min(ys), max(xs), max(ys)] == sample['observed_bounds']
+            assert max(abs(sample['received_click'][axis] - 100) for axis in ('x', 'y')) <= 2
+        if sample['style'] == 'color':
+            assert sample['toolbar_cursor']['flags'] == 1
+            rgb = sample['transparent_hole_rgb']
+            assert not (rgb[0] > 180 and rgb[1] < 100 and rgb[2] > 180)
+    assert all(s['outside']['flags'] == 1 for s in dpi['cursor_boundary_samples'])
+    assert read('native-dpi-39231634543/restore-dpi.json')['after_dpi'] == 96
+    assert dpi['cleanup']['app_exited'] and dpi['cleanup']['peer_exit'] == 0
+    input_uac = read('service-39231770633/uac/result.json')
+    assert input_uac['outcome'] == 'passed' and input_uac['medium_token']['elevation_type'] == 3
+    assert input_uac['prompt_result']['cancelled'] and input_uac['prompt_result']['error'] == 1223
+    assert input_uac['account_delete_status'] == 0
+    assert input_uac['original_consent_policy'] == input_uac['restored_consent_policy']
+    assert input_uac['cancellation_path'] == 'production SessionManager VncAuth keysyms Escape down/up'
+    assert 'ready_ms=' in (ROOT / 'service-39231770633/uac/input.stdout.txt').read_text()
+    print(f"PASS: {len(manifest['files'])} byte hashes; 42 native clicks, 24 cursor checks, recovery, service, resize, lock and UAC input evidence")
 
 
 if __name__ == '__main__':

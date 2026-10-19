@@ -1,0 +1,703 @@
+{
+  "outcome": "passed",
+  "source_sha": "aa527cb6e35156a96ee40c8362bbd6168850073d",
+  "run_id": "39231770633",
+  "scope": "UltraVNC1.8.3.0 self-owned Windows service; 1 lossless/static loopback basic samples; service-to-worker RFB attribution required; not UAC/lock or weak-network acceptance; three measured real Windows display sizes via supported native mode changes and fresh VncAuth connections; actual filtered-token UAC capture and production SessionManager Escape cancellation; actual WTS lock state and fresh complete lock-screen capture",
+  "sample_count_requested": 1,
+  "workload": "static",
+  "quality": "lossless",
+  "synthetic_load": true,
+  "network": "native loopback baseline; no RTT/bandwidth/loss shaping",
+  "runner": "GitHub Actions 1000016283",
+  "os": {
+    "Caption": "Microsoft Windows Server 2025 Datacenter",
+    "Version": "10.0.26100",
+    "BuildNumber": "26100",
+    "OSArchitecture": "64-bit"
+  },
+  "target": "127.0.0.1:15911",
+  "vendor_listener": "127.0.0.1:15911",
+  "samples": [
+    {
+      "index": 1,
+      "wrong_password": false,
+      "exit": 0,
+      "timed_out": false,
+      "workload": "static",
+      "quality": "lossless",
+      "passed": true,
+      "synthetic_canary": true,
+      "reset_generation": 1,
+      "load_state": {
+        "canaries": [
+          {
+            "point": [
+              40,
+              40
+            ],
+            "rgb": [
+              224,
+              48,
+              32
+            ]
+          },
+          {
+            "point": [
+              670,
+              470
+            ],
+            "rgb": [
+              32,
+              80,
+              224
+            ]
+          }
+        ],
+        "closed": false,
+        "counts": {
+          "button_press": 0,
+          "button_release": 0,
+          "drag_motion": 0,
+          "viewport_changes": 0,
+          "wheel_events": 0,
+          "wheel_units": 0
+        },
+        "elapsed_ms": 39000,
+        "focused": true,
+        "geometry": {
+          "height": 600,
+          "screen_height": 768,
+          "screen_width": 1024,
+          "width": 800,
+          "x": 0,
+          "y": 0
+        },
+        "pid": 2028,
+        "ready": true,
+        "reset_generation": 1,
+        "shared_probe": {
+          "clicks": 0,
+          "point": [
+            752,
+            52
+          ],
+          "protocol": "adit-public-shared-v1",
+          "rgb": [
+            16,
+            16,
+            16
+          ],
+          "sequence": 0
+        },
+        "viewport": {
+          "x": [
+            0.25,
+            0.75
+          ],
+          "y": [
+            0.25,
+            0.75
+          ]
+        }
+      },
+      "tk_consumption_passed": true,
+      "connected_ms": 697,
+      "first_paint_ms": 975,
+      "complete_paint_ms": 1097,
+      "framebuffer": [
+        1024,
+        768
+      ],
+      "security": "VncAuth",
+      "full_pixel_coverage": true,
+      "steady_and_connected": true
+    },
+    {
+      "index": 2,
+      "wrong_password": true,
+      "exit": 1,
+      "timed_out": false,
+      "workload": "static",
+      "quality": "lossless",
+      "passed": true
+    },
+    {
+      "index": 101,
+      "wrong_password": false,
+      "exit": 0,
+      "timed_out": false,
+      "workload": "static",
+      "quality": "lossless",
+      "passed": true,
+      "synthetic_canary": true,
+      "reset_generation": 2,
+      "load_state": {
+        "canaries": [
+          {
+            "point": [
+              40,
+              40
+            ],
+            "rgb": [
+              224,
+              48,
+              32
+            ]
+          },
+          {
+            "point": [
+              670,
+              470
+            ],
+            "rgb": [
+              32,
+              80,
+              224
+            ]
+          }
+        ],
+        "closed": false,
+        "counts": {
+          "button_press": 0,
+          "button_release": 0,
+          "drag_motion": 0,
+          "viewport_changes": 0,
+          "wheel_events": 0,
+          "wheel_units": 0
+        },
+        "elapsed_ms": 46500,
+        "focused": true,
+        "geometry": {
+          "height": 600,
+          "screen_height": 768,
+          "screen_width": 1024,
+          "width": 800,
+          "x": 0,
+          "y": 0
+        },
+        "pid": 2028,
+        "ready": true,
+        "reset_generation": 2,
+        "shared_probe": {
+          "clicks": 0,
+          "point": [
+            752,
+            52
+          ],
+          "protocol": "adit-public-shared-v1",
+          "rgb": [
+            16,
+            16,
+            16
+          ],
+          "sequence": 0
+        },
+        "viewport": {
+          "x": [
+            0.25,
+            0.75
+          ],
+          "y": [
+            0.25,
+            0.75
+          ]
+        }
+      },
+      "tk_consumption_passed": true,
+      "connected_ms": 628,
+      "first_paint_ms": 926,
+      "complete_paint_ms": 1139,
+      "framebuffer": [
+        1280,
+        1024
+      ],
+      "security": "VncAuth",
+      "full_pixel_coverage": true,
+      "steady_and_connected": true
+    },
+    {
+      "index": 102,
+      "wrong_password": false,
+      "exit": 0,
+      "timed_out": false,
+      "workload": "static",
+      "quality": "lossless",
+      "passed": true,
+      "synthetic_canary": true,
+      "reset_generation": 3,
+      "load_state": {
+        "canaries": [
+          {
+            "point": [
+              40,
+              40
+            ],
+            "rgb": [
+              224,
+              48,
+              32
+            ]
+          },
+          {
+            "point": [
+              670,
+              470
+            ],
+            "rgb": [
+              32,
+              80,
+              224
+            ]
+          }
+        ],
+        "closed": false,
+        "counts": {
+          "button_press": 0,
+          "button_release": 0,
+          "drag_motion": 0,
+          "viewport_changes": 0,
+          "wheel_events": 0,
+          "wheel_units": 0
+        },
+        "elapsed_ms": 52187,
+        "focused": true,
+        "geometry": {
+          "height": 600,
+          "screen_height": 768,
+          "screen_width": 1024,
+          "width": 800,
+          "x": 0,
+          "y": 0
+        },
+        "pid": 2028,
+        "ready": true,
+        "reset_generation": 3,
+        "shared_probe": {
+          "clicks": 0,
+          "point": [
+            752,
+            52
+          ],
+          "protocol": "adit-public-shared-v1",
+          "rgb": [
+            16,
+            16,
+            16
+          ],
+          "sequence": 0
+        },
+        "viewport": {
+          "x": [
+            0.25,
+            0.75
+          ],
+          "y": [
+            0.25,
+            0.75
+          ]
+        }
+      },
+      "tk_consumption_passed": true,
+      "connected_ms": 644,
+      "first_paint_ms": 841,
+      "complete_paint_ms": 1176,
+      "framebuffer": [
+        1600,
+        1200
+      ],
+      "security": "VncAuth",
+      "full_pixel_coverage": true,
+      "steady_and_connected": true
+    },
+    {
+      "index": 103,
+      "wrong_password": false,
+      "exit": 0,
+      "timed_out": false,
+      "workload": "static",
+      "quality": "lossless",
+      "passed": true,
+      "synthetic_canary": true,
+      "reset_generation": 4,
+      "load_state": {
+        "canaries": [
+          {
+            "point": [
+              40,
+              40
+            ],
+            "rgb": [
+              224,
+              48,
+              32
+            ]
+          },
+          {
+            "point": [
+              670,
+              470
+            ],
+            "rgb": [
+              32,
+              80,
+              224
+            ]
+          }
+        ],
+        "closed": false,
+        "counts": {
+          "button_press": 0,
+          "button_release": 0,
+          "drag_motion": 0,
+          "viewport_changes": 0,
+          "wheel_events": 0,
+          "wheel_units": 0
+        },
+        "elapsed_ms": 57890,
+        "focused": true,
+        "geometry": {
+          "height": 600,
+          "screen_height": 768,
+          "screen_width": 1024,
+          "width": 800,
+          "x": 0,
+          "y": 0
+        },
+        "pid": 2028,
+        "ready": true,
+        "reset_generation": 4,
+        "shared_probe": {
+          "clicks": 0,
+          "point": [
+            752,
+            52
+          ],
+          "protocol": "adit-public-shared-v1",
+          "rgb": [
+            16,
+            16,
+            16
+          ],
+          "sequence": 0
+        },
+        "viewport": {
+          "x": [
+            0.25,
+            0.75
+          ],
+          "y": [
+            0.25,
+            0.75
+          ]
+        }
+      },
+      "tk_consumption_passed": true,
+      "connected_ms": 627,
+      "first_paint_ms": 877,
+      "complete_paint_ms": 981,
+      "framebuffer": [
+        1024,
+        768
+      ],
+      "security": "VncAuth",
+      "full_pixel_coverage": true,
+      "steady_and_connected": true
+    }
+  ],
+  "configuration_reference_commit": "0cd8b41aeb34e52e170b33e24411b3f805e303be",
+  "configuration_reference_note": "Pinned official reference source explains INI/password/CLI semantics; it is not a claim that the downloaded vendor binary was built from this commit.",
+  "previous_failed_run": "https://github.com/weironz/adit/actions/runs/39132780089",
+  "previous_failure_note": "Exact pinned archive started a wildcard UDP listener despite exclusive loopback reservation. No client sample ran; failure remains failed evidence, not compatibility acceptance.",
+  "sources": [
+    "https://uvnc.com/downloads/ultravnc/172-ultravnc-1-8-3-0.html",
+    "https://uvnc.com/docs/ultravnc-server/69-ultravnc-ini.html",
+    "https://uvnc.com/docs/ultravnc-server/51-ultravnc-server-commandline-parameters.html",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/common/inifile.cpp",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/vncauth.c",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/winvnc.cpp",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/UdpEchoServer.cpp",
+    "https://learn.microsoft.com/en-us/powershell/module/netsecurity/new-netfirewallrule",
+    "https://learn.microsoft.com/en-us/powershell/module/netsecurity/get-netfirewallrule",
+    "https://github.com/ultravnc/UltraVNC/blob/0cd8b41aeb34e52e170b33e24411b3f805e303be/winvnc/winvnc/UltraVNCService.cpp"
+  ],
+  "limitations": [
+    "Actual service attribution and fresh lock-screen capture; optional Uac records rendering separately. No unlock/password entry, elevation approval, secure attention or uninterrupted existing-session transition.",
+    "Loopback samples are a baseline, not the Windows weak-network matrix, latency percentiles or physical input acceptance.",
+    "Full framebuffer means opaque decoded pixels in production SessionManager, not GPU presentation. SyntheticLoad additionally requires decoded public canary colors and real Tk input consumption.",
+    "VncAuth is not transport encryption. Only a public synthetic fixture password is used.",
+    "TCP RFB is loopback-only, but the official binary also binds a wildcard UDP echo on15911 independently of LoopbackOnly. This disposable CI adds one temporary exact-program/UDP-port inbound Block rule on all enabled firewall profiles; not all vendor sockets are loopback.",
+    "One fresh GUID service and exact executable UDP block are created only in disposable hosted CI; existing services, rules, profiles and system protection are not changed.",
+    "The hosted runner may not expose a capturable interactive desktop. A startup/listener alone never passes this test."
+  ],
+  "service_name": "AditVncCi_907e7d75bb704ec4a13fc096006a2502",
+  "service_acceptance": true,
+  "expected_worker_identity": "Direct SCM-root child via LaunchProcessWin/CreateProcessAsUser using GetSessionUserTokenWin/get_winlogon_handle duplicated winlogon primary token; SYSTEM SID and active-console SessionId required. TerminalServer IPC fallback is outside this calibration and must fail attribution.",
+  "console_session": 2,
+  "probe_sha256": "78bcf7d73322a103b85a752977573a2a144300b77994900c1606054c08826eb1",
+  "load_script_sha256": "21007a83807c87172b3b4e422524d09a8a9ef338b51fd449eef59945bc475573",
+  "load_pid": 2028,
+  "load_ready": {
+    "canaries": [
+      {
+        "point": [
+          40,
+          40
+        ],
+        "rgb": [
+          224,
+          48,
+          32
+        ]
+      },
+      {
+        "point": [
+          670,
+          470
+        ],
+        "rgb": [
+          32,
+          80,
+          224
+        ]
+      }
+    ],
+    "closed": false,
+    "counts": {
+      "button_press": 0,
+      "button_release": 0,
+      "drag_motion": 0,
+      "viewport_changes": 0,
+      "wheel_events": 0,
+      "wheel_units": 0
+    },
+    "elapsed_ms": 3187,
+    "focused": true,
+    "geometry": {
+      "height": 600,
+      "screen_height": 768,
+      "screen_width": 1024,
+      "width": 800,
+      "x": 0,
+      "y": 0
+    },
+    "pid": 2028,
+    "ready": true,
+    "reset_generation": 0,
+    "shared_probe": {
+      "clicks": 0,
+      "point": [
+        752,
+        52
+      ],
+      "protocol": "adit-public-shared-v1",
+      "rgb": [
+        16,
+        16,
+        16
+      ],
+      "sequence": 0
+    },
+    "viewport": {
+      "x": [
+        0.25,
+        0.75
+      ],
+      "y": [
+        0.25,
+        0.75
+      ]
+    }
+  },
+  "initial_closed_tcp": [],
+  "archive": {
+    "actual_sha256": "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f",
+    "expected_sha256": "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f",
+    "url": "https://uvnc.eu/download/1800/UltraVNC_1830.zip"
+  },
+  "server": {
+    "mode": "unique SCM service with independently attributed LocalSystem RFB worker",
+    "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe",
+    "version": "1.8.3.0"
+  },
+  "password_format": "Public synthetic adit-ci, zero-padded8; fixed-key VNC DES with reversed key bits; Win32 Write/GetPrivateProfileStruct8-byte readback verified; never argv/env.",
+  "service_configuration": {
+    "service_ini": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\AditVncCi_907e7d75bb704ec4a13fc096006a2502.ini",
+    "bootstrap_sha256": "93631af01ccdbb8c1f4dca712e04e0ba47d9352a852b79794a3c15b479ae4ec5",
+    "bootstrap": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\ultravnc.ini",
+    "service_ini_sha256": "93631af01ccdbb8c1f4dca712e04e0ba47d9352a852b79794a3c15b479ae4ec5",
+    "marker": "ultravnc.portable"
+  },
+  "udp_firewall_rule": "AditVncCiUdpBlock-8034caf9423b4092911a9ff39877b867",
+  "service_install_arguments": [
+    "-config",
+    "\"D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\ultravnc.ini\"",
+    "-install",
+    "AditVncCi_907e7d75bb704ec4a13fc096006a2502"
+  ],
+  "service_captured_root": {
+    "pid": 8564,
+    "parent_pid": 988,
+    "executable": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe",
+    "command_line": "\"D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe\" -service",
+    "created_utc": "2026-10-19T09:42:53.9523630Z",
+    "session_id": 0,
+    "owner_sid": "S-1-5-18",
+    "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+  },
+  "service_install_exit": 0,
+  "service_captured_workers": [
+    {
+      "pid": 392,
+      "parent_pid": 8564,
+      "executable": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe",
+      "command_line": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe -config \"D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\aditvncci_907e7d75bb704ec4a13fc096006a2502.ini\" -service_run",
+      "created_utc": "2026-10-19T09:42:57.9997290Z",
+      "session_id": 2,
+      "owner_sid": "S-1-5-18",
+      "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+    }
+  ],
+  "service_identity": {
+    "scm": {
+      "start_name": "LocalSystem",
+      "path": "\"D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe\" -service",
+      "name": "aditvncci_907e7d75bb704ec4a13fc096006a2502",
+      "state": "Running",
+      "pid": 8564
+    },
+    "root": {
+      "pid": 8564,
+      "parent_pid": 988,
+      "executable": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe",
+      "command_line": "\"D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe\" -service",
+      "created_utc": "2026-10-19T09:42:53.9523630Z",
+      "session_id": 0,
+      "owner_sid": "S-1-5-18",
+      "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+    },
+    "worker": {
+      "pid": 392,
+      "parent_pid": 8564,
+      "executable": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe",
+      "command_line": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\winvnc.exe -config \"D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\aditvncci_907e7d75bb704ec4a13fc096006a2502.ini\" -service_run",
+      "created_utc": "2026-10-19T09:42:57.9997290Z",
+      "session_id": 2,
+      "owner_sid": "S-1-5-18",
+      "sha256": "9ebd1ec90ba1274d4a183f5bf6588374700052da907fa764a2ae7072e8ae19fe"
+    },
+    "ini": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\AditVncCi_907e7d75bb704ec4a13fc096006a2502.ini",
+    "portable_marker": "D:\\a\\_temp\\adit-ultravnc-f4d67d46018c412bae5fb0180dd91df1\\portable\\x64\\ultravnc.portable"
+  },
+  "display_resize": [
+    {
+      "sample": 101,
+      "dimensions": [
+        1280,
+        1024
+      ],
+      "full_frame": true,
+      "real_canaries": true
+    },
+    {
+      "sample": 102,
+      "dimensions": [
+        1600,
+        1200
+      ],
+      "full_frame": true,
+      "real_canaries": true
+    },
+    {
+      "sample": 103,
+      "dimensions": [
+        1024,
+        768
+      ],
+      "full_frame": true,
+      "real_canaries": true
+    }
+  ],
+  "uac": {
+    "outcome": "passed",
+    "source_sha": "aa527cb6e35156a96ee40c8362bbd6168850073d",
+    "run_id": "39231770633",
+    "scope": "Fresh disposable standard administrator with a filtered medium token; actual UAC secure-desktop rendering and Escape cancellation through production Adit SessionManager",
+    "account": "AditCi_ed44b03e3a9c",
+    "public_state": "C:\\Users\\Public\\AditCi_ed44b03e3a9c",
+    "original_consent_policy": 0,
+    "limitations": [
+      "Prompt cancellation uses production SessionManager keysyms; does not pass native UI/physical keyboard hooks, IME or elevation approval.",
+      "No user password is read. Synthetic account password exists only in process memory, never argv, environment, files or logs."
+    ],
+    "active_consent_policy": 5,
+    "secure_desktop_policy": 1,
+    "medium_token": {
+      "elevation_type": 3,
+      "pid": 8620
+    },
+    "consent": {
+      "ProcessId": 3188,
+      "SessionId": 2,
+      "ExecutablePath": "C:\\Windows\\system32\\consent.exe"
+    },
+    "input_desktop": {
+      "access_denied": true,
+      "error": 5
+    },
+    "snapshot_sha256": "5311affe9815ee8f928e57837cb2e2b84c6d233494dca7774c466916e4b4936c",
+    "input_driver_sha256": "c36a5a6d5baaf0c5dbc4ad2a00ff628cfd2547e712798cc59e46d94c254e6159",
+    "cancellation_path": "production SessionManager VncAuth keysyms Escape down/up",
+    "prompt_result": {
+      "return_value": 5,
+      "error": 1223,
+      "cancelled": true
+    },
+    "restored_consent_policy": 0,
+    "account_delete_status": 0
+  },
+  "lock_screen": {
+    "outcome": "passed",
+    "source_sha": "aa527cb6e35156a96ee40c8362bbd6168850073d",
+    "run_id": "39231770633",
+    "scope": "Fresh production SessionManager VncAuth connections to attributed UltraVNC service before/after actual WTS workstation lock",
+    "limitations": [
+      "Does not prove unlock, password entry, UAC, secure attention or uninterrupted existing-session transition.",
+      "Disposable runner remains locked until destruction; no user workstation state is changed."
+    ],
+    "references": [
+      "https://learn.microsoft.com/en-us/windows/win32/api/wtsapi32/ns-wtsapi32-wtsinfoex_level1_w",
+      "https://learn.microsoft.com/en-us/windows/win32/shutdown/how-to-lock-the-workstation"
+    ],
+    "before_state": {
+      "session_id": 2,
+      "connection_state": 0,
+      "flags": 1,
+      "locked": false,
+      "unlocked": true
+    },
+    "before_frame": {
+      "width": 1024,
+      "height": 768,
+      "sha256": "09f039f1c5dab71b01b02ab7ebeb24772e7cbd3523971dfc85038e7f8f3c052b",
+      "colours": 57851
+    },
+    "locked_state": {
+      "session_id": 2,
+      "connection_state": 0,
+      "flags": 0,
+      "locked": true,
+      "unlocked": false
+    },
+    "locked_frame": {
+      "width": 1024,
+      "height": 768,
+      "sha256": "80261a682152f97e7aec39b0058711be21c3d4771f35568775d149aefd9b3ca0",
+      "colours": 28428
+    },
+    "changed_channel_fraction": 0.9939524332682291
+  },
+  "service_closed_tcp": [],
+  "service_cleanup": "Exact GUID SCM registration and key absent; attributed root/workers and all live TCP/UDP endpoints absent before protective-rule removal; only recorded PID0 TIME_WAIT may remain as closed kernel state",
+  "load_cleanup": "owned Python target exited; identity/path and script/state arguments verified before termination",
+  "firewall_cleanup": "exact owned GUID rule removed after owned server exit; PersistentStore and ActiveStore absence verified"
+}

@@ -1,0 +1,276 @@
+{"monotonic": 220.718, "unix_ms": 1792402852835, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 220.718, "unix_ms": 1792402852835, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 220.718, "unix_ms": 1792402852835, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 220.75, "unix_ms": 1792402852860, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 223.609, "unix_ms": 1792402855711, "event": "pointer", "mask": 0, "x": 817, "y": 543, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 223.656, "unix_ms": 1792402855763, "event": "pointer", "mask": 0, "x": 864, "y": 543, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 223.656, "unix_ms": 1792402855763, "event": "pointer", "mask": 0, "x": 914, "y": 593, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 223.656, "unix_ms": 1792402855763, "event": "pointer", "mask": 0, "x": 995, "y": 696, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 224.812, "unix_ms": 1792402856916, "event": "pointer", "mask": 0, "x": 118, "y": 117, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 224.921, "unix_ms": 1792402857025, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.031, "unix_ms": 1792402857133, "event": "button", "mask": 1, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.187, "unix_ms": 1792402857293, "event": "button", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.234, "unix_ms": 1792402857346, "event": "cursor", "style": "arrow", "hotspot": [5, 7], "opaque_bounds": [0, 0, 8, 15], "wire_sha256": "a35979da5c5d9ed991ac22230785e79ea450412cb0e26129e54231af51f9aa35"}
+{"monotonic": 225.39, "unix_ms": 1792402857506, "event": "pointer", "mask": 0, "x": 105, "y": 105, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.5, "unix_ms": 1792402857608, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.703, "unix_ms": 1792402857819, "event": "button", "mask": 1, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.812, "unix_ms": 1792402857925, "event": "button", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 225.859, "unix_ms": 1792402857976, "event": "cursor", "style": "ibeam", "hotspot": [5, 7], "opaque_bounds": [3, 0, 12, 15], "wire_sha256": "6892126aad2909ade09c365cf8c25ba93ae36f811b05fb922f45dd340778657e"}
+{"monotonic": 226.031, "unix_ms": 1792402858138, "event": "pointer", "mask": 0, "x": 105, "y": 105, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.14, "unix_ms": 1792402858244, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.312, "unix_ms": 1792402858415, "event": "button", "mask": 1, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.421, "unix_ms": 1792402858524, "event": "button", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.468, "unix_ms": 1792402858575, "event": "cursor", "style": "color", "hotspot": [5, 7], "opaque_bounds": [0, 0, 15, 15], "wire_sha256": "b0f6785767e659921ba063d5ccab7f272f69d1d6a65512391a300c54fd267c90"}
+{"monotonic": 226.625, "unix_ms": 1792402858730, "event": "pointer", "mask": 0, "x": 105, "y": 105, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.734, "unix_ms": 1792402858841, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.89, "unix_ms": 1792402859000, "event": "button", "mask": 1, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 226.937, "unix_ms": 1792402859051, "event": "button", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 227.203, "unix_ms": 1792402859319, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 227.265, "unix_ms": 1792402859370, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 227.375, "unix_ms": 1792402859491, "event": "pointer", "mask": 0, "x": 105, "y": 105, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 227.437, "unix_ms": 1792402859543, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 228.687, "unix_ms": 1792402860801, "event": "pointer", "mask": 0, "x": 115, "y": 114, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 228.765, "unix_ms": 1792402860869, "event": "pointer", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 228.828, "unix_ms": 1792402860932, "event": "button", "mask": 1, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 228.953, "unix_ms": 1792402861056, "event": "button", "mask": 0, "x": 101, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 229.125, "unix_ms": 1792402861230, "event": "pointer", "mask": 0, "x": 177, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 229.125, "unix_ms": 1792402861232, "event": "pointer", "mask": 0, "x": 160, "y": 136, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 229.875, "unix_ms": 1792402861987, "event": "pointer", "mask": 0, "x": 118, "y": 118, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 229.984, "unix_ms": 1792402862098, "event": "pointer", "mask": 0, "x": 99, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 230.093, "unix_ms": 1792402862205, "event": "button", "mask": 1, "x": 99, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 230.203, "unix_ms": 1792402862314, "event": "button", "mask": 0, "x": 99, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 230.312, "unix_ms": 1792402862418, "event": "disconnected", "reason": "ConnectionAbortedError"}
+{"monotonic": 230.859, "unix_ms": 1792402862968, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 230.859, "unix_ms": 1792402862968, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 230.859, "unix_ms": 1792402862968, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 230.859, "unix_ms": 1792402862970, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 230.89, "unix_ms": 1792402862994, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 231.5, "unix_ms": 1792402863616, "event": "pointer", "mask": 0, "x": 114, "y": 64, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 232.562, "unix_ms": 1792402864679, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 232.625, "unix_ms": 1792402864741, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 232.781, "unix_ms": 1792402864884, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 232.859, "unix_ms": 1792402864969, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 232.937, "unix_ms": 1792402865054, "event": "cursor", "style": "arrow", "hotspot": [5, 7], "opaque_bounds": [0, 0, 8, 15], "wire_sha256": "a35979da5c5d9ed991ac22230785e79ea450412cb0e26129e54231af51f9aa35"}
+{"monotonic": 233.109, "unix_ms": 1792402865211, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 233.234, "unix_ms": 1792402865336, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 233.406, "unix_ms": 1792402865515, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 233.468, "unix_ms": 1792402865571, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 233.515, "unix_ms": 1792402865622, "event": "cursor", "style": "ibeam", "hotspot": [5, 7], "opaque_bounds": [3, 0, 12, 15], "wire_sha256": "6892126aad2909ade09c365cf8c25ba93ae36f811b05fb922f45dd340778657e"}
+{"monotonic": 233.687, "unix_ms": 1792402865790, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 233.781, "unix_ms": 1792402865892, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 233.89, "unix_ms": 1792402866004, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 234.0, "unix_ms": 1792402866110, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 234.046, "unix_ms": 1792402866161, "event": "cursor", "style": "color", "hotspot": [5, 7], "opaque_bounds": [0, 0, 15, 15], "wire_sha256": "b0f6785767e659921ba063d5ccab7f272f69d1d6a65512391a300c54fd267c90"}
+{"monotonic": 234.156, "unix_ms": 1792402866271, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 234.265, "unix_ms": 1792402866377, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 234.546, "unix_ms": 1792402866650, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 234.593, "unix_ms": 1792402866701, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 234.875, "unix_ms": 1792402866978, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 234.921, "unix_ms": 1792402867030, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 235.078, "unix_ms": 1792402867194, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 235.187, "unix_ms": 1792402867298, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 236.453, "unix_ms": 1792402868565, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 236.578, "unix_ms": 1792402868680, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 236.75, "unix_ms": 1792402868863, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 236.812, "unix_ms": 1792402868914, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 237.734, "unix_ms": 1792402869848, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 237.843, "unix_ms": 1792402869955, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 237.953, "unix_ms": 1792402870063, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 238.062, "unix_ms": 1792402870165, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 238.156, "unix_ms": 1792402870267, "event": "disconnected", "reason": "ConnectionAbortedError"}
+{"monotonic": 241.0, "unix_ms": 1792402873107, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 241.0, "unix_ms": 1792402873108, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 241.0, "unix_ms": 1792402873108, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 241.0, "unix_ms": 1792402873109, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 241.031, "unix_ms": 1792402873137, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 241.75, "unix_ms": 1792402873855, "event": "pointer", "mask": 0, "x": 440, "y": 246, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 241.796, "unix_ms": 1792402873913, "event": "pointer", "mask": 0, "x": 487, "y": 246, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 241.859, "unix_ms": 1792402873965, "event": "pointer", "mask": 0, "x": 600, "y": 359, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 241.859, "unix_ms": 1792402873965, "event": "pointer", "mask": 0, "x": 1036, "y": 710, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 242.921, "unix_ms": 1792402875033, "event": "pointer", "mask": 0, "x": 119, "y": 119, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 243.14, "unix_ms": 1792402875249, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 243.296, "unix_ms": 1792402875402, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 243.406, "unix_ms": 1792402875514, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 243.515, "unix_ms": 1792402875621, "event": "cursor", "style": "arrow", "hotspot": [5, 7], "opaque_bounds": [0, 0, 8, 15], "wire_sha256": "a35979da5c5d9ed991ac22230785e79ea450412cb0e26129e54231af51f9aa35"}
+{"monotonic": 243.718, "unix_ms": 1792402875831, "event": "pointer", "mask": 0, "x": 104, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 243.875, "unix_ms": 1792402875983, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.093, "unix_ms": 1792402876206, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.14, "unix_ms": 1792402876257, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.203, "unix_ms": 1792402876316, "event": "cursor", "style": "ibeam", "hotspot": [5, 7], "opaque_bounds": [3, 0, 12, 15], "wire_sha256": "6892126aad2909ade09c365cf8c25ba93ae36f811b05fb922f45dd340778657e"}
+{"monotonic": 244.421, "unix_ms": 1792402876525, "event": "pointer", "mask": 0, "x": 104, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.593, "unix_ms": 1792402876695, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.75, "unix_ms": 1792402876852, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.859, "unix_ms": 1792402876965, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 244.906, "unix_ms": 1792402877015, "event": "cursor", "style": "color", "hotspot": [5, 7], "opaque_bounds": [0, 0, 15, 15], "wire_sha256": "b0f6785767e659921ba063d5ccab7f272f69d1d6a65512391a300c54fd267c90"}
+{"monotonic": 245.062, "unix_ms": 1792402877173, "event": "pointer", "mask": 0, "x": 104, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 245.218, "unix_ms": 1792402877326, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 245.39, "unix_ms": 1792402877498, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 245.484, "unix_ms": 1792402877601, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 245.75, "unix_ms": 1792402877866, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 245.859, "unix_ms": 1792402877976, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 245.968, "unix_ms": 1792402878077, "event": "pointer", "mask": 0, "x": 104, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 246.015, "unix_ms": 1792402878128, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 247.078, "unix_ms": 1792402879195, "event": "pointer", "mask": 0, "x": 115, "y": 115, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 247.25, "unix_ms": 1792402879357, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 247.421, "unix_ms": 1792402879529, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 247.546, "unix_ms": 1792402879652, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 247.765, "unix_ms": 1792402879871, "event": "pointer", "mask": 0, "x": 234, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 247.765, "unix_ms": 1792402879871, "event": "pointer", "mask": 0, "x": 167, "y": 140, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 248.703, "unix_ms": 1792402880809, "event": "pointer", "mask": 0, "x": 122, "y": 122, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 248.859, "unix_ms": 1792402880966, "event": "pointer", "mask": 0, "x": 101, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 249.062, "unix_ms": 1792402881175, "event": "button", "mask": 1, "x": 101, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 249.125, "unix_ms": 1792402881226, "event": "button", "mask": 0, "x": 101, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 249.218, "unix_ms": 1792402881334, "event": "disconnected", "reason": "ConnectionAbortedError"}
+{"monotonic": 249.75, "unix_ms": 1792402881865, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 249.75, "unix_ms": 1792402881865, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 249.75, "unix_ms": 1792402881865, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 249.75, "unix_ms": 1792402881865, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 249.781, "unix_ms": 1792402881892, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 250.515, "unix_ms": 1792402882617, "event": "pointer", "mask": 0, "x": 147, "y": 57, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 251.406, "unix_ms": 1792402883515, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 251.578, "unix_ms": 1792402883693, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 251.687, "unix_ms": 1792402883799, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 251.812, "unix_ms": 1792402883915, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 251.906, "unix_ms": 1792402884017, "event": "cursor", "style": "arrow", "hotspot": [5, 7], "opaque_bounds": [0, 0, 8, 15], "wire_sha256": "a35979da5c5d9ed991ac22230785e79ea450412cb0e26129e54231af51f9aa35"}
+{"monotonic": 252.078, "unix_ms": 1792402884183, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 252.234, "unix_ms": 1792402884339, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 252.406, "unix_ms": 1792402884515, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 252.453, "unix_ms": 1792402884567, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 252.515, "unix_ms": 1792402884618, "event": "cursor", "style": "ibeam", "hotspot": [5, 7], "opaque_bounds": [3, 0, 12, 15], "wire_sha256": "6892126aad2909ade09c365cf8c25ba93ae36f811b05fb922f45dd340778657e"}
+{"monotonic": 252.671, "unix_ms": 1792402884780, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 252.828, "unix_ms": 1792402884940, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.0, "unix_ms": 1792402885105, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.046, "unix_ms": 1792402885161, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.109, "unix_ms": 1792402885212, "event": "cursor", "style": "color", "hotspot": [5, 7], "opaque_bounds": [0, 0, 15, 15], "wire_sha256": "b0f6785767e659921ba063d5ccab7f272f69d1d6a65512391a300c54fd267c90"}
+{"monotonic": 253.25, "unix_ms": 1792402885365, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.375, "unix_ms": 1792402885477, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.546, "unix_ms": 1792402885656, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.656, "unix_ms": 1792402885758, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.968, "unix_ms": 1792402886075, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 253.968, "unix_ms": 1792402886075, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 254.14, "unix_ms": 1792402886251, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 254.25, "unix_ms": 1792402886358, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 255.546, "unix_ms": 1792402887658, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 255.656, "unix_ms": 1792402887762, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 255.843, "unix_ms": 1792402887948, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 255.906, "unix_ms": 1792402888010, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 256.75, "unix_ms": 1792402888860, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 256.859, "unix_ms": 1792402888962, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 256.906, "unix_ms": 1792402889014, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 257.0, "unix_ms": 1792402889116, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 257.109, "unix_ms": 1792402889218, "event": "disconnected", "reason": "ConnectionAbortedError"}
+{"monotonic": 259.765, "unix_ms": 1792402891877, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 259.765, "unix_ms": 1792402891877, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 259.765, "unix_ms": 1792402891878, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 259.765, "unix_ms": 1792402891878, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 259.796, "unix_ms": 1792402891904, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 260.875, "unix_ms": 1792402892991, "event": "pointer", "mask": 0, "x": 374, "y": 220, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 261.031, "unix_ms": 1792402893144, "event": "pointer", "mask": 0, "x": 421, "y": 220, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 261.031, "unix_ms": 1792402893144, "event": "pointer", "mask": 0, "x": 1019, "y": 656, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 261.046, "unix_ms": 1792402893158, "event": "pointer", "mask": 0, "x": 1088, "y": 726, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 261.875, "unix_ms": 1792402893984, "event": "pointer", "mask": 0, "x": 121, "y": 120, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 261.937, "unix_ms": 1792402894048, "event": "pointer", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.062, "unix_ms": 1792402894174, "event": "button", "mask": 1, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.14, "unix_ms": 1792402894252, "event": "button", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.218, "unix_ms": 1792402894329, "event": "cursor", "style": "arrow", "hotspot": [5, 7], "opaque_bounds": [0, 0, 8, 15], "wire_sha256": "a35979da5c5d9ed991ac22230785e79ea450412cb0e26129e54231af51f9aa35"}
+{"monotonic": 262.375, "unix_ms": 1792402894484, "event": "pointer", "mask": 0, "x": 105, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.484, "unix_ms": 1792402894586, "event": "pointer", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.625, "unix_ms": 1792402894741, "event": "button", "mask": 1, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.734, "unix_ms": 1792402894849, "event": "button", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 262.812, "unix_ms": 1792402894914, "event": "cursor", "style": "ibeam", "hotspot": [5, 7], "opaque_bounds": [3, 0, 12, 15], "wire_sha256": "6892126aad2909ade09c365cf8c25ba93ae36f811b05fb922f45dd340778657e"}
+{"monotonic": 262.968, "unix_ms": 1792402895077, "event": "pointer", "mask": 0, "x": 105, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 263.125, "unix_ms": 1792402895236, "event": "pointer", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 263.281, "unix_ms": 1792402895389, "event": "button", "mask": 1, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 263.437, "unix_ms": 1792402895545, "event": "button", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 263.484, "unix_ms": 1792402895596, "event": "cursor", "style": "color", "hotspot": [5, 7], "opaque_bounds": [0, 0, 15, 15], "wire_sha256": "b0f6785767e659921ba063d5ccab7f272f69d1d6a65512391a300c54fd267c90"}
+{"monotonic": 263.64, "unix_ms": 1792402895755, "event": "pointer", "mask": 0, "x": 105, "y": 104, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 263.75, "unix_ms": 1792402895864, "event": "pointer", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 263.968, "unix_ms": 1792402896082, "event": "button", "mask": 1, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 264.078, "unix_ms": 1792402896185, "event": "button", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 264.343, "unix_ms": 1792402896454, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 264.406, "unix_ms": 1792402896511, "event": "pointer", "mask": 0, "x": 99, "y": 98, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 266.093, "unix_ms": 1792402898203, "event": "pointer", "mask": 0, "x": 118, "y": 118, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 266.203, "unix_ms": 1792402898305, "event": "pointer", "mask": 0, "x": 101, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 266.312, "unix_ms": 1792402898416, "event": "button", "mask": 1, "x": 101, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 266.421, "unix_ms": 1792402898523, "event": "button", "mask": 0, "x": 101, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 266.578, "unix_ms": 1792402898689, "event": "pointer", "mask": 0, "x": 303, "y": 101, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 266.578, "unix_ms": 1792402898689, "event": "pointer", "mask": 0, "x": 178, "y": 148, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 267.218, "unix_ms": 1792402899323, "event": "pointer", "mask": 0, "x": 125, "y": 125, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 267.312, "unix_ms": 1792402899425, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 267.468, "unix_ms": 1792402899585, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 267.578, "unix_ms": 1792402899687, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 267.687, "unix_ms": 1792402899792, "event": "disconnected", "reason": "ConnectionAbortedError"}
+{"monotonic": 268.218, "unix_ms": 1792402900334, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 268.218, "unix_ms": 1792402900334, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 268.218, "unix_ms": 1792402900334, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 268.234, "unix_ms": 1792402900336, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 268.25, "unix_ms": 1792402900360, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 269.109, "unix_ms": 1792402901222, "event": "pointer", "mask": 0, "x": 178, "y": 49, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.015, "unix_ms": 1792402902117, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.109, "unix_ms": 1792402902220, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.218, "unix_ms": 1792402902322, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.312, "unix_ms": 1792402902424, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.359, "unix_ms": 1792402902474, "event": "cursor", "style": "arrow", "hotspot": [5, 7], "opaque_bounds": [0, 0, 8, 15], "wire_sha256": "a35979da5c5d9ed991ac22230785e79ea450412cb0e26129e54231af51f9aa35"}
+{"monotonic": 270.515, "unix_ms": 1792402902630, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.625, "unix_ms": 1792402902735, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.843, "unix_ms": 1792402902947, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.89, "unix_ms": 1792402902998, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 270.953, "unix_ms": 1792402903059, "event": "cursor", "style": "ibeam", "hotspot": [5, 7], "opaque_bounds": [3, 0, 12, 15], "wire_sha256": "6892126aad2909ade09c365cf8c25ba93ae36f811b05fb922f45dd340778657e"}
+{"monotonic": 271.046, "unix_ms": 1792402903160, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 271.156, "unix_ms": 1792402903266, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 271.359, "unix_ms": 1792402903470, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 271.468, "unix_ms": 1792402903584, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 271.531, "unix_ms": 1792402903642, "event": "cursor", "style": "color", "hotspot": [5, 7], "opaque_bounds": [0, 0, 15, 15], "wire_sha256": "b0f6785767e659921ba063d5ccab7f272f69d1d6a65512391a300c54fd267c90"}
+{"monotonic": 271.687, "unix_ms": 1792402903799, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 271.812, "unix_ms": 1792402903926, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 271.921, "unix_ms": 1792402904028, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 272.031, "unix_ms": 1792402904135, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 272.187, "unix_ms": 1792402904296, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 272.312, "unix_ms": 1792402904418, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 272.421, "unix_ms": 1792402904537, "event": "pointer", "mask": 0, "x": 103, "y": 103, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 272.531, "unix_ms": 1792402904639, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 273.421, "unix_ms": 1792402905528, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 273.609, "unix_ms": 1792402905715, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 273.781, "unix_ms": 1792402905895, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 273.89, "unix_ms": 1792402905996, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 275.125, "unix_ms": 1792402907226, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 275.281, "unix_ms": 1792402907387, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 275.437, "unix_ms": 1792402907550, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 275.546, "unix_ms": 1792402907651, "event": "button", "mask": 0, "x": 100, "y": 100, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 275.64, "unix_ms": 1792402907753, "event": "disconnected", "reason": "ConnectionAbortedError"}
+{"monotonic": 278.296, "unix_ms": 1792402910401, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 278.296, "unix_ms": 1792402910401, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 278.296, "unix_ms": 1792402910401, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 278.296, "unix_ms": 1792402910402, "event": "cursor", "style": "hidden", "hotspot": [0, 0], "opaque_bounds": null, "wire_sha256": "d4451f720aa698c6a663b94ae182b84105a44a1f1a74460acb61ae6bc765452a"}
+{"monotonic": 278.312, "unix_ms": 1792402910427, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 278.89, "unix_ms": 1792402910996, "event": "pointer", "mask": 0, "x": 786, "y": 512, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 278.937, "unix_ms": 1792402911051, "event": "pointer", "mask": 0, "x": 833, "y": 512, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 278.937, "unix_ms": 1792402911051, "event": "pointer", "mask": 0, "x": 914, "y": 593, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 278.937, "unix_ms": 1792402911051, "event": "pointer", "mask": 0, "x": 995, "y": 696, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 279.312, "unix_ms": 1792402911421, "event": "set_desktop_size", "width": 968, "height": 568, "screens": [[42, 0, 0, 968, 568, 0]], "previous": [1200, 800]}
+{"monotonic": 279.328, "unix_ms": 1792402911433, "event": "full_frame_sent", "sequence": 2, "width": 968, "height": 568, "pixel_bytes": 2199296, "sha256": "397d082b76eba492677797ccd9b067091dbece241637a760ba56012fc17460c4", "eds_reason": 1}
+{"monotonic": 279.484, "unix_ms": 1792402911597, "event": "pointer", "mask": 0, "x": 766, "y": 497, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 280.421, "unix_ms": 1792402912533, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 280.546, "unix_ms": 1792402912651, "event": "pointer", "mask": 0, "x": 112, "y": 110, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 280.593, "unix_ms": 1792402912702, "event": "pointer", "mask": 0, "x": 100, "y": 98, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 280.765, "unix_ms": 1792402912867, "event": "button", "mask": 1, "x": 100, "y": 98, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 280.812, "unix_ms": 1792402912918, "event": "button", "mask": 0, "x": 100, "y": 98, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 281.015, "unix_ms": 1792402913126, "event": "pointer", "mask": 0, "x": 0, "y": 38, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 281.015, "unix_ms": 1792402913126, "event": "pointer", "mask": 0, "x": 82, "y": 80, "width": 968, "height": 568, "frame": 2}
+{"monotonic": 281.406, "unix_ms": 1792402913509, "event": "set_desktop_size", "width": 1168, "height": 688, "screens": [[42, 0, 0, 1168, 688, 0]], "previous": [968, 568]}
+{"monotonic": 281.421, "unix_ms": 1792402913528, "event": "full_frame_sent", "sequence": 3, "width": 1168, "height": 688, "pixel_bytes": 3214336, "sha256": "321ea86343ae07f77b0037cde1038741a4dd78bb1e1b7dff4143254608915c84", "eds_reason": 1}
+{"monotonic": 281.578, "unix_ms": 1792402913682, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 282.609, "unix_ms": 1792402914717, "event": "pointer", "mask": 0, "x": 100, "y": 98, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 282.765, "unix_ms": 1792402914875, "event": "pointer", "mask": 0, "x": 112, "y": 110, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 282.812, "unix_ms": 1792402914929, "event": "pointer", "mask": 0, "x": 100, "y": 98, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 282.921, "unix_ms": 1792402915031, "event": "button", "mask": 1, "x": 100, "y": 98, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 283.031, "unix_ms": 1792402915133, "event": "button", "mask": 0, "x": 100, "y": 98, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 283.234, "unix_ms": 1792402915344, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 1168, "height": 688, "frame": 3}
+{"monotonic": 283.609, "unix_ms": 1792402915724, "event": "set_desktop_size", "width": 868, "height": 508, "screens": [[42, 0, 0, 868, 508, 0]], "previous": [1168, 688]}
+{"monotonic": 283.625, "unix_ms": 1792402915734, "event": "full_frame_sent", "sequence": 4, "width": 868, "height": 508, "pixel_bytes": 1763776, "sha256": "2f870593758c0166ca37c923e49cae9b8c8d18c63ef58e7774a01447c960f1d2", "eds_reason": 1}
+{"monotonic": 284.515, "unix_ms": 1792402916632, "event": "pointer", "mask": 0, "x": 112, "y": 112, "width": 868, "height": 508, "frame": 4}
+{"monotonic": 284.703, "unix_ms": 1792402916805, "event": "pointer", "mask": 0, "x": 100, "y": 100, "width": 868, "height": 508, "frame": 4}
+{"monotonic": 284.796, "unix_ms": 1792402916913, "event": "button", "mask": 1, "x": 100, "y": 100, "width": 868, "height": 508, "frame": 4}
+{"monotonic": 284.796, "unix_ms": 1792402916913, "event": "pointer", "mask": 1, "x": 100, "y": 98, "width": 868, "height": 508, "frame": 4}
+{"monotonic": 284.906, "unix_ms": 1792402917014, "event": "button", "mask": 0, "x": 100, "y": 98, "width": 868, "height": 508, "frame": 4}
+{"monotonic": 285.062, "unix_ms": 1792402917178, "event": "disconnected", "reason": "ConnectionResetError"}

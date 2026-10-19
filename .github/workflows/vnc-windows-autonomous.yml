@@ -103,6 +103,13 @@ jobs:
           python-version: '3.12'
       - name: Install capture dependency
         run: python -m pip install Pillow==11.3.0
+      - name: Verify fixture syntax and RFB contract before building
+        shell: pwsh
+        run: |
+          python -c "import ast,pathlib; [ast.parse((pathlib.Path('tests/vnc')/name).read_text(encoding='utf-8')) for name in ('native_rfb_fixture.py','windows-autonomous-native.py','windows-autonomous-recovery.py','windows-service-lock.py','windows-service-uac.py')]"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/vnc/native_rfb_fixture.py --self-test
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build isolated native window with production view and dispatcher
         if: inputs.binary_run == ''
         shell: pwsh

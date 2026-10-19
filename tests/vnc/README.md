@@ -56,8 +56,10 @@ Change a Rust input and omit `binary_run` to build a fresh binary.
 `vnc-windows-lock.yml` owns an independent UltraVNC service and verifies native
 server display changes, actual UAC secure-desktop rendering and WTS lock-screen
 capture. UAC creates a disposable administrator with a verified filtered token;
-its password stays in process memory. A separate cleanup client cancels the
-prompt, then the fixture restores the exact policy and deletes its account.
+its password stays in process memory. The production SessionManager input driver
+sends Escape down/up, and the requesting process must acknowledge cancellation;
+the fixture then restores the exact policy and deletes its account. This proves
+secure-desktop protocol input, independently of native physical keyboard hooks.
 The wrapper verifies service/worker/port and owned firewall cleanup even on failure.
 Never invoke these system-changing scripts on a user desktop or self-hosted runner.
 

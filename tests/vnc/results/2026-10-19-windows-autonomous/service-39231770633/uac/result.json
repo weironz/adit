@@ -1,0 +1,38 @@
+{
+  "outcome": "passed",
+  "source_sha": "aa527cb6e35156a96ee40c8362bbd6168850073d",
+  "run_id": "39231770633",
+  "scope": "Fresh disposable standard administrator with a filtered medium token; actual UAC secure-desktop rendering and Escape cancellation through production Adit SessionManager",
+  "account": "AditCi_ed44b03e3a9c",
+  "public_state": "C:\\Users\\Public\\AditCi_ed44b03e3a9c",
+  "original_consent_policy": 0,
+  "limitations": [
+    "Prompt cancellation uses production SessionManager keysyms; does not pass native UI/physical keyboard hooks, IME or elevation approval.",
+    "No user password is read. Synthetic account password exists only in process memory, never argv, environment, files or logs."
+  ],
+  "active_consent_policy": 5,
+  "secure_desktop_policy": 1,
+  "medium_token": {
+    "elevation_type": 3,
+    "pid": 8620
+  },
+  "consent": {
+    "ProcessId": 3188,
+    "SessionId": 2,
+    "ExecutablePath": "C:\\Windows\\system32\\consent.exe"
+  },
+  "input_desktop": {
+    "access_denied": true,
+    "error": 5
+  },
+  "snapshot_sha256": "5311affe9815ee8f928e57837cb2e2b84c6d233494dca7774c466916e4b4936c",
+  "input_driver_sha256": "c36a5a6d5baaf0c5dbc4ad2a00ff628cfd2547e712798cc59e46d94c254e6159",
+  "cancellation_path": "production SessionManager VncAuth keysyms Escape down/up",
+  "prompt_result": {
+    "return_value": 5,
+    "error": 1223,
+    "cancelled": true
+  },
+  "restored_consent_policy": 0,
+  "account_delete_status": 0
+}
