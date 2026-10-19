@@ -51,6 +51,22 @@ jobs:
         run: |
           $dir=Join-Path $env:RUNNER_TEMP 'direct-network'
           New-Item -Type Directory $dir,(Join-Path $dir 'markers') | Out-Null
+          # Refuse to authenticate to a real desktop if source-specific routing
+          # did not reach our zero-challenge synthetic peer.
+          $tcp=[Net.Sockets.TcpClient]::new()
+          try {
+            $tcp.Connect($env:FIXTURE_HOST,[int]$env:FIXTURE_PORT)
+            $stream=$tcp.GetStream();$stream.ReadTimeout=10000
+            function Read-Exact([int]$count){$b=[byte[]]::new($count);$o=0;while($o -lt $count){$n=$stream.Read($b,$o,$count-$o);if($n -eq 0){throw 'Fixture EOF'};$o+=$n};return ,$b}
+            $version=Read-Exact 12
+            if([Text.Encoding]::ASCII.GetString($version) -cne "RFB 003.008`n"){throw 'Unexpected synthetic protocol'}
+            $stream.Write($version,0,12)
+            $types=Read-Exact 2
+            if($types[0] -ne 1 -or $types[1] -ne 2){throw 'Not the synthetic VncAuth fixture'}
+            $stream.WriteByte(2);$challenge=Read-Exact 16
+            if(@($challenge|Where-Object {$_ -ne 0}).Count){throw 'Synthetic challenge mismatch; no authentication attempted'}
+            @{zero_challenge_verified=$true;credential_sent=$false} | ConvertTo-Json | Set-Content "$dir/preflight.json"
+          } finally {$tcp.Dispose()}
           $exe=(Resolve-Path target/debug/examples/vnc_recovery_probe.exe).Path
           @{source_sha=$env:GITHUB_SHA;probe_sha256=(Get-FileHash $exe -Algorithm SHA256).Hash;path_scope='Direct hosted Windows TCP to source-restricted synthetic public fixture; no SSH/QEMU/NetBird TCP forwarder'} | ConvertTo-Json | Set-Content "$dir/provenance.json"
           $s=[Diagnostics.ProcessStartInfo]::new($exe)

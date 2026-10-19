@@ -41,8 +41,9 @@ def cleanup(directory):
                 pass
             except FileNotFoundError:
                 pass
-    for chain, rule in reversed(state['rules']):
-        command(['iptables', '-w', '5', '-D', chain, *rule], check=False)
+    for entry in reversed(state['rules']):
+        table, chain, rule = entry if len(entry) == 3 else ('filter', *entry)
+        command(['iptables', '-w', '5', '-t', table, '-D', chain, *rule], check=False)
     if state.get('chain_created'):
         command(['iptables', '-w', '5', '-F', state['chain']], check=False)
         command(['iptables', '-w', '5', '-X', state['chain']], check=False)
@@ -52,6 +53,10 @@ def cleanup(directory):
               'filter_rules_sha256_before': state['filter_sha256'],
               'filter_rules_sha256_after': rules_sha256(after)}
     result['original_filter_rules_unchanged'] = result['filter_rules_sha256_before'] == result['filter_rules_sha256_after']
+    if 'nat_sha256' in state:
+        nat = command(['iptables-save', '-t', 'nat']).stdout
+        (directory/'after-nat.txt').write_text(nat)
+        result['original_nat_rules_unchanged'] = state['nat_sha256'] == rules_sha256(nat)
     (directory/'cleanup.json').write_text(json.dumps(result, indent=2)+'\n')
 
 
@@ -62,6 +67,7 @@ def main():
     p.add_argument('--bind')
     p.add_argument('--run-id')
     p.add_argument('--port', type=int, default=15916)
+    p.add_argument('--ingress-port', type=int)
     p.add_argument('--cleanup-only', action='store_true')
     args = p.parse_args()
     directory = args.directory.resolve()
@@ -72,14 +78,17 @@ def main():
     assert os.geteuid() == 0 and args.run_id.isdigit()
     assert 1 <= args.port <= 65535
     port = str(args.port)
+    assert args.ingress_port is None or 1 <= args.ingress_port <= 65535
     client = str(ipaddress.IPv4Address(args.client_ip))
     bind = str(ipaddress.IPv4Address(args.bind))
     chain = 'ADITVNC'+args.run_id
     assert len(chain) <= 28 and not (directory/'owner.json').exists()
     before = command(['iptables-save', '-t', 'filter']).stdout
     (directory/'before-filter.txt').write_text(before)
+    nat = command(['iptables-save', '-t', 'nat']).stdout
+    (directory/'before-nat.txt').write_text(nat)
     state = dict(directory=str(directory), chain=chain, chain_created=False, rules=[], controller_pid=os.getpid(),
-                 filter_sha256=rules_sha256(before))
+                 filter_sha256=rules_sha256(before), nat_sha256=rules_sha256(nat))
     result = dict(outcome='failed', scope='Direct hosted Windows client to Linux TCP; no application proxy; Linux INPUT/OUTPUT packet drop', client_ip=client)
     server = None
     timer = 'adit-vnc-cleanup-'+args.run_id
@@ -92,9 +101,9 @@ def main():
     def save():
         (directory/'owner.json').write_text(json.dumps(state, indent=2)+'\n')
 
-    def insert(target, rule):
-        command(['iptables', '-w', '5', '-I', target, '1', *rule])
-        state['rules'].append((target, rule))
+    def insert(target, rule, table='filter'):
+        command(['iptables', '-w', '5', '-t', table, '-I', target, '1', *rule])
+        state['rules'].append((table, target, rule))
         save()
 
     def peer_events():
@@ -126,6 +135,12 @@ def main():
         insert('OUTPUT', ['-d', client, '-p', 'tcp', '--sport', port, '-m', 'comment', '--comment', chain, '-j', 'ACCEPT'])
         command(['systemd-run', '--quiet', '--unit='+timer, '--on-active=15min', '--collect',
                  sys.executable, str(directory/'direct-network-server.py'), '--directory', str(directory), '--cleanup-only'])
+        if args.ingress_port is not None:
+            # Exact disposable runner source only. Existing desktop service and
+            # other clients remain on their original socket; kernel NAT is not
+            # an application TCP terminator such as the NetBird VM gateway.
+            insert('PREROUTING', ['-s', client, '-d', bind, '-p', 'tcp', '--dport', str(args.ingress_port),
+                   '-m', 'comment', '--comment', chain, '-j', 'REDIRECT', '--to-ports', port], table='nat')
         with (directory/'peer.stdout.txt').open('w') as out, (directory/'peer.stderr.txt').open('w') as err:
             server = subprocess.Popen([sys.executable, str(directory/'windows-vm-network-peer.py'),
                 '--bind', bind, '--port', port, '--directory', str(directory/'peer'), '--public-fixture'], stdout=out, stderr=err)
