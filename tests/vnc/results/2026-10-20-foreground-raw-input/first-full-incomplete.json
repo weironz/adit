@@ -1,0 +1,3643 @@
+{
+  "cycles": [
+    {
+      "baseline_raw": {
+        "devices": [
+          {
+            "flags": 0,
+            "page": 1,
+            "target": 12259738,
+            "usage": 2
+          },
+          {
+            "flags": 0,
+            "page": 1,
+            "target": 12259738,
+            "usage": 6
+          }
+        ],
+        "read": true
+      },
+      "continuous_focus": false,
+      "continuous_foreground": false,
+      "continuous_grab": false,
+      "cycle": 1,
+      "grab_before": false,
+      "grab_off": true,
+      "grab_on": true,
+      "hook_armed": true,
+      "hook_off": true,
+      "injected_f24_accepted": 2,
+      "keyboard_removed": true,
+      "other_devices_unchanged": true,
+      "own_probe_delta": 2,
+      "passed": false,
+      "raw_armed": {
+        "devices": [
+          {
+            "flags": 0,
+            "page": 1,
+            "target": 12259738,
+            "usage": 2
+          }
+        ],
+        "read": true
+      },
+      "raw_off": {
+        "devices": [
+          {
+            "flags": 0,
+            "page": 1,
+            "target": 12259738,
+            "usage": 2
+          },
+          {
+            "flags": 0,
+            "page": 1,
+            "target": 12259738,
+            "usage": 6
+          }
+        ],
+        "read": true
+      },
+      "raw_restored": true,
+      "swallowed_delta": 0
+    }
+  ],
+  "elapsed_ms": 7281,
+  "final_restored": true,
+  "grab_final": false,
+  "hook_final": {
+    "armed": false,
+    "counters": [
+      2,
+      2,
+      2,
+      0,
+      0
+    ],
+    "probe_events": 2,
+    "pump_exit": 1,
+    "pump_turns": 24,
+    "vnc": true,
+    "worker_thread": null
+  },
+  "outcome": "incomplete",
+  "pid": 54348,
+  "raw_final": {
+    "devices": [
+      {
+        "flags": 0,
+        "page": 1,
+        "target": 12259738,
+        "usage": 2
+      },
+      {
+        "flags": 0,
+        "page": 1,
+        "target": 12259738,
+        "usage": 6
+      }
+    ],
+    "read": true
+  },
+  "samples": [
+    {
+      "elapsed_ms": 4818,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4818,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4821,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4821,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4821,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4821,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4822,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4823,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4823,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4823,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4823,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4824,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4824,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4824,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4824,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4825,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4825,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4826,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4827,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4827,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4828,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4828,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4828,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4828,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4829,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4829,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4829,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4829,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4829,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4829,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4830,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4830,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4830,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4830,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4830,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4830,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4831,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4831,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4831,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4831,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4831,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4831,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4832,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4846,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4846,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4846,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4846,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4847,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4853,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4853,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4853,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4853,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4882,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": false,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 4905,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 4957,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 1,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5010,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 2,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5074,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 2,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5124,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 3,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5175,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 4,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5225,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 5,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5275,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 6,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5324,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 7,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5361,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 7,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5411,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 8,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5463,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 9,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5526,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 10,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5575,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 11,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5624,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 11,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5675,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 12,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5724,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 13,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5763,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 14,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5824,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 14,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5875,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 15,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5925,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 16,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 5975,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 17,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6024,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 18,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6075,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 18,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6125,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 19,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6175,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 20,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6224,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 21,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6275,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 22,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6325,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 23,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6375,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 0,
+        "pump_turns": 23,
+        "vnc": true,
+        "worker_thread": 32816
+      }
+    },
+    {
+      "elapsed_ms": 6425,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6475,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6543,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6575,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6626,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6675,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6727,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6775,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6827,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6877,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6926,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 6991,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 7043,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 7080,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 7126,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 7177,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 7225,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    },
+    {
+      "elapsed_ms": 7277,
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": false,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "grab": false,
+      "hook": {
+        "armed": false,
+        "counters": [
+          2,
+          2,
+          2,
+          0,
+          0
+        ],
+        "probe_events": 2,
+        "pump_exit": 1,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": null
+      }
+    }
+  ],
+  "scope": "full synthetic native GUI; production dispatcher and SessionManager; programmatic ToggleVncGrab, not toolbar click or physical Win/AltTab interception"
+}

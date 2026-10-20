@@ -486,6 +486,38 @@ to a VNC server. `just ci-vnc` compiles/lints the examples without opening them
 and also runs the standalone vendored graphics decoder regressions used by the
 RDP control path.
 
+The [foreground Raw Input investigation](results/2026-10-20-foreground-raw-input/README.md)
+retains the failing defaults and successful same-binary keyboard-registration
+control. During capture the app now leases its raw keyboard registration:
+remove only keyboard usage 1/6, keep mouse registration, and restore on disarm
+or installation failure. A later registrant or destroyed target is preserved.
+This is a measured workaround for this foreground-delivery failure, not a claim
+that every Windows Raw Input registration suppresses low-level hooks.
+
+For a bounded full-window check using the production dispatcher and synthetic
+loopback peer, run:
+
+```powershell
+cargo build -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked
+pwsh -NoProfile -File tests/vnc/local-hook-full.ps1 -ProbeExe target/debug/examples/vnc_native_acceptance.exe -PythonExe C:\Python313\python.exe -StateDir C:\Temp\adit-hook-full-new-result
+```
+
+Use the actual local Python path. The wrapper creates an isolated configuration,
+starts only its own standard-library RFB peer, toggles capture three times
+through `ToggleVncGrab`, verifies continuous foreground/focus and tagged F24
+callback delivery, checks exact restoration, and closes both owned processes.
+It fails on an incomplete report. Port 15915 must be available; it does not
+replace another listener. No clipboard or real desktop is captured. The
+programmatic dispatcher check does not establish a toolbar click, physical
+Win/Alt+Tab interception or actual vendor-server key consumption.
+
+Two opt-in controls, `keyboard_hook_win32_probe` and
+`keyboard_hook_winit_probe`, reuse the hook source without the full app.
+The Win32 control accepts `--focus-alt`; the winit control accepts
+`--no-device-events`. Each takes a fresh absolute JSON path and exits within
+15 seconds. Historical reports were built before the lease fix, with hashes
+recorded in the investigation; a current rebuild includes the fix.
+
 ## Windows OS DPI acceptance attempt
 
 The [2026-10-17 OS DPI record](results/2026-10-17-windows-os-dpi.json)

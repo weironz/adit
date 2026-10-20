@@ -1,6 +1,6 @@
 //! Manual RDP fixture driver. Password and optional input commands arrive on stdin.
 //! argv: helper-path host username [timeout-seconds]. Never pass a password in argv/env.
-//! Commands: WAIT milliseconds, KEY hex-scancode extended pressed, TEXT text, ASCII US-layout-text,
+//! Commands: WAIT milliseconds, KEY hex-scancode extended(0|1) pressed(0|1), TEXT text, ASCII US-layout-text,
 //! CLICK x y, MOVE x y, CLIP text, SNAP absolute-png-path, ACK token, CLOSE.
 //! Optional --fixture-report enables clipboard
 //! transport and prints only reports starting with ADIT_VNC_TEST:, never arbitrary text.
@@ -224,23 +224,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 } else if let Some(key) = command.strip_prefix("KEY ") {
                     let parts: Vec<_> = key.split_whitespace().collect();
                     if parts.len() != 3 {
-                        return Err("KEY requires scancode, extended, pressed".into());
+                        return Err(
+                            "KEY requires hex-scancode, extended (0|1), pressed (0|1)".into()
+                        );
                     }
                     write_msg(
                         &mut wire,
                         &ClientMsg::Input(InputEvent::Key {
                             scancode: u8::from_str_radix(parts[0], 16)?,
-                            extended: parts[1] == "1",
-                            pressed: parts[2] == "1",
+                            extended: parse_key_flag(parts[1])?,
+                            pressed: parse_key_flag(parts[2])?,
                         }),
                     )?;
                 } else if let Some(token) = command.strip_prefix("ACK ") {
-                    if token.is_empty() || token.len() > 64
-                        || !token.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-') {
+                    if token.is_empty()
+                        || token.len() > 64
+                        || !token
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    {
                         return Err("ACK requires a short alphanumeric token".into());
                     }
                     println!("command_ack={token}");
-                } else if let Some(point) = command.strip_prefix("CLICK ").or_else(|| command.strip_prefix("MOVE ")) {
+                } else if let Some(point) = command
+                    .strip_prefix("CLICK ")
+                    .or_else(|| command.strip_prefix("MOVE "))
+                {
                     let parts: Vec<_> = point.split_whitespace().collect();
                     if parts.len() != 2 {
                         return Err("pointer command requires x y".into());
@@ -252,7 +261,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             y: parts[1].parse()?,
                         }),
                     )?;
-                    for pressed in [true, false].into_iter().filter(|_| command.starts_with("CLICK ")) {
+                    for pressed in [true, false]
+                        .into_iter()
+                        .filter(|_| command.starts_with("CLICK "))
+                    {
                         write_msg(
                             &mut wire,
                             &ClientMsg::Input(InputEvent::MouseButton {
@@ -300,8 +312,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::thread::sleep(Duration::from_millis(10));
     }
     let _ = child.kill();
-    if let Ok(status) = child.wait() { eprintln!("helper_exit={status}"); }
+    if let Ok(status) = child.wait() {
+        eprintln!("helper_exit={status}");
+    }
     result
+}
+
+fn parse_key_flag(value: &str) -> Result<bool, &'static str> {
+    match value {
+        "0" => Ok(false),
+        "1" => Ok(true),
+        // Treating arbitrary text as false silently converted attempted key
+        // presses into releases, invalidating native-input acceptance.
+        _ => Err("KEY extended/pressed flags must be 0 or 1"),
+    }
 }
 
 fn ascii_scancode(ch: char) -> Option<(u8, bool)> {
@@ -331,4 +355,25 @@ fn ascii_scancode(ch: char) -> Option<(u8, bool)> {
                 .position(|c| c == ch)
                 .map(|i| (codes[i], true))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_key_flag;
+
+    #[test]
+    fn key_flags_accept_only_numeric_zero_and_one() {
+        assert_eq!(parse_key_flag("0"), Ok(false));
+        assert_eq!(parse_key_flag("1"), Ok(true));
+    }
+
+    #[test]
+    fn key_flags_reject_boolean_words_and_other_invalid_values() {
+        for value in ["true", "false", "", "2", "-1", "01"] {
+            assert!(
+                parse_key_flag(value).is_err(),
+                "accepted invalid KEY flag {value:?}"
+            );
+        }
+    }
 }

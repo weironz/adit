@@ -1,0 +1,130 @@
+{
+  "scope": "saved synthetic evidence only; no hardware-input acceptance",
+  "outcome": "passed",
+  "checks": [
+    {
+      "check": "original fixture matches captured source hash",
+      "passed": true
+    },
+    {
+      "check": "baseline-raw-default.json: outcome and actual foreground",
+      "passed": true
+    },
+    {
+      "check": "baseline-raw-default.json: ordinary window receives F24",
+      "passed": true
+    },
+    {
+      "check": "baseline-raw-default.json: own hook marker delta",
+      "passed": true
+    },
+    {
+      "check": "baseline-raw-disabled.json: outcome and actual foreground",
+      "passed": true
+    },
+    {
+      "check": "baseline-raw-disabled.json: ordinary window receives F24",
+      "passed": true
+    },
+    {
+      "check": "baseline-raw-disabled.json: own hook marker delta",
+      "passed": true
+    },
+    {
+      "check": "baseline-win32-alt.json: outcome and continuous focus",
+      "passed": true
+    },
+    {
+      "check": "baseline-win32-alt.json: window and marker observed separately",
+      "passed": true
+    },
+    {
+      "check": "baseline-winit-default.json: outcome and continuous focus",
+      "passed": true
+    },
+    {
+      "check": "baseline-winit-default.json: window and marker observed separately",
+      "passed": true
+    },
+    {
+      "check": "baseline-winit-never.json: outcome and continuous focus",
+      "passed": true
+    },
+    {
+      "check": "baseline-winit-never.json: window and marker observed separately",
+      "passed": true
+    },
+    {
+      "check": "first-full-incomplete.json: incomplete retained",
+      "passed": true
+    },
+    {
+      "check": "first-minimal-incomplete.json: incomplete retained",
+      "passed": true
+    },
+    {
+      "check": "second-minimal-incomplete.json: incomplete retained",
+      "passed": true
+    },
+    {
+      "check": "full GUI passed all three cycles",
+      "passed": true
+    },
+    {
+      "check": "cycle 1: actual focus and capture stay active",
+      "passed": true
+    },
+    {
+      "check": "cycle 1: own injected F24 delivered but not swallowed",
+      "passed": true
+    },
+    {
+      "check": "cycle 1: keyboard suspended and all devices restored",
+      "passed": true
+    },
+    {
+      "check": "cycle 2: actual focus and capture stay active",
+      "passed": true
+    },
+    {
+      "check": "cycle 2: own injected F24 delivered but not swallowed",
+      "passed": true
+    },
+    {
+      "check": "cycle 2: keyboard suspended and all devices restored",
+      "passed": true
+    },
+    {
+      "check": "cycle 3: actual focus and capture stay active",
+      "passed": true
+    },
+    {
+      "check": "cycle 3: own injected F24 delivered but not swallowed",
+      "passed": true
+    },
+    {
+      "check": "cycle 3: keyboard suspended and all devices restored",
+      "passed": true
+    },
+    {
+      "check": "final hook and capture disabled, exact restoration",
+      "passed": true
+    },
+    {
+      "check": "wrapper successful and owned processes exited",
+      "passed": true
+    },
+    {
+      "check": "three explicit native regressions passed",
+      "passed": true
+    },
+    {
+      "check": "feature library and vendor tests passed",
+      "passed": true
+    },
+    {
+      "check": "no final compiler error",
+      "passed": true
+    }
+  ]
+}

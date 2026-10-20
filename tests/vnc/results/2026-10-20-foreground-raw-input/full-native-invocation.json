@@ -1,0 +1,13 @@
+{
+  "scope": "full isolated GUI; production dispatcher; tagged F24; synthetic loopback only",
+  "executable_sha256": "6bb645965aebd6667ccc4ef31939e51aba35ee16d5b32b3c5703fc2d2df8fa35",
+  "fixture_sha256": "476c6be618f40f9d510921b4be84d0c5aa1119186be61efe5d478071ea3541c1",
+  "started_utc": "2026-10-20T12:43:44.6823211Z",
+  "completed": true,
+  "peer_pid": 42088,
+  "probe_pid": 48248,
+  "exit_code": 0,
+  "outcome": "passed",
+  "finished_utc": "2026-10-20T12:44:00.3108662Z",
+  "owned_processes_exited": true
+}

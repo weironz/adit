@@ -24,6 +24,14 @@ required-features = ["native-vnc-acceptance"]
 name = "keyboard_hook_gui_probe"
 required-features = ["native-vnc-acceptance"]
 
+[[example]]
+name = "keyboard_hook_win32_probe"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_winit_probe"
+required-features = ["native-vnc-acceptance"]
+
 [dependencies]
 adit-domain.workspace = true
 adit-session.workspace = true
@@ -86,3 +94,6 @@ windows = { version = "0.62", features = [
     "Win32_UI_Input_KeyboardAndMouse",
     "Win32_UI_Shell",
 ] }
+
+[target.'cfg(windows)'.dev-dependencies]
+winit = "=0.30.13"

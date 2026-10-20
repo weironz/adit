@@ -13,6 +13,279 @@ struct State {
     native_dpi: Option<u32>,
     hook_diagnostics: Option<(bool, bool, [u32; 5])>,
     hook_health: Option<(u32, u32)>,
+    auto: Option<HookAutotest>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum AutoPhase {
+    Await,
+    PendingOn,
+    Observe,
+    PendingOff,
+    OffQueued,
+    Recover,
+    Writing,
+}
+
+#[derive(Clone)]
+struct HookAutotest {
+    started: Instant,
+    phase: AutoPhase,
+    phase_started: Instant,
+    report: std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+    accepted: std::sync::Arc<AtomicU32>,
+    accepted_before: u32,
+    probe_before: u32,
+    swallowed_before: u32,
+    current: Option<serde_json::Value>,
+    cycles: Vec<serde_json::Value>,
+    samples: Vec<serde_json::Value>,
+    incomplete: bool,
+}
+
+fn auto_focus() -> serde_json::Value {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        let foreground = GetForegroundWindow();
+        let mut process = 0;
+        let thread = GetWindowThreadProcessId(foreground, Some(&mut process));
+        let mut gui = GUITHREADINFO {
+            cbSize: size_of::<GUITHREADINFO>() as u32,
+            ..Default::default()
+        };
+        let read = GetGUIThreadInfo(thread, &mut gui).is_ok();
+        serde_json::json!({"foreground_owned":process == std::process::id(),
+            "gui_thread_info_ok":read,"focus_owned":read && gui.hwndFocus == foreground,
+            "active_owned":read && gui.hwndActive == foreground,"gui_flags":gui.flags.0})
+    }
+    #[cfg(not(windows))]
+    serde_json::json!({"foreground_owned":false,"focus_owned":false,"active_owned":false})
+}
+
+fn auto_focused(focus: &serde_json::Value) -> bool {
+    focus["foreground_owned"] == true
+        && focus["focus_owned"] == true
+        && focus["active_owned"] == true
+        && focus["gui_flags"]
+            .as_u64()
+            .is_some_and(|flags| flags & 0x1e == 0)
+}
+
+fn raw_without_keyboard(snapshot: &serde_json::Value) -> Option<Vec<serde_json::Value>> {
+    (snapshot["read"] == true).then_some(())?;
+    Some(
+        snapshot["devices"]
+            .as_array()?
+            .iter()
+            .filter(|device| !(device["page"] == 1 && device["usage"] == 6))
+            .cloned()
+            .collect(),
+    )
+}
+
+fn auto_after_toggle(state: &mut State) {
+    let Some(auto) = state.auto.as_mut() else {
+        return;
+    };
+    match auto.phase {
+        AutoPhase::PendingOn => {
+            let raw = native_hook_probe::raw_input_snapshot();
+            let focus = auto_focus();
+            let current = auto.current.as_mut().expect("pending cycle");
+            current["focus_on"] = focus.clone();
+            current["continuous_foreground"] = serde_json::json!(focus["foreground_owned"] == true);
+            current["continuous_focus"] = serde_json::json!(auto_focused(&focus));
+            if !auto_focused(&focus) {
+                auto.incomplete = true;
+            }
+            current["raw_armed"] = raw.clone();
+            current["grab_on"] = serde_json::json!(state.app.vnc_grab_keys);
+            current["hook_armed"] = serde_json::json!(keyboard_hook::diagnostics().0);
+            current["keyboard_removed"] = serde_json::json!(
+                raw["read"] == true
+                    && raw["devices"].as_array().is_some_and(|devices| devices
+                        .iter()
+                        .all(|device| !(device["page"] == 1 && device["usage"] == 6)))
+            );
+            current["other_devices_unchanged"] =
+                serde_json::json!(raw_without_keyboard(&current["baseline_raw"])
+                    .zip(raw_without_keyboard(&raw))
+                    .is_some_and(|(before, after)| before == after));
+            auto.phase = AutoPhase::Observe;
+            auto.phase_started = Instant::now();
+        }
+        AutoPhase::OffQueued => {
+            auto.phase = AutoPhase::Recover;
+            auto.phase_started = Instant::now();
+        }
+        _ => {}
+    }
+}
+
+fn auto_tick(state: &mut State) -> Task<NativeMessage> {
+    let Some(mut auto) = state.auto.take() else {
+        return Task::none();
+    };
+    if auto.phase == AutoPhase::Writing {
+        state.auto = Some(auto);
+        return Task::none();
+    }
+    let focus = auto_focus();
+    auto.samples.push(
+        serde_json::json!({"elapsed_ms":auto.started.elapsed().as_millis(),
+        "focus":focus,"grab":state.app.vnc_grab_keys,"hook":native_hook_probe::snapshot()}),
+    );
+    let mut task = Task::none();
+    // Leave the restore interval and asynchronous report write room inside
+    // the twenty-second acceptance budget.
+    let timed_out = auto.started.elapsed() >= std::time::Duration::from_millis(19_500);
+    if timed_out
+        && !matches!(
+            auto.phase,
+            AutoPhase::PendingOff | AutoPhase::OffQueued | AutoPhase::Recover
+        )
+    {
+        auto.incomplete = true;
+        auto.phase = AutoPhase::PendingOff;
+    }
+    match auto.phase {
+        AutoPhase::Await => {
+            if state.app.manager.active_rdp_live()
+                && state.app.rdp_surface_size.is_some()
+                && auto_focused(&focus)
+            {
+                auto.probe_before = keyboard_hook::probe_events();
+                auto.swallowed_before = keyboard_hook::diagnostics().2[4];
+                auto.accepted_before = auto.accepted.load(Ordering::Acquire);
+                auto.current = Some(serde_json::json!({"cycle":auto.cycles.len()+1,
+                    "baseline_raw":native_hook_probe::raw_input_snapshot(),
+                    "grab_before":state.app.vnc_grab_keys,"continuous_foreground":true,
+                    "continuous_focus":true,"continuous_grab":true}));
+                auto.phase = AutoPhase::PendingOn;
+                task = Task::done(NativeMessage::App(Message::ToggleVncGrab));
+            }
+        }
+        AutoPhase::Observe => {
+            let current = auto.current.as_mut().expect("observing cycle");
+            current["continuous_foreground"] = serde_json::json!(
+                current["continuous_foreground"] == true && focus["foreground_owned"] == true
+            );
+            current["continuous_focus"] =
+                serde_json::json!(current["continuous_focus"] == true && auto_focused(&focus));
+            current["continuous_grab"] =
+                serde_json::json!(current["continuous_grab"] == true && state.app.vnc_grab_keys);
+            if !auto_focused(&focus) {
+                auto.incomplete = true;
+            }
+            if auto.phase_started.elapsed() >= std::time::Duration::from_secs(2) {
+                auto.phase = AutoPhase::PendingOff;
+            }
+        }
+        AutoPhase::Recover
+            if auto.phase_started.elapsed() >= std::time::Duration::from_millis(300) =>
+        {
+            if let Some(mut current) = auto.current.take() {
+                let raw = native_hook_probe::raw_input_snapshot();
+                let probe_delta = keyboard_hook::probe_events().wrapping_sub(auto.probe_before);
+                let swallowed_delta =
+                    keyboard_hook::diagnostics().2[4].wrapping_sub(auto.swallowed_before);
+                let accepted_delta = auto
+                    .accepted
+                    .load(Ordering::Acquire)
+                    .wrapping_sub(auto.accepted_before);
+                current["raw_off"] = raw.clone();
+                current["raw_restored"] =
+                    serde_json::json!(raw["read"] == true && raw == current["baseline_raw"]);
+                current["grab_off"] = serde_json::json!(!state.app.vnc_grab_keys);
+                current["hook_off"] = serde_json::json!(!keyboard_hook::diagnostics().0);
+                current["own_probe_delta"] = serde_json::json!(probe_delta);
+                current["swallowed_delta"] = serde_json::json!(swallowed_delta);
+                current["injected_f24_accepted"] = serde_json::json!(accepted_delta);
+                current["passed"] = serde_json::json!(
+                    current["grab_before"] == false
+                        && current["grab_on"] == true
+                        && current["hook_armed"] == true
+                        && current["keyboard_removed"] == true
+                        && current["other_devices_unchanged"] == true
+                        && current["continuous_foreground"] == true
+                        && current["continuous_focus"] == true
+                        && current["continuous_grab"] == true
+                        && current["raw_restored"] == true
+                        && current["grab_off"] == true
+                        && current["hook_off"] == true
+                        && probe_delta >= 2
+                        && swallowed_delta == 0
+                        && accepted_delta == 2
+                );
+                log(
+                    state,
+                    serde_json::json!({"event":"hook_auto_cycle","result":current}),
+                );
+                auto.cycles.push(current);
+            }
+            auto.phase = AutoPhase::Await;
+            if auto.cycles.len() >= 3 || auto.incomplete || timed_out {
+                release_rdp_modifiers(&mut state.app);
+                keyboard_hook::disarm();
+                let raw_final = native_hook_probe::raw_input_snapshot();
+                let final_restored = auto.cycles.first().is_some_and(|first| {
+                    raw_final["read"] == true && raw_final == first["baseline_raw"]
+                });
+                let outcome = if auto.incomplete || auto.cycles.len() != 3 {
+                    "incomplete"
+                } else if auto.cycles.iter().all(|cycle| cycle["passed"] == true)
+                    && final_restored
+                    && !state.app.vnc_grab_keys
+                {
+                    "passed"
+                } else {
+                    "failed"
+                };
+                let report = serde_json::json!({"scope":"full synthetic native GUI; production dispatcher and SessionManager; programmatic ToggleVncGrab, not toolbar click or physical Win/AltTab interception",
+                        "outcome":outcome,"pid":std::process::id(),"cycles":auto.cycles,
+                        "samples":auto.samples,"raw_final":raw_final,"final_restored":final_restored,
+                        "grab_final":state.app.vnc_grab_keys,"hook_final":native_hook_probe::snapshot(),
+                        "elapsed_ms":auto.started.elapsed().as_millis()});
+                log(
+                    state,
+                    serde_json::json!({"event":"hook_auto_finished","outcome":outcome}),
+                );
+                auto.phase = AutoPhase::Writing;
+                let file = std::sync::Arc::clone(&auto.report);
+                task = Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || -> Result<(), String> {
+                            let bytes = serde_json::to_vec_pretty(&report)
+                                .map_err(|error| error.to_string())?;
+                            let mut file = file.lock().map_err(|error| error.to_string())?;
+                            file.write_all(&bytes)
+                                .and_then(|()| file.flush())
+                                .map_err(|error| error.to_string())
+                        })
+                        .await
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result)
+                    },
+                    NativeMessage::AutoSaved,
+                );
+            }
+        }
+        _ => {}
+    }
+    if auto.phase == AutoPhase::PendingOff {
+        if state.app.vnc_grab_keys {
+            auto.phase = AutoPhase::OffQueued;
+            task = Task::done(NativeMessage::App(Message::ToggleVncGrab));
+        } else {
+            release_rdp_modifiers(&mut state.app);
+            keyboard_hook::disarm();
+            auto.phase = AutoPhase::Recover;
+            auto.phase_started = Instant::now();
+        }
+    }
+    state.auto = Some(auto);
+    task
 }
 
 #[derive(Debug, Clone)]
@@ -22,6 +295,8 @@ enum NativeMessage {
     Fit(bool),
     RemoteResize,
     NativeDpi(Option<u32>),
+    AutoTick,
+    AutoSaved(Result<(), String>),
 }
 
 #[cfg(windows)]
@@ -58,6 +333,14 @@ fn log(state: &State, mut event: serde_json::Value) {
 
 fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessage> {
     match message {
+        NativeMessage::AutoTick => auto_tick(state),
+        NativeMessage::AutoSaved(result) => {
+            log(
+                state,
+                serde_json::json!({"event":"hook_auto_report_saved","result":result}),
+            );
+            iced::exit()
+        }
         NativeMessage::NativeDpi(dpi) => {
             state.native_dpi = dpi;
             log(
@@ -108,8 +391,11 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                         ),
                     )
                 };
-                log(state, serde_json::json!({"event":"hook_dispatcher", "dispatcher_thread":dispatcher,
-                    "foreground_window_thread":foreground, "grab_before":state.app.vnc_grab_keys}));
+                log(
+                    state,
+                    serde_json::json!({"event":"hook_dispatcher", "dispatcher_thread":dispatcher,
+                    "foreground_window_thread":foreground, "grab_before":state.app.vnc_grab_keys}),
+                );
             }
             match &mut message {
                 Message::DisplayScale(scale) => {
@@ -145,24 +431,43 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                 dpi_probe,
             ]);
             if toggling_grab {
-                log(state, serde_json::json!({"event":"grab_state", "enabled":state.app.vnc_grab_keys}));
+                auto_after_toggle(state);
+                log(
+                    state,
+                    serde_json::json!({"event":"grab_state", "enabled":state.app.vnc_grab_keys}),
+                );
                 #[cfg(windows)]
                 if state.app.vnc_grab_keys
-                    && std::env::var("ADIT_NATIVE_HOOK_SELFTEST").as_deref() == Ok("1")
+                    && (std::env::var("ADIT_NATIVE_HOOK_SELFTEST").as_deref() == Ok("1")
+                        || state.auto.is_some())
                 {
                     let events = state.events.clone();
+                    let accepted_counter = state
+                        .auto
+                        .as_ref()
+                        .map(|auto| std::sync::Arc::clone(&auto.accepted));
                     std::thread::spawn(move || {
                         use windows::Win32::UI::Input::KeyboardAndMouse::*;
                         std::thread::sleep(std::time::Duration::from_millis(100));
                         let inputs = [false, true].map(|up| INPUT {
                             r#type: INPUT_KEYBOARD,
-                            Anonymous: INPUT_0 { ki: KEYBDINPUT {
-                                wVk: VK_F24,
-                                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
-                                ..Default::default()
-                            } },
+                            Anonymous: INPUT_0 {
+                                ki: KEYBDINPUT {
+                                    wVk: VK_F24,
+                                    dwExtraInfo: keyboard_hook::probe_input_tag(),
+                                    dwFlags: if up {
+                                        KEYEVENTF_KEYUP
+                                    } else {
+                                        Default::default()
+                                    },
+                                    ..Default::default()
+                                },
+                            },
                         });
                         let accepted = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+                        if let Some(counter) = accepted_counter {
+                            counter.fetch_add(accepted, Ordering::Release);
+                        }
                         let _ = events.send(serde_json::json!({
                             "event":"hook_selftest", "injected_f24_accepted":accepted,
                             "unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
@@ -174,16 +479,22 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             let hook = keyboard_hook::diagnostics();
             if state.hook_diagnostics != Some(hook) {
                 state.hook_diagnostics = Some(hook);
-                log(state, serde_json::json!({"event":"hook_diagnostics", "armed":hook.0,
+                log(
+                    state,
+                    serde_json::json!({"event":"hook_diagnostics", "armed":hook.0,
                     "vnc":hook.1,"counters":hook.2,
-                    "worker_thread":keyboard_hook::worker_thread_id()}));
+                    "worker_thread":keyboard_hook::worker_thread_id()}),
+                );
             }
             let health = keyboard_hook::worker_health();
             let health_snapshot = (health.0 / 20, health.1);
             if state.hook_health != Some(health_snapshot) {
                 state.hook_health = Some(health_snapshot);
-                log(state, serde_json::json!({"event":"hook_pump", "turns":health.0,
-                    "exit_reason":health.1,"worker_thread":keyboard_hook::worker_thread_id()}));
+                log(
+                    state,
+                    serde_json::json!({"event":"hook_pump", "turns":health.0,
+                    "exit_reason":health.1,"worker_thread":keyboard_hook::worker_thread_id()}),
+                );
             }
             if let Some((width, height)) = state.app.rdp_surface_size {
                 let generation = state
@@ -256,6 +567,32 @@ fn view_native(state: &State) -> Element<'_, NativeMessage> {
 }
 
 pub fn run() -> iced::Result {
+    let auto = (std::env::var("ADIT_NATIVE_HOOK_AUTOTEST").as_deref() == Ok("1")).then(|| {
+        let path = std::path::PathBuf::from(
+            std::env::var_os("ADIT_NATIVE_HOOK_REPORT")
+                .expect("autotest requires ADIT_NATIVE_HOOK_REPORT"),
+        );
+        assert!(path.is_absolute() && path.parent().is_some_and(|parent| parent.is_dir()));
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)
+            .expect("fresh absolute autotest report path");
+        HookAutotest {
+            started: Instant::now(),
+            phase: AutoPhase::Await,
+            phase_started: Instant::now(),
+            report: std::sync::Arc::new(std::sync::Mutex::new(file)),
+            accepted: std::sync::Arc::new(AtomicU32::new(0)),
+            accepted_before: 0,
+            probe_before: 0,
+            swallowed_before: 0,
+            current: None,
+            cycles: Vec::new(),
+            samples: Vec::new(),
+            incomplete: false,
+        }
+    });
     // This entry point is available only to an explicit development feature.
     // Change the process override before the app reads any settings or vault.
     let scratch =
@@ -322,8 +659,16 @@ pub fn run() -> iced::Result {
                 native_dpi: None,
                 hook_diagnostics: None,
                 hook_health: None,
+                auto: auto.clone(),
             },
-            window::latest().and_then(native_dpi),
+            Task::batch([
+                window::latest().and_then(native_dpi),
+                if auto.is_some() {
+                    window::latest().and_then(window::gain_focus)
+                } else {
+                    Task::none()
+                },
+            ]),
         )
     };
     iced::application(boot, update_native, view_native)
@@ -336,7 +681,18 @@ pub fn run() -> iced::Result {
             )
         })
         .theme(|state: &State| app_theme(&state.app))
-        .subscription(|state: &State| subscription(&state.app).map(NativeMessage::App))
+        .subscription(|state: &State| {
+            let normal = subscription(&state.app).map(NativeMessage::App);
+            if state.auto.is_some() {
+                Subscription::batch([
+                    normal,
+                    iced::time::every(std::time::Duration::from_millis(50))
+                        .map(|_| NativeMessage::AutoTick),
+                ])
+            } else {
+                normal
+            }
+        })
         .scale_factor(|state: &State| state.scale)
         .window(window::Settings {
             size: iced::Size::new(1100.0, 760.0),

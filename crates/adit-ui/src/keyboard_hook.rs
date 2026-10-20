@@ -32,7 +32,12 @@
 //!   toolbar the user has not found could only be escaped by killing Adit.
 
 #[cfg(windows)]
+#[path = "keyboard_raw_input.rs"]
+mod raw_input;
+
+#[cfg(windows)]
 mod imp {
+    use super::raw_input::KeyboardRegistrationLease;
     use std::cell::Cell;
     use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
@@ -53,6 +58,8 @@ mod imp {
     static VNC: AtomicBool = AtomicBool::new(false);
     static GENERATION: AtomicU64 = AtomicU64::new(0);
     static TARGET_WINDOW: AtomicIsize = AtomicIsize::new(0);
+    #[cfg(all(test, feature = "native-vnc-acceptance"))]
+    pub(super) static FAIL_NEXT_INSTALL: AtomicBool = AtomicBool::new(false);
     #[cfg(feature = "native-vnc-acceptance")]
     static PUMP_TURNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     #[cfg(feature = "native-vnc-acceptance")]
@@ -98,12 +105,24 @@ mod imp {
     struct HookWorker {
         thread_id: u32,
         stop: Arc<AtomicBool>,
+        alive: Arc<AtomicBool>,
     }
-    static HOOK: Mutex<Option<HookWorker>> = Mutex::new(None);
+    struct HookState {
+        worker: Option<HookWorker>,
+        raw_keyboard: Option<KeyboardRegistrationLease>,
+    }
+    static HOOK: Mutex<HookState> = Mutex::new(HookState {
+        worker: None,
+        raw_keyboard: None,
+    });
 
     #[cfg(feature = "native-vnc-acceptance")]
     pub(crate) fn worker_thread_id() -> Option<u32> {
-        HOOK.lock().ok()?.as_ref().map(|worker| worker.thread_id)
+        HOOK.lock()
+            .ok()?
+            .worker
+            .as_ref()
+            .map(|worker| worker.thread_id)
     }
     #[cfg(feature = "native-vnc-acceptance")]
     pub(crate) fn worker_health() -> (u32, u32) {
@@ -247,11 +266,47 @@ mod imp {
 
     fn arm_mode(vnc: bool, target_window: isize) -> bool {
         let mut held = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-        TARGET_WINDOW.store(target_window, Ordering::Release);
-        if held.is_some() {
+        if held
+            .worker
+            .as_ref()
+            .is_some_and(|worker| worker.alive.load(Ordering::Acquire))
+            && ARMED.load(Ordering::Acquire)
+            && VNC.load(Ordering::Acquire) == vnc
+            && TARGET_WINDOW.load(Ordering::Acquire) == target_window
+        {
+            // A window recreated while capture is active may register again.
+            // An empty new lease must not discard the original registration.
+            match KeyboardRegistrationLease::suspend() {
+                Ok(lease) if lease.pending() => held.raw_keyboard = Some(lease),
+                Ok(_) => {}
+                Err(error) => {
+                    ARMED.store(false, Ordering::Release);
+                    eprintln!("keyboard capture raw input suspension failed: {error}");
+                    return false;
+                }
+            }
             VNC.store(vnc, Ordering::Release);
             ARMED.store(true, Ordering::Release);
             return true;
+        }
+        ARMED.store(false, Ordering::Release);
+        TARGET_WINDOW.store(target_window, Ordering::Release);
+        if let Some(worker) = held.worker.take() {
+            stop_worker(worker);
+        }
+        if !restore_raw_keyboard(&mut held) {
+            return false;
+        }
+        // Our foreground winit window can receive WM_KEYDOWN while its raw
+        // keyboard registration prevents WH_KEYBOARD_LL delivery (#210).
+        // Only suspend this process's keyboard class during capture; window
+        // keyboard/IME events and mouse raw input keep their normal routes.
+        match KeyboardRegistrationLease::suspend() {
+            Ok(lease) => held.raw_keyboard = Some(lease),
+            Err(error) => {
+                eprintln!("keyboard capture raw input suspension failed: {error}");
+                return false;
+            }
         }
         // Windows dispatches WH_KEYBOARD_LL to the installing thread. A UI
         // stall can silently remove it after LowLevelHooksTimeout; even pumping
@@ -259,6 +314,8 @@ mod imp {
         let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
+        let alive = Arc::new(AtomicBool::new(false));
+        let worker_alive = Arc::clone(&alive);
         let _ = queue();
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let spawned = std::thread::Builder::new()
@@ -278,12 +335,17 @@ mod imp {
                     let module = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
                         .ok()
                         .map(|module| windows::Win32::Foundation::HINSTANCE(module.0));
+                    #[cfg(all(test, feature = "native-vnc-acceptance"))]
+                    if FAIL_NEXT_INSTALL.swap(false, Ordering::AcqRel) {
+                        return;
+                    }
                     let Ok(hook) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(callback), module, 0)
                     else {
                         return;
                     };
                     let thread_id = windows::Win32::System::Threading::GetCurrentThreadId();
                     let timer = SetTimer(None, 0, 50, None);
+                    worker_alive.store(timer != 0, Ordering::Release);
                     if timer != 0 && ready_tx.send(thread_id).is_ok() {
                         while !worker_stop.load(Ordering::Acquire) {
                             let received = GetMessageW(&mut message, None, 0, 0).0;
@@ -303,9 +365,10 @@ mod imp {
                         let _ = KillTimer(None, timer);
                     }
                     let _ = UnhookWindowsHookEx(hook);
-                    if GENERATION.load(Ordering::Acquire) == generation {
-                        ARMED.store(false, Ordering::Release);
-                    }
+                    worker_alive.store(false, Ordering::Release);
+                    // Only the UI owner changes the shared input gate. An old
+                    // worker checking its epoch then clearing ARMED could race
+                    // a new activation and turn the new owner off.
                     #[cfg(feature = "native-vnc-acceptance")]
                     if worker_stop.load(Ordering::Acquire) {
                         PUMP_EXIT.store(1, Ordering::Relaxed);
@@ -314,15 +377,47 @@ mod imp {
             });
         if spawned.is_ok() {
             if let Ok(thread_id) = ready_rx.recv_timeout(Duration::from_millis(250)) {
+                if !alive.load(Ordering::Acquire) {
+                    stop.store(true, Ordering::Release);
+                    let _ = restore_raw_keyboard(&mut held);
+                    return false;
+                }
                 VNC.store(vnc, Ordering::Release);
                 ARMED.store(true, Ordering::Release);
-                *held = Some(HookWorker { thread_id, stop });
+                held.worker = Some(HookWorker {
+                    thread_id,
+                    stop,
+                    alive,
+                });
                 return true;
             }
         }
         stop.store(true, Ordering::Release);
         ARMED.store(false, Ordering::Release);
+        let _ = restore_raw_keyboard(&mut held);
         false
+    }
+
+    fn restore_raw_keyboard(state: &mut HookState) -> bool {
+        if let Some(lease) = &mut state.raw_keyboard {
+            if let Err(error) = lease.restore() {
+                // Keep the lease so a later disarm can retry. A retiring worker
+                // must never restore over the next activation's registration.
+                eprintln!("keyboard capture raw input restore failed: {error}");
+                return false;
+            }
+            if !lease.pending() {
+                state.raw_keyboard = None;
+            }
+        }
+        true
+    }
+
+    fn stop_worker(worker: HookWorker) {
+        worker.stop.store(true, Ordering::Release);
+        unsafe {
+            let _ = PostThreadMessageW(worker.thread_id, WM_NULL, WPARAM(0), LPARAM(0));
+        }
     }
 
     /// Remove the hook. Safe to call when nothing is installed.
@@ -330,15 +425,13 @@ mod imp {
         ARMED.store(false, Ordering::Release);
         GENERATION.fetch_add(1, Ordering::AcqRel);
         let mut held = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(worker) = held.take() {
-            worker.stop.store(true, Ordering::Release);
+        if let Some(worker) = held.worker.take() {
             // Do not join a global-hook thread from the UI: Windows can be
             // waiting for that same UI during CallNextHookEx. Epoch checks stop
             // capture synchronously; the owner unhooks as its pump exits.
-            unsafe {
-                let _ = PostThreadMessageW(worker.thread_id, WM_NULL, WPARAM(0), LPARAM(0));
-            }
+            stop_worker(worker);
         }
+        let _ = restore_raw_keyboard(&mut held);
         // Anything swallowed but not yet forwarded is dropped: it was meant for
         // a session no longer in the mode that captured it, and replaying it
         // afterwards would fire keys the user cannot see land.
@@ -411,14 +504,14 @@ mod imp {
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::arm_observer;
 #[cfg(feature = "native-vnc-acceptance")]
-pub(crate) use imp::{probe_events, probe_input_tag};
-#[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::diagnostics;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::worker_health;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::worker_thread_id;
 pub(crate) use imp::{arm, arm_vnc, disarm, drain};
+#[cfg(feature = "native-vnc-acceptance")]
+pub(crate) use imp::{probe_events, probe_input_tag};
 
 #[cfg(all(test, windows, feature = "native-vnc-acceptance"))]
 mod native_tests {
@@ -428,6 +521,84 @@ mod native_tests {
         SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_F24,
     };
     use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE};
+
+    #[test]
+    #[ignore = "changes only this test process's raw keyboard registration"]
+    fn hook_install_failure_restores_raw_keyboard_registration() {
+        use super::raw_input::KeyboardRegistrationLease;
+        use windows::Win32::UI::Input::*;
+        fn devices() -> Vec<RAWINPUTDEVICE> {
+            let mut data = vec![RAWINPUTDEVICE::default(); 64];
+            let mut count = data.len() as u32;
+            let got = unsafe {
+                GetRegisteredRawInputDevices(
+                    Some(data.as_mut_ptr()),
+                    &mut count,
+                    size_of::<RAWINPUTDEVICE>() as u32,
+                )
+            };
+            assert_ne!(got, u32::MAX);
+            data.truncate(got as usize);
+            data.sort_by_key(|d| (d.usUsagePage, d.usUsage));
+            data
+        }
+        struct Restore(KeyboardRegistrationLease);
+        impl Drop for Restore {
+            fn drop(&mut self) {
+                disarm();
+                unsafe {
+                    let _ = RegisterRawInputDevices(
+                        &[RAWINPUTDEVICE {
+                            usUsagePage: 1,
+                            usUsage: 6,
+                            dwFlags: RIDEV_REMOVE,
+                            ..Default::default()
+                        }],
+                        size_of::<RAWINPUTDEVICE>() as u32,
+                    );
+                }
+                let _ = self.0.restore();
+            }
+        }
+        let original = devices();
+        let restore = Restore(KeyboardRegistrationLease::suspend().unwrap());
+        unsafe {
+            RegisterRawInputDevices(
+                &[RAWINPUTDEVICE {
+                    usUsagePage: 1,
+                    usUsage: 6,
+                    dwFlags: RIDEV_DEVNOTIFY,
+                    ..Default::default()
+                }],
+                size_of::<RAWINPUTDEVICE>() as u32,
+            )
+            .unwrap();
+        }
+        let baseline = devices();
+        super::imp::FAIL_NEXT_INSTALL.store(true, std::sync::atomic::Ordering::Release);
+        assert!(
+            !arm_observer(),
+            "forced hook installation failure reported success"
+        );
+        assert!(!diagnostics().0);
+        assert_eq!(
+            devices(),
+            baseline,
+            "failed arm lost raw input registration"
+        );
+        disarm();
+        assert_eq!(
+            devices(),
+            baseline,
+            "repeat disarm changed restored registration"
+        );
+        drop(restore);
+        assert_eq!(
+            devices(),
+            original,
+            "test did not restore its original registration"
+        );
+    }
 
     #[test]
     #[ignore = "injects only F24 on an explicitly selected Windows test desktop"]

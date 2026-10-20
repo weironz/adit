@@ -1,0 +1,1024 @@
+{
+  "continuous_foreground": true,
+  "cycles": [
+    {
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 31,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "injected_delta": 0,
+      "passed": false,
+      "ui_f24": 2
+    }
+  ],
+  "final_hook": {
+    "armed": false,
+    "counters": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "probe_events": 0,
+    "pump_exit": 0,
+    "pump_turns": 32,
+    "vnc": true,
+    "worker_thread": null
+  },
+  "foreground_required": true,
+  "injected_f24_accepted": 2,
+  "installed_before_gui": false,
+  "no_keyboard_raw": false,
+  "outcome": "failed",
+  "pid": 52660,
+  "raw_after": {
+    "devices": [
+      {
+        "flags": 0,
+        "page": 1,
+        "usage": 2
+      },
+      {
+        "flags": 0,
+        "page": 1,
+        "usage": 6
+      }
+    ],
+    "read": true
+  },
+  "raw_before": {
+    "devices": [
+      {
+        "flags": 0,
+        "page": 1,
+        "usage": 2
+      },
+      {
+        "flags": 0,
+        "page": 1,
+        "usage": 6
+      }
+    ],
+    "read": true
+  },
+  "release_test": false,
+  "requested_cycles": 1,
+  "samples": [
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2869,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2878,
+      "event": "await_foreground",
+      "foreground_owned": true
+    },
+    {
+      "event": "arm",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "installed": true
+    },
+    {
+      "elapsed_ms": 0,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 0,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 21,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 0,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 102,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 1,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 1,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 102,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 1,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 122,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 2,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 222,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 3,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 322,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 5,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 422,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 6,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 522,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 8,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 622,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 9,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 723,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 10,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 822,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 12,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 923,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 14,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1022,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 15,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1122,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 17,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1221,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 19,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1323,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 20,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1423,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 22,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1522,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 23,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1624,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 25,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1721,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 27,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1822,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 28,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 1922,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 30,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    },
+    {
+      "elapsed_ms": 2022,
+      "event": "sample",
+      "focus": {
+        "dispatcher_thread": 36296,
+        "flags": 0,
+        "focus_is_foreground": true,
+        "focus_owned": true,
+        "foreground_pid": 52660,
+        "foreground_thread": 36296,
+        "query_ok": true
+      },
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 31,
+        "vnc": true,
+        "worker_thread": 50348
+      },
+      "released": false,
+      "ui_f24": 2,
+      "ui_focused": true
+    }
+  ],
+  "scope": "minimal iced GUI, actual library hook, observe only",
+  "ui_f24": 2
+}
