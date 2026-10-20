@@ -1,0 +1,61 @@
+{
+    "case":  "nonbmp-emoji",
+    "outcome":  "failed",
+    "expected":  "😊",
+    "expected_scalars":  [
+                             "U+1F60A"
+                         ],
+    "clipboard_send_used":  false,
+    "before":  {
+                   "pid":  1976,
+                   "box_hwnd":  787552,
+                   "text":  "",
+                   "scalars":  [
+
+                               ],
+                   "focused":  true,
+                   "press":  0,
+                   "release":  0,
+                   "keypress":  0,
+                   "unfocused_input":  0,
+                   "focus_losses":  0,
+                   "text_changes":  0
+               },
+    "native_before":  {
+                          "foreground_pid":  1976,
+                          "foreground_hwnd":  984038,
+                          "gui_ok":  true,
+                          "focus_hwnd":  787552
+                      },
+    "after":  {
+                  "pid":  1976,
+                  "box_hwnd":  787552,
+                  "text":  "",
+                  "scalars":  [
+                                  "U+F60A"
+                              ],
+                  "focused":  true,
+                  "press":  1,
+                  "release":  25,
+                  "keypress":  1,
+                  "unfocused_input":  0,
+                  "focus_losses":  0,
+                  "text_changes":  1
+              },
+    "native_after":  {
+                         "foreground_pid":  1976,
+                         "foreground_hwnd":  984038,
+                         "gui_ok":  true,
+                         "focus_hwnd":  787552
+                     },
+    "driver_exit":  0,
+    "checks":  {
+                   "driver_ready":  true,
+                   "driver_exit_zero":  true,
+                   "same_target":  true,
+                   "target_focused":  true,
+                   "all_input_focused":  true,
+                   "actual_input":  true,
+                   "exact_scalars":  false
+               }
+}

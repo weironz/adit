@@ -1,0 +1,63 @@
+{
+    "case":  "bmp-cjk",
+    "outcome":  "passed",
+    "expected":  "中文",
+    "expected_scalars":  [
+                             "U+4E2D",
+                             "U+6587"
+                         ],
+    "clipboard_send_used":  false,
+    "before":  {
+                   "pid":  9784,
+                   "box_hwnd":  459872,
+                   "text":  "",
+                   "scalars":  [
+
+                               ],
+                   "focused":  true,
+                   "press":  0,
+                   "release":  0,
+                   "keypress":  0,
+                   "unfocused_input":  0,
+                   "focus_losses":  0,
+                   "text_changes":  0
+               },
+    "native_before":  {
+                          "foreground_pid":  9784,
+                          "foreground_hwnd":  656358,
+                          "gui_ok":  true,
+                          "focus_hwnd":  459872
+                      },
+    "after":  {
+                  "pid":  9784,
+                  "box_hwnd":  459872,
+                  "text":  "中文",
+                  "scalars":  [
+                                  "U+4E2D",
+                                  "U+6587"
+                              ],
+                  "focused":  true,
+                  "press":  2,
+                  "release":  26,
+                  "keypress":  2,
+                  "unfocused_input":  0,
+                  "focus_losses":  0,
+                  "text_changes":  2
+              },
+    "native_after":  {
+                         "foreground_pid":  9784,
+                         "foreground_hwnd":  656358,
+                         "gui_ok":  true,
+                         "focus_hwnd":  459872
+                     },
+    "driver_exit":  0,
+    "checks":  {
+                   "driver_ready":  true,
+                   "driver_exit_zero":  true,
+                   "same_target":  true,
+                   "target_focused":  true,
+                   "all_input_focused":  true,
+                   "actual_input":  true,
+                   "exact_scalars":  true
+               }
+}

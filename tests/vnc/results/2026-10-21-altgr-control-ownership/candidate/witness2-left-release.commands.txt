@@ -1,0 +1,5 @@
+KEY 1d 0 0
+WAIT 120
+WAIT 600
+WAIT 1200
+ACK witness2-left-release

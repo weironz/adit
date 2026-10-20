@@ -1,0 +1,24 @@
+{
+  "snapshot_utc": "2026-10-20T19:49:03.822644+00:00",
+  "scope": "Working source copied at archive time; source hashes alone do not establish a reproducible binary build.",
+  "files": [
+    {
+      "repository_path": "crates/adit-rdp/src/egfx.rs",
+      "archive_path": "source/egfx.rs",
+      "sha256": "464043380cf78413061697488084d37b988cb757b25a7a6e9f47a5349e8a128d",
+      "bytes": 62947
+    },
+    {
+      "repository_path": "crates/adit-rdp/src/session.rs",
+      "archive_path": "source/session.rs",
+      "sha256": "d7515b23a34a8a42bc0e9a27b6053ac216574e89c4e3cf45d59ef76b40bdb6e6",
+      "bytes": 40604
+    },
+    {
+      "repository_path": "crates/adit-rdp/tests/clearcodec_dump.rs",
+      "archive_path": "source/clearcodec_dump.rs",
+      "sha256": "36c052e2474c969abe7191cc02ee8920c0e063fedf3428541dad1e69d1b45611",
+      "bytes": 17519
+    }
+  ]
+}

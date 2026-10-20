@@ -1,0 +1,14 @@
+   Compiling adit-rdp v0.1.75 (<REPOSITORY>\crates\adit-rdp)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6.38s
+     Running tests\clearcodec_dump.rs (crates\adit-rdp\target\debug\deps\clearcodec_dump-5b66a32966edaa3a.exe)
+
+running 1 test
+400 captured streams, 0 pending, 0 live decode errors
+composited surface -> <PRIVATE_TEST_ROOT>/rdp-clear-witness-1792524714588/Adit/clear-surface.png
+0 offline decode failures out of 400
+ClearCodec metadata: flags={0: 281, 1: 83, 3: 36}, glyph_stores=83, glyph_hits=36, successful_hits=36, missing_stores=0, shape_changes=0, aspect_changes=0, legacy_stride_oob_successes=0
+No successful captured glyph hit covered the old stride-overrun class; clean replay alone does not reproduce the original panic.
+test captured_streams_replay ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 14.18s
+

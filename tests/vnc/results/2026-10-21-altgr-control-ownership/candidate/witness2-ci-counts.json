@@ -1,0 +1,25 @@
+{
+  "exit_code": 0,
+  "groups": [
+    {
+      "name": "root",
+      "passed": 439,
+      "failed": 0,
+      "ignored": 11
+    },
+    {
+      "name": "native_feature",
+      "passed": 154,
+      "failed": 0,
+      "ignored": 4
+    },
+    {
+      "name": "vendor_graphics",
+      "passed": 202,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "counts_overlap": true,
+  "hosted_ci_run": false
+}

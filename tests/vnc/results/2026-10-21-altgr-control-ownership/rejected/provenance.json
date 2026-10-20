@@ -1,0 +1,249 @@
+{
+  "schema": 1,
+  "prefix": "witness",
+  "status": "rejected-incomplete",
+  "reason": "Four modifier ownership/backlog cases passed; core lacked Ctrl+Esc wire events and lost foreground/capture. Not final acceptance.",
+  "copy_policy": "Exact allowlist; raw files byte-for-byte. No screenshots, RDP frames, executable, credentials, bootstrap, or launch commands.",
+  "files": [
+    {
+      "path": "witness-pure-altgr-app.jsonl",
+      "bytes": 7479,
+      "sha256": "f2b2fdae5952cfb6f49c0f1b780ee5a0e2d1419717ea011a9c8302223688a2a3"
+    },
+    {
+      "path": "witness-pure-altgr-peer.jsonl",
+      "bytes": 2886,
+      "sha256": "4bb22cf519b8abc18d23d8c57ed92e23ec317de35ef352ab42002bd71bb4bb66"
+    },
+    {
+      "path": "witness-pure-altgr-observer.jsonl",
+      "bytes": 1773,
+      "sha256": "44abc574eb902dd6c1b031cdc4ea92601320e7f4cf94d111ca9ee3e7a3ad9d6c"
+    },
+    {
+      "path": "witness-left-held-app.jsonl",
+      "bytes": 9862,
+      "sha256": "7da451ed41f6e1c31ea2ee43177d93c8dd606168d18054cca3314f5118c91f4d"
+    },
+    {
+      "path": "witness-left-held-peer.jsonl",
+      "bytes": 3283,
+      "sha256": "cfe34e742edf447b5846c68299766571ac9fde03604b5eaac823371707e9a234"
+    },
+    {
+      "path": "witness-left-held-observer.jsonl",
+      "bytes": 2025,
+      "sha256": "5417ac43cdf5e8e771eaa0756357d437d0b61969e2cf48c1853af037c31c40ae"
+    },
+    {
+      "path": "witness-left-after-alt-app.jsonl",
+      "bytes": 10650,
+      "sha256": "34992f4306a786012cdfa4af900368d5e2b5120105e68db3d23f676d31502d34"
+    },
+    {
+      "path": "witness-left-after-alt-peer.jsonl",
+      "bytes": 3383,
+      "sha256": "de293cc5b115b95f2717ae171b8c888481141cb7c8f6ccd0d1c2afca8ce39e31"
+    },
+    {
+      "path": "witness-left-after-alt-observer.jsonl",
+      "bytes": 2153,
+      "sha256": "2040ac579b401674f227fe39c4cc5ba9165813c539e956e2eb950e9b36b64fb4"
+    },
+    {
+      "path": "witness-left-final-app.jsonl",
+      "bytes": 12306,
+      "sha256": "909033958800355154cd2f3894c4b01417c7b6b3f845f092d8ae4db3ff150768"
+    },
+    {
+      "path": "witness-left-final-peer.jsonl",
+      "bytes": 3481,
+      "sha256": "4913e6d9b159b83a9464bf4fa40d939c6c82a8b93c1245f08668b29e54acf10b"
+    },
+    {
+      "path": "witness-left-final-observer.jsonl",
+      "bytes": 2281,
+      "sha256": "04ddbc799628023e94428845efade2e07f43446c8ca65d27a9f1a426f2711c1d"
+    },
+    {
+      "path": "witness-right-held-app.jsonl",
+      "bytes": 14130,
+      "sha256": "56c95b2db9cd42d95c642fcdb66bb7b3dc0932bd339e3d3e3bda990a29be21a9"
+    },
+    {
+      "path": "witness-right-held-peer.jsonl",
+      "bytes": 3878,
+      "sha256": "30fbe888cf7f14ac13f601986d72b21c1149cc8ff46021d8a350db51a2aca66f"
+    },
+    {
+      "path": "witness-right-held-observer.jsonl",
+      "bytes": 2533,
+      "sha256": "efa105c5c6d976a3765e1e154d30aa88701cd5867109398849dac12838c33599"
+    },
+    {
+      "path": "witness-right-after-alt-app.jsonl",
+      "bytes": 15885,
+      "sha256": "0242dd051f75295a9d2f1291e95e0d12e6acb06c9a71c7a0c705bb7e452dc594"
+    },
+    {
+      "path": "witness-right-after-alt-peer.jsonl",
+      "bytes": 3978,
+      "sha256": "5ae63676ac00b519033db6fe476e78d1951078a456970efe3d75e76d99c70dc2"
+    },
+    {
+      "path": "witness-right-after-alt-observer.jsonl",
+      "bytes": 2790,
+      "sha256": "9bb56f18970a917538bcab2e0ce9064b6774ec30515371113be81fcbc75abde1"
+    },
+    {
+      "path": "witness-right-final-app.jsonl",
+      "bytes": 16584,
+      "sha256": "4a510ad500514bbb6a108aab2997e1a0517784c31787a4a31466572ba1f91ace"
+    },
+    {
+      "path": "witness-right-final-peer.jsonl",
+      "bytes": 4078,
+      "sha256": "b6cd2ddd60ff5b28ff34f34c684b6ff21b922517b6c87daca63fe88d2cf83d93"
+    },
+    {
+      "path": "witness-right-final-observer.jsonl",
+      "bytes": 2918,
+      "sha256": "9cffa0bd86f41823e67292744a5986b88c18afafa0a271e1afda47044ad91e1f"
+    },
+    {
+      "path": "witness-preheld-start-app.jsonl",
+      "bytes": 20741,
+      "sha256": "ae9f85586c3acd0a1188390cbe74967bf4f29a4b208c14e1c65f4269cec8b0aa"
+    },
+    {
+      "path": "witness-preheld-start-peer.jsonl",
+      "bytes": 5776,
+      "sha256": "d8105267150297cde8046de4bdf366258baa726d50bc1723f77b76c2092eabe3"
+    },
+    {
+      "path": "witness-preheld-start-observer.jsonl",
+      "bytes": 3803,
+      "sha256": "b894fda76ee4de2630530f71844993a4acfc952a6b00a6caaa86ac69e1357db2"
+    },
+    {
+      "path": "witness-preheld-end-app.jsonl",
+      "bytes": 24035,
+      "sha256": "db27b64bc2661e4e252dcda737b63b0abd01d433bccf8b116d50fe99ff8b8270"
+    },
+    {
+      "path": "witness-preheld-end-peer.jsonl",
+      "bytes": 5776,
+      "sha256": "d8105267150297cde8046de4bdf366258baa726d50bc1723f77b76c2092eabe3"
+    },
+    {
+      "path": "witness-preheld-end-observer.jsonl",
+      "bytes": 4311,
+      "sha256": "94b90972b272ae40325401785e5fdc22fb295fc4def297f2dc4e0d833eef6184"
+    },
+    {
+      "path": "witness-core-start-app.jsonl",
+      "bytes": 28435,
+      "sha256": "362be40b5b314aa15a831e7c6b2576feadef172195a2891e95e383afa5749a37"
+    },
+    {
+      "path": "witness-core-start-peer.jsonl",
+      "bytes": 7708,
+      "sha256": "3f1ab464f61044cac5a49d1da4a9dfd566cc76304e214574710fc94adfe5f32b"
+    },
+    {
+      "path": "witness-core-start-observer.jsonl",
+      "bytes": 4688,
+      "sha256": "ee344eb50505ed0c727166bb97ae998353f6e417af36e47905f81080a817b6cc"
+    },
+    {
+      "path": "witness-core-app.jsonl",
+      "bytes": 51886,
+      "sha256": "decedc1fa243504fc70c06f3662d4a06f30459002c8d40a0f138323075bdf7bd"
+    },
+    {
+      "path": "witness-core-peer.jsonl",
+      "bytes": 9329,
+      "sha256": "861feb4620061883629793f0d4913488755d7a5f13969592358c40e75b75adde"
+    },
+    {
+      "path": "witness-core-observer.jsonl",
+      "bytes": 5193,
+      "sha256": "7f3f635911bd8d4d31dceb8f4191400d8fb083510fb5b1be712afbaf4998e6e5"
+    },
+    {
+      "path": "witness-pure-altgr-handshake.json",
+      "bytes": 1464,
+      "sha256": "c6af09abc2afc4ed0aa1e7cbeb976738f95d4948df87bd131d603954e74fc426"
+    },
+    {
+      "path": "witness-left-control-handshake.json",
+      "bytes": 1502,
+      "sha256": "4eaafe28bd6905f4c8898c243320a0460aaf0576f95af0a459a92853e8917d94"
+    },
+    {
+      "path": "witness-right-control-handshake.json",
+      "bytes": 1503,
+      "sha256": "cafcd3c9b068c1c6cfc1ce6a6f6b8abe8aebe97ab6ca57b220e9b7c401518c32"
+    },
+    {
+      "path": "witness-preheld-win-handshake.json",
+      "bytes": 1477,
+      "sha256": "3887e43f225c04bf16941f84d5b327ec3d7541658c9ecce002f709d53bf062d8"
+    },
+    {
+      "path": "witness-pure-altgr-burst.commands.txt",
+      "bytes": 61,
+      "sha256": "c0f468f95f25b701652d26186ae13f6beed3d543e35b0dda1037fe6443081aa6"
+    },
+    {
+      "path": "witness-pure-altgr-finish.commands.txt",
+      "bytes": 109,
+      "sha256": "74968d9b778c23fcc892425875ae9a1ca564a271f0e4c975e49f273115f5f027"
+    },
+    {
+      "path": "witness-left-control-burst.commands.txt",
+      "bytes": 94,
+      "sha256": "6197df83f9d8e335afc1c1f9a4a2f709067ec61b224e5dbcf8a4d6be3cdb8de2"
+    },
+    {
+      "path": "witness-left-alt-up.commands.txt",
+      "bytes": 63,
+      "sha256": "5a6ccdd9f50a0e61342ba88843292c24d3a9d63a8c90daa9968e287125d3aec8"
+    },
+    {
+      "path": "witness-left-release.commands.txt",
+      "bytes": 64,
+      "sha256": "b1033070e92d7efd7f20eaa8fc05811baacbbd992185366919b9740a4e52448d"
+    },
+    {
+      "path": "witness-right-control-burst.commands.txt",
+      "bytes": 94,
+      "sha256": "84dd15ea89e208a14b08b1df5371432531e8ff1a4399e02413d00d0a24849133"
+    },
+    {
+      "path": "witness-right-alt-up.commands.txt",
+      "bytes": 64,
+      "sha256": "5d0610078315c1060a48a5d003461bd5c525ecd580c8e63c87c0b530ed249193"
+    },
+    {
+      "path": "witness-right-release.commands.txt",
+      "bytes": 65,
+      "sha256": "56930dcdd2ea52e49ec1272681dfe5b561789ea31ba84be816cce43260934dcb"
+    },
+    {
+      "path": "witness-preheld-win-burst.commands.txt",
+      "bytes": 72,
+      "sha256": "3136dfd578e7a3e4fef2389ec8d1990bdfb163e1332e3e8aa68061373c279ae2"
+    },
+    {
+      "path": "witness-preheld-ctrl-release.commands.txt",
+      "bytes": 92,
+      "sha256": "454df4633924930e909c1799da61ac3c250daa8c14d46364ca750442246b914c"
+    },
+    {
+      "path": "witness-core.commands.txt",
+      "bytes": 357,
+      "sha256": "deccc9823ed4bd53e9a8058357e3eabc23ddf1c517787c2154cc62884e3bc62d"
+    }
+  ]
+}

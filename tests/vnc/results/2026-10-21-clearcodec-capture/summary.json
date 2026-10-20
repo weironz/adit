@@ -1,0 +1,33 @@
+{
+  "captured_streams": 400,
+  "pending": 0,
+  "live_decode_errors": 0,
+  "offline_decode_failures": 0,
+  "flags": {
+    "0": 281,
+    "1": 83,
+    "3": 36
+  },
+  "glyph_stores": 83,
+  "glyph_hits": 36,
+  "successful_hits": 36,
+  "missing_stores": 0,
+  "shape_changes": 0,
+  "aspect_changes": 0,
+  "legacy_stride_oob_successes": 0,
+  "replay_exit": 0,
+  "helper_lib_tests": {
+    "passed": 33,
+    "failed": 0,
+    "ignored": 0,
+    "exit": 0
+  },
+  "additional_parent_reported_checks": {
+    "clippy_all_targets": "passed; no standalone log retained",
+    "clearcodec_manifest_tests": "4 passed; no standalone log retained",
+    "helper_build": "passed; no standalone log retained"
+  },
+  "original_2026_10_20_panic_capture": false,
+  "same_fault_class_real_capture_coverage": false,
+  "helper_normal_exit_proven": false
+}

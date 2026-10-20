@@ -1,0 +1,1587 @@
+//! EGFX (RDPGFX graphics pipeline, MS-RDPEGFX) client handler.
+//!
+//! GNOME Remote Desktop — and modern Windows — serve graphics only over the EGFX
+//! pipeline, not the legacy bitmap path; a client that doesn't advertise it is
+//! rejected at capabilities exchange. We attach a [`GraphicsPipelineClient`] to
+//! the dynamic virtual channels and composite the decoded RGBA surface updates it
+//! hands us into a shared framebuffer the session loop emits as tiles.
+//!
+//! Capabilities are advertised V10.7 (which implies AVC444) → V8.1 (AVC420) →
+//! V8, so a server picks H.264 where it has one and **RemoteFX Progressive**
+//! otherwise. Progressive arrives as `WireToSurface2`, which IronRDP delivers
+//! via [`on_wire_to_surface2`] but does NOT decode itself; we decode it with
+//! [`ironrdp_graphics::progressive`] and composite the resulting 64×64 RGBA
+//! tiles. AVC is decoded in [`super::avc444`].
+//!
+//! [`GraphicsPipelineClient`]: ironrdp_egfx::client::GraphicsPipelineClient
+//! [`on_wire_to_surface2`]: GraphicsPipelineHandler::on_wire_to_surface2
+
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+
+use ironrdp_egfx::client::{BitmapUpdate, GraphicsPipelineHandler, Surface};
+use ironrdp_egfx::pdu::{
+    CacheToSurfacePdu, DeleteEncodingContextPdu, SolidFillPdu, SurfaceToCachePdu,
+    SurfaceToSurfacePdu, WireToSurface2Pdu,
+};
+use ironrdp_graphics::clearcodec::ClearCodecDecoder;
+use ironrdp_graphics::image_processing::PixelFormat as GfxPixelFormat;
+use ironrdp_graphics::progressive::ProgressiveDecoder;
+use ironrdp_session::image::DecodedImage;
+use ironrdp_session::rfx::DecodingContext as RfxDecodingContext;
+
+/// Match the framebuffer clamp on the app side.
+const MAX_DIMENSION: u32 = 8192;
+
+/// How many progressive streams to write out before giving up, when dumping is
+/// switched on with `ADIT_RDP_DUMP=1`.
+///
+/// Successes are captured too, not just failures. A stream that decodes is
+/// usually the one carrying the SYNC + CONTEXT blocks that establish the codec
+/// context, and without it a captured failure cannot be replayed at all — every
+/// later frame references a context that a fresh decoder has never seen. That is
+/// exactly what happened the first time this was used: only failures were kept,
+/// and the capture turned out to be unreplayable on its own.
+///
+/// Off unless asked for: a capture is a picture of the user's desktop, so it is
+/// opt-in rather than something a bad connection scatters across their disk.
+/// Raised from 8: eight frames were enough to find a decoder that failed
+/// outright, but an artefact that only shows on continuously animating content
+/// needs the whole sequence — progressive refinement is stateful, so a frame
+/// only means anything replayed in order after the ones before it.
+/// Effectively uncapped: the 512 cap made a busy capture cover 24 seconds,
+/// ending right before the misbehaviour it was taken to catch.
+const MAX_DUMPS: u32 = 65536;
+
+/// A pending record must reach disk before the decoder can panic. Appending
+/// the outcome to this same file preserves the failing PDU's original index.
+struct ClearDump {
+    sidecar: std::path::PathBuf,
+}
+
+impl ClearDump {
+    fn start(
+        dir: &std::path::Path,
+        index: u32,
+        surface_id: u16,
+        (x, y, w, h): (u16, u16, u16, u16),
+        data: &[u8],
+    ) -> std::io::Result<Self> {
+        use std::io::Write as _;
+        // A second connection must not silently overwrite an older cache
+        // prefix. Each capture needs its own fresh APPDATA/Adit directory.
+        let mut stream = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(format!("clear-{index:03}.bin")))?;
+        stream.write_all(data)?;
+        let sidecar = dir.join(format!("clear-{index:03}.txt"));
+        let mut metadata = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sidecar)?;
+        writeln!(
+            metadata,
+            "outcome=pending\nhelper_pid={}\nsurface_id={surface_id}\nrect={w}x{h} at {x},{y}\nbytes={}",
+            std::process::id(),
+            data.len(),
+        )?;
+        Ok(Self { sidecar })
+    }
+
+    fn finish(self, outcome: &str) -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut metadata = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.sidecar)?;
+        writeln!(metadata, "outcome={outcome}")
+    }
+}
+
+/// RemoteFX Progressive tile edge, in pixels (MS-RDPRFX): tiles are 64×64.
+const TILE: usize = 64;
+
+/// The EGFX output framebuffer, written by the handler (which runs inside
+/// `ActiveStage::process`) and sampled by the session loop.
+pub(crate) struct EgfxFrame {
+    pub rgba: Vec<u8>,
+    pub width: u16,
+    pub height: u16,
+    /// Updates landed since the loop last emitted a frame.
+    pub dirty: bool,
+    /// The pixel rects touched since the last take, kept apart rather than
+    /// unioned. Lets the session loop ship only what changed instead of cloning
+    /// and piping the whole framebuffer (~9 MB per frame at 2560-class sizes)
+    /// on every present.
+    dirty_rects: Vec<Rect>,
+    /// Trait callbacks cannot return errors to ActiveStage. Keep the first
+    /// stateful codec failure until the session loop can close with Error/Closed.
+    decode_error: Option<String>,
+}
+
+/// A dirty region: `(x, y, w, h)` in pixels.
+type Rect = (usize, usize, usize, usize);
+
+/// How many separate dirty rects to carry before coalescing.
+///
+/// One rect was the original behaviour, and it degrades in exactly the case
+/// that matters: a blinking cursor in one corner and a clock in another grow
+/// the single rect to span both, so a few hundred changed pixels ship as most
+/// of the screen. An unbounded list is the opposite failure — a full repaint
+/// arrives as ~900 tiles at 2560-class sizes, and one IPC message each costs
+/// more than the pixels saved. Sixteen keeps unrelated activity apart while a
+/// genuine full-surface paint still collapses to roughly one rect, because
+/// adjacent tiles merge for free (see [`merge_cost`]).
+const MAX_DIRTY_RECTS: usize = 16;
+
+fn area(rect: Rect) -> usize {
+    rect.2 * rect.3
+}
+
+fn union(a: Rect, b: Rect) -> Rect {
+    let x0 = a.0.min(b.0);
+    let y0 = a.1.min(b.1);
+    let x1 = (a.0 + a.2).max(b.0 + b.2);
+    let y1 = (a.1 + a.3).max(b.1 + b.3);
+    (x0, y0, x1 - x0, y1 - y0)
+}
+
+/// Pixels that merging `a` and `b` would send without either having asked for
+/// them. Zero when they overlap or tile exactly edge to edge, which is what
+/// lets a row of adjacent tiles collapse into one strip at no cost.
+fn merge_cost(a: Rect, b: Rect) -> usize {
+    area(union(a, b)).saturating_sub(area(a) + area(b))
+}
+
+impl EgfxFrame {
+    fn resize(&mut self, width: u16, height: u16) {
+        self.width = width;
+        self.height = height;
+        self.rgba = vec![0u8; usize::from(width) * usize::from(height) * 4];
+        self.dirty_rects.clear();
+        // Deliberately NOT dirty: this buffer is all black until content
+        // lands. Publishing it at allocation time flashed a full black frame
+        // on every graphics reset; the first composited EndFrame after the
+        // resize is the correct first publish (and carries the new size).
+        self.dirty = false;
+    }
+}
+
+pub(crate) type SharedEgfx = Arc<Mutex<EgfxFrame>>;
+
+pub(crate) fn new_shared() -> SharedEgfx {
+    Arc::new(Mutex::new(EgfxFrame {
+        rgba: Vec::new(),
+        width: 0,
+        height: 0,
+        dirty: false,
+        dirty_rects: Vec::new(),
+        decode_error: None,
+    }))
+}
+
+pub(crate) fn take_decode_error(shared: &SharedEgfx) -> Option<String> {
+    // A poisoned graphics lock must not hide the reason the connection ended.
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .decode_error
+        .take()
+}
+
+/// One published region: the surface size, the region's position and size, and
+/// its pixels (row-major, tightly packed).
+pub(crate) struct FrameUpdate {
+    pub surface_width: u16,
+    pub surface_height: u16,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
+    pub rgba: Vec<u8>,
+}
+
+/// Every region changed since the last call, clearing the dirty flag. Empty
+/// when nothing changed (or EGFX isn't in use).
+pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
+    let Ok(mut frame) = shared.lock() else {
+        return Vec::new();
+    };
+    if frame.decode_error.is_some() || !frame.dirty || frame.rgba.is_empty() {
+        return Vec::new();
+    }
+    frame.dirty = false;
+    let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+    let (surface_width, surface_height) = (frame.width, frame.height);
+
+    let mut rects = std::mem::take(&mut frame.dirty_rects);
+    // No recorded rect (defensive) -> whole surface.
+    if rects.is_empty() {
+        rects.push((0, 0, fw, fh));
+    }
+
+    let mut out = Vec::with_capacity(rects.len());
+    for (x, y, w, h) in rects {
+        let (x, y) = (x.min(fw), y.min(fh));
+        let (w, h) = (w.min(fw - x), h.min(fh - y));
+        if w == 0 || h == 0 {
+            continue;
+        }
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for row in 0..h {
+            let start = ((y + row) * fw + x) * 4;
+            rgba.extend_from_slice(&frame.rgba[start..start + w * 4]);
+        }
+        out.push(FrameUpdate {
+            surface_width,
+            surface_height,
+            x: x as u16,
+            y: y as u16,
+            width: w as u16,
+            height: h as u16,
+            rgba,
+        });
+    }
+    out
+}
+
+/// Grow the frame's dirty rect to cover `w x h` pixels at `(x, y)`.
+/// Record every paint, with its source, under `ADIT_RDP_DUMP`.
+///
+/// Not a debug leftover. Now that ClearCodec decodes over the destination, an
+/// area we never painted and an area we painted wrongly look identical on
+/// screen: both keep the pixels that were already there. A complete record of
+/// what touched which rectangle is the only thing that separates them.
+///
+/// Deliberately uncapped. The capped op probes are what hid the
+/// cache-to-surface volume for three rounds of guessing — a counter that stops
+/// at 60 reports "60 calls" whether there were 60 or 60000.
+fn trace_paint(source: &str, x: usize, y: usize, w: usize, h: usize) {
+    trace_slot(source, None, x, y, w, h);
+}
+
+/// As [`trace_paint`], naming the cache slot the pixels came from or went to.
+///
+/// The slot is the whole point for the cache ops. A blit that draws a
+/// populated but *wrong* slot is completely silent — the code warns only when
+/// a slot is missing entirely — so the slot number is what ties a bad
+/// rectangle back to the `SurfaceToCache` that filled it.
+fn trace_slot(source: &str, slot: Option<u16>, x: usize, y: usize, w: usize, h: usize) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ON.get_or_init(|| std::env::var_os("ADIT_RDP_DUMP").is_some()) {
+        return;
+    }
+    tracing::info!(source, slot, x, y, w, h, "paint");
+}
+
+fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
+    if w == 0 || h == 0 {
+        return;
+    }
+    add_dirty_rect(&mut frame.dirty_rects, (x, y, w, h));
+}
+
+/// Add one changed rect, merging where merging is free and coalescing only
+/// once the list is full.
+///
+/// The free merges are what keep this cheap on the hot path: a progressive
+/// frame arrives as hundreds of adjacent 64x64 tiles, and each folds into the
+/// strip beside it at zero cost, so the list stays short without any search.
+fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
+    // Fold into anything it overlaps or tiles against, repeatedly: a rect that
+    // just grew can now reach a third one, and leaving those apart would send
+    // the pixels they share twice.
+    let mut merged = new;
+    let mut again = true;
+    while again {
+        again = false;
+        let mut index = 0;
+        while index < rects.len() {
+            if merge_cost(rects[index], merged) == 0 {
+                merged = union(rects.swap_remove(index), merged);
+                again = true;
+            } else {
+                index += 1;
+            }
+        }
+    }
+    rects.push(merged);
+
+    // Full: give up the pair that costs least to join. Shrinking by one each
+    // time means the list cannot grow past the cap, however scattered the
+    // paints are.
+    while rects.len() > MAX_DIRTY_RECTS {
+        let mut best = (0, 1, usize::MAX);
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let cost = merge_cost(rects[i], rects[j]);
+                if cost < best.2 {
+                    best = (i, j, cost);
+                }
+            }
+        }
+        let (i, j, _) = best;
+        let other = rects.swap_remove(j);
+        rects[i] = union(rects[i], other);
+    }
+}
+
+/// One entry of the EGFX bitmap cache.
+struct CachedBitmap {
+    width: u16,
+    height: u16,
+    rgba: Vec<u8>,
+}
+
+/// A server surface: where it maps onto the output, and its size.
+struct SurfaceInfo {
+    origin_x: u32,
+    origin_y: u32,
+    width: u16,
+    height: u16,
+}
+
+pub(crate) struct EgfxHandler {
+    shared: SharedEgfx,
+    /// Remains set after the loop consumes the mailbox: no later callback in
+    /// this transport batch may paint using invalidated codec state.
+    decode_failed: bool,
+    /// surface_id → mapping/size. A bitmap update targets a surface; the surface
+    /// is mapped to a position on the output.
+    surfaces: HashMap<u16, SurfaceInfo>,
+    /// RemoteFX Progressive decoder, keyed internally by codec-context id. Kept
+    /// across frames (progressive frames refine earlier ones).
+    progressive: ProgressiveDecoder,
+    /// How many failing streams have been written out so far.
+    dumps: u32,
+    /// The EGFX bitmap cache: slot -> (width, height, RGBA).
+    ///
+    /// Windows sends a region's pixels ONCE, tells the client to cache it, and
+    /// from then on says "blit slot N here" instead of re-encoding. Ignoring
+    /// those PDUs left every repeated element — window chrome, glyph runs, the
+    /// contents of a text box — frozen at whatever was on screen before, which
+    /// is what made a logged-in desktop render as a mosaic of stale fragments.
+    cache: HashMap<u16, CachedBitmap>,
+    /// ClearCodec decoder (glyph + vBar caches are session-global state).
+    ///
+    /// The codec exists, fully implemented, in the graphics crate — the EGFX
+    /// client just never wires it: WireToSurface1 with ClearCodec lands in
+    /// `on_unhandled_pdu`. Windows encodes sharp UI content (text boxes,
+    /// glyph runs, small controls) with it, so before this was connected a
+    /// logged-in desktop rendered as fragments and the logon password box
+    /// never appeared at all.
+    clear: ClearCodecDecoder,
+    /// Classic RemoteFX (TS_RFX) decoder + scratch image, per surface.
+    ///
+    /// Same story: `ironrdp_session::rfx::DecodingContext` is a complete
+    /// decoder sitting one crate over, used only by the legacy non-EGFX path.
+    /// Thin-client-mode Windows ships whole frames as classic RemoteFX inside
+    /// WireToSurface1.
+    rfx: HashMap<u16, (RfxDecodingContext, DecodedImage)>,
+    /// How many composition-op probe lines have been logged.
+    ops_logged: u32,
+    /// How many ClearCodec streams have been written out.
+    clear_dumps: u32,
+    /// AVC444 recombination state: two H.264 decoders plus per-surface
+    /// YUV 4:4:4 planes. `None` when decoder construction failed, in which
+    /// case V10+ capabilities are not advertised and the server never sends
+    /// AVC444.
+    avc444: Option<crate::avc444::Avc444State>,
+    /// One-shot codec announcements: which paint path this session actually
+    /// uses is a question that should cost one grep, not an inference from
+    /// negotiation lines (always logged, unlike the ADIT_RDP_DUMP traces).
+    avc444_announced: bool,
+    /// Counters for the one-off diagnostics above.
+    unhandled_logged: u32,
+    frames_seen: u32,
+    /// How many "no rect covered this tile" warnings have been logged.
+    unclipped_logged: u32,
+    /// Whether anything was composited since the last present. `EndFrame`
+    /// publishes only when this is set: after a graphics reset zeroes the
+    /// framebuffer, an empty frame's unconditional present would flash pure
+    /// black until the next real content arrived.
+    composited: bool,
+}
+
+impl EgfxHandler {
+    pub(crate) fn new(shared: SharedEgfx) -> Self {
+        Self {
+            shared,
+            decode_failed: false,
+            surfaces: HashMap::new(),
+            progressive: ProgressiveDecoder::new(),
+            dumps: 0,
+            composited: false,
+            clear: ClearCodecDecoder::new(),
+            avc444: match crate::avc444::Avc444State::new() {
+                Ok(state) => Some(state),
+                Err(error) => {
+                    tracing::warn!(
+                        error,
+                        "AVC444 decoders unavailable; not advertising V10 caps"
+                    );
+                    None
+                }
+            },
+            rfx: HashMap::new(),
+            ops_logged: 0,
+            clear_dumps: 0,
+            avc444_announced: false,
+            unclipped_logged: 0,
+            unhandled_logged: 0,
+            frames_seen: 0,
+            cache: HashMap::new(),
+        }
+    }
+
+    /// Write a progressive stream next to the helper's log, in arrival order, so
+    /// the sequence can be replayed offline. Best-effort in every respect: a
+    /// diagnostic must never take down a session that is otherwise working.
+    fn dump_stream(&mut self, pdu: &WireToSurface2Pdu, sw: u16, sh: u16, outcome: &str) {
+        if self.dumps >= MAX_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
+            return;
+        }
+        let Some(base) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) else {
+            return;
+        };
+        let dir = base.join("Adit");
+        let index = self.dumps;
+        self.dumps += 1;
+        // The sidecar carries what the bytes alone cannot: which context they
+        // belong to, the surface they were sized against, and which error they
+        // produced — all of which the parse has to be read against.
+        let meta = format!(
+            "outcome={outcome}
+codec_context_id={}
+surface={sw}x{sh}
+bytes={}
+",
+            pdu.codec_context_id,
+            pdu.bitmap_data.len(),
+        );
+        let stream = dir.join(format!("progressive-{index}.bin"));
+        let sidecar = dir.join(format!("progressive-{index}.txt"));
+        if std::fs::write(&stream, &pdu.bitmap_data).is_ok()
+            && std::fs::write(&sidecar, meta).is_ok()
+        {
+            tracing::warn!("wrote progressive stream to {}", stream.display());
+        }
+    }
+
+    /// Composite a 64×64 RGBA tile at output pixel (`px`, `py`), clamped to the
+    /// framebuffer (edge tiles overhang a surface whose size isn't a multiple of 64).
+    /// Copy `w x h` RGBA pixels into the frame at `(x, y)`, clipped to it.
+    fn blit_rect(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize, rgba: &[u8]) {
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if x >= fw || y >= fh || w == 0 || h == 0 {
+            return;
+        }
+        let cols = w.min(fw - x);
+        let rows = h.min(fh - y);
+        if rgba.len() < (rows - 1) * w * 4 + cols * 4 {
+            return;
+        }
+        for row in 0..rows {
+            let dst = ((y + row) * fw + x) * 4;
+            let src = row * w * 4;
+            frame.rgba[dst..dst + cols * 4].copy_from_slice(&rgba[src..src + cols * 4]);
+        }
+        grow_dirty(frame, x, y, cols, rows);
+    }
+
+    /// Read `w x h` RGBA pixels out of the frame at `(x, y)`, tightly packed.
+    fn read_rect(frame: &EgfxFrame, x: usize, y: usize, w: usize, h: usize) -> Option<Vec<u8>> {
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if x + w > fw || y + h > fh || w == 0 || h == 0 {
+            return None;
+        }
+        let mut out = Vec::with_capacity(w * h * 4);
+        for row in 0..h {
+            let start = ((y + row) * fw + x) * 4;
+            out.extend_from_slice(&frame.rgba[start..start + w * 4]);
+        }
+        Some(out)
+    }
+
+    /// Write a ClearCodec stream next to the helper's log, in arrival order.
+    fn dump_clear_stream(
+        &mut self,
+        pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu,
+        w: u16,
+        h: u16,
+    ) -> Option<ClearDump> {
+        // A much higher cap than the progressive dumps: ClearCodec streams are
+        // small and the v-bar/glyph caches only reproduce when the whole
+        // session's sequence is replayed, so a useful capture is hundreds of
+        // streams, not eight.
+        const MAX_CLEAR_DUMPS: u32 = 65536;
+        if self.clear_dumps >= MAX_CLEAR_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
+            return None;
+        }
+        let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from)?;
+        let dir = base.join("Adit");
+        let index = self.clear_dumps;
+        self.clear_dumps += 1;
+        match ClearDump::start(
+            &dir,
+            index,
+            pdu.surface_id,
+            (
+                pdu.destination_rectangle.left,
+                pdu.destination_rectangle.top,
+                w,
+                h,
+            ),
+            &pdu.bitmap_data,
+        ) {
+            Ok(dump) => Some(dump),
+            Err(error) => {
+                tracing::warn!(index, %error, "ClearCodec capture could not be saved");
+                None
+            }
+        }
+    }
+
+    /// WireToSurface1 with AVC444: recombine the two 4:2:0 views into the
+    /// per-surface 4:4:4 planes and blit the touched regions (see `avc444`).
+    fn decode_avc444(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
+        use ironrdp_core::Decode as _;
+
+        let Some((sw, sh, ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.width, s.height, s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let Some(state) = self.avc444.as_mut() else {
+            // Can only happen if the server ignores our caps: we advertise
+            // V10+ only while the decoders exist.
+            if self.unhandled_logged < 20 {
+                self.unhandled_logged += 1;
+                tracing::warn!("AVC444 PDU but no decoder; frame dropped");
+            }
+            return;
+        };
+        let mut cursor = ironrdp_core::ReadCursor::new(&pdu.bitmap_data);
+        let stream = match ironrdp_egfx::pdu::Avc444BitmapStream::decode(&mut cursor) {
+            Ok(stream) => stream,
+            Err(error) => {
+                tracing::warn!(%error, "AVC444 stream parse failed");
+                return;
+            }
+        };
+        match state.decode(pdu.surface_id, sw, sh, pdu.codec_id, &stream) {
+            Ok(regions) => {
+                if regions.is_empty() {
+                    return;
+                }
+                if !self.avc444_announced {
+                    self.avc444_announced = true;
+                    tracing::info!(codec = ?pdu.codec_id, "first AVC444 frame painted; session is on the H.264 4:4:4 path");
+                }
+                if let Ok(mut frame) = self.shared.lock() {
+                    for region in &regions {
+                        trace_paint(
+                            "avc444",
+                            ox as usize + region.x,
+                            oy as usize + region.y,
+                            region.w,
+                            region.h,
+                        );
+                        Self::blit_rect(
+                            &mut frame,
+                            ox as usize + region.x,
+                            oy as usize + region.y,
+                            region.w,
+                            region.h,
+                            &region.rgba,
+                        );
+                    }
+                    self.composited = true;
+                }
+            }
+            Err(error) => tracing::warn!(error, "AVC444 decode failed"),
+        }
+    }
+
+    /// WireToSurface1 with ClearCodec: decode and composite at the
+    /// destination rectangle. The decoder outputs BGRA with alpha forced to
+    /// 0xFF; the framebuffer is RGBA, so channels swap during the blit.
+    fn decode_clear_codec(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let rect = &pdu.destination_rectangle;
+        let (w, h) = (
+            rect.right.saturating_sub(rect.left),
+            rect.bottom.saturating_sub(rect.top),
+        );
+        if w == 0 || h == 0 {
+            return;
+        }
+        // Hand the decoder the pixels already on screen, as BGRA. ClearCodec's
+        // layers need not cover the whole tile, and what they skip must keep
+        // the destination's colour — see `ClearCodecDecoder::decode_onto`.
+        let (dx, dy) = (
+            ox as usize + usize::from(rect.left),
+            oy as usize + usize::from(rect.top),
+        );
+        let background = self.shared.lock().ok().and_then(|frame| {
+            let mut rgba = Self::read_rect(&frame, dx, dy, usize::from(w), usize::from(h))?;
+            for px in rgba.as_chunks_mut::<4>().0 {
+                px.swap(0, 2); // RGBA -> BGRA
+            }
+            Some(rgba)
+        });
+        // Keep all preceding cache state AND this PDU, even if decoding it
+        // panics. A failures-only or after-decode dump loses that evidence.
+        let dump = self.dump_clear_stream(pdu, w, h);
+        let outcome = self
+            .clear
+            .decode_onto(&pdu.bitmap_data, w, h, background.as_deref());
+        if let Some(dump) = dump {
+            let result = match &outcome {
+                Ok(_) => "ok".to_owned(),
+                Err(error) => error.to_string(),
+            };
+            if let Err(error) = dump.finish(&result) {
+                tracing::warn!(%error, "ClearCodec capture outcome could not be saved");
+            }
+        }
+        let mut bgra = match outcome {
+            Ok(bgra) => bgra,
+            Err(error) => {
+                let message = format!("ClearCodec decode failed: {error}");
+                tracing::error!(%message, "closing session after stateful graphics decode failure");
+                self.decode_failed = true;
+                self.composited = false;
+                let mut frame = self
+                    .shared
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                frame.decode_error.get_or_insert(message);
+                // Earlier callbacks in this same batch may have painted. None
+                // of that incomplete frame may cross the helper's IPC pipe.
+                frame.dirty = false;
+                frame.dirty_rects.clear();
+                return;
+            }
+        };
+        for px in bgra.as_chunks_mut::<4>().0 {
+            px.swap(0, 2); // BGRA -> RGBA
+        }
+        if let Ok(mut frame) = self.shared.lock() {
+            // Opaque, because the buffer was seeded with this very rectangle:
+            // there are no untouched pixels left to decide about. The masked
+            // blit this replaces was the ghosting — it skipped every pixel the
+            // codec's layers had not covered, so the previous frame's content
+            // showed through and, since the server counts the region as
+            // painted, stayed there for good.
+            trace_paint("clear", dx, dy, usize::from(w), usize::from(h));
+            Self::blit_rect(&mut frame, dx, dy, usize::from(w), usize::from(h), &bgra);
+            self.composited = true;
+        }
+    }
+
+    /// WireToSurface1 with classic RemoteFX (TS_RFX): decode through the
+    /// session crate's decoder into a per-surface scratch image, then copy the
+    /// updated region across. Thin-client-mode Windows ships entire frames
+    /// this way.
+    fn decode_classic_rfx(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
+        use ironrdp_pdu::geometry::InclusiveRectangle;
+
+        let Some((sw, sh, ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.width, s.height, s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let (context, image) = self.rfx.entry(pdu.surface_id).or_insert_with(|| {
+            (
+                RfxDecodingContext::new(),
+                DecodedImage::new(GfxPixelFormat::RgbA32, sw, sh),
+            )
+        });
+        if image.width() != sw || image.height() != sh {
+            *context = RfxDecodingContext::new();
+            *image = DecodedImage::new(GfxPixelFormat::RgbA32, sw, sh);
+        }
+
+        let rect = &pdu.destination_rectangle;
+        let destination = InclusiveRectangle {
+            left: rect.left,
+            top: rect.top,
+            right: rect.right.saturating_sub(1),
+            bottom: rect.bottom.saturating_sub(1),
+        };
+        let mut cursor = ironrdp_core::ReadCursor::new(&pdu.bitmap_data);
+        let updated = match context.decode(image, &destination, &mut cursor) {
+            Ok((_frame_id, updated)) => updated,
+            Err(error) => {
+                tracing::warn!("classic RemoteFX decode failed: {error}");
+                return;
+            }
+        };
+
+        // Copy the updated region out of the scratch image (RgbA32 == the
+        // framebuffer's byte order, so this is a straight row copy).
+        let (ux, uy) = (usize::from(updated.left), usize::from(updated.top));
+        let uw = usize::from(updated.right.saturating_sub(updated.left)) + 1;
+        let uh = usize::from(updated.bottom.saturating_sub(updated.top)) + 1;
+        let img_w = usize::from(image.width());
+        let data = image.data();
+        let mut region = Vec::with_capacity(uw * uh * 4);
+        for row in 0..uh {
+            let start = ((uy + row) * img_w + ux) * 4;
+            let Some(slice) = data.get(start..start + uw * 4) else {
+                return;
+            };
+            region.extend_from_slice(slice);
+        }
+        if let Ok(mut frame) = self.shared.lock() {
+            Self::blit_rect(
+                &mut frame,
+                ox as usize + ux,
+                oy as usize + uy,
+                uw,
+                uh,
+                &region,
+            );
+            self.composited = true;
+        }
+    }
+
+    /// Blit a window of one 64x64 tile: `w x h` pixels starting at
+    /// `(sub_x, sub_y)` inside the tile, landing at `(px, py)` on the frame.
+    #[expect(clippy::too_many_arguments, reason = "a rectangle is six numbers")]
+    fn blit_tile_window(
+        frame: &mut EgfxFrame,
+        px: usize,
+        py: usize,
+        sub_x: usize,
+        sub_y: usize,
+        w: usize,
+        h: usize,
+        pixels: &[u8],
+    ) {
+        if pixels.len() < TILE * TILE * 4 {
+            return;
+        }
+        let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+        if px >= fw || py >= fh || w == 0 {
+            return;
+        }
+        let cols = w.min(fw - px).min(TILE - sub_x);
+        let rows = h.min(fh - py).min(TILE - sub_y);
+        for row in 0..rows {
+            let dst = ((py + row) * fw + px) * 4;
+            let src = ((sub_y + row) * TILE + sub_x) * 4;
+            frame.rgba[dst..dst + cols * 4].copy_from_slice(&pixels[src..src + cols * 4]);
+        }
+        grow_dirty(frame, px, py, cols, rows);
+    }
+}
+
+impl GraphicsPipelineHandler for EgfxHandler {
+    /// Advertise V10.7 (AVC444, decoded by our avc444 module), V8.1 with
+    /// AVC420 (decoded upstream), and V8 as the no-AVC fallback the tile
+    /// path serves. ironrdp-egfx 0.3 forwards AVC444 PDUs to
+    /// `on_unhandled_pdu`, which is where the avc444 module picks them up.
+    fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
+        use ironrdp_egfx::pdu::{
+            CapabilitiesV107Flags, CapabilitiesV81Flags, CapabilitiesV8Flags, CapabilitySet,
+        };
+        let mut caps = Vec::with_capacity(3);
+        // V10.7 implies AVC444, which the avc444 module decodes. Only offered
+        // while its decoders exist — advertising it without them turns the
+        // desktop into undecoded rectangles.
+        if self.avc444.is_some() {
+            caps.push(CapabilitySet::V10_7 {
+                flags: CapabilitiesV107Flags::SMALL_CACHE,
+            });
+        }
+        caps.push(CapabilitySet::V8_1 {
+            flags: CapabilitiesV81Flags::AVC420_ENABLED | CapabilitiesV81Flags::SMALL_CACHE,
+        });
+        caps.push(CapabilitySet::V8 {
+            flags: CapabilitiesV8Flags::SMALL_CACHE,
+        });
+        caps
+    }
+
+    /// Always logged: which capability set the server actually confirmed is
+    /// the difference between "AVC negotiated" and "server chose the tile
+    /// path anyway", and without it that question cost a log archaeology
+    /// session to half-answer.
+    fn on_capabilities_confirmed(&mut self, caps: &ironrdp_egfx::pdu::CapabilitySet) {
+        tracing::info!(?caps, "EGFX capabilities confirmed by server");
+    }
+
+    fn on_reset_graphics(&mut self, width: u32, height: u32) {
+        if self.decode_failed {
+            return;
+        }
+        // AVC444 recombination state describes surfaces that are going away;
+        // fresh decoders avoid refining against a dead reference chain.
+        if let Some(state) = self.avc444.as_mut() {
+            state.reset();
+        }
+        let w = width.clamp(1, MAX_DIMENSION) as u16;
+        let h = height.clamp(1, MAX_DIMENSION) as u16;
+        if let Ok(mut frame) = self.shared.lock() {
+            // Only reallocate (which zeroes) on an actual size change. GNOME sends
+            // RESET_GRAPHICS immediately before repainting; zeroing every time would
+            // flash the surface black in the gap before the first new tile lands.
+            if frame.width != w || frame.height != h || frame.rgba.is_empty() {
+                frame.resize(w, h);
+            }
+        }
+    }
+
+    fn on_surface_created(&mut self, surface: &Surface) {
+        if self.decode_failed {
+            return;
+        }
+        tracing::info!(
+            id = surface.id,
+            w = surface.width,
+            h = surface.height,
+            "surface created"
+        );
+        self.surfaces.insert(
+            surface.id,
+            SurfaceInfo {
+                origin_x: surface.output_origin_x,
+                origin_y: surface.output_origin_y,
+                width: surface.width,
+                height: surface.height,
+            },
+        );
+    }
+
+    fn on_surface_mapped(&mut self, surface_id: u16, origin_x: u32, origin_y: u32) {
+        if self.decode_failed {
+            return;
+        }
+        tracing::info!(id = surface_id, origin_x, origin_y, "surface mapped");
+        if let Some(surface) = self.surfaces.get_mut(&surface_id) {
+            surface.origin_x = origin_x;
+            surface.origin_y = origin_y;
+        }
+    }
+
+    fn on_surface_deleted(&mut self, surface_id: u16) {
+        if self.decode_failed {
+            return;
+        }
+        tracing::info!(id = surface_id, "surface deleted");
+        self.surfaces.remove(&surface_id);
+        // Progressive, classic-RFX and AVC444 state are per-surface; they die
+        // with it.
+        self.progressive.delete_surface(surface_id);
+        self.rfx.remove(&surface_id);
+        if let Some(state) = self.avc444.as_mut() {
+            state.delete_surface(surface_id);
+        }
+    }
+
+    /// `WireToSurface1` path (uncompressed / H.264): IronRDP hands us already-decoded
+    /// RGBA. (No H.264 decoder is configured, so in practice this fires only for
+    /// uncompressed updates.)
+    fn on_bitmap_updated(&mut self, update: &BitmapUpdate) {
+        if self.decode_failed {
+            return;
+        }
+        if update.data.is_empty() {
+            return; // decode skipped (no decoder for this codec)
+        }
+        let (ox, oy) = self
+            .surfaces
+            .get(&update.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+            .unwrap_or((0, 0));
+        let dst_x = (ox + u32::from(update.destination_rectangle.left)) as usize;
+        let dst_y = (oy + u32::from(update.destination_rectangle.top)) as usize;
+        let (tw, th) = (usize::from(update.width), usize::from(update.height));
+
+        if let Ok(mut frame) = self.shared.lock() {
+            let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+            if tw == 0
+                || th == 0
+                || dst_x + tw > fw
+                || dst_y + th > fh
+                || update.data.len() < tw * th * 4
+            {
+                return;
+            }
+            for row in 0..th {
+                let dst = ((dst_y + row) * fw + dst_x) * 4;
+                let src = row * tw * 4;
+                frame.rgba[dst..dst + tw * 4].copy_from_slice(&update.data[src..src + tw * 4]);
+            }
+            trace_paint("bitmap-update", dst_x, dst_y, tw, th);
+            grow_dirty(&mut frame, dst_x, dst_y, tw, th);
+            // Not marked dirty: presents happen on `on_frame_complete`, so a
+            // multi-PDU frame reaches the screen whole (see on_wire_to_surface2).
+            self.composited = true;
+        }
+    }
+
+    /// `WireToSurface2` path: RemoteFX Progressive. IronRDP delivers the raw
+    /// progressive stream here without decoding it (it only decodes H.264), so we
+    /// decode it ourselves and composite the 64×64 tiles. This is what GNOME
+    /// Remote Desktop uses — without it the desktop renders solid black.
+    fn on_wire_to_surface2(&mut self, pdu: &WireToSurface2Pdu) {
+        if self.decode_failed {
+            return;
+        }
+        let Some((sw, sh, ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.width, s.height, s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+
+        let decoded = match self
+            .progressive
+            .decode_bitmap(pdu.surface_id, sw, sh, &pdu.bitmap_data)
+        {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                tracing::warn!("EGFX progressive decode failed: {error}");
+                self.dump_stream(pdu, sw, sh, &error.to_string());
+                return;
+            }
+        };
+        self.dump_stream(pdu, sw, sh, "ok");
+        if decoded.upgrades_without_base > 0 && self.unclipped_logged < 8 {
+            self.unclipped_logged += 1;
+            tracing::warn!(
+                count = decoded.upgrades_without_base,
+                "progressive upgrades refining a tile the server painted another way"
+            );
+        }
+        if decoded.tiles.is_empty() {
+            return;
+        }
+
+        if let Ok(mut frame) = self.shared.lock() {
+            for tile in &decoded.tiles {
+                // Hybrid blit, keyed on what the pass reconstructs.
+                //
+                // A FRESH pass (TILE_FIRST/TILE_SIMPLE) re-encodes the tile's
+                // current screen content, so it is applied WHOLE: the region
+                // rects understate it -- a captured stream re-encoded a whole
+                // tile (icon -> background) under a rect overlapping it by 3
+                // pixel columns, and clipping to that kept 61 stale columns
+                // alive; the bitmap cache then snapshotted and re-stamped
+                // them for the rest of the session (the frozen ghosts).
+                //
+                // An UPGRADE reconstructs the tile as of its last FIRST. If a
+                // CacheToSurface blit painted part of the tile since, whole
+                // application rolls those pixels back to pre-blit content --
+                // seen live as half-old half-new cells right after the
+                // whole-tile change shipped. So upgrades are clipped to the
+                // region rects, which bound exactly the area the server is
+                // refining. (FreeRDP clips everything; the fresh/upgrade
+                // split is ours, forced by two captures disagreeing about
+                // which side lies.)
+                let tx = usize::from(tile.x_idx) * TILE;
+                let ty = usize::from(tile.y_idx) * TILE;
+                if tile.fresh {
+                    trace_paint(
+                        "progressive",
+                        ox as usize + tx,
+                        oy as usize + ty,
+                        TILE,
+                        TILE,
+                    );
+                    Self::blit_tile_window(
+                        &mut frame,
+                        ox as usize + tx,
+                        oy as usize + ty,
+                        0,
+                        0,
+                        TILE,
+                        TILE,
+                        &tile.pixels,
+                    );
+                } else {
+                    for rect in &decoded.rects {
+                        let rx0 = usize::from(rect.x);
+                        let ry0 = usize::from(rect.y);
+                        let rx1 = rx0 + usize::from(rect.width);
+                        let ry1 = ry0 + usize::from(rect.height);
+                        let cx0 = tx.max(rx0);
+                        let cy0 = ty.max(ry0);
+                        let cx1 = (tx + TILE).min(rx1);
+                        let cy1 = (ty + TILE).min(ry1);
+                        if cx0 >= cx1 || cy0 >= cy1 {
+                            continue;
+                        }
+                        trace_paint(
+                            "progressive-upgrade",
+                            ox as usize + cx0,
+                            oy as usize + cy0,
+                            cx1 - cx0,
+                            cy1 - cy0,
+                        );
+                        Self::blit_tile_window(
+                            &mut frame,
+                            ox as usize + cx0,
+                            oy as usize + cy0,
+                            cx0 - tx,
+                            cy0 - ty,
+                            cx1 - cx0,
+                            cy1 - cy0,
+                            &tile.pixels,
+                        );
+                    }
+                }
+            }
+            self.composited = true;
+            // Deliberately NOT marked dirty here: presents are frame-atomic.
+            // A frame's PDUs are decoded back-to-back inside one process()
+            // call, but the session loop samples the framebuffer once per
+            // transport read — marking dirty per PDU let it emit a frame
+            // mid-composite, flashing the blurry base pass of a progressive
+            // sequence before its refinements landed. `on_frame_complete`
+            // (the EndFrame handler) is the present point.
+        }
+    }
+
+    /// Fill rectangles with a solid colour (MS-RDPEGFX 2.2.2.6).
+    ///
+    /// Windows clears window backgrounds and control interiors this way rather
+    /// than encoding flat pixels. Unimplemented, those areas kept whatever was
+    /// underneath — a text box never appeared to clear, so typing looked like
+    /// it did nothing.
+    fn on_solid_fill(&mut self, pdu: &SolidFillPdu) {
+        if self.decode_failed {
+            return;
+        }
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let c = &pdu.fill_pixel;
+        if let Ok(mut frame) = self.shared.lock() {
+            let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
+            for rect in &pdu.rectangles {
+                // RDPGFX_RECT16 is exclusive: right/bottom are one-past-end.
+                let x0 = (ox as usize + usize::from(rect.left)).min(fw);
+                let y0 = (oy as usize + usize::from(rect.top)).min(fh);
+                let x1 = (ox as usize + usize::from(rect.right)).min(fw);
+                let y1 = (oy as usize + usize::from(rect.bottom)).min(fh);
+                if x0 >= x1 || y0 >= y1 {
+                    continue;
+                }
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        let i = (y * fw + x) * 4;
+                        frame.rgba[i] = c.r;
+                        frame.rgba[i + 1] = c.g;
+                        frame.rgba[i + 2] = c.b;
+                        frame.rgba[i + 3] = 0xFF;
+                    }
+                }
+                // Colour included: the offline replay must repaint these, and a
+                // skipped fill poisons every cache slot later filled from the area
+                // (the first faithful-looking sim was wrecked by exactly that).
+                if std::env::var_os("ADIT_RDP_DUMP").is_some() {
+                    tracing::info!(
+                        source = "solid-fill",
+                        r = c.r,
+                        g = c.g,
+                        b = c.b,
+                        x = x0,
+                        y = y0,
+                        w = x1 - x0,
+                        h = y1 - y0,
+                        "paint"
+                    );
+                }
+                grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
+            }
+            self.composited = true;
+        }
+    }
+
+    /// Copy a rectangle to one or more destinations (MS-RDPEGFX 2.2.2.7).
+    ///
+    /// This is how scrolling and window drags move pixels the client already
+    /// has, without re-encoding them.
+    fn on_surface_to_surface(&mut self, pdu: &SurfaceToSurfacePdu) {
+        if self.decode_failed {
+            return;
+        }
+        let Some((sox, soy)) = self
+            .surfaces
+            .get(&pdu.source_surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let Some((dox, doy)) = self
+            .surfaces
+            .get(&pdu.destination_surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let r = &pdu.source_rectangle;
+        let (w, h) = (
+            usize::from(r.right.saturating_sub(r.left)),
+            usize::from(r.bottom.saturating_sub(r.top)),
+        );
+        if self.ops_logged < 60 {
+            self.ops_logged += 1;
+            tracing::info!(
+                src_left = r.left,
+                src_top = r.top,
+                w,
+                h,
+                dests = ?pdu.destination_points.iter().map(|p| (p.x, p.y)).collect::<Vec<_>>(),
+                "surface-to-surface"
+            );
+        }
+        if let Ok(mut frame) = self.shared.lock() {
+            // Read once, then write every destination: the regions may overlap,
+            // and a straight memmove per destination would smear.
+            let Some(pixels) = Self::read_rect(
+                &frame,
+                sox as usize + usize::from(r.left),
+                soy as usize + usize::from(r.top),
+                w,
+                h,
+            ) else {
+                return;
+            };
+            for point in &pdu.destination_points {
+                trace_paint(
+                    "surface-to-surface",
+                    dox as usize + usize::from(point.x),
+                    doy as usize + usize::from(point.y),
+                    w,
+                    h,
+                );
+                Self::blit_rect(
+                    &mut frame,
+                    dox as usize + usize::from(point.x),
+                    doy as usize + usize::from(point.y),
+                    w,
+                    h,
+                    &pixels,
+                );
+            }
+            self.composited = true;
+        }
+    }
+
+    /// Store a rectangle into the bitmap cache (MS-RDPEGFX 2.2.2.8).
+    fn on_surface_to_cache(&mut self, pdu: &SurfaceToCachePdu) {
+        if self.decode_failed {
+            return;
+        }
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let r = &pdu.source_rectangle;
+        let (w, h) = (
+            r.right.saturating_sub(r.left),
+            r.bottom.saturating_sub(r.top),
+        );
+        trace_slot(
+            "surface-to-cache",
+            Some(pdu.cache_slot),
+            ox as usize + usize::from(r.left),
+            oy as usize + usize::from(r.top),
+            usize::from(w),
+            usize::from(h),
+        );
+        if let Ok(frame) = self.shared.lock() {
+            if let Some(rgba) = Self::read_rect(
+                &frame,
+                ox as usize + usize::from(r.left),
+                oy as usize + usize::from(r.top),
+                usize::from(w),
+                usize::from(h),
+            ) {
+                self.cache.insert(
+                    pdu.cache_slot,
+                    CachedBitmap {
+                        width: w,
+                        height: h,
+                        rgba,
+                    },
+                );
+            }
+        }
+    }
+
+    /// Blit a cached rectangle to one or more destinations (MS-RDPEGFX 2.2.2.9).
+    fn on_cache_to_surface(&mut self, pdu: &CacheToSurfacePdu) {
+        if self.decode_failed {
+            return;
+        }
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
+        else {
+            return;
+        };
+        let Some(entry) = self.cache.get(&pdu.cache_slot) else {
+            // A slot the server believes we hold. It will not re-send those
+            // pixels, so the area stays stale — worth knowing about.
+            tracing::warn!(slot = pdu.cache_slot, "cache blit for an unknown slot");
+            return;
+        };
+        let (ew, eh) = (entry.width, entry.height);
+        let dests: Vec<(u16, u16)> = pdu.destination_points.iter().map(|p| (p.x, p.y)).collect();
+        if self.ops_logged < 60 {
+            self.ops_logged += 1;
+            tracing::info!(slot = pdu.cache_slot, ew, eh, ?dests, "cache-to-surface");
+        }
+        for point in &pdu.destination_points {
+            trace_slot(
+                "cache-to-surface",
+                Some(pdu.cache_slot),
+                ox as usize + usize::from(point.x),
+                oy as usize + usize::from(point.y),
+                usize::from(ew),
+                usize::from(eh),
+            );
+        }
+        if let Ok(mut frame) = self.shared.lock() {
+            let Some(entry) = self.cache.get(&pdu.cache_slot) else {
+                return;
+            };
+            for point in &pdu.destination_points {
+                Self::blit_rect(
+                    &mut frame,
+                    ox as usize + usize::from(point.x),
+                    oy as usize + usize::from(point.y),
+                    usize::from(entry.width),
+                    usize::from(entry.height),
+                    &entry.rgba,
+                );
+            }
+            self.composited = true;
+        }
+    }
+
+    /// Drop cache entries the server is done with (MS-RDPEGFX 2.2.2.10).
+    fn on_evict_cache_entry(&mut self, pdu: &ironrdp_egfx::pdu::EvictCacheEntryPdu) {
+        if self.decode_failed {
+            return;
+        }
+        self.cache.remove(&pdu.cache_slot);
+    }
+
+    /// Anything the pipeline did not route itself. The EGFX client decodes
+    /// only uncompressed and H.264 in WireToSurface1; ClearCodec and classic
+    /// RemoteFX land here and are decoded with the implementations that
+    /// already exist one crate over. Everything else is logged, because an
+    /// unhandled PDU is invisible otherwise.
+    fn on_unhandled_pdu(&mut self, pdu: &ironrdp_egfx::pdu::GfxPdu) {
+        use ironrdp_egfx::pdu::{Codec1Type, GfxPdu};
+
+        if self.decode_failed {
+            return;
+        }
+        if let GfxPdu::WireToSurface1(pdu) = pdu {
+            match pdu.codec_id {
+                Codec1Type::ClearCodec => return self.decode_clear_codec(pdu),
+                Codec1Type::RemoteFx => return self.decode_classic_rfx(pdu),
+                Codec1Type::Avc444 | Codec1Type::Avc444v2 => return self.decode_avc444(pdu),
+                _ => {}
+            }
+        }
+        if self.unhandled_logged < 20 {
+            self.unhandled_logged += 1;
+            tracing::warn!("unhandled EGFX pdu: {pdu:?}");
+        }
+    }
+
+    fn on_delete_encoding_context(&mut self, pdu: &DeleteEncodingContextPdu) {
+        if self.decode_failed {
+            return;
+        }
+        self.progressive.delete_context(pdu.codec_context_id);
+    }
+
+    fn on_frame_complete(&mut self, _frame_id: u32) {
+        if self.decode_failed {
+            return;
+        }
+        // Present point: publish once per EndFrame, and only when the frame
+        // actually painted something — the mirror half of the "no dirty per
+        // PDU" rule above.
+        if self.frames_seen < 20 {
+            self.frames_seen += 1;
+            tracing::info!(composited = self.composited, "EGFX frame complete");
+        }
+        if !self.composited {
+            return;
+        }
+        self.composited = false;
+        if let Ok(mut frame) = self.shared.lock() {
+            frame.dirty = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod decode_error_tests {
+    use super::*;
+    use ironrdp_egfx::pdu::{Codec1Type, GfxPdu, PixelFormat, WireToSurface1Pdu};
+    use ironrdp_pdu::geometry::ExclusiveRectangle;
+
+    #[test]
+    fn invalid_glyph_pdu_closes_before_outputs_and_blocks_later_batch_paints() {
+        // Exercise both ActiveStage outcomes: callbacks can have failed before
+        // process returns either successful output or its own unrelated error.
+        for stage_failed in [false, true] {
+            let shared = new_shared();
+            let mut handler = EgfxHandler::new(Arc::clone(&shared));
+            handler.surfaces.insert(
+                1,
+                SurfaceInfo {
+                    origin_x: 0,
+                    origin_y: 0,
+                    width: 2,
+                    height: 2,
+                },
+            );
+            {
+                let mut frame = shared.lock().unwrap();
+                frame.resize(2, 2);
+                frame.rgba.fill(7);
+                frame.dirty = true;
+                frame.dirty_rects.push((0, 0, 2, 2));
+            }
+            let mut pdu = WireToSurface1Pdu {
+                surface_id: 1,
+                codec_id: Codec1Type::ClearCodec,
+                pixel_format: PixelFormat::XRgb,
+                destination_rectangle: ExclusiveRectangle {
+                    left: 0,
+                    top: 0,
+                    right: 2,
+                    bottom: 2,
+                },
+                // Valid ClearCodec GLYPH_INDEX | GLYPH_HIT framing, but
+                // slot zero has never been stored: a real decoder error.
+                bitmap_data: vec![3, 0, 0, 0],
+            };
+            handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu.clone()));
+            let first = shared
+                .lock()
+                .unwrap()
+                .decode_error
+                .clone()
+                .expect("first decode error");
+            assert!(first.contains("glyph cache miss"));
+            assert!(
+                take_frames(&shared).is_empty(),
+                "must discard earlier partial paint"
+            );
+
+            // Subsequent codec and graphics-reset callbacks in the same batch
+            // cannot overwrite the first failure or change the framebuffer.
+            pdu.bitmap_data = vec![3, 0]; // Different error if it were decoded.
+            handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu.clone()));
+            handler.on_reset_graphics(4, 4);
+            handler.on_frame_complete(1);
+            assert_eq!(
+                shared.lock().unwrap().decode_error.as_deref(),
+                Some(first.as_str())
+            );
+
+            let processed = if stage_failed {
+                Err(ironrdp_session::custom_err!(
+                    "unrelated PDU",
+                    std::io::Error::other("other failure")
+                ))
+            } else {
+                Ok(vec![ironrdp_session::ActiveStageOutput::ResponseFrame(
+                    vec![9],
+                )])
+            };
+            let result = crate::session::finish_active_process(
+                processed,
+                &shared,
+                ironrdp_pdu::Action::X224,
+                &[],
+            );
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("fatal graphics error was swallowed"),
+            };
+            assert!(error.to_string().contains(&first));
+            assert!(
+                take_decode_error(&shared).is_none(),
+                "consume the first error exactly once"
+            );
+
+            // Consuming the mailbox does not re-enable this failed handler.
+            pdu.bitmap_data = vec![1, 1, 1, 0]; // Would populate glyph slot one.
+            handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu));
+            handler.on_frame_complete(2);
+            assert!(handler
+                .clear
+                .decode_onto(&[3, 2, 1, 0], 2, 2, None)
+                .is_err());
+            let frame = shared.lock().unwrap();
+            assert_eq!((frame.width, frame.height), (2, 2));
+            assert_eq!(frame.rgba, vec![7; 16]);
+            drop(frame);
+            assert!(take_frames(&shared).is_empty());
+            assert!(take_decode_error(&new_shared()).is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod clear_dump_tests {
+    use super::ClearDump;
+
+    #[test]
+    fn capture_keeps_pending_pdu_after_decoder_unwinds_and_never_overwrites_it() {
+        let path = std::env::temp_dir().join(format!(
+            "adit-clear-dump-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let path = path.canonicalize().unwrap();
+        let result = std::panic::catch_unwind(|| {
+            let _pending = ClearDump::start(&path, 0, 1, (2, 3, 1, 4), &[1, 2, 3]).unwrap();
+            panic!("synthetic decoder unwind after capture");
+        });
+        assert!(result.is_err());
+        let raw = path.join("clear-000.bin");
+        let sidecar = path.join("clear-000.txt");
+        assert_eq!(std::fs::read(&raw).unwrap(), [1, 2, 3]);
+        let pending = std::fs::read_to_string(&sidecar).unwrap();
+        assert!(pending.contains("outcome=pending\n"));
+        assert!(pending.contains("rect=1x4 at 2,3\n"));
+        assert!(!pending.contains("outcome=ok"));
+        assert!(ClearDump::start(&path, 0, 1, (0, 0, 1, 1), &[9]).is_err());
+        assert_eq!(std::fs::read(&raw).unwrap(), [1, 2, 3]);
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), pending);
+        ClearDump {
+            sidecar: sidecar.clone(),
+        }
+        .finish("ok")
+        .unwrap();
+        assert!(std::fs::read_to_string(&sidecar)
+            .unwrap()
+            .ends_with("outcome=ok\n"));
+        std::fs::remove_file(raw).unwrap();
+        std::fs::remove_file(sidecar).unwrap();
+        std::fs::remove_dir(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod dirty_rect_tests {
+    use super::*;
+
+    /// Every pixel that was marked must still be covered afterwards. Anything
+    /// less is a region that changed on the server and never reaches the
+    /// screen — the failure mode this whole mechanism can produce.
+    fn covers(rects: &[Rect], (x, y, w, h): Rect) -> bool {
+        (x..x + w).all(|px| {
+            (y..y + h).any(|_| true)
+                && (y..y + h).all(|py| {
+                    rects
+                        .iter()
+                        .any(|r| px >= r.0 && px < r.0 + r.2 && py >= r.1 && py < r.1 + r.3)
+                })
+        })
+    }
+
+    /// A progressive frame arrives as a run of adjacent 64x64 tiles. They must
+    /// collapse into one strip, or the list fills on every frame and the
+    /// coalescing below does the work instead.
+    #[test]
+    fn adjacent_tiles_collapse_into_one_rect() {
+        let mut rects = Vec::new();
+        for i in 0..20 {
+            add_dirty_rect(&mut rects, (i * TILE, 0, TILE, TILE));
+        }
+        assert_eq!(rects, vec![(0, 0, 20 * TILE, TILE)]);
+    }
+
+    /// The case that motivated the change: two small changes far apart used to
+    /// grow one rect across everything between them.
+    #[test]
+    fn distant_changes_stay_apart() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 16, 16));
+        add_dirty_rect(&mut rects, (2000, 1200, 16, 16));
+
+        assert_eq!(rects.len(), 2);
+        let sent: usize = rects.iter().map(|r| area(*r)).sum();
+        assert_eq!(sent, 512, "must not ship the span between them");
+    }
+
+    /// A rect that grows can reach a third one. Leaving those apart would send
+    /// the pixels they share twice.
+    #[test]
+    fn a_merge_that_bridges_two_rects_joins_all_three() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 10, 10));
+        add_dirty_rect(&mut rects, (20, 0, 10, 10));
+        assert_eq!(rects.len(), 2, "not touching yet");
+
+        add_dirty_rect(&mut rects, (10, 0, 10, 10));
+        assert_eq!(rects, vec![(0, 0, 30, 10)]);
+    }
+
+    /// Scattered paints must never grow the list past the cap, and must never
+    /// drop coverage while shrinking it.
+    #[test]
+    fn the_list_is_capped_and_loses_nothing() {
+        let mut rects = Vec::new();
+        let marked: Vec<Rect> = (0..200)
+            .map(|i| ((i * 37) % 1900, (i * 61) % 1000, 8, 8))
+            .collect();
+        for rect in &marked {
+            add_dirty_rect(&mut rects, *rect);
+            assert!(rects.len() <= MAX_DIRTY_RECTS, "{} rects", rects.len());
+        }
+        for rect in &marked {
+            assert!(covers(&rects, *rect), "lost {rect:?}");
+        }
+    }
+
+    /// Overlapping and edge-to-edge merges are free; a diagonal neighbour is
+    /// not, and that difference is what keeps unrelated activity apart.
+    #[test]
+    fn merge_cost_is_zero_only_when_nothing_extra_is_sent() {
+        assert_eq!(merge_cost((0, 0, 10, 10), (10, 0, 10, 10)), 0);
+        assert_eq!(merge_cost((0, 0, 10, 10), (5, 0, 10, 10)), 0);
+        assert_eq!(merge_cost((0, 0, 10, 10), (0, 0, 10, 10)), 0);
+        assert!(merge_cost((0, 0, 10, 10), (10, 10, 10, 10)) > 0);
+    }
+}

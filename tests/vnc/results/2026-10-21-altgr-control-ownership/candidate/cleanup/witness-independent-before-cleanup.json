@@ -1,0 +1,54 @@
+﻿{
+    "listeners":  [
+
+                  ],
+    "languages":  [
+                      {
+                          "LanguageTag":  "zh-Hans-CN",
+                          "InputMethodTips":  [
+                                                  "0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}"
+                                              ],
+                          "Spellchecking":  true,
+                          "Handwriting":  true
+                      }
+                  ],
+    "winrm":  "Stopped",
+    "owned_processes":  [
+
+                        ],
+    "language_restored":  true,
+    "baseline":  [
+                     {
+                         "LanguageTag":  "zh-Hans-CN",
+                         "InputMethodTips":  [
+                                                 "0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}"
+                                             ],
+                         "Spellchecking":  true,
+                         "Handwriting":  true
+                     }
+                 ],
+    "utc":  "2026-10-20T19:58:48.4001990Z",
+    "firewall":  [
+                     {
+                         "Name":  "Domain",
+                         "Enabled":  1
+                     },
+                     {
+                         "Name":  "Private",
+                         "Enabled":  0
+                     },
+                     {
+                         "Name":  "Public",
+                         "Enabled":  0
+                     }
+                 ],
+    "stage":  "independent_before_cleanup",
+    "tasks":  [
+                  {
+                      "TaskName":  "AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5-language"
+                  },
+                  {
+                      "TaskName":  "AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5-lease"
+                  }
+              ]
+}

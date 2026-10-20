@@ -1,0 +1,66 @@
+{
+  "label": "witness-left-control",
+  "burst": "KEY 1d 0 1\nKEY 5b 1 1\nKEY 5b 1 0\nKEY 38 1 1",
+  "events": [
+    {
+      "event": "ready",
+      "prior_sequence": 1
+    },
+    {
+      "event": "observed",
+      "received_unix_ms": 1792525156540,
+      "record": {
+        "duration_ms": 1500,
+        "event": "ui_stall_start",
+        "focus": {
+          "active_owned": true,
+          "focus_owned": true,
+          "foreground_owned": true,
+          "gui_flags": 0,
+          "gui_thread_info_ok": true
+        },
+        "grab": true,
+        "input_epoch": 1,
+        "sequence": 2,
+        "threads": {
+          "dispatcher": 10044,
+          "foreground": 10044,
+          "same": true
+        },
+        "trigger": "F8",
+        "unix_ms": 1792525155706
+      }
+    },
+    {
+      "event": "observed",
+      "received_unix_ms": 1792525158692,
+      "record": {
+        "elapsed_ms": 1501,
+        "event": "ui_stall_end",
+        "focus": {
+          "active_owned": true,
+          "focus_owned": true,
+          "foreground_owned": true,
+          "gui_flags": 0,
+          "gui_thread_info_ok": true
+        },
+        "grab": true,
+        "input_epoch": 1,
+        "sequence": 2,
+        "unix_ms": 1792525157207
+      }
+    }
+  ],
+  "commands": [
+    {
+      "unix_ms": 1792525155504,
+      "stage": "trigger"
+    },
+    {
+      "unix_ms": 1792525156540,
+      "stage": "burst"
+    }
+  ],
+  "exit_code": 0,
+  "stderr": "socket aborted by peer (WSAESHUTDOWN), treating as EOF\r\n"
+}

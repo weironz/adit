@@ -1,0 +1,466 @@
+{
+  "schema": 1,
+  "prefix": "witness2",
+  "status": "candidate",
+  "source_base": "63092a6",
+  "source_state": "Build-time base plus uncommitted patch; subsequent source_commit recorded separately",
+  "source_freeze_basis": "Controller states these ten current source files were frozen across final build and native run; snapshots preserve their byte hashes. No source-level hash was emitted by native-ready itself.",
+  "copy_policy": "Exact allowlist only; raw files byte-for-byte. No screenshot, RDP frame, executable, auth, bootstrap, launch file, or fabricated preheld-off snapshot.",
+  "binary_observations": [
+    {
+      "private_source_name": "witness-native.exe",
+      "bytes": 64390144,
+      "sha256": "876464e832fc34099facfe8b92c5285d5d48b58bc3524fbcb0466ec5daf19a6a",
+      "binary_copied": false
+    },
+    {
+      "private_source_name": "witness2-native.exe",
+      "bytes": 64396288,
+      "sha256": "625032eff0414b9c7b373efc803db61412b5aeaffa9503a94092ab562c48e64c",
+      "binary_copied": false
+    }
+  ],
+  "files": [
+    {
+      "path": "witness2-pure-altgr-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 12342,
+      "sha256": "0c3b4ca49600614885ef7e8803b44b63b27fec822c3111df3f6b002251a43397"
+    },
+    {
+      "path": "witness2-pure-altgr-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 4862,
+      "sha256": "dcbc3b6219f4c0a8852908d0e1381b91ba9e266961eec13688a9fbdb05efd358"
+    },
+    {
+      "path": "witness2-pure-altgr-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 3016,
+      "sha256": "88907807a8e208027024f049f88a8c761bf910a193f38d59311896fd0ec3aa9d"
+    },
+    {
+      "path": "witness2-left-held-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 14072,
+      "sha256": "ceba01e601f21978f431b3d3495f0608127c64af3202abb4a1f1f5982ed86d31"
+    },
+    {
+      "path": "witness2-left-held-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5259,
+      "sha256": "d466f747fa3e22ce3c21c432b4841e99eddee5aff7aa2c96359bb8575e6462f1"
+    },
+    {
+      "path": "witness2-left-held-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 3266,
+      "sha256": "73fe5bfdd71fe0a6db513d1501f404a93a672e85a5eda7839d88a4801d999bbc"
+    },
+    {
+      "path": "witness2-left-after-alt-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 14869,
+      "sha256": "6e69fe361a7a1d50d01dfeaf130599a8218c12e76cd868728a1d077ed3f249d5"
+    },
+    {
+      "path": "witness2-left-after-alt-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5359,
+      "sha256": "93fa20b247d570db6bb8c93d049fbe09309e2d1e25894fde1394e013335a23b9"
+    },
+    {
+      "path": "witness2-left-after-alt-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 3393,
+      "sha256": "96c41929583a582a08a52c5fe1b2a066e79fe38748100bcb66babd97b5702bad"
+    },
+    {
+      "path": "witness2-left-final-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 16434,
+      "sha256": "84843b8dba02d01cdfc860941f9edd6b0f396f2c3f5b93e187501a03bc4aa6e4"
+    },
+    {
+      "path": "witness2-left-final-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5459,
+      "sha256": "d64ebf34293b37c77cd59945f2ec930d20cadb7c20172640e33101ecd92de838"
+    },
+    {
+      "path": "witness2-left-final-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 3520,
+      "sha256": "3dee113ff9d8cee2a733584bbb26e230a0f959cf69d13610661cb7f3cf532c55"
+    },
+    {
+      "path": "witness2-right-held-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 18356,
+      "sha256": "ee01b6d1a9a5b40acf6a312fb82b8ddfb60aba91f6ccea8cecc9af6c9b5222a6"
+    },
+    {
+      "path": "witness2-right-held-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5856,
+      "sha256": "8ae846ff72a5a0075b5abad3b7a3f98807754cb21974c7351e3148cb88f1f7bc"
+    },
+    {
+      "path": "witness2-right-held-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 3770,
+      "sha256": "8c929c6414dd005637690f091c2898c87de54b96dfdebec328055367a023642b"
+    },
+    {
+      "path": "witness2-right-after-alt-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 19153,
+      "sha256": "4bc4344dbb86bcf2370b81f115792821b2eef532ffa7746afcf63d25943961c7"
+    },
+    {
+      "path": "witness2-right-after-alt-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5956,
+      "sha256": "5efaebbfbc0eb2d5c28ea271fe86b0808b0c8a57ce396a85314f8e8796218416"
+    },
+    {
+      "path": "witness2-right-after-alt-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 4025,
+      "sha256": "103f317c08a5c4e89694155a670343ee435550bf26fc5727ecd4b37532450ce4"
+    },
+    {
+      "path": "witness2-right-final-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 21198,
+      "sha256": "d3f76917b3e6dab65d059269824bde2ee09620657a29590d773ddd4f8f0e9266"
+    },
+    {
+      "path": "witness2-right-final-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 6056,
+      "sha256": "d218746eb17ab21dbd7850f0121817614b5873341b220efde49e91b53e256fc7"
+    },
+    {
+      "path": "witness2-right-final-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 4152,
+      "sha256": "0d182bdcc04949305f51c6a75a4a14cebb66d95e578c39ae08ea81ff5b8eeab2"
+    },
+    {
+      "path": "witness2-preheld-start-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 23802,
+      "sha256": "8e784733433b5392e9b94904f1634239c93a7c8d4ead70e08d48e538f6c68cdb"
+    },
+    {
+      "path": "witness2-preheld-start-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 7757,
+      "sha256": "a475bb7eb17457b7b62a929cc14348ba50999724141fe9f4f1e36e1a0af21abd"
+    },
+    {
+      "path": "witness2-preheld-start-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5030,
+      "sha256": "ad56e31237d4912000341560f059a4fef86870b6e8ce21955311a035fc0e8d86"
+    },
+    {
+      "path": "witness2-preheld-end-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 27386,
+      "sha256": "81683fd15c0c26e0954696c2f573625fa2a0c56f7f8425c73701e7b0e4ce8c4f"
+    },
+    {
+      "path": "witness2-preheld-end-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 7757,
+      "sha256": "a475bb7eb17457b7b62a929cc14348ba50999724141fe9f4f1e36e1a0af21abd"
+    },
+    {
+      "path": "witness2-preheld-end-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 5534,
+      "sha256": "77c223d7595a880974a76a842706bde6c49f3f9159450b9efe0b8280d9f1ebe9"
+    },
+    {
+      "path": "witness2-core-start-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 4730,
+      "sha256": "74ea4afbd35875c1ecd5e586bf579cc4f9165fd0f0d608568942c5cd2a487ca5"
+    },
+    {
+      "path": "witness2-core-start-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 2494,
+      "sha256": "08857064be47daabe573d8d1fd39051178b14a575246a1e3e4d7a7ff197fdae1"
+    },
+    {
+      "path": "witness2-core-start-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 1500,
+      "sha256": "c31e012e0aa42981ff7b47094970de457b5a953db6f3638e30fd653770653f07"
+    },
+    {
+      "path": "witness2-core-app.jsonl",
+      "kind": "original-evidence",
+      "bytes": 8907,
+      "sha256": "44b17c3127b8d02258aa65c5b6fec0159227aa24f5751c307691b49383be46b7"
+    },
+    {
+      "path": "witness2-core-peer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 4472,
+      "sha256": "15627b398f741b2c148c2c27f7eee2ca14a03d7a49c901359db39b328310bcce"
+    },
+    {
+      "path": "witness2-core-observer.jsonl",
+      "kind": "original-evidence",
+      "bytes": 2257,
+      "sha256": "797955421c7817cb93891af8b0bc32a4e839c80d87130d4dbdef1e2abb6be57e"
+    },
+    {
+      "path": "witness2-pure-altgr-handshake.json",
+      "kind": "original-evidence",
+      "bytes": 1680,
+      "sha256": "18c439ba7f3311d99e8a27a20b0a46621bbd31b6e1c17e28d0981afea7d372e1"
+    },
+    {
+      "path": "witness2-left-control-handshake.json",
+      "kind": "original-evidence",
+      "bytes": 1720,
+      "sha256": "f5bcabf4a9d713539d119c259baa88bd10df0090fe4d5c30f2f901d66013d23a"
+    },
+    {
+      "path": "witness2-right-control-handshake.json",
+      "kind": "original-evidence",
+      "bytes": 1726,
+      "sha256": "b36d102111510e3772d00a1ebb01c7a40f928cd5d4f509e9b61f8e1a0541901e"
+    },
+    {
+      "path": "witness2-preheld-win-handshake.json",
+      "kind": "original-evidence",
+      "bytes": 1700,
+      "sha256": "a3c9e61ecb0cf97d26901997a2b70658d70d26005af6d2f24ec18a1dc8cd3fab"
+    },
+    {
+      "path": "witness2-pure-altgr-burst.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 61,
+      "sha256": "c0f468f95f25b701652d26186ae13f6beed3d543e35b0dda1037fe6443081aa6"
+    },
+    {
+      "path": "witness2-pure-altgr-finish.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 110,
+      "sha256": "b4d29b714f7ba5039aeed7a39739cc8df8606cccb067afbe20d5ef11bceac8da"
+    },
+    {
+      "path": "witness2-left-control-burst.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 94,
+      "sha256": "6197df83f9d8e335afc1c1f9a4a2f709067ec61b224e5dbcf8a4d6be3cdb8de2"
+    },
+    {
+      "path": "witness2-left-alt-up.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 64,
+      "sha256": "572bcb8a6458fbc9e46ad04a4ea726acc30bbf80b13a0a1dd5957ab2ffa1d206"
+    },
+    {
+      "path": "witness2-left-release.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 65,
+      "sha256": "e0f7410047e23e183440defa0ab6bf19449cd8466326bba32fda8a59dcd23c5a"
+    },
+    {
+      "path": "witness2-right-control-burst.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 94,
+      "sha256": "84dd15ea89e208a14b08b1df5371432531e8ff1a4399e02413d00d0a24849133"
+    },
+    {
+      "path": "witness2-right-alt-up.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 65,
+      "sha256": "631b94e8e4aec77a4d3a4b30d4a98da7ada439dda7bdc2aa908d40a681a55225"
+    },
+    {
+      "path": "witness2-right-release.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 66,
+      "sha256": "d03e9e767b5033a5ca6e6dc76631e664def0b065370029493822960aeac541ce"
+    },
+    {
+      "path": "witness2-preheld-win-burst.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 72,
+      "sha256": "3136dfd578e7a3e4fef2389ec8d1990bdfb163e1332e3e8aa68061373c279ae2"
+    },
+    {
+      "path": "witness2-preheld-ctrl-release.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 93,
+      "sha256": "3e9a52eefa17e051bb1c0c32967f34cd4fa3e9722dcdd991f3065aedee3cee75"
+    },
+    {
+      "path": "witness2-preheld-off.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 178,
+      "sha256": "b2799a96016cfce74d405d560dc5cf71a40ff42816bf79348378227cf2210404"
+    },
+    {
+      "path": "witness2-core.commands.txt",
+      "kind": "original-evidence",
+      "bytes": 438,
+      "sha256": "1d267964b840ede9e80a71c9928b00414c4d3079b196ef6ba984e349deb526ae"
+    },
+    {
+      "path": "witness2-ci-vnc.txt",
+      "kind": "original-evidence",
+      "bytes": 71496,
+      "sha256": "344e7368e699768de1f4e76d1b9659f475d1e22ad54c842654c2ff5e93dec7c6"
+    },
+    {
+      "path": "witness2-native-build.txt",
+      "kind": "original-evidence",
+      "bytes": 140,
+      "sha256": "d14511257849c5a7770141698b1d84b0aff3622e024d9dbba97bee145379e619"
+    },
+    {
+      "path": "witness2-native-ready.json",
+      "kind": "original-evidence",
+      "bytes": 193,
+      "sha256": "ba09126a2f73f3f1743d075765ebb08557b46952e320fc39c4a8bb734af856c6"
+    },
+    {
+      "path": "witness2-languages.json",
+      "kind": "original-evidence",
+      "bytes": 755,
+      "sha256": "73ffc81de7418f606628271b6712852b046301361a937d00a8834a7fd3b55070"
+    },
+    {
+      "path": "source/crates/adit-ui/src/keyboard_hook.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 38760,
+      "sha256": "386fccff9b827839483b228833e28fd1aa7d29f8574615f66b77766d18985b6c"
+    },
+    {
+      "path": "source/crates/adit-ui/src/keyboard_vnc_order.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 16017,
+      "sha256": "e140c277c8a22d0ded3563819aa8e92658cf939acd0463163e483df7b46255f9"
+    },
+    {
+      "path": "source/crates/adit-ui/src/input.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 25250,
+      "sha256": "db4b3a70287ded7b6a545db1b944d42ec357ac88caea5beb4a3a7950fbb354d2"
+    },
+    {
+      "path": "source/crates/adit-ui/src/update_loop.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 165910,
+      "sha256": "3ff7da11dab6a03028ca846f9fe94a75d6cd3ab57056b3ca099ed14627b44017"
+    },
+    {
+      "path": "source/crates/adit-ui/src/vnc_input_wire_tests.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 17850,
+      "sha256": "9eeb67c1e4b6814a31098b095f9ce71053fbccd2394fb79c6bf50d625e030560"
+    },
+    {
+      "path": "source/crates/adit-ui/src/vnc_native_acceptance.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 37591,
+      "sha256": "42da4d308c3c450e13f829b27856d0c3e674c00c2c0f63ba32b94c3e7b587709"
+    },
+    {
+      "path": "source/crates/adit-ui/src/keyboard_vnc_chord.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 21338,
+      "sha256": "b3526a4d3036802b1fbfdb391eb673a746161df46cec6eead75281b9149b5f39"
+    },
+    {
+      "path": "source/crates/adit-rdp/src/egfx.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 62947,
+      "sha256": "464043380cf78413061697488084d37b988cb757b25a7a6e9f47a5349e8a128d"
+    },
+    {
+      "path": "source/crates/adit-rdp/src/session.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 40604,
+      "sha256": "d7515b23a34a8a42bc0e9a27b6053ac216574e89c4e3cf45d59ef76b40bdb6e6"
+    },
+    {
+      "path": "source/crates/adit-rdp/tests/clearcodec_dump.rs",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 17519,
+      "sha256": "36c052e2474c969abe7191cc02ee8920c0e063fedf3428541dad1e69d1b45611"
+    },
+    {
+      "path": "cleanup/witness-independent-before-cleanup.json",
+      "kind": "original-cleanup-evidence",
+      "bytes": 1959,
+      "sha256": "d457330eee128f183130fc9b041e05f5668bd69584d9bcd7db7ec234cc38b12c"
+    },
+    {
+      "path": "cleanup/witness-language-baseline.json",
+      "kind": "original-cleanup-evidence",
+      "bytes": 267,
+      "sha256": "71cdeaf90d4418380fd8740f4bfc70f30eb28f5547163f46ccc4cb73984747d1"
+    },
+    {
+      "path": "cleanup/witness-language-restored.json",
+      "kind": "original-cleanup-evidence",
+      "bytes": 267,
+      "sha256": "71cdeaf90d4418380fd8740f4bfc70f30eb28f5547163f46ccc4cb73984747d1"
+    },
+    {
+      "path": "cleanup/witness-cleanup-reports.json",
+      "kind": "original-cleanup-evidence",
+      "bytes": 1287,
+      "sha256": "07d7477dd22f6fa0c94edcdf0838050436202e9c864d3d170976372d040b464c"
+    },
+    {
+      "path": "cleanup/witness2-native-stopped.json",
+      "kind": "original-cleanup-evidence",
+      "bytes": 47,
+      "sha256": "d1bb712c0d21fa6e74c3b077b9350596c71720e9992e944a9b3dadbf6ba7b9a7"
+    },
+    {
+      "path": "cleanup/source/witness-independent.ps1",
+      "kind": "cleanup-source-snapshot",
+      "bytes": 1664,
+      "sha256": "62bf8635f857ddd8bbbc92b8ee047d7a0a66c107c86e19e853ce1a07a69828b9"
+    },
+    {
+      "path": "cleanup/source/witness-recover.ps1",
+      "kind": "cleanup-source-snapshot",
+      "bytes": 152,
+      "sha256": "621a09eb201c34c57d281ee58dff6e4da0c04f92058084ed68d4f515c1bc145b"
+    },
+    {
+      "path": "cleanup/source/witness-cleanup-final.ps1",
+      "kind": "cleanup-source-snapshot",
+      "bytes": 2395,
+      "sha256": "3c5e8e6d51d77565aa93aa05d47f572bb594dfae0b20cc0b8a95eec21d7c865a"
+    },
+    {
+      "path": "cleanup/witness-control-final.json",
+      "kind": "original-final-control-evidence",
+      "bytes": 364,
+      "sha256": "003f25d4798cfab9016542c08287275d66e7f5645ffcfbcff5b721d037f78a8d"
+    },
+    {
+      "path": "witness2-ci-counts.json",
+      "kind": "independent-ci-counts",
+      "bytes": 394,
+      "sha256": "04e4182d0768be7df0828deabc09d6e3171dbf177d856cfc1cc1fcf691ecaa1c"
+    }
+  ],
+  "source_commit": "3f9dadba1b3fa1b8bd8008bb9a7224472c2ff0f8",
+  "source_commit_basis": "Controller reports ten frozen source files committed after build/run; build-time source_base plus uncommitted patch fact retained. Parent verifies Git blob correspondence independently.",
+  "transport_attributes": "Root .gitattributes (* -text) is repository transport metadata, not an original evidence file; excluded from provenance file list."
+}

@@ -1,0 +1,255 @@
+{
+  "schema": 1,
+  "captured_utc": "2026-10-21",
+  "copy_policy": "Explicit allowlist only; original evidence copied byte-for-byte; no RDP captures or command/bootstrap files. Source snapshots are current frozen files, not VM execution hashes.",
+  "server_sha256": "68be8f45403afbd5bc2312b39e40689fac9a0f00986f1e5773ba8845b2b050e8",
+  "driver_sha256": "0024168f5fc9575068c740f3b57ff6a87a45c217f0b50952af853c4efec3fd7b",
+  "files": [
+    {
+      "path": "first/tight-unicode1-first/ascii-result.json",
+      "kind": "original-evidence",
+      "bytes": 2242,
+      "sha256": "191ecb0466c70c8b2aaee5a743aa397f16e51eef594a2ade2fd319c1c1f79511"
+    },
+    {
+      "path": "second/tight-unicode2-ascii-result.json",
+      "kind": "original-evidence",
+      "bytes": 2246,
+      "sha256": "fdb75acb70de996813fcdc14d3df9c2e50adcfc8e865299444f8c6ffa07a4deb"
+    },
+    {
+      "path": "first/tight-unicode1-first/ascii-actual.json",
+      "kind": "original-evidence",
+      "bytes": 187,
+      "sha256": "74a4ac2c501e37e87386a87c8e9a3aa7ef7c01b57e323a8b6585e1e0068bf5b8"
+    },
+    {
+      "path": "second/tight-unicode2-ascii-actual.json",
+      "kind": "original-evidence",
+      "bytes": 188,
+      "sha256": "9f9308576694303c8bb502e6d880f50b61fed727680462a1fa1320ead582acbd"
+    },
+    {
+      "path": "first/tight-unicode1-first/ascii-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "bd5b146951de704836aaae2e8dd7f2bde57f23889076376a57a63e46e3c49c75"
+    },
+    {
+      "path": "second/tight-unicode2-ascii-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "bced5072f9988157a95df9ecb7d1a0ce360a454bd721ce4efb3626895c412a11"
+    },
+    {
+      "path": "first/tight-unicode1-first/ascii-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "second/tight-unicode2-ascii-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "first/tight-unicode1-first/bmp-cjk-result.json",
+      "kind": "original-evidence",
+      "bytes": 2163,
+      "sha256": "f8c198b1a50683eee7e1b701561761849c74308d683a2f05b8e5085b9b2d4e5b"
+    },
+    {
+      "path": "second/tight-unicode2-bmp-cjk-result.json",
+      "kind": "original-evidence",
+      "bytes": 2163,
+      "sha256": "ff9a01dbb84b2894736a58c2cf977ef72d9037c2ccfb87acb2642816967872b2"
+    },
+    {
+      "path": "first/tight-unicode1-first/bmp-cjk-actual.json",
+      "kind": "original-evidence",
+      "bytes": 181,
+      "sha256": "8e43173e3635de078d90cd480e39337216643579958799be97f5246acb9d8c0b"
+    },
+    {
+      "path": "second/tight-unicode2-bmp-cjk-actual.json",
+      "kind": "original-evidence",
+      "bytes": 181,
+      "sha256": "ebde5a4e173e915cc92e2a0ab9c7a3ca3a2c7360f256376954c3d618f64f2d06"
+    },
+    {
+      "path": "first/tight-unicode1-first/bmp-cjk-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "90d58aea06803c7fe61daf077650810b54ef40853f0a7726efe4fb3ec10ce840"
+    },
+    {
+      "path": "second/tight-unicode2-bmp-cjk-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "c51c10c05274485610099ac7ae86db701a01e23a5ad6cb67190cb7e5c3eff014"
+    },
+    {
+      "path": "first/tight-unicode1-first/bmp-cjk-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "second/tight-unicode2-bmp-cjk-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "first/tight-unicode1-first/nonbmp-emoji-result.json",
+      "kind": "original-evidence",
+      "bytes": 2080,
+      "sha256": "e60e4bc8faa8bf9b73f32b91ce6693e5314f2235d71671fb3d14d0aa7db2249d"
+    },
+    {
+      "path": "second/tight-unicode2-nonbmp-emoji-result.json",
+      "kind": "original-evidence",
+      "bytes": 2080,
+      "sha256": "3d594f6eb3e91e5b5bf1384d7e14cb7df42e0ec2c35a540836c115b543cd2c58"
+    },
+    {
+      "path": "first/tight-unicode1-first/nonbmp-emoji-actual.json",
+      "kind": "original-evidence",
+      "bytes": 169,
+      "sha256": "edd12757ee99dafaa7da2cb6960d08db84cc2c8fad1c7b2fc486354702a30360"
+    },
+    {
+      "path": "second/tight-unicode2-nonbmp-emoji-actual.json",
+      "kind": "original-evidence",
+      "bytes": 169,
+      "sha256": "5fa2fb5d03bc9433af34f950fe716c4d9aa5baa0b4c7223fa97392294c0cab7b"
+    },
+    {
+      "path": "first/tight-unicode1-first/nonbmp-emoji-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "547e6f2dd96dd9b6ef26b72ebee8d79cd0b65c81c12c970c408af5b81ada60da"
+    },
+    {
+      "path": "second/tight-unicode2-nonbmp-emoji-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "3aff1128ecf60a832a86f13083a782b53fea96c4b75e542eb890b1b15d634024"
+    },
+    {
+      "path": "first/tight-unicode1-first/nonbmp-emoji-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "second/tight-unicode2-nonbmp-emoji-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "first/tight-unicode1-first/combining-result.json",
+      "kind": "original-evidence",
+      "bytes": 2159,
+      "sha256": "e15fc5e53c2505501e46ba06e69fe1e976e13b15f3a428cf52393f30bbdc9cf1"
+    },
+    {
+      "path": "second/tight-unicode2-combining-result.json",
+      "kind": "original-evidence",
+      "bytes": 2165,
+      "sha256": "7ede5ece3b39d4d2f56c90f86eb638c365b9823dd9668c771b3a77cadd5fc229"
+    },
+    {
+      "path": "first/tight-unicode1-first/combining-actual.json",
+      "kind": "original-evidence",
+      "bytes": 178,
+      "sha256": "2c90fceb815804f2e734ae233228a66fd1606600e7ae0c1f1ea0f5baec922230"
+    },
+    {
+      "path": "second/tight-unicode2-combining-actual.json",
+      "kind": "original-evidence",
+      "bytes": 179,
+      "sha256": "3b607bc595c9dc3c4220eb09bedadfef926224e3c4d9c5beb48018981ecd835d"
+    },
+    {
+      "path": "first/tight-unicode1-first/combining-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "ed380894b7cabc1ac86a716e16e91ac865ae8b004a610471b4fb1b090f150849"
+    },
+    {
+      "path": "second/tight-unicode2-combining-driver.stdout.txt",
+      "kind": "original-evidence",
+      "bytes": 13,
+      "sha256": "547e6f2dd96dd9b6ef26b72ebee8d79cd0b65c81c12c970c408af5b81ada60da"
+    },
+    {
+      "path": "first/tight-unicode1-first/combining-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "second/tight-unicode2-combining-driver.stderr.txt",
+      "kind": "original-evidence",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "first/tight-unicode1-preflight.json",
+      "kind": "original-evidence",
+      "bytes": 4002,
+      "sha256": "2d5684e57d122d98d108723cba20dff796fdda7c3cdc07c8a2ecf0bfc3754075"
+    },
+    {
+      "path": "first/tight-unicode1-ownership.json",
+      "kind": "original-evidence",
+      "bytes": 4842,
+      "sha256": "4f3aecae6e121b5a045cb03e445df9ac27973245de0b2bbd79c820b4d1fe477a"
+    },
+    {
+      "path": "second/tight-unicode2-result.json",
+      "kind": "original-evidence",
+      "bytes": 24727,
+      "sha256": "3112c32a799905cf4b8c0538f0cd3f0b194dd5a99c4b597c3fe13d4b5b28b5ea"
+    },
+    {
+      "path": "second/tight-unicode2-preflight.json",
+      "kind": "original-evidence",
+      "bytes": 4002,
+      "sha256": "880abe389ce23e58959e4cbb8527d2fde05f8d603dacda628cbbf9dc7b2ce29b"
+    },
+    {
+      "path": "second/tight-unicode2-fixture-ownership.json",
+      "kind": "original-evidence",
+      "bytes": 4844,
+      "sha256": "5c571590efee28f837873f2516619a49b83005fec25168d715851a4417060283"
+    },
+    {
+      "path": "recovery/tight-recovery1-failed-utf8.json",
+      "kind": "original-evidence",
+      "bytes": 5237,
+      "sha256": "30d64fdeccbc336f67c75d79e392ffb397ffd8d9041228be680858f42300012d"
+    },
+    {
+      "path": "recovery/tight-recovery2.json",
+      "kind": "original-evidence",
+      "bytes": 18356,
+      "sha256": "1865e9c282fc29fdc764bcb348195cba05f3ff27dc3df07464fc6232b46fd731"
+    },
+    {
+      "path": "source/windows-vm-tight-unicode.ps1",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 25069,
+      "sha256": "1d70f4121e8b6ec9bb27dc2e31a41f28db352c04185eede5c009ded3f5cb39e4"
+    },
+    {
+      "path": "source/windows-vm-tight-unicode-recover.ps1",
+      "kind": "current-frozen-source-snapshot",
+      "bytes": 12207,
+      "sha256": "138f148accfe0aab1b88f66c6ff203facfe8378eefe94b1db6851da62d2de51f"
+    }
+  ]
+}

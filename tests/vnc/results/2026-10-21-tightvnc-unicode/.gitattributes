@@ -1,0 +1,3 @@
+# Preserve native evidence bytes for the SHA-256 provenance manifests.
+# Captured CRLF and PowerShell indentation are evidence, not formatter input.
+* -text -whitespace

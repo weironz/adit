@@ -1,0 +1,5 @@
+KEY 38 1 0
+WAIT 120
+WAIT 600
+WAIT 1200
+ACK witness-right-alt-up

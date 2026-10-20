@@ -1,0 +1,25 @@
+{
+  "driver": "<PRIVATE_TEST_ROOT>/rdp-probe-control.exe",
+  "driver_pid": 51396,
+  "driver_sha256": "30ea189e762f270129a378fbdb47a4653dc236a95db5557c803e2493e0fe1808",
+  "helper": "<PRIVATE_TEST_ROOT>/rdp-helper-witness-1792524714591.exe",
+  "helper_pid": 25860,
+  "helper_sha256": "7ae9637ea26e09837da78ae45b7f2028cf320c8cb8687537c7362a7c18cd3043",
+  "appdata": "<PRIVATE_TEST_ROOT>/rdp-clear-witness-1792524714588",
+  "driver_exit": 0,
+  "stdout_lines": 39,
+  "stderr_lines": 1,
+  "helper_exit_codes_from_stderr": [
+    1
+  ],
+  "helper_normal_exit_proven": false,
+  "original_private_provenance_sha256": "3f51d3542c665f7153e5d1ca5dd1ebf59976b90f8f703c1ff1800f53172a88c1",
+  "stdout_archived": false,
+  "stderr_archived": false,
+  "private_helper_log_checks": {
+    "log_sha256": "19a9fbac7f23a98a48c791029fe0980bba8b1f8c9156d897c04473d3b4b8b704",
+    "clearcodec_failure_matches": 0,
+    "panic_matches": 0,
+    "raw_log_archived": false
+  }
+}
