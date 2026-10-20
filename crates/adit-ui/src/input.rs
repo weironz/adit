@@ -230,10 +230,11 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
         } => (modified_key, *physical_key, false, modifiers),
         _ => return,
     };
-    // In local mode Windows owns Win+Space/Win+letter. Forwarding just
-    // Super-down while Windows consumes the rest opens the remote Start menu.
+    // Owned Win combinations now come entirely through the hook, before IME.
+    // A window-delivered logo press belongs to the local OS (including a Win
+    // held before this grab). Its leftover character must not leak remotely.
     // Owned releases below must still pass, even while a local shortcut is held.
-    if pressed && !app.vnc_grab_keys
+    if pressed
         && (modifiers.logo() || matches!(physical, keyboard::key::Physical::Code(
             keyboard::key::Code::SuperLeft | keyboard::key::Code::SuperRight))) {
         return;
@@ -389,16 +390,60 @@ mod vnc_input_tests {
 
 /// Merge selectively swallowed system keys before the next ordinary window key.
 pub(crate) fn drain_vnc_system_keys(app: &mut AditApp) {
-    route_vnc_system_keys(
-        app,
-        keyboard_hook::drain()
-            .into_iter()
-            .map(|stroke| VncSystemStroke {
-                scancode: stroke.scancode,
-                extended: stroke.extended,
-                pressed: stroke.pressed,
-            }),
-    );
+    for stroke in keyboard_hook::drain() {
+        if let Some(chord) = stroke.chord {
+            route_vnc_chord(app, chord);
+        } else {
+            route_vnc_system_keys(
+                app,
+                std::iter::once(VncSystemStroke {
+                    scancode: stroke.scancode,
+                    extended: stroke.extended,
+                    pressed: stroke.pressed,
+                }),
+            );
+        }
+    }
+}
+
+fn route_vnc_chord(app: &mut AditApp, stroke: keyboard_hook::vnc_chord::Stroke) {
+    if !app.vnc_grab_keys || !vnc_accepts_text_input(app) {
+        return;
+    }
+    // This identity describes the captured physical press, not a US letter.
+    // A layout change while held must still release the original keysym.
+    let physical = keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Windows(
+        u16::from(stroke.scan) | if stroke.extended { 0xe000 } else { 0 },
+    ));
+    let held = app
+        .vnc_pressed_keys
+        .iter()
+        .position(|(key, _)| *key == physical);
+    let symbol = if let Some(index) = held {
+        let symbol = app.vnc_pressed_keys[index].1;
+        if !stroke.pressed {
+            app.vnc_pressed_keys.remove(index);
+        }
+        symbol
+    } else if !stroke.pressed || stroke.repeat {
+        // Unsupported presses and pre-existing local presses own no remote up.
+        return;
+    } else {
+        match keyboard_hook::vnc_chord::translate(&stroke) {
+            Ok(symbol) => {
+                app.vnc_pressed_keys.push((physical, symbol));
+                symbol
+            }
+            Err(reason) => {
+                app.notice = "VNC：当前布局的此系统组合字符不支持（未映射、死键或多字符），字符未发送；此前发送的 Win 键仍按原顺序释放".into();
+                // One diagnostic per physical press, with no typed text. The
+                // repeat/up branches above cannot flood logs or invent key-ups.
+                eprintln!("VNC system chord translation unavailable: {reason}");
+                return;
+            }
+        }
+    };
+    app.manager.send_vnc_key_to_active(symbol, stroke.pressed);
 }
 
 /// Value-only boundary so routing can be verified without a global OS hook.
@@ -444,3 +489,7 @@ pub(crate) fn route_vnc_system_keys(
         }
     }
 }
+
+#[cfg(all(test, windows))]
+#[path = "vnc_chord_tests.rs"]
+mod vnc_chord_tests;

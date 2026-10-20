@@ -1,0 +1,11 @@
+{
+  ".gitattributes": "8b9c3028d6467ff3be7c793141927841d70f47f52d0590677438f488ca154992",
+  "audit.json": "608cf0608b0c62584444c4fa37b31dfb565f5aa3d9fd6b65545bd5163df98523",
+  "candidate-provenance.json": "f1528ff81d3d0639fcb1a43f97b239efb4cdba82d7b9537dc1426f1b3edf3455",
+  "fixture-build.txt": "eefd0d30c9ec62b7542a3ccaaed377b554bad8df7ca8d5b103f1269ae1544750",
+  "local-ci.txt": "f6a9cd24717c8febfb30345efd5d678b77a8ce56480ae318a140af7733d9a0e2",
+  "native-regressions.txt": "fac1d37d444f76a23d54991f4659f790b5a492adaa3918cceb6f669b4721abc5",
+  "provenance.json": "05f2f8f47c790ea1c3d5cc4329332bea58d40e9084a9f0a8fdb4413df52b3f0b",
+  "README.md": "aaa02daaf7f90e459650d6a8961dbad55c97bcd45bde053f9a017c6ef774cfcf",
+  "targeted-tests.txt": "63c0b55dec4a6c15686c614d197c6b58716127b23efb048feb3df3fd70ce8ffb"
+}

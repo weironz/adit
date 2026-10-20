@@ -35,10 +35,16 @@
 #[path = "keyboard_raw_input.rs"]
 mod raw_input;
 
+// Standalone native probes include this shipping source without a VNC router;
+// non-Windows builds retain only its value types for the shared input boundary.
+#[cfg_attr(any(not(windows), feature = "native-vnc-acceptance"), allow(dead_code))]
+#[path = "keyboard_vnc_chord.rs"]
+pub(crate) mod vnc_chord;
+
 #[cfg(windows)]
 mod imp {
     use super::raw_input::KeyboardRegistrationLease;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
     use std::sync::{Arc, Mutex, OnceLock};
@@ -67,6 +73,8 @@ mod imp {
     thread_local! {
         // An asynchronously retiring hook must never capture for the next tab.
         static WORKER_GENERATION: Cell<u64> = const { Cell::new(0) };
+        static CHORDS: RefCell<super::vnc_chord::Ownership> =
+            RefCell::new(super::vnc_chord::Ownership::new([false; 512], None));
     }
 
     // Synthetic native acceptance only: count delivery without logging keys or
@@ -138,6 +146,9 @@ mod imp {
         pub(crate) scancode: u8,
         pub(crate) extended: bool,
         pub(crate) pressed: bool,
+        // Standalone acceptance probes include the hook without routing VNC.
+        #[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
+        pub(crate) chord: Option<super::vnc_chord::Stroke>,
     }
 
     fn queue() -> &'static (Sender<QueuedStroke>, Mutex<Receiver<QueuedStroke>>) {
@@ -204,6 +215,14 @@ mod imp {
         if foreground.0 as isize != TARGET_WINDOW.load(Ordering::Acquire)
             || process != std::process::id()
         {
+            CHORDS.with(|state| {
+                state.borrow_mut().foreign_event(
+                    info.vkCode as u16,
+                    (info.scanCode & 0xff) as u8,
+                    info.flags.0 & 1 != 0,
+                    matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN),
+                )
+            });
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
@@ -215,18 +234,69 @@ mod imp {
 
         // The way out of fullscreen has to keep working locally.
         const VK_RETURN: u32 = 0x0D;
-        if info.vkCode == VK_RETURN && ctrl_and_alt_down() {
+        let owned_vnc_enter_up = info.vkCode == VK_RETURN
+            && released
+            && VNC.load(Ordering::Relaxed)
+            && CHORDS.with(|state| {
+                state
+                    .borrow()
+                    .member_down((info.scanCode & 0xff) as u8, info.flags.0 & 1 != 0)
+            });
+        // A Ctrl/Alt press after Win+Enter-down must not strand that owned
+        // Enter. Only its key-up bypasses escape handling; new Escape downs
+        // and the RDP contract keep their existing local priority.
+        if info.vkCode == VK_RETURN && ctrl_and_alt_down() && !owned_vnc_enter_up {
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
-        // In VNC mode only system-reserved keys are intercepted. Ordinary
-        // characters must reach the window/IME to preserve the active layout.
+        // Ordinary text keeps its window/IME path. Once we swallow Win, its
+        // chord members cannot use that path: IME no longer sees the logo and
+        // would compose the shortcut letter locally. Capture its layout state
+        // here and translate outside this timed callback instead.
+        let mut chord = None;
         if VNC.load(Ordering::Relaxed) {
-            const VK_TAB: u32 = 0x09;
-            const VK_LWIN: u32 = 0x5b;
-            const VK_RWIN: u32 = 0x5c;
-            if !matches!(info.vkCode, VK_TAB | VK_LWIN | VK_RWIN) {
+            use super::vnc_chord::{Modifiers, Route};
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                GetAsyncKeyState, GetKeyboardLayout,
+            };
+            let scan = (info.scanCode & 0xff) as u8;
+            let extended = info.flags.0 & 1 != 0;
+            let route = CHORDS.with(|state| {
+                state
+                    .borrow_mut()
+                    .event(info.vkCode as u16, scan, extended, pressed)
+            });
+            if route == Route::Local {
                 return CallNextHookEx(None, code, wparam, lparam);
+            }
+            if let Route::Member { repeat } = route {
+                let down = |vk: i32| (GetAsyncKeyState(vk) as u16 & 0x8000) != 0;
+                let modifiers = CHORDS.with(|state| {
+                    let state = state.borrow();
+                    let left_shift = down(0xa0) || state.member_down(0x2a, false);
+                    let right_shift = down(0xa1) || state.member_down(0x36, false);
+                    let left_control = down(0xa2) || state.member_down(0x1d, false);
+                    let right_control = down(0xa3) || state.member_down(0x1d, true);
+                    let left_alt = down(0xa4) || state.member_down(0x38, false);
+                    let right_alt = down(0xa5) || state.member_down(0x38, true);
+                    Modifiers {
+                        shift: left_shift || right_shift,
+                        control: left_control || right_control,
+                        alt: left_alt || right_alt,
+                        right_alt,
+                        caps: state.caps(),
+                    }
+                });
+                let thread = GetWindowThreadProcessId(foreground, None);
+                chord = Some(super::vnc_chord::Stroke {
+                    vk: info.vkCode as u16,
+                    scan,
+                    extended,
+                    pressed,
+                    repeat,
+                    layout: GetKeyboardLayout(thread).0 as isize,
+                    modifiers,
+                });
             }
             #[cfg(feature = "native-vnc-acceptance")]
             COUNTERS[3].fetch_add(1, Ordering::Relaxed);
@@ -236,10 +306,12 @@ mod imp {
             scancode: (info.scanCode & 0xFF) as u8,
             extended: info.flags.0 & LLKHF_EXTENDED != 0,
             pressed,
+            chord,
         };
         // A failed send means the receiver is gone, i.e. we are shutting down;
         // passing the key on is the right thing then.
         if queue().0.send((generation, stroke)).is_err() {
+            CHORDS.with(|state| state.borrow_mut().clear());
             return CallNextHookEx(None, code, wparam, lparam);
         }
         #[cfg(feature = "native-vnc-acceptance")]
@@ -312,6 +384,32 @@ mod imp {
         // stall can silently remove it after LowLevelHooksTimeout; even pumping
         // the UI afterwards cannot recover that handle. Keep its pump isolated.
         let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        let (preheld, caps) = unsafe {
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW,
+                MAPVK_VK_TO_VSC_EX,
+            };
+            let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
+            let layout = GetKeyboardLayout(thread);
+            let caps = (thread == windows::Win32::System::Threading::GetCurrentThreadId())
+                .then(|| GetKeyState(0x14) & 1 != 0);
+            let mut down = [false; 512];
+            for vk in 1..255 {
+                // Generic modifier VKs map to the left scan even if only the
+                // right physical key is held. Seed only their explicit halves.
+                if matches!(vk, 0x10..=0x12) {
+                    continue;
+                }
+                if GetAsyncKeyState(vk) as u16 & 0x8000 == 0 {
+                    continue;
+                }
+                let scan = MapVirtualKeyExW(vk as u32, MAPVK_VK_TO_VSC_EX, Some(layout));
+                if scan != 0 {
+                    down[(scan & 0xff) as usize + if scan & 0xff00 != 0 { 256 } else { 0 }] = true;
+                }
+            }
+            (down, caps)
+        };
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
         let alive = Arc::new(AtomicBool::new(false));
@@ -322,6 +420,9 @@ mod imp {
             .name("adit-keyboard-hook".into())
             .spawn(move || {
                 WORKER_GENERATION.with(|value| value.set(generation));
+                CHORDS.with(|state| {
+                    *state.borrow_mut() = super::vnc_chord::Ownership::new(preheld, caps)
+                });
                 #[cfg(feature = "native-vnc-acceptance")]
                 {
                     PUMP_TURNS.store(0, Ordering::Relaxed);
@@ -485,6 +586,8 @@ mod imp {
         pub(crate) scancode: u8,
         pub(crate) extended: bool,
         pub(crate) pressed: bool,
+        #[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
+        pub(crate) chord: Option<super::vnc_chord::Stroke>,
     }
 
     pub(crate) fn arm() -> bool {
