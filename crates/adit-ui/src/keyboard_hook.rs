@@ -72,9 +72,9 @@ mod imp {
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
-        GetWindowThreadProcessId, KillTimer, PeekMessageW, PostThreadMessageW, SetTimer,
-        SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
-        PM_NOREMOVE, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_NULL, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        GetWindowThreadProcessId, KBDLLHOOKSTRUCT, KillTimer, MSG, PM_NOREMOVE, PeekMessageW,
+        PostThreadMessageW, SetTimer, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
+        WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_NULL, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     /// Whether the hook should currently swallow and forward. Read on the hook
@@ -312,15 +312,12 @@ mod imp {
                     let index = usize::from(scan) + if extended { 256 } else { 0 };
                     let fence = WINDOW_MODIFIERS.with(|state| {
                         let mut state = state.borrow_mut();
-                        if pressed && !was_down {
-                            state[index] = true;
-                            true
-                        } else if released && state[index] {
-                            state[index] = false;
-                            true
-                        } else {
-                            false
-                        }
+                        super::vnc_order::record_window_modifier(
+                            info.vkCode,
+                            pressed,
+                            was_down,
+                            &mut state[index],
+                        )
                     });
                     if fence {
                         let _ = queue().0.send((
@@ -452,8 +449,8 @@ mod imp {
         let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let (preheld, caps, layout) = unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{
-                GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW,
-                MAPVK_VK_TO_VSC_EX,
+                GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MAPVK_VK_TO_VSC_EX,
+                MapVirtualKeyExW,
             };
             let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
             let layout = GetKeyboardLayout(thread);
@@ -645,6 +642,43 @@ mod imp {
         receive_current(&mut rx);
         rx.ordered.drain(acknowledged, std::time::Instant::now())
     }
+
+    #[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
+    pub(crate) fn owns_vnc_window_modifier(edge: ModifierEdge) -> bool {
+        inspect_current_vnc_queue(|queue| queue.is_waiting_for(edge)).unwrap_or(false)
+    }
+
+    #[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
+    pub(crate) fn filtered_vnc_control_before_alt(alt: ModifierEdge) -> Option<ModifierEdge> {
+        inspect_current_vnc_queue(|queue| queue.filtered_control_before_alt(alt)).flatten()
+    }
+
+    fn inspect_current_vnc_queue<T>(inspect: impl FnOnce(&OrderedQueue<Stroke>) -> T) -> Option<T> {
+        let generation = GENERATION.load(Ordering::Acquire);
+        if !ARMED.load(Ordering::Acquire) || !VNC.load(Ordering::Acquire) {
+            return None;
+        }
+        let Ok(mut rx) = queue().1.lock() else {
+            return None;
+        };
+        receive_current(&mut rx);
+        // The LL callback sends a real edge before CallNextHookEx permits its
+        // window delivery. The UI has already drained up to this fence, so its
+        // exact head is authorization, without waiting or a timing heuristic.
+        // Auxiliary AltGr Ctrl has no fence even when winit leaks a Ctrl event.
+        let foreground = unsafe { GetForegroundWindow() };
+        let mut process = 0;
+        unsafe {
+            GetWindowThreadProcessId(foreground, Some(&mut process));
+        }
+        let current = rx.generation == generation
+            && GENERATION.load(Ordering::Acquire) == generation
+            && ARMED.load(Ordering::Acquire)
+            && VNC.load(Ordering::Acquire)
+            && foreground.0 as isize == TARGET_WINDOW.load(Ordering::Acquire)
+            && process == std::process::id();
+        current.then(|| inspect(&rx.ordered))
+    }
 }
 
 #[cfg(not(windows))]
@@ -697,6 +731,14 @@ mod imp {
     pub(crate) fn drain_vnc(_: Option<super::vnc_order::ModifierEdge>) -> (Vec<Stroke>, bool) {
         (Vec::new(), false)
     }
+    pub(crate) fn owns_vnc_window_modifier(_: super::vnc_order::ModifierEdge) -> bool {
+        false
+    }
+    pub(crate) fn filtered_vnc_control_before_alt(
+        _: super::vnc_order::ModifierEdge,
+    ) -> Option<super::vnc_order::ModifierEdge> {
+        None
+    }
 }
 
 // `Stroke` stays inside the module: callers read its fields off whatever
@@ -707,6 +749,10 @@ pub(crate) use imp::arm_observer;
 pub(crate) use imp::diagnostics;
 #[cfg_attr(feature = "native-vnc-acceptance", allow(unused_imports))]
 pub(crate) use imp::drain_vnc;
+#[cfg_attr(feature = "native-vnc-acceptance", allow(unused_imports))]
+pub(crate) use imp::filtered_vnc_control_before_alt;
+#[cfg_attr(feature = "native-vnc-acceptance", allow(unused_imports))]
+pub(crate) use imp::owns_vnc_window_modifier;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::worker_health;
 #[cfg(feature = "native-vnc-acceptance")]
@@ -720,9 +766,9 @@ mod native_tests {
     use super::*;
     use std::time::{Duration, Instant};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_F24,
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_F24,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE};
+    use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW};
 
     #[test]
     #[ignore = "changes only this test process's raw keyboard registration"]

@@ -15,6 +15,8 @@ struct State {
     hook_health: Option<(u32, u32)>,
     ime_snapshot: Option<serde_json::Value>,
     auto: Option<HookAutotest>,
+    ui_stall_enabled: bool,
+    ui_stalls: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -109,10 +111,11 @@ fn auto_after_toggle(state: &mut State) {
                         .iter()
                         .all(|device| !(device["page"] == 1 && device["usage"] == 6)))
             );
-            current["other_devices_unchanged"] =
-                serde_json::json!(raw_without_keyboard(&current["baseline_raw"])
+            current["other_devices_unchanged"] = serde_json::json!(
+                raw_without_keyboard(&current["baseline_raw"])
                     .zip(raw_without_keyboard(&raw))
-                    .is_some_and(|(before, after)| before == after));
+                    .is_some_and(|(before, after)| before == after)
+            );
             auto.phase = AutoPhase::Observe;
             auto.phase_started = Instant::now();
         }
@@ -300,6 +303,7 @@ enum NativeMessage {
     AutoSaved(Result<(), String>),
     ImeTick,
     NativeIme(serde_json::Value),
+    StallUi,
 }
 
 fn native_ime(window: window::Id) -> Task<NativeMessage> {
@@ -373,15 +377,55 @@ fn native_dpi(_window: window::Id) -> Task<NativeMessage> {
 }
 
 fn log(state: &State, mut event: serde_json::Value) {
-    event["unix_ms"] = serde_json::json!(std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis());
+    event["unix_ms"] = serde_json::json!(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
     let _ = state.events.send(event.to_string());
+}
+
+fn stall_ui(state: &mut State, trigger: &'static str) -> Task<NativeMessage> {
+    if !state.ui_stall_enabled {
+        return Task::none();
+    }
+    state.ui_stalls += 1;
+    let sequence = state.ui_stalls;
+    #[cfg(windows)]
+    let threads = unsafe {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId,
+        };
+        let dispatcher = GetCurrentThreadId();
+        let foreground = GetWindowThreadProcessId(GetForegroundWindow(), None);
+        serde_json::json!({"dispatcher":dispatcher,"foreground":foreground,"same":dispatcher == foreground})
+    };
+    #[cfg(not(windows))]
+    let threads = serde_json::json!({"same":false});
+    log(
+        state,
+        serde_json::json!({"event":"ui_stall_start","sequence":sequence,"trigger":trigger,
+        "duration_ms":1500,"threads":threads,"grab":state.app.vnc_grab_keys,
+        "input_epoch":state.app.vnc_input_epoch,"focus":auto_focus()}),
+    );
+    let started = Instant::now();
+    // Explicit fixture-only fault injection. The independently pumping hook
+    // stays live while the native UI thread accumulates real WM backlog.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    log(
+        state,
+        serde_json::json!({"event":"ui_stall_end","sequence":sequence,
+        "elapsed_ms":started.elapsed().as_millis(),"grab":state.app.vnc_grab_keys,
+        "input_epoch":state.app.vnc_input_epoch,"focus":auto_focus()}),
+    );
+    Task::none()
 }
 
 fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessage> {
     match message {
+        NativeMessage::StallUi => stall_ui(state, "button"),
         NativeMessage::ImeTick => window::latest().and_then(native_ime),
         NativeMessage::NativeIme(mut snapshot) => {
             snapshot["grab"] = serde_json::json!(state.app.vnc_grab_keys);
@@ -441,6 +485,34 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             task
         }
         NativeMessage::App(mut message) => {
+            if state.ui_stall_enabled {
+                let stall_key = match &message {
+                    Message::KeyboardInput(keyboard::Event::KeyPressed {
+                        physical_key,
+                        repeat,
+                        ..
+                    }) if *physical_key
+                        == keyboard::key::Physical::Code(keyboard::key::Code::F8) =>
+                    {
+                        Some(!*repeat)
+                    }
+                    Message::KeyboardInput(keyboard::Event::KeyReleased {
+                        physical_key, ..
+                    }) if *physical_key
+                        == keyboard::key::Physical::Code(keyboard::key::Code::F8) =>
+                    {
+                        Some(false)
+                    }
+                    _ => None,
+                };
+                if let Some(trigger) = stall_key {
+                    return if trigger {
+                        stall_ui(state, "F8")
+                    } else {
+                        Task::none()
+                    };
+                }
+            }
             let toggling_grab = matches!(message, Message::ToggleVncGrab);
             #[cfg(windows)]
             if matches!(message, Message::ToggleVncGrab) {
@@ -642,16 +714,18 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
 }
 
 fn view_native(state: &State) -> Element<'_, NativeMessage> {
-    let controls = row![
+    let mut controls = row![
         button("100%").on_press(NativeMessage::Scale(1.0)),
         button("150%").on_press(NativeMessage::Scale(1.5)),
         button("200%").on_press(NativeMessage::Scale(2.0)),
         button("Fit").on_press(NativeMessage::Fit(true)),
         button("1:1").on_press(NativeMessage::Fit(false)),
         button("Remote resize").on_press(NativeMessage::RemoteResize),
-    ]
-    .spacing(5)
-    .align_y(Alignment::Center);
+    ];
+    if state.ui_stall_enabled {
+        controls = controls.push(button("UI backlog 1.5s (F8)").on_press(NativeMessage::StallUi));
+    }
+    let controls = controls.spacing(5).align_y(Alignment::Center);
     stack(vec![
         view(&state.app).map(NativeMessage::App),
         iced::widget::column![Space::new().height(Fill), container(
@@ -762,6 +836,8 @@ pub fn run() -> iced::Result {
                 hook_health: None,
                 ime_snapshot: None,
                 auto: auto.clone(),
+                ui_stall_enabled: std::env::var("ADIT_NATIVE_UI_STALL").as_deref() == Ok("1"),
+                ui_stalls: 0,
             },
             Task::batch([
                 window::latest().and_then(native_dpi),

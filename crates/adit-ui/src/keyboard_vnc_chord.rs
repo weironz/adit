@@ -39,6 +39,7 @@ pub(crate) struct Ownership {
     down: [bool; 512],
     members: [bool; 512],
     wins: u8,
+    controls: u8,
     tab: bool,
     caps: Option<bool>,
 }
@@ -49,6 +50,7 @@ impl Ownership {
             down,
             members: [false; 512],
             wins: 0,
+            controls: 0,
             tab: false,
             caps,
         }
@@ -57,6 +59,7 @@ impl Ownership {
     pub fn clear(&mut self) {
         self.members.fill(false);
         self.wins = 0;
+        self.controls = 0;
         self.tab = false;
         // Existing presses now belong to another local input lease. Preserve
         // `down` so coming back during an auto-repeat cannot adopt them.
@@ -83,6 +86,11 @@ impl Ownership {
         self.down[usize::from(scan) + if extended { 256 } else { 0 }]
     }
 
+    fn local_win_down(&self) -> bool {
+        [(0x5b, 1), (0x5c, 2)].into_iter().any(|(scan, mask)|
+            (self.down[scan] || self.down[scan + 256]) && self.wins & mask == 0)
+    }
+
     pub fn event(&mut self, vk: u16, scan: u8, extended: bool, pressed: bool) -> Route {
         let index = usize::from(scan) + if extended { 256 } else { 0 };
         let was_down = self.down[index];
@@ -99,6 +107,19 @@ impl Ownership {
         {
             // Also retain the escape in this value policy; Ctrl/Alt were
             // deliberately left visible to the normal window dispatcher.
+            return Route::Local;
+        }
+        let control = match vk {
+            0xa3 => 2,
+            0x11 if extended => 2,
+            0x11 | 0xa2 => 1,
+            _ => 0,
+        };
+        if control != 0 {
+            if pressed && !was_down && !self.local_win_down() { self.controls |= control; }
+            if !pressed { self.controls &= !control; }
+            // Ctrl still takes the window modifier/fence path. Only its new
+            // capture-lease presses can make a subsequent Esc a remote chord.
             return Route::Local;
         }
         let win = match vk {
@@ -138,6 +159,13 @@ impl Ownership {
             return Route::Member {
                 repeat: pressed && was_down,
             };
+        }
+        if vk == 0x1b && pressed && !was_down && self.controls != 0 && !self.local_win_down() {
+            // Ctrl+Esc opens the local Start menu before ordinary window
+            // input can forward it. Own Esc only; the existing Ctrl fence
+            // keeps Ctrl-down ahead of this captured Esc on the wire.
+            self.members[index] = true;
+            return Route::Member { repeat: false };
         }
         if pressed && !was_down && self.wins != 0 && eligible(vk) {
             self.members[index] = true;
@@ -435,5 +463,87 @@ mod tests {
             assert_eq!(keys.event(0x0d, 0x1c, extended, false), Route::Local);
             assert_eq!(keys.event(0x0d, 0x1c, extended, true), Route::Local);
         }
+    }
+
+    #[test]
+    fn ctrl_escape_keeps_control_local_and_owns_escape_through_repeat_and_release() {
+        for (vk, extended) in [(0xa2, false), (0xa3, true)] {
+            let mut keys = Ownership::new([false; 512], Some(false));
+            assert_eq!(keys.event(vk, 0x1d, extended, true), Route::Local);
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: true });
+            assert_eq!(keys.event(vk, 0x1d, extended, false), Route::Local);
+            // Releasing Ctrl first must not strand an already captured Esc.
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: true });
+            assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Member { repeat: false });
+            assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Local);
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+        }
+    }
+
+    #[test]
+    fn ctrl_escape_cannot_overtake_its_real_control_window_edge() {
+        use super::super::vnc_order::{Entry, ModifierEdge, OrderedQueue};
+        let mut keys = Ownership::new([false; 512], Some(false));
+        let mut queue = OrderedQueue::default();
+        let ctrl = ModifierEdge { scan: 0x1d, extended: false, pressed: true };
+        assert_eq!(keys.event(0xa2, 0x1d, false, true), Route::Local);
+        queue.push(Entry::WindowModifier(ctrl));
+        assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+        queue.push(Entry::Key("Esc down"));
+        assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Member { repeat: false });
+        queue.push(Entry::Key("Esc up"));
+        let now = std::time::Instant::now();
+        assert_eq!(queue.drain(None, now), (vec![], false));
+        assert_eq!(queue.drain(Some(ctrl), now), (vec!["Esc down", "Esc up"], false));
+    }
+
+    #[test]
+    fn ctrl_escape_does_not_adopt_preheld_keys_or_retired_capture_ownership() {
+        for extended in [false, true] {
+            let vk = if extended { 0xa3 } else { 0xa2 };
+            let mut preheld = [false; 512];
+            preheld[0x1d + if extended { 256 } else { 0 }] = true;
+            let mut keys = Ownership::new(preheld, Some(false));
+            assert_eq!(keys.event(vk, 0x1d, extended, true), Route::Local);
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+            keys.event(0x1b, 0x01, false, false);
+            keys.event(vk, 0x1d, extended, false);
+            keys.event(vk, 0x1d, extended, true);
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+            keys.clear();
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+            assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Local);
+            // Ctrl still physically down after clear is not a fresh lease press.
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+        }
+        let mut preheld = [false; 512];
+        preheld[0x01] = true;
+        let mut keys = Ownership::new(preheld, Some(false));
+        keys.event(0xa2, 0x1d, false, true);
+        assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+        assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Local);
+    }
+
+    #[test]
+    fn ctrl_escape_respects_local_preheld_win_and_preserves_ctrl_alt_enter_escape() {
+        for win in [0x5b, 0x5c] {
+            let mut preheld = [false; 512];
+            preheld[win + 256] = true;
+            let mut keys = Ownership::new(preheld, Some(false));
+            keys.event(0xa2, 0x1d, false, true);
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+            keys.event(0x1b, 0x01, false, false);
+            keys.event(win as u16, win as u8, true, false);
+            // That Ctrl-down was local under Win; Win-up cannot adopt it later.
+            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
+        }
+        let mut keys = Ownership::new([false; 512], Some(false));
+        keys.event(0xa2, 0x1d, false, true);
+        assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+        keys.event(0xa4, 0x38, false, true);
+        assert_eq!(keys.event(0x0d, 0x1c, false, true), Route::Local);
+        assert_eq!(keys.event(0x0d, 0x1c, false, false), Route::Local);
+        assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Member { repeat: false });
     }
 }

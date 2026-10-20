@@ -18,12 +18,14 @@ $driverPath=Join-Path $payload 'vnc_fixture_driver.exe'
 $record=[ordered]@{outcome='failed';scope='TightVNC application mode to native Windows TextBox via production TEXT; no IME acceptance';clipboard_send_used=$false;registry_owner_token=$token;started_utc=[DateTime]::UtcNow.ToString('o');cases=@();cleanup_verified=$false}
 $server=$null;$target=$null;$driver=$null;$registryOwned=$false;$parentExisted=$true
 $cu=$null;$lm=$null;$key=$null;$baseline=$null
+$controllerIdentity=$null
 $owned=New-Object 'System.Collections.Generic.List[object]'
 
 Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class AditTightNative {
+ public static void AtomicReplace(string source,string destination){System.IO.File.Replace(source,destination,null);}
  [StructLayout(LayoutKind.Sequential)] public struct RECT {public int l,t,r,b;}
  [StructLayout(LayoutKind.Sequential)] public struct GUI {public uint cbSize,flags;public IntPtr active,focus,capture,menu,movesize,caret;public RECT rc;}
  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
@@ -34,7 +36,27 @@ public static class AditTightNative {
  [DllImport("advapi32.dll",CharSet=CharSet.Unicode)] public static extern int RegQueryInfoKey(Microsoft.Win32.SafeHandles.SafeRegistryHandle h,IntPtr cls,IntPtr clsLen,IntPtr reserved,out uint sub,out uint maxSub,out uint maxClass,out uint values,out uint maxName,out uint maxData,out uint security,out long lastWrite);
 }
 '@
-function Save-Json($Path,$Value){[IO.File]::WriteAllText($Path,($Value|ConvertTo-Json -Depth 14),$utf8)}
+function Save-Json($Path,$Value){
+    $absolute=[IO.Path]::GetFullPath($Path)
+    if(-not $absolute.StartsWith($result+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){throw 'Evidence path escaped owned result directory'}
+    $temporary=$absolute+'.'+[guid]::NewGuid().ToString('N')+'.tmp'
+    try{
+        [IO.File]::WriteAllText($temporary,($Value|ConvertTo-Json -Depth 14),$utf8)
+        for($attempt=0;$attempt -lt 20;$attempt++){
+            try{if([IO.File]::Exists($absolute)){[AditTightNative]::AtomicReplace($temporary,$absolute)}else{[IO.File]::Move($temporary,$absolute)};return}
+            catch [IO.IOException]{if($attempt -eq 19){throw};Start-Sleep -Milliseconds 50}
+        }
+    }finally{if([IO.File]::Exists($temporary)){[IO.File]::Delete($temporary)}}
+}
+function Save-Ownership {
+    Save-Json (Join-Path $result 'fixture-ownership.json') ([ordered]@{
+        schema=2;registry_owner_token=$token;registry_owned=$registryOwned;parent_existed=$parentExisted
+        user_sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        session_id=[Diagnostics.Process]::GetCurrentProcess().SessionId;started_utc=$record.started_utc
+        payload=$payload;result=$result;controller=$controllerIdentity;server=$record.server_identity
+        owned_processes=$owned.ToArray()
+    })
+}
 function App-MutexExists {
     try{$m=[Threading.Mutex]::OpenExisting('Local\tvnserverApplication');$m.Dispose();return $true}
     catch [Threading.WaitHandleCannotBeOpenedException]{return $false}
@@ -46,6 +68,7 @@ function Process-Identity([int]$IdValue){
 function Track-Process($Process){
     $identity=Process-Identity $Process.Id
     [void]$owned.Add($identity)
+    Save-Ownership
     return $identity
 }
 function Track-ServerChildren {
@@ -53,10 +76,10 @@ function Track-ServerChildren {
     # The private payload path alone is insufficient ownership: require an
     # actual parent chain from the new root, then capture exact creation time.
     for($round=0;$round -lt 3;$round++){
-        $ids=@($owned|Where-Object {$_.path -eq $serverPath}|ForEach-Object {$_.id})
+        $ids=@($owned.ToArray()|Where-Object {$_.path -eq $serverPath}|ForEach-Object {$_.id})
         foreach($candidate in @(Get-CimInstance Win32_Process -Filter "Name='tvnserver.exe'")){
-            if($candidate.ParentProcessId -in $ids -and $candidate.ExecutablePath -eq $serverPath -and $candidate.ProcessId -notin @($owned.id)){
-                try{[void]$owned.Add((Process-Identity ([int]$candidate.ProcessId)))}catch{if(Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue){throw}}
+            if($candidate.ParentProcessId -in $ids -and $candidate.ExecutablePath -eq $serverPath -and $candidate.ProcessId -notin @($owned.ToArray().id)){
+                try{[void]$owned.Add((Process-Identity ([int]$candidate.ProcessId)));Save-Ownership}catch{if(Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue){throw}}
             }
         }
     }
@@ -109,9 +132,10 @@ function Scalars([string]$Text){
         if([char]::IsHighSurrogate($Text[$i]) -and $i+1 -lt $Text.Length -and [char]::IsLowSurrogate($Text[$i+1])){$v=[char]::ConvertToUtf32($Text,$i);$i++}else{$v=[int]$Text[$i]}
         [void]$values.Add(('U+{0:X4}' -f $v))
     }
-    return ,@($values)
+    return ,($values.ToArray())
 }
 try{
+    $controllerIdentity=Process-Identity $PID
     $record.os=Get-CimInstance Win32_OperatingSystem|Select-Object Caption,Version,BuildNumber,OSArchitecture
     if(-not (Test-Path -LiteralPath $serverPath) -or -not (Test-Path -LiteralPath $driverPath)){throw 'Copied signed tvnserver.exe and production driver are required in owned payload'}
     $record.server_sha256=(Get-FileHash -LiteralPath $serverPath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -139,6 +163,7 @@ try{
     if($rc -ne 0 -or $disposition -ne 1){throw 'Registry key was not newly created; no values written'}
     $key=$cu.OpenSubKey('Software\TightVNC\Server',$true)
     $key.SetValue('AditAcceptanceOwner',$token,[Microsoft.Win32.RegistryValueKind]::String);$registryOwned=$true
+    Save-Ownership
     $settings=@{RfbPort=15911;AcceptRfbConnections=1;UseVncAuthentication=1;LoopbackOnly=1;AllowLoopback=1;AcceptHttpConnections=0;EnableFileTransfers=0;UseD3D=0;UseMirrorDriver=0;RemoveWallpaper=0;BlockRemoteInput=0;BlockLocalInput=0;LocalInputPriority=0;AlwaysShared=1;NeverShared=0;DisconnectClients=0;DisconnectAction=0;RunControlInterface=0;LogLevel=0}
     foreach($name in $settings.Keys){$key.SetValue($name,[int]$settings[$name],[Microsoft.Win32.RegistryValueKind]::DWord)}
     # VncPassCrypt's fixed storage key and reversed DES bit order are verified
@@ -154,7 +179,7 @@ try{
     $key.Dispose();$key=$null
     $server=Start-Process -FilePath $serverPath -ArgumentList '-run' -WorkingDirectory $payload -WindowStyle Hidden -PassThru
     $record.server_identity=Track-Process $server
-    Save-Json (Join-Path $result 'fixture-ownership.json') ([ordered]@{registry_owner_token=$token;server=$record.server_identity;payload=$payload})
+    Save-Ownership
     $deadline=[DateTime]::UtcNow.AddSeconds(20)
     do{
         Track-ServerChildren
@@ -163,8 +188,8 @@ try{
         if($server.HasExited -or [DateTime]::UtcNow -ge $deadline){throw 'TightVNC app listener readiness failed'}
         Start-Sleep -Milliseconds 100
     }while($true)
-    $record.fixture_tcp=@(Get-NetTCPConnection -State Listen|Where-Object {$_.OwningProcess -in @($owned.id)}|Select-Object LocalAddress,LocalPort,OwningProcess)
-    $record.fixture_udp=@(Get-NetUDPEndpoint -ErrorAction SilentlyContinue|Where-Object {$_.OwningProcess -in @($owned.id)}|Select-Object LocalAddress,LocalPort,OwningProcess)
+    $record.fixture_tcp=@(Get-NetTCPConnection -State Listen|Where-Object {$_.OwningProcess -in @($owned.ToArray().id)}|Select-Object LocalAddress,LocalPort,OwningProcess)
+    $record.fixture_udp=@(Get-NetUDPEndpoint -ErrorAction SilentlyContinue|Where-Object {$_.OwningProcess -in @($owned.ToArray().id)}|Select-Object LocalAddress,LocalPort,OwningProcess)
     if(@($record.fixture_tcp|Where-Object {$_.LocalAddress -ne '127.0.0.1' -or $_.LocalPort -ne 15911 -or $_.OwningProcess -ne $server.Id}).Count -or $record.fixture_tcp.Count -ne 1 -or $record.fixture_udp.Count){throw 'Owned server has unexpected non-loopback/extra listeners'}
     $targetPath=Join-Path $result 'synthetic-tight-text.exe'
     Add-Type -ReferencedAssemblies System.dll,System.Core.dll,System.Windows.Forms.dll,System.Drawing.dll,System.Web.Extensions.dll -OutputAssembly $targetPath -OutputType WindowsApplication -TypeDefinition @'
@@ -236,7 +261,7 @@ finally{
     $cleanupErrors=New-Object 'System.Collections.Generic.List[string]'
     if($key){$key.Dispose()}
     try{Track-ServerChildren}catch{[void]$cleanupErrors.Add($_.Exception.Message)}
-    foreach($identity in @($owned|Sort-Object start_ticks -Descending)){
+    foreach($identity in @($owned.ToArray()|Sort-Object start_ticks -Descending)){
         try{Stop-Owned $identity}catch{[void]$cleanupErrors.Add($_.Exception.Message)}
     }
     if($registryOwned){
@@ -264,12 +289,13 @@ finally{
             if($record.remaining_fixture_tcp -or $record.remaining_fixture_udp){throw 'Fixture port remains'}
         }catch{[void]$cleanupErrors.Add($_.Exception.Message)}
     }
-    $record.owned_processes=@($owned)
-    $record.cleanup_errors=@($cleanupErrors)
+    $record.owned_processes=$owned.ToArray()
+    $record.cleanup_errors=$cleanupErrors.ToArray()
     $record.cleanup_verified=($registryOwned -and $record.owned_registry_removed -and $record.original_state_unchanged -and $cleanupErrors.Count -eq 0)
     if(-not $record.cleanup_verified){$record.outcome='failed'}
     if($cu){$cu.Dispose()};if($lm){$lm.Dispose()}
     $record.finished_utc=[DateTime]::UtcNow.ToString('o')
+    if($registryOwned){Save-Ownership}
     Save-Json (Join-Path $result 'result.json') $record
 }
 if($record.outcome -ne 'passed'){exit 1}

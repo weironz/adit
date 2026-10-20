@@ -10,7 +10,14 @@ use super::*;
 /// Encode a mouse event as an xterm report. `button`: 0=left, 1=middle,
 /// 2=right, 3=none/release, 64=wheel-up, 65=wheel-down. `col`/`row` are 0-based
 /// cells; `press` is the button-down (or wheel) edge; `motion` marks a drag.
-pub(super) fn encode_mouse_event(sgr: bool, button: u8, col: usize, row: usize, press: bool, motion: bool) -> Vec<u8> {
+pub(super) fn encode_mouse_event(
+    sgr: bool,
+    button: u8,
+    col: usize,
+    row: usize,
+    press: bool,
+    motion: bool,
+) -> Vec<u8> {
     let mut cb = u32::from(button);
     if motion {
         cb += 32;
@@ -179,7 +186,10 @@ pub(super) fn encode_rdp_scancode(event: &keyboard::Event) -> Option<(u8, bool, 
 /// to the runtime. Keep this VNC-only so the existing RDP focus contract stays intact.
 pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
     app.manager.active_is_vnc()
-        && app.manager.active_session_summary().is_some_and(|s| s.status == SessionStatus::Connected)
+        && app
+            .manager
+            .active_session_summary()
+            .is_some_and(|s| s.status == SessionStatus::Connected)
         && !app.manager.active_vnc_read_only()
         && app.desktop_window_focused
         && app.terminal_focused
@@ -205,14 +215,127 @@ pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
         && app.editing_group.is_none()
 }
 
+/// Reject only capture-mode left Ctrl edges with no real LL authorization.
+/// The dispatcher must gate both wire forwarding and fence acknowledgement.
+pub(super) fn vnc_window_key_authorized(app: &AditApp, event: &keyboard::Event) -> bool {
+    if !app.vnc_grab_keys {
+        return true;
+    }
+    let (physical, pressed) = match event {
+        keyboard::Event::KeyPressed { physical_key, .. } => (*physical_key, true),
+        keyboard::Event::KeyReleased { physical_key, .. } => (*physical_key, false),
+        _ => return true,
+    };
+    if vnc_window_physical(physical)
+        != keyboard::key::Physical::Code(keyboard::key::Code::ControlLeft)
+    {
+        return true;
+    }
+    // winit's next-message AltGr heuristic may expose an auxiliary Ctrl down
+    // while filtering its up. Repeats and auxiliary edges authorize neither
+    // wire events nor acknowledgements, even if a real Ctrl is already held.
+    keyboard_hook::owns_vnc_window_modifier(keyboard_hook::vnc_order::ModifierEdge {
+        scan: 0x1d,
+        extended: false,
+        pressed,
+    })
+}
+
+pub(super) fn repair_vnc_filtered_control(app: &mut AditApp, event: &keyboard::Event) {
+    use keyboard::key::{Code, Physical};
+    if !app.vnc_grab_keys || !vnc_accepts_text_input(app) {
+        return;
+    }
+    let (physical, pressed, modifiers) = match event {
+        keyboard::Event::KeyPressed {
+            physical_key,
+            modifiers,
+            ..
+        } => (*physical_key, true, *modifiers),
+        keyboard::Event::KeyReleased {
+            physical_key,
+            modifiers,
+            ..
+        } => (*physical_key, false, *modifiers),
+        _ => return,
+    };
+    if vnc_window_physical(physical) != Physical::Code(Code::AltRight) {
+        return;
+    }
+    let alt = keyboard_hook::vnc_order::ModifierEdge {
+        scan: 0x38,
+        extended: true,
+        pressed,
+    };
+    let Some(control) = keyboard_hook::filtered_vnc_control_before_alt(alt) else {
+        return;
+    };
+    forward_filtered_vnc_control(app, control, modifiers);
+}
+
+pub(super) fn forward_filtered_vnc_control(
+    app: &mut AditApp,
+    control: keyboard_hook::vnc_order::ModifierEdge,
+    modifiers: keyboard::Modifiers,
+) {
+    use keyboard::key::{Code, Physical};
+    let physical = Physical::Code(if control.extended {
+        Code::ControlRight
+    } else {
+        Code::ControlLeft
+    });
+    let event = if control.pressed {
+        keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Control),
+            modified_key: Key::Named(Named::Control),
+            physical_key: physical,
+            location: if control.extended {
+                keyboard::Location::Right
+            } else {
+                keyboard::Location::Left
+            },
+            modifiers,
+            text: None,
+            repeat: false,
+        }
+    } else {
+        keyboard::Event::KeyReleased {
+            key: Key::Named(Named::Control),
+            modified_key: Key::Named(Named::Control),
+            physical_key: physical,
+            location: if control.extended {
+                keyboard::Location::Right
+            } else {
+                keyboard::Location::Left
+            },
+            modifiers,
+        }
+    };
+    // Only the current exact LL prefix is a witness for winit's missing Ctrl.
+    // Use normal tracked ownership (an unowned up emits nothing), then ack/drain
+    // captured keys before the dispatcher forwards/acks the RightAlt event.
+    // Keep that event's modifier eligibility: a Win held locally before capture
+    // must suppress the repaired down too; an already-owned up still releases.
+    send_vnc_keyboard(app, &event);
+    drain_vnc_keys_after_modifier(app, Some(control));
+}
+
 /// VNC sends logical X11 keysyms. Keep the symbol chosen at key-down so a
 /// modifier/layout change before key-up cannot leave the original symbol held.
 pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
-    if app.manager.active_vnc_read_only() { return; }
-    if let keyboard::Event::KeyPressed { text: Some(text), modifiers, .. } = event {
+    if app.manager.active_vnc_read_only() {
+        return;
+    }
+    if let keyboard::Event::KeyPressed {
+        text: Some(text),
+        modifiers,
+        ..
+    } = event
+    {
         // A composition commit is a string, not one key. Send all scalars,
         // including combining marks, without leaving a synthetic key held.
-        if text.chars().count() > 1 && !modifiers.control() && !modifiers.alt() && !modifiers.logo() {
+        if text.chars().count() > 1 && !modifiers.control() && !modifiers.alt() && !modifiers.logo()
+        {
             for ch in text.chars().filter(|ch| !ch.is_control()) {
                 let symbol = adit_session::unicode_keysym(ch);
                 app.manager.send_vnc_key_to_active(symbol, true);
@@ -223,11 +346,27 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
     }
     let (key, physical, pressed, modifiers) = match event {
         keyboard::Event::KeyPressed {
-            modified_key, physical_key, modifiers, ..
-        } => (modified_key, vnc_window_physical(*physical_key), true, modifiers),
+            modified_key,
+            physical_key,
+            modifiers,
+            ..
+        } => (
+            modified_key,
+            vnc_window_physical(*physical_key),
+            true,
+            modifiers,
+        ),
         keyboard::Event::KeyReleased {
-            modified_key, physical_key, modifiers, ..
-        } => (modified_key, vnc_window_physical(*physical_key), false, modifiers),
+            modified_key,
+            physical_key,
+            modifiers,
+            ..
+        } => (
+            modified_key,
+            vnc_window_physical(*physical_key),
+            false,
+            modifiers,
+        ),
         _ => return,
     };
     // Owned Win combinations now come entirely through the hook, before IME.
@@ -235,8 +374,14 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
     // held before this grab). Its leftover character must not leak remotely.
     // Owned releases below must still pass, even while a local shortcut is held.
     if pressed
-        && (modifiers.logo() || matches!(physical, keyboard::key::Physical::Code(
-            keyboard::key::Code::SuperLeft | keyboard::key::Code::SuperRight))) {
+        && (modifiers.logo()
+            || matches!(
+                physical,
+                keyboard::key::Physical::Code(
+                    keyboard::key::Code::SuperLeft | keyboard::key::Code::SuperRight
+                )
+            ))
+    {
         return;
     }
     let tracked = app
@@ -297,7 +442,11 @@ fn vnc_keysym(key: &Key, physical: keyboard::key::Physical) -> Option<u32> {
         Physical::Code(Code::ControlLeft) => Some(0xffe3),
         Physical::Code(Code::ControlRight) => Some(0xffe4),
         Physical::Code(Code::AltLeft) => Some(0xffe9),
-        Physical::Code(Code::AltRight) => Some(if matches!(key, Key::Named(Named::AltGraph)) { 0xfe03 } else { 0xffea }),
+        Physical::Code(Code::AltRight) => Some(if matches!(key, Key::Named(Named::AltGraph)) {
+            0xfe03
+        } else {
+            0xffea
+        }),
         Physical::Code(Code::SuperLeft) => Some(0xffeb),
         Physical::Code(Code::SuperRight) => Some(0xffec),
         _ => None,
@@ -309,9 +458,11 @@ fn vnc_keysym(key: &Key, physical: keyboard::key::Physical) -> Option<u32> {
         Key::Character(text) => {
             let mut chars = text.chars();
             let first = chars.next()?;
-            if chars.next().is_some() { return None; }
+            if chars.next().is_some() {
+                return None;
+            }
             adit_session::unicode_keysym(first)
-        },
+        }
         Key::Named(named) => match named {
             Named::Backspace => 0xff08,
             Named::Tab => 0xff09,
@@ -360,7 +511,10 @@ mod vnc_tests {
     #[test]
     fn native_extended_shift_alias_matches_window_tracking_and_wire_symbol() {
         use keyboard::key::NativeCode;
-        for (scan, code, symbol) in [(0xe02a, Code::ShiftLeft, 0xffe1), (0xe036, Code::ShiftRight, 0xffe2)] {
+        for (scan, code, symbol) in [
+            (0xe02a, Code::ShiftLeft, 0xffe1),
+            (0xe036, Code::ShiftRight, 0xffe2),
+        ] {
             let native = Physical::Unidentified(NativeCode::Windows(scan));
             assert_eq!(vnc_window_physical(native), Physical::Code(code));
             assert_eq!(vnc_keysym(&Key::Unidentified, native), Some(symbol));
@@ -402,8 +556,20 @@ mod vnc_input_tests {
     use super::*;
     #[test]
     fn composition_is_never_truncated_to_the_first_character() {
-        assert_eq!(vnc_keysym(&Key::Character("中文🙂".into()), keyboard::key::Physical::Code(keyboard::key::Code::KeyA)), None);
-        assert_eq!(vnc_keysym(&Key::Character("e\u{301}".into()), keyboard::key::Physical::Code(keyboard::key::Code::KeyE)), None);
+        assert_eq!(
+            vnc_keysym(
+                &Key::Character("中文🙂".into()),
+                keyboard::key::Physical::Code(keyboard::key::Code::KeyA)
+            ),
+            None
+        );
+        assert_eq!(
+            vnc_keysym(
+                &Key::Character("e\u{301}".into()),
+                keyboard::key::Physical::Code(keyboard::key::Code::KeyE)
+            ),
+            None
+        );
     }
     #[test]
     fn altgr_and_right_alt_keep_distinct_symbols() {
@@ -436,13 +602,21 @@ pub(crate) fn finish_vnc_window_key(app: &mut AditApp, event: &keyboard::Event) 
         _ => return,
     };
     if app.vnc_grab_keys {
-        drain_vnc_keys_after_modifier(app, Some(keyboard_hook::vnc_order::ModifierEdge {
-            scan, extended, pressed,
-        }));
+        drain_vnc_keys_after_modifier(
+            app,
+            Some(keyboard_hook::vnc_order::ModifierEdge {
+                scan,
+                extended,
+                pressed,
+            }),
+        );
     }
 }
 
-fn drain_vnc_keys_after_modifier(app: &mut AditApp, acknowledged: Option<keyboard_hook::vnc_order::ModifierEdge>) {
+fn drain_vnc_keys_after_modifier(
+    app: &mut AditApp,
+    acknowledged: Option<keyboard_hook::vnc_order::ModifierEdge>,
+) {
     let (strokes, timed_out) = keyboard_hook::drain_vnc(acknowledged);
     if timed_out {
         release_rdp_modifiers(app);

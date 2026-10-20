@@ -53,6 +53,51 @@ const MAX_DIMENSION: u32 = 8192;
 /// ending right before the misbehaviour it was taken to catch.
 const MAX_DUMPS: u32 = 65536;
 
+/// A pending record must reach disk before the decoder can panic. Appending
+/// the outcome to this same file preserves the failing PDU's original index.
+struct ClearDump {
+    sidecar: std::path::PathBuf,
+}
+
+impl ClearDump {
+    fn start(
+        dir: &std::path::Path,
+        index: u32,
+        surface_id: u16,
+        (x, y, w, h): (u16, u16, u16, u16),
+        data: &[u8],
+    ) -> std::io::Result<Self> {
+        use std::io::Write as _;
+        // A second connection must not silently overwrite an older cache
+        // prefix. Each capture needs its own fresh APPDATA/Adit directory.
+        let mut stream = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join(format!("clear-{index:03}.bin")))?;
+        stream.write_all(data)?;
+        let sidecar = dir.join(format!("clear-{index:03}.txt"));
+        let mut metadata = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&sidecar)?;
+        writeln!(
+            metadata,
+            "outcome=pending\nhelper_pid={}\nsurface_id={surface_id}\nrect={w}x{h} at {x},{y}\nbytes={}",
+            std::process::id(),
+            data.len(),
+        )?;
+        Ok(Self { sidecar })
+    }
+
+    fn finish(self, outcome: &str) -> std::io::Result<()> {
+        use std::io::Write as _;
+        let mut metadata = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.sidecar)?;
+        writeln!(metadata, "outcome={outcome}")
+    }
+}
+
 /// RemoteFX Progressive tile edge, in pixels (MS-RDPRFX): tiles are 64×64.
 const TILE: usize = 64;
 
@@ -69,6 +114,9 @@ pub(crate) struct EgfxFrame {
     /// and piping the whole framebuffer (~9 MB per frame at 2560-class sizes)
     /// on every present.
     dirty_rects: Vec<Rect>,
+    /// Trait callbacks cannot return errors to ActiveStage. Keep the first
+    /// stateful codec failure until the session loop can close with Error/Closed.
+    decode_error: Option<String>,
 }
 
 /// A dirty region: `(x, y, w, h)` in pixels.
@@ -128,7 +176,17 @@ pub(crate) fn new_shared() -> SharedEgfx {
         height: 0,
         dirty: false,
         dirty_rects: Vec::new(),
+        decode_error: None,
     }))
+}
+
+pub(crate) fn take_decode_error(shared: &SharedEgfx) -> Option<String> {
+    // A poisoned graphics lock must not hide the reason the connection ended.
+    shared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .decode_error
+        .take()
 }
 
 /// One published region: the surface size, the region's position and size, and
@@ -149,7 +207,7 @@ pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
     let Ok(mut frame) = shared.lock() else {
         return Vec::new();
     };
-    if !frame.dirty || frame.rgba.is_empty() {
+    if frame.decode_error.is_some() || !frame.dirty || frame.rgba.is_empty() {
         return Vec::new();
     }
     frame.dirty = false;
@@ -285,6 +343,9 @@ struct SurfaceInfo {
 
 pub(crate) struct EgfxHandler {
     shared: SharedEgfx,
+    /// Remains set after the loop consumes the mailbox: no later callback in
+    /// this transport batch may paint using invalidated codec state.
+    decode_failed: bool,
     /// surface_id → mapping/size. A bitmap update targets a surface; the surface
     /// is mapped to a position on the output.
     surfaces: HashMap<u16, SurfaceInfo>,
@@ -346,6 +407,7 @@ impl EgfxHandler {
     pub(crate) fn new(shared: SharedEgfx) -> Self {
         Self {
             shared,
+            decode_failed: false,
             surfaces: HashMap::new(),
             progressive: ProgressiveDecoder::new(),
             dumps: 0,
@@ -354,7 +416,10 @@ impl EgfxHandler {
             avc444: match crate::avc444::Avc444State::new() {
                 Ok(state) => Some(state),
                 Err(error) => {
-                    tracing::warn!(error, "AVC444 decoders unavailable; not advertising V10 caps");
+                    tracing::warn!(
+                        error,
+                        "AVC444 decoders unavailable; not advertising V10 caps"
+                    );
                     None
                 }
             },
@@ -444,39 +509,36 @@ bytes={}
         pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu,
         w: u16,
         h: u16,
-        outcome: &str,
-    ) {
+    ) -> Option<ClearDump> {
         // A much higher cap than the progressive dumps: ClearCodec streams are
         // small and the v-bar/glyph caches only reproduce when the whole
         // session's sequence is replayed, so a useful capture is hundreds of
         // streams, not eight.
         const MAX_CLEAR_DUMPS: u32 = 65536;
         if self.clear_dumps >= MAX_CLEAR_DUMPS || std::env::var_os("ADIT_RDP_DUMP").is_none() {
-            return;
+            return None;
         }
-        let Some(base) = std::env::var_os("APPDATA").map(std::path::PathBuf::from) else {
-            return;
-        };
+        let base = std::env::var_os("APPDATA").map(std::path::PathBuf::from)?;
         let dir = base.join("Adit");
         let index = self.clear_dumps;
         self.clear_dumps += 1;
-        let meta = format!(
-            "outcome={outcome}
-surface_id={}
-rect={}x{} at {},{}
-bytes={}
-",
+        match ClearDump::start(
+            &dir,
+            index,
             pdu.surface_id,
-            w,
-            h,
-            pdu.destination_rectangle.left,
-            pdu.destination_rectangle.top,
-            pdu.bitmap_data.len(),
-        );
-        let stream = dir.join(format!("clear-{index:03}.bin"));
-        let sidecar = dir.join(format!("clear-{index:03}.txt"));
-        if std::fs::write(&stream, &pdu.bitmap_data).is_ok() {
-            let _ = std::fs::write(&sidecar, meta);
+            (
+                pdu.destination_rectangle.left,
+                pdu.destination_rectangle.top,
+                w,
+                h,
+            ),
+            &pdu.bitmap_data,
+        ) {
+            Ok(dump) => Some(dump),
+            Err(error) => {
+                tracing::warn!(index, %error, "ClearCodec capture could not be saved");
+                None
+            }
         }
     }
 
@@ -520,7 +582,13 @@ bytes={}
                 }
                 if let Ok(mut frame) = self.shared.lock() {
                     for region in &regions {
-                        trace_paint("avc444", ox as usize + region.x, oy as usize + region.y, region.w, region.h);
+                        trace_paint(
+                            "avc444",
+                            ox as usize + region.x,
+                            oy as usize + region.y,
+                            region.w,
+                            region.h,
+                        );
                         Self::blit_rect(
                             &mut frame,
                             ox as usize + region.x,
@@ -541,7 +609,10 @@ bytes={}
     /// destination rectangle. The decoder outputs BGRA with alpha forced to
     /// 0xFF; the framebuffer is RGBA, so channels swap during the blit.
     fn decode_clear_codec(&mut self, pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu) {
-        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
         else {
             return;
         };
@@ -567,26 +638,37 @@ bytes={}
             }
             Some(rgba)
         });
+        // Keep all preceding cache state AND this PDU, even if decoding it
+        // panics. A failures-only or after-decode dump loses that evidence.
+        let dump = self.dump_clear_stream(pdu, w, h);
         let outcome = self
             .clear
             .decode_onto(&pdu.bitmap_data, w, h, background.as_deref());
-        // Capture under ADIT_RDP_DUMP, successes included: the glyph and v-bar
-        // caches are stateful, so a failing stream can only be replayed in the
-        // order it arrived — the lesson the progressive captures already
-        // taught, where a failures-only capture turned out unreplayable.
-        self.dump_clear_stream(
-            pdu,
-            w,
-            h,
-            &match &outcome {
+        if let Some(dump) = dump {
+            let result = match &outcome {
                 Ok(_) => "ok".to_owned(),
                 Err(error) => error.to_string(),
-            },
-        );
+            };
+            if let Err(error) = dump.finish(&result) {
+                tracing::warn!(%error, "ClearCodec capture outcome could not be saved");
+            }
+        }
         let mut bgra = match outcome {
             Ok(bgra) => bgra,
             Err(error) => {
-                tracing::warn!("ClearCodec decode failed: {error}");
+                let message = format!("ClearCodec decode failed: {error}");
+                tracing::error!(%message, "closing session after stateful graphics decode failure");
+                self.decode_failed = true;
+                self.composited = false;
+                let mut frame = self
+                    .shared
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                frame.decode_error.get_or_insert(message);
+                // Earlier callbacks in this same batch may have painted. None
+                // of that incomplete frame may cross the helper's IPC pipe.
+                frame.dirty = false;
+                frame.dirty_rects.clear();
                 return;
             }
         };
@@ -713,7 +795,7 @@ impl GraphicsPipelineHandler for EgfxHandler {
     /// `on_unhandled_pdu`, which is where the avc444 module picks them up.
     fn capabilities(&self) -> Vec<ironrdp_egfx::pdu::CapabilitySet> {
         use ironrdp_egfx::pdu::{
-            CapabilitiesV107Flags, CapabilitiesV8Flags, CapabilitiesV81Flags, CapabilitySet,
+            CapabilitiesV107Flags, CapabilitiesV81Flags, CapabilitiesV8Flags, CapabilitySet,
         };
         let mut caps = Vec::with_capacity(3);
         // V10.7 implies AVC444, which the avc444 module decodes. Only offered
@@ -742,6 +824,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_reset_graphics(&mut self, width: u32, height: u32) {
+        if self.decode_failed {
+            return;
+        }
         // AVC444 recombination state describes surfaces that are going away;
         // fresh decoders avoid refining against a dead reference chain.
         if let Some(state) = self.avc444.as_mut() {
@@ -760,7 +845,15 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_created(&mut self, surface: &Surface) {
-        tracing::info!(id = surface.id, w = surface.width, h = surface.height, "surface created");
+        if self.decode_failed {
+            return;
+        }
+        tracing::info!(
+            id = surface.id,
+            w = surface.width,
+            h = surface.height,
+            "surface created"
+        );
         self.surfaces.insert(
             surface.id,
             SurfaceInfo {
@@ -773,6 +866,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_mapped(&mut self, surface_id: u16, origin_x: u32, origin_y: u32) {
+        if self.decode_failed {
+            return;
+        }
         tracing::info!(id = surface_id, origin_x, origin_y, "surface mapped");
         if let Some(surface) = self.surfaces.get_mut(&surface_id) {
             surface.origin_x = origin_x;
@@ -781,6 +877,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_surface_deleted(&mut self, surface_id: u16) {
+        if self.decode_failed {
+            return;
+        }
         tracing::info!(id = surface_id, "surface deleted");
         self.surfaces.remove(&surface_id);
         // Progressive, classic-RFX and AVC444 state are per-surface; they die
@@ -796,6 +895,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     /// RGBA. (No H.264 decoder is configured, so in practice this fires only for
     /// uncompressed updates.)
     fn on_bitmap_updated(&mut self, update: &BitmapUpdate) {
+        if self.decode_failed {
+            return;
+        }
         if update.data.is_empty() {
             return; // decode skipped (no decoder for this codec)
         }
@@ -836,6 +938,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     /// decode it ourselves and composite the 64×64 tiles. This is what GNOME
     /// Remote Desktop uses — without it the desktop renders solid black.
     fn on_wire_to_surface2(&mut self, pdu: &WireToSurface2Pdu) {
+        if self.decode_failed {
+            return;
+        }
         let Some((sw, sh, ox, oy)) = self
             .surfaces
             .get(&pdu.surface_id)
@@ -844,18 +949,17 @@ impl GraphicsPipelineHandler for EgfxHandler {
             return;
         };
 
-        let decoded =
-            match self
-                .progressive
-                .decode_bitmap(pdu.surface_id, sw, sh, &pdu.bitmap_data)
-            {
-                Ok(decoded) => decoded,
-                Err(error) => {
-                    tracing::warn!("EGFX progressive decode failed: {error}");
-                    self.dump_stream(pdu, sw, sh, &error.to_string());
-                    return;
-                }
-            };
+        let decoded = match self
+            .progressive
+            .decode_bitmap(pdu.surface_id, sw, sh, &pdu.bitmap_data)
+        {
+            Ok(decoded) => decoded,
+            Err(error) => {
+                tracing::warn!("EGFX progressive decode failed: {error}");
+                self.dump_stream(pdu, sw, sh, &error.to_string());
+                return;
+            }
+        };
         self.dump_stream(pdu, sw, sh, "ok");
         if decoded.upgrades_without_base > 0 && self.unclipped_logged < 8 {
             self.unclipped_logged += 1;
@@ -892,7 +996,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
                 let tx = usize::from(tile.x_idx) * TILE;
                 let ty = usize::from(tile.y_idx) * TILE;
                 if tile.fresh {
-                    trace_paint("progressive", ox as usize + tx, oy as usize + ty, TILE, TILE);
+                    trace_paint(
+                        "progressive",
+                        ox as usize + tx,
+                        oy as usize + ty,
+                        TILE,
+                        TILE,
+                    );
                     Self::blit_tile_window(
                         &mut frame,
                         ox as usize + tx,
@@ -916,7 +1026,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
                         if cx0 >= cx1 || cy0 >= cy1 {
                             continue;
                         }
-                        trace_paint("progressive-upgrade", ox as usize + cx0, oy as usize + cy0, cx1 - cx0, cy1 - cy0);
+                        trace_paint(
+                            "progressive-upgrade",
+                            ox as usize + cx0,
+                            oy as usize + cy0,
+                            cx1 - cx0,
+                            cy1 - cy0,
+                        );
                         Self::blit_tile_window(
                             &mut frame,
                             ox as usize + cx0,
@@ -948,7 +1064,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
     /// underneath — a text box never appeared to clear, so typing looked like
     /// it did nothing.
     fn on_solid_fill(&mut self, pdu: &SolidFillPdu) {
-        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        if self.decode_failed {
+            return;
+        }
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
         else {
             return;
         };
@@ -974,12 +1096,22 @@ impl GraphicsPipelineHandler for EgfxHandler {
                     }
                 }
                 // Colour included: the offline replay must repaint these, and a
-            // skipped fill poisons every cache slot later filled from the area
-            // (the first faithful-looking sim was wrecked by exactly that).
-            if std::env::var_os("ADIT_RDP_DUMP").is_some() {
-                tracing::info!(source = "solid-fill", r = c.r, g = c.g, b = c.b, x = x0, y = y0, w = x1 - x0, h = y1 - y0, "paint");
-            }
-            grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
+                // skipped fill poisons every cache slot later filled from the area
+                // (the first faithful-looking sim was wrecked by exactly that).
+                if std::env::var_os("ADIT_RDP_DUMP").is_some() {
+                    tracing::info!(
+                        source = "solid-fill",
+                        r = c.r,
+                        g = c.g,
+                        b = c.b,
+                        x = x0,
+                        y = y0,
+                        w = x1 - x0,
+                        h = y1 - y0,
+                        "paint"
+                    );
+                }
+                grow_dirty(&mut frame, x0, y0, x1 - x0, y1 - y0);
             }
             self.composited = true;
         }
@@ -990,6 +1122,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     /// This is how scrolling and window drags move pixels the client already
     /// has, without re-encoding them.
     fn on_surface_to_surface(&mut self, pdu: &SurfaceToSurfacePdu) {
+        if self.decode_failed {
+            return;
+        }
         let Some((sox, soy)) = self
             .surfaces
             .get(&pdu.source_surface_id)
@@ -1055,7 +1190,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
     /// Store a rectangle into the bitmap cache (MS-RDPEGFX 2.2.2.8).
     fn on_surface_to_cache(&mut self, pdu: &SurfaceToCachePdu) {
-        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        if self.decode_failed {
+            return;
+        }
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
         else {
             return;
         };
@@ -1094,7 +1235,13 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
     /// Blit a cached rectangle to one or more destinations (MS-RDPEGFX 2.2.2.9).
     fn on_cache_to_surface(&mut self, pdu: &CacheToSurfacePdu) {
-        let Some((ox, oy)) = self.surfaces.get(&pdu.surface_id).map(|s| (s.origin_x, s.origin_y))
+        if self.decode_failed {
+            return;
+        }
+        let Some((ox, oy)) = self
+            .surfaces
+            .get(&pdu.surface_id)
+            .map(|s| (s.origin_x, s.origin_y))
         else {
             return;
         };
@@ -1140,6 +1287,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
 
     /// Drop cache entries the server is done with (MS-RDPEGFX 2.2.2.10).
     fn on_evict_cache_entry(&mut self, pdu: &ironrdp_egfx::pdu::EvictCacheEntryPdu) {
+        if self.decode_failed {
+            return;
+        }
         self.cache.remove(&pdu.cache_slot);
     }
 
@@ -1151,6 +1301,9 @@ impl GraphicsPipelineHandler for EgfxHandler {
     fn on_unhandled_pdu(&mut self, pdu: &ironrdp_egfx::pdu::GfxPdu) {
         use ironrdp_egfx::pdu::{Codec1Type, GfxPdu};
 
+        if self.decode_failed {
+            return;
+        }
         if let GfxPdu::WireToSurface1(pdu) = pdu {
             match pdu.codec_id {
                 Codec1Type::ClearCodec => return self.decode_clear_codec(pdu),
@@ -1166,10 +1319,16 @@ impl GraphicsPipelineHandler for EgfxHandler {
     }
 
     fn on_delete_encoding_context(&mut self, pdu: &DeleteEncodingContextPdu) {
+        if self.decode_failed {
+            return;
+        }
         self.progressive.delete_context(pdu.codec_context_id);
     }
 
     fn on_frame_complete(&mut self, _frame_id: u32) {
+        if self.decode_failed {
+            return;
+        }
         // Present point: publish once per EndFrame, and only when the frame
         // actually painted something — the mirror half of the "no dirty per
         // PDU" rule above.
@@ -1184,6 +1343,162 @@ impl GraphicsPipelineHandler for EgfxHandler {
         if let Ok(mut frame) = self.shared.lock() {
             frame.dirty = true;
         }
+    }
+}
+
+#[cfg(test)]
+mod decode_error_tests {
+    use super::*;
+    use ironrdp_egfx::pdu::{Codec1Type, GfxPdu, PixelFormat, WireToSurface1Pdu};
+    use ironrdp_pdu::geometry::ExclusiveRectangle;
+
+    #[test]
+    fn invalid_glyph_pdu_closes_before_outputs_and_blocks_later_batch_paints() {
+        // Exercise both ActiveStage outcomes: callbacks can have failed before
+        // process returns either successful output or its own unrelated error.
+        for stage_failed in [false, true] {
+            let shared = new_shared();
+            let mut handler = EgfxHandler::new(Arc::clone(&shared));
+            handler.surfaces.insert(
+                1,
+                SurfaceInfo {
+                    origin_x: 0,
+                    origin_y: 0,
+                    width: 2,
+                    height: 2,
+                },
+            );
+            {
+                let mut frame = shared.lock().unwrap();
+                frame.resize(2, 2);
+                frame.rgba.fill(7);
+                frame.dirty = true;
+                frame.dirty_rects.push((0, 0, 2, 2));
+            }
+            let mut pdu = WireToSurface1Pdu {
+                surface_id: 1,
+                codec_id: Codec1Type::ClearCodec,
+                pixel_format: PixelFormat::XRgb,
+                destination_rectangle: ExclusiveRectangle {
+                    left: 0,
+                    top: 0,
+                    right: 2,
+                    bottom: 2,
+                },
+                // Valid ClearCodec GLYPH_INDEX | GLYPH_HIT framing, but
+                // slot zero has never been stored: a real decoder error.
+                bitmap_data: vec![3, 0, 0, 0],
+            };
+            handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu.clone()));
+            let first = shared
+                .lock()
+                .unwrap()
+                .decode_error
+                .clone()
+                .expect("first decode error");
+            assert!(first.contains("glyph cache miss"));
+            assert!(
+                take_frames(&shared).is_empty(),
+                "must discard earlier partial paint"
+            );
+
+            // Subsequent codec and graphics-reset callbacks in the same batch
+            // cannot overwrite the first failure or change the framebuffer.
+            pdu.bitmap_data = vec![3, 0]; // Different error if it were decoded.
+            handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu.clone()));
+            handler.on_reset_graphics(4, 4);
+            handler.on_frame_complete(1);
+            assert_eq!(
+                shared.lock().unwrap().decode_error.as_deref(),
+                Some(first.as_str())
+            );
+
+            let processed = if stage_failed {
+                Err(ironrdp_session::custom_err!(
+                    "unrelated PDU",
+                    std::io::Error::other("other failure")
+                ))
+            } else {
+                Ok(vec![ironrdp_session::ActiveStageOutput::ResponseFrame(
+                    vec![9],
+                )])
+            };
+            let result = crate::session::finish_active_process(
+                processed,
+                &shared,
+                ironrdp_pdu::Action::X224,
+                &[],
+            );
+            let error = match result {
+                Err(error) => error,
+                Ok(_) => panic!("fatal graphics error was swallowed"),
+            };
+            assert!(error.to_string().contains(&first));
+            assert!(
+                take_decode_error(&shared).is_none(),
+                "consume the first error exactly once"
+            );
+
+            // Consuming the mailbox does not re-enable this failed handler.
+            pdu.bitmap_data = vec![1, 1, 1, 0]; // Would populate glyph slot one.
+            handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu));
+            handler.on_frame_complete(2);
+            assert!(handler
+                .clear
+                .decode_onto(&[3, 2, 1, 0], 2, 2, None)
+                .is_err());
+            let frame = shared.lock().unwrap();
+            assert_eq!((frame.width, frame.height), (2, 2));
+            assert_eq!(frame.rgba, vec![7; 16]);
+            drop(frame);
+            assert!(take_frames(&shared).is_empty());
+            assert!(take_decode_error(&new_shared()).is_none());
+        }
+    }
+}
+
+#[cfg(test)]
+mod clear_dump_tests {
+    use super::ClearDump;
+
+    #[test]
+    fn capture_keeps_pending_pdu_after_decoder_unwinds_and_never_overwrites_it() {
+        let path = std::env::temp_dir().join(format!(
+            "adit-clear-dump-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir(&path).unwrap();
+        let path = path.canonicalize().unwrap();
+        let result = std::panic::catch_unwind(|| {
+            let _pending = ClearDump::start(&path, 0, 1, (2, 3, 1, 4), &[1, 2, 3]).unwrap();
+            panic!("synthetic decoder unwind after capture");
+        });
+        assert!(result.is_err());
+        let raw = path.join("clear-000.bin");
+        let sidecar = path.join("clear-000.txt");
+        assert_eq!(std::fs::read(&raw).unwrap(), [1, 2, 3]);
+        let pending = std::fs::read_to_string(&sidecar).unwrap();
+        assert!(pending.contains("outcome=pending\n"));
+        assert!(pending.contains("rect=1x4 at 2,3\n"));
+        assert!(!pending.contains("outcome=ok"));
+        assert!(ClearDump::start(&path, 0, 1, (0, 0, 1, 1), &[9]).is_err());
+        assert_eq!(std::fs::read(&raw).unwrap(), [1, 2, 3]);
+        assert_eq!(std::fs::read_to_string(&sidecar).unwrap(), pending);
+        ClearDump {
+            sidecar: sidecar.clone(),
+        }
+        .finish("ok")
+        .unwrap();
+        assert!(std::fs::read_to_string(&sidecar)
+            .unwrap()
+            .ends_with("outcome=ok\n"));
+        std::fs::remove_file(raw).unwrap();
+        std::fs::remove_file(sidecar).unwrap();
+        std::fs::remove_dir(path).unwrap();
     }
 }
 

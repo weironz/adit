@@ -353,6 +353,34 @@ fn pdu_prefix(pdu: Option<&[u8]>) -> String {
     format!("len={} head={head}", bytes.len())
 }
 
+/// Call immediately after process(), before inspecting any output. The EGFX
+/// trait cannot return a decode error, and its stateful failure must not be
+/// mistaken for one of GNOME's independently skippable, unrecognised PDUs.
+pub(crate) fn finish_active_process(
+    processed: Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError>,
+    egfx: &SharedEgfx,
+    action: ironrdp_pdu::Action,
+    payload: &[u8],
+) -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+    if let Some(message) = egfx::take_decode_error(egfx) {
+        // Custom-error Display omits its source chain; Reason keeps the codec
+        // failure visible when run_session serialises this error to the GUI.
+        return Err(ironrdp_session::reason_err!("EGFX decode", "{message}"));
+    }
+    match processed {
+        Ok(outputs) => Ok(outputs),
+        Err(error) => {
+            tracing::warn!(
+                ?action,
+                payload_len = payload.len(),
+                pdu = %pdu_prefix(Some(payload)),
+                "skipping PDU the active stage could not process: {error}"
+            );
+            Ok(Vec::new())
+        }
+    }
+}
+
 /// The active-session pump. Returns when the server terminates the session or the
 /// app drops its input channel.
 async fn active_session(
@@ -423,18 +451,8 @@ async fn active_session(
                 // of them was killing the connection right after the handover (the
                 // desktop showed "connecting" forever). Losing one frame/order is far
                 // better than losing the session.
-                match active_stage.process(&mut image, action, &payload) {
-                    Ok(outputs) => outputs,
-                    Err(error) => {
-                        tracing::warn!(
-                            ?action,
-                            payload_len = payload.len(),
-                            pdu = %pdu_prefix(Some(&payload)),
-                            "skipping PDU the active stage could not process: {error}"
-                        );
-                        Vec::new()
-                    }
-                }
+                let processed = active_stage.process(&mut image, action, &payload);
+                finish_active_process(processed, egfx, action, &payload)?
             }
             input = input_rx.recv(), if input_open => {
                 match input {
@@ -556,8 +574,8 @@ async fn active_session(
                     // Deactivation-Reactivation (e.g. after a resize): re-run the
                     // activation sequence from the factory captured at connect time,
                     // then rebuild the image at the new size.
-                    use ironrdp_connector::Sequence;
                     use ironrdp_connector::connection_activation::ConnectionActivationState;
+                    use ironrdp_connector::Sequence;
                     use ironrdp_core::WriteBuf;
                     use ironrdp_session::fast_path;
 
@@ -599,7 +617,9 @@ async fn active_session(
                                 if let Some(redirection) =
                                     crate::redirect::detect(bytes, io_channel_id)
                                 {
-                                    tracing::info!("server redirection arrived during reactivation");
+                                    tracing::info!(
+                                        "server redirection arrived during reactivation"
+                                    );
                                     return Ok(Some(redirection));
                                 }
                                 connection_activation.step(bytes, &mut buf)
@@ -630,7 +650,9 @@ async fn active_session(
                         };
                         if written.size().is_some() {
                             if let Err(error) = writer.write_all(buf.filled()).await {
-                                tracing::warn!("reactivation write failed, keeping session: {error}");
+                                tracing::warn!(
+                                    "reactivation write failed, keeping session: {error}"
+                                );
                                 break 'activation;
                             }
                         }
@@ -777,4 +799,35 @@ async fn active_session(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod process_error_tests {
+    use super::*;
+
+    #[test]
+    fn unrelated_stage_error_still_skips_one_pdu_and_next_output_survives() {
+        let shared = egfx::new_shared();
+        let skipped = finish_active_process(
+            Err(ironrdp_session::custom_err!(
+                "unrecognised GNOME PDU",
+                std::io::Error::other("unsupported")
+            )),
+            &shared,
+            ironrdp_pdu::Action::X224,
+            &[],
+        )
+        .expect("unrelated PDU errors remain recoverable");
+        assert!(skipped.is_empty());
+        let outputs = finish_active_process(
+            Ok(vec![ActiveStageOutput::ResponseFrame(vec![1, 2, 3])]),
+            &shared,
+            ironrdp_pdu::Action::X224,
+            &[],
+        )
+        .expect("next PDU still processes normally");
+        assert!(
+            matches!(outputs.as_slice(), [ActiveStageOutput::ResponseFrame(bytes)] if bytes == &[1, 2, 3])
+        );
+    }
 }

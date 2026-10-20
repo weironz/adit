@@ -180,8 +180,22 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     // Local layout/OS shortcuts must not leak a bare Super into the peer,
     // even if Windows delivers a constituent letter to this window.
     for physical in [Code::SuperLeft, Code::SuperRight] {
-        let _ = update(&mut app, press(Key::Named(Named::Super), physical, keyboard::Modifiers::LOGO));
-        let _ = update(&mut app, press(Key::Character("r".into()), Code::KeyR, keyboard::Modifiers::LOGO));
+        let _ = update(
+            &mut app,
+            press(
+                Key::Named(Named::Super),
+                physical,
+                keyboard::Modifiers::LOGO,
+            ),
+        );
+        let _ = update(
+            &mut app,
+            press(
+                Key::Character("r".into()),
+                Code::KeyR,
+                keyboard::Modifiers::LOGO,
+            ),
+        );
         let _ = update(&mut app, release(Key::Character("r".into()), Code::KeyR));
         let _ = update(&mut app, release(Key::Named(Named::Super), physical));
     }
@@ -209,7 +223,9 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
         ),
     );
     let mut owned_release = release(Key::Character("q".into()), Code::KeyQ);
-    if let Message::KeyboardInput(keyboard::Event::KeyReleased { modifiers, .. }) = &mut owned_release {
+    if let Message::KeyboardInput(keyboard::Event::KeyReleased { modifiers, .. }) =
+        &mut owned_release
+    {
         *modifiers = keyboard::Modifiers::LOGO;
     }
     let _ = update(&mut app, owned_release);
@@ -274,6 +290,86 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     );
     let _ = update(&mut app, Message::WindowFocused);
     let _ = update(&mut app, release(Key::Named(Named::Shift), Code::ShiftLeft));
+    // Model a proven LL repair witness while a Win held before capture remains
+    // local. Repaired Ctrl must use the RightAlt event's same logo eligibility.
+    for extended in [false, true] {
+        forward_filtered_vnc_control(
+            &mut app,
+            keyboard_hook::vnc_order::ModifierEdge {
+                scan: 0x1d,
+                extended,
+                pressed: true,
+            },
+            keyboard::Modifiers::LOGO,
+        );
+    }
+    assert!(
+        app.vnc_pressed_keys.is_empty(),
+        "local preheld Win must suppress repaired Ctrl downs"
+    );
+    // A capture-mode auxiliary Ctrl must neither add a duplicate down nor
+    // release an already remote-owned real Ctrl. No current hook/fence exists
+    // in this fixture, so both exposed auxiliary window edges are unowned.
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::Control),
+            Code::ControlLeft,
+            keyboard::Modifiers::CTRL,
+        ),
+    );
+    app.vnc_grab_keys = true;
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::Control),
+            Code::ControlLeft,
+            keyboard::Modifiers::CTRL,
+        ),
+    );
+    let _ = update(
+        &mut app,
+        release(Key::Named(Named::Control), Code::ControlLeft),
+    );
+    // RightAlt alone cannot supply a missing real Ctrl witness. In particular,
+    // an unarmed/focus-retired hook must never repair an invented Ctrl edge.
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::AltGraph),
+            Code::AltRight,
+            keyboard::Modifiers::ALT,
+        ),
+    );
+    let _ = update(
+        &mut app,
+        release(Key::Named(Named::AltGraph), Code::AltRight),
+    );
+    assert!(
+        app.vnc_pressed_keys
+            .iter()
+            .any(|(physical, symbol)| *physical
+                == keyboard::key::Physical::Code(Code::ControlLeft)
+                && *symbol == 0xffe3)
+    );
+    forward_filtered_vnc_control(
+        &mut app,
+        keyboard_hook::vnc_order::ModifierEdge {
+            scan: 0x1d,
+            extended: false,
+            pressed: false,
+        },
+        keyboard::Modifiers::LOGO,
+    );
+    assert!(
+        app.vnc_pressed_keys.is_empty(),
+        "logo must not suppress a real owned Ctrl release"
+    );
+    app.vnc_grab_keys = false;
+    let _ = update(
+        &mut app,
+        release(Key::Named(Named::Control), Code::ControlLeft),
+    );
     // A toolbar fullscreen switch shares the shipping dispatcher. Build the
     // captured-state precondition without installing a global hook or injecting
     // any Windows key; the peer must observe the release before the next key.
@@ -367,6 +463,10 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     expected.extend([
         (1, 0xffe1, true),
         (1, 0xffe1, false),
+        (1, 0xffe3, true),
+        (1, 0xfe03, true),
+        (1, 0xfe03, false),
+        (1, 0xffe3, false),
         (1, 0xffe1, true),
         (1, 0xffe1, false),
         (1, 0xffe4, true),
