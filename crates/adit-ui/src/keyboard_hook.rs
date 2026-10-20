@@ -267,6 +267,9 @@ mod imp {
         // here and translate outside this timed callback instead.
         let mut chord = None;
         if VNC.load(Ordering::Relaxed) {
+            if super::vnc_order::is_altgr_control(info.vkCode, info.scanCode) {
+                return CallNextHookEx(None, code, wparam, lparam);
+            }
             use super::vnc_chord::{Modifiers, Route};
             use windows::Win32::UI::Input::KeyboardAndMouse::{
                 GetAsyncKeyState, GetKeyboardLayout,

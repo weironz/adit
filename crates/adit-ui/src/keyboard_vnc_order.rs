@@ -2,6 +2,13 @@
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
+pub(crate) fn is_altgr_control(vk: u32, scan: u32) -> bool {
+    // Windows tags AltGr's auxiliary left Ctrl with the full 0x21d scan.
+    // winit filters that Ctrl before delivering window keys. Truncating it to
+    // 0x1d would wait forever for a real Ctrl event which will never arrive.
+    matches!(vk, 0x11 | 0xa2) && scan == 0x21d
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ModifierEdge {
     pub scan: u8,
@@ -69,6 +76,25 @@ impl<T> OrderedQueue<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn altgr_auxiliary_control_is_not_a_window_modifier_fence() {
+        let now = Instant::now();
+        let mut queue = OrderedQueue::default();
+        for pressed in [true, false] {
+            if !is_altgr_control(0xa2, 0x21d) {
+                queue.push(Entry::WindowModifier(ModifierEdge { scan: 0x1d, extended: false, pressed }));
+            }
+            let alt = ModifierEdge { scan: 0x38, extended: true, pressed };
+            queue.push(Entry::WindowModifier(alt));
+            queue.push(Entry::Key(pressed));
+            assert_eq!(queue.drain(Some(alt), now), (vec![pressed], false));
+        }
+        assert_eq!(queue.drain(None, now + Duration::from_secs(4)), (vec![], false));
+        assert!(!is_altgr_control(0xa2, 0x1d));
+        assert!(!is_altgr_control(0xa3, 0x21d));
+        assert!(!is_altgr_control(0xa2, 0x121d));
+    }
 
     #[test]
     fn queued_win_cannot_overtake_shift_or_alt_window_release() {
