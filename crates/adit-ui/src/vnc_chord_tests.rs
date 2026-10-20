@@ -4,13 +4,15 @@ use keyboard_hook::vnc_chord::{Modifiers, Ownership, Route, Stroke};
 use std::io::{Read, Write};
 
 fn stroke(vk: u16, scan: u8, pressed: bool) -> Stroke {
+    let layout = test_layout().0;
+    keyboard_hook::prepare_test_layout(layout);
     Stroke {
         vk,
         scan,
         extended: false,
         pressed,
         repeat: false,
-        layout: test_layout().0,
+        layout,
         modifiers: Modifiers {
             caps: Some(false),
             ..Default::default()

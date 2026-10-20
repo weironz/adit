@@ -46,6 +46,20 @@ pub(crate) mod vnc_chord;
 pub(crate) mod vnc_order;
 
 #[cfg(windows)]
+#[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
+#[path = "keyboard_vnc_layout.rs"]
+mod vnc_layout;
+
+#[cfg(all(test, windows))]
+pub(crate) fn prepare_test_layout(layout: isize) {
+    // Wire tests bypass hook installation. Give them the same explicit layout
+    // preparation without teaching the UI translation path to perform IO.
+    if vnc_layout::supports(layout) {
+        vnc_layout::prepare(layout).expect("test layout tables are available");
+    }
+}
+
+#[cfg(windows)]
 mod imp {
     use super::raw_input::KeyboardRegistrationLease;
     use super::vnc_order::{Entry, ModifierEdge, OrderedQueue};
@@ -165,7 +179,14 @@ mod imp {
     fn queue() -> &'static (Sender<QueuedStroke>, Mutex<QueueReceiver>) {
         QUEUE.get_or_init(|| {
             let (tx, rx) = mpsc::channel();
-            (tx, Mutex::new(QueueReceiver { receiver: rx, generation: 0, ordered: OrderedQueue::default() }))
+            (
+                tx,
+                Mutex::new(QueueReceiver {
+                    receiver: rx,
+                    generation: 0,
+                    ordered: OrderedQueue::default(),
+                }),
+            )
         })
     }
 
@@ -275,7 +296,8 @@ mod imp {
                 GetAsyncKeyState, GetKeyboardLayout,
             };
             let scan = (info.scanCode & 0xff) as u8;
-            let extended = super::vnc_chord::physical_extended(info.vkCode as u16, info.flags.0 & 1 != 0);
+            let extended =
+                super::vnc_chord::physical_extended(info.vkCode as u16, info.flags.0 & 1 != 0);
             let was_down = CHORDS.with(|state| state.borrow().key_down(scan, extended));
             let route = CHORDS.with(|state| {
                 state
@@ -301,9 +323,14 @@ mod imp {
                         }
                     });
                     if fence {
-                        let _ = queue().0.send((generation, Entry::WindowModifier(ModifierEdge {
-                            scan, extended, pressed,
-                        })));
+                        let _ = queue().0.send((
+                            generation,
+                            Entry::WindowModifier(ModifierEdge {
+                                scan,
+                                extended,
+                                pressed,
+                            }),
+                        ));
                     }
                 }
                 return CallNextHookEx(None, code, wparam, lparam);
@@ -423,7 +450,7 @@ mod imp {
         // stall can silently remove it after LowLevelHooksTimeout; even pumping
         // the UI afterwards cannot recover that handle. Keep its pump isolated.
         let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
-        let (preheld, caps) = unsafe {
+        let (preheld, caps, layout) = unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{
                 GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW,
                 MAPVK_VK_TO_VSC_EX,
@@ -447,7 +474,7 @@ mod imp {
                     down[(scan & 0xff) as usize + if scan & 0xff00 != 0 { 256 } else { 0 }] = true;
                 }
             }
-            (down, caps)
+            (down, caps, layout.0 as isize)
         };
         let stop = Arc::new(AtomicBool::new(false));
         let worker_stop = Arc::clone(&stop);
@@ -458,6 +485,11 @@ mod imp {
         let spawned = std::thread::Builder::new()
             .name("adit-keyboard-hook".into())
             .spawn(move || {
+                // Copy supported layout tables before arming. DLL/registry IO
+                // belongs on this worker, never in the timed hook or UI key path.
+                if vnc {
+                    super::vnc_layout::prepare_loaded(layout);
+                }
                 WORKER_GENERATION.with(|value| value.set(generation));
                 CHORDS.with(|state| {
                     *state.borrow_mut() = super::vnc_chord::Ownership::new(preheld, caps)
@@ -607,7 +639,9 @@ mod imp {
     // Standalone native probes include this source without the VNC UI router.
     #[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
     pub(crate) fn drain_vnc(acknowledged: Option<ModifierEdge>) -> (Vec<Stroke>, bool) {
-        let Ok(mut rx) = queue().1.lock() else { return (Vec::new(), true) };
+        let Ok(mut rx) = queue().1.lock() else {
+            return (Vec::new(), true);
+        };
         receive_current(&mut rx);
         rx.ordered.drain(acknowledged, std::time::Instant::now())
     }
@@ -671,13 +705,13 @@ mod imp {
 pub(crate) use imp::arm_observer;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::diagnostics;
+#[cfg_attr(feature = "native-vnc-acceptance", allow(unused_imports))]
+pub(crate) use imp::drain_vnc;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::worker_health;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::worker_thread_id;
 pub(crate) use imp::{arm, arm_vnc, disarm, drain};
-#[cfg_attr(feature = "native-vnc-acceptance", allow(unused_imports))]
-pub(crate) use imp::drain_vnc;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::{probe_events, probe_input_tag};
 

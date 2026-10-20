@@ -225,6 +225,12 @@ pub(crate) fn translate(stroke: &Stroke) -> Result<u32, &'static str> {
     if let Some(symbol) = named_symbol(stroke.vk, stroke.extended) {
         return Ok(symbol);
     }
+    // ToUnicodeEx(flags=4) still reads a pending local dead key. Query copied
+    // layout tables where supported, so Win+E cannot accidentally become Win+é.
+    #[cfg(windows)]
+    if super::vnc_layout::supports(stroke.layout) {
+        return super::vnc_layout::translate(stroke);
+    }
     #[cfg(windows)]
     unsafe {
         use windows::Win32::UI::Input::KeyboardAndMouse::{ToUnicodeEx, HKL};
@@ -298,7 +304,10 @@ mod tests {
         assert_eq!(keys.event(0xa1, 0x36, extended, true), Route::Local);
         keys.event(0xa1, 0x36, extended, false);
         keys.event(0x5b, 0x5b, true, true);
-        assert_eq!(keys.event(0xa1, 0x36, extended, true), Route::Member { repeat: false });
+        assert_eq!(
+            keys.event(0xa1, 0x36, extended, true),
+            Route::Member { repeat: false }
+        );
         assert!(keys.member_down(0x36, false));
         keys.event(0xa1, 0x36, physical_extended(0xa1, false), false);
         assert!(!keys.member_down(0x36, false));
