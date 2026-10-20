@@ -93,7 +93,8 @@ for name, state in [('previous', load('previous-cleanup.json')), ('current', cle
 manifest_path = ROOT / 'sha256.json'
 if manifest_path.exists():
     for name, expected in load('sha256.json').items():
-        check('archive hash ' + name, hashlib.sha256((ROOT / name).read_bytes()).hexdigest() == expected)
+        canonical = (ROOT / name).read_bytes().replace(b'\r\n', b'\n')
+        check('archive hash ' + name, hashlib.sha256(canonical).hexdigest() == expected)
 
 print(json.dumps({'outcome': 'passed', 'scope': 'saved evidence integrity and observations; ordering failures retained',
                   'tested_commit': COMMIT, 'checks': len(checks), 'known_failures': [

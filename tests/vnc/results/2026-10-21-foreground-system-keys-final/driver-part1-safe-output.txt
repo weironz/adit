@@ -1,0 +1,42 @@
+connected=1280x800 elapsed_ms=4682
+snapshot_saved tiles=0 covered_pixels=0
+command_ack=order-desktop
+first_tile_ms=6476
+snapshot_saved tiles=4 covered_pixels=1024000
+command_ack=order-ready-view
+snapshot_saved tiles=49 covered_pixels=1024000
+command_ack=order-run-admin
+snapshot_saved tiles=55 covered_pixels=1024000
+command_ack=order-uac-settled
+snapshot_saved tiles=71 covered_pixels=1024000
+command_ack=order-admin-console
+snapshot_saved tiles=106 covered_pixels=1024000
+command_ack=order-console-settled
+command_ack=order-share-bootstrap
+ADIT_VNC_TEST:{"directory":"C:\\ProgramData\\AditVncKeys-a8f917e502845c647a9f318cf68d9f11","share":"AditVncKeys-a8f917e502845c647a9f318cf68d9f11","computer":"WIN11-VM","stage":"candidate2_share_ready"}
+command_ack=order-initialize
+snapshot_saved tiles=821 covered_pixels=1024000
+command_ack=order-launch
+snapshot_saved tiles=905 covered_pixels=1024000
+command_ack=order-view
+snapshot_saved tiles=930 covered_pixels=1024000
+command_ack=order-maximize
+snapshot_saved tiles=961 covered_pixels=1024000
+command_ack=order-toolbar-open
+command_ack=order-ime-preflight
+command_ack=order-grab
+command_ack=order-winr
+command_ack=order-shifts-repeat
+command_ack=order-system-basics
+command_ack=order-enter-held
+command_ack=order-numpad-enter-held
+command_ack=order-right-modifiers
+snapshot_saved tiles=1211 covered_pixels=1024000
+command_ack=prefix-launch
+snapshot_saved tiles=1285 covered_pixels=1024000
+command_ack=prefix-view
+snapshot_saved tiles=1351 covered_pixels=1024000
+command_ack=prefix-maximize
+command_ack=prefix-grab-preflight
+command_ack=prefix-core-matrix
+command_ack=prefix-right-modifiers

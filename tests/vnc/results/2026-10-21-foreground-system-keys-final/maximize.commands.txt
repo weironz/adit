@@ -1,0 +1,9 @@
+CLICK 1065 40
+WAIT 2200
+MOVE 640 92
+WAIT 600
+CLICK 640 92
+WAIT 1600
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/alias-toolbar.png
+WAIT 1200
+ACK alias-maximize

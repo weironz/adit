@@ -1,0 +1,25 @@
+KEY 2a 0 1
+WAIT 120
+KEY 2a 0 0
+WAIT 120
+WAIT 500
+ASCII z
+WAIT 90
+ASCII h
+WAIT 90
+ASCII o
+WAIT 90
+ASCII n
+WAIT 90
+ASCII g
+WAIT 90
+ASCII w
+WAIT 90
+ASCII e
+WAIT 90
+ASCII n
+WAIT 90
+WAIT 1000
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/alias-cjk-preedit.png
+WAIT 1200
+ACK alias-cjk-preedit

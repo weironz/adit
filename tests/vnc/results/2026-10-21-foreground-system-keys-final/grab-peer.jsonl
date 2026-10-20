@@ -1,0 +1,14 @@
+{"monotonic": 11127.484, "unix_ms": 1792513618332, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 11127.484, "unix_ms": 1792513618332, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 11127.484, "unix_ms": 1792513618332, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 11127.5, "unix_ms": 1792513618353, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 11128.203, "unix_ms": 1792513619056, "event": "pointer", "mask": 0, "x": 657, "y": 335, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11203.734, "unix_ms": 1792513694594, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11204.156, "unix_ms": 1792513695016, "event": "button", "mask": 1, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11204.156, "unix_ms": 1792513695016, "event": "button", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11204.921, "unix_ms": 1792513695771, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11204.921, "unix_ms": 1792513695771, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11204.921, "unix_ms": 1792513695772, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11205.718, "unix_ms": 1792513696574, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11205.781, "unix_ms": 1792513696635, "event": "button", "mask": 1, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 11205.781, "unix_ms": 1792513696635, "event": "button", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
