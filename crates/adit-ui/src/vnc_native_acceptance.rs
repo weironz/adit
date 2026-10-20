@@ -398,6 +398,17 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                 );
             }
             match &mut message {
+                Message::KeyboardInput(event) => {
+                    let (physical, pressed) = match event {
+                        keyboard::Event::KeyPressed { physical_key, .. } => (Some(*physical_key), true),
+                        keyboard::Event::KeyReleased { physical_key, .. } => (Some(*physical_key), false),
+                        _ => (None, false),
+                    };
+                    if let Some(keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Windows(scan @ (0xe02a | 0xe036)))) = physical {
+                        // Public fixture metadata only; never record typed text.
+                        log(state, serde_json::json!({"event":"window_shift_alias", "scan":scan, "pressed":pressed}));
+                    }
+                }
                 Message::DisplayScale(scale) => {
                     state.os_scale = *scale;
                     *scale *= state.scale;

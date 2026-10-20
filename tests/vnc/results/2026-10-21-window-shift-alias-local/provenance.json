@@ -1,0 +1,35 @@
+{
+  "source_sha256_lf": {
+    "crates/adit-ui/src/input.rs": "c777ada44fcd467a4d1b493b8130587bd889e4b21cd19dcd38a0429b9b5b737e",
+    "crates/adit-ui/src/keyboard_hook.rs": "6569d8657f488be876e3e58df3f5e931566ee25eeec6db54b3056e993b1e5f79",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "c7161a4e153fb7b70481a989e2fcd2fe9ad539187513645d03c980ba1b5b00da",
+    "crates/adit-ui/src/keyboard_vnc_order.rs": "39ae5d70b45650f7c011c2285b446206ac211a7eaa3ceda64a8fdfc805690ebd",
+    "crates/adit-ui/src/update_loop.rs": "1e051fb2f58a2736a36d9e23ad6858aeae9bc1026961eb0015caba2b71cacf94",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "3f7fdb15043757fa54a6448d08835e4caa37bf0fbca43e30c60fc2d7fa6dd949"
+  },
+  "executable_sha256": "8c668bc74059b480a392fb33a7b3439ae31f274cfc2cd0260d4c05099895fe20",
+  "executable_bytes": 64242176,
+  "local_ci_exit": 0,
+  "native_exit": 0,
+  "build_exit": 0,
+  "root_tests": {
+    "passed": 427,
+    "failed": 0,
+    "ignored": 11
+  },
+  "native_feature_tests": {
+    "passed": 142,
+    "failed": 0,
+    "ignored": 3
+  },
+  "explicit_native": {
+    "passed": 3,
+    "failed": 0
+  },
+  "standalone_vendor_graphics": {
+    "passed": 202,
+    "failed": 0
+  },
+  "hosted_actions_run": false,
+  "vm_acceptance": "pending case5 actual foreground target record"
+}

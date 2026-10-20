@@ -1,0 +1,9 @@
+CLICK 1116 92
+WAIT 2200
+MOVE 640 92
+WAIT 500
+CLICK 640 92
+WAIT 1500
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/prefix-toolbar.png
+WAIT 1200
+ACK prefix-maximize

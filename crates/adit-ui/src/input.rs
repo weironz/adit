@@ -224,10 +224,10 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
     let (key, physical, pressed, modifiers) = match event {
         keyboard::Event::KeyPressed {
             modified_key, physical_key, modifiers, ..
-        } => (modified_key, *physical_key, true, modifiers),
+        } => (modified_key, vnc_window_physical(*physical_key), true, modifiers),
         keyboard::Event::KeyReleased {
             modified_key, physical_key, modifiers, ..
-        } => (modified_key, *physical_key, false, modifiers),
+        } => (modified_key, vnc_window_physical(*physical_key), false, modifiers),
         _ => return,
     };
     // Owned Win combinations now come entirely through the hook, before IME.
@@ -275,8 +275,21 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
     }
 }
 
+fn vnc_window_physical(physical: keyboard::key::Physical) -> keyboard::key::Physical {
+    use keyboard::key::{Code, NativeCode, Physical};
+    // winit leaves E0-Shift as NativeCode::Windows instead of a Shift keycode.
+    // Normalize the window identity too: normalizing only the low-level hook
+    // still stranded its fence and lost the ordinary Shift down/up on the wire.
+    match physical {
+        Physical::Unidentified(NativeCode::Windows(0xe02a)) => Physical::Code(Code::ShiftLeft),
+        Physical::Unidentified(NativeCode::Windows(0xe036)) => Physical::Code(Code::ShiftRight),
+        _ => physical,
+    }
+}
+
 fn vnc_keysym(key: &Key, physical: keyboard::key::Physical) -> Option<u32> {
     use keyboard::key::{Code, Physical};
+    let physical = vnc_window_physical(physical);
     // Distinguish right-hand modifiers even when the logical key is just Alt.
     let modifier = match physical {
         Physical::Code(Code::ShiftLeft) => Some(0xffe1),
@@ -345,6 +358,18 @@ mod vnc_tests {
     use keyboard::key::{Code, Physical};
 
     #[test]
+    fn native_extended_shift_alias_matches_window_tracking_and_wire_symbol() {
+        use keyboard::key::NativeCode;
+        for (scan, code, symbol) in [(0xe02a, Code::ShiftLeft, 0xffe1), (0xe036, Code::ShiftRight, 0xffe2)] {
+            let native = Physical::Unidentified(NativeCode::Windows(scan));
+            assert_eq!(vnc_window_physical(native), Physical::Code(code));
+            assert_eq!(vnc_keysym(&Key::Unidentified, native), Some(symbol));
+        }
+        let other = Physical::Unidentified(NativeCode::Windows(0xe01d));
+        assert_eq!(vnc_window_physical(other), other);
+    }
+
+    #[test]
     fn vnc_uses_logical_text_and_distinguishes_right_modifiers() {
         assert_eq!(
             vnc_keysym(&Key::Character("A".into()), Physical::Code(Code::KeyA)),
@@ -401,7 +426,7 @@ pub(crate) fn finish_vnc_window_key(app: &mut AditApp, event: &keyboard::Event) 
         keyboard::Event::KeyReleased { physical_key, .. } => (*physical_key, false),
         _ => return,
     };
-    let (scan, extended) = match physical {
+    let (scan, extended) = match vnc_window_physical(physical) {
         Physical::Code(Code::ShiftLeft) => (0x2a, false),
         Physical::Code(Code::ShiftRight) => (0x36, false),
         Physical::Code(Code::ControlLeft) => (0x1d, false),
