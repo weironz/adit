@@ -1,0 +1,102 @@
+[package]
+name = "adit-ui"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[features]
+native-vnc-acceptance = []
+
+[[example]]
+name = "vnc_native_acceptance"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_probe"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_root_probe"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_gui_probe"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_win32_probe"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_winit_probe"
+required-features = ["native-vnc-acceptance"]
+
+[dependencies]
+adit-domain.workspace = true
+adit-session.workspace = true
+adit-storage.workspace = true
+adit-sync.workspace = true
+hex.workspace = true
+adit-terminal.workspace = true
+# "Follow the system theme" needs the OS's own setting, and every platform
+# exposes it differently — the registry on Windows, defaults on macOS, a portal
+# or GTK setting on Linux.
+dark-light = "2"
+iced.workspace = true
+# Keyword highlighting runs user-supplied patterns on the render path. `regex`
+# has no backtracking, so a pathological pattern costs linear time rather than
+# hanging the UI thread — which on Windows surfaces only as "Not Responding".
+regex = "1"
+rfd = "0.15"
+serde_json.workspace = true
+zeroize.workspace = true
+unicode-width = "0.2"
+time = { version = "0.3", features = ["local-offset"] }
+tokio.workspace = true
+
+# Clipboard *file* transfer for RDP. iced's clipboard carries text and nothing
+# else, so reading a file selection (CF_HDROP) and later offering one back
+# (a delay-rendered IDataObject) both have to go to Win32 directly.
+#
+# Windows-only by target, not by feature: the three platforms do not share a
+# mechanism here — macOS promises files through NSFilePromiseProvider, and X11
+# has no delayed-content protocol for files at all (its `text/uri-list` names
+# real paths, which is why FreeRDP mounts FUSE for this). Abstracting over three
+# designs that different would be guessing; see `clipboard_files`.
+[target.'cfg(windows)'.dependencies]
+# `windows::core::implement` generates the COM vtables for IDataObject /
+# IEnumFORMATETC / IStream. Hand-writing those is the bulk of what makes this job
+# large in C, and it is the reason doing it in Rust is worth it at all. As of
+# 0.62 the macro needs no feature flag — it moved out of one.
+# Named separately because the `implement` macro expands to `windows_core::`
+# paths, so the crate has to be in scope under that name.
+windows-core = "0.62"
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    # Not for drawing: the COM `*_Impl` traits are gated on Gdi together with
+    # StructuredStorage, because STGMEDIUM can carry an HBITMAP.
+    "Win32_Graphics_Gdi",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_DataExchange",
+    "Win32_System_Memory",
+    "Win32_System_Ole",
+    # GetCurrentThreadId / PostThreadMessageW / GetMessageW: OleSetClipboard is
+    # apartment-bound, so it runs on a dedicated STA thread with a message pump.
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_SystemInformation",
+    "Win32_System_StationsAndDesktops",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_HiDpi",
+    # SetWindowsHookExW / WH_KEYBOARD_LL, for passing global hotkeys through to
+    # a fullscreen remote desktop instead of letting the local owner eat them.
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Shell",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+winit = "=0.30.13"

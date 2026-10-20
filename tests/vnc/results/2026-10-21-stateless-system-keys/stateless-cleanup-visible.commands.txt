@@ -1,0 +1,4 @@
+WAIT 1000
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/stateless-cleanup-visible.png
+WAIT 1200
+ACK stateless-cleanup-visible

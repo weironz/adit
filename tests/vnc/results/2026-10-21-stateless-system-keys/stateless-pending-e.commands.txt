@@ -1,0 +1,16 @@
+KEY 0d 0 1
+WAIT 120
+KEY 0d 0 0
+WAIT 120
+KEY 5b 1 1
+WAIT 120
+KEY 12 0 1
+WAIT 120
+KEY 12 0 0
+WAIT 120
+KEY 5b 1 0
+WAIT 120
+WAIT 1000
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/stateless-pending-e.png
+WAIT 1200
+ACK stateless-pending-e

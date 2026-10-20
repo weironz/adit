@@ -1,0 +1,543 @@
+{
+  "outcome": "passed",
+  "server": "x11vnc",
+  "host_port": 15902,
+  "display": 99,
+  "cases": [
+    {
+      "outcome": "passed",
+      "expected": "abc",
+      "expected_scalars": [
+        "U+0061",
+        "U+0062",
+        "U+0063"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 1981
+      },
+      "commands": [
+        "TEXT abc",
+        "WAIT 1500",
+        "CLOSE"
+      ],
+      "after": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "abc",
+        "python_codepoints": [
+          "U+0061",
+          "U+0062",
+          "U+0063"
+        ],
+        "scalars": [
+          "U+0061",
+          "U+0062",
+          "U+0063"
+        ],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 3,
+          "release": 3,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [
+          {
+            "kind": "press",
+            "keysym": "a",
+            "char_scalars": [
+              "U+0061"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "a",
+            "char_scalars": [],
+            "focused": true
+          },
+          {
+            "kind": "press",
+            "keysym": "b",
+            "char_scalars": [
+              "U+0062"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "b",
+            "char_scalars": [],
+            "focused": true
+          },
+          {
+            "kind": "press",
+            "keysym": "c",
+            "char_scalars": [
+              "U+0063"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "c",
+            "char_scalars": [],
+            "focused": true
+          }
+        ],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 4436
+      },
+      "driver_exit": 0,
+      "checks": {
+        "driver_ready": true,
+        "driver_exit_zero": true,
+        "empty_before": true,
+        "same_target_pid": true,
+        "focus_before": true,
+        "focus_after": true,
+        "no_focus_loss": true,
+        "all_input_focused": true,
+        "key_events_consumed": true,
+        "no_event_truncation": true,
+        "exact_scalars": true
+      }
+    },
+    {
+      "outcome": "passed",
+      "expected": "\u4e2d\u6587",
+      "expected_scalars": [
+        "U+4E2D",
+        "U+6587"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 5136
+      },
+      "commands": [
+        "TEXT \u4e2d\u6587",
+        "WAIT 1500",
+        "CLOSE"
+      ],
+      "after": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "\u4e2d\u6587",
+        "python_codepoints": [
+          "U+4E2D",
+          "U+6587"
+        ],
+        "scalars": [
+          "U+4E2D",
+          "U+6587"
+        ],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 2,
+          "release": 2,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [
+          {
+            "kind": "press",
+            "keysym": "U4E2D",
+            "char_scalars": [
+              "U+4E2D"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "U4E2D",
+            "char_scalars": [],
+            "focused": true
+          },
+          {
+            "kind": "press",
+            "keysym": "U6587",
+            "char_scalars": [
+              "U+6587"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "U6587",
+            "char_scalars": [],
+            "focused": true
+          }
+        ],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 7530
+      },
+      "driver_exit": 0,
+      "checks": {
+        "driver_ready": true,
+        "driver_exit_zero": true,
+        "empty_before": true,
+        "same_target_pid": true,
+        "focus_before": true,
+        "focus_after": true,
+        "no_focus_loss": true,
+        "all_input_focused": true,
+        "key_events_consumed": true,
+        "no_event_truncation": true,
+        "exact_scalars": true
+      }
+    },
+    {
+      "outcome": "passed",
+      "expected": "\ud83d\ude0a",
+      "expected_scalars": [
+        "U+1F60A"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 8279
+      },
+      "commands": [
+        "TEXT \ud83d\ude0a",
+        "WAIT 1500",
+        "CLOSE"
+      ],
+      "after": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "\ud83d\ude0a",
+        "python_codepoints": [
+          "U+1F60A"
+        ],
+        "scalars": [
+          "U+1F60A"
+        ],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 1,
+          "release": 1,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [
+          {
+            "kind": "press",
+            "keysym": "U0001F60A",
+            "char_scalars": [
+              "U+1F60A"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "U0001F60A",
+            "char_scalars": [],
+            "focused": true
+          }
+        ],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 10693
+      },
+      "driver_exit": 0,
+      "checks": {
+        "driver_ready": true,
+        "driver_exit_zero": true,
+        "empty_before": true,
+        "same_target_pid": true,
+        "focus_before": true,
+        "focus_after": true,
+        "no_focus_loss": true,
+        "all_input_focused": true,
+        "key_events_consumed": true,
+        "no_event_truncation": true,
+        "exact_scalars": true
+      }
+    },
+    {
+      "outcome": "passed",
+      "expected": "e\u0301",
+      "expected_scalars": [
+        "U+0065",
+        "U+0301"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 11394
+      },
+      "commands": [
+        "TEXT e\u0301",
+        "WAIT 1500",
+        "CLOSE"
+      ],
+      "after": {
+        "pid": 231,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "e\u0301",
+        "python_codepoints": [
+          "U+0065",
+          "U+0301"
+        ],
+        "scalars": [
+          "U+0065",
+          "U+0301"
+        ],
+        "focus": {
+          "x_input_focus": 14680089,
+          "x_ancestors": [
+            14680089,
+            14680086
+          ],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": true,
+          "tk_entry_focused": true,
+          "focused": true
+        },
+        "counts": {
+          "press": 2,
+          "release": 2,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [
+          {
+            "kind": "press",
+            "keysym": "e",
+            "char_scalars": [
+              "U+0065"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "e",
+            "char_scalars": [],
+            "focused": true
+          },
+          {
+            "kind": "press",
+            "keysym": "combining_acute",
+            "char_scalars": [
+              "U+0301"
+            ],
+            "focused": true
+          },
+          {
+            "kind": "release",
+            "keysym": "combining_acute",
+            "char_scalars": [],
+            "focused": true
+          }
+        ],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 13812
+      },
+      "driver_exit": 0,
+      "checks": {
+        "driver_ready": true,
+        "driver_exit_zero": true,
+        "empty_before": true,
+        "same_target_pid": true,
+        "focus_before": true,
+        "focus_after": true,
+        "no_focus_loss": true,
+        "all_input_focused": true,
+        "key_events_consumed": true,
+        "no_event_truncation": true,
+        "exact_scalars": true
+      }
+    }
+  ],
+  "cleanup_verified": true,
+  "published": [
+    "127.0.0.1:15902"
+  ],
+  "version": {
+    "stdout": "x11vnc: 0.9.16 lastmod: 2019-01-05\n",
+    "stderr": "",
+    "exit": 0
+  },
+  "target_identity": {
+    "ready": true,
+    "pid": 231,
+    "control": "/tmp/adit-unicode-1565fa5cd6c142d1a87461a6bbad0d71.sock",
+    "display": 99
+  },
+  "cleanup": {
+    "quit": true,
+    "fallback_termination": false
+  }
+}

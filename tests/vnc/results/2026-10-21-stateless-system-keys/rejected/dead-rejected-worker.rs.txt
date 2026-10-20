@@ -1,0 +1,190 @@
+//! Translate captured shortcut members away from the window's composition queue.
+//!
+//! Flags 4 preserves existing dead-key state; it does not ignore that state.
+//! This worker must never attach to an input queue, dispatch keyboard messages,
+//! or translate ordinary typing. The ignored native test is the isolation gate.
+
+use super::vnc_chord::Stroke;
+use std::sync::{Arc, OnceLock, mpsc};
+
+type Translation = Result<u32, &'static str>;
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Pending(Arc<OnceLock<Translation>>);
+
+impl Pending {
+    pub(crate) fn result(&self) -> Option<Translation> {
+        self.0.get().copied()
+    }
+
+    fn resolve(&self, result: Translation) {
+        let _ = self.0.set(result);
+    }
+}
+
+struct Request {
+    stroke: Stroke,
+    pending: Pending,
+}
+
+impl Drop for Request {
+    fn drop(&mut self) {
+        // Also resolves queued requests if the receiver unexpectedly exits.
+        self.pending.resolve(Err("translator-stopped"));
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct Translator {
+    sender: mpsc::SyncSender<Request>,
+}
+
+impl Translator {
+    #[cfg(windows)]
+    pub(crate) fn start() -> Result<Self, &'static str> {
+        use std::time::Duration;
+        use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_NOREMOVE, PeekMessageW};
+
+        let (sender, receiver) = mpsc::sync_channel::<Request>(64);
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        // Start before arming capture. Neither the callback nor the UI's steady
+        // input path should pay for thread creation or wait for a translation.
+        std::thread::Builder::new()
+            .name("adit-vnc-translate".into())
+            .spawn(move || {
+                let mut message = MSG::default();
+                unsafe {
+                    let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+                }
+                if ready_tx.send(()).is_err() {
+                    return;
+                }
+                for request in receiver {
+                    let result =
+                        std::panic::catch_unwind(|| super::vnc_chord::translate(&request.stroke))
+                            .unwrap_or(Err("translator-panicked"));
+                    request.pending.resolve(result);
+                }
+                // Dropping the last sender ends the worker. No UI/hook join,
+                // window, activation, layout installation or message pump.
+            })
+            .map_err(|_| "translator-spawn-failed")?;
+        ready_rx
+            .recv_timeout(Duration::from_millis(250))
+            .map_err(|_| "translator-start-timeout")?;
+        Ok(Self { sender })
+    }
+
+    #[cfg(not(windows))]
+    pub(crate) fn start() -> Result<Self, &'static str> {
+        Err("native-layout-unavailable")
+    }
+
+    pub(crate) fn request(&self, stroke: Stroke) -> Pending {
+        let pending = Pending::default();
+        match self.sender.try_send(Request {
+            stroke,
+            pending: pending.clone(),
+        }) {
+            Ok(()) => {}
+            Err(mpsc::TrySendError::Full(request)) => {
+                request.pending.resolve(Err("translator-queue-full"));
+            }
+            Err(mpsc::TrySendError::Disconnected(request)) => {
+                request.pending.resolve(Err("translator-stopped"));
+            }
+        }
+        pending
+    }
+}
+
+#[cfg(all(test, windows, feature = "native-vnc-acceptance"))]
+mod tests {
+    use super::super::vnc_chord::Modifiers;
+    use super::*;
+    use std::time::{Duration, Instant};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyboardLayoutList, HKL, ToUnicodeEx};
+    use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_NOREMOVE, PeekMessageW};
+
+    /// Run only in the isolated Windows VM after its operator has installed DE.
+    /// LoadKeyboardLayout is system-wide on modern Windows; this test never
+    /// loads/unloads/activates a layout or changes any actual window's queue.
+    #[test]
+    #[ignore = "isolated Windows VM; ADIT_VNC_ISOLATED_LAYOUT_TEST=1 and preloaded German 04070407 required"]
+    fn native_worker_ignores_other_queue_dead_key_and_preserves_pending_accent() {
+        assert_eq!(
+            std::env::var("ADIT_VNC_ISOLATED_LAYOUT_TEST").as_deref(),
+            Ok("1"),
+            "unsupported test environment: use an isolated Windows VM"
+        );
+        let mut layouts = [HKL::default(); 64];
+        let count = unsafe { GetKeyboardLayoutList(Some(&mut layouts)) };
+        assert!(
+            count > 0,
+            "unsupported test environment: cannot enumerate HKLs"
+        );
+        let layout = layouts[..(count as usize).min(layouts.len())]
+            .iter()
+            .find(|layout| layout.0 as usize & 0xffff_ffff == 0x0407_0407)
+            .expect("unsupported test environment: preload standard German 04070407 in the VM")
+            .0 as isize;
+        let translator = Translator::start().expect("translation worker ready");
+        let (accent_result, translated, composed_result, composed_text) =
+            std::thread::spawn(move || {
+                let mut message = MSG::default();
+                unsafe {
+                    let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+                }
+                let state = [0u8; 256];
+                let mut text = [0u16; 16];
+                let hkl = HKL(layout as *mut _);
+                // Standard German acute is VK_OEM_6, physical scan 0x0d.
+                let accent_result =
+                    unsafe { ToUnicodeEx(0xdd, 0x0d, &state, &mut text, 0, Some(hkl)) };
+                let pending = translator.request(Stroke {
+                    vk: 0x52,
+                    scan: 0x13,
+                    extended: false,
+                    pressed: true,
+                    repeat: false,
+                    layout,
+                    modifiers: Modifiers {
+                        caps: Some(false),
+                        ..Modifiers::default()
+                    },
+                });
+                let deadline = Instant::now() + Duration::from_secs(1);
+                let translated = loop {
+                    if let Some(result) = pending.result() {
+                        break result;
+                    }
+                    if Instant::now() >= deadline {
+                        break Err("translator-test-timeout");
+                    }
+                    std::thread::sleep(Duration::from_millis(1));
+                };
+                // Always consume A's own pending accent before returning/asserting,
+                // including a worker failure. No cleanup touches a GUI input queue.
+                text.fill(0);
+                let composed_result =
+                    unsafe { ToUnicodeEx(0x45, 0x12, &state, &mut text, 0, Some(hkl)) };
+                (accent_result, translated, composed_result, text)
+            })
+            .join()
+            .expect("isolated composition thread completes");
+        assert!(
+            accent_result < 0,
+            "German acute must establish a real pending dead key"
+        );
+        assert_eq!(
+            translated,
+            Ok(u32::from('r')),
+            "worker must not inherit A's accent"
+        );
+        assert_eq!(composed_result, 1);
+        assert_eq!(
+            composed_text[0], 'é' as u16,
+            "worker must preserve A's pending accent"
+        );
+    }
+}

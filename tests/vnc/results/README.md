@@ -2,6 +2,17 @@
 
 ## Native foreground input acceptance
 
+[2026-10-21 stateless shortcut translation](2026-10-21-stateless-system-keys/README.md)
+proves pending German acute + Win+R/Win+E without consuming the local accent,
+plus actual English/Chinese layouts, IME, escape and focus regression. It retains
+130 wire events and a newly observed extra Ctrl around AltGr; that AltGr run is
+explicitly incomplete and does not replace the prior clean pass.
+
+[2026-10-21 Linux Unicode text consumption](2026-10-21-linux-unicode-text/README.md)
+records 12/12 actual native Entry model comparisons across x11vnc, TigerVNC and
+TurboVNC, including CJK, non-BMP and combining text. Preinput fixture failures and
+owned container cleanup remain alongside the successful results.
+
 [2026-10-21 grab/IME/AltGr report](2026-10-21-grab-ime-altgr/README.md) records
 actual Windows preedit/Chinese commits with capture enabled, the AltGr auxiliary
 Ctrl fix, final-source system-key regression, and owned VM cleanup. It retains

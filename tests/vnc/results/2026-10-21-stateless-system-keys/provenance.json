@@ -1,0 +1,34 @@
+{
+  "base": "eea9b178d8fae1641b3e5dde2484d240b2e51b56",
+  "product_files_sha256": {
+    "crates/adit-ui/Cargo.toml": "c73cd76b9c8f55faf4de6f55dcc04becff8f41178f902b40f2b55f3e53f0203c",
+    "crates/adit-ui/src/keyboard_hook.rs": "b158a0a8d9f778bcbd6967d69936f43de73f16894f4e5832c3bfa05764d2d065",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "9eccf695bdee5334f2751ce8537a3d12d804d2c5a266f7add51cc2e8f375cc45",
+    "crates/adit-ui/src/keyboard_vnc_layout.rs": "fbd67a120495e91a2c289f7724d04f1b0528399f59f2a0589db641186648815e"
+  },
+  "native_gui_exe_sha256": "1e6b48cf97d4f8bc0a7fabf30ec9944528d609568ce24e4e5f299e4a3245e9c2",
+  "native_test_exe_sha256": "8664988cc57c77e44ad1c8bc0d1dc52321d8642d9ca743e50ca9cc3035b26084",
+  "scope": "Actual Adit foreground input via RDP scancodes, synthetic RFB peer; not vendor text consumption or physical keyboard repeat certification.",
+  "build_note": "GUI/native binaries built after cargo fmt --all. Unrelated whitespace-only formatting in 44 other tracked files was reverted before final local CI; product files archived here are unchanged from the tested build.",
+  "altgr_scope": "New run retained an extra initial Ctrl until a later real Ctrl release. This run is not accepted as a clean AltGr regression; previous independent pass remains historical evidence.",
+  "product_files_raw_sha256": {
+    "crates/adit-ui/Cargo.toml": "c73cd76b9c8f55faf4de6f55dcc04becff8f41178f902b40f2b55f3e53f0203c",
+    "crates/adit-ui/src/keyboard_hook.rs": "b158a0a8d9f778bcbd6967d69936f43de73f16894f4e5832c3bfa05764d2d065",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "9eccf695bdee5334f2751ce8537a3d12d804d2c5a266f7add51cc2e8f375cc45",
+    "crates/adit-ui/src/keyboard_vnc_layout.rs": "fbd67a120495e91a2c289f7724d04f1b0528399f59f2a0589db641186648815e"
+  },
+  "source_normalization": "product_files_sha256 uses LF; raw source hashes retained separately",
+  "final_test_adjustment": "After this GUI/native run, added only cfg(test) prepare_test_layout and called it from preexisting wire tests; no shipping behavior changed. Their initial layout-not-prepared failures are retained.",
+  "final_product_git_commit": "ff84b344d532e4a5ecc3cad9a8124ea35ea96d1e",
+  "toolchain": {
+    "rustc": "1.98.0 (88d9e12ae 2026-08-18)",
+    "cargo": "1.98.0 (797e8a9bc 2026-08-05)"
+  },
+  "final_product_files_lf_sha256": {
+    "crates/adit-ui/Cargo.toml": "c73cd76b9c8f55faf4de6f55dcc04becff8f41178f902b40f2b55f3e53f0203c",
+    "crates/adit-ui/src/keyboard_hook.rs": "fc1e3f7753c7ce74d972a6d248c9c1770db96a8ac68af2797cbf40d888c161ef",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "9eccf695bdee5334f2751ce8537a3d12d804d2c5a266f7add51cc2e8f375cc45",
+    "crates/adit-ui/src/keyboard_vnc_layout.rs": "fbd67a120495e91a2c289f7724d04f1b0528399f59f2a0589db641186648815e",
+    "crates/adit-ui/src/vnc_chord_tests.rs": "e348eeefb81c12d28d71f5067bda4a4bbfdd1be177b147a182e0a8a08d1fd67f"
+  }
+}

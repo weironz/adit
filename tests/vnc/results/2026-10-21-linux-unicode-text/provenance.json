@@ -1,0 +1,16 @@
+{
+  "production_source_commit": "eea9b178d8fae1641b3e5dde2484d240b2e51b56",
+  "build": "cargo build -p adit-session --example vnc_fixture_driver",
+  "build_exit": 0,
+  "driver_sha256": "5bb7117156fa94adf718daf3445eee3a0c91928e993eb05dc7956186fef58ad2",
+  "production_source_sha256_lf": {
+    "crates/adit-session/examples/vnc_fixture_driver.rs": "15ae2fa51729b46b8f60a391c04532b61c6f0a1460c59db7298bac308776da1b",
+    "crates/adit-session/src/vnc_client.rs": "ea147e8fe3d4b03bff3066401c4f379fd46b7d71759539df2156f61ac198c2ab",
+    "crates/adit-session/Cargo.toml": "b118b91ba1333e5bdfac3d914cc15da04f5f802da7399ca6876b5701caaed975"
+  },
+  "runner_sha256_lf": "87b6bf2911f937bfbcc4386876585cd6ac90b81bc7f90f1657d6594170113e56",
+  "target_sha256_lf": "5bf4a34ba3acc67501d12572d132bc50da3fbf003c311d4da77d4d7f35ea8c67",
+  "scope": "real Linux servers and actual Tk Entry model; production TEXT over RFB; no clipboard/native IME/hardware claim",
+  "container_owner": "codex-vnc-unicode-20261021",
+  "unlinked_experiment": "UI-only dead-state prototype was present while driver built; linked Session source above matched frozen Git blobs"
+}

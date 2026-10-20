@@ -1,0 +1,188 @@
+{
+  "outcome": "failed",
+  "server": "x11vnc",
+  "host_port": 15902,
+  "display": 99,
+  "cases": [
+    {
+      "outcome": "failed",
+      "expected": "abc",
+      "expected_scalars": [
+        "U+0061",
+        "U+0062",
+        "U+0063"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 47,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 1,
+          "x_ancestors": [],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": false,
+          "tk_entry_focused": true,
+          "focused": false
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 3481
+      },
+      "error": "target not empty/focused; no TEXT sent"
+    },
+    {
+      "outcome": "failed",
+      "expected": "\u4e2d\u6587",
+      "expected_scalars": [
+        "U+4E2D",
+        "U+6587"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 47,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 1,
+          "x_ancestors": [],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": false,
+          "tk_entry_focused": true,
+          "focused": false
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 6133
+      },
+      "error": "target not empty/focused; no TEXT sent"
+    },
+    {
+      "outcome": "failed",
+      "expected": "\ud83d\ude0a",
+      "expected_scalars": [
+        "U+1F60A"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 47,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 1,
+          "x_ancestors": [],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": false,
+          "tk_entry_focused": true,
+          "focused": false
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 6852
+      },
+      "error": "target not empty/focused; no TEXT sent"
+    },
+    {
+      "outcome": "failed",
+      "expected": "e\u0301",
+      "expected_scalars": [
+        "U+0065",
+        "U+0301"
+      ],
+      "clipboard_send_used": false,
+      "before": {
+        "pid": 47,
+        "display": 99,
+        "entry_xid": 14680089,
+        "root_xid": 14680086,
+        "text": "",
+        "python_codepoints": [],
+        "scalars": [],
+        "focus": {
+          "x_input_focus": 1,
+          "x_ancestors": [],
+          "x_target_windows": [
+            14680086,
+            14680086
+          ],
+          "x_focus_owned": false,
+          "tk_entry_focused": true,
+          "focused": false
+        },
+        "counts": {
+          "press": 0,
+          "release": 0,
+          "unfocused_input": 0,
+          "focus_losses": 0,
+          "truncated_events": 0
+        },
+        "events": [],
+        "tk_patchlevel": "8.6.14",
+        "elapsed_ms": 7547
+      },
+      "error": "target not empty/focused; no TEXT sent"
+    }
+  ],
+  "cleanup_verified": false,
+  "published": [
+    "127.0.0.1:15902"
+  ],
+  "version": {
+    "stdout": "x11vnc: 0.9.16 lastmod: 2019-01-05\n",
+    "stderr": "",
+    "exit": 0
+  },
+  "target_identity": {
+    "ready": true,
+    "pid": 47,
+    "control": "/tmp/adit-unicode-3b007bee3ed342f0803c4ffc957c17ee.sock",
+    "display": 99
+  },
+  "cleanup": {
+    "quit": true,
+    "fallback_termination": false,
+    "error": "command failed (143): "
+  }
+}
