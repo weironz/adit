@@ -2158,9 +2158,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             return window::latest().and_then(move |id| window::set_mode(id, mode));
         }
         Message::KeyboardInput(event) => {
-            // Hook events precede window events on Windows. Drain them here as
-            // well as on the frame tick, so Win+letter and fast Alt+Tab retain
-            // their original ordering across the two event queues.
+            // Stop at each pass-through modifier until its window event has
+            // been forwarded. Draining the entire hook queue here let a later
+            // Win-down overtake an earlier Shift/Alt-up in the window queue.
             if app.manager.active_is_vnc() && app.vnc_grab_keys && app.manager.active_rdp_live() {
                 drain_vnc_system_keys(app);
             }
@@ -2274,6 +2274,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 if app.manager.active_is_vnc() {
                     if vnc_accepts_text_input(app) {
                         send_vnc_keyboard(app, &event);
+                        finish_vnc_window_key(app, &event);
                     }
                     return Task::none();
                 }

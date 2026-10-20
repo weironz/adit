@@ -41,9 +41,14 @@ mod raw_input;
 #[path = "keyboard_vnc_chord.rs"]
 pub(crate) mod vnc_chord;
 
+#[cfg_attr(any(not(windows), feature = "native-vnc-acceptance"), allow(dead_code))]
+#[path = "keyboard_vnc_order.rs"]
+pub(crate) mod vnc_order;
+
 #[cfg(windows)]
 mod imp {
     use super::raw_input::KeyboardRegistrationLease;
+    use super::vnc_order::{Entry, ModifierEdge, OrderedQueue};
     use std::cell::{Cell, RefCell};
     use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
@@ -75,6 +80,7 @@ mod imp {
         static WORKER_GENERATION: Cell<u64> = const { Cell::new(0) };
         static CHORDS: RefCell<super::vnc_chord::Ownership> =
             RefCell::new(super::vnc_chord::Ownership::new([false; 512], None));
+        static WINDOW_MODIFIERS: RefCell<[bool; 512]> = const { RefCell::new([false; 512]) };
     }
 
     // Synthetic native acceptance only: count delivery without logging keys or
@@ -107,8 +113,13 @@ mod imp {
     /// Keystrokes the callback swallowed, waiting for the UI thread to forward
     /// them. A channel rather than a lock the callback might contend on: the
     /// callback never waits for UI or network work.
-    type QueuedStroke = (u64, Stroke);
-    static QUEUE: OnceLock<(Sender<QueuedStroke>, Mutex<Receiver<QueuedStroke>>)> = OnceLock::new();
+    type QueuedStroke = (u64, Entry<Stroke>);
+    struct QueueReceiver {
+        receiver: Receiver<QueuedStroke>,
+        generation: u64,
+        ordered: OrderedQueue<Stroke>,
+    }
+    static QUEUE: OnceLock<(Sender<QueuedStroke>, Mutex<QueueReceiver>)> = OnceLock::new();
 
     struct HookWorker {
         thread_id: u32,
@@ -151,10 +162,10 @@ mod imp {
         pub(crate) chord: Option<super::vnc_chord::Stroke>,
     }
 
-    fn queue() -> &'static (Sender<QueuedStroke>, Mutex<Receiver<QueuedStroke>>) {
+    fn queue() -> &'static (Sender<QueuedStroke>, Mutex<QueueReceiver>) {
         QUEUE.get_or_init(|| {
             let (tx, rx) = mpsc::channel();
-            (tx, Mutex::new(rx))
+            (tx, Mutex::new(QueueReceiver { receiver: rx, generation: 0, ordered: OrderedQueue::default() }))
         })
     }
 
@@ -223,6 +234,7 @@ mod imp {
                     matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN),
                 )
             });
+            WINDOW_MODIFIERS.with(|state| state.borrow_mut().fill(false));
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
@@ -261,12 +273,36 @@ mod imp {
             };
             let scan = (info.scanCode & 0xff) as u8;
             let extended = info.flags.0 & 1 != 0;
+            let was_down = CHORDS.with(|state| state.borrow().key_down(scan, extended));
             let route = CHORDS.with(|state| {
                 state
                     .borrow_mut()
                     .event(info.vkCode as u16, scan, extended, pressed)
             });
             if route == Route::Local {
+                // These keys must remain visible to Windows/IME and the local
+                // escape shortcut. Their window delivery is an ordering fence:
+                // a tick must not replay a later Win/Tab before this edge.
+                if matches!(info.vkCode, 0x10..=0x12 | 0xa0..=0xa5) {
+                    let index = usize::from(scan) + if extended { 256 } else { 0 };
+                    let fence = WINDOW_MODIFIERS.with(|state| {
+                        let mut state = state.borrow_mut();
+                        if pressed && !was_down {
+                            state[index] = true;
+                            true
+                        } else if released && state[index] {
+                            state[index] = false;
+                            true
+                        } else {
+                            false
+                        }
+                    });
+                    if fence {
+                        let _ = queue().0.send((generation, Entry::WindowModifier(ModifierEdge {
+                            scan, extended, pressed,
+                        })));
+                    }
+                }
                 return CallNextHookEx(None, code, wparam, lparam);
             }
             if let Route::Member { repeat } = route {
@@ -310,7 +346,7 @@ mod imp {
         };
         // A failed send means the receiver is gone, i.e. we are shutting down;
         // passing the key on is the right thing then.
-        if queue().0.send((generation, stroke)).is_err() {
+        if queue().0.send((generation, Entry::Key(stroke))).is_err() {
             CHORDS.with(|state| state.borrow_mut().clear());
             return CallNextHookEx(None, code, wparam, lparam);
         }
@@ -423,6 +459,7 @@ mod imp {
                 CHORDS.with(|state| {
                     *state.borrow_mut() = super::vnc_chord::Ownership::new(preheld, caps)
                 });
+                WINDOW_MODIFIERS.with(|state| state.borrow_mut().fill(false));
                 #[cfg(feature = "native-vnc-acceptance")]
                 {
                     PUMP_TURNS.store(0, Ordering::Relaxed);
@@ -536,20 +573,40 @@ mod imp {
         // Anything swallowed but not yet forwarded is dropped: it was meant for
         // a session no longer in the mode that captured it, and replaying it
         // afterwards would fire keys the user cannot see land.
-        if let Ok(rx) = queue().1.lock() {
-            while rx.try_recv().is_ok() {}
+        if let Ok(mut rx) = queue().1.lock() {
+            while rx.receiver.try_recv().is_ok() {}
+            rx.ordered = OrderedQueue::default();
         }
     }
 
     /// Take everything swallowed since the last call.
     pub(crate) fn drain() -> Vec<Stroke> {
-        let Ok(rx) = queue().1.lock() else {
+        let Ok(mut rx) = queue().1.lock() else {
             return Vec::new();
         };
+        receive_current(&mut rx);
+        rx.ordered.take_all()
+    }
+
+    fn receive_current(rx: &mut QueueReceiver) {
         let generation = GENERATION.load(Ordering::Acquire);
-        rx.try_iter()
-            .filter_map(|(owner, stroke)| (owner == generation).then_some(stroke))
-            .collect()
+        if rx.generation != generation {
+            rx.ordered = OrderedQueue::default();
+            rx.generation = generation;
+        }
+        while let Ok((owner, entry)) = rx.receiver.try_recv() {
+            if owner == generation {
+                rx.ordered.push(entry);
+            }
+        }
+    }
+
+    // Standalone native probes include this source without the VNC UI router.
+    #[cfg_attr(feature = "native-vnc-acceptance", allow(dead_code))]
+    pub(crate) fn drain_vnc(acknowledged: Option<ModifierEdge>) -> (Vec<Stroke>, bool) {
+        let Ok(mut rx) = queue().1.lock() else { return (Vec::new(), true) };
+        receive_current(&mut rx);
+        rx.ordered.drain(acknowledged, std::time::Instant::now())
     }
 }
 
@@ -600,6 +657,9 @@ mod imp {
     pub(crate) fn drain() -> Vec<Stroke> {
         Vec::new()
     }
+    pub(crate) fn drain_vnc(_: Option<super::vnc_order::ModifierEdge>) -> (Vec<Stroke>, bool) {
+        (Vec::new(), false)
+    }
 }
 
 // `Stroke` stays inside the module: callers read its fields off whatever
@@ -613,6 +673,8 @@ pub(crate) use imp::worker_health;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::worker_thread_id;
 pub(crate) use imp::{arm, arm_vnc, disarm, drain};
+#[cfg_attr(feature = "native-vnc-acceptance", allow(unused_imports))]
+pub(crate) use imp::drain_vnc;
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::{probe_events, probe_input_tag};
 

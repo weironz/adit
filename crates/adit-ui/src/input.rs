@@ -390,7 +390,41 @@ mod vnc_input_tests {
 
 /// Merge selectively swallowed system keys before the next ordinary window key.
 pub(crate) fn drain_vnc_system_keys(app: &mut AditApp) {
-    for stroke in keyboard_hook::drain() {
+    drain_vnc_keys_after_modifier(app, None);
+}
+
+/// Acknowledge only after the ordinary window modifier has reached the wire.
+pub(crate) fn finish_vnc_window_key(app: &mut AditApp, event: &keyboard::Event) {
+    use keyboard::key::{Code, Physical};
+    let (physical, pressed) = match event {
+        keyboard::Event::KeyPressed { physical_key, .. } => (*physical_key, true),
+        keyboard::Event::KeyReleased { physical_key, .. } => (*physical_key, false),
+        _ => return,
+    };
+    let (scan, extended) = match physical {
+        Physical::Code(Code::ShiftLeft) => (0x2a, false),
+        Physical::Code(Code::ShiftRight) => (0x36, false),
+        Physical::Code(Code::ControlLeft) => (0x1d, false),
+        Physical::Code(Code::ControlRight) => (0x1d, true),
+        Physical::Code(Code::AltLeft) => (0x38, false),
+        Physical::Code(Code::AltRight) => (0x38, true),
+        _ => return,
+    };
+    if app.vnc_grab_keys {
+        drain_vnc_keys_after_modifier(app, Some(keyboard_hook::vnc_order::ModifierEdge {
+            scan, extended, pressed,
+        }));
+    }
+}
+
+fn drain_vnc_keys_after_modifier(app: &mut AditApp, acknowledged: Option<keyboard_hook::vnc_order::ModifierEdge>) {
+    let (strokes, timed_out) = keyboard_hook::drain_vnc(acknowledged);
+    if timed_out {
+        release_rdp_modifiers(app);
+        app.notice = "VNC：窗口修饰键同步超时，已释放系统键抓取".into();
+        return;
+    }
+    for stroke in strokes {
         if let Some(chord) = stroke.chord {
             route_vnc_chord(app, chord);
         } else {

@@ -72,6 +72,10 @@ impl Ownership {
         self.members[usize::from(scan) + if extended { 256 } else { 0 }]
     }
 
+    pub fn key_down(&self, scan: u8, extended: bool) -> bool {
+        self.down[usize::from(scan) + if extended { 256 } else { 0 }]
+    }
+
     pub fn event(&mut self, vk: u16, scan: u8, extended: bool, pressed: bool) -> Route {
         let index = usize::from(scan) + if extended { 256 } else { 0 };
         let was_down = self.down[index];
