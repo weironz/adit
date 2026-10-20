@@ -1,0 +1,3 @@
+vm3dgl: Failed to initialize svga driver.
+vm3dgl: Falling back to LLVMPipe.
+VNC system chord translation unavailable: multiple-scalars

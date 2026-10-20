@@ -1,0 +1,7 @@
+KEY 39 0 1
+WAIT 120
+KEY 39 0 0
+WAIT 120
+WAIT 1100
+WAIT 1200
+ACK ime2-pinyin-commit

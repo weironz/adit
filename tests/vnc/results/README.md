@@ -1,5 +1,16 @@
 # VNC fixture results
 
+## Native foreground input acceptance
+
+[2026-10-21 grab/IME/AltGr report](2026-10-21-grab-ime-altgr/README.md) records
+actual Windows preedit/Chinese commits with capture enabled, the AltGr auxiliary
+Ctrl fix, final-source system-key regression, and owned VM cleanup. It retains
+the failed predecessor and the unsupported pending-dead-key boundary. Its
+synthetic RFB peer does not replace vendor application Unicode consumption.
+
+[The preceding foreground matrix](2026-10-21-foreground-system-keys-final/README.md)
+contains the full left/right modifier, ownership, escape and focus matrix.
+
 ## 2026-10-16 fixed-window calibration (partial run)
 
 The two `linux-fixed-window` JSON files preserve raw observations and the exact

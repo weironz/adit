@@ -1,0 +1,9 @@
+{
+  "driver_pid": 48240,
+  "driver_exit": 0,
+  "console_exit_ack": true,
+  "scope": "owned RDP control process and its child helper; no account/password changes",
+  "helper_report_on_control_close": 1,
+  "helper_remaining_after_close": false,
+  "note": "helper reported exit 1 during explicit control shutdown; no claim of helper success or root cause; local process inventory was empty"
+}
