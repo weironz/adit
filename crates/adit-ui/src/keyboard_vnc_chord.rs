@@ -28,6 +28,13 @@ pub(crate) enum Route {
     Member { repeat: bool },
 }
 
+pub(crate) fn physical_extended(vk: u16, extended: bool) -> bool {
+    // Windows can mark an RDP-delivered right Shift as extended even when the
+    // source scan was unprefixed. iced and MapVirtualKey use the plain Shift
+    // identity; a fence using E0-36 could never match that window key event.
+    extended && !matches!(vk, 0x10 | 0xa0 | 0xa1)
+}
+
 pub(crate) struct Ownership {
     down: [bool; 512],
     members: [bool; 512],
@@ -277,6 +284,25 @@ pub(crate) fn translate(stroke: &Stroke) -> Result<u32, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn shift_identity_matches_window_and_preheld_seed_despite_os_prefix() {
+        assert!(!physical_extended(0xa1, true));
+        assert!(!physical_extended(0x10, true));
+        assert!(physical_extended(0xa3, true));
+        assert!(physical_extended(0xa5, true));
+        let mut preheld = [false; 512];
+        preheld[0x36] = true;
+        let mut keys = Ownership::new(preheld, Some(false));
+        let extended = physical_extended(0xa1, true);
+        assert!(keys.key_down(0x36, extended));
+        assert_eq!(keys.event(0xa1, 0x36, extended, true), Route::Local);
+        keys.event(0xa1, 0x36, extended, false);
+        keys.event(0x5b, 0x5b, true, true);
+        assert_eq!(keys.event(0xa1, 0x36, extended, true), Route::Member { repeat: false });
+        assert!(keys.member_down(0x36, false));
+        keys.event(0xa1, 0x36, physical_extended(0xa1, false), false);
+        assert!(!keys.member_down(0x36, false));
+    }
     #[test]
     fn member_release_and_repeat_stay_owned_after_win_release() {
         let mut keys = Ownership::new([false; 512], Some(false));

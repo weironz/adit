@@ -1,0 +1,13 @@
+{
+  "tested_commit": "981c1680a6295efcf49c89410b8ddba357e2203f",
+  "executable_sha256": "466546a9febdaa0c13921e068a3f8ddd4585416f791ae2a956e851e8251de3ce",
+  "scope": "modifier ordering passed; right Shift prefix mismatch retained as failed; timeout released capture",
+  "source_sha256_lf": {
+    "crates/adit-ui/src/input.rs": "62f0be5c702c89c4d3e3c6fa50fea1e93de1859e48f6c81faf63ccae667e9ee6",
+    "crates/adit-ui/src/keyboard_hook.rs": "2d2e61373dd11311ef45f9b5a12d240bd4f85a552d4fd90459e9ca65e2ea6426",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "e106830c389c015b53a614ba908319af4169e10edd8ce84c109b5dd75ae64620",
+    "crates/adit-ui/src/keyboard_vnc_order.rs": "39ae5d70b45650f7c011c2285b446206ac211a7eaa3ceda64a8fdfc805690ebd",
+    "crates/adit-ui/src/update_loop.rs": "1e051fb2f58a2736a36d9e23ad6858aeae9bc1026961eb0015caba2b71cacf94"
+  },
+  "cleanup": "case3 stopped; final shared lease cleanup will be attached with next candidate"
+}

@@ -1,0 +1,5 @@
+CLICK 540 534
+WAIT 2200
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/order-admin-console.png
+WAIT 1200
+ACK order-admin-console

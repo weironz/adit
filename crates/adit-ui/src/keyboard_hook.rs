@@ -230,7 +230,7 @@ mod imp {
                 state.borrow_mut().foreign_event(
                     info.vkCode as u16,
                     (info.scanCode & 0xff) as u8,
-                    info.flags.0 & 1 != 0,
+                    super::vnc_chord::physical_extended(info.vkCode as u16, info.flags.0 & 1 != 0),
                     matches!(wparam.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN),
                 )
             });
@@ -272,7 +272,7 @@ mod imp {
                 GetAsyncKeyState, GetKeyboardLayout,
             };
             let scan = (info.scanCode & 0xff) as u8;
-            let extended = info.flags.0 & 1 != 0;
+            let extended = super::vnc_chord::physical_extended(info.vkCode as u16, info.flags.0 & 1 != 0);
             let was_down = CHORDS.with(|state| state.borrow().key_down(scan, extended));
             let route = CHORDS.with(|state| {
                 state

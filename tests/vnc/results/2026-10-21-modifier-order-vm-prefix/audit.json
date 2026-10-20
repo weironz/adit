@@ -1,0 +1,16 @@
+{
+  "outcome": "passed",
+  "scope": "saved failed prefix case and tested source integrity; does not certify failed chord",
+  "checks": 9,
+  "check_names": [
+    "right Shift chord failure retained",
+    "OS right Shift prefix retained",
+    "timeout actually disarmed",
+    "target hash matches tested source",
+    "tested source crates/adit-ui/src/input.rs",
+    "tested source crates/adit-ui/src/keyboard_hook.rs",
+    "tested source crates/adit-ui/src/keyboard_vnc_chord.rs",
+    "tested source crates/adit-ui/src/keyboard_vnc_order.rs",
+    "tested source crates/adit-ui/src/update_loop.rs"
+  ]
+}

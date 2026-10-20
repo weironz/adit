@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "out": "{\"outcome\": \"passed\", \"files\": [{\"path\": \"payload/native_rfb_fixture.py\", \"sha256\": \"476c6be618f40f9d510921b4be84d0c5aa1119186be61efe5d478071ea3541c1\", \"bytes\": 15570}, {\"path\": \"payload/windows-vm-native.ps1\", \"sha256\": \"f4baeb32f6bf7d5d7cd1618e28cf013c5cf85367426272e588cecaa3edff5cb2\", \"bytes\": 3173}, {\"path\": \"payload/windows-vm-input-observer.py\", \"sha256\": \"cf94c7f8bde1c8a23ab7aeb40e32435fb20884f2984bba379b9e1678ac00b124\", \"bytes\": 4246}, {\"path\": \"payload/run-case3.ps1\", \"sha256\": \"15ea83a26bbd1cf8a09daa2611b079967eb09731b757c9ad746a41f65cff57e4\", \"bytes\": 692}, {\"path\": \"payload/candidate3.zip\", \"sha256\": \"3339fe95024effcacb3f0e3382a4a9fc144bb1b622aa88371a5d0df5830bbe75\", \"bytes\": 27569090}]}\r\n",
+  "err": "socket aborted by peer (WSAESHUTDOWN), treating as EOF\r\n"
+}

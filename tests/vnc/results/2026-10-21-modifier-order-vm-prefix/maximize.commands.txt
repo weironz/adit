@@ -1,0 +1,7 @@
+CLICK 1196 170
+WAIT 2200
+MOVE 640 92
+WAIT 1000
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/order-toolbar.png
+WAIT 1200
+ACK order-maximize
