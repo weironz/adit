@@ -13,6 +13,7 @@ struct State {
     native_dpi: Option<u32>,
     hook_diagnostics: Option<(bool, bool, [u32; 5])>,
     hook_health: Option<(u32, u32)>,
+    ime_snapshot: Option<serde_json::Value>,
     auto: Option<HookAutotest>,
 }
 
@@ -297,6 +298,54 @@ enum NativeMessage {
     NativeDpi(Option<u32>),
     AutoTick,
     AutoSaved(Result<(), String>),
+    ImeTick,
+    NativeIme(serde_json::Value),
+}
+
+fn native_ime(window: window::Id) -> Task<NativeMessage> {
+    window::run(window, |native| {
+        #[cfg(windows)]
+        unsafe {
+            use iced::window::raw_window_handle::RawWindowHandle;
+            use windows::Win32::UI::Input::{Ime::*, KeyboardAndMouse::GetKeyboardLayout};
+            use windows::Win32::UI::WindowsAndMessaging::*;
+            let Ok(handle) = native.window_handle() else {
+                return serde_json::json!({"available":false});
+            };
+            let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+                return serde_json::json!({"available":false});
+            };
+            let hwnd = windows::Win32::Foundation::HWND(handle.hwnd.get() as *mut _);
+            let thread = windows::Win32::System::Threading::GetCurrentThreadId();
+            let owner = GetWindowThreadProcessId(hwnd, None);
+            // IMM context access belongs on the owning native window thread.
+            // Never inspect another foreground application's input context.
+            if thread != owner {
+                return serde_json::json!({"available":false,"same_thread":false});
+            }
+            let context = ImmGetContext(hwnd);
+            let mut conversion = IME_CONVERSION_MODE::default();
+            let mut sentence = IME_SENTENCE_MODE::default();
+            let valid = !context.0.is_null();
+            let open = valid && ImmGetOpenStatus(context).as_bool();
+            let converted = valid
+                && ImmGetConversionStatus(context, Some(&mut conversion), Some(&mut sentence))
+                    .as_bool();
+            if valid {
+                let _ = ImmReleaseContext(hwnd, context);
+            }
+            serde_json::json!({"available":true,"same_thread":true,
+                "foreground":GetForegroundWindow()==hwnd,"context":valid,"open":open,
+                "conversion_read":converted,"conversion":conversion.0,"sentence":sentence.0,
+                "layout":GetKeyboardLayout(0).0 as usize})
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = native;
+            serde_json::json!({"available":false})
+        }
+    })
+    .map(NativeMessage::NativeIme)
 }
 
 #[cfg(windows)]
@@ -333,6 +382,22 @@ fn log(state: &State, mut event: serde_json::Value) {
 
 fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessage> {
     match message {
+        NativeMessage::ImeTick => window::latest().and_then(native_ime),
+        NativeMessage::NativeIme(mut snapshot) => {
+            snapshot["grab"] = serde_json::json!(state.app.vnc_grab_keys);
+            snapshot["accepts_text"] = serde_json::json!(vnc_accepts_text_input(&state.app));
+            snapshot["window_focused"] = serde_json::json!(state.app.desktop_window_focused);
+            snapshot["desktop_focused"] = serde_json::json!(state.app.terminal_focused);
+            snapshot["input_epoch"] = serde_json::json!(state.app.vnc_input_epoch);
+            if state.ime_snapshot.as_ref() != Some(&snapshot) {
+                state.ime_snapshot = Some(snapshot.clone());
+                log(
+                    state,
+                    serde_json::json!({"event":"native_ime_state","state":snapshot}),
+                );
+            }
+            Task::none()
+        }
         NativeMessage::AutoTick => auto_tick(state),
         NativeMessage::AutoSaved(result) => {
             log(
@@ -398,15 +463,40 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                 );
             }
             match &mut message {
+                Message::VncImeEvent(_, epoch, event) => {
+                    use iced::advanced::input_method::Event;
+                    let (kind, scalars) = match event {
+                        Event::Opened => ("opened", 0),
+                        Event::Closed => ("closed", 0),
+                        Event::Preedit(text, _) => ("preedit", text.chars().count()),
+                        Event::Commit(text) => ("commit", text.chars().count()),
+                    };
+                    log(
+                        state,
+                        serde_json::json!({"event":"native_ime_event","kind":kind,
+                        "scalars":scalars,"epoch":epoch,"current_epoch":state.app.vnc_input_epoch,
+                        "accepts_text":vnc_accepts_text_input(&state.app),"grab":state.app.vnc_grab_keys}),
+                    );
+                }
                 Message::KeyboardInput(event) => {
                     let (physical, pressed) = match event {
-                        keyboard::Event::KeyPressed { physical_key, .. } => (Some(*physical_key), true),
-                        keyboard::Event::KeyReleased { physical_key, .. } => (Some(*physical_key), false),
+                        keyboard::Event::KeyPressed { physical_key, .. } => {
+                            (Some(*physical_key), true)
+                        }
+                        keyboard::Event::KeyReleased { physical_key, .. } => {
+                            (Some(*physical_key), false)
+                        }
                         _ => (None, false),
                     };
-                    if let Some(keyboard::key::Physical::Unidentified(keyboard::key::NativeCode::Windows(scan @ (0xe02a | 0xe036)))) = physical {
+                    if let Some(keyboard::key::Physical::Unidentified(
+                        keyboard::key::NativeCode::Windows(scan @ (0xe02a | 0xe036)),
+                    )) = physical
+                    {
                         // Public fixture metadata only; never record typed text.
-                        log(state, serde_json::json!({"event":"window_shift_alias", "scan":scan, "pressed":pressed}));
+                        log(
+                            state,
+                            serde_json::json!({"event":"window_shift_alias", "scan":scan, "pressed":pressed}),
+                        );
                     }
                 }
                 Message::DisplayScale(scale) => {
@@ -670,6 +760,7 @@ pub fn run() -> iced::Result {
                 native_dpi: None,
                 hook_diagnostics: None,
                 hook_health: None,
+                ime_snapshot: None,
                 auto: auto.clone(),
             },
             Task::batch([
@@ -693,7 +784,11 @@ pub fn run() -> iced::Result {
         })
         .theme(|state: &State| app_theme(&state.app))
         .subscription(|state: &State| {
-            let normal = subscription(&state.app).map(NativeMessage::App);
+            let normal = Subscription::batch([
+                subscription(&state.app).map(NativeMessage::App),
+                iced::time::every(std::time::Duration::from_millis(500))
+                    .map(|_| NativeMessage::ImeTick),
+            ]);
             if state.auto.is_some() {
                 Subscription::batch([
                     normal,

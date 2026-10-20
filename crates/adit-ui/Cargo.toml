@@ -92,6 +92,7 @@ windows = { version = "0.62", features = [
     # SetWindowsHookExW / WH_KEYBOARD_LL, for passing global hotkeys through to
     # a fullscreen remote desktop instead of letting the local owner eat them.
     "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Input_Ime",
     "Win32_UI_Shell",
 ] }
 
