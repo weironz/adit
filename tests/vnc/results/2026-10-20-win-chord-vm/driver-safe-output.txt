@@ -1,0 +1,54 @@
+connected=1280x800 elapsed_ms=7761
+first_tile_ms=11442
+snapshot_saved tiles=10 covered_pixels=1024000
+command_ack=resumed-ready
+snapshot_saved tiles=48 covered_pixels=1024000
+command_ack=resumed-admin
+snapshot_saved tiles=63 covered_pixels=1024000
+command_ack=run-paste
+snapshot_saved tiles=84 covered_pixels=1024000
+command_ack=run-text
+snapshot_saved tiles=125 covered_pixels=1024000
+command_ack=console-view
+snapshot_saved tiles=158 covered_pixels=1024000
+command_ack=console-settled
+command_ack=candidate2-setup
+snapshot_saved tiles=168 covered_pixels=1024000
+command_ack=candidate2-setup-view
+snapshot_saved tiles=179 covered_pixels=1024000
+command_ack=console-input-check
+snapshot_saved tiles=183 covered_pixels=1024000
+command_ack=unicode-check
+snapshot_saved tiles=201 covered_pixels=1024000
+command_ack=slow-ascii
+snapshot_saved tiles=619 covered_pixels=1024000
+command_ack=share-bootstrap
+snapshot_saved tiles=767 covered_pixels=1024000
+command_ack=initialized
+snapshot_saved tiles=918 covered_pixels=1024000
+command_ack=initialized-bypass
+ADIT_VNC_TEST:{"directory":"C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618","share":"AditVncKeys-0e455bba634e4dd3b05235022ad89618","computer":"WIN11-VM","stage":"candidate2_share_ready"}
+snapshot_saved tiles=1076 covered_pixels=1024000
+command_ack=candidate2-launch
+snapshot_saved tiles=1149 covered_pixels=1024000
+command_ack=candidate2-view
+snapshot_saved tiles=1157 covered_pixels=1024000
+command_ack=candidate2-maximize
+snapshot_saved tiles=1220 covered_pixels=1024000
+command_ack=candidate2-layout
+snapshot_saved tiles=1221 covered_pixels=1024000
+command_ack=candidate2-ime-preflight
+command_ack=candidate2-grab
+snapshot_saved tiles=1253 covered_pixels=1024000
+command_ack=candidate2-winr
+command_ack=candidate2-shifts-repeat
+command_ack=candidate2-system-basics
+command_ack=candidate2-enter-held
+command_ack=candidate2-numpad-enter-held
+command_ack=candidate2-escape
+snapshot_saved tiles=1331 covered_pixels=1024000
+command_ack=candidate2-lifecycle
+command_ack=candidate2-cleanup
+ADIT_VNC_TEST:{"cleanup":{"stage":"owned_cleanup","utc":"2026-10-20T15:42:06.0483149Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]},"audit":{"listener_15915":[],"pids":[8084,4384,10124],"stage":"candidate2_independent_cleanup","previous_share_absent":true,"previous_tasks":[],"utc":"2026-10-20T15:41:58.3282799Z","processes_remaining":[]},"stage":"candidate2_cleanup_verified"}
+snapshot_saved tiles=1509 covered_pixels=1024000
+command_ack=candidate2-cleanup-view

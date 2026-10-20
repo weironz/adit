@@ -1,0 +1,39 @@
+{
+  "cleanup": {
+    "stage": "owned_cleanup",
+    "utc": "2026-10-20T15:42:06.0483149Z",
+    "remaining_processes": [],
+    "directory": "C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618",
+    "winrm": "Stopped",
+    "share_absent": true,
+    "firewall": [
+      {
+        "Name": "Domain",
+        "Enabled": 1
+      },
+      {
+        "Name": "Private",
+        "Enabled": 0
+      },
+      {
+        "Name": "Public",
+        "Enabled": 0
+      }
+    ],
+    "tasks_remaining": []
+  },
+  "audit": {
+    "listener_15915": [],
+    "pids": [
+      8084,
+      4384,
+      10124
+    ],
+    "stage": "candidate2_independent_cleanup",
+    "previous_share_absent": true,
+    "previous_tasks": [],
+    "utc": "2026-10-20T15:41:58.3282799Z",
+    "processes_remaining": []
+  },
+  "stage": "candidate2_cleanup_verified"
+}

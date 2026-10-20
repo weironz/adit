@@ -1,0 +1,9 @@
+{
+  "tested_commit": "44f73b94b22f6918fab1e793f6b8915d319e6402",
+  "test_scope": "Actual foreground RDP scancodes to production VNC hook, synthetic loopback RFB peer; partial, ordering failures retained",
+  "local_ci": "../2026-10-20-win-chord-ime/README.md",
+  "hosted_actions_run": false,
+  "goal_issue": 210,
+  "cleanup_verified": true,
+  "raw_screenshots_committed": false
+}

@@ -1,0 +1,12 @@
+{
+  "outcome": "passed",
+  "scope": "saved evidence integrity and observations; ordering failures retained",
+  "tested_commit": "44f73b94b22f6918fab1e793f6b8915d319e6402",
+  "checks": 224,
+  "known_failures": [
+    "Shift-up after subsequent Win-down",
+    "Alt-up after subsequent Win-down",
+    "window modifiers can follow captured Enter-up",
+    "repeat request is not hardware auto-repeat proof"
+  ]
+}
