@@ -67,6 +67,18 @@ mod imp {
     #[cfg(feature = "native-vnc-acceptance")]
     static COUNTERS: [std::sync::atomic::AtomicU32; 5] =
         [const { std::sync::atomic::AtomicU32::new(0) }; 5];
+    #[cfg(feature = "native-vnc-acceptance")]
+    static PROBE_EVENTS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn probe_input_tag() -> usize {
+        0x4144_4954 ^ std::process::id() as usize
+    }
+
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn probe_events() -> u32 {
+        PROBE_EVENTS.load(Ordering::Relaxed)
+    }
 
     #[cfg(feature = "native-vnc-acceptance")]
     pub(crate) fn diagnostics() -> (bool, bool, [u32; 5]) {
@@ -156,7 +168,12 @@ mod imp {
         const LLKHF_INJECTED: u32 = 0x10;
         if info.flags.0 & LLKHF_INJECTED != 0 {
             #[cfg(feature = "native-vnc-acceptance")]
-            COUNTERS[2].fetch_add(1, Ordering::Relaxed);
+            {
+                COUNTERS[2].fetch_add(1, Ordering::Relaxed);
+                if info.dwExtraInfo == probe_input_tag() && info.vkCode == 0x87 {
+                    PROBE_EVENTS.fetch_add(1, Ordering::Relaxed);
+                }
+            }
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
@@ -215,19 +232,22 @@ mod imp {
 
     /// Install the hook if it is not already installed.
     pub(crate) fn arm_vnc() -> bool {
-        arm_mode(true)
+        arm_mode(true, unsafe { GetForegroundWindow() }.0 as isize)
+    }
+
+    /// Observe delivery without ever targeting a window for interception.
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn arm_observer() -> bool {
+        arm_mode(true, 0)
     }
 
     pub(crate) fn arm() -> bool {
-        arm_mode(false)
+        arm_mode(false, unsafe { GetForegroundWindow() }.0 as isize)
     }
 
-    fn arm_mode(vnc: bool) -> bool {
+    fn arm_mode(vnc: bool, target_window: isize) -> bool {
         let mut held = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-        TARGET_WINDOW.store(
-            unsafe { GetForegroundWindow() }.0 as isize,
-            Ordering::Release,
-        );
+        TARGET_WINDOW.store(target_window, Ordering::Release);
         if held.is_some() {
             VNC.store(vnc, Ordering::Release);
             ARMED.store(true, Ordering::Release);
@@ -342,6 +362,18 @@ mod imp {
 #[cfg(not(windows))]
 mod imp {
     #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn probe_input_tag() -> usize {
+        0
+    }
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn probe_events() -> u32 {
+        0
+    }
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn arm_observer() -> bool {
+        false
+    }
+    #[cfg(feature = "native-vnc-acceptance")]
     pub(crate) fn worker_thread_id() -> Option<u32> {
         None
     }
@@ -376,6 +408,10 @@ mod imp {
 
 // `Stroke` stays inside the module: callers read its fields off whatever
 // `drain` hands back and never name the type.
+#[cfg(feature = "native-vnc-acceptance")]
+pub(crate) use imp::arm_observer;
+#[cfg(feature = "native-vnc-acceptance")]
+pub(crate) use imp::{probe_events, probe_input_tag};
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::diagnostics;
 #[cfg(feature = "native-vnc-acceptance")]

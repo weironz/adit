@@ -118,21 +118,18 @@ impl ClearCodecDecoder {
                     "cached glyph is smaller than the request"
                 ));
             }
-            // Row by row at the CACHED stride. A linear `pixels[..want * 4]`
-            // would be right only when the widths happen to match: reading a
-            // 32x32 request out of a 64-wide glyph that way returns the first
-            // 16 rows of the wider image, which rendered as displaced blocks.
-            let (cw, rw) = (usize::from(entry.width), usize::from(width));
-            let rh = usize::from(height);
-            if rw > cw {
-                return Err(invalid_field_err!("glyphIndex", "cached glyph is narrower than the request"));
-            }
-            let mut out = Vec::with_capacity(want * 4);
-            for row in 0..rh {
-                let start = (row * cw) * 4;
-                out.extend_from_slice(&entry.pixels[start..start + rw * 4]);
-            }
-            return Ok(out);
+            // ADIT PATCH (#223): a glyph is a linear pixel stream, not a
+            // rectangle to crop at its original stride. FreeRDP's
+            // clear_decompress_glyph_data uses the REQUESTED width as nSrcStep.
+            // The old cached stride both displaced pixels and panicked for a
+            // valid 2x2 -> 1x4 hit (end index 20, cache length 16).
+            let byte_count = pixel_count
+                .checked_mul(4)
+                .ok_or_else(|| invalid_field_err!("dimensions", "glyph byte count overflow"))?;
+            let pixels = entry.pixels.get(..byte_count).ok_or_else(|| {
+                invalid_field_err!("glyphIndex", "cached glyph pixel storage is truncated")
+            })?;
+            return Ok(pixels.to_vec());
         }
 
         // Cap allocation to prevent OOM from adversarial dimensions.
@@ -713,6 +710,45 @@ mod tests {
 
         let pixels2 = decoder.decode(&hit_stream, 1, 1).unwrap();
         assert_eq!(pixels1, pixels2);
+    }
+
+    #[test]
+    fn glyph_hit_reinterprets_cached_pixels_at_requested_width() {
+        let mut decoder = ClearCodecDecoder::new();
+        // Distinct pixels distinguish a linear stream from a cropped rectangle.
+        let pixels: Vec<u8> = (1..=4).flat_map(|value| [value, 0, 0, 255]).collect();
+        let residual: Vec<u8> = (1..=4).flat_map(|value| [value, 0, 0, 1]).collect();
+        let mut seed = vec![FLAG_GLYPH_INDEX, 0, 42, 0];
+        seed.extend_from_slice(&16u32.to_le_bytes());
+        seed.extend_from_slice(&0u32.to_le_bytes());
+        seed.extend_from_slice(&0u32.to_le_bytes());
+        seed.extend_from_slice(&residual);
+        assert_eq!(decoder.decode(&seed, 2, 2).unwrap(), pixels);
+        let hit = [FLAG_GLYPH_INDEX | FLAG_GLYPH_HIT, 0, 42, 0];
+        for (width, height) in [(1, 4), (4, 1), (1, 3), (3, 1), (2, 1)] {
+            let decoded = decoder.decode(&hit, width, height).unwrap();
+            assert_eq!(
+                decoded,
+                pixels[..usize::from(width) * usize::from(height) * 4],
+                "requested {width}x{height}",
+            );
+        }
+        assert!(decoder.decode(&hit, 3, 2).is_err());
+    }
+
+    #[test]
+    fn glyph_hit_rejects_truncated_cache_storage() {
+        let mut decoder = ClearCodecDecoder::new();
+        decoder.glyph_cache.store(
+            42,
+            GlyphEntry {
+                width: 2,
+                height: 2,
+                pixels: vec![0; 12],
+            },
+        );
+        let hit = [FLAG_GLYPH_INDEX | FLAG_GLYPH_HIT, 0, 42, 0];
+        assert!(decoder.decode(&hit, 2, 2).is_err());
     }
 
     #[test]

@@ -4,13 +4,25 @@
 mod keyboard_hook;
 
 fn main() {
+    let injection_second: u32 = std::env::args()
+        .find_map(|value| value.strip_prefix("--inject-after=").map(str::to_owned))
+        .map(|value| value.parse().expect("--inject-after must be 0..12 seconds"))
+        .unwrap_or(1);
+    assert!(injection_second <= 12);
     let rdp = std::env::args().any(|value| value == "--rdp");
-    let installed = if rdp {
+    let observer = std::env::args().any(|value| value == "--observe-only");
+    let installed = if observer {
+        keyboard_hook::arm_observer()
+    } else if rdp {
         keyboard_hook::arm()
     } else {
         keyboard_hook::arm_vnc()
     };
-    println!("installed={installed} pid={}", std::process::id());
+    println!(
+        "installed={installed} pid={} probe_tag={}",
+        std::process::id(),
+        keyboard_hook::probe_input_tag()
+    );
     #[cfg(windows)]
     unsafe {
         use windows::Win32::Foundation::HANDLE;
@@ -51,13 +63,22 @@ fn main() {
     }
     for second in 0..15 {
         #[cfg(windows)]
-        if second == 1 {
+        if second == injection_second {
             use windows::Win32::UI::Input::KeyboardAndMouse::*;
+            let mut foreground_pid = 0;
+            unsafe {
+                windows::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId(
+                    windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow(),
+                    Some(&mut foreground_pid),
+                );
+            }
+            println!("selftest_second={second} selftest_foreground_pid={foreground_pid}");
             let inputs = [false, true].map(|up| INPUT {
                 r#type: INPUT_KEYBOARD,
                 Anonymous: INPUT_0 {
                     ki: KEYBDINPUT {
                         wVk: VK_F24,
+                        dwExtraInfo: keyboard_hook::probe_input_tag(),
                         dwFlags: if up {
                             KEYEVENTF_KEYUP
                         } else {
@@ -73,6 +94,7 @@ fn main() {
         }
         let state = keyboard_hook::diagnostics();
         println!("worker_health={:?}", keyboard_hook::worker_health());
+        println!("own_probe_events={}", keyboard_hook::probe_events());
         let drained: Vec<_> = keyboard_hook::drain()
             .into_iter()
             .map(|stroke| (stroke.scancode, stroke.extended, stroke.pressed))

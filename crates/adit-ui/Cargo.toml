@@ -20,6 +20,10 @@ required-features = ["native-vnc-acceptance"]
 name = "keyboard_hook_root_probe"
 required-features = ["native-vnc-acceptance"]
 
+[[example]]
+name = "keyboard_hook_gui_probe"
+required-features = ["native-vnc-acceptance"]
+
 [dependencies]
 adit-domain.workspace = true
 adit-session.workspace = true

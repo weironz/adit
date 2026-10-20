@@ -1,0 +1,232 @@
+   Compiling ironrdp-graphics v0.9.0 (C:\data\codes\adit\crates\adit-rdp\vendor\ironrdp-graphics)
+warning: unnecessary qualification
+    --> src\progressive.rs:1815:27
+     |
+1815 |         let mut decoder = crate::srl::SrlDecoder::new(&data);
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+     |
+1815 -         let mut decoder = crate::srl::SrlDecoder::new(&data);
+1815 +         let mut decoder = srl::SrlDecoder::new(&data);
+     |
+
+warning: this lint expectation is unfulfilled
+   --> src\progressive.rs:579:10
+    |
+579 | #[expect(dead_code, reason = "orphaned by the persistent-cursor upgrade path; kept for reference against upstream")]
+    |          ^^^^^^^^^
+    |
+    = note: orphaned by the persistent-cursor upgrade path; kept for reference against upstream
+    = note: `#[warn(unfulfilled_lint_expectations)]` on by default
+
+warning: `ironrdp-graphics` (lib test) generated 2 warnings (run `cargo fix --lib -p ironrdp-graphics --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.49s
+     Running unittests src\lib.rs (crates\adit-rdp\vendor\ironrdp-graphics\target\debug\deps\ironrdp_graphics-bf47d8d52af21207.exe)
+
+running 202 tests
+test clearcodec::tests::bgra_to_run_segments_unique_pixels ... ok
+test clearcodec::tests::bgra_to_run_segments_compresses_runs ... ok
+test clearcodec::glyph_cache::tests::get_empty_returns_none ... ok
+test clearcodec::glyph_cache::tests::reject_out_of_range ... ok
+test clearcodec::glyph_cache::tests::store_and_retrieve ... ok
+test clearcodec::tests::encode_sequence_numbers_increment ... ok
+test clearcodec::vbar_cache::tests::reconstruct_full_vbar ... ok
+test clearcodec::tests::raw_subcodec_decode ... ok
+test clearcodec::tests::encode_cache_reset ... ok
+test clearcodec::tests::cache_reset_clears_vbar_cursors ... ok
+test diff::tests::test_edge_tiles ... ok
+test diff::tests::test_intersect ... ok
+test dwt_extrapolate::tests::band_dimensions_match_spec ... ok
+test diff::tests::test_adjacent_tiles ... ok
+test diff::tests::test_single_tile ... ok
+test clearcodec::tests::glyph_hit_rejects_truncated_cache_storage ... ok
+test dwt_extrapolate::tests::band_offsets_match_freerdp ... ok
+test clearcodec::vbar_cache::tests::store_and_retrieve_vbar ... ok
+test clearcodec::vbar_cache::tests::reset_resets_cursors ... ok
+test clearcodec::tests::encode_two_color_stripe_round_trip ... ok
+test clearcodec::tests::glyph_hit_reinterprets_cached_pixels_at_requested_width ... ok
+test clearcodec::tests::encode_solid_color_round_trip ... ok
+test clearcodec::tests::decode_solid_red_4x4 ... ok
+test dwt_extrapolate::tests::band_total_is_4096 ... ok
+test dwt_extrapolate::tests::idwt_row_even_input ... ok
+test dwt_extrapolate::tests::idwt_row_odd_input ... ok
+test dwt_extrapolate::tests::low_high_counts ... ok
+test dwt_extrapolate::tests::decode_all_zeros ... ok
+test clearcodec::tests::glyph_cache_round_trip ... ok
+test dwt_extrapolate::tests::encode_all_zeros ... ok
+test clearcodec::tests::encode_glyph_cache_hit ... ok
+test nscodec::tests::rle_expands_runs_and_keeps_the_tail ... ok
+test nscodec::tests::rle_copies_literals ... ok
+test nscodec::tests::truncated_planes_are_an_error ... ok
+test nscodec::tests::zero_length_planes_fill_solid ... ok
+test dwt_extrapolate::tests::round_trip_gradient ... ok
+test progressive::tests::band_zero_count_counts_correctly ... ok
+test progressive::tests::clamp_i16_limits ... ok
+test dwt_extrapolate::tests::round_trip_identity ... ok
+test progressive::tests::decoder_delete_nonexistent_context ... ok
+test progressive::tests::decoder_error_display ... ok
+test dwt_extrapolate::tests::round_trip_random_like ... ok
+test progressive::tests::decoder_new_is_empty ... ok
+test progressive::tests::decoder_reset_clears_contexts ... ok
+test progressive::tests::dequantize_component_ccq_shifts_correctly ... ok
+test progressive::tests::a_difference_first_pass_accumulates ... ok
+test progressive::tests::encode_first_pass_produces_output ... ok
+test progressive::tests::encode_upgrade_pass_empty_when_no_refinement ... ok
+test progressive::tests::ll3_offsets_correct ... ok
+test progressive::tests::progressive_dequantize_ll3_shift ... ok
+test progressive::tests::encode_first_pass_reduce_extrapolate ... ok
+test progressive::tests::quantize_ccq_right_shifts ... ok
+test progressive::tests::raw_bit_reader_basic ... ok
+test diff::tests::test_sub_diff ... ok
+test progressive::tests::quantize_ccq_negative_truncates_toward_zero ... ok
+test progressive::tests::progressive_dequantize_non_ll3_preserves_sign ... ok
+test progressive::tests::raw_bit_writer_multi_byte ... ok
+test progressive::tests::raw_bit_writer_partial_byte_padded ... ok
+test progressive::tests::raw_bit_writer_single_byte ... ok
+test progressive::tests::rgba_to_ycbcr_pure_black ... ok
+test progressive::tests::progressive_quantize_round_trip ... ok
+test progressive::tests::sign_capture_tri_state ... ok
+test progressive::tests::rgba_to_ycbcr_pure_white ... ok
+test progressive::tests::srl_state_persists_across_reads ... ok
+test progressive::tests::standard_band_layout_totals_4096 ... ok
+test progressive::tests::standard_band_offsets ... ok
+test progressive::tests::surface_tiles_dimensions ... ok
+test progressive::tests::surface_tiles_exact_multiple ... ok
+test progressive::tests::surface_tiles_lazy_allocation ... ok
+test progressive::tests::surface_tiles_reset ... ok
+test progressive::tests::tile_state_default_is_zeroed ... ok
+test progressive::tests::upgrade_pass_zero_das_becomes_nonzero ... ok
+test quantization::tests::decode_does_not_change_buffer_with_null_quant_values ... ok
+test quantization::tests::decode_works_with_not_empty_quant_values ... ok
+test quantization::tests::encode_does_not_change_buffer_with_null_quant_values ... ok
+test quantization::tests::encode_works_with_not_empty_quant_values ... ok
+test progressive::tests::upgrade_bits_land_at_base_scale ... ok
+test rdp6::bitmap_stream::tests::decode_32x64_rgb_raw ... ok
+test clearcodec::vbar_cache::tests::cursor_wraps ... ok
+test rdp6::bitmap_stream::tests::decode_64x24_argb_rle ... ok
+test rdp6::rle::tests::complex_encode_decode ... ok
+test rdp6::rle::tests::buffer_too_small_encode ... ok
+test rdp6::bitmap_stream::tests::decode_64x35_ycocg_rle_ss ... ok
+test rdp6::rle::tests::each_scanline_resets_last_decoded_byte ... ok
+test rdp6::rle::tests::long_sequence_decode ... ok
+test rdp6::rle::tests::empty_buffer_handled ... ok
+test rdp6::rle::tests::long_sequence_encode_decode ... ok
+test rdp6::rle::tests::insufficient_raw_bytes_handled ... ok
+test rdp6::bitmap_stream::tests::encode_32x64_rgb_raw ... ok
+test rdp6::rle::tests::long_sequence_encode ... ok
+test rdp6::rle::tests::multiline_decode ... ok
+test rdp6::bitmap_stream::tests::encode_decode_32x64_rgb_raw ... ok
+test rdp6::rle::tests::multiline_encode ... ok
+test rdp6::bitmap_stream::tests::decode_64x64_ycocg_raw_ss ... ok
+test rdp6::rle::tests::multiline_encode_decode ... ok
+test rdp6::rle::tests::not_enough_bytes_to_encode ... ok
+test rdp6::rle::tests::segments_out_of_scanline_produce_error ... ok
+test rdp6::bitmap_stream::tests::encode_decode_64x24_rgb_raw ... ok
+test rdp6::rle::tests::simple_encode ... ok
+test progressive::tests::surface_tiles_rejects_over_cap_dimensions ... ok
+test rdp6::bitmap_stream::tests::decode_64x64_aycocg_rle ... ok
+test rdp6::bitmap_stream::tests::decode_64x64_ycocg_rle_ss ... ok
+test rdp6::rle::tests::too_small_dest_buffer_handled ... ok
+test rectangle_processing::tests::intersect_rectangle_returns_empty_region_for_empty_intersection_region ... ok
+test rectangle_processing::tests::intersect_rectangle_returns_empty_region_for_not_intersecting_rectangle ... ok
+test rectangle_processing::tests::intersect_rectangle_returns_part_of_rectangle_that_overlaps_for_region_with_one_rectangle ... ok
+test rectangle_processing::tests::intersect_rectangle_returns_region_with_exact_sizes_of_rectangle_that_overlaps_it ... ok
+test rectangle_processing::tests::intersect_rectangle_returns_region_with_parts_of_rectangles_that_intersect_input_rectangle ... ok
+test rdp6::bitmap_stream::tests::encode_decode_32x64_rgb_rle ... ok
+test rdp6::bitmap_stream::tests::encode_decode_64x24_rgb_rle ... ok
+test rectangle_processing::tests::simplify_does_not_change_three_different_bands_with_one_rectangle ... ok
+test rectangle_processing::tests::simplify_does_not_change_two_different_bands_with_multiple_rectangles ... ok
+test rectangle_processing::tests::simplify_does_not_change_two_different_bands_with_one_rectangle ... ok
+test rectangle_processing::tests::simplify_merges_bands_with_identical_internal_rectangles ... ok
+test rectangle_processing::tests::simplify_merges_three_bands_with_identical_internal_rectangles ... ok
+test rectangle_processing::tests::simplify_merges_two_pairs_of_bands_with_identical_internal_rectangles ... ok
+test rectangle_processing::tests::union_rectangle_cuts_new_rectangle_higher_and_lower_part_which_crosses_band_on_top_and_bottom ... ok
+test rectangle_processing::tests::union_rectangle_cuts_new_rectangle_lower_part_which_crosses_band_on_bottom ... ok
+test rectangle_processing::tests::union_rectangle_cuts_new_rectangle_top_part_which_crosses_band_on_top ... ok
+test rdp6::bitmap_stream::tests::encode_decode_64x64_rgb_raw ... ok
+test rectangle_processing::tests::union_rectangle_does_not_add_new_rectangle_which_is_inside_a_band ... ok
+test rectangle_processing::tests::union_rectangle_inserts_new_rectangle_between_two_bands ... ok
+test rdp6::bitmap_stream::tests::encode_decode_64x64_rgb_rle ... ok
+test rectangle_processing::tests::union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_with_merging_with_side_rectangles ... ok
+test rectangle_processing::tests::union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_with_merging_with_side_rectangles_on_board ... ok
+test rectangle_processing::tests::union_rectangle_inserts_new_rectangle_in_band_of_3_rectangles_without_merging_with_rectangles ... ok
+test rectangle_processing::tests::union_rectangle_places_new_rectangle_lower_relative_to_band ... ok
+test rectangle_processing::tests::union_rectangle_sets_extents_and_single_rectangle_for_empty_region ... ok
+test rectangle_processing::tests::union_rectangle_places_new_rectangle_higher_relative_to_band ... ok
+test rle::tests::buf_mut_15_bpp ... ok
+test rle::tests::buf_mut_16_bpp ... ok
+test rle::tests::buf_mut_24_bpp ... ok
+test srl::tests::bit_writer_basic ... ok
+test srl::tests::bit_reader_basic ... ok
+test srl::tests::bit_writer_multi_byte ... ok
+test srl::tests::decode_empty ... ok
+test srl::tests::decode_empty_data ... ok
+test srl::tests::encode_all_zeros ... ok
+test srl::tests::encode_empty ... ok
+test srl::tests::round_trip_mixed_zeros ... ok
+test srl::tests::round_trip_nonzero_only ... ok
+test srl::tests::round_trip_single_negative ... ok
+test srl::tests::round_trip_single_positive ... ok
+test subband_reconstruction::tests::decode_changes_last_element_for_buffer_with_min_elements ... ok
+test subband_reconstruction::tests::decode_changes_last_element_for_buffer_with_max_elements ... ok
+test subband_reconstruction::tests::decode_does_not_change_buffer_with_one_element ... ok
+test subband_reconstruction::tests::decode_changes_last_element_for_buffer_with_two_elements ... ok
+test subband_reconstruction::tests::decode_does_not_change_zeroed_buffer ... ok
+test subband_reconstruction::tests::decode_does_not_panic_for_empty_buffer ... ok
+test subband_reconstruction::tests::encode_changes_last_element_for_buffer_with_max_elements ... ok
+test subband_reconstruction::tests::decode_works_with_five_not_zeroed_elements ... ok
+test subband_reconstruction::tests::encode_does_not_change_zeroed_buffer ... ok
+test subband_reconstruction::tests::encode_works_with_five_not_zeroed_elements ... ok
+test subband_reconstruction::tests::encode_changes_last_element_for_buffer_with_min_elements ... ok
+test zgfx::api::tests::mode_always_produces_compressed ... ok
+test zgfx::api::tests::mode_never_produces_uncompressed ... ok
+test zgfx::api::tests::mode_auto_compresses_repetitive_data ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_reads_buffer_from_end_to_start ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_reads_buffer_with_length_not_greater_then_buffer_length ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_reads_buffer_with_repeating_multiple_bytes ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_reads_buffer_with_repeating_multiple_bytes_from_end_to_start ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_reads_buffer_with_repeating_one_byte ... ok
+test zgfx::api::tests::round_trip_all_modes ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_writes_buffer_bigger_then_internal_buffer_size ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_writes_buffer_bigger_then_internal_buffer_size_with_position_at_end ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_writes_buffer_bigger_then_position_with_remaining_size ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_writes_buffer_less_then_internal_buffer_size ... ok
+test zgfx::circular_buffer::tests::fixed_circular_buffer_correctly_writes_buffer_less_then_internal_buffer_size_to_end ... ok
+test zgfx::compressor::tests::bit_writer_basic ... ok
+test zgfx::compressor::tests::compress_empty ... ok
+test zgfx::compressor::tests::encode_literal_null_prefix ... ok
+test zgfx::compressor::tests::encode_literal_with_token ... ok
+test zgfx::compressor::tests::compress_single_byte ... ok
+test zgfx::compressor::tests::compress_round_trip ... ok
+test zgfx::compressor::tests::compress_repetitive_data ... ok
+test zgfx::control_messages::test::from_buffer_correctly_parses_zgfx_multipart_segmented_data_pdu ... ok
+test zgfx::control_messages::test::from_buffer_correctly_parses_zgfx_single_segmented_data_pdu ... ok
+test zgfx::tests::zgfx_decompresses_multiple_literals_with_match_in_center_with_not_compressed ... ok
+test zgfx::tests::zgfx_decompresses_one_literal_with_null_prefix ... ok
+test zgfx::tests::zgfx_decompresses_one_literal_with_one_match_distance_1 ... ok
+test zgfx::tests::zgfx_decompresses_only_one_literal ... ok
+test zgfx::tests::zgfx_decompresses_one_match_with_match_unencoded_bytes ... ok
+test zgfx::tests::zgfx_decompresses_only_multiple_literals ... ok
+test zgfx::tests::zgfx_decompresses_single_match_unencoded_block ... ok
+test zgfx::tests::zgfx_decompresses_three_literals_with_one_match_distance_3_length_57 ... ok
+test zgfx::tests::zgfx_decompresses_unencoded_block_without_padding ... ok
+test zgfx::wrapper::tests::test_round_trip_with_decompressor ... ok
+test zgfx::wrapper::tests::test_wrap_compressed_single_segment ... ok
+test zgfx::wrapper::tests::test_wrap_empty_data ... ok
+test zgfx::wrapper::tests::test_wrap_compressed_data ... ok
+test zgfx::wrapper::tests::test_wrap_small_data ... ok
+test zgfx::wrapper::tests::test_wrap_typical_egfx_pdu ... ok
+test zgfx::wrapper::tests::test_wrap_large_data ... ok
+test zgfx::wrapper::tests::test_round_trip_large_data ... ok
+test zgfx::wrapper::tests::test_wrap_compressed_rejects_oversized - should panic ... ok
+test zgfx::wrapper::tests::test_compress_and_wrap_full_pipeline ... ok
+test zgfx::wrapper::tests::test_wrap_max_single_segment ... ok
+test zgfx::wrapper::tests::test_wrap_typical_h264_frame ... ok
+test zgfx::compressor::tests::compress_large_patterned_data ... ok
+test zgfx::tests::zgfx_decompresses_multiple_single_pdus ... ok
+test diff::tests::test_large ... ok
+test zgfx::compressor::tests::compress_high_entropy_round_trips_and_bounds_table ... ok
+
+test result: ok. 202 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.47s

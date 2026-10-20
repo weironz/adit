@@ -1,0 +1,15 @@
+{
+  "started_utc": "2026-10-20T11:45:35.0317852Z",
+  "scope": "separate observe-only process while minimal iced GUI is foreground",
+  "gui_sha256": "4DDE0401ED36D04CA59942C6652C974B5BADFC04F8D741D3844958ECE39425EB",
+  "observer_sha256": "97A9EB81FCD643E0704DA0F7578B1E16CB9370931EA6169707EF39F4874D2C27",
+  "gui_pid": 48396,
+  "observer_pid": 26620,
+  "gui_exit": 0,
+  "observer_exit": 0,
+  "gui_outcome": "failed",
+  "gui_continuous_foreground": true,
+  "gui_own_probe_events": 0,
+  "finished_utc": "2026-10-20T11:45:50.8317092Z",
+  "owned_processes_exited": true
+}

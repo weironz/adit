@@ -1,0 +1,51 @@
+installed=true pid=26620 probe_tag=1094987432
+station=Ok(()):WinSta0
+worker=17788 desktop=Ok(()):Default
+input_desktop=Ok(()):Default
+worker_health=(0, 0)
+own_probe_events=0
+second=0 armed=true vnc=true counters=[0, 0, 0, 0, 0] queued=0
+worker_health=(16, 0)
+own_probe_events=0
+second=1 armed=true vnc=true counters=[0, 0, 0, 0, 0] queued=0
+worker_health=(32, 0)
+own_probe_events=0
+second=2 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(48, 0)
+own_probe_events=0
+second=3 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+selftest_second=4 selftest_foreground_pid=48396
+injected_f24=2
+worker_health=(64, 0)
+own_probe_events=0
+second=4 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(80, 0)
+own_probe_events=0
+second=5 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(96, 0)
+own_probe_events=0
+second=6 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(112, 0)
+own_probe_events=0
+second=7 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(128, 0)
+own_probe_events=0
+second=8 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(144, 0)
+own_probe_events=0
+second=9 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(161, 0)
+own_probe_events=0
+second=10 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(177, 0)
+own_probe_events=0
+second=11 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(193, 0)
+own_probe_events=0
+second=12 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(209, 0)
+own_probe_events=0
+second=13 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+worker_health=(225, 0)
+own_probe_events=0
+second=14 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0

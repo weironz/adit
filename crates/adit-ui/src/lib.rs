@@ -68,6 +68,9 @@ mod vnc_native_acceptance;
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 #[doc(hidden)]
+pub mod native_hook_probe;
+#[cfg(feature = "native-vnc-acceptance")]
+#[doc(hidden)]
 pub fn run_native_keyboard_hook_probe() {
     let installed = keyboard_hook::arm_vnc();
     println!("root_library_installed={installed} pid={}", std::process::id());

@@ -93,6 +93,8 @@ ci:
 ci-vnc: ci
     cargo clippy -p adit-ui --all-targets --features native-vnc-acceptance --locked -- -D warnings
     cargo test -p adit-ui --features native-vnc-acceptance --locked --lib
+    # The VM control path uses this vendored decoder; neither workspace runs its tests.
+    cargo test --manifest-path crates/adit-rdp/vendor/ironrdp-graphics/Cargo.toml --locked
 
 # ── run / deploy ───────────────────────────────────────────────────────
 

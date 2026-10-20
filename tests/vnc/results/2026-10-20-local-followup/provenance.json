@@ -1,0 +1,31 @@
+{
+  "base_commit": "f7982d6290889c9ad3fc5cc0422e3a50dea5977b",
+  "tested_uncommitted_source": true,
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "source_sha256_worktree_bytes": {
+    "crates/adit-ui/src/keyboard_hook.rs": "a7eb867a4d9dbf0304a6023d89f7b47172b51ee459ba37abdddd7b3e350289b3",
+    "crates/adit-ui/src/lib.rs": "39a5e889b60a0232fc32c0ff282d403af7129d7b7b6c2b063248ad325020c3c4",
+    "crates/adit-ui/src/native_hook_probe.rs": "d04975dad12b277597bf28f9fd930e495ebde07a43d2907ebf02c95045b67dc8",
+    "crates/adit-ui/examples/keyboard_hook_gui_probe.rs": "174351e646e77c50b2b29c7e6e63359861f7bf71948d942dae2803c1d665eff2",
+    "crates/adit-ui/examples/keyboard_hook_probe.rs": "607a19505000676e7d70e0a6ffef57642c1fa493b228709f92766bd6835e97a7",
+    "crates/adit-ui/Cargo.toml": "621bb834e7142f4b3d132f3d7c9e95e2d966f457e522db4852b264842a3215f3",
+    "crates/adit-rdp/vendor/ironrdp-graphics/src/clearcodec/mod.rs": "8258a38cb6c70fdb74d36fec3a16e4a195f6bd10f8cadaf35a42994f57dbca4c",
+    "justfile": "7db91f70eab2589dd4e033c274e8e1277ad2c815213b516d76f2a17092cc36ff"
+  },
+  "source_sha256_lf": {
+    "crates/adit-ui/src/keyboard_hook.rs": "a7eb867a4d9dbf0304a6023d89f7b47172b51ee459ba37abdddd7b3e350289b3",
+    "crates/adit-ui/src/lib.rs": "39a5e889b60a0232fc32c0ff282d403af7129d7b7b6c2b063248ad325020c3c4",
+    "crates/adit-ui/src/native_hook_probe.rs": "d04975dad12b277597bf28f9fd930e495ebde07a43d2907ebf02c95045b67dc8",
+    "crates/adit-ui/examples/keyboard_hook_gui_probe.rs": "174351e646e77c50b2b29c7e6e63359861f7bf71948d942dae2803c1d665eff2",
+    "crates/adit-ui/examples/keyboard_hook_probe.rs": "607a19505000676e7d70e0a6ffef57642c1fa493b228709f92766bd6835e97a7",
+    "crates/adit-ui/Cargo.toml": "621bb834e7142f4b3d132f3d7c9e95e2d966f457e522db4852b264842a3215f3",
+    "crates/adit-rdp/vendor/ironrdp-graphics/src/clearcodec/mod.rs": "8258a38cb6c70fdb74d36fec3a16e4a195f6bd10f8cadaf35a42994f57dbca4c",
+    "justfile": "26b2bdd1ba366ec7d4837f554670b4e9ce9d082f333d72988300afcbb38a9253"
+  },
+  "helper_executable_sha256": "0170aac16b9e5064add206751e059b4365aed0da0c2efcc80937e387decbf0e1",
+  "gui_executable_sha256": "4dde0401ed36d04ca59942c6652c974b5badfc04f8d741d3844958ece39425eb",
+  "console_executable_sha256": "97a9eb81fcd643e0704da0f7578b1e16cb9370931ea6169707ef39f4874d2c27",
+  "hosted_workflows_started": false,
+  "release_published": false,
+  "vm_modified_this_followup": false
+}

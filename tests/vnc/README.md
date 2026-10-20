@@ -457,6 +457,35 @@ It preserves the restored-click discrepancy and unsuccessful border attempts.
 Synthetic peer observations do not establish vendor compatibility, every
 transient frame, physical keyboard behavior or the actual OS DPI matrix.
 
+### Minimal local hook delivery diagnostic
+
+Build the opt-in example with the actual UI library, then run the bounded
+Windows wrapper with a fresh absolute result directory:
+
+```powershell
+cargo build -p adit-ui --example keyboard_hook_gui_probe --features native-vnc-acceptance --locked
+pwsh -NoProfile -File tests/vnc/local-hook-gui.ps1 -ProbeExe target/debug/examples/keyboard_hook_gui_probe.exe -StateDir C:\Temp\adit-hook-new-result -Mode foreground
+```
+
+The window requests focus once and closes automatically. It never intercepts
+input: the observer's target HWND is zero before the hook is armed. Only F24
+down/up is generated. Each injected event carries a process-specific marker,
+and acceptance uses the increase in that marker's callback counter during the
+cycle; unrelated or delayed injected input cannot satisfy it. No keystroke
+contents, clipboard, account credentials or desktop images are recorded.
+The wrapper records the EXE hash and always stops only its owned process after
+a 25-second deadline. A missing report, lost foreground or incomplete cycle is
+not a pass. Diagnostic `failed` is written as data, rather than inferred from
+the wrapper's exit code.
+
+`-Mode background` supplies a comparison without requiring foreground;
+`prearm` installs the observer before GUI creation; `rearm` tests three cycles.
+These modes each need a different result directory. Successful injected
+callback delivery does not establish physical Win/Alt+Tab capture or forwarding
+to a VNC server. `just ci-vnc` compiles/lints the examples without opening them
+and also runs the standalone vendored graphics decoder regressions used by the
+RDP control path.
+
 ## Windows OS DPI acceptance attempt
 
 The [2026-10-17 OS DPI record](results/2026-10-17-windows-os-dpi.json)

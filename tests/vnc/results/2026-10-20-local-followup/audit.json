@@ -1,0 +1,181 @@
+{
+  "passed": true,
+  "checks": [
+    {
+      "check": "foreground: outcome",
+      "passed": true
+    },
+    {
+      "check": "foreground: own marker",
+      "passed": true
+    },
+    {
+      "check": "foreground: exactly two accepted F24 events",
+      "passed": true
+    },
+    {
+      "check": "foreground: no swallowed keys",
+      "passed": true
+    },
+    {
+      "check": "foreground: owned process exited",
+      "passed": true
+    },
+    {
+      "check": "foreground: same GUI binary",
+      "passed": true
+    },
+    {
+      "check": "foreground: sustained foreground",
+      "passed": true
+    },
+    {
+      "check": "background: outcome",
+      "passed": true
+    },
+    {
+      "check": "background: own marker",
+      "passed": true
+    },
+    {
+      "check": "background: exactly two accepted F24 events",
+      "passed": true
+    },
+    {
+      "check": "background: no swallowed keys",
+      "passed": true
+    },
+    {
+      "check": "background: owned process exited",
+      "passed": true
+    },
+    {
+      "check": "background: same GUI binary",
+      "passed": true
+    },
+    {
+      "check": "prearm: outcome",
+      "passed": true
+    },
+    {
+      "check": "prearm: own marker",
+      "passed": true
+    },
+    {
+      "check": "prearm: exactly two accepted F24 events",
+      "passed": true
+    },
+    {
+      "check": "prearm: no swallowed keys",
+      "passed": true
+    },
+    {
+      "check": "prearm: owned process exited",
+      "passed": true
+    },
+    {
+      "check": "prearm: same GUI binary",
+      "passed": true
+    },
+    {
+      "check": "prearm: sustained foreground",
+      "passed": true
+    },
+    {
+      "check": "cross-early: foreground correlation",
+      "passed": true
+    },
+    {
+      "check": "cross-early: clean exit",
+      "passed": true
+    },
+    {
+      "check": "cross-delayed: foreground correlation",
+      "passed": true
+    },
+    {
+      "check": "cross-delayed: clean exit",
+      "passed": true
+    },
+    {
+      "check": "cross-delayed: own marker never delivered",
+      "passed": true
+    },
+    {
+      "check": "cross-delayed: F24 accepted",
+      "passed": true
+    },
+    {
+      "check": "cross-delayed: sustained GUI foreground",
+      "passed": true
+    },
+    {
+      "check": "workspace 414/0/11",
+      "passed": true
+    },
+    {
+      "check": "feature 129/0/1",
+      "passed": true
+    },
+    {
+      "check": "vendor 202/0/0",
+      "passed": true
+    },
+    {
+      "check": "no final CI compiler errors",
+      "passed": true
+    },
+    {
+      "check": "native explicit regression passed",
+      "passed": true
+    },
+    {
+      "check": "before-fix panic matches field signature",
+      "passed": true
+    },
+    {
+      "check": "helper 30 tests passed",
+      "passed": true
+    },
+    {
+      "check": "helper actual executable built",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-ui/src/keyboard_hook.rs",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-ui/src/lib.rs",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-ui/src/native_hook_probe.rs",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-ui/examples/keyboard_hook_gui_probe.rs",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-ui/examples/keyboard_hook_probe.rs",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-ui/Cargo.toml",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: crates/adit-rdp/vendor/ironrdp-graphics/src/clearcodec/mod.rs",
+      "passed": true
+    },
+    {
+      "check": "source staged hash: justfile",
+      "passed": true
+    },
+    {
+      "check": "no OAuth secret pattern in archived bytes",
+      "passed": true
+    }
+  ]
+}

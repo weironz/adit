@@ -1,0 +1,1576 @@
+{
+  "continuous_foreground": true,
+  "cycles": [
+    {
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 33,
+        "vnc": true,
+        "worker_thread": 47544
+      },
+      "injected_delta": 0,
+      "passed": false
+    },
+    {
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 33,
+        "vnc": true,
+        "worker_thread": 34480
+      },
+      "injected_delta": 0,
+      "passed": false
+    },
+    {
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 33,
+        "vnc": true,
+        "worker_thread": 5888
+      },
+      "injected_delta": 0,
+      "passed": false
+    }
+  ],
+  "final_hook": {
+    "armed": false,
+    "counters": [
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "probe_events": 0,
+    "pump_exit": 0,
+    "pump_turns": 33,
+    "vnc": true,
+    "worker_thread": null
+  },
+  "foreground_required": true,
+  "injected_f24_accepted": 6,
+  "installed_before_gui": false,
+  "outcome": "failed",
+  "pid": 52856,
+  "requested_cycles": 3,
+  "samples": [
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 1973,
+      "event": "await_foreground",
+      "foreground_owned": false
+    },
+    {
+      "elapsed_ms": 2002,
+      "event": "await_foreground",
+      "foreground_owned": true
+    },
+    {
+      "event": "arm",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 47544
+      },
+      "installed": true
+    },
+    {
+      "elapsed_ms": 0,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 99,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 1,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 199,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 3,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 299,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 4,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 399,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 6,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 498,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 8,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 599,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 9,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 698,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 11,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 799,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 12,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 898,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 14,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 999,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 16,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1100,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 17,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1198,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 19,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1299,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 20,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1399,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 22,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1498,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1599,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 25,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1698,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 27,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1798,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 28,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1898,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 30,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 1998,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 31,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 2100,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 33,
+        "vnc": true,
+        "worker_thread": 47544
+      }
+    },
+    {
+      "elapsed_ms": 4202,
+      "event": "await_foreground",
+      "foreground_owned": true
+    },
+    {
+      "event": "arm",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 34480
+      },
+      "installed": true
+    },
+    {
+      "elapsed_ms": 0,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 97,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 1,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 198,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 3,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 297,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 4,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 398,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 6,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 498,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 7,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 597,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 9,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 698,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 11,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 798,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 12,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 897,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 14,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 998,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 15,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1099,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 17,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1198,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 19,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1298,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 20,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1398,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 22,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1497,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 23,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1598,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 25,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1698,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 27,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1798,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 28,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1898,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 30,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 1998,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 31,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 2097,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 33,
+        "vnc": true,
+        "worker_thread": 34480
+      }
+    },
+    {
+      "elapsed_ms": 6401,
+      "event": "await_foreground",
+      "foreground_owned": true
+    },
+    {
+      "event": "arm",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 5888
+      },
+      "installed": true
+    },
+    {
+      "elapsed_ms": 0,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 0,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 98,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 1,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 199,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 3,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 301,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 4,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 398,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 6,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 498,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 7,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 598,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 9,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 698,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 11,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 801,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 12,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 899,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 14,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1002,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 16,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1098,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 17,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1198,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 19,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1298,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 20,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1399,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 22,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1500,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 24,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1598,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 25,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1698,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 27,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1799,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 28,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1899,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 30,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 1999,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 32,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    },
+    {
+      "elapsed_ms": 2097,
+      "event": "sample",
+      "foreground_owned": true,
+      "hook": {
+        "armed": true,
+        "counters": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "probe_events": 0,
+        "pump_exit": 0,
+        "pump_turns": 33,
+        "vnc": true,
+        "worker_thread": 5888
+      }
+    }
+  ],
+  "scope": "minimal iced GUI, actual library hook, observe only"
+}
