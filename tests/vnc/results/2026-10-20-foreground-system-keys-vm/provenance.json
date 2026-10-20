@@ -1,0 +1,24 @@
+{
+  "tested_commit": "e2ecd4511e7c57a873580f98aa286bb22aa93be2",
+  "target_executable_sha256": "6bb645965aebd6667ccc4ef31939e51aba35ee16d5b32b3c5703fc2d2df8fa35",
+  "source_sha256_git_blobs": {
+    "crates/adit-ui/src/keyboard_hook.rs": "15dc909768214ad0f40be6d922ff11f2f16b07e8038731fe716407cb9295c2be",
+    "crates/adit-ui/src/keyboard_raw_input.rs": "f1a812c59c9beb640181ce9e4c1ab798ccea6a316396ddc73f5b14f627d5ec7b",
+    "crates/adit-ui/src/input.rs": "47b6ce5c8d0ee8a227ac658c2b1e7a05a9f5181d1b5571b56a6aceef0d19a256",
+    "crates/adit-ui/src/update_loop.rs": "f08fe138c78123b47350c0eb6d142482e94959cb2466f6aa83b3edffc2d0f309",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "ad57f1dddbdafcbcef8383c7ca22b9f0430cce6445c381a38b68947bf20902a2",
+    "tests/vnc/windows-vm-native.ps1": "b0cd2d07195a4ccc101f96a6a01e84a837e893b7a0c7d04f2ea1f629588e7c02",
+    "tests/vnc/native_rfb_fixture.py": "bdade20a610647698888ecb24a59cc9d221fd11d7be818f757f040d059d1c013",
+    "tests/vnc/windows-vm-input-observer.py": "e7e962bedd804e5f266f5528decb0e3b15efb4810ab96aa9df5af449c86f9e37"
+  },
+  "control_driver": {
+    "kind": "temporary metadata-instrumented rdp_probe; exact temporary source not retained",
+    "source_base": "57edc64eef0fa581926667c1ddeac3aefca81527",
+    "binary_sha256": "74491bb4225f3e2b81468c39e50479c7a9b8f1df531e91d088229f914759d3af",
+    "acceptance": "ACK confirms transport only; actual behavior checked in target app, independent observer and RFB peer"
+  },
+  "helper_sha256": "0170aac16b9e5064add206751e059b4365aed0da0c2efcc80937e387decbf0e1",
+  "credentials": "stdin only, absent from archive",
+  "native_case_stopped": true,
+  "full_owned_resource_cleanup": "pending final phase; original VM services and firewall unchanged"
+}

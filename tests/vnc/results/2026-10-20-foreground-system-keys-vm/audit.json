@@ -1,0 +1,154 @@
+{
+  "scope": "actual RDP scan input and synthetic VNC peer; Win R failure preserved",
+  "outcome": "passed",
+  "checks": [
+    {
+      "check": "target hash matches accepted local executable",
+      "passed": true
+    },
+    {
+      "check": "observer belongs to this target",
+      "passed": true
+    },
+    {
+      "check": "Alt Tab received in order",
+      "passed": true
+    },
+    {
+      "check": "left and right Win complete",
+      "passed": true
+    },
+    {
+      "check": "Win R failure retained, no fabricated letter success",
+      "passed": true
+    },
+    {
+      "check": "no disarm during the initial actual system matrix",
+      "passed": true
+    },
+    {
+      "check": "capture dispatched on actual foreground window thread",
+      "passed": true
+    },
+    {
+      "check": "noninjected Alt and R independently observed",
+      "passed": true
+    },
+    {
+      "check": "escape releases Ctrl and Alt without remote Enter",
+      "passed": true
+    },
+    {
+      "check": "escape actually disarms",
+      "passed": true
+    },
+    {
+      "check": "held Win tab switch and focus loss release once each",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe9",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ff09",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ff09",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe9",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffec",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffec",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe3",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe9",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe3",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe9",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe1",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffe1",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "no orphan key up ffeb",
+      "passed": true
+    },
+    {
+      "check": "all remote keys released",
+      "passed": true
+    },
+    {
+      "check": "final hook disabled",
+      "passed": true
+    },
+    {
+      "check": "runner stopped only its owned fixture processes",
+      "passed": true
+    },
+    {
+      "check": "independent owned PID and listener absence",
+      "passed": true
+    }
+  ]
+}

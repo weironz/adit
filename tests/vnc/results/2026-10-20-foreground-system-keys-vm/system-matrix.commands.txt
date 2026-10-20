@@ -1,0 +1,28 @@
+ACK matrix-begin
+KEY 38 0 1
+WAIT 120
+KEY 0f 0 1
+WAIT 120
+KEY 0f 0 0
+KEY 38 0 0
+WAIT 500
+ACK alt-tab
+KEY 5b 1 1
+WAIT 120
+KEY 5b 1 0
+WAIT 500
+ACK left-win
+KEY 5c 1 1
+WAIT 120
+KEY 5c 1 0
+WAIT 500
+ACK right-win
+KEY 5b 1 1
+KEY 13 0 1
+WAIT 120
+KEY 13 0 0
+KEY 5b 1 0
+WAIT 800
+ACK win-r
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/vm-matrix.png
+ACK matrix-snapshot
