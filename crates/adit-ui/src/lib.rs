@@ -66,6 +66,18 @@ mod vnc_cursor;
 mod vnc_native_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
+#[cfg(feature = "native-vnc-acceptance")]
+#[doc(hidden)]
+pub fn run_native_keyboard_hook_probe() {
+    let installed = keyboard_hook::arm_vnc();
+    println!("root_library_installed={installed} pid={}", std::process::id());
+    for second in 0..15 {
+        println!("second={second} diagnostics={:?} worker={:?} health={:?}",
+            keyboard_hook::diagnostics(), keyboard_hook::worker_thread_id(), keyboard_hook::worker_health());
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    keyboard_hook::disarm();
+}
 #[cfg(test)]
 mod vnc_input_wire_tests;
 mod vault_ui;

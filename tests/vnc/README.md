@@ -5,6 +5,42 @@ server. All published ports bind to host loopback. `adit-ci` and
 `adit-test-isolated` are public synthetic fixture passwords, not deployable secrets.
 No screen or clipboard from the user's actual desktop is captured.
 
+## Local CI without GitHub Actions minutes
+
+Run `just ci-vnc` on Windows. It runs the normal workspace build, both
+workspaces' Clippy gates, workspace tests and SSH integration compilation, then
+checks every native VNC example with the acceptance feature and runs its library
+tests. It never injects input or changes display, power, services or firewall
+settings. Ignored tests stay ignored. Docker integration execution and the
+Linux/macOS/ARM matrix still require those environments; a local Windows pass
+does not certify them. No hosted workflow or self-hosted runner registration is
+needed.
+
+For an explicitly selected disposable Windows desktop, the ignored
+`hook_delivery_survives_a_stalled_ui_thread` regression sends only injected F24
+down/up while the calling thread stops pumping messages for 1.6 seconds. Run it
+with `cargo test -p adit-ui --features native-vnc-acceptance --lib
+hook_delivery_survives_a_stalled_ui_thread -- --ignored --nocapture
+--test-threads=1`. It proves callback delivery and injected-key pass-through,
+not physical system-key interception. `keyboard_hook_probe` and
+`keyboard_hook_root_probe` provide separate source/library delivery diagnostics;
+the former also sends F24 and observes the window station and desktops. None
+of these results substitutes for the actual Adit window and remote consumer.
+
+On an owned interactive test VM, `windows-vm-unicode.ps1 -Directory <owned-dir>`
+uses a pinned portable UltraVNC archive and public `adit-ci` password, starts a
+synthetic Windows TextBox, and verifies text received through the production
+SessionManager driver. Required payloads are `UltraVNC_1830.zip` and
+`vnc_fixture_driver.exe`. The directory must carry the test owner's metadata;
+`-ResultName` selects a fresh result directory without overwriting failed runs.
+The fixture never installs a service, sends clipboard text or changes firewall
+profiles. TCP must be loopback-only, but this vendor also opens a wildcard UDP
+echo socket; the result records the actual sockets and existing firewall state.
+Use only a disposable isolated VM. Its owned server, target and driver are
+stopped on completion, and the outer VM controller must enforce an independent
+deadline and verify cleanup. This is protocol-to-application Unicode acceptance;
+the target disables IME so it cannot certify native composition/preedit.
+
 ## Isolated Windows vendor smoke
 
 The `VNC Windows vendor smoke` GitHub workflow runs the portable UltraVNC

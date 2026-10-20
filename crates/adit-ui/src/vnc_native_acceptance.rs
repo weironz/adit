@@ -12,6 +12,7 @@ struct State {
     geometry: Option<(u16, u16, u64)>,
     native_dpi: Option<u32>,
     hook_diagnostics: Option<(bool, bool, [u32; 5])>,
+    hook_health: Option<(u32, u32)>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,12 +146,44 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             ]);
             if toggling_grab {
                 log(state, serde_json::json!({"event":"grab_state", "enabled":state.app.vnc_grab_keys}));
+                #[cfg(windows)]
+                if state.app.vnc_grab_keys
+                    && std::env::var("ADIT_NATIVE_HOOK_SELFTEST").as_deref() == Ok("1")
+                {
+                    let events = state.events.clone();
+                    std::thread::spawn(move || {
+                        use windows::Win32::UI::Input::KeyboardAndMouse::*;
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        let inputs = [false, true].map(|up| INPUT {
+                            r#type: INPUT_KEYBOARD,
+                            Anonymous: INPUT_0 { ki: KEYBDINPUT {
+                                wVk: VK_F24,
+                                dwFlags: if up { KEYEVENTF_KEYUP } else { Default::default() },
+                                ..Default::default()
+                            } },
+                        });
+                        let accepted = unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) };
+                        let _ = events.send(serde_json::json!({
+                            "event":"hook_selftest", "injected_f24_accepted":accepted,
+                            "unix_ms":std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default().as_millis()
+                        }).to_string());
+                    });
+                }
             }
             let hook = keyboard_hook::diagnostics();
             if state.hook_diagnostics != Some(hook) {
                 state.hook_diagnostics = Some(hook);
                 log(state, serde_json::json!({"event":"hook_diagnostics", "armed":hook.0,
-                    "vnc":hook.1,"counters":hook.2}));
+                    "vnc":hook.1,"counters":hook.2,
+                    "worker_thread":keyboard_hook::worker_thread_id()}));
+            }
+            let health = keyboard_hook::worker_health();
+            let health_snapshot = (health.0 / 20, health.1);
+            if state.hook_health != Some(health_snapshot) {
+                state.hook_health = Some(health_snapshot);
+                log(state, serde_json::json!({"event":"hook_pump", "turns":health.0,
+                    "exit_reason":health.1,"worker_thread":keyboard_hook::worker_thread_id()}));
             }
             if let Some((width, height)) = state.app.rdp_surface_size {
                 let generation = state
@@ -288,6 +321,7 @@ pub fn run() -> iced::Result {
                 geometry: None,
                 native_dpi: None,
                 hook_diagnostics: None,
+                hook_health: None,
             },
             window::latest().and_then(native_dpi),
         )

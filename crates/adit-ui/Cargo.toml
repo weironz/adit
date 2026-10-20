@@ -12,6 +12,14 @@ native-vnc-acceptance = []
 name = "vnc_native_acceptance"
 required-features = ["native-vnc-acceptance"]
 
+[[example]]
+name = "keyboard_hook_probe"
+required-features = ["native-vnc-acceptance"]
+
+[[example]]
+name = "keyboard_hook_root_probe"
+required-features = ["native-vnc-acceptance"]
+
 [dependencies]
 adit-domain.workspace = true
 adit-session.workspace = true
@@ -65,6 +73,8 @@ windows = { version = "0.62", features = [
     # GetCurrentThreadId / PostThreadMessageW / GetMessageW: OleSetClipboard is
     # apartment-bound, so it runs on a dedicated STA thread with a message pump.
     "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_System_StationsAndDesktops",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_HiDpi",
     # SetWindowsHookExW / WH_KEYBOARD_LL, for passing global hotkeys through to

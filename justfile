@@ -88,6 +88,12 @@ ci:
     cargo test --workspace
     cargo test -p adit-ssh --features integration --no-run
 
+# Opt-in VNC fixture code as well as the normal local gate. Ignored native
+# tests stay opt-in: this command never injects keys or changes the desktop.
+ci-vnc: ci
+    cargo clippy -p adit-ui --all-targets --features native-vnc-acceptance --locked -- -D warnings
+    cargo test -p adit-ui --features native-vnc-acceptance --locked --lib
+
 # ── run / deploy ───────────────────────────────────────────────────────
 
 # Build then launch the app

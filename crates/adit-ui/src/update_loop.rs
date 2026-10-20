@@ -3056,8 +3056,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             let grab = !app.vnc_grab_keys;
             release_rdp_modifiers(app);
             app.vnc_grab_keys = grab;
-            if app.vnc_grab_keys { keyboard_hook::arm_vnc(); } else { keyboard_hook::disarm(); }
-            app.notice = "VNC 系统键模式：Ctrl+Alt+Enter 始终在本地释放抓取；Ctrl+Alt+Del 由服务端权限决定".into();
+            if app.vnc_grab_keys {
+                app.vnc_grab_keys = keyboard_hook::arm_vnc();
+            } else {
+                keyboard_hook::disarm();
+            }
+            app.notice = if app.vnc_grab_keys {
+                "VNC 系统键模式：Ctrl+Alt+Enter 始终在本地释放抓取；Ctrl+Alt+Del 由服务端权限决定"
+            } else {
+                "VNC 系统键已留在本地；无法安装抓取时请重新开启"
+            }.into();
         }
         Message::ToggleVncFit => {
             app.vnc_fit = !app.vnc_fit;

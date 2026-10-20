@@ -15,15 +15,15 @@
 //! ## Why it is kept on a very short leash
 //!
 //! A low-level hook is global: its callback runs for every keystroke on the
-//! machine, on the system input thread, and swallowing the wrong thing makes the
+//! machine, on the installing thread, and swallowing the wrong thing makes the
 //! whole desktop feel broken rather than just this window. Three rules follow,
 //! and all three are load-bearing:
 //!
-//! * **Armed only while fullscreen.** That is the mode where the desktop owns
-//!   the screen and the user plainly means keys for the remote. Leaving it
-//!   disarms, so ordinary local work is never affected.
+//! * **Armed only for the focused remote.** RDP uses fullscreen; VNC has an
+//!   explicit capture switch. Focus loss disarms, and the callback also checks
+//!   its target HWND so a stalled UI cannot steal another application's keys.
 //! * **The callback does the minimum.** It reads an atomic and pushes onto a
-//!   channel. No allocation, no locking, no blocking — Windows gives the
+//!   channel. It never waits for UI or network work — Windows gives the
 //!   callback a deadline (`LowLevelHooksTimeout`) and silently removes hooks
 //!   that miss it, so a slow callback does not fail loudly, it just stops
 //!   working.
@@ -33,39 +33,73 @@
 
 #[cfg(windows)]
 mod imp {
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::cell::Cell;
+    use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, Ordering};
     use std::sync::mpsc::{self, Receiver, Sender};
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::{Arc, Mutex, OnceLock};
+    use std::time::Duration;
 
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, SetWindowsHookExW, UnhookWindowsHookEx, HHOOK, KBDLLHOOKSTRUCT,
-        WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
+        GetWindowThreadProcessId, KillTimer, PeekMessageW, PostThreadMessageW, SetTimer,
+        SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
+        PM_NOREMOVE, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_NULL, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
-    /// Whether the hook should currently swallow and forward. Read on the system
-    /// input thread for every keystroke, so it is an atomic and nothing more.
+    /// Whether the hook should currently swallow and forward. Read on the hook
+    /// thread for every keystroke, so it is an atomic and nothing more.
     static ARMED: AtomicBool = AtomicBool::new(false);
     static VNC: AtomicBool = AtomicBool::new(false);
+    static GENERATION: AtomicU64 = AtomicU64::new(0);
+    static TARGET_WINDOW: AtomicIsize = AtomicIsize::new(0);
+    #[cfg(feature = "native-vnc-acceptance")]
+    static PUMP_TURNS: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    #[cfg(feature = "native-vnc-acceptance")]
+    static PUMP_EXIT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    thread_local! {
+        // An asynchronously retiring hook must never capture for the next tab.
+        static WORKER_GENERATION: Cell<u64> = const { Cell::new(0) };
+    }
 
     // Synthetic native acceptance only: count delivery without logging keys or
     // changing injected-key filtering. An installed handle alone proves no input.
     #[cfg(feature = "native-vnc-acceptance")]
-    static COUNTERS: [std::sync::atomic::AtomicU32; 5] = [const { std::sync::atomic::AtomicU32::new(0) }; 5];
+    static COUNTERS: [std::sync::atomic::AtomicU32; 5] =
+        [const { std::sync::atomic::AtomicU32::new(0) }; 5];
 
     #[cfg(feature = "native-vnc-acceptance")]
     pub(crate) fn diagnostics() -> (bool, bool, [u32; 5]) {
-        (ARMED.load(Ordering::Relaxed), VNC.load(Ordering::Relaxed),
-            std::array::from_fn(|i| COUNTERS[i].load(Ordering::Relaxed)))
+        (
+            ARMED.load(Ordering::Relaxed),
+            VNC.load(Ordering::Relaxed),
+            std::array::from_fn(|i| COUNTERS[i].load(Ordering::Relaxed)),
+        )
     }
 
     /// Keystrokes the callback swallowed, waiting for the UI thread to forward
     /// them. A channel rather than a lock the callback might contend on: the
-    /// send is wait-free in the uncontended case, and the callback must never
-    /// block the system input thread.
-    static QUEUE: OnceLock<(Sender<Stroke>, Mutex<Receiver<Stroke>>)> = OnceLock::new();
+    /// callback never waits for UI or network work.
+    type QueuedStroke = (u64, Stroke);
+    static QUEUE: OnceLock<(Sender<QueuedStroke>, Mutex<Receiver<QueuedStroke>>)> = OnceLock::new();
 
-    static HOOK: Mutex<Option<isize>> = Mutex::new(None);
+    struct HookWorker {
+        thread_id: u32,
+        stop: Arc<AtomicBool>,
+    }
+    static HOOK: Mutex<Option<HookWorker>> = Mutex::new(None);
+
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn worker_thread_id() -> Option<u32> {
+        HOOK.lock().ok()?.as_ref().map(|worker| worker.thread_id)
+    }
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn worker_health() -> (u32, u32) {
+        (
+            PUMP_TURNS.load(Ordering::Relaxed),
+            PUMP_EXIT.load(Ordering::Relaxed),
+        )
+    }
 
     /// One swallowed key, already in the form the RDP wire wants.
     #[derive(Debug, Clone, Copy)]
@@ -75,7 +109,7 @@ mod imp {
         pub(crate) pressed: bool,
     }
 
-    fn queue() -> &'static (Sender<Stroke>, Mutex<Receiver<Stroke>>) {
+    fn queue() -> &'static (Sender<QueuedStroke>, Mutex<Receiver<QueuedStroke>>) {
         QUEUE.get_or_init(|| {
             let (tx, rx) = mpsc::channel();
             (tx, Mutex::new(rx))
@@ -95,7 +129,7 @@ mod imp {
         down(VK_CONTROL.0) && down(VK_MENU.0)
     }
 
-    /// The hook itself. Runs on the system input thread for **every** keystroke
+    /// The hook itself. Runs on its installing thread for **every** keystroke
     /// on the machine, so it does as little as is possible.
     ///
     /// # Safety
@@ -106,7 +140,11 @@ mod imp {
         COUNTERS[0].fetch_add(1, Ordering::Relaxed);
         // Anything but HC_ACTION must be passed on untouched, per the API
         // contract — and the struct is only valid then.
-        if code != 0 || !ARMED.load(Ordering::Relaxed) {
+        let generation = GENERATION.load(Ordering::Acquire);
+        if code != 0
+            || !ARMED.load(Ordering::Acquire)
+            || WORKER_GENERATION.with(Cell::get) != generation
+        {
             return CallNextHookEx(None, code, wparam, lparam);
         }
         let info = &*(lparam.0 as *const KBDLLHOOKSTRUCT);
@@ -119,6 +157,17 @@ mod imp {
         if info.flags.0 & LLKHF_INJECTED != 0 {
             #[cfg(feature = "native-vnc-acceptance")]
             COUNTERS[2].fetch_add(1, Ordering::Relaxed);
+            return CallNextHookEx(None, code, wparam, lparam);
+        }
+
+        // WindowUnfocused is delivered through the UI loop. Do not wait for it
+        // when that loop is stalled: keys for other applications remain local.
+        let foreground = GetForegroundWindow();
+        let mut process = 0;
+        GetWindowThreadProcessId(foreground, Some(&mut process));
+        if foreground.0 as isize != TARGET_WINDOW.load(Ordering::Acquire)
+            || process != std::process::id()
+        {
             return CallNextHookEx(None, code, wparam, lparam);
         }
 
@@ -154,7 +203,7 @@ mod imp {
         };
         // A failed send means the receiver is gone, i.e. we are shutting down;
         // passing the key on is the right thing then.
-        if queue().0.send(stroke).is_err() {
+        if queue().0.send((generation, stroke)).is_err() {
             return CallNextHookEx(None, code, wparam, lparam);
         }
         #[cfg(feature = "native-vnc-acceptance")]
@@ -165,40 +214,109 @@ mod imp {
     }
 
     /// Install the hook if it is not already installed.
-    pub(crate) fn arm_vnc() {
-        arm();
-        VNC.store(true, Ordering::Relaxed);
+    pub(crate) fn arm_vnc() -> bool {
+        arm_mode(true)
     }
 
-    pub(crate) fn arm() {
-        VNC.store(false, Ordering::Relaxed);
+    pub(crate) fn arm() -> bool {
+        arm_mode(false)
+    }
+
+    fn arm_mode(vnc: bool) -> bool {
         let mut held = HOOK.lock().unwrap_or_else(|e| e.into_inner());
+        TARGET_WINDOW.store(
+            unsafe { GetForegroundWindow() }.0 as isize,
+            Ordering::Release,
+        );
         if held.is_some() {
-            ARMED.store(true, Ordering::Relaxed);
-            return;
+            VNC.store(vnc, Ordering::Release);
+            ARMED.store(true, Ordering::Release);
+            return true;
         }
-        // SAFETY: a `WH_KEYBOARD_LL` hook takes no module handle and no thread
-        // id, and the callback has the required signature. Removed in `disarm`.
-        match unsafe { SetWindowsHookExW(WH_KEYBOARD_LL, Some(callback), None, 0) } {
-            Ok(hook) => {
-                *held = Some(hook.0 as isize);
-                ARMED.store(true, Ordering::Relaxed);
+        // Windows dispatches WH_KEYBOARD_LL to the installing thread. A UI
+        // stall can silently remove it after LowLevelHooksTimeout; even pumping
+        // the UI afterwards cannot recover that handle. Keep its pump isolated.
+        let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker_stop = Arc::clone(&stop);
+        let _ = queue();
+        let (ready_tx, ready_rx) = mpsc::sync_channel(1);
+        let spawned = std::thread::Builder::new()
+            .name("adit-keyboard-hook".into())
+            .spawn(move || {
+                WORKER_GENERATION.with(|value| value.set(generation));
+                #[cfg(feature = "native-vnc-acceptance")]
+                {
+                    PUMP_TURNS.store(0, Ordering::Relaxed);
+                    PUMP_EXIT.store(0, Ordering::Relaxed);
+                }
+                // Initialize both the TLS and channel before entering a timed
+                // callback. PeekMessage also creates the thread's message queue.
+                unsafe {
+                    let mut message = MSG::default();
+                    let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+                    let module = windows::Win32::System::LibraryLoader::GetModuleHandleW(None)
+                        .ok()
+                        .map(|module| windows::Win32::Foundation::HINSTANCE(module.0));
+                    let Ok(hook) = SetWindowsHookExW(WH_KEYBOARD_LL, Some(callback), module, 0)
+                    else {
+                        return;
+                    };
+                    let thread_id = windows::Win32::System::Threading::GetCurrentThreadId();
+                    let timer = SetTimer(None, 0, 50, None);
+                    if timer != 0 && ready_tx.send(thread_id).is_ok() {
+                        while !worker_stop.load(Ordering::Acquire) {
+                            let received = GetMessageW(&mut message, None, 0, 0).0;
+                            #[cfg(feature = "native-vnc-acceptance")]
+                            PUMP_TURNS.fetch_add(1, Ordering::Relaxed);
+                            if received <= 0 {
+                                #[cfg(feature = "native-vnc-acceptance")]
+                                PUMP_EXIT
+                                    .store(if received == 0 { 2 } else { 3 }, Ordering::Relaxed);
+                                break;
+                            }
+                            let _ = TranslateMessage(&message);
+                            DispatchMessageW(&message);
+                        }
+                    }
+                    if timer != 0 {
+                        let _ = KillTimer(None, timer);
+                    }
+                    let _ = UnhookWindowsHookEx(hook);
+                    if GENERATION.load(Ordering::Acquire) == generation {
+                        ARMED.store(false, Ordering::Release);
+                    }
+                    #[cfg(feature = "native-vnc-acceptance")]
+                    if worker_stop.load(Ordering::Acquire) {
+                        PUMP_EXIT.store(1, Ordering::Relaxed);
+                    }
+                }
+            });
+        if spawned.is_ok() {
+            if let Ok(thread_id) = ready_rx.recv_timeout(Duration::from_millis(250)) {
+                VNC.store(vnc, Ordering::Release);
+                ARMED.store(true, Ordering::Release);
+                *held = Some(HookWorker { thread_id, stop });
+                return true;
             }
-            // No hook is a working app with local hotkeys, not a broken one, so
-            // a failure simply leaves it unarmed.
-            Err(_) => ARMED.store(false, Ordering::Relaxed),
         }
+        stop.store(true, Ordering::Release);
+        ARMED.store(false, Ordering::Release);
+        false
     }
 
     /// Remove the hook. Safe to call when nothing is installed.
     pub(crate) fn disarm() {
-        ARMED.store(false, Ordering::Relaxed);
+        ARMED.store(false, Ordering::Release);
+        GENERATION.fetch_add(1, Ordering::AcqRel);
         let mut held = HOOK.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(raw) = held.take() {
-            // SAFETY: the handle came from `SetWindowsHookExW` above and is
-            // removed exactly once.
+        if let Some(worker) = held.take() {
+            worker.stop.store(true, Ordering::Release);
+            // Do not join a global-hook thread from the UI: Windows can be
+            // waiting for that same UI during CallNextHookEx. Epoch checks stop
+            // capture synchronously; the owner unhooks as its pump exits.
             unsafe {
-                let _ = UnhookWindowsHookEx(HHOOK(raw as *mut core::ffi::c_void));
+                let _ = PostThreadMessageW(worker.thread_id, WM_NULL, WPARAM(0), LPARAM(0));
             }
         }
         // Anything swallowed but not yet forwarded is dropped: it was meant for
@@ -214,14 +332,27 @@ mod imp {
         let Ok(rx) = queue().1.lock() else {
             return Vec::new();
         };
-        rx.try_iter().collect()
+        let generation = GENERATION.load(Ordering::Acquire);
+        rx.try_iter()
+            .filter_map(|(owner, stroke)| (owner == generation).then_some(stroke))
+            .collect()
     }
 }
 
 #[cfg(not(windows))]
 mod imp {
     #[cfg(feature = "native-vnc-acceptance")]
-    pub(crate) fn diagnostics() -> (bool, bool, [u32; 5]) { (false, false, [0; 5]) }
+    pub(crate) fn worker_thread_id() -> Option<u32> {
+        None
+    }
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn worker_health() -> (u32, u32) {
+        (0, 0)
+    }
+    #[cfg(feature = "native-vnc-acceptance")]
+    pub(crate) fn diagnostics() -> (bool, bool, [u32; 5]) {
+        (false, false, [0; 5])
+    }
     /// The hook is a Win32 mechanism and RDP ships on Windows only, so the other
     /// platforms get a shape that compiles and does nothing.
     #[derive(Debug, Clone, Copy)]
@@ -231,8 +362,12 @@ mod imp {
         pub(crate) pressed: bool,
     }
 
-    pub(crate) fn arm() {}
-    pub(crate) fn arm_vnc() {}
+    pub(crate) fn arm() -> bool {
+        false
+    }
+    pub(crate) fn arm_vnc() -> bool {
+        false
+    }
     pub(crate) fn disarm() {}
     pub(crate) fn drain() -> Vec<Stroke> {
         Vec::new()
@@ -241,6 +376,72 @@ mod imp {
 
 // `Stroke` stays inside the module: callers read its fields off whatever
 // `drain` hands back and never name the type.
-pub(crate) use imp::{arm, arm_vnc, disarm, drain};
 #[cfg(feature = "native-vnc-acceptance")]
 pub(crate) use imp::diagnostics;
+#[cfg(feature = "native-vnc-acceptance")]
+pub(crate) use imp::worker_health;
+#[cfg(feature = "native-vnc-acceptance")]
+pub(crate) use imp::worker_thread_id;
+pub(crate) use imp::{arm, arm_vnc, disarm, drain};
+
+#[cfg(all(test, windows, feature = "native-vnc-acceptance"))]
+mod native_tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_F24,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE};
+
+    #[test]
+    #[ignore = "injects only F24 on an explicitly selected Windows test desktop"]
+    fn hook_delivery_survives_a_stalled_ui_thread() {
+        // This proves real callback delivery, not interception of a physical
+        // shortcut: shipping code deliberately passes injected keys through.
+        arm_vnc();
+        assert!(diagnostics().0, "hook installation failed");
+        let before = diagnostics().2;
+        let injector = std::thread::spawn(|| {
+            std::thread::sleep(Duration::from_millis(100));
+            let inputs = [false, true].map(|up| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_F24,
+                        dwFlags: if up {
+                            KEYEVENTF_KEYUP
+                        } else {
+                            Default::default()
+                        },
+                        ..Default::default()
+                    },
+                },
+            });
+            assert_eq!(unsafe { SendInput(&inputs, size_of::<INPUT>() as i32) }, 2);
+        });
+        // Longer than Windows' maximum LowLevelHooksTimeout. Rendering or an
+        // unrelated OS call on the UI thread must not destroy system capture.
+        std::thread::sleep(Duration::from_millis(1600));
+        let until = Instant::now() + Duration::from_millis(200);
+        while Instant::now() < until {
+            let mut message = MSG::default();
+            unsafe {
+                let _ = PeekMessageW(&mut message, None, 0, 0, PM_REMOVE);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        injector.join().unwrap();
+        let after = diagnostics().2;
+        disarm();
+        println!("native hook delivery: before={before:?}, after={after:?}");
+        assert!(
+            after[0].wrapping_sub(before[0]) >= 2,
+            "callback was not delivered during UI stall"
+        );
+        assert!(
+            after[2].wrapping_sub(before[2]) >= 2,
+            "injected input must remain local"
+        );
+        assert_eq!(after[4], before[4], "injected input was swallowed");
+    }
+}
