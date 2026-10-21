@@ -1,0 +1,38 @@
+connected=1280x800 elapsed_ms=4361
+first_tile_ms=6927
+command_ack=admin-numeric
+command_ack=setup-numeric
+snapshot_saved tiles=442 covered_pixels=1024000
+command_ack=view-numeric
+snapshot_saved tiles=482 covered_pixels=1024000
+command_ack=enter-dwell
+ADIT_VNC_TEST:{"stage":"control-ok"}
+command_ack=text-control
+command_ack=setup-text
+ADIT_VNC_TEST:{"directory":"C:\\ProgramData\\AditVncKeys-74c435392ff548f8b04dfb36481e310a","share":"AditVncKeys-74c435392ff548f8b04dfb36481e310a","computer":"WIN11-VM","stage":"keys_share_ready","utc":"2026-10-20T12:54:23.7275731Z"}
+command_ack=deploy-length
+ADIT_VNC_TEST:64191488
+snapshot_saved tiles=3760 covered_pixels=1024000
+command_ack=native-start
+command_ack=native-bypass
+snapshot_saved tiles=3903 covered_pixels=1024000
+command_ack=app-snapshot
+snapshot_saved tiles=3914 covered_pixels=1024000
+command_ack=app-max
+snapshot_saved tiles=3972 covered_pixels=1024000
+command_ack=double-title
+snapshot_saved tiles=3977 covered_pixels=1024000
+command_ack=toolbar-view
+command_ack=grab-enabled
+command_ack=matrix-begin
+command_ack=alt-tab
+command_ack=left-win
+command_ack=right-win
+command_ack=win-r
+snapshot_saved tiles=3982 covered_pixels=1024000
+command_ack=matrix-snapshot
+command_ack=escape-release
+command_ack=english-win-r
+command_ack=held-win-tab-switch
+command_ack=held-win-focus-loss
+command_ack=restore-window

@@ -1,0 +1,60 @@
+[
+  {
+    "stage": "owned_cleanup",
+    "utc": "2026-10-20T19:59:44.8064500Z",
+    "remaining_processes": [],
+    "directory": "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5",
+    "winrm": "Stopped",
+    "share_absent": true,
+    "firewall": [
+      {
+        "Name": "Domain",
+        "Enabled": 1
+      },
+      {
+        "Name": "Private",
+        "Enabled": 0
+      },
+      {
+        "Name": "Public",
+        "Enabled": 0
+      }
+    ],
+    "tasks_remaining": []
+  },
+  {
+    "directory_absent": true,
+    "listeners": [],
+    "languages": [
+      {
+        "LanguageTag": "zh-Hans-CN",
+        "InputMethodTips": [
+          "0804:{81D4E9C9-1D3B-41BC-9E6C-4B40BF79E35E}{FA550B04-5AD7-411F-A5AC-CA038EC515D7}"
+        ],
+        "Spellchecking": true,
+        "Handwriting": true
+      }
+    ],
+    "directory": "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5",
+    "winrm": "Stopped",
+    "share_absent": true,
+    "firewall": [
+      {
+        "Name": "Domain",
+        "Enabled": 1
+      },
+      {
+        "Name": "Private",
+        "Enabled": 0
+      },
+      {
+        "Name": "Public",
+        "Enabled": 0
+      }
+    ],
+    "utc": "2026-10-20T19:59:46.0762243Z",
+    "tasks": [],
+    "stage": "owned_cleanup_final",
+    "processes": []
+  }
+]

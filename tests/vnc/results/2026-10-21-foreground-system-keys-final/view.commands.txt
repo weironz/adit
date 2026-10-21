@@ -1,0 +1,4 @@
+WAIT 1400
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/alias-ready.png
+WAIT 1200
+ACK alias-view

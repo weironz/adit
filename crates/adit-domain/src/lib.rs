@@ -144,6 +144,8 @@ pub struct VncOptions {
     pub clipboard_receive: bool,
     /// Opt out of broken Extended Clipboard advertisements on legacy servers.
     pub clipboard_legacy: bool,
+    /// Explicit workaround for servers that truncate Unicode keysyms to UTF-16.
+    pub unicode_bmp_only: bool,
     pub auto_reconnect: bool,
     pub resize_remote: bool,
     pub gateway_profile: Option<ProfileId>,
@@ -159,6 +161,7 @@ impl Default for VncOptions {
             clipboard_send: true,
             clipboard_receive: true,
             clipboard_legacy: false,
+            unicode_bmp_only: false,
             auto_reconnect: true,
             resize_remote: false,
             gateway_profile: None,

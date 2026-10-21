@@ -1,0 +1,39 @@
+   Compiling vnc-rs v0.6.0 (C:\data\codes\adit\crates\adit-vnc)
+   Compiling adit-session v0.1.75 (C:\data\codes\adit\crates\adit-session)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11.93s
+   Compiling adit-rdp-proto v0.1.75 (C:\data\codes\adit\crates\adit-rdp-proto)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.96s
+   Compiling vnc-rs v0.6.0 (C:\data\codes\adit\crates\adit-vnc)
+   Compiling adit-session v0.1.75 (C:\data\codes\adit\crates\adit-session)
+   Compiling adit-ui v0.1.75 (C:\data\codes\adit\crates\adit-ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 31.53s
+     Running unittests src\lib.rs (target\debug\deps\adit_ui-8418c2bd15107bf3.exe)
+
+running 2 tests
+test vnc_input_wire_tests::unicode_compatibility_rejects_whole_commits_without_truncation_or_owned_keys ... ok
+test vnc_input_wire_tests::ime_and_local_focus_changes_preserve_remote_input_ownership ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 154 filtered out; finished in 0.47s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.16s
+     Running unittests src\lib.rs (target\debug\deps\adit_ui-8418c2bd15107bf3.exe)
+
+running 1 test
+
+running 1 test
+synthetic_ipc mode=closed had_frame=true held_after_error=true input_count=0 specific_error_preserved=true shutdown_event_consumed=true
+test workspace::error_tests::connected_rdp_error_replaces_cached_interactive_surface ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 155 filtered out; finished in 0.60s
+
+
+running 1 test
+synthetic_ipc mode=eof had_frame=true held_after_error=true input_count=0 specific_error_preserved=true shutdown_event_consumed=true
+test workspace::error_tests::connected_rdp_error_replaces_cached_interactive_surface ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 155 filtered out; finished in 0.47s
+
+test workspace::error_tests::connected_rdp_error_replaces_cached_interactive_surface ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 155 filtered out; finished in 1.12s
+

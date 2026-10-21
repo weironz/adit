@@ -1,0 +1,340 @@
+//! Bounded minimal iced window: observe hook delivery, never intercept input.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+use adit_ui::native_hook_probe;
+use iced::{Element, Subscription, Task};
+use std::sync::{
+    atomic::{AtomicU32, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
+
+struct State {
+    started: Instant,
+    armed_at: Option<Instant>,
+    continuous_foreground: bool,
+    sent: Arc<AtomicU32>,
+    samples: Vec<serde_json::Value>,
+    output: std::path::PathBuf,
+    finishing: bool,
+    background: bool,
+    prearm: bool,
+    requested_cycles: u32,
+    cycles: Vec<serde_json::Value>,
+    injected_before: u64,
+    ui_f24: u32,
+    release_test: bool,
+    release_at: Option<Instant>,
+    ui_focused: bool,
+    no_keyboard_raw: bool,
+    raw_before: Option<serde_json::Value>,
+    raw_after: Option<serde_json::Value>,
+}
+
+#[derive(Clone, Debug)]
+enum Message {
+    Tick,
+    Saved,
+    F24,
+    Focused(bool),
+}
+
+fn foreground_owned() -> bool {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::{
+            GetForegroundWindow, GetWindowThreadProcessId,
+        };
+        let mut pid = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), Some(&mut pid));
+        pid == std::process::id()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
+fn focus_snapshot() -> serde_json::Value {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::WindowsAndMessaging::*;
+        let mut pid = 0;
+        let foreground = GetForegroundWindow();
+        let thread = GetWindowThreadProcessId(foreground, Some(&mut pid));
+        let mut info = GUITHREADINFO { cbSize: size_of::<GUITHREADINFO>() as u32, ..Default::default() };
+        let queried = GetGUIThreadInfo(thread, &mut info).is_ok();
+        let mut focus_pid = 0;
+        GetWindowThreadProcessId(info.hwndFocus, Some(&mut focus_pid));
+        serde_json::json!({"query_ok":queried,"foreground_pid":pid,"foreground_thread":thread,
+            "focus_owned":focus_pid==std::process::id(),"focus_is_foreground":info.hwndFocus==foreground,
+            "flags":info.flags.0,
+            "dispatcher_thread":windows::Win32::System::Threading::GetCurrentThreadId()})
+    }
+    #[cfg(not(windows))]
+    serde_json::json!({"query_ok":false})
+}
+
+fn raw_input_snapshot() -> serde_json::Value {
+    #[cfg(windows)]
+    unsafe {
+        use windows::Win32::UI::Input::*;
+        let mut devices = [RAWINPUTDEVICE::default(); 32];
+        let mut count = devices.len() as u32;
+        let got = GetRegisteredRawInputDevices(Some(devices.as_mut_ptr()), &mut count, size_of::<RAWINPUTDEVICE>() as u32);
+        if got == u32::MAX || got as usize > devices.len() {
+            return serde_json::json!({"read":false});
+        }
+        serde_json::json!({"read":true,"devices":devices[..got as usize].iter().map(|d|
+            serde_json::json!({"page":d.usUsagePage,"usage":d.usUsage,"flags":d.dwFlags.0})).collect::<Vec<_>>()})
+    }
+    #[cfg(not(windows))]
+    serde_json::json!({"read":false})
+}
+
+fn inject_f24(sent: Arc<AtomicU32>) {
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        #[cfg(windows)]
+        unsafe {
+            use windows::Win32::UI::Input::KeyboardAndMouse::*;
+            let inputs = [false, true].map(|up| INPUT {
+                r#type: INPUT_KEYBOARD,
+                Anonymous: INPUT_0 {
+                    ki: KEYBDINPUT {
+                        wVk: VK_F24,
+                        dwExtraInfo: native_hook_probe::input_tag(),
+                        dwFlags: if up {
+                            KEYEVENTF_KEYUP
+                        } else {
+                            Default::default()
+                        },
+                        ..Default::default()
+                    },
+                },
+            });
+            sent.fetch_add(
+                SendInput(&inputs, size_of::<INPUT>() as i32),
+                Ordering::Release,
+            );
+        }
+        #[cfg(not(windows))]
+        sent.store(0, Ordering::Release);
+    });
+}
+
+fn update(state: &mut State, message: Message) -> Task<Message> {
+    if matches!(message, Message::Saved) {
+        return iced::exit();
+    }
+    if state.finishing {
+        return Task::none();
+    }
+    if matches!(message, Message::F24) {
+        state.ui_f24 += 1;
+    }
+    if let Message::Focused(focused) = message {
+        state.ui_focused = focused;
+    }
+    let foreground = foreground_owned();
+    if state.armed_at.is_none() {
+        state
+            .samples
+            .push(serde_json::json!({"event":"await_foreground",
+            "foreground_owned":foreground,"elapsed_ms":state.started.elapsed().as_millis()}));
+    }
+    if state.release_at.is_none() && state.armed_at.is_none() && (foreground || state.background) {
+        if state.raw_before.is_none() {
+            state.raw_before = Some(raw_input_snapshot());
+            #[cfg(windows)]
+            if state.no_keyboard_raw {
+                use windows::Win32::UI::Input::*;
+                // Registration is local to this disposable process. Its exit
+                // removes it; no system device or other application's state changes.
+                unsafe { RegisterRawInputDevices(&[RAWINPUTDEVICE {
+                    usUsagePage:1, usUsage:6, dwFlags:RIDEV_REMOVE, ..Default::default()
+                }], size_of::<RAWINPUTDEVICE>() as u32).expect("remove own keyboard raw input"); }
+            }
+            state.raw_after = Some(raw_input_snapshot());
+        }
+        state.injected_before = native_hook_probe::snapshot()["probe_events"]
+            .as_u64()
+            .unwrap_or(0);
+        let installed = if state.prearm && state.cycles.is_empty() {
+            native_hook_probe::snapshot()["armed"]
+                .as_bool()
+                .unwrap_or(false)
+        } else {
+            native_hook_probe::arm()
+        };
+        state
+            .samples
+            .push(serde_json::json!({"event":"arm","installed":installed,
+            "foreground_owned":foreground,"focus":focus_snapshot(),"hook":native_hook_probe::snapshot()}));
+        state.armed_at = Some(Instant::now());
+        inject_f24(Arc::clone(&state.sent));
+    }
+    if let Some(armed) = state.armed_at {
+        if state.release_at.is_none() {
+            state.continuous_foreground &= foreground;
+        }
+        state.samples.push(
+            serde_json::json!({"event":"sample","elapsed_ms":armed.elapsed().as_millis(),
+            "foreground_owned":foreground,"ui_f24":state.ui_f24,
+            "ui_focused":state.ui_focused,"focus":focus_snapshot(),
+            "released":state.release_at.is_some(),"hook":native_hook_probe::snapshot()}),
+        );
+    }
+    if state.release_at.is_none() && state
+        .armed_at
+        .is_some_and(|v| v.elapsed() >= Duration::from_secs(2))
+    {
+        let hook = native_hook_probe::snapshot();
+        let injected = hook["probe_events"].as_u64().unwrap_or(0);
+        let expected_sent = (state.cycles.len() as u32 + 1) * 2;
+        let passed = state.sent.load(Ordering::Acquire) == expected_sent
+            && injected.saturating_sub(state.injected_before) >= 2
+            && hook["counters"][4].as_u64() == Some(0);
+        state
+            .cycles
+            .push(serde_json::json!({"passed":passed,"hook":hook,"ui_f24":state.ui_f24,
+            "injected_delta":injected.saturating_sub(state.injected_before)}));
+        if state.release_test {
+            state.release_at = Some(Instant::now());
+            return iced::window::latest().and_then(|id| iced::window::minimize(id, true));
+        }
+        native_hook_probe::disarm();
+        state.armed_at = None;
+    }
+    if (state.started.elapsed() >= Duration::from_secs(15)
+        || state.cycles.len() as u32 >= state.requested_cycles)
+        && !state.release_at.is_some_and(|at| at.elapsed() < Duration::from_secs(1))
+    {
+        state.finishing = true;
+        let snapshot = native_hook_probe::snapshot();
+        native_hook_probe::disarm();
+        let accepted = state.sent.load(Ordering::Acquire);
+        let outcome = if state.cycles.len() as u32 != state.requested_cycles
+            || (!state.background && !state.continuous_foreground)
+        {
+            "incomplete"
+        } else if state
+            .cycles
+            .iter()
+            .all(|cycle| cycle["passed"].as_bool() == Some(true))
+        {
+            "passed"
+        } else {
+            "failed"
+        };
+        let report = serde_json::json!({"scope":"minimal iced GUI, actual library hook, observe only",
+            "outcome":outcome,"pid":std::process::id(),"injected_f24_accepted":accepted,
+            "continuous_foreground":state.continuous_foreground,
+            "foreground_required":!state.background,
+            "installed_before_gui":state.prearm,
+            "ui_f24":state.ui_f24,"release_test":state.release_test,
+            "no_keyboard_raw":state.no_keyboard_raw,"raw_before":state.raw_before,"raw_after":state.raw_after,
+            "requested_cycles":state.requested_cycles,"cycles":state.cycles,
+            "final_hook":snapshot,"samples":state.samples});
+        let path = state.output.clone();
+        return Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    std::fs::write(
+                        path,
+                        serde_json::to_vec_pretty(&report).expect("serialize synthetic report"),
+                    )
+                })
+                .await
+                .expect("report writer")
+                .expect("write synthetic report");
+            },
+            |_| Message::Saved,
+        );
+    }
+    Task::none()
+}
+
+fn view(_state: &State) -> Element<'_, Message> {
+    iced::widget::container(iced::widget::text(
+        "键盘诊断中，完成后自动关闭。\n此窗口只观察回调，不拦截按键。",
+    ))
+    .padding(24)
+    .into()
+}
+
+fn main() -> iced::Result {
+    let output = std::path::PathBuf::from(
+        std::env::args_os()
+            .nth(1)
+            .expect("absolute synthetic report path"),
+    );
+    assert!(output.is_absolute() && output.parent().is_some_and(|p| p.is_dir()));
+    assert!(!output.exists(), "refusing to overwrite an earlier result");
+    let background = std::env::args().any(|arg| arg == "--background");
+    let prearm = std::env::args().any(|arg| arg == "--prearm");
+    let release_test = std::env::args().any(|arg| arg == "--release-test");
+    let no_keyboard_raw = std::env::args().any(|arg| arg == "--no-keyboard-raw");
+    let requested_cycles = if std::env::args().any(|arg| arg == "--rearm") {
+        3
+    } else {
+        1
+    };
+    if prearm {
+        let _ = native_hook_probe::arm();
+    }
+    let result = iced::application(
+        move || {
+            (
+                State {
+                    started: Instant::now(),
+                    armed_at: None,
+                    continuous_foreground: true,
+                    sent: Arc::new(AtomicU32::new(0)),
+                    samples: Vec::new(),
+                    output: output.clone(),
+                    finishing: false,
+                    background,
+                    prearm,
+                    requested_cycles,
+                    cycles: Vec::new(),
+                    injected_before: 0,
+                    ui_f24: 0,
+                    release_test,
+                    release_at: None,
+                    ui_focused: false,
+                    no_keyboard_raw,
+                    raw_before: None,
+                    raw_after: None,
+                },
+                if background {
+                    Task::none()
+                } else {
+                    iced::window::latest().and_then(iced::window::gain_focus)
+                },
+            )
+        },
+        update,
+        view,
+    )
+    .title("Adit 自动键盘诊断")
+    .subscription(|_| -> Subscription<Message> {
+        Subscription::batch([
+            iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
+            iced::event::listen_with(|event, _, _| match event {
+                iced::Event::Window(iced::window::Event::Focused) => Some(Message::Focused(true)),
+                iced::Event::Window(iced::window::Event::Unfocused) => Some(Message::Focused(false)),
+                iced::Event::Keyboard(iced::keyboard::Event::KeyPressed {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F24), ..
+                } | iced::keyboard::Event::KeyReleased {
+                    key: iced::keyboard::Key::Named(iced::keyboard::key::Named::F24), ..
+                }) => Some(Message::F24),
+                _ => None,
+            }),
+        ])
+    })
+    .window_size((500.0, 160.0))
+    .run();
+    native_hook_probe::disarm();
+    result
+}

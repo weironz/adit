@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "out": "{\"outcome\": \"passed\", \"files\": [{\"path\": \"payload/candidate5.zip\", \"sha256\": \"9a5ef13628a9034e2fd465d7378ec2f547e6acb923f6c73bc9dcd66eb6c8479e\", \"bytes\": 20665504}]}\r\n",
+  "err": "socket aborted by peer (WSAESHUTDOWN), treating as EOF\r\n"
+}

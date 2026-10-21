@@ -1,0 +1,31 @@
+connected=1280x800 elapsed_ms=5114
+first_tile_ms=7048
+snapshot_saved tiles=1 covered_pixels=1024000
+command_ack=alias-desktop
+snapshot_saved tiles=183 covered_pixels=1024000
+command_ack=alias-launch
+snapshot_saved tiles=242 covered_pixels=1024000
+command_ack=alias-view
+snapshot_saved tiles=305 covered_pixels=1024000
+command_ack=alias-maximize
+command_ack=alias-grab-preflight
+command_ack=alias-right-shift-diagnostic
+command_ack=alias-core-matrix
+command_ack=alias-right-modifiers
+snapshot_saved tiles=326 covered_pixels=1024000
+command_ack=alias-shift-toggle
+snapshot_saved tiles=327 covered_pixels=1024000
+command_ack=alias-cjk-preedit
+snapshot_saved tiles=334 covered_pixels=1024000
+command_ack=alias-ime-indicator
+snapshot_saved tiles=375 covered_pixels=1024000
+command_ack=alias-cjk-mode-preedit
+command_ack=alias-escape-held-win
+snapshot_saved tiles=430 covered_pixels=1024000
+command_ack=alias-lifecycle
+ADIT_VNC_TEST:{"stage":"owned_cleanup","utc":"2026-10-20T16:37:25.2095881Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-74c435392ff548f8b04dfb36481e310a","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]}
+command_ack=alias-cleanup-all
+ADIT_VNC_TEST:{"stage":"owned_cleanup","utc":"2026-10-20T16:37:26.9644155Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]}
+ADIT_VNC_TEST:{"stage":"owned_cleanup","utc":"2026-10-20T16:37:29.2549326Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-a8f917e502845c647a9f318cf68d9f11","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]}
+ADIT_VNC_TEST:{"utc":"2026-10-20T16:37:30.1435401Z","stage":"all_owned_cleanup_verified","pressed_modifier_keys":[],"audit":{"pids":[9932,11728,8072,11632,2144,9676,12056,4396,1568],"listener_15915":[],"owned_processes_remaining":[],"stage":"all_cases_independent_cleanup","utc":"2026-10-20T16:37:21.2447725Z"},"language_tags":["zh-Hans-CN"],"roots":[{"cleanup":{"stage":"owned_cleanup","utc":"2026-10-20T16:37:25.2095881Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-74c435392ff548f8b04dfb36481e310a","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]},"name":"AditVncKeys-74c435392ff548f8b04dfb36481e310a","directory_absent":true},{"cleanup":{"stage":"owned_cleanup","utc":"2026-10-20T16:37:26.9644155Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]},"name":"AditVncKeys-0e455bba634e4dd3b05235022ad89618","directory_absent":true},{"cleanup":{"stage":"owned_cleanup","utc":"2026-10-20T16:37:29.2549326Z","remaining_processes":[],"directory":"C:\\ProgramData\\AditVncKeys-a8f917e502845c647a9f318cf68d9f11","winrm":"Stopped","share_absent":true,"firewall":[{"Name":"Domain","Enabled":1},{"Name":"Private","Enabled":0},{"Name":"Public","Enabled":0}],"tasks_remaining":[]},"name":"AditVncKeys-a8f917e502845c647a9f318cf68d9f11","directory_absent":true}]}
+command_ack=alias-console-close

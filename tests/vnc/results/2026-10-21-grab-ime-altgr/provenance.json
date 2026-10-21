@@ -1,0 +1,46 @@
+{
+  "tested_commit": "76df0b6c93f7a5587fbdd9e29f04b2f82d9fbf56",
+  "before_commit": "312cc33",
+  "executable_sha256": "55f7161690b387b659d60afd8b704c653ea000c99f704bfffb3b2f81455119f2",
+  "before_executable_sha256": "a80e16034510e6e09c9746f9cf15d3ee15edfe9f4504ae1b4643f1cb4e71c8dd",
+  "source_sha256_lf": {
+    "crates/adit-ui/src/keyboard_hook.rs": "440913e46cc867288dddad8f131b3c9e7c41c26f670d309b6ea0b96c5dc42720",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "c7161a4e153fb7b70481a989e2fcd2fe9ad539187513645d03c980ba1b5b00da",
+    "crates/adit-ui/src/keyboard_vnc_order.rs": "9147ee5d1edaac64f70cbf2f45021a969f84f90abd6a0dbda36354aadf8e8413",
+    "crates/adit-ui/src/keyboard_raw_input.rs": "f1a812c59c9beb640181ce9e4c1ab798ccea6a316396ddc73f5b14f627d5ec7b",
+    "crates/adit-ui/src/input.rs": "c777ada44fcd467a4d1b493b8130587bd889e4b21cd19dcd38a0429b9b5b737e",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "19f1df15208d79ad782cb903ccc1ca84cd7c720c01989cd53c404e2dd735ffc5",
+    "crates/adit-ui/Cargo.toml": "3168dbd0711299eb65b69c7bf48631b4ed83183df6fcabad5902b333a3e3e4ed"
+  },
+  "build": "cargo build -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance",
+  "local_ci": {
+    "command": "just ci-vnc",
+    "exit_code": 0,
+    "root": [
+      428,
+      0,
+      11
+    ],
+    "native_feature": [
+      143,
+      0,
+      3
+    ],
+    "graphics": [
+      202,
+      0,
+      0
+    ],
+    "native_explicit": [
+      3,
+      0,
+      0
+    ],
+    "overlapping_counts": true,
+    "ssh_integration": "compiled only",
+    "hosted_actions": "none requested",
+    "cross_platform": "not rerun"
+  },
+  "input": "RDP scan codes; production injected filter unchanged; no physical hardware repeat certification",
+  "scope": "synthetic RFB peer; vendor application Unicode consumption remains separate"
+}

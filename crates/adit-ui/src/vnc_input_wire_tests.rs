@@ -82,6 +82,7 @@ fn wire_peers() -> (
                             assert!(n < 1024 * 1024);
                             let mut body = vec![0; n];
                             stream.read_exact(&mut body).unwrap();
+                            panic!("keyboard input must not silently fall back to clipboard");
                         }
                         other => panic!("unexpected RFB client message {other}"),
                     }
@@ -93,6 +94,124 @@ fn wire_peers() -> (
         }
     });
     (port, rx, worker)
+}
+
+#[test]
+fn unicode_compatibility_rejects_whole_commits_without_truncation_or_owned_keys() {
+    use iced::advanced::input_method::Event as Ime;
+    use keyboard::key::Code;
+    let (port, wire, peer) = wire_peers();
+    let profiles: Vec<_> = (0..2).map(|index| {
+        let mut profile = ConnectionProfile::new(format!("unicode {index}"), "127.0.0.1", port, "");
+        profile.protocol = Protocol::Vnc;
+        profile.vnc.security = VncSecurity::AllowNone;
+        profile.vnc.auto_reconnect = false;
+        if index == 0 { profile.vnc.unicode_bmp_only = true; }
+        profile
+    }).collect();
+    assert!(!profiles[1].vnc.unicode_bmp_only, "full Unicode remains the default");
+    let ids: Vec<_> = profiles.iter().map(|p| p.id).collect();
+    let scratch = std::env::temp_dir().join(format!("adit-unicode-wire-{}", SessionId::new()));
+    let mut app = AditApp {
+        manager: SessionManager::with_profiles(profiles.clone()),
+        profile_store: ProfileStore::new(scratch.join("profiles.json")),
+        settings_store: SettingsStore::new(scratch.join("settings.json")),
+        credential_store: CredentialStore::with_path("unicode-wire", scratch.join("credentials.json")),
+        ..AditApp::default()
+    };
+    let mut sessions = Vec::new();
+    for id in ids {
+        sessions.push(app.manager.open_live_vnc_session(id, String::new()).unwrap());
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while app.manager.active_session_summary().unwrap().status != SessionStatus::Connected {
+            app.manager.poll_events();
+            assert!(Instant::now() < deadline, "Unicode peer must authenticate");
+            std::thread::sleep(std::time::Duration::from_millis(2));
+        }
+    }
+    app.main_view = MainView::Terminal;
+    app.terminal_focused = true;
+    // Catalogue edits cannot silently change an established transport's policy.
+    let mut edited = profiles;
+    edited[0].vnc.unicode_bmp_only = false;
+    edited[1].vnc.unicode_bmp_only = true;
+    app.manager.replace_profiles(edited);
+    app.manager.activate(sessions[0]).unwrap();
+    let epoch = app.vnc_input_epoch;
+    let _ = update(&mut app, Message::VncImeEvent(sessions[0], epoch, Ime::Commit("前🙂后".into())));
+    assert!(app.notice.contains("整段未发送"));
+    let mut composed = press(Key::Character("a".into()), Code::KeyA, keyboard::Modifiers::empty());
+    if let Message::KeyboardInput(keyboard::Event::KeyPressed { text, .. }) = &mut composed {
+        *text = Some("prefix𠀀suffix".into());
+    }
+    let _ = update(&mut app, composed);
+    let _ = update(&mut app, release(Key::Character("a".into()), Code::KeyA));
+    let _ = update(&mut app, press(Key::Character("🙂".into()), Code::KeyB, keyboard::Modifiers::empty()));
+    assert!(app.vnc_pressed_keys.is_empty(), "rejected scalar must not own a remote up");
+    let _ = update(&mut app, release(Key::Character("🙂".into()), Code::KeyB));
+    // Cover unmapped physical text fallback separately from the string branch.
+    let mut fallback = press(Key::Unidentified, Code::KeyC, keyboard::Modifiers::empty());
+    if let Message::KeyboardInput(keyboard::Event::KeyPressed { text, .. }) = &mut fallback {
+        *text = Some("🙂".into());
+    }
+    let _ = update(&mut app, fallback);
+    assert!(app.vnc_pressed_keys.is_empty());
+    // Direct API callers cannot bypass the per-connection snapshot either.
+    let emoji = adit_session::unicode_keysym('🙂');
+    app.manager.send_vnc_key_to_active(emoji, true);
+    app.manager.send_vnc_key_to_active(emoji, false);
+    app.manager.send_rdp_input_to_active(RdpInput::Unicode { ch: '🙂', pressed: true });
+    app.manager.send_rdp_input_to_active(RdpInput::Unicode { ch: '🙂', pressed: false });
+    assert!(app.manager.send_vnc_text_to_active("before🙂after").is_err());
+    app.manager.poll_events();
+    assert!(app.manager.take_desktop_notice().is_some_and(|notice| notice.contains("整段未发送")),
+        "direct Unicode callers must produce a visible nonfatal notice");
+    // A one-scalar TEXT payload must be checked even if modified_key differs.
+    let mut scalar_text = press(Key::Character("d".into()), Code::KeyD, keyboard::Modifiers::empty());
+    if let Message::KeyboardInput(keyboard::Event::KeyPressed { text, .. }) = &mut scalar_text {
+        *text = Some("🙂".into());
+    }
+    let _ = update(&mut app, scalar_text);
+    let _ = update(&mut app, release(Key::Character("d".into()), Code::KeyD));
+    assert!(app.vnc_pressed_keys.is_empty());
+    // The byte cap applies before queueing any valid prefix, independently of
+    // Unicode compatibility. The scalar count fits; the UTF-8 byte count does not.
+    let oversized = "中".repeat(1366);
+    assert_eq!(oversized.len(), 4098);
+    let _ = update(&mut app, Message::VncImeEvent(sessions[0], epoch, Ime::Commit(oversized.clone())));
+    assert!(app.notice.contains("4 KiB") && app.notice.contains("整段未发送"));
+    assert!(app.vnc_pressed_keys.is_empty());
+    let _ = update(&mut app, press(Key::Character("é".into()), Code::KeyE, keyboard::Modifiers::empty()));
+    let _ = update(&mut app, release(Key::Character("é".into()), Code::KeyE));
+    let _ = update(&mut app, press(Key::Named(Named::Tab), Code::Tab, keyboard::Modifiers::empty()));
+    let _ = update(&mut app, release(Key::Named(Named::Tab), Code::Tab));
+    let bmp = "中文e\u{301}\u{ffff}☃";
+    let _ = update(&mut app, Message::VncImeEvent(sessions[0], epoch, Ime::Commit(bmp.into())));
+    app.manager.activate(sessions[1]).unwrap();
+    let _ = update(&mut app, Message::VncImeEvent(sessions[1], epoch, Ime::Commit(oversized)));
+    assert!(app.notice.contains("4 KiB") && app.notice.contains("整段未发送"));
+    let full = "🙂\u{10000}𠀀\u{10ffff}☃";
+    let _ = update(&mut app, Message::VncImeEvent(sessions[1], epoch, Ime::Commit(full.into())));
+    let mut observed = [Vec::new(), Vec::new()];
+    let mut barriers = [false; 2];
+    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+    while barriers != [true, true] {
+        let (index, symbol, pressed) = wire.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("per-peer Unicode barrier");
+        observed[index].push((symbol, pressed));
+        if symbol == adit_session::unicode_keysym('☃') && !pressed { barriers[index] = true; }
+    }
+    for (index, text) in [bmp, full].into_iter().enumerate() {
+        let mut expected = if index == 0 {
+            vec![(0xe9, true), (0xe9, false), (0xff09, true), (0xff09, false)]
+        } else { Vec::new() };
+        expected.extend(text.chars().flat_map(|ch| {
+            let symbol = adit_session::unicode_keysym(ch);
+            [(symbol, true), (symbol, false)]
+        }));
+        assert_eq!(observed[index], expected, "no rejected prefix, truncation, surrogate replacement or orphan up");
+    }
+    for session in sessions { app.manager.close(session); }
+    peer.join().unwrap();
 }
 
 fn press(key: Key, physical: keyboard::key::Code, modifiers: keyboard::Modifiers) -> Message {
@@ -177,11 +296,37 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     }
     app.main_view = MainView::Terminal;
     app.terminal_focused = true;
+    // The symbol at press time owns release even after Shift changes. Exercise
+    // the real transport: a mock session must never acquire remote ownership.
+    let shifted = press(Key::Character("A".into()), Code::KeyA, keyboard::Modifiers::SHIFT);
+    let _ = update(&mut app, shifted.clone());
+    assert_eq!(app.vnc_pressed_keys, vec![(keyboard::key::Physical::Code(Code::KeyA), 0x41)]);
+    let _ = update(&mut app, release(Key::Character("a".into()), Code::KeyA));
+    assert!(app.vnc_pressed_keys.is_empty());
+    let _ = update(&mut app, shifted);
+    assert_eq!(app.vnc_pressed_keys, vec![(keyboard::key::Physical::Code(Code::KeyA), 0x41)]);
+    let _ = update(&mut app, Message::WindowUnfocused);
+    assert!(app.vnc_pressed_keys.is_empty());
+    let _ = update(&mut app, Message::WindowFocused);
     // Local layout/OS shortcuts must not leak a bare Super into the peer,
     // even if Windows delivers a constituent letter to this window.
     for physical in [Code::SuperLeft, Code::SuperRight] {
-        let _ = update(&mut app, press(Key::Named(Named::Super), physical, keyboard::Modifiers::LOGO));
-        let _ = update(&mut app, press(Key::Character("r".into()), Code::KeyR, keyboard::Modifiers::LOGO));
+        let _ = update(
+            &mut app,
+            press(
+                Key::Named(Named::Super),
+                physical,
+                keyboard::Modifiers::LOGO,
+            ),
+        );
+        let _ = update(
+            &mut app,
+            press(
+                Key::Character("r".into()),
+                Code::KeyR,
+                keyboard::Modifiers::LOGO,
+            ),
+        );
         let _ = update(&mut app, release(Key::Character("r".into()), Code::KeyR));
         let _ = update(&mut app, release(Key::Named(Named::Super), physical));
     }
@@ -209,7 +354,9 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
         ),
     );
     let mut owned_release = release(Key::Character("q".into()), Code::KeyQ);
-    if let Message::KeyboardInput(keyboard::Event::KeyReleased { modifiers, .. }) = &mut owned_release {
+    if let Message::KeyboardInput(keyboard::Event::KeyReleased { modifiers, .. }) =
+        &mut owned_release
+    {
         *modifiers = keyboard::Modifiers::LOGO;
     }
     let _ = update(&mut app, owned_release);
@@ -274,6 +421,86 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     );
     let _ = update(&mut app, Message::WindowFocused);
     let _ = update(&mut app, release(Key::Named(Named::Shift), Code::ShiftLeft));
+    // Model a proven LL repair witness while a Win held before capture remains
+    // local. Repaired Ctrl must use the RightAlt event's same logo eligibility.
+    for extended in [false, true] {
+        forward_filtered_vnc_control(
+            &mut app,
+            keyboard_hook::vnc_order::ModifierEdge {
+                scan: 0x1d,
+                extended,
+                pressed: true,
+            },
+            keyboard::Modifiers::LOGO,
+        );
+    }
+    assert!(
+        app.vnc_pressed_keys.is_empty(),
+        "local preheld Win must suppress repaired Ctrl downs"
+    );
+    // A capture-mode auxiliary Ctrl must neither add a duplicate down nor
+    // release an already remote-owned real Ctrl. No current hook/fence exists
+    // in this fixture, so both exposed auxiliary window edges are unowned.
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::Control),
+            Code::ControlLeft,
+            keyboard::Modifiers::CTRL,
+        ),
+    );
+    app.vnc_grab_keys = true;
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::Control),
+            Code::ControlLeft,
+            keyboard::Modifiers::CTRL,
+        ),
+    );
+    let _ = update(
+        &mut app,
+        release(Key::Named(Named::Control), Code::ControlLeft),
+    );
+    // RightAlt alone cannot supply a missing real Ctrl witness. In particular,
+    // an unarmed/focus-retired hook must never repair an invented Ctrl edge.
+    let _ = update(
+        &mut app,
+        press(
+            Key::Named(Named::AltGraph),
+            Code::AltRight,
+            keyboard::Modifiers::ALT,
+        ),
+    );
+    let _ = update(
+        &mut app,
+        release(Key::Named(Named::AltGraph), Code::AltRight),
+    );
+    assert!(
+        app.vnc_pressed_keys
+            .iter()
+            .any(|(physical, symbol)| *physical
+                == keyboard::key::Physical::Code(Code::ControlLeft)
+                && *symbol == 0xffe3)
+    );
+    forward_filtered_vnc_control(
+        &mut app,
+        keyboard_hook::vnc_order::ModifierEdge {
+            scan: 0x1d,
+            extended: false,
+            pressed: false,
+        },
+        keyboard::Modifiers::LOGO,
+    );
+    assert!(
+        app.vnc_pressed_keys.is_empty(),
+        "logo must not suppress a real owned Ctrl release"
+    );
+    app.vnc_grab_keys = false;
+    let _ = update(
+        &mut app,
+        release(Key::Named(Named::Control), Code::ControlLeft),
+    );
     // A toolbar fullscreen switch shares the shipping dispatcher. Build the
     // captured-state precondition without installing a global hook or injecting
     // any Windows key; the peer must observe the release before the next key.
@@ -356,7 +583,7 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
             break;
         }
     }
-    let mut expected: Vec<_> = "e\u{301}q"
+    let mut expected: Vec<_> = "AAe\u{301}q"
         .chars()
         .chain(text.chars())
         .flat_map(|ch| {
@@ -367,6 +594,10 @@ fn ime_and_local_focus_changes_preserve_remote_input_ownership() {
     expected.extend([
         (1, 0xffe1, true),
         (1, 0xffe1, false),
+        (1, 0xffe3, true),
+        (1, 0xfe03, true),
+        (1, 0xfe03, false),
+        (1, 0xffe3, false),
         (1, 0xffe1, true),
         (1, 0xffe1, false),
         (1, 0xffe4, true),

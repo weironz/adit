@@ -1,0 +1,12 @@
+KEY 01 0 1
+KEY 01 0 0
+WAIT 200
+KEY 1d 0 1
+KEY 38 0 1
+KEY 1c 0 1
+WAIT 150
+KEY 1c 0 0
+KEY 38 0 0
+KEY 1d 0 0
+WAIT 900
+ACK escape-release

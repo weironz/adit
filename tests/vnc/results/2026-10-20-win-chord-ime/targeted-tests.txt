@@ -1,0 +1,17 @@
+   Compiling adit-ui v0.1.75 (C:\data\codes\adit\crates\adit-ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 15.21s
+     Running unittests src\lib.rs (target\debug\deps\adit_ui-0e904a1cd1e7f4d3.exe)
+
+running 9 tests
+test keyboard_hook::vnc_chord::tests::shift_membership_preserves_both_modifier_orders ... ok
+test keyboard_hook::vnc_chord::tests::caps_repeats_and_unicode_results_are_explicit ... ok
+test input::vnc_chord_tests::native_translation_keeps_ctrl_shortcuts_out_of_control_characters ... ok
+test keyboard_hook::vnc_chord::tests::both_wins_and_focus_lease_are_independent ... ok
+test keyboard_hook::vnc_chord::tests::preheld_win_and_preheld_letters_are_not_adopted ... ok
+test keyboard_hook::vnc_chord::tests::member_release_and_repeat_stay_owned_after_win_release ... ok
+test keyboard_hook::vnc_chord::tests::win_ctrl_alt_enter_keeps_escape_modifiers_in_window_path ... ok
+test keyboard_hook::vnc_chord::tests::owned_enter_up_survives_later_escape_modifiers_for_both_enter_keys ... ok
+test input::vnc_chord_tests::captured_win_r_repeats_and_release_order_reach_real_rfb_wire ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 132 filtered out; finished in 1.04s
+

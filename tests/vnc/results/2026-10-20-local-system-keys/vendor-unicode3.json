@@ -1,0 +1,47 @@
+{
+    "finished_utc":  "2026-10-20T03:02:28.1866844Z",
+    "scope":  "SessionManager Unicode input to portable UltraVNC and an actual Windows TextBox; no native IME acceptance",
+    "actual":  "a中文é",
+    "outcome":  "failed",
+    "tcp":  [
+                {
+                    "LocalAddress":  "127.0.0.1",
+                    "LocalPort":  15911,
+                    "OwningProcess":  12524
+                }
+            ],
+    "remaining_fixture_tcp":  0,
+    "server_pid":  12524,
+    "udp":  [
+                {
+                    "LocalAddress":  "0.0.0.0",
+                    "LocalPort":  15911,
+                    "OwningProcess":  12524
+                }
+            ],
+    "archive_sha256":  "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f",
+    "clipboard_send_used":  false,
+    "foreground_pid":  5440,
+    "expected":  "a中文😊é",
+    "firewall_profiles":  [
+                              {
+                                  "Name":  "Domain",
+                                  "Enabled":  1
+                              },
+                              {
+                                  "Name":  "Private",
+                                  "Enabled":  0
+                              },
+                              {
+                                  "Name":  "Public",
+                                  "Enabled":  0
+                              }
+                          ],
+    "target_pid":  5440,
+    "error":  "Actual vendor text consumption differs; see synthetic result",
+    "server_version":  "1.8.3.0",
+    "exact_match":  false,
+    "remaining_fixture_udp":  0,
+    "server_sha256":  "9EBD1EC90BA1274D4A183F5BF6588374700052DA907FA764A2AE7072E8AE19FE",
+    "driver_exit":  0
+}

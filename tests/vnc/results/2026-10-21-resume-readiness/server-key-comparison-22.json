@@ -1,0 +1,23 @@
+{
+  "utc": "2026-10-20T20:27:16.395862+00:00",
+  "host": "100.70.172.11",
+  "port": 22,
+  "tool": "Windows OpenSSH ssh-keyscan",
+  "exit": 0,
+  "authentication_attempted": false,
+  "known_hosts_modified": false,
+  "raw_keys_saved": false,
+  "keys": [
+    {
+      "algorithm": "ssh-ed25519",
+      "blob_bytes": 51,
+      "key_blob_sha256": "79fb6105cdeafc5fff398322fa61403ad22561628109adbe9be24fe903189860",
+      "fingerprint_sha256": "SHA256:efthBc3q/F//OYMi+mFAOtIlYWKBCa2+m+JP6QMYmGA",
+      "matches_daemon_key": false
+    }
+  ],
+  "daemon_key_blob_sha256": "1ad1ebe30ee912052f1353b37981e1dedb7266a5df9cec9860897ff4b7a60f9d",
+  "comparison": "mismatch",
+  "stderr_bytes": 52,
+  "stderr_sha256": "630a0b55073a1a119eff93d7d26b05b21c672e576310a477685a00d61073b5ba"
+}

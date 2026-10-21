@@ -1,0 +1,14 @@
+{
+  "tested_commit": "f31770e",
+  "executable_sha256": "f88caca4837dec922e548600d8b19679f04ab425d5154b041f5169fa8466048d",
+  "source_sha256_lf": {
+    "crates/adit-ui/src/input.rs": "62f0be5c702c89c4d3e3c6fa50fea1e93de1859e48f6c81faf63ccae667e9ee6",
+    "crates/adit-ui/src/keyboard_hook.rs": "6569d8657f488be876e3e58df3f5e931566ee25eeec6db54b3056e993b1e5f79",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "c7161a4e153fb7b70481a989e2fcd2fe9ad539187513645d03c980ba1b5b00da",
+    "crates/adit-ui/src/keyboard_vnc_order.rs": "39ae5d70b45650f7c011c2285b446206ac211a7eaa3ceda64a8fdfc805690ebd",
+    "crates/adit-ui/src/update_loop.rs": "1e051fb2f58a2736a36d9e23ad6858aeae9bc1026961eb0015caba2b71cacf94"
+  },
+  "scope": "hook-side Shift normalization insufficient; ordinary window E0 Shift alias still missing; failed and stopped",
+  "final_keys": 50,
+  "cleanup": "shared lease final cleanup to be archived after case5"
+}

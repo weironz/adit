@@ -1,0 +1,4 @@
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.90s
+    Checking adit-ui v0.1.75 (/src/crates/adit-ui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.97s

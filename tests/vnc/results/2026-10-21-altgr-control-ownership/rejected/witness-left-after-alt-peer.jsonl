@@ -1,0 +1,26 @@
+{"monotonic": 22392.843, "unix_ms": 1792524883704, "event": "connected", "security": "None", "shared": 1}
+{"monotonic": 22392.843, "unix_ms": 1792524883704, "event": "pixel_format", "hex": "2018000100ff00ff00ff000810000000"}
+{"monotonic": 22392.843, "unix_ms": 1792524883704, "event": "encodings", "values": [-312, -254, 7, 16, -239, 1, 0, -223, -308, -224, -1063131698]}
+{"monotonic": 22392.859, "unix_ms": 1792524883721, "event": "full_frame_sent", "sequence": 1, "width": 1200, "height": 800, "pixel_bytes": 3840000, "sha256": "b22bf4b061ad126512759b22b3bd441317a96f09ff5999cccb1520fc6dd53813", "eds_reason": 0}
+{"monotonic": 22395.359, "unix_ms": 1792524886220, "event": "pointer", "mask": 0, "x": 564, "y": 242, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22454.796, "unix_ms": 1792524945645, "event": "pointer", "mask": 0, "x": 456, "y": 242, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22454.796, "unix_ms": 1792524945645, "event": "pointer", "mask": 0, "x": 590, "y": 376, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22454.796, "unix_ms": 1792524945645, "event": "pointer", "mask": 0, "x": 589, "y": 394, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22508.75, "unix_ms": 1792524999612, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22509.187, "unix_ms": 1792525000044, "event": "button", "mask": 1, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22509.187, "unix_ms": 1792525000044, "event": "button", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22620.718, "unix_ms": 1792525111580, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22620.718, "unix_ms": 1792525111580, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22620.718, "unix_ms": 1792525111580, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22621.75, "unix_ms": 1792525112604, "event": "pointer", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22621.75, "unix_ms": 1792525112604, "event": "button", "mask": 1, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22621.75, "unix_ms": 1792525112604, "event": "button", "mask": 0, "x": 539, "y": 269, "width": 1200, "height": 800, "frame": 1}
+{"monotonic": 22628.828, "unix_ms": 1792525119680, "event": "key", "down": true, "keysym": 65027}
+{"monotonic": 22642.5, "unix_ms": 1792525133361, "event": "key", "down": true, "keysym": 64}
+{"monotonic": 22642.812, "unix_ms": 1792525133674, "event": "key", "down": false, "keysym": 64}
+{"monotonic": 22642.906, "unix_ms": 1792525133760, "event": "key", "down": false, "keysym": 65027}
+{"monotonic": 22666.406, "unix_ms": 1792525157265, "event": "key", "down": true, "keysym": 65507}
+{"monotonic": 22666.406, "unix_ms": 1792525157268, "event": "key", "down": true, "keysym": 65515}
+{"monotonic": 22666.406, "unix_ms": 1792525157268, "event": "key", "down": false, "keysym": 65515}
+{"monotonic": 22666.406, "unix_ms": 1792525157268, "event": "key", "down": true, "keysym": 65027}
+{"monotonic": 22675.718, "unix_ms": 1792525166573, "event": "key", "down": false, "keysym": 65027}

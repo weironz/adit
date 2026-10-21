@@ -1,0 +1,4 @@
+{"unix_ms": 1792512923316, "message": 256, "vk": 82, "scan": 19, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512923322, "message": 257, "vk": 82, "scan": 19, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512923328, "message": 256, "vk": 27, "scan": 1, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512923672, "message": 257, "vk": 27, "scan": 1, "flags": 128, "injected": false, "foreground_thread": 11208}

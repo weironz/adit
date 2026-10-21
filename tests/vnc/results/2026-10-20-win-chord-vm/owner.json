@@ -1,0 +1,22 @@
+﻿{
+    "winrm":  "Stopped",
+    "name":  "AditVncKeys-0e455bba634e4dd3b05235022ad89618",
+    "bootstrap_started":  "2026-10-20T15:33:40.9519531Z",
+    "directory":  "C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618",
+    "computer":  "WIN11-VM",
+    "bootstrap_pid":  8736,
+    "firewall":  [
+                     {
+                         "Name":  "Domain",
+                         "Enabled":  1
+                     },
+                     {
+                         "Name":  "Private",
+                         "Enabled":  0
+                     },
+                     {
+                         "Name":  "Public",
+                         "Enabled":  0
+                     }
+                 ]
+}

@@ -1,0 +1,108 @@
+{
+  "utc": "2026-10-20T16:37:30.1435401Z",
+  "stage": "all_owned_cleanup_verified",
+  "pressed_modifier_keys": [],
+  "audit": {
+    "pids": [
+      9932,
+      11728,
+      8072,
+      11632,
+      2144,
+      9676,
+      12056,
+      4396,
+      1568
+    ],
+    "listener_15915": [],
+    "owned_processes_remaining": [],
+    "stage": "all_cases_independent_cleanup",
+    "utc": "2026-10-20T16:37:21.2447725Z"
+  },
+  "language_tags": [
+    "zh-Hans-CN"
+  ],
+  "roots": [
+    {
+      "cleanup": {
+        "stage": "owned_cleanup",
+        "utc": "2026-10-20T16:37:25.2095881Z",
+        "remaining_processes": [],
+        "directory": "C:\\ProgramData\\AditVncKeys-74c435392ff548f8b04dfb36481e310a",
+        "winrm": "Stopped",
+        "share_absent": true,
+        "firewall": [
+          {
+            "Name": "Domain",
+            "Enabled": 1
+          },
+          {
+            "Name": "Private",
+            "Enabled": 0
+          },
+          {
+            "Name": "Public",
+            "Enabled": 0
+          }
+        ],
+        "tasks_remaining": []
+      },
+      "name": "AditVncKeys-74c435392ff548f8b04dfb36481e310a",
+      "directory_absent": true
+    },
+    {
+      "cleanup": {
+        "stage": "owned_cleanup",
+        "utc": "2026-10-20T16:37:26.9644155Z",
+        "remaining_processes": [],
+        "directory": "C:\\ProgramData\\AditVncKeys-0e455bba634e4dd3b05235022ad89618",
+        "winrm": "Stopped",
+        "share_absent": true,
+        "firewall": [
+          {
+            "Name": "Domain",
+            "Enabled": 1
+          },
+          {
+            "Name": "Private",
+            "Enabled": 0
+          },
+          {
+            "Name": "Public",
+            "Enabled": 0
+          }
+        ],
+        "tasks_remaining": []
+      },
+      "name": "AditVncKeys-0e455bba634e4dd3b05235022ad89618",
+      "directory_absent": true
+    },
+    {
+      "cleanup": {
+        "stage": "owned_cleanup",
+        "utc": "2026-10-20T16:37:29.2549326Z",
+        "remaining_processes": [],
+        "directory": "C:\\ProgramData\\AditVncKeys-a8f917e502845c647a9f318cf68d9f11",
+        "winrm": "Stopped",
+        "share_absent": true,
+        "firewall": [
+          {
+            "Name": "Domain",
+            "Enabled": 1
+          },
+          {
+            "Name": "Private",
+            "Enabled": 0
+          },
+          {
+            "Name": "Public",
+            "Enabled": 0
+          }
+        ],
+        "tasks_remaining": []
+      },
+      "name": "AditVncKeys-a8f917e502845c647a9f318cf68d9f11",
+      "directory_absent": true
+    }
+  ]
+}

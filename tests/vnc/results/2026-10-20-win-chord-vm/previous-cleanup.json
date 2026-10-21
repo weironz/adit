@@ -1,0 +1,27 @@
+﻿{
+    "stage":  "owned_cleanup",
+    "utc":  "2026-10-20T13:55:26.0598990Z",
+    "remaining_processes":  [
+
+                            ],
+    "directory":  "C:\\ProgramData\\AditVncKeys-74c435392ff548f8b04dfb36481e310a",
+    "winrm":  "Stopped",
+    "share_absent":  true,
+    "firewall":  [
+                     {
+                         "Name":  "Domain",
+                         "Enabled":  1
+                     },
+                     {
+                         "Name":  "Private",
+                         "Enabled":  0
+                     },
+                     {
+                         "Name":  "Public",
+                         "Enabled":  0
+                     }
+                 ],
+    "tasks_remaining":  [
+
+                        ]
+}

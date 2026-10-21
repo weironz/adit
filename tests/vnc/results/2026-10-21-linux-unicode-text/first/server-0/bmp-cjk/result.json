@@ -1,0 +1,40 @@
+{
+  "outcome": "failed",
+  "expected": "\u4e2d\u6587",
+  "expected_scalars": [
+    "U+4E2D",
+    "U+6587"
+  ],
+  "clipboard_send_used": false,
+  "before": {
+    "pid": 47,
+    "display": 99,
+    "entry_xid": 14680089,
+    "root_xid": 14680086,
+    "text": "",
+    "python_codepoints": [],
+    "scalars": [],
+    "focus": {
+      "x_input_focus": 1,
+      "x_ancestors": [],
+      "x_target_windows": [
+        14680086,
+        14680086
+      ],
+      "x_focus_owned": false,
+      "tk_entry_focused": true,
+      "focused": false
+    },
+    "counts": {
+      "press": 0,
+      "release": 0,
+      "unfocused_input": 0,
+      "focus_losses": 0,
+      "truncated_events": 0
+    },
+    "events": [],
+    "tk_patchlevel": "8.6.14",
+    "elapsed_ms": 6133
+  },
+  "error": "target not empty/focused; no TEXT sent"
+}

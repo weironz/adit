@@ -5,6 +5,42 @@ server. All published ports bind to host loopback. `adit-ci` and
 `adit-test-isolated` are public synthetic fixture passwords, not deployable secrets.
 No screen or clipboard from the user's actual desktop is captured.
 
+## Local CI without GitHub Actions minutes
+
+Run `just ci-vnc` on Windows. It runs the normal workspace build, both
+workspaces' Clippy gates, workspace tests and SSH integration compilation, then
+checks every native VNC example with the acceptance feature and runs its library
+tests. It never injects input or changes display, power, services or firewall
+settings. Ignored tests stay ignored. Docker integration execution and the
+Linux/macOS/ARM matrix still require those environments; a local Windows pass
+does not certify them. No hosted workflow or self-hosted runner registration is
+needed.
+
+For an explicitly selected disposable Windows desktop, the ignored
+`hook_delivery_survives_a_stalled_ui_thread` regression sends only injected F24
+down/up while the calling thread stops pumping messages for 1.6 seconds. Run it
+with `cargo test -p adit-ui --features native-vnc-acceptance --lib
+hook_delivery_survives_a_stalled_ui_thread -- --ignored --nocapture
+--test-threads=1`. It proves callback delivery and injected-key pass-through,
+not physical system-key interception. `keyboard_hook_probe` and
+`keyboard_hook_root_probe` provide separate source/library delivery diagnostics;
+the former also sends F24 and observes the window station and desktops. None
+of these results substitutes for the actual Adit window and remote consumer.
+
+On an owned interactive test VM, `windows-vm-unicode.ps1 -Directory <owned-dir>`
+uses a pinned portable UltraVNC archive and public `adit-ci` password, starts a
+synthetic Windows TextBox, and verifies text received through the production
+SessionManager driver. Required payloads are `UltraVNC_1830.zip` and
+`vnc_fixture_driver.exe`. The directory must carry the test owner's metadata;
+`-ResultName` selects a fresh result directory without overwriting failed runs.
+The fixture never installs a service, sends clipboard text or changes firewall
+profiles. TCP must be loopback-only, but this vendor also opens a wildcard UDP
+echo socket; the result records the actual sockets and existing firewall state.
+Use only a disposable isolated VM. Its owned server, target and driver are
+stopped on completion, and the outer VM controller must enforce an independent
+deadline and verify cleanup. This is protocol-to-application Unicode acceptance;
+the target disables IME so it cannot certify native composition/preedit.
+
 ## Isolated Windows vendor smoke
 
 The `VNC Windows vendor smoke` GitHub workflow runs the portable UltraVNC
@@ -420,6 +456,67 @@ includes the exact binary/source hashes, original events and settled screenshots
 It preserves the restored-click discrepancy and unsuccessful border attempts.
 Synthetic peer observations do not establish vendor compatibility, every
 transient frame, physical keyboard behavior or the actual OS DPI matrix.
+
+### Minimal local hook delivery diagnostic
+
+Build the opt-in example with the actual UI library, then run the bounded
+Windows wrapper with a fresh absolute result directory:
+
+```powershell
+cargo build -p adit-ui --example keyboard_hook_gui_probe --features native-vnc-acceptance --locked
+pwsh -NoProfile -File tests/vnc/local-hook-gui.ps1 -ProbeExe target/debug/examples/keyboard_hook_gui_probe.exe -StateDir C:\Temp\adit-hook-new-result -Mode foreground
+```
+
+The window requests focus once and closes automatically. It never intercepts
+input: the observer's target HWND is zero before the hook is armed. Only F24
+down/up is generated. Each injected event carries a process-specific marker,
+and acceptance uses the increase in that marker's callback counter during the
+cycle; unrelated or delayed injected input cannot satisfy it. No keystroke
+contents, clipboard, account credentials or desktop images are recorded.
+The wrapper records the EXE hash and always stops only its owned process after
+a 25-second deadline. A missing report, lost foreground or incomplete cycle is
+not a pass. Diagnostic `failed` is written as data, rather than inferred from
+the wrapper's exit code.
+
+`-Mode background` supplies a comparison without requiring foreground;
+`prearm` installs the observer before GUI creation; `rearm` tests three cycles.
+These modes each need a different result directory. Successful injected
+callback delivery does not establish physical Win/Alt+Tab capture or forwarding
+to a VNC server. `just ci-vnc` compiles/lints the examples without opening them
+and also runs the standalone vendored graphics decoder regressions used by the
+RDP control path.
+
+The [foreground Raw Input investigation](results/2026-10-20-foreground-raw-input/README.md)
+retains the failing defaults and successful same-binary keyboard-registration
+control. During capture the app now leases its raw keyboard registration:
+remove only keyboard usage 1/6, keep mouse registration, and restore on disarm
+or installation failure. A later registrant or destroyed target is preserved.
+This is a measured workaround for this foreground-delivery failure, not a claim
+that every Windows Raw Input registration suppresses low-level hooks.
+
+For a bounded full-window check using the production dispatcher and synthetic
+loopback peer, run:
+
+```powershell
+cargo build -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked
+pwsh -NoProfile -File tests/vnc/local-hook-full.ps1 -ProbeExe target/debug/examples/vnc_native_acceptance.exe -PythonExe C:\Python313\python.exe -StateDir C:\Temp\adit-hook-full-new-result
+```
+
+Use the actual local Python path. The wrapper creates an isolated configuration,
+starts only its own standard-library RFB peer, toggles capture three times
+through `ToggleVncGrab`, verifies continuous foreground/focus and tagged F24
+callback delivery, checks exact restoration, and closes both owned processes.
+It fails on an incomplete report. Port 15915 must be available; it does not
+replace another listener. No clipboard or real desktop is captured. The
+programmatic dispatcher check does not establish a toolbar click, physical
+Win/Alt+Tab interception or actual vendor-server key consumption.
+
+Two opt-in controls, `keyboard_hook_win32_probe` and
+`keyboard_hook_winit_probe`, reuse the hook source without the full app.
+The Win32 control accepts `--focus-alt`; the winit control accepts
+`--no-device-events`. Each takes a fresh absolute JSON path and exits within
+15 seconds. Historical reports were built before the lease fix, with hashes
+recorded in the investigation; a current rebuild includes the fix.
 
 ## Windows OS DPI acceptance attempt
 

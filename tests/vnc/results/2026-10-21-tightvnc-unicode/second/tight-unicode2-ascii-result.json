@@ -1,0 +1,65 @@
+{
+    "case":  "ascii",
+    "outcome":  "passed",
+    "expected":  "abc",
+    "expected_scalars":  [
+                             "U+0061",
+                             "U+0062",
+                             "U+0063"
+                         ],
+    "clipboard_send_used":  false,
+    "before":  {
+                   "pid":  11284,
+                   "box_hwnd":  590908,
+                   "text":  "",
+                   "scalars":  [
+
+                               ],
+                   "focused":  true,
+                   "press":  0,
+                   "release":  0,
+                   "keypress":  0,
+                   "unfocused_input":  0,
+                   "focus_losses":  0,
+                   "text_changes":  0
+               },
+    "native_before":  {
+                          "foreground_pid":  11284,
+                          "foreground_hwnd":  1245906,
+                          "gui_ok":  true,
+                          "focus_hwnd":  590908
+                      },
+    "after":  {
+                  "pid":  11284,
+                  "box_hwnd":  590908,
+                  "text":  "abc",
+                  "scalars":  [
+                                  "U+0061",
+                                  "U+0062",
+                                  "U+0063"
+                              ],
+                  "focused":  true,
+                  "press":  3,
+                  "release":  27,
+                  "keypress":  3,
+                  "unfocused_input":  0,
+                  "focus_losses":  0,
+                  "text_changes":  3
+              },
+    "native_after":  {
+                         "foreground_pid":  11284,
+                         "foreground_hwnd":  1245906,
+                         "gui_ok":  true,
+                         "focus_hwnd":  590908
+                     },
+    "driver_exit":  0,
+    "checks":  {
+                   "driver_ready":  true,
+                   "driver_exit_zero":  true,
+                   "same_target":  true,
+                   "target_focused":  true,
+                   "all_input_focused":  true,
+                   "actual_input":  true,
+                   "exact_scalars":  true
+               }
+}

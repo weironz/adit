@@ -1,0 +1,1 @@
+$d='C:\ProgramData\AditVncKeys-0e455bba634e4dd3b05235022ad89618';mkdir $d;New-SmbShare -Name 'AditVncKeys-0e455bba634e4dd3b05235022ad89618' -Path $d -FullAccess ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -EncryptData $true -Temporary

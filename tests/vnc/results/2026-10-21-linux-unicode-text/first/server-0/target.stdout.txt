@@ -1,0 +1,1 @@
+{"ready": true, "pid": 47, "control": "/tmp/adit-unicode-3b007bee3ed342f0803c4ffc957c17ee.sock", "display": 99}

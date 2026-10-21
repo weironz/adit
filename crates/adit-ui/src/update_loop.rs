@@ -14,7 +14,11 @@ pub(super) enum VncPreviousLayer {
 }
 
 impl VncFrameCoverage {
-    pub(super) fn observe(&mut self, epoch: u64, covered: impl FnOnce() -> bool) -> VncPreviousLayer {
+    pub(super) fn observe(
+        &mut self,
+        epoch: u64,
+        covered: impl FnOnce() -> bool,
+    ) -> VncPreviousLayer {
         let changed = self.resize_epoch != Some(epoch);
         let was_complete = self.complete;
         // Alpha becomes opaque monotonically within a VNC surface epoch.
@@ -22,7 +26,11 @@ impl VncFrameCoverage {
         self.complete = (!changed && was_complete) || covered();
         self.resize_epoch = Some(epoch);
         if changed {
-            if was_complete { VncPreviousLayer::Promote } else { VncPreviousLayer::Keep }
+            if was_complete {
+                VncPreviousLayer::Promote
+            } else {
+                VncPreviousLayer::Keep
+            }
         } else if was_complete {
             // The preceding complete upload has landed. The first complete
             // upload itself still keeps the shield until this or the timer.
@@ -32,14 +40,24 @@ impl VncFrameCoverage {
         }
     }
 
-    pub(super) fn may_retire(&self) -> bool { self.complete }
+    pub(super) fn may_retire(&self) -> bool {
+        self.complete
+    }
 }
 
 fn vnc_frame_covered(frame: &adit_session::RdpFrame) -> bool {
-    frame.width > 0 && frame.height > 0
-        && usize::from(frame.width).checked_mul(usize::from(frame.height))
-            .and_then(|pixels| pixels.checked_mul(4)) == Some(frame.rgba.len())
-        && frame.rgba.as_chunks::<4>().0.iter().all(|pixel| pixel[3] == 255)
+    frame.width > 0
+        && frame.height > 0
+        && usize::from(frame.width)
+            .checked_mul(usize::from(frame.height))
+            .and_then(|pixels| pixels.checked_mul(4))
+            == Some(frame.rgba.len())
+        && frame
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .all(|pixel| pixel[3] == 255)
 }
 
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
@@ -88,7 +106,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
             app.manager.poll_events();
-            if let Some(notice) = app.manager.take_desktop_notice() { app.notice = notice; }
+            if let Some(notice) = app.manager.take_desktop_notice() {
+                app.notice = notice;
+            }
             // Fatal errors stop frame subscriptions too; retire cache/hook on
             // the regular tick rather than relying on one more video frame.
             retire_vnc_connection_cache(app);
@@ -133,7 +153,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
 
             // RDP clipboard bridge: the helper is a windowless process, so only
             // this one has a Windows clipboard. Remote copies land here...
-            if let Some(text) = app.manager.take_rdp_clipboard().filter(|_| app.rdp_clipboard) {
+            if let Some(text) = app
+                .manager
+                .take_rdp_clipboard()
+                .filter(|_| app.rdp_clipboard)
+            {
                 // Record it as already-offered so the poll below doesn't bounce
                 // the remote's own text straight back at it.
                 app.rdp_clipboard_offered = Some(text.clone());
@@ -203,10 +227,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.manager.answer_rdp_file_read(read.stream_id, data);
             }
 
-            let clipboard_ready = !app.manager.active_is_vnc() || app.manager.active_session_summary().is_some_and(|s| s.status == SessionStatus::Connected);
+            let clipboard_ready = !app.manager.active_is_vnc()
+                || app
+                    .manager
+                    .active_session_summary()
+                    .is_some_and(|s| s.status == SessionStatus::Connected);
             if app.rdp_clipboard && app.manager.active_is_desktop() && clipboard_ready {
                 app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
-                if app.rdp_clipboard_ticks.is_multiple_of(RDP_CLIPBOARD_POLL_TICKS) {
+                if app
+                    .rdp_clipboard_ticks
+                    .is_multiple_of(RDP_CLIPBOARD_POLL_TICKS)
+                {
                     // Explorer also offers file names as text. RDP checks files
                     // first; VNC supports text only and never requests local files.
                     if !app.manager.active_is_vnc() {
@@ -215,17 +246,24 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     }
                     if let Some(session) = app.manager.active_session() {
                         let epoch = app.desktop_clipboard_epoch;
-                        return clipboard::read().map(move |contents| Message::RdpClipboardPolled(session, epoch, contents));
+                        return clipboard::read().map(move |contents| {
+                            Message::RdpClipboardPolled(session, epoch, contents)
+                        });
                     }
                 }
             }
         }
         Message::RdpClipboardPolled(session, epoch, contents) => {
             // A read can finish after a tab switch or after sharing was disabled.
-            if !app.rdp_clipboard || app.manager.active_session() != Some(session) || app.desktop_clipboard_epoch != epoch {
+            if !app.rdp_clipboard
+                || app.manager.active_session() != Some(session)
+                || app.desktop_clipboard_epoch != epoch
+            {
                 return Task::none();
             }
-            if let Some(text) = contents.filter(|text| app.manager.active_is_vnc() || !text.is_empty()) {
+            if let Some(text) =
+                contents.filter(|text| app.manager.active_is_vnc() || !text.is_empty())
+            {
                 if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
                     app.rdp_clipboard_offered = Some(text.clone());
                     app.manager.offer_clipboard_to_active_rdp(text);
@@ -238,9 +276,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Drained here rather than in the callback because the callback runs
             // on the system input thread against a deadline, and sending on the
             // helper pipe is not work that belongs there.
-            if app.manager.active_is_vnc() && app.vnc_grab_keys && app.manager.active_rdp_live() && !app.manager.active_vnc_read_only() {
+            if app.manager.active_is_vnc()
+                && app.vnc_grab_keys
+                && app.manager.active_rdp_live()
+                && !app.manager.active_vnc_read_only()
+            {
                 drain_vnc_system_keys(app);
-            } else if app.fullscreen && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
+            } else if app.fullscreen
+                && app.manager.active_rdp_live()
+                && !app.manager.active_is_vnc()
+            {
                 for stroke in keyboard_hook::drain() {
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode: stroke.scancode,
@@ -279,9 +324,19 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             let vnc_not_connected = retire_vnc_connection_cache(app);
             if app.manager.active_is_vnc() && !vnc_not_connected {
                 if let Some(cursor) = app.manager.active_vnc_cursor() {
-                    if app.vnc_cursor.as_ref().is_none_or(|old| old.generation != cursor.generation) {
-                        app.vnc_cursor_handle = (cursor.width > 0 && cursor.height > 0).then(||
-                            iced::widget::image::Handle::from_rgba(u32::from(cursor.width), u32::from(cursor.height), cursor.rgba.clone()));
+                    if app
+                        .vnc_cursor
+                        .as_ref()
+                        .is_none_or(|old| old.generation != cursor.generation)
+                    {
+                        app.vnc_cursor_handle =
+                            (cursor.width > 0 && cursor.height > 0).then(|| {
+                                iced::widget::image::Handle::from_rgba(
+                                    u32::from(cursor.width),
+                                    u32::from(cursor.height),
+                                    cursor.rgba.clone(),
+                                )
+                            });
                         app.vnc_cursor = Some(cursor);
                     }
                 } else {
@@ -308,10 +363,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if due && !vnc_not_connected {
                 let is_vnc = app.manager.active_is_vnc();
                 let sampled = if is_vnc {
-                    app.manager.active_vnc_frame_if_newer(app.rdp_frame_generation)
+                    app.manager
+                        .active_vnc_frame_if_newer(app.rdp_frame_generation)
                         .map(|snapshot| (snapshot.frame, Some(snapshot.resize_epoch)))
                 } else {
-                    app.manager.active_rdp_frame_if_newer(app.rdp_frame_generation)
+                    app.manager
+                        .active_rdp_frame_if_newer(app.rdp_frame_generation)
                         .map(|frame| (frame, None))
                 };
                 if let Some((frame, vnc_epoch)) = sampled {
@@ -325,7 +382,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     // settle. A follow-up frame at the same size means the
                     // swap has certainly landed — drop the shield then.
                     if let Some(epoch) = vnc_epoch {
-                        match app.vnc_frame_coverage.observe(epoch, || vnc_frame_covered(&frame)) {
+                        match app
+                            .vnc_frame_coverage
+                            .observe(epoch, || vnc_frame_covered(&frame))
+                        {
                             VncPreviousLayer::Promote if !app.rdp_tiles.is_empty() => {
                                 app.rdp_tiles_prev = std::mem::take(&mut app.rdp_tiles);
                                 app.rdp_surface_size_prev = app.rdp_surface_size;
@@ -361,14 +421,18 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RdpPressed(button) => {
             if let Some(b) = rdp_mouse_button(button) {
                 app.terminal_focused = true;
-                app.manager
-                    .send_rdp_input_to_active(RdpInput::MouseButton { button: b, pressed: true });
+                app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
+                    button: b,
+                    pressed: true,
+                });
             }
         }
         Message::RdpReleased(button) => {
             if let Some(b) = rdp_mouse_button(button) {
-                app.manager
-                    .send_rdp_input_to_active(RdpInput::MouseButton { button: b, pressed: false });
+                app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
+                    button: b,
+                    pressed: false,
+                });
             }
         }
         Message::RdpScrolled(delta) => {
@@ -391,8 +455,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if amount != 0.0 {
                 // RDP wheel units: 120 per notch, sign = scroll direction.
                 let units = (amount * 120.0).clamp(-32768.0, 32767.0) as i16;
-                app.manager
-                    .send_rdp_input_to_active(RdpInput::Wheel { vertical, delta: units });
+                app.manager.send_rdp_input_to_active(RdpInput::Wheel {
+                    vertical,
+                    delta: units,
+                });
             }
         }
         Message::ToggleMenu(menu) => {
@@ -518,8 +584,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::PickConfigDir => {
-            let mut dialog = rfd::AsyncFileDialog::new()
-                .set_title("选择配置文件夹（可指向 Dropbox 等同步盘）");
+            let mut dialog =
+                rfd::AsyncFileDialog::new().set_title("选择配置文件夹（可指向 Dropbox 等同步盘）");
             if let Some(parent) = app.config_dir.parent() {
                 if parent.exists() {
                     dialog = dialog.set_directory(parent);
@@ -616,8 +682,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // The SecureCRT import opens an async folder picker.
             if matches!(command, MenuCommand::ImportSecureCrt) {
                 app.active_menu = None;
-                let mut dialog = rfd::AsyncFileDialog::new()
-                    .set_title("选择 SecureCRT 的 Sessions 文件夹");
+                let mut dialog =
+                    rfd::AsyncFileDialog::new().set_title("选择 SecureCRT 的 Sessions 文件夹");
                 if let Some(dir) = adit_storage::default_securecrt_sessions_dir() {
                     dialog = dialog.set_directory(dir);
                 }
@@ -1397,8 +1463,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.last_error = Some(error.to_string());
                 }
             } else if !app.manager.sftp_is_open() {
-                app.notice =
-                    String::from(t("拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)"));
+                app.notice = String::from(t(
+                    "拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)",
+                ));
             } else if let Err(error) = app.manager.sftp_upload(&path) {
                 app.last_error = Some(error.to_string());
             } else {
@@ -1592,7 +1659,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // SSH defaults to password auth; only upgrade the implicit "Auto" so an
             // explicit Key/Agent choice is preserved.
-            if (protocol.is_ssh_based() || protocol == Protocol::Vnc) && app.profile_auth_method == AuthMethod::Auto {
+            if (protocol.is_ssh_based() || protocol == Protocol::Vnc)
+                && app.profile_auth_method == AuthMethod::Auto
+            {
                 app.profile_auth_method = AuthMethod::Password;
             }
             // Give the tile a starting icon, but only while the user has not
@@ -1684,7 +1753,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // A row the filter hides is a row the user can no longer see they
             // selected, and batch delete would still have destroyed it.
             let visible: std::collections::HashSet<ProfileId> =
-                crate::sidebar::visible_profile_ids(app).into_iter().collect();
+                crate::sidebar::visible_profile_ids(app)
+                    .into_iter()
+                    .collect();
             app.selected_profiles.retain(|id| visible.contains(id));
             if app.selected_profiles.is_empty() {
                 app.profile_select_anchor = None;
@@ -1920,7 +1991,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(report) = app.sync_held.take() {
                 app.groups = report.catalog.groups.clone();
                 app.group_icons = report.catalog.group_icons.clone();
-                app.manager.replace_profiles(report.catalog.profiles.clone());
+                app.manager
+                    .replace_profiles(report.catalog.profiles.clone());
                 // The same tail as the unheld path, deliberately: two ways of
                 // adopting a catalog that do slightly different things is how
                 // one of them ends up missing a step nobody notices.
@@ -2026,26 +2098,26 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         // closure, so this is the only chance to keep it.
                         let assigned_id = backend.assigned_id();
                         result
-                        .map(|outcome| SyncReport {
-                            conflicts: outcome
-                                .conflicts
-                                .iter()
-                                .map(|conflict| tf("冲突（已保留本机）: {}", &[&conflict.name]))
-                                .collect(),
-                            summary: if outcome.uploaded {
-                                format!(
-                                    "同步完成：新增 {} 项，更新 {} 项，删除 {} 项",
-                                    outcome.stats.added_from_remote,
-                                    outcome.stats.updated_from_remote,
-                                    outcome.stats.deleted
-                                )
-                            } else {
-                                String::from(t("已是最新，无需上传"))
-                            },
-                            catalog: outcome.catalog,
-                            assigned_id,
-                        })
-                        .map_err(|error| error.to_string())
+                            .map(|outcome| SyncReport {
+                                conflicts: outcome
+                                    .conflicts
+                                    .iter()
+                                    .map(|conflict| tf("冲突（已保留本机）: {}", &[&conflict.name]))
+                                    .collect(),
+                                summary: if outcome.uploaded {
+                                    format!(
+                                        "同步完成：新增 {} 项，更新 {} 项，删除 {} 项",
+                                        outcome.stats.added_from_remote,
+                                        outcome.stats.updated_from_remote,
+                                        outcome.stats.deleted
+                                    )
+                                } else {
+                                    String::from(t("已是最新，无需上传"))
+                                },
+                                catalog: outcome.catalog,
+                                assigned_id,
+                            })
+                            .map_err(|error| error.to_string())
                     })
                     .await
                     .unwrap_or_else(|error| Err(error.to_string()))
@@ -2101,7 +2173,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     // machine has already survived the merge, and dropping it
                     // here would undo that on the next save.
                     app.group_icons = report.catalog.group_icons.clone();
-                    app.manager.replace_profiles(report.catalog.profiles.clone());
+                    app.manager
+                        .replace_profiles(report.catalog.profiles.clone());
                     // A sync can delete profiles, and the selection can still be
                     // holding their ids. `prune_profile_selection` documents
                     // itself as covering "a sync that replaces the whole
@@ -2158,9 +2231,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             return window::latest().and_then(move |id| window::set_mode(id, mode));
         }
         Message::KeyboardInput(event) => {
-            // Hook events precede window events on Windows. Drain them here as
-            // well as on the frame tick, so Win+letter and fast Alt+Tab retain
-            // their original ordering across the two event queues.
+            // Stop at each pass-through modifier until its window event has
+            // been forwarded. Draining the entire hook queue here let a later
+            // Win-down overtake an earlier Shift/Alt-up in the window queue.
             if app.manager.active_is_vnc() && app.vnc_grab_keys && app.manager.active_rdp_live() {
                 drain_vnc_system_keys(app);
             }
@@ -2220,7 +2293,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // Ctrl+Shift+F opens scrollback search regardless of focus; Escape
             // closes it. These run before the terminal-focus gate.
-            if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && terminal_shortcut(&event, 'f') {
+            if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && terminal_shortcut(&event, 'f')
+            {
                 app.search_open = true;
                 app.terminal_focused = false;
                 recompute_search(app);
@@ -2245,7 +2319,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // Escape cancels an in-place rename (the focused text input ignores
             // Escape, so the key reaches us here).
-            if is_escape_key(&event) && (app.editing_profile.is_some() || app.editing_group.is_some())
+            if is_escape_key(&event)
+                && (app.editing_profile.is_some() || app.editing_group.is_some())
             {
                 app.editing_profile = None;
                 app.profile_name_draft.clear();
@@ -2272,8 +2347,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     return Task::none();
                 }
                 if app.manager.active_is_vnc() {
-                    if vnc_accepts_text_input(app) {
+                    repair_vnc_filtered_control(app, &event);
+                    if vnc_accepts_text_input(app) && vnc_window_key_authorized(app, &event) {
                         send_vnc_keyboard(app, &event);
+                        finish_vnc_window_key(app, &event);
                     }
                     return Task::none();
                 }
@@ -2283,7 +2360,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         extended,
                         pressed,
                     });
-                } else if let keyboard::Event::KeyPressed { text: Some(text), .. } = &event {
+                } else if let keyboard::Event::KeyPressed {
+                    text: Some(text), ..
+                } = &event
+                {
                     // Unmapped physical key (remapped layouts, some IME setups
                     // report Unidentified): fall back to the Unicode input
                     // path instead of dropping the keystroke on the floor.
@@ -2370,7 +2450,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 send_terminal_bytes(app, bytes);
             }
         }
-        Message::WindowResized { width, height, window } => {
+        Message::WindowResized {
+            width,
+            height,
+            window,
+        } => {
             // Minimizing reports 0x0. A visible high-DPI window can legitimately
             // be below the persisted-size minimum in logical points; ignoring
             // that resize leaves desktop rendering and input on stale geometry.
@@ -2677,12 +2761,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // Shift-click: range-select from the anchor to this tab.
                 let anchor = app.tab_select_anchor.or(app.manager.active_session());
                 if let Some(anchor_id) = anchor {
-                    let sessions: Vec<SessionId> = app
-                        .manager
-                        .sessions()
-                        .into_iter()
-                        .map(|s| s.id)
-                        .collect();
+                    let sessions: Vec<SessionId> =
+                        app.manager.sessions().into_iter().map(|s| s.id).collect();
                     let anchor_pos = sessions.iter().position(|id| *id == anchor_id);
                     let click_pos = sessions.iter().position(|id| *id == session_id);
                     if let (Some(a), Some(c)) = (anchor_pos, click_pos) {
@@ -2778,7 +2858,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ReconnectSession(session_id) => {
             app.tab_context_menu = None;
-            let is_vnc = app.manager.session_summary(session_id)
+            let is_vnc = app
+                .manager
+                .session_summary(session_id)
                 .and_then(|summary| app.manager.profile(summary.profile_id))
                 .is_some_and(|profile| profile.protocol == Protocol::Vnc);
             if is_vnc {
@@ -2824,7 +2906,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                                 start_vnc(app, profile_id, password, None);
                                 return Task::none();
                             } else {
-                                app.manager.open_live_rdp_session(profile_id, password, rw, rh)
+                                app.manager
+                                    .open_live_rdp_session(profile_id, password, rw, rh)
                             };
                             match result {
                                 Ok(_) => {
@@ -2925,7 +3008,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             let command = app.snippet_command_draft.trim().to_string();
             if !command.is_empty() {
                 app.snippets.push(Snippet {
-                    name: if name.is_empty() { command.clone() } else { name },
+                    name: if name.is_empty() {
+                        command.clone()
+                    } else {
+                        name
+                    },
                     command,
                 });
                 app.snippet_name_draft.clear();
@@ -2985,8 +3072,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // writes the flag on the next Tick.
             app.keyring_migrated = true;
             if imported > 0 {
-                app.notice =
-                    tf("已从系统密钥环导入 {} 条密码到配置目录(可随 Dropbox 同步)", &[&imported]);
+                app.notice = tf(
+                    "已从系统密钥环导入 {} 条密码到配置目录(可随 Dropbox 同步)",
+                    &[&imported],
+                );
                 // A secret for the selected profile may have just arrived; refresh
                 // so the connect form reflects it.
                 load_selected_profile(app);
@@ -3013,15 +3102,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 match event {
                     Event::Commit(text) => {
                         app.vnc_preedit = None;
-                        for ch in text.chars().filter(|ch| !ch.is_control()) {
-                            let symbol = adit_session::unicode_keysym(ch);
-                            app.manager.send_vnc_key_to_active(symbol, true);
-                            app.manager.send_vnc_key_to_active(symbol, false);
-                        }
+                        send_vnc_text(app, &text);
                     }
-                    Event::Preedit(content, selection) => app.vnc_preedit = Some(Preedit { content, selection, text_size: None }),
+                    Event::Preedit(content, selection) => {
+                        app.vnc_preedit = Some(Preedit {
+                            content,
+                            selection,
+                            text_size: None,
+                        })
+                    }
                     Event::Closed => app.vnc_preedit = None,
-                    Event::Opened => {},
+                    Event::Opened => {}
                 }
             }
         }
@@ -3036,7 +3127,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             3 => app.profile_vnc.auto_reconnect = value,
             4 => app.profile_vnc.resize_remote = value,
             5 => app.profile_vnc.clipboard_legacy = value,
-            _ => {},
+            6 => app.profile_vnc.unicode_bmp_only = value,
+            _ => {}
         },
         Message::ToggleVncReadOnly => {
             release_rdp_modifiers(app);
@@ -3044,7 +3136,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             keyboard_hook::disarm();
             let value = !app.manager.active_vnc_read_only();
             app.manager.set_active_vnc_read_only(value);
-            app.notice = if value { "VNC 已切换只读观察；仍按接收策略同步远端剪贴板" } else { "VNC 已允许控制" }.into();
+            app.notice = if value {
+                "VNC 已切换只读观察；仍按接收策略同步远端剪贴板"
+            } else {
+                "VNC 已允许控制"
+            }
+            .into();
         }
         Message::ToggleVncResize => {
             let value = !app.manager.active_vnc_resize_remote();
@@ -3056,8 +3153,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             let grab = !app.vnc_grab_keys;
             release_rdp_modifiers(app);
             app.vnc_grab_keys = grab;
-            if app.vnc_grab_keys { keyboard_hook::arm_vnc(); } else { keyboard_hook::disarm(); }
-            app.notice = "VNC 系统键模式：Ctrl+Alt+Enter 始终在本地释放抓取；Ctrl+Alt+Del 由服务端权限决定".into();
+            if app.vnc_grab_keys {
+                app.vnc_grab_keys = keyboard_hook::arm_vnc();
+            } else {
+                keyboard_hook::disarm();
+            }
+            app.notice = if app.vnc_grab_keys {
+                "VNC 系统键模式：Ctrl+Alt+Enter 始终在本地释放抓取；Ctrl+Alt+Del 由服务端权限决定"
+            } else {
+                "VNC 系统键已留在本地；无法安装抓取时请重新开启"
+            }
+            .into();
         }
         Message::ToggleVncFit => {
             app.vnc_fit = !app.vnc_fit;
@@ -3073,7 +3179,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_clipboard_offered = None;
             }
             app.notice = if app.manager.active_is_vnc() {
-                if enabled { "VNC 剪贴板已按配置的收发策略开启" } else { "VNC 剪贴板已关闭，已清除待发送文本" }.into()
+                if enabled {
+                    "VNC 剪贴板已按配置的收发策略开启"
+                } else {
+                    "VNC 剪贴板已关闭，已清除待发送文本"
+                }
+                .into()
             } else if enabled {
                 String::from(t("已开启：RDP 共享剪贴板（下次连接生效）"))
             } else {
@@ -3107,10 +3218,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // again. Doing it silently would look like the button did nothing
             // for the two seconds the reconnect takes, hence the notice.
             if app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
-                app.notice = tf("画质已切换为 {} — 正在重新连接", &[&t(rdp_quality_label(quality))]);
+                app.notice = tf(
+                    "画质已切换为 {} — 正在重新连接",
+                    &[&t(rdp_quality_label(quality))],
+                );
                 reconnect_active_session(app);
             } else {
-                app.notice = tf("画质已切换为 {}（下次连接生效）", &[&t(rdp_quality_label(quality))]);
+                app.notice = tf(
+                    "画质已切换为 {}（下次连接生效）",
+                    &[&t(rdp_quality_label(quality))],
+                );
             }
         }
         Message::RdpSendCtrlAltDel => {
@@ -3122,10 +3239,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 let url = info.installer_url.clone();
                 let name = info.installer_name.clone();
                 app.update_state = UpdateState::Downloading;
-                return Task::perform(
-                    download_installer(url, name),
-                    Message::UpdateDownloaded,
-                );
+                return Task::perform(download_installer(url, name), Message::UpdateDownloaded);
             }
         }
         Message::UpdateDownloaded(result) => match result {
@@ -3222,8 +3336,11 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
     let path = std::path::PathBuf::from(dir).join(format!("frame-{index:03}.png"));
     // PNG by hand would need an encoder here; a raw dump plus its dimensions is
     // enough for the offline comparison and keeps this dependency-free.
-    let meta = format!("{}x{}
-", frame.width, frame.height);
+    let meta = format!(
+        "{}x{}
+",
+        frame.width, frame.height
+    );
     let _ = std::fs::write(path.with_extension("txt"), meta);
     let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
 }
@@ -3342,7 +3459,14 @@ pub(crate) fn offer_local_files_if_changed(app: &mut AditApp) {
 
 /// Returns true while a VNC tab has no authenticated active connection.
 fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
-    if !app.manager.active_is_vnc() || app.manager.active_session_summary().is_some_and(|s| s.status == SessionStatus::Connected) { return false; }
+    if !app.manager.active_is_vnc()
+        || app
+            .manager
+            .active_session_summary()
+            .is_some_and(|s| s.status == SessionStatus::Connected)
+    {
+        return false;
+    }
     app.rdp_tiles.clear();
     app.rdp_tiles_prev.clear();
     app.rdp_surface_size = None;
@@ -3371,23 +3495,46 @@ mod vnc_resize_tests {
     fn captured_partial_resize_keeps_the_last_complete_shield() {
         let capture: serde_json::Value = serde_json::from_str(include_str!(
             "../../../tests/vnc/results/2026-10-17-resize-frame-investigation.json"
-        )).unwrap();
+        ))
+        .unwrap();
         let mut state = VncFrameCoverage::default();
         state.observe(40, || true);
-        for (i, sample) in capture["selected_samples"].as_array().unwrap().iter().enumerate() {
+        for (i, sample) in capture["selected_samples"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .enumerate()
+        {
             let width = u16::try_from(sample["width"].as_u64().unwrap()).unwrap();
             let height = u16::try_from(sample["height"].as_u64().unwrap()).unwrap();
             let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
             for run in sample["alpha_rle"].as_array().unwrap() {
                 let alpha = u8::try_from(run[0].as_u64().unwrap()).unwrap();
-                for _ in 0..run[1].as_u64().unwrap() { rgba.extend_from_slice(&[0, 0, 0, alpha]); }
+                for _ in 0..run[1].as_u64().unwrap() {
+                    rgba.extend_from_slice(&[0, 0, 0, alpha]);
+                }
             }
-            let frame = adit_session::RdpFrame { width, height, rgba, generation: i as u64 };
+            let frame = adit_session::RdpFrame {
+                width,
+                height,
+                rgba,
+                generation: i as u64,
+            };
             let action = state.observe(41, || vnc_frame_covered(&frame));
-            assert_eq!(action, if i == 0 { VncPreviousLayer::Promote } else { VncPreviousLayer::Keep });
+            assert_eq!(
+                action,
+                if i == 0 {
+                    VncPreviousLayer::Promote
+                } else {
+                    VncPreviousLayer::Keep
+                }
+            );
             assert_eq!(state.may_retire(), sample["covered"] == sample["total"]);
         }
-        assert_eq!(state.observe(41, || panic!("stable full frames must not scan")), VncPreviousLayer::Retire);
+        assert_eq!(
+            state.observe(41, || panic!("stable full frames must not scan")),
+            VncPreviousLayer::Retire
+        );
     }
 
     #[test]
@@ -3403,7 +3550,10 @@ mod vnc_resize_tests {
         assert!(!state.may_retire());
         assert_eq!(state.observe(4, || true), VncPreviousLayer::Keep);
         assert!(state.may_retire());
-        assert_eq!(state.observe(4, || panic!("stable full frame")), VncPreviousLayer::Retire);
+        assert_eq!(
+            state.observe(4, || panic!("stable full frame")),
+            VncPreviousLayer::Retire
+        );
     }
 
     #[test]
@@ -3420,7 +3570,12 @@ mod vnc_resize_tests {
 
     #[test]
     fn incomplete_or_invalid_rgba_never_counts_as_full_coverage() {
-        let mut frame = adit_session::RdpFrame { width: 2, height: 2, rgba: vec![255; 16], generation: 0 };
+        let mut frame = adit_session::RdpFrame {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+            generation: 0,
+        };
         assert!(vnc_frame_covered(&frame));
         frame.rgba[15] = 0;
         assert!(!vnc_frame_covered(&frame));
@@ -3435,16 +3590,24 @@ mod vnc_resize_tests {
     #[test]
     fn legal_maximum_surface_is_scanned_only_during_transition() {
         let frame = adit_session::RdpFrame {
-            width: 3840, height: 2160, rgba: vec![255; 3840 * 2160 * 4], generation: 1,
+            width: 3840,
+            height: 2160,
+            rgba: vec![255; 3840 * 2160 * 4],
+            generation: 1,
         };
         let mut state = VncFrameCoverage::default();
         let started = Instant::now();
         state.observe(1, || vnc_frame_covered(std::hint::black_box(&frame)));
-        println!("VNC max 8294400-pixel alpha scan: {:?}; debug_assertions={}; observation only",
-            started.elapsed(), cfg!(debug_assertions));
+        println!(
+            "VNC max 8294400-pixel alpha scan: {:?}; debug_assertions={}; observation only",
+            started.elapsed(),
+            cfg!(debug_assertions)
+        );
         assert!(state.may_retire());
         for _ in 0..1000 {
-            state.observe(1, || panic!("steady frames must not scan the maximum surface"));
+            state.observe(1, || {
+                panic!("steady frames must not scan the maximum surface")
+            });
         }
     }
 }

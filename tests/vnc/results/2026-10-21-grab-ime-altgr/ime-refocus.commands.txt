@@ -1,0 +1,8 @@
+WAIT 1300
+CLICK 906 776
+WAIT 2200
+CLICK 600 300
+WAIT 1000
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/ime-refocus.png
+WAIT 1200
+ACK ime-refocus

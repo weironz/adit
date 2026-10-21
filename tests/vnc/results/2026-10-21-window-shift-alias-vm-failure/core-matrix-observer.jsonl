@@ -1,0 +1,16 @@
+{"unix_ms": 1792512923316, "message": 256, "vk": 82, "scan": 19, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512923322, "message": 257, "vk": 82, "scan": 19, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512923328, "message": 256, "vk": 27, "scan": 1, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512923672, "message": 257, "vk": 27, "scan": 1, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512948212, "message": 256, "vk": 160, "scan": 42, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512948950, "message": 257, "vk": 160, "scan": 42, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512950549, "message": 260, "vk": 164, "scan": 56, "flags": 32, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512951236, "message": 257, "vk": 164, "scan": 56, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512952861, "message": 256, "vk": 162, "scan": 29, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512953186, "message": 256, "vk": 164, "scan": 56, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512953543, "message": 257, "vk": 164, "scan": 56, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512953549, "message": 257, "vk": 162, "scan": 29, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512954832, "message": 256, "vk": 162, "scan": 29, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512955168, "message": 256, "vk": 164, "scan": 56, "flags": 0, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512955490, "message": 257, "vk": 164, "scan": 56, "flags": 128, "injected": false, "foreground_thread": 11208}
+{"unix_ms": 1792512955496, "message": 257, "vk": 162, "scan": 29, "flags": 128, "injected": false, "foreground_thread": 11208}

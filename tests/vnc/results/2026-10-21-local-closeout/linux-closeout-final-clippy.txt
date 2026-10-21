@@ -1,0 +1,4 @@
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+    Checking adit-session v0.1.75 (/src/crates/adit-session)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 4.03s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.15s

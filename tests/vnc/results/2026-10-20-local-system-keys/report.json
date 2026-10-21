@@ -1,0 +1,113 @@
+{
+  "date": "2026-10-20",
+  "base_commit": "fd81ff758b085ff259481caa6716c724731aaa86",
+  "compiler": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "overall": "partial",
+  "hosted_workflows_dispatched": 0,
+  "release_published": false,
+  "local_ci": {
+    "command": "just ci-vnc",
+    "exit_code": 0,
+    "workspace": {
+      "passed": 414,
+      "failed": 0,
+      "ignored": 11
+    },
+    "native_feature_library": {
+      "passed": 129,
+      "failed": 0,
+      "ignored": 1,
+      "overlaps_workspace": true
+    },
+    "explicit_f24_regression": {
+      "passed": 1,
+      "failed": 0
+    },
+    "ssh_integration": "compiled only",
+    "rdp_workspace": "Clippy passed; tests not executed",
+    "platform_scope": "Windows local only"
+  },
+  "native_global_capture": {
+    "outcome": "failed",
+    "case5": {
+      "integrity_rid_observed": 12288,
+      "token_query": "Win32 OpenProcessToken / TokenIntegrityLevel",
+      "binary": "DD2EA71E4F7E777F59739E3DC3D52A2F66962ECF2490047E432EC78F979A3081"
+    },
+    "case7": {
+      "requested_task_run_level": "Limited",
+      "actual_token_integrity": "not separately queried",
+      "binary": "39881137E6F79606918DB06174726A90F29AF9403B43B45DEE03051A6816F2A7",
+      "own_f24_sendinput_accepted": 2,
+      "hook_callbacks": 0,
+      "alt_tab_forwarded": false
+    },
+    "standalone_source_callback_count": 6,
+    "standalone_library_console_callback_count": 4,
+    "standalone_library_gui_callback_count": 4,
+    "complete_system_key_matrix": false
+  },
+  "vendor_unicode": {
+    "outcome": "failed",
+    "vendor": "UltraVNC 1.8.3.0",
+    "protocol_driver_exit": 0,
+    "expected_scalars": [
+      97,
+      20013,
+      25991,
+      128522,
+      101,
+      769
+    ],
+    "actual_scalars": [
+      97,
+      20013,
+      25991,
+      62986,
+      101,
+      769
+    ],
+    "clipboard_send_used": false,
+    "native_ime": false
+  },
+  "sleep": {
+    "outcome": "not_run",
+    "available_state": "S1",
+    "external_resume_path_verified": false
+  },
+  "cleanup": {
+    "management_rule_absent": true,
+    "outcome": "passed",
+    "winrm_status": "Stopped",
+    "share_absent": true,
+    "profiles_restored": true,
+    "firewall_profiles": [
+      {
+        "Name": "Domain",
+        "Enabled": 1
+      },
+      {
+        "Name": "Private",
+        "Enabled": 0
+      },
+      {
+        "Name": "Public",
+        "Enabled": 0
+      }
+    ],
+    "owned_task_count": 0,
+    "management_endpoint_registry_absent": true,
+    "base_report_exists": true,
+    "stage": "independent_cleanup_verification",
+    "management_tcp_listener_absent": true,
+    "utc": "2026-10-20T03:28:52.6266499Z",
+    "computer": "WIN11-VM",
+    "winrm_start_mode": "Manual",
+    "fixture_udp_absent": true,
+    "owned_processes": [],
+    "owned_wrappers": [],
+    "fixture_tcp_absent": true,
+    "directory_removed": true,
+    "directory_cleanup_utc": "2026-10-20T03:32:42.8708473Z"
+  }
+}

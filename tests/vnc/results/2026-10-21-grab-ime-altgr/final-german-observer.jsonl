@@ -1,0 +1,6 @@
+{"unix_ms": 1792516725424, "message": 256, "vk": 91, "scan": 91, "flags": 1, "injected": false, "foreground_thread": 6428}
+{"unix_ms": 1792516725524, "message": 256, "vk": 32, "scan": 57, "flags": 0, "injected": false, "foreground_thread": 6428}
+{"unix_ms": 1792516725769, "message": 257, "vk": 32, "scan": 57, "flags": 128, "injected": false, "foreground_thread": 6428}
+{"unix_ms": 1792516725862, "message": 256, "vk": 32, "scan": 57, "flags": 0, "injected": false, "foreground_thread": 6428}
+{"unix_ms": 1792516726111, "message": 257, "vk": 32, "scan": 57, "flags": 128, "injected": false, "foreground_thread": 6428}
+{"unix_ms": 1792516726206, "message": 257, "vk": 91, "scan": 91, "flags": 129, "injected": false, "foreground_thread": 6428}

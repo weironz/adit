@@ -1,0 +1,6 @@
+
+thread 'keyboard_hook::vnc_translate::tests::native_worker_ignores_other_queue_dead_key_and_preserves_pending_accent' (3100) panicked at crates\adit-ui\src\keyboard_vnc_translate.rs:179:9:
+assertion `left == right` failed: worker must not inherit A's accent
+  left: Err("multiple-scalars")
+ right: Ok(114)
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

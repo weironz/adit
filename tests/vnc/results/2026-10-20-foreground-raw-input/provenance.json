@@ -1,0 +1,38 @@
+{
+  "base_commit": "57edc64eef0fa581926667c1ddeac3aefca81527",
+  "tested_uncommitted_source": true,
+  "host": "Windows x64",
+  "toolchain": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+  "ci": "local just ci-vnc, exit 0; no hosted workflow",
+  "source_sha256_worktree_bytes": {
+    "Cargo.lock": "9c88db79234f28c9bbe00ad05dcccb3b5976b15a57b88f5be55b8b1964485892",
+    "crates/adit-ui/Cargo.toml": "e5ec45227d3f0457e0315cbb7cf1bd23c479d41ce1ab606de70518567274c30b",
+    "crates/adit-ui/src/keyboard_hook.rs": "15dc909768214ad0f40be6d922ff11f2f16b07e8038731fe716407cb9295c2be",
+    "crates/adit-ui/src/keyboard_raw_input.rs": "f1a812c59c9beb640181ce9e4c1ab798ccea6a316396ddc73f5b14f627d5ec7b",
+    "crates/adit-ui/src/native_hook_probe.rs": "0d633b125b404577040b44f4d859b045b1540631d41d3756e38d7825a29abcc8",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "ad57f1dddbdafcbcef8383c7ca22b9f0430cce6445c381a38b68947bf20902a2",
+    "crates/adit-ui/examples/keyboard_hook_gui_probe.rs": "ed0868987411f53f5b879961959505034abfa0dc59f80fbc11b02b562a7af6c1",
+    "crates/adit-ui/examples/keyboard_hook_win32_probe.rs": "3c91c419184ad7178a3a06af05e6313290533957dd75e27948343d851b04d28f",
+    "crates/adit-ui/examples/keyboard_hook_winit_probe.rs": "d9cd880b2e10eef9afeb3eefd5f977558ca06d0e3d86f08992c28233d2681d58",
+    "crates/adit-rdp-proto/examples/rdp_probe.rs": "8b160965b96de47ce7712c84bee0f3617019d82b11893f6e1cab221bbdd75cc0",
+    "tests/vnc/local-hook-full.ps1": "166b48cdd12fb2065c72593ce00bf0da4c28fdf624da9dafb74b7d8c071f1916"
+  },
+  "source_sha256_lf": {
+    "Cargo.lock": "9c88db79234f28c9bbe00ad05dcccb3b5976b15a57b88f5be55b8b1964485892",
+    "crates/adit-ui/Cargo.toml": "e5ec45227d3f0457e0315cbb7cf1bd23c479d41ce1ab606de70518567274c30b",
+    "crates/adit-ui/src/keyboard_hook.rs": "15dc909768214ad0f40be6d922ff11f2f16b07e8038731fe716407cb9295c2be",
+    "crates/adit-ui/src/keyboard_raw_input.rs": "f1a812c59c9beb640181ce9e4c1ab798ccea6a316396ddc73f5b14f627d5ec7b",
+    "crates/adit-ui/src/native_hook_probe.rs": "0d633b125b404577040b44f4d859b045b1540631d41d3756e38d7825a29abcc8",
+    "crates/adit-ui/src/vnc_native_acceptance.rs": "ad57f1dddbdafcbcef8383c7ca22b9f0430cce6445c381a38b68947bf20902a2",
+    "crates/adit-ui/examples/keyboard_hook_gui_probe.rs": "ed0868987411f53f5b879961959505034abfa0dc59f80fbc11b02b562a7af6c1",
+    "crates/adit-ui/examples/keyboard_hook_win32_probe.rs": "3c91c419184ad7178a3a06af05e6313290533957dd75e27948343d851b04d28f",
+    "crates/adit-ui/examples/keyboard_hook_winit_probe.rs": "d9cd880b2e10eef9afeb3eefd5f977558ca06d0e3d86f08992c28233d2681d58",
+    "crates/adit-rdp-proto/examples/rdp_probe.rs": "8b160965b96de47ce7712c84bee0f3617019d82b11893f6e1cab221bbdd75cc0",
+    "tests/vnc/local-hook-full.ps1": "166b48cdd12fb2065c72593ce00bf0da4c28fdf624da9dafb74b7d8c071f1916"
+  },
+  "executable_sha256": {
+    "target/debug/examples/vnc_native_acceptance.exe": "6bb645965aebd6667ccc4ef31939e51aba35ee16d5b32b3c5703fc2d2df8fa35",
+    "target/debug/examples/keyboard_hook_gui_probe.exe": "7facfda2247fd6719001bbad1dcc2cb85e68cfd11bbf341422c4dbe74916b876",
+    "target/debug/examples/rdp_probe.exe": "103e341004a82e267bcbc912f703ed5d3f0ed60e8047c8f4b6284ed45b9fb328"
+  }
+}

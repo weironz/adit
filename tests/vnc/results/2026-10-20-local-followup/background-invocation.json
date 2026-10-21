@@ -1,0 +1,12 @@
+{
+  "scope": "minimal iced GUI; actual library hook; tagged F24; observe only",
+  "mode": "background",
+  "executable_sha256": "4dde0401ed36d04ca59942c6652c974b5badfc04f8d741d3844958ece39425eb",
+  "started_utc": "2026-10-20T11:42:19.6428140Z",
+  "completed": true,
+  "pid": 41192,
+  "exit_code": 0,
+  "outcome": "passed",
+  "finished_utc": "2026-10-20T11:42:23.4675697Z",
+  "owned_process_exited": true
+}

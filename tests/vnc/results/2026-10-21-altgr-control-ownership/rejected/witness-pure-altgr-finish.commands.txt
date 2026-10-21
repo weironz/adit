@@ -1,0 +1,9 @@
+KEY 10 0 1
+WAIT 120
+KEY 10 0 0
+WAIT 120
+KEY 38 1 0
+WAIT 120
+WAIT 900
+WAIT 1200
+ACK witness-pure-altgr-finish

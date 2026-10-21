@@ -1,0 +1,7 @@
+KEY 39 0 1
+WAIT 120
+KEY 39 0 0
+WAIT 120
+WAIT 1000
+WAIT 1200
+ACK stateless-chinese-commit

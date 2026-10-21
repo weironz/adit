@@ -1,0 +1,66 @@
+{
+  "source_commit": "3f9dadba1b3fa1b8bd8008bb9a7224472c2ff0f8",
+  "comparison": "UTF-8 source bytes after CRLF to LF normalization only; no token or whitespace stripping",
+  "files": [
+    {
+      "path": "crates/adit-ui/src/keyboard_hook.rs",
+      "snapshot_sha256": "386fccff9b827839483b228833e28fd1aa7d29f8574615f66b77766d18985b6c",
+      "git_blob_sha256": "386fccff9b827839483b228833e28fd1aa7d29f8574615f66b77766d18985b6c",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-ui/src/keyboard_vnc_order.rs",
+      "snapshot_sha256": "e140c277c8a22d0ded3563819aa8e92658cf939acd0463163e483df7b46255f9",
+      "git_blob_sha256": "e140c277c8a22d0ded3563819aa8e92658cf939acd0463163e483df7b46255f9",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-ui/src/input.rs",
+      "snapshot_sha256": "db4b3a70287ded7b6a545db1b944d42ec357ac88caea5beb4a3a7950fbb354d2",
+      "git_blob_sha256": "db4b3a70287ded7b6a545db1b944d42ec357ac88caea5beb4a3a7950fbb354d2",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-ui/src/update_loop.rs",
+      "snapshot_sha256": "3ff7da11dab6a03028ca846f9fe94a75d6cd3ab57056b3ca099ed14627b44017",
+      "git_blob_sha256": "3ff7da11dab6a03028ca846f9fe94a75d6cd3ab57056b3ca099ed14627b44017",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-ui/src/vnc_input_wire_tests.rs",
+      "snapshot_sha256": "9eeb67c1e4b6814a31098b095f9ce71053fbccd2394fb79c6bf50d625e030560",
+      "git_blob_sha256": "9eeb67c1e4b6814a31098b095f9ce71053fbccd2394fb79c6bf50d625e030560",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-ui/src/vnc_native_acceptance.rs",
+      "snapshot_sha256": "42da4d308c3c450e13f829b27856d0c3e674c00c2c0f63ba32b94c3e7b587709",
+      "git_blob_sha256": "42da4d308c3c450e13f829b27856d0c3e674c00c2c0f63ba32b94c3e7b587709",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-ui/src/keyboard_vnc_chord.rs",
+      "snapshot_sha256": "b3526a4d3036802b1fbfdb391eb673a746161df46cec6eead75281b9149b5f39",
+      "git_blob_sha256": "b3526a4d3036802b1fbfdb391eb673a746161df46cec6eead75281b9149b5f39",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-rdp/src/egfx.rs",
+      "snapshot_sha256": "464043380cf78413061697488084d37b988cb757b25a7a6e9f47a5349e8a128d",
+      "git_blob_sha256": "464043380cf78413061697488084d37b988cb757b25a7a6e9f47a5349e8a128d",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-rdp/src/session.rs",
+      "snapshot_sha256": "d7515b23a34a8a42bc0e9a27b6053ac216574e89c4e3cf45d59ef76b40bdb6e6",
+      "git_blob_sha256": "d7515b23a34a8a42bc0e9a27b6053ac216574e89c4e3cf45d59ef76b40bdb6e6",
+      "lf_normalized_bytes_equal": true
+    },
+    {
+      "path": "crates/adit-rdp/tests/clearcodec_dump.rs",
+      "snapshot_sha256": "36c052e2474c969abe7191cc02ee8920c0e063fedf3428541dad1e69d1b45611",
+      "git_blob_sha256": "36c052e2474c969abe7191cc02ee8920c0e063fedf3428541dad1e69d1b45611",
+      "lf_normalized_bytes_equal": true
+    }
+  ]
+}

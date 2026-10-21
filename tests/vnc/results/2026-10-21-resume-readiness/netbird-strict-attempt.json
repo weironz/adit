@@ -1,0 +1,39 @@
+{
+  "utc": "2026-10-20T20:20:09.272220+00:00",
+  "pid": 47924,
+  "exit": 1,
+  "timed_out": false,
+  "strict_host_key_checking": true,
+  "no_browser": true,
+  "stdin": "DEVNULL",
+  "explicit_identity_or_password": false,
+  "stdout_bytes": 233,
+  "stderr_bytes": 201,
+  "stdout_sha256": "648bcd78053aa8289b89f2158847be32ad40f3e1e4f88327b167a86135f93a80",
+  "stderr_sha256": "593537a4f6f161c37a4603c44adeb449f5ce8e2504b2e5ac2d6555e816f827b1",
+  "allowlisted_checks": {
+    "ssh_server_detection_failure": false,
+    "connection_refused": false,
+    "timeout": false,
+    "host_key_verification_failed": true,
+    "authentication_failure": false,
+    "auth_interaction_required": false,
+    "metadata_received": false
+  },
+  "classification": {
+    "strict_verification_result": "rejected",
+    "remote_command_metadata_received": false,
+    "known_hosts_fallback_reported_no_key": true,
+    "daemon_reason_exposed": false,
+    "daemon_verification_result": "did not accept; this CLI error does not distinguish unavailable daemon, missing peer key, or mismatch",
+    "safe_error": "host key verification failed; peer key not found in known_hosts fallback"
+  },
+  "netbird_versions": {
+    "cli": "0.81.2",
+    "daemon": "0.81.2",
+    "daemon_status": "Connected"
+  },
+  "managed_known_hosts_exists": false,
+  "versioned_primary_source": "https://raw.githubusercontent.com/netbirdio/netbird/v0.81.2/client/ssh/client/client.go",
+  "private_authentication_output_copied": false
+}

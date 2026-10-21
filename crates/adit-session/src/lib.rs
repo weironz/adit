@@ -1850,7 +1850,12 @@ impl SessionManager {
         if let Some(session_id) = self.active_session {
             if let Some(record) = self.sessions.get(&session_id) {
                 if let Some(rdp) = &record.rdp {
-                    rdp.send_input(event);
+                    // Error may precede Closed/EOF while the pipe is still
+                    // writable. Drop queued UI/global input once the desktop
+                    // is no longer connected; VNC retains its own input gate.
+                    if record.summary.status == SessionStatus::Connected {
+                        rdp.send_input(event);
+                    }
                 } else if let Some(vnc) = &record.vnc {
                     vnc.send_input(event);
                 }
@@ -2027,6 +2032,22 @@ impl SessionManager {
             vnc.send_key(keysym, pressed);
         }
     }
+
+    /// Check before adopting a physical press; rejected characters own no up.
+    pub fn active_vnc_accepts_keysym(&self, keysym: u32) -> bool {
+        self.active_vnc().is_some_and(|vnc| vnc.accepts_keysym(keysym))
+    }
+
+    /// Reject an unsupported composition as a whole, before emitting its prefix.
+    pub fn send_vnc_text_to_active(&self, text: &str) -> Result<(), &'static str> {
+        if let Some(vnc) = self.active_vnc() {
+            vnc.send_text(text)?;
+        }
+        Ok(())
+    }
+
+    pub fn vnc_bmp_only_notice() -> &'static str { vnc_client::BMP_ONLY_NOTICE }
+    pub fn vnc_text_too_long_notice() -> &'static str { vnc_client::TEXT_TOO_LONG_NOTICE }
 
     /// Whether the active session renders a graphical desktop.
     #[must_use]

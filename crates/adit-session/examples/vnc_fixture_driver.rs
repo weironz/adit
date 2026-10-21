@@ -1,7 +1,7 @@
 //! Manual input acceptance on an explicitly selected private/loopback VNC fixture.
-//! argv: host port [seconds]. Password is the first stdin line; never argv/env.
+//! argv: host port [seconds] [--bmp-only]. Password is the first stdin line; never argv/env.
 //! Remaining stdin commands: WAIT ms, KEY hex-keysym 0|1, TEXT text, CLICK x y,
-//! CLIP text, READONLY 0|1, SNAP absolute.ppm, CLOSE. No input bodies are logged.
+//! CLIP text, READONLY 0|1, SNAP absolute.ppm, ACK token, CLOSE. No input bodies are logged.
 use adit_domain::{ConnectionProfile, Protocol, SessionStatus};
 use adit_session::{RdpInput, RdpMouseButton, SessionManager};
 use std::{
@@ -11,21 +11,24 @@ use std::{
 };
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
-    if args.len() < 3 {
+    let bmp_only = args.last().is_some_and(|arg| arg == "--bmp-only");
+    let positional_len = args.len() - usize::from(bmp_only);
+    if !(3..=4).contains(&positional_len) {
         return Err(
-            "usage: vnc_fixture_driver private-ip port [seconds]; password on stdin".into(),
+            "usage: vnc_fixture_driver private-ip port [seconds] [--bmp-only]; password on stdin".into(),
         );
     }
     let host: std::net::Ipv4Addr = args[1].parse()?;
     if !host.is_private() && !host.is_loopback() {
         return Err("input is restricted to an authorized private/loopback fixture".into());
     }
-    let timeout = args.get(3).map(|s| s.parse()).transpose()?.unwrap_or(120);
+    let timeout = if positional_len == 4 { args[3].parse()? } else { 120 };
     let mut password = zeroize::Zeroizing::new(String::new());
     io::stdin().lock().read_line(&mut password)?;
     let mut profile = ConnectionProfile::new("manual VNC fixture", &args[1], args[2].parse()?, "");
     profile.protocol = Protocol::Vnc;
     profile.vnc.auto_reconnect = false;
+    profile.vnc.unicode_bmp_only = bmp_only;
     let id = profile.id;
     let mut manager = SessionManager::with_profiles(vec![profile]);
     let session =
@@ -44,7 +47,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut ready = false;
     let mut next = Instant::now();
-    let mut typed = std::collections::VecDeque::new();
     let result: Result<(), Box<dyn std::error::Error>> = (|| {
         while start.elapsed() < Duration::from_secs(timeout) {
             manager.poll_events();
@@ -74,18 +76,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             if ready && Instant::now() >= next {
-                if let Some(ch) = typed.pop_front() {
-                    manager.send_rdp_input_to_active(RdpInput::Unicode { ch, pressed: true });
-                    manager.send_rdp_input_to_active(RdpInput::Unicode { ch, pressed: false });
-                    next = Instant::now() + Duration::from_millis(20);
-                } else if let Ok(command) = commands.try_recv() {
+                if let Ok(command) = commands.try_recv() {
                     if command == "CLOSE" {
                         return Ok(());
                     }
                     if let Some(ms) = command.strip_prefix("WAIT ") {
                         next = Instant::now() + Duration::from_millis(ms.parse()?);
+                    } else if let Some(token) = command.strip_prefix("ACK ") {
+                        if token.is_empty() || token.len() > 64
+                            || !token.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+                        {
+                            return Err("ACK requires 1-64 ASCII letters, digits, hyphens or underscores".into());
+                        }
+                        println!("ack={token}");
+                        io::stdout().flush()?;
                     } else if let Some(text) = command.strip_prefix("TEXT ") {
-                        typed.extend(text.chars());
+                        if let Err(notice) = manager.send_vnc_text_to_active(text) {
+                            let reason = if notice == SessionManager::vnc_bmp_only_notice() {
+                                "unicode_compatibility"
+                            } else if notice == SessionManager::vnc_text_too_long_notice() {
+                                "text_too_long"
+                            } else {
+                                "other"
+                            };
+                            println!("text_rejected={reason}");
+                            println!("notice={notice}");
+                        }
                     } else if let Some(text) = command.strip_prefix("CLIP ") {
                         manager.offer_clipboard_to_active_rdp(text.into());
                     } else if let Some(value) = command.strip_prefix("READONLY ") {

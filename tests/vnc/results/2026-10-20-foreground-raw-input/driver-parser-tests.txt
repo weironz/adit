@@ -1,0 +1,9 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running unittests examples\rdp_probe.rs (target\debug\examples\rdp_probe-d7d96161240d8e9e.exe)
+
+running 2 tests
+test tests::key_flags_accept_only_numeric_zero_and_one ... ok
+test tests::key_flags_reject_boolean_words_and_other_invalid_values ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

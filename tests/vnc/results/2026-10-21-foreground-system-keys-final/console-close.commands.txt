@@ -1,0 +1,13 @@
+ASCII e
+WAIT 90
+ASCII x
+WAIT 90
+ASCII i
+WAIT 90
+ASCII t
+WAIT 90
+KEY 1c 0 1
+WAIT 150
+KEY 1c 0 0
+WAIT 1200
+ACK alias-console-close

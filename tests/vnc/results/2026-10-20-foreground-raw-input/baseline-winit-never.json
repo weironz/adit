@@ -1,0 +1,1242 @@
+{
+  "after_focus_request": {
+    "active_owned": true,
+    "focus_owned": true,
+    "foreground_owned": true,
+    "foreground_thread_is_window_thread": true,
+    "gui_flags": 0,
+    "gui_thread_info_ok": true
+  },
+  "armed": false,
+  "before_focus_request": {
+    "active_owned": true,
+    "focus_owned": true,
+    "foreground_owned": false,
+    "foreground_thread_is_window_thread": false,
+    "gui_flags": 0,
+    "gui_thread_info_ok": true
+  },
+  "continuous_focus": true,
+  "continuous_foreground": true,
+  "counters": [
+    21,
+    21,
+    2,
+    0,
+    0
+  ],
+  "final_focus": {
+    "active_owned": true,
+    "focus_owned": true,
+    "foreground_owned": true,
+    "foreground_thread_is_window_thread": true,
+    "gui_flags": 0,
+    "gui_thread_info_ok": true
+  },
+  "hook_installed": true,
+  "injection": {
+    "accepted": 2,
+    "after": {
+      "active_owned": true,
+      "focus_owned": true,
+      "foreground_owned": true,
+      "foreground_thread_is_window_thread": true,
+      "gui_flags": 0,
+      "gui_thread_info_ok": true
+    },
+    "before": {
+      "active_owned": true,
+      "focus_owned": true,
+      "foreground_owned": true,
+      "foreground_thread_is_window_thread": true,
+      "gui_flags": 0,
+      "gui_thread_info_ok": true
+    }
+  },
+  "outcome": "passed",
+  "own_probe_delta": 2,
+  "own_probe_events": 2,
+  "parameters": {
+    "focus_request_once": true,
+    "no_device_events": true
+  },
+  "pid": 2640,
+  "queued": 0,
+  "samples": [
+    {
+      "elapsed_ms": 59,
+      "event": "winit_focus",
+      "focused": true
+    },
+    {
+      "armed": false,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "elapsed_ms": 59,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 0,
+      "window_tagged_f24_events": 0,
+      "winit_f24_events": 0,
+      "worker_health": [
+        0,
+        0
+      ]
+    },
+    {
+      "armed": false,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "elapsed_ms": 109,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 0,
+      "window_tagged_f24_events": 0,
+      "winit_f24_events": 0,
+      "worker_health": [
+        0,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "elapsed_ms": 160,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 0,
+      "window_tagged_f24_events": 0,
+      "winit_f24_events": 0,
+      "worker_health": [
+        0,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        1,
+        1,
+        0,
+        0,
+        0
+      ],
+      "elapsed_ms": 210,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 0,
+      "window_tagged_f24_events": 0,
+      "winit_f24_events": 0,
+      "worker_health": [
+        0,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        2,
+        2,
+        0,
+        0,
+        0
+      ],
+      "elapsed_ms": 260,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 0,
+      "window_tagged_f24_events": 0,
+      "winit_f24_events": 0,
+      "worker_health": [
+        1,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        4,
+        4,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 310,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        2,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        5,
+        5,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 360,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        3,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        6,
+        6,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 411,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        4,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        6,
+        6,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 461,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        4,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        7,
+        7,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 512,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        5,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        8,
+        8,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 562,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        6,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        8,
+        8,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 612,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        7,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        9,
+        9,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 663,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        8,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        10,
+        10,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 713,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        8,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 764,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        9,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 814,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        10,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 865,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        11,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 916,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        12,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 966,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        12,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1017,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        13,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1067,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        14,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        11,
+        11,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1118,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        15,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        12,
+        12,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1168,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        16,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        12,
+        12,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1219,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        17,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        13,
+        13,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1269,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        17,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        13,
+        13,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1319,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        18,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        13,
+        13,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1369,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        19,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        14,
+        14,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1420,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        20,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        15,
+        15,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1470,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        21,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        16,
+        16,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1520,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        21,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        17,
+        17,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1571,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        22,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        18,
+        18,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1622,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        23,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        19,
+        19,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1672,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        24,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        20,
+        20,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1722,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        25,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        20,
+        20,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1773,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        25,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1823,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        26,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1874,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        27,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1924,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        28,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 1974,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        29,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 2025,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        29,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 2075,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        30,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 2126,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        31,
+        0
+      ]
+    },
+    {
+      "armed": true,
+      "counters": [
+        21,
+        21,
+        2,
+        0,
+        0
+      ],
+      "elapsed_ms": 2177,
+      "event": "sample",
+      "focus": {
+        "active_owned": true,
+        "focus_owned": true,
+        "foreground_owned": true,
+        "foreground_thread_is_window_thread": true,
+        "gui_flags": 0,
+        "gui_thread_info_ok": true
+      },
+      "own_probe_events": 2,
+      "window_tagged_f24_events": 2,
+      "winit_f24_events": 2,
+      "worker_health": [
+        32,
+        0
+      ]
+    }
+  ],
+  "scope": "winit-only foreground window; actual source hook; observe only",
+  "window_tagged_f24_events": 2,
+  "window_thread": 46388,
+  "winit_f24_events": 2,
+  "worker_health": [
+    32,
+    0
+  ],
+  "worker_thread": null
+}

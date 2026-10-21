@@ -1,0 +1,513 @@
+{
+    "outcome":  "failed",
+    "scope":  "TightVNC application mode to native Windows TextBox via production TEXT; no IME acceptance",
+    "clipboard_send_used":  false,
+    "registry_owner_token":  "e7ad8f62940141b2af981a9eb4c294ba",
+    "started_utc":  "2026-10-20T20:37:21.7333039Z",
+    "cases":  [
+                  {
+                      "case":  "ascii",
+                      "mode":  "full_unicode",
+                      "outcome":  "passed",
+                      "input":  "abc",
+                      "input_scalars":  [
+                                            "U+0061",
+                                            "U+0062",
+                                            "U+0063"
+                                        ],
+                      "expected":  "abc",
+                      "expected_scalars":  [
+                                               "U+0061",
+                                               "U+0062",
+                                               "U+0063"
+                                           ],
+                      "rejection_expected":  false,
+                      "clipboard_send_used":  false,
+                      "before":  {
+                                     "pid":  10700,
+                                     "box_hwnd":  1442170,
+                                     "text":  "",
+                                     "scalars":  [
+
+                                                 ],
+                                     "focused":  true,
+                                     "press":  0,
+                                     "release":  0,
+                                     "keypress":  0,
+                                     "unfocused_input":  0,
+                                     "focus_losses":  0,
+                                     "text_changes":  0
+                                 },
+                      "native_before":  {
+                                            "foreground_pid":  10700,
+                                            "foreground_hwnd":  1508434,
+                                            "gui_ok":  true,
+                                            "focus_hwnd":  1442170
+                                        },
+                      "after":  {
+                                    "pid":  10700,
+                                    "box_hwnd":  1442170,
+                                    "text":  "abc",
+                                    "scalars":  [
+                                                    "U+0061",
+                                                    "U+0062",
+                                                    "U+0063"
+                                                ],
+                                    "focused":  true,
+                                    "press":  3,
+                                    "release":  27,
+                                    "keypress":  3,
+                                    "unfocused_input":  0,
+                                    "focus_losses":  0,
+                                    "text_changes":  3
+                                },
+                      "native_after":  {
+                                           "foreground_pid":  10700,
+                                           "foreground_hwnd":  1508434,
+                                           "gui_ok":  true,
+                                           "focus_hwnd":  1442170
+                                       },
+                      "driver_exit":  0,
+                      "checks":  {
+                                     "driver_ready":  true,
+                                     "driver_exit_zero":  true,
+                                     "same_target":  true,
+                                     "target_focused":  true,
+                                     "all_input_focused":  true,
+                                     "input_counts_correct":  true,
+                                     "compatibility_notice_correct":  true,
+                                     "exact_scalars":  true
+                                 }
+                  },
+                  {
+                      "case":  "bmp-cjk",
+                      "mode":  "full_unicode",
+                      "outcome":  "passed",
+                      "input":  "中文",
+                      "input_scalars":  [
+                                            "U+4E2D",
+                                            "U+6587"
+                                        ],
+                      "expected":  "中文",
+                      "expected_scalars":  [
+                                               "U+4E2D",
+                                               "U+6587"
+                                           ],
+                      "rejection_expected":  false,
+                      "clipboard_send_used":  false,
+                      "before":  {
+                                     "pid":  4572,
+                                     "box_hwnd":  1245386,
+                                     "text":  "",
+                                     "scalars":  [
+
+                                                 ],
+                                     "focused":  true,
+                                     "press":  0,
+                                     "release":  0,
+                                     "keypress":  0,
+                                     "unfocused_input":  0,
+                                     "focus_losses":  0,
+                                     "text_changes":  0
+                                 },
+                      "native_before":  {
+                                            "foreground_pid":  4572,
+                                            "foreground_hwnd":  1377070,
+                                            "gui_ok":  true,
+                                            "focus_hwnd":  1245386
+                                        },
+                      "after":  {
+                                    "pid":  4572,
+                                    "box_hwnd":  1245386,
+                                    "text":  "中文",
+                                    "scalars":  [
+                                                    "U+4E2D",
+                                                    "U+6587"
+                                                ],
+                                    "focused":  true,
+                                    "press":  2,
+                                    "release":  26,
+                                    "keypress":  2,
+                                    "unfocused_input":  0,
+                                    "focus_losses":  0,
+                                    "text_changes":  2
+                                },
+                      "native_after":  {
+                                           "foreground_pid":  4572,
+                                           "foreground_hwnd":  1377070,
+                                           "gui_ok":  true,
+                                           "focus_hwnd":  1245386
+                                       },
+                      "driver_exit":  0,
+                      "checks":  {
+                                     "driver_ready":  true,
+                                     "driver_exit_zero":  true,
+                                     "same_target":  true,
+                                     "target_focused":  true,
+                                     "all_input_focused":  true,
+                                     "input_counts_correct":  true,
+                                     "compatibility_notice_correct":  true,
+                                     "exact_scalars":  true
+                                 }
+                  },
+                  {
+                      "case":  "nonbmp-emoji",
+                      "mode":  "full_unicode",
+                      "outcome":  "failed",
+                      "input":  "😊",
+                      "input_scalars":  [
+                                            "U+1F60A"
+                                        ],
+                      "expected":  "😊",
+                      "expected_scalars":  [
+                                               "U+1F60A"
+                                           ],
+                      "rejection_expected":  false,
+                      "clipboard_send_used":  false,
+                      "before":  {
+                                     "pid":  7224,
+                                     "box_hwnd":  1639506,
+                                     "text":  "",
+                                     "scalars":  [
+
+                                                 ],
+                                     "focused":  true,
+                                     "press":  0,
+                                     "release":  0,
+                                     "keypress":  0,
+                                     "unfocused_input":  0,
+                                     "focus_losses":  0,
+                                     "text_changes":  0
+                                 },
+                      "native_before":  {
+                                            "foreground_pid":  7224,
+                                            "foreground_hwnd":  1442606,
+                                            "gui_ok":  true,
+                                            "focus_hwnd":  1639506
+                                        },
+                      "after":  {
+                                    "pid":  7224,
+                                    "box_hwnd":  1639506,
+                                    "text":  "",
+                                    "scalars":  [
+                                                    "U+F60A"
+                                                ],
+                                    "focused":  true,
+                                    "press":  1,
+                                    "release":  25,
+                                    "keypress":  1,
+                                    "unfocused_input":  0,
+                                    "focus_losses":  0,
+                                    "text_changes":  1
+                                },
+                      "native_after":  {
+                                           "foreground_pid":  7224,
+                                           "foreground_hwnd":  1442606,
+                                           "gui_ok":  true,
+                                           "focus_hwnd":  1639506
+                                       },
+                      "driver_exit":  0,
+                      "checks":  {
+                                     "driver_ready":  true,
+                                     "driver_exit_zero":  true,
+                                     "same_target":  true,
+                                     "target_focused":  true,
+                                     "all_input_focused":  true,
+                                     "input_counts_correct":  true,
+                                     "compatibility_notice_correct":  true,
+                                     "exact_scalars":  false
+                                 }
+                  },
+                  {
+                      "case":  "combining",
+                      "mode":  "full_unicode",
+                      "outcome":  "passed",
+                      "input":  "é",
+                      "input_scalars":  [
+                                            "U+0065",
+                                            "U+0301"
+                                        ],
+                      "expected":  "é",
+                      "expected_scalars":  [
+                                               "U+0065",
+                                               "U+0301"
+                                           ],
+                      "rejection_expected":  false,
+                      "clipboard_send_used":  false,
+                      "before":  {
+                                     "pid":  6748,
+                                     "box_hwnd":  1705042,
+                                     "text":  "",
+                                     "scalars":  [
+
+                                                 ],
+                                     "focused":  true,
+                                     "press":  0,
+                                     "release":  0,
+                                     "keypress":  0,
+                                     "unfocused_input":  0,
+                                     "focus_losses":  0,
+                                     "text_changes":  0
+                                 },
+                      "native_before":  {
+                                            "foreground_pid":  6748,
+                                            "foreground_hwnd":  2163432,
+                                            "gui_ok":  true,
+                                            "focus_hwnd":  1705042
+                                        },
+                      "after":  {
+                                    "pid":  6748,
+                                    "box_hwnd":  1705042,
+                                    "text":  "é",
+                                    "scalars":  [
+                                                    "U+0065",
+                                                    "U+0301"
+                                                ],
+                                    "focused":  true,
+                                    "press":  2,
+                                    "release":  26,
+                                    "keypress":  2,
+                                    "unfocused_input":  0,
+                                    "focus_losses":  0,
+                                    "text_changes":  2
+                                },
+                      "native_after":  {
+                                           "foreground_pid":  6748,
+                                           "foreground_hwnd":  2163432,
+                                           "gui_ok":  true,
+                                           "focus_hwnd":  1705042
+                                       },
+                      "driver_exit":  0,
+                      "checks":  {
+                                     "driver_ready":  true,
+                                     "driver_exit_zero":  true,
+                                     "same_target":  true,
+                                     "target_focused":  true,
+                                     "all_input_focused":  true,
+                                     "input_counts_correct":  true,
+                                     "compatibility_notice_correct":  true,
+                                     "exact_scalars":  true
+                                 }
+                  }
+              ],
+    "cleanup_verified":  true,
+    "mode":  "full_unicode",
+    "pass_interpretation":  "All four native TextBox inputs match their complete Unicode scalars",
+    "os":  {
+               "Caption":  "Microsoft Windows 11 专业版",
+               "Version":  "10.0.26300",
+               "BuildNumber":  "26300",
+               "OSArchitecture":  "64 位"
+           },
+    "server_sha256":  "68be8f45403afbd5bc2312b39e40689fac9a0f00986f1e5773ba8845b2b050e8",
+    "server_version":  "2, 8, 90, 0",
+    "server_signature":  {
+                             "status":  "Valid",
+                             "subject":  "E=info@glavsoft.com, CN=OOO GlavSoft, O=OOO GlavSoft, L=Tomsk, S=Tomsk Oblast, C=RU"
+                         },
+    "driver_sha256":  "b05bc90c92b4583700e22ee25b8775ae8ff761946feb9ed036a76e875f1eeca1",
+    "before":  {
+                   "processes":  [
+                                     {
+                                         "ProcessId":  3420,
+                                         "CreationDate":  "\/Date(1792502538462)\/",
+                                         "ExecutablePath":  "C:\\Program Files\\TightVNC\\tvnserver.exe",
+                                         "SessionId":  0,
+                                         "ParentProcessId":  952
+                                     },
+                                     {
+                                         "ProcessId":  11124,
+                                         "CreationDate":  "\/Date(1792502917160)\/",
+                                         "ExecutablePath":  "C:\\Program Files\\TightVNC\\tvnserver.exe",
+                                         "SessionId":  2,
+                                         "ParentProcessId":  6812
+                                     }
+                                 ],
+                   "services":  [
+                                    {
+                                        "Name":  "tvnserver",
+                                        "State":  "Running",
+                                        "StartMode":  "Auto",
+                                        "ProcessId":  3420,
+                                        "StartName":  "LocalSystem"
+                                    }
+                                ],
+                   "tcp":  [
+                               {
+                                   "LocalAddress":  "0.0.0.0",
+                                   "LocalPort":  15910,
+                                   "OwningProcess":  3420
+                               }
+                           ],
+                   "udp":  [
+
+                           ],
+                   "firewall":  [
+                                    {
+                                        "Name":  "Domain",
+                                        "Enabled":  1
+                                    },
+                                    {
+                                        "Name":  "Private",
+                                        "Enabled":  0
+                                    },
+                                    {
+                                        "Name":  "Public",
+                                        "Enabled":  0
+                                    }
+                                ],
+                   "hklm":  {
+                                "exists":  true,
+                                "last_write":  134366403392645443,
+                                "subkeys":  0,
+                                "values":  5,
+                                "security_bytes":  116,
+                                "sddl":  "O:SYG:SYD:(A;OICI;KA;;;SY)(A;OICIID;KA;;;SY)(A;OICIID;KA;;;BA)"
+                            }
+               },
+    "server_identity":  {
+                            "id":  10336,
+                            "start_ticks":  639281254449365399,
+                            "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\tvnserver.exe",
+                            "session_id":  2
+                        },
+    "fixture_tcp":  [
+                        {
+                            "LocalAddress":  "127.0.0.1",
+                            "LocalPort":  15911,
+                            "OwningProcess":  10336
+                        }
+                    ],
+    "fixture_udp":  [
+
+                    ],
+    "owned_registry_removed":  true,
+    "after":  {
+                  "processes":  [
+                                    {
+                                        "ProcessId":  3420,
+                                        "CreationDate":  "\/Date(1792502538462)\/",
+                                        "ExecutablePath":  "C:\\Program Files\\TightVNC\\tvnserver.exe",
+                                        "SessionId":  0,
+                                        "ParentProcessId":  952
+                                    },
+                                    {
+                                        "ProcessId":  11124,
+                                        "CreationDate":  "\/Date(1792502917160)\/",
+                                        "ExecutablePath":  "C:\\Program Files\\TightVNC\\tvnserver.exe",
+                                        "SessionId":  2,
+                                        "ParentProcessId":  6812
+                                    }
+                                ],
+                  "services":  [
+                                   {
+                                       "Name":  "tvnserver",
+                                       "State":  "Running",
+                                       "StartMode":  "Auto",
+                                       "ProcessId":  3420,
+                                       "StartName":  "LocalSystem"
+                                   }
+                               ],
+                  "tcp":  [
+                              {
+                                  "LocalAddress":  "0.0.0.0",
+                                  "LocalPort":  15910,
+                                  "OwningProcess":  3420
+                              }
+                          ],
+                  "udp":  [
+
+                          ],
+                  "firewall":  [
+                                   {
+                                       "Name":  "Domain",
+                                       "Enabled":  1
+                                   },
+                                   {
+                                       "Name":  "Private",
+                                       "Enabled":  0
+                                   },
+                                   {
+                                       "Name":  "Public",
+                                       "Enabled":  0
+                                   }
+                               ],
+                  "hklm":  {
+                               "exists":  true,
+                               "last_write":  134366403392645443,
+                               "subkeys":  0,
+                               "values":  5,
+                               "security_bytes":  116,
+                               "sddl":  "O:SYG:SYD:(A;OICI;KA;;;SY)(A;OICIID;KA;;;SY)(A;OICIID;KA;;;BA)"
+                           }
+              },
+    "original_state_unchanged":  true,
+    "remaining_fixture_tcp":  0,
+    "remaining_fixture_udp":  0,
+    "owned_processes":  [
+                            {
+                                "id":  10336,
+                                "start_ticks":  639281254449365399,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\tvnserver.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  2124,
+                                "start_ticks":  639281254449721556,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\tvnserver.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  10700,
+                                "start_ticks":  639281254454456356,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\unicode-default\\synthetic-tight-text.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  11964,
+                                "start_ticks":  639281254461342625,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\vnc_fixture_driver.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  4572,
+                                "start_ticks":  639281254491196509,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\unicode-default\\synthetic-tight-text.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  7216,
+                                "start_ticks":  639281254492948339,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\vnc_fixture_driver.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  7224,
+                                "start_ticks":  639281254522132739,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\unicode-default\\synthetic-tight-text.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  4136,
+                                "start_ticks":  639281254523566105,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\vnc_fixture_driver.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  6748,
+                                "start_ticks":  639281254552578019,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\unicode-default\\synthetic-tight-text.exe",
+                                "session_id":  2
+                            },
+                            {
+                                "id":  11312,
+                                "start_ticks":  639281254554138887,
+                                "path":  "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803\\payload\\vnc_fixture_driver.exe",
+                                "session_id":  2
+                            }
+                        ],
+    "cleanup_errors":  [
+
+                       ],
+    "finished_utc":  "2026-10-20T20:37:38.8479836Z"
+}

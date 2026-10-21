@@ -62,23 +62,30 @@ impl Default for Permissions {
 impl Permissions {
     fn set(&self, send: bool, receive: bool) {
         let bits = u64::from(send) | (u64::from(receive) << 1);
-        let _ = self
-            .0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |old| {
-                if old & 3 == bits {
-                    None
-                } else {
-                    let mut next = (old & !3) | bits;
-                    if (old ^ bits) & 1 != 0 {
-                        next = (next & !SEND_EPOCH) | (old.wrapping_add(4) & SEND_EPOCH);
-                    }
-                    if (old ^ bits) & 2 != 0 {
-                        next =
-                            (next & !RECEIVE_EPOCH) | (old.wrapping_add(1 << 33) & RECEIVE_EPOCH);
-                    }
-                    Some(next)
-                }
-            });
+        // Keep the same retry/order semantics on both supported toolchains:
+        // Rust 1.99 deprecates fetch_update, while 1.98 has no try_update.
+        let mut old = self.0.load(Ordering::Acquire);
+        loop {
+            if old & 3 == bits {
+                return;
+            }
+            let mut next = (old & !3) | bits;
+            if (old ^ bits) & 1 != 0 {
+                next = (next & !SEND_EPOCH) | (old.wrapping_add(4) & SEND_EPOCH);
+            }
+            if (old ^ bits) & 2 != 0 {
+                next = (next & !RECEIVE_EPOCH) | (old.wrapping_add(1 << 33) & RECEIVE_EPOCH);
+            }
+            match self.0.compare_exchange_weak(
+                old,
+                next,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return,
+                Err(current) => old = current,
+            }
+        }
     }
     pub(crate) fn snapshot(&self) -> u64 {
         self.0.load(Ordering::Acquire)

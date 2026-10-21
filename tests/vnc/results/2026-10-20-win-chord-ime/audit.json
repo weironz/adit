@@ -1,0 +1,50 @@
+{
+  "scope": "local evidence only; VM acceptance separate",
+  "outcome": "passed",
+  "checks": [
+    {
+      "check": "full root suite exact final counts",
+      "passed": true
+    },
+    {
+      "check": "feature suite final counts",
+      "passed": true
+    },
+    {
+      "check": "standalone graphics suite",
+      "passed": true
+    },
+    {
+      "check": "native regressions",
+      "passed": true
+    },
+    {
+      "check": "targeted final nine",
+      "passed": true
+    },
+    {
+      "check": "candidate executable identical after final build",
+      "passed": true
+    },
+    {
+      "check": "frozen source identical after final checks",
+      "passed": true
+    },
+    {
+      "check": "source crates/adit-ui/src/keyboard_hook.rs",
+      "passed": true
+    },
+    {
+      "check": "source crates/adit-ui/src/keyboard_vnc_chord.rs",
+      "passed": true
+    },
+    {
+      "check": "source crates/adit-ui/src/input.rs",
+      "passed": true
+    },
+    {
+      "check": "source crates/adit-ui/src/vnc_chord_tests.rs",
+      "passed": true
+    }
+  ]
+}

@@ -1,0 +1,250 @@
+﻿{
+    "exited":  true,
+    "utc":  "2026-10-20T19:17:48.3887426Z",
+    "recovery":  {
+                     "outcome":  "passed",
+                     "scope":  "Exact owned TightVNC fixture recovery; never reconfigure original services or firewall",
+                     "started_utc":  "2026-10-20T19:17:45.1549306Z",
+                     "process_actions":  [
+                                             {
+                                                 "identity":  {
+                                                                  "id":  2084,
+                                                                  "start_ticks":  639281202282206061,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  7436,
+                                                                  "start_ticks":  639281202280701511,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  6220,
+                                                                  "start_ticks":  639281202251626023,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  8664,
+                                                                  "start_ticks":  639281202249719941,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  5784,
+                                                                  "start_ticks":  639281202219961263,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  9784,
+                                                                  "start_ticks":  639281202216085134,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  4384,
+                                                                  "start_ticks":  639281202184489600,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  9804,
+                                                                  "start_ticks":  639281202157433692,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  5192,
+                                                                  "start_ticks":  639281202139026777,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tvnserver.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             },
+                                             {
+                                                 "identity":  {
+                                                                  "id":  3356,
+                                                                  "start_ticks":  639281202137555683,
+                                                                  "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tvnserver.exe",
+                                                                  "session_id":  2
+                                                              },
+                                                 "observed":  "exited",
+                                                 "terminated":  false
+                                             }
+                                         ],
+                     "unknown_processes":  [
+
+                                           ],
+                     "registry_removed":  true,
+                     "original_state_unchanged":  true,
+                     "registry_owner_token":  "fac3cbdfc11a4069b11702e0d5caee52",
+                     "user_sid":  "S-1-5-21-2966110652-2135622106-2811765130-1000",
+                     "session_id":  2,
+                     "controller_state":  "exited",
+                     "recorded_identities":  [
+                                                 {
+                                                     "id":  3356,
+                                                     "start_ticks":  639281202137555683,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tvnserver.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  5192,
+                                                     "start_ticks":  639281202139026777,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tvnserver.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  9804,
+                                                     "start_ticks":  639281202157433692,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  4384,
+                                                     "start_ticks":  639281202184489600,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  9784,
+                                                     "start_ticks":  639281202216085134,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  5784,
+                                                     "start_ticks":  639281202219961263,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  8664,
+                                                     "start_ticks":  639281202249719941,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  6220,
+                                                     "start_ticks":  639281202251626023,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  7436,
+                                                     "start_ticks":  639281202280701511,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\tight-unicode1\\synthetic-tight-text.exe",
+                                                     "session_id":  2
+                                                 },
+                                                 {
+                                                     "id":  2084,
+                                                     "start_ticks":  639281202282206061,
+                                                     "path":  "C:\\ProgramData\\AditVncKeys-f6a76343ddc648689e1c9ff5efe2b1e5\\payload\\vnc_fixture_driver.exe",
+                                                     "session_id":  2
+                                                 }
+                                             ],
+                     "after":  {
+                                   "processes":  [
+                                                     {
+                                                         "ProcessId":  3420,
+                                                         "CreationDate":  "\/Date(1792502538462)\/",
+                                                         "ExecutablePath":  "C:\\Program Files\\TightVNC\\tvnserver.exe",
+                                                         "SessionId":  0,
+                                                         "ParentProcessId":  952
+                                                     },
+                                                     {
+                                                         "ProcessId":  11124,
+                                                         "CreationDate":  "\/Date(1792502917160)\/",
+                                                         "ExecutablePath":  "C:\\Program Files\\TightVNC\\tvnserver.exe",
+                                                         "SessionId":  2,
+                                                         "ParentProcessId":  6812
+                                                     }
+                                                 ],
+                                   "services":  [
+                                                    {
+                                                        "Name":  "tvnserver",
+                                                        "State":  "Running",
+                                                        "StartMode":  "Auto",
+                                                        "ProcessId":  3420,
+                                                        "StartName":  "LocalSystem"
+                                                    }
+                                                ],
+                                   "tcp":  [
+                                               {
+                                                   "LocalAddress":  "0.0.0.0",
+                                                   "LocalPort":  15910,
+                                                   "OwningProcess":  3420
+                                               }
+                                           ],
+                                   "udp":  [
+
+                                           ],
+                                   "firewall":  [
+                                                    {
+                                                        "Name":  "Domain",
+                                                        "Enabled":  1
+                                                    },
+                                                    {
+                                                        "Name":  "Private",
+                                                        "Enabled":  0
+                                                    },
+                                                    {
+                                                        "Name":  "Public",
+                                                        "Enabled":  0
+                                                    }
+                                                ],
+                                   "hklm":  {
+                                                "exists":  true,
+                                                "last_write":  134366403392645443,
+                                                "subkeys":  0,
+                                                "values":  5,
+                                                "security_bytes":  116,
+                                                "sddl":  "O:SYG:SYD:(A;OICI;KA;;;SY)(A;OICIID;KA;;;SY)(A;OICIID;KA;;;BA)"
+                                            }
+                               },
+                     "fixture_tcp":  [
+
+                                     ],
+                     "fixture_udp":  [
+
+                                     ],
+                     "finished_utc":  "2026-10-20T19:17:48.3177147Z"
+                 },
+    "controller_pid":  2940,
+    "exit_code":  0
+}

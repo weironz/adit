@@ -1,0 +1,5 @@
+   Compiling ironrdp-graphics v0.9.0 (C:\data\codes\adit\crates\adit-rdp\vendor\ironrdp-graphics)
+   Compiling ironrdp-session v0.11.0
+   Compiling ironrdp-egfx v0.3.0
+   Compiling adit-rdp v0.1.75 (C:\data\codes\adit\crates\adit-rdp)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 21.99s

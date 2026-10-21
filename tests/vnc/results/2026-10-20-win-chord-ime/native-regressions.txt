@@ -1,0 +1,12 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.57s
+     Running unittests src\lib.rs (target\debug\deps\adit_ui-0e904a1cd1e7f4d3.exe)
+
+running 3 tests
+test keyboard_hook::native_tests::hook_delivery_survives_a_stalled_ui_thread ... native hook delivery: before=[0, 0, 0, 0, 0], after=[2, 2, 2, 0, 0]
+ok
+test keyboard_hook::native_tests::hook_install_failure_restores_raw_keyboard_registration ... ok
+test keyboard_hook::raw_input::native_tests::raw_keyboard_lease_restores_and_preserves_later_registrants ... raw keyboard lease native: absent, exact restore, later registrant preserved; non-keyboard classes unchanged
+ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 138 filtered out; finished in 1.82s
+

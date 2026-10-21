@@ -1,0 +1,14 @@
+{
+  "outcome": "passed",
+  "scope": "basic foreground matrix and evidence integrity",
+  "tested_commit": "a549ffb404536936b51361370ffb786b65e97e5a",
+  "checks": 496,
+  "final_key_events": 118,
+  "capture_mode_cjk": "not accepted; ASCII preparation attempts retained",
+  "remaining": [
+    "international layout and preceding dead-key state",
+    "capture-mode IME revalidation",
+    "vendor Unicode consumption",
+    "physical hardware repeat certification"
+  ]
+}

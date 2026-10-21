@@ -126,6 +126,19 @@ a column desynchronises them permanently.
 | `mod.rs` `resolve_vbar` | A cache miss aborted the whole PDU. FreeRDP warns and substitutes background-filled dummy data, then keeps going — so one lost slot no longer poisons every later frame. |
 | `mod.rs` glyph cache | Stored only glyphs <= 1024 px (FreeRDP: 1024x1024) and required exact dimension equality on read (FreeRDP: the request must merely fit). Both left slots the server believes populated permanently empty. |
 
+Glyph hits interpret the cached pixels as a linear stream using the requested
+width, matching [FreeRDP `clear_decompress_glyph_data`](https://github.com/FreeRDP/FreeRDP/blob/master/libfreerdp/codec/clear.c).
+The previous cached-stride crop could panic on a valid 2x2 cache read as 1x4
+(issue #223: end index 20 for a 16-byte cache), and rejected a valid 4x1 read.
+The decoder now checks the actual byte slice before returning it. Synthetic
+regressions cover changed aspect ratios with distinct pixels, smaller requests,
+oversized requests and truncated cache storage; they do not require a live host
+or a recording of a user's desktop. Run them in this standalone vendor workspace:
+
+```powershell
+cargo test --manifest-path crates/adit-rdp/vendor/ironrdp-graphics/Cargo.toml glyph_hit_
+```
+
 Capture harness: `ADIT_RDP_DUMP=1` also writes `clear-NNN.bin` + sidecars under
 `%APPDATA%\Adit`, successes included — the caches are stateful, so a failing
 stream replays only in arrival order.

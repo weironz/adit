@@ -1,0 +1,97 @@
+   Compiling simd-adler32 v0.3.9
+   Compiling bytemuck v1.25.1
+   Compiling adler2 v2.0.1
+   Compiling miniz_oxide v0.8.9
+   Compiling flate2 v1.1.9
+   Compiling safe_arch v1.1.0
+   Compiling ironrdp-graphics v0.9.0 (C:\data\codes\adit\crates\adit-rdp\vendor\ironrdp-graphics)
+   Compiling fdeflate v0.3.7
+   Compiling pxfm v0.1.30
+   Compiling byteorder-lite v0.1.0
+   Compiling winscard v0.3.3
+   Compiling png v0.18.1
+   Compiling wide v1.5.0
+   Compiling ironrdp-session v0.11.0
+   Compiling sspi v0.21.1
+   Compiling openh264 v0.9.7
+   Compiling ironrdp-egfx v0.3.0
+   Compiling moxcms v0.8.1
+   Compiling image v0.25.10
+   Compiling ironrdp-connector v0.10.0 (C:\data\codes\adit\crates\adit-rdp\vendor\ironrdp-connector)
+   Compiling ironrdp-async v0.10.0
+   Compiling ironrdp-tokio v0.10.0
+   Compiling adit-rdp v0.1.75 (C:\data\codes\adit\crates\adit-rdp)
+warning: linker stdout: 正在创建库 C:\data\codes\adit\crates\adit-rdp\target\debug\deps\adit_rdp-493e8d7f066ca642.lib 和对象 C:\data\codes\adit\crates\adit-rdp\target\debug\deps\adit_rdp-493e8d7f066ca642.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `adit-rdp` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 50.82s
+     Running unittests src\lib.rs (crates\adit-rdp\target\debug\deps\adit_rdp-493e8d7f066ca642.exe)
+
+running 30 tests
+test clipboard::tests::a_redirection_resets_channel_state_but_keeps_the_users_clipboard ... ok
+test clipboard::tests::a_remote_copy_falls_back_to_legacy_text_formats ... ok
+test clipboard::tests::remote_unicode_text_round_trips_to_the_app ... ok
+test clipboard::tests::an_offered_image_advertises_cf_dib ... ok
+test clipboard::tests::a_remote_copy_of_a_format_we_do_not_handle_is_ignored ... ok
+test clipboard::tests::an_unsolicited_response_is_ignored ... ok
+test clipboard::tests::handshake_advertises_even_with_an_empty_local_clipboard ... ok
+test clipboard::tests::a_remote_paste_with_nothing_copied_locally_gets_an_error_response ... ok
+test clipboard::tests::submitted_text_is_encoded_for_the_format_the_remote_asked_for ... ok
+test clipboard::tests::ready_does_not_re_advertise_what_the_handshake_already_sent ... ok
+test clipboard::tests::repeat_offers_of_the_same_text_do_not_re_advertise ... ok
+test clipboard::tests::remote_ansi_text_is_decoded_with_the_requested_charset ... ok
+test clipboard::tests::an_image_alone_is_requested ... ok
+test clipboard::tests::a_remote_paste_is_answered_with_our_local_text ... ok
+test clipboard::tests::local_text_is_not_advertised_before_the_channel_is_ready ... ok
+test clipboard::tests::a_remote_paste_of_a_format_we_never_offered_gets_an_error_response ... ok
+test clipboard::tests::a_remote_copy_requests_the_best_text_format_available ... ok
+test clipboard::tests::an_image_replaces_the_offered_text ... ok
+test clipboard::tests::text_copied_during_the_handshake_is_advertised_once_ready ... ok
+test egfx::dirty_rect_tests::a_merge_that_bridges_two_rects_joins_all_three ... ok
+test clipboard::tests::an_error_response_produces_nothing_and_clears_the_pending_format ... ok
+test egfx::dirty_rect_tests::distant_changes_stay_apart ... ok
+test egfx::dirty_rect_tests::adjacent_tiles_collapse_into_one_rect ... ok
+test clipboard::tests::text_is_preferred_over_an_image_when_both_are_offered ... ok
+test tests::balanced_is_exactly_the_pre_existing_default ... ok
+test tests::high_disables_nothing ... ok
+test tests::speed_asks_for_nothing_that_costs_bandwidth ... ok
+test egfx::dirty_rect_tests::merge_cost_is_zero_only_when_nothing_extra_is_sent ... ok
+test egfx::dirty_rect_tests::the_list_is_capped_and_loses_nothing ... ok
+test clipboard::tests::oversized_remote_text_is_dropped ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.63s
+
+     Running unittests src\main.rs (crates\adit-rdp\target\debug\deps\adit_rdp_host-1dd7a8acebb6ce0a.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\clearcodec_dump.rs (crates\adit-rdp\target\debug\deps\clearcodec_dump-5b66a32966edaa3a.exe)
+
+running 1 test
+test captured_streams_replay ... ignored, needs captured streams; see the module docs
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\merged_dump.rs (crates\adit-rdp\target\debug\deps\merged_dump-6b878df2906ab468.exe)
+
+running 1 test
+test a_captured_session_replays ... ignored, needs captured streams; see the module docs
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests\progressive_dump.rs (crates\adit-rdp\target\debug\deps\progressive_dump-1a95757096f931d3.exe)
+
+running 1 test
+test a_captured_stream_decodes ... ignored, needs a captured stream; see the module docs
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_rdp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

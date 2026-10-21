@@ -775,6 +775,8 @@ fn vnc_options_editor(app: &AditApp) -> Element<'_, Message> {
         checkbox(option.clipboard_send).label("允许本地文本发送到远端").on_toggle(|v| Message::VncPolicyChanged(1,v)),
         checkbox(option.clipboard_receive).label("允许接收远端文本剪贴板").on_toggle(|v| Message::VncPolicyChanged(2,v)),
         checkbox(option.clipboard_legacy).label("传统剪贴板兼容模式（Latin-1，不支持中文）").on_toggle(|v| Message::VncPolicyChanged(5,v)),
+        checkbox(option.unicode_bmp_only).label("Windows VNC 字符兼容模式").on_toggle(|v| Message::VncPolicyChanged(6,v)),
+        text("适用于会错误输入部分表情的服务端。开启后，遇到不兼容字符会提示，整段文本不发送。").size(11),
         checkbox(option.auto_reconnect).label("连接中断后自动重连").on_toggle(|v| Message::VncPolicyChanged(3,v)),
         checkbox(option.resize_remote).label("请求远端单屏适应窗口（会影响其他观察者）").on_toggle(|v| Message::VncPolicyChanged(4,v)),
         text("SSH 网关（目标地址由网关访问）").size(11),

@@ -1,0 +1,35 @@
+{
+  "management_rule_absent": true,
+  "outcome": "passed",
+  "winrm_status": "Stopped",
+  "share_absent": true,
+  "profiles_restored": true,
+  "firewall_profiles": [
+    {
+      "Name": "Domain",
+      "Enabled": 1
+    },
+    {
+      "Name": "Private",
+      "Enabled": 0
+    },
+    {
+      "Name": "Public",
+      "Enabled": 0
+    }
+  ],
+  "owned_task_count": 0,
+  "management_endpoint_registry_absent": true,
+  "base_report_exists": true,
+  "stage": "independent_cleanup_verification",
+  "management_tcp_listener_absent": true,
+  "utc": "2026-10-20T03:28:52.6266499Z",
+  "computer": "WIN11-VM",
+  "winrm_start_mode": "Manual",
+  "fixture_udp_absent": true,
+  "owned_processes": [],
+  "owned_wrappers": [],
+  "fixture_tcp_absent": true,
+  "directory_removed": true,
+  "directory_cleanup_utc": "2026-10-20T03:32:42.8708473Z"
+}

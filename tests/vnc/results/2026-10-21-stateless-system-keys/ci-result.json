@@ -1,0 +1,46 @@
+{
+  "exit_code": 0,
+  "command": "just ci-vnc",
+  "platform": "Windows x64 local",
+  "hosted_actions_started": false,
+  "sections": [
+    {
+      "command": "cargo test --workspace",
+      "summed_results": [
+        430,
+        0,
+        11
+      ],
+      "result_lines": 33
+    },
+    {
+      "command": "cargo test -p adit-ssh --features integration --no-run",
+      "summed_results": [
+        0,
+        0,
+        0
+      ],
+      "result_lines": 0
+    },
+    {
+      "command": "cargo test -p adit-ui --features native-vnc-acceptance --locked --lib",
+      "summed_results": [
+        145,
+        0,
+        4
+      ],
+      "result_lines": 1
+    },
+    {
+      "command": "cargo test --manifest-path crates/adit-rdp/vendor/ironrdp-graphics/Cargo.toml --locked",
+      "summed_results": [
+        202,
+        0,
+        0
+      ],
+      "result_lines": 1
+    }
+  ],
+  "ssh_integration": "compile only --no-run",
+  "native_ignored": "Feature has four ignored tests; this run explicitly executed only the new isolation gate on the VM. Historical native three-test results are not rerun claims."
+}

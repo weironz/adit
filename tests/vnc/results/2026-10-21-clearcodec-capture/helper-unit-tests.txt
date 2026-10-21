@@ -1,0 +1,45 @@
+warning: linker stdout: 正在创建库 <REPOSITORY>\crates\adit-rdp\target\debug\deps\adit_rdp-493e8d7f066ca642.lib 和对象 <REPOSITORY>\crates\adit-rdp\target\debug\deps\adit_rdp-493e8d7f066ca642.exp
+  |
+  = note: `#[warn(linker_messages)]` on by default
+
+warning: `adit-rdp` (lib test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.50s
+     Running unittests src\lib.rs (crates\adit-rdp\target\debug\deps\adit_rdp-493e8d7f066ca642.exe)
+
+running 33 tests
+test clipboard::tests::handshake_advertises_even_with_an_empty_local_clipboard ... ok
+test clipboard::tests::an_offered_image_advertises_cf_dib ... ok
+test clipboard::tests::a_redirection_resets_channel_state_but_keeps_the_users_clipboard ... ok
+test clipboard::tests::a_remote_copy_of_a_format_we_do_not_handle_is_ignored ... ok
+test clipboard::tests::an_error_response_produces_nothing_and_clears_the_pending_format ... ok
+test clipboard::tests::a_remote_copy_requests_the_best_text_format_available ... ok
+test clipboard::tests::an_image_replaces_the_offered_text ... ok
+test clipboard::tests::a_remote_paste_is_answered_with_our_local_text ... ok
+test clipboard::tests::an_unsolicited_response_is_ignored ... ok
+test clipboard::tests::a_remote_copy_falls_back_to_legacy_text_formats ... ok
+test clipboard::tests::a_remote_paste_of_a_format_we_never_offered_gets_an_error_response ... ok
+test clipboard::tests::ready_does_not_re_advertise_what_the_handshake_already_sent ... ok
+test clipboard::tests::remote_ansi_text_is_decoded_with_the_requested_charset ... ok
+test clipboard::tests::repeat_offers_of_the_same_text_do_not_re_advertise ... ok
+test clipboard::tests::submitted_text_is_encoded_for_the_format_the_remote_asked_for ... ok
+test clipboard::tests::remote_unicode_text_round_trips_to_the_app ... ok
+test clipboard::tests::an_image_alone_is_requested ... ok
+test clipboard::tests::local_text_is_not_advertised_before_the_channel_is_ready ... ok
+test clipboard::tests::text_copied_during_the_handshake_is_advertised_once_ready ... ok
+test clipboard::tests::text_is_preferred_over_an_image_when_both_are_offered ... ok
+test clipboard::tests::a_remote_paste_with_nothing_copied_locally_gets_an_error_response ... ok
+test egfx::dirty_rect_tests::a_merge_that_bridges_two_rects_joins_all_three ... ok
+test egfx::dirty_rect_tests::adjacent_tiles_collapse_into_one_rect ... ok
+test egfx::dirty_rect_tests::distant_changes_stay_apart ... ok
+test egfx::dirty_rect_tests::merge_cost_is_zero_only_when_nothing_extra_is_sent ... ok
+test session::process_error_tests::unrelated_stage_error_still_skips_one_pdu_and_next_output_survives ... ok
+test tests::speed_asks_for_nothing_that_costs_bandwidth ... ok
+test tests::balanced_is_exactly_the_pre_existing_default ... ok
+test tests::high_disables_nothing ... ok
+test egfx::dirty_rect_tests::the_list_is_capped_and_loses_nothing ... ok
+test egfx::decode_error_tests::invalid_glyph_pdu_closes_before_outputs_and_blocks_later_batch_paints ... ok
+test egfx::clear_dump_tests::capture_keeps_pending_pdu_after_decoder_unwinds_and_never_overwrites_it ... ok
+test clipboard::tests::oversized_remote_text_is_dropped ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.90s
+

@@ -1,0 +1,9 @@
+   Compiling adit-ui v0.1.75 (C:\data\codes\adit\crates\adit-ui)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.71s
+     Running unittests src\lib.rs (target\debug\deps\adit_ui-16a5da3342016db3.exe)
+
+running 1 test
+test keyboard_hook::native_tests::hook_delivery_survives_a_stalled_ui_thread ... native hook delivery: before=[0, 0, 0, 0, 0], after=[2, 2, 2, 0, 0]
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 129 filtered out; finished in 1.80s

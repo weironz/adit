@@ -1,0 +1,2 @@
+   Compiling adit-ui v0.1.75 (C:\data\codes\adit\crates\adit-ui)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 31.44s

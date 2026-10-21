@@ -66,6 +66,21 @@ mod vnc_cursor;
 mod vnc_native_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
+#[cfg(feature = "native-vnc-acceptance")]
+#[doc(hidden)]
+pub mod native_hook_probe;
+#[cfg(feature = "native-vnc-acceptance")]
+#[doc(hidden)]
+pub fn run_native_keyboard_hook_probe() {
+    let installed = keyboard_hook::arm_vnc();
+    println!("root_library_installed={installed} pid={}", std::process::id());
+    for second in 0..15 {
+        println!("second={second} diagnostics={:?} worker={:?} health={:?}",
+            keyboard_hook::diagnostics(), keyboard_hook::worker_thread_id(), keyboard_hook::worker_health());
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    keyboard_hook::disarm();
+}
 #[cfg(test)]
 mod vnc_input_wire_tests;
 mod vault_ui;
@@ -2852,13 +2867,14 @@ mod tests {
     }
 
     #[test]
-    fn vnc_releases_the_original_keysym_after_shift_or_focus_changes() {
+    fn vnc_without_live_transport_does_not_adopt_keyboard_ownership() {
         let mut app = drag_test_app();
         let physical = Physical::Code(Code::KeyA);
         let press = key_press(Key::Character("a".into()), Key::Character("A".into()),
             physical, keyboard::Modifiers::SHIFT, Some("A"));
         send_vnc_keyboard(&mut app, &press);
-        assert_eq!(app.vnc_pressed_keys, vec![(physical, 0x41)]);
+        assert!(!app.manager.active_is_vnc());
+        assert!(app.vnc_pressed_keys.is_empty());
         let release = keyboard::Event::KeyReleased {
             key: Key::Character("a".into()), modified_key: Key::Character("a".into()),
             physical_key: physical, location: keyboard::Location::Standard,

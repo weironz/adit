@@ -1,0 +1,48 @@
+{
+  "time": 1792519295534,
+  "case": "dead-state-native-prototypes",
+  "vm": "A8A34D56-3ADC-763F-E8EC-203ACC603E63",
+  "thread_prototype_source_sha256": "01932947bed0a48b789d86293b11a8e7de9a9f59e3dbda7256999533147c7c8a",
+  "thread_test_exe_sha256": "c0dc639d2499dec7bcca335d7f0f4502ca2eb52568c702e0a9faa1ad946bc19e",
+  "thread_test_exit": 101,
+  "desktop_probe_source_sha256": "5c66b4843918723f3e4036a9d4aa17c644d446b525ccbd8d02b55488520caed1",
+  "desktop_probe_result": {
+    "scope": "private desktop translation isolation; no GUI activation",
+    "layouts": [
+      134481924,
+      67568647,
+      67699721
+    ],
+    "worker_private": true,
+    "acute": {
+      "return": -1,
+      "units": [
+        180
+      ]
+    },
+    "worker_r": {
+      "return": 2,
+      "units": [
+        180,
+        114
+      ]
+    },
+    "worker_e": {
+      "return": 1,
+      "units": [
+        233
+      ]
+    },
+    "restored": true,
+    "closed": true,
+    "composition_e": {
+      "return": 1,
+      "units": [
+        233
+      ]
+    },
+    "threads_exited": true,
+    "passed": false
+  },
+  "conclusion": "Neither a fresh queue/thread nor a non-visible private desktop isolates shared ToUnicodeEx pending state; rejected, not integrated"
+}

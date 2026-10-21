@@ -1,0 +1,7 @@
+KEY 42 0 1
+[await real ui_stall_start]
+KEY 42 0 0
+KEY 1d 1 1
+KEY 5b 1 1
+KEY 5b 1 0
+KEY 38 1 1

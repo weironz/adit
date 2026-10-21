@@ -1,0 +1,118 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded bytemuck v1.25.2
+  Downloaded proc-macro2 v1.0.107
+  Downloaded displaydoc v0.2.7
+  Downloaded expect-test v1.5.1
+  Downloaded quote v1.0.47
+  Downloaded thiserror-impl v2.0.19
+  Downloaded thiserror v2.0.19
+  Downloaded bitflags v2.13.1
+  Downloaded dissimilar v1.0.11
+  Downloaded bmp v0.5.0
+  Downloaded ironrdp-pdu v0.9.0
+  Downloaded syn v2.0.119
+  Downloaded syn v3.0.3
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling autocfg v1.5.1
+   Compiling version_check v0.9.5
+   Compiling typenum v1.20.1
+   Compiling minimal-lexical v0.2.1
+   Compiling memchr v2.8.3
+   Compiling flagset v0.4.7
+   Compiling const-oid v0.9.6
+   Compiling thiserror v2.0.19
+   Compiling cfg-if v1.0.4
+   Compiling tap v1.0.1
+   Compiling radium v0.7.0
+   Compiling byteorder v1.5.0
+   Compiling cpufeatures v0.2.17
+   Compiling ironrdp-error v0.2.0
+   Compiling funty v2.0.0
+   Compiling once_cell v1.21.4
+   Compiling bitflags v2.13.1
+   Compiling dissimilar v1.0.11
+   Compiling bit_field v0.10.3
+   Compiling ironrdp-core v0.2.1
+   Compiling bytemuck v1.25.2
+   Compiling generic-array v0.14.7
+   Compiling expect-test v1.5.1
+   Compiling bmp v0.5.0
+   Compiling wyz v0.5.1
+   Compiling num-traits v0.2.19
+   Compiling nom v7.1.3
+   Compiling bitvec v1.1.1
+   Compiling syn v2.0.119
+   Compiling syn v3.0.3
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling digest v0.10.7
+   Compiling num-integer v0.1.46
+   Compiling yuv v0.8.16
+   Compiling md-5 v0.10.6
+   Compiling sha1 v0.10.7
+   Compiling num-bigint v0.4.8
+   Compiling rusticata-macros v4.1.0
+   Compiling thiserror-impl v2.0.19
+   Compiling displaydoc v0.2.7
+   Compiling synstructure v0.13.2
+   Compiling der_derive v0.7.3
+   Compiling asn1-rs-derive v0.6.0
+   Compiling asn1-rs-impl v0.2.0
+   Compiling num-derive v0.4.2
+   Compiling asn1-rs v0.7.2
+   Compiling der v0.7.10
+   Compiling spki v0.7.3
+   Compiling pkcs1 v0.7.5
+   Compiling x509-cert v0.2.5
+   Compiling der-parser v10.0.0
+   Compiling ironrdp-pdu v0.9.0
+   Compiling ironrdp-graphics v0.9.0 (C:\data\codes\adit\crates\adit-rdp\vendor\ironrdp-graphics)
+warning: unnecessary qualification
+    --> src\progressive.rs:1815:27
+     |
+1815 |         let mut decoder = crate::srl::SrlDecoder::new(&data);
+     |                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: requested on the command line with `-W unused-qualifications`
+help: remove the unnecessary path segments
+     |
+1815 -         let mut decoder = crate::srl::SrlDecoder::new(&data);
+1815 +         let mut decoder = srl::SrlDecoder::new(&data);
+     |
+
+warning: this lint expectation is unfulfilled
+   --> src\progressive.rs:579:10
+    |
+579 | #[expect(dead_code, reason = "orphaned by the persistent-cursor upgrade path; kept for reference against upstream")]
+    |          ^^^^^^^^^
+    |
+    = note: orphaned by the persistent-cursor upgrade path; kept for reference against upstream
+    = note: `#[warn(unfulfilled_lint_expectations)]` on by default
+
+warning: `ironrdp-graphics` (lib test) generated 2 warnings (run `cargo fix --lib -p ironrdp-graphics --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 34.95s
+     Running unittests src\lib.rs (crates\adit-rdp\vendor\ironrdp-graphics\target\debug\deps\ironrdp_graphics-bf47d8d52af21207.exe)
+
+running 2 tests
+
+thread 'clearcodec::tests::glyph_hit_reinterprets_cached_pixels_at_requested_width' (49208) panicked at src\clearcodec\mod.rs:133:52:
+range end index 20 out of range for slice of length 16
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+thread 'clearcodec::tests::glyph_hit_rejects_truncated_cache_storage' (36760) panicked at src\clearcodec\mod.rs:133:52:
+range end index 16 out of range for slice of length 12
+test clearcodec::tests::glyph_hit_reinterprets_cached_pixels_at_requested_width ... FAILED
+test clearcodec::tests::glyph_hit_rejects_truncated_cache_storage ... FAILED
+
+failures:
+
+failures:
+    clearcodec::tests::glyph_hit_reinterprets_cached_pixels_at_requested_width
+    clearcodec::tests::glyph_hit_rejects_truncated_cache_storage
+
+test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 200 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--lib`

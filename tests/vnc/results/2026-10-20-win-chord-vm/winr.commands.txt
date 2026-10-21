@@ -1,0 +1,11 @@
+KEY 5b 1 1
+WAIT 120
+KEY 13 0 1
+WAIT 120
+KEY 13 0 0
+WAIT 120
+KEY 5b 1 0
+WAIT 120
+SNAP C:/Users/willz/AppData/Local/Temp/adit-hook-focus-d8a451c46583411394431fa9d6fe749e/candidate2-winr.png
+WAIT 1200
+ACK candidate2-winr

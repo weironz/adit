@@ -141,7 +141,14 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let scale_x = app.display_scale.max(0.1) / fit_x;
     let scale_y = app.display_scale.max(0.1) / fit_y;
 
-    if app.rdp_tiles.is_empty() || sw == 0 || sh == 0 {
+    // A fatal error can arrive after a valid frame. Its stale image must not
+    // hide the concrete error or keep a remote mouse_area interactive while
+    // Error/Closed retire the transport.
+    if app.manager.active_desktop_error().is_some()
+        || app.rdp_tiles.is_empty()
+        || sw == 0
+        || sh == 0
+    {
         // The toolbar wraps this branch too: a connect that hangs in fullscreen
         // is exactly when someone needs the way out, and there is no menu bar.
         return with_rdp_toolbar(
@@ -263,6 +270,10 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
 
     with_rdp_toolbar(app, desktop)
 }
+
+#[cfg(test)]
+#[path = "workspace_error_tests.rs"]
+mod error_tests;
 
 /// One generation of framebuffer tiles laid out edge to edge at the given
 /// per-axis scales, in logical points so the compositor's DPI scaling lands

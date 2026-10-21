@@ -1,0 +1,129 @@
+{
+  "outcome": "passed",
+  "expected": "e\u0301",
+  "expected_scalars": [
+    "U+0065",
+    "U+0301"
+  ],
+  "clipboard_send_used": false,
+  "before": {
+    "pid": 380,
+    "display": 101,
+    "entry_xid": 4194329,
+    "root_xid": 4194326,
+    "text": "",
+    "python_codepoints": [],
+    "scalars": [],
+    "focus": {
+      "x_input_focus": 4194329,
+      "x_ancestors": [
+        4194329,
+        4194326
+      ],
+      "x_target_windows": [
+        4194326,
+        4194326
+      ],
+      "x_focus_owned": true,
+      "tk_entry_focused": true,
+      "focused": true
+    },
+    "counts": {
+      "press": 0,
+      "release": 0,
+      "unfocused_input": 0,
+      "focus_losses": 0,
+      "truncated_events": 0
+    },
+    "events": [],
+    "tk_patchlevel": "8.6.14",
+    "elapsed_ms": 8943
+  },
+  "commands": [
+    "TEXT e\u0301",
+    "WAIT 1500",
+    "CLOSE"
+  ],
+  "after": {
+    "pid": 380,
+    "display": 101,
+    "entry_xid": 4194329,
+    "root_xid": 4194326,
+    "text": "e\u0301",
+    "python_codepoints": [
+      "U+0065",
+      "U+0301"
+    ],
+    "scalars": [
+      "U+0065",
+      "U+0301"
+    ],
+    "focus": {
+      "x_input_focus": 4194329,
+      "x_ancestors": [
+        4194329,
+        4194326
+      ],
+      "x_target_windows": [
+        4194326,
+        4194326
+      ],
+      "x_focus_owned": true,
+      "tk_entry_focused": true,
+      "focused": true
+    },
+    "counts": {
+      "press": 2,
+      "release": 2,
+      "unfocused_input": 0,
+      "focus_losses": 0,
+      "truncated_events": 0
+    },
+    "events": [
+      {
+        "kind": "press",
+        "keysym": "e",
+        "char_scalars": [
+          "U+0065"
+        ],
+        "focused": true
+      },
+      {
+        "kind": "release",
+        "keysym": "e",
+        "char_scalars": [],
+        "focused": true
+      },
+      {
+        "kind": "press",
+        "keysym": "combining_acute",
+        "char_scalars": [
+          "U+0301"
+        ],
+        "focused": true
+      },
+      {
+        "kind": "release",
+        "keysym": "combining_acute",
+        "char_scalars": [],
+        "focused": true
+      }
+    ],
+    "tk_patchlevel": "8.6.14",
+    "elapsed_ms": 11362
+  },
+  "driver_exit": 0,
+  "checks": {
+    "driver_ready": true,
+    "driver_exit_zero": true,
+    "empty_before": true,
+    "same_target_pid": true,
+    "focus_before": true,
+    "focus_after": true,
+    "no_focus_loss": true,
+    "all_input_focused": true,
+    "key_events_consumed": true,
+    "no_event_truncation": true,
+    "exact_scalars": true
+  }
+}

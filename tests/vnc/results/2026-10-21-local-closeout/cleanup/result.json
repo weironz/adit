@@ -1,0 +1,20 @@
+{
+  "scope": "exact owned GUID; no original service/account/network changes",
+  "observations": [
+    {
+      "utc": "2026-10-21T00:02:43.2974528Z",
+      "stage": "closeout_readonly",
+      "directory": "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803",
+      "tasks": 0,
+      "processes": 0,
+      "exists": true,
+      "share": 0
+    },
+    {
+      "directory": "C:\\ProgramData\\AditVncKeys-c11d36edff21422f8fd01acb1b637803",
+      "absent": true,
+      "stage": "closeout_directory_removed",
+      "utc": "2026-10-21T00:04:07.5828931Z"
+    }
+  ]
+}

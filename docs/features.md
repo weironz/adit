@@ -97,8 +97,20 @@ keys/buttons and blocks keyboard, pointer, wheel and outgoing clipboard; receivi
 remote text follows its separate policy. Images/files remain RDP-only.
 
 Logical keysyms preserve layout-specific characters, with right-hand modifiers and
-multi-character IME commits. Windows optionally grabs Tab/Windows system keys while
-letting normal text reach the IME; Ctrl+Alt+Enter always releases the grab locally.
+multi-character IME commits. Full Unicode is the default. The optional Windows VNC
+character compatibility mode rejects a whole text commit containing a non-BMP
+character before sending any of it, with a visible notice; it does not substitute
+clipboard input or add non-BMP support to the server. The setting takes effect on a
+new connection. This addresses observed truncation in Windows TightVNC 2.8.90 and
+UltraVNC 1.8.3.0; the [saved TextBox results](../tests/vnc/results/2026-10-21-tightvnc-unicode/README.md)
+retain those compatibility failures.
+Each text commit is limited to 4 KiB of UTF-8. A larger commit is rejected in full
+with a notice to split it, keeping queued keyboard text bounded.
+
+Windows optionally grabs Tab/Windows system keys and Ctrl+Esc while letting normal
+text reach the IME; Ctrl+Alt+Enter always releases the grab locally. Grabbing does
+not adopt keys that were already held locally. AltGr auxiliary Ctrl events do not
+own remote Ctrl; real left/right Ctrl ownership survives an AltGr release.
 Ctrl+Alt+Del still depends on the remote server's secure-desktop permissions. Native
 keyboard/IME, DPI, UAC and service-mode acceptance require real environment evidence;
 a unit-test pass alone is not that evidence.

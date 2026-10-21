@@ -1,0 +1,11 @@
+{
+  "scope": "Final native fixture control driver shutdown; separate from the earlier ClearCodec capture connection",
+  "driver_pid": 3004,
+  "driver_exit": 0,
+  "helper_exit_code": 0,
+  "helper_exit_source": [
+    "helper_exit=exit code: 0\n"
+  ],
+  "helper_sha256": "7ae9637ea26e09837da78ae45b7f2028cf320c8cb8687537c7362a7c18cd3043",
+  "capture_enabled": false
+}

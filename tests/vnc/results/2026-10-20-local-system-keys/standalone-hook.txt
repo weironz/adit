@@ -1,0 +1,20 @@
+installed=true pid=6684
+station=Ok(()):WinSta0
+worker=13184 desktop=Ok(()):Default
+input_desktop=Ok(()):Default
+second=0 armed=true vnc=true counters=[0, 0, 0, 0, 0] queued=0
+injected_f24=2
+second=1 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+second=2 armed=true vnc=true counters=[2, 2, 2, 0, 0] queued=0
+second=3 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=4 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=5 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=6 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=7 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=8 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=9 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=10 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=11 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=12 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=13 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0
+second=14 armed=true vnc=true counters=[6, 6, 2, 0, 0] queued=0

@@ -1,0 +1,15 @@
+{
+  "base_commit": "cbbd105c39be12d31eb8752444fc30fa5676a6ae",
+  "tested_uncommitted_source": true,
+  "source_sha256_lf": {
+    "crates/adit-ui/src/keyboard_hook.rs": "80eb00894fa537ae3ba984f747693c73bf9dd1de198cd5eec9be62c4bd818907",
+    "crates/adit-ui/src/keyboard_vnc_chord.rs": "d789e9d3fa365171b2e5597142a2332983b98963c5a9a70e81b4d29f9f54c3c5",
+    "crates/adit-ui/src/input.rs": "8be4a58a5b5d2ef79bde923a8e08cce7ee2ada5124ef1d35d6f8308d18d15e71",
+    "crates/adit-ui/src/vnc_chord_tests.rs": "0b7d187b16dc891815321786f3fc2b74f6c8d93615119c1d5c5a08b7a5f2a64f"
+  },
+  "executable_sha256": "0fe9e877e46feb5cd0b8c1afb7ca89f662e4a459d7c463b4b5181f5f129ed2c2",
+  "local_ci_exit": 0,
+  "native_regressions_exit": 0,
+  "fixture_build_exit": 0,
+  "physical_keyboard_hardware_acceptance": false
+}

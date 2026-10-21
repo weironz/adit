@@ -1,0 +1,39 @@
+{
+  "utc": "2026-10-20T20:26:43.842Z",
+  "transport": "protected Windows named pipe with Identification",
+  "rpc": "/daemon.DaemonService/GetPeerSSHHostKey",
+  "read_only": true,
+  "raw_key_saved": false,
+  "results": [
+    {
+      "peer_address": "willoptpc-172-11.netbird.selfhosted:22",
+      "http_status": 200,
+      "grpc_status": "0",
+      "response_bytes": 5,
+      "found": false,
+      "key_bytes": 0,
+      "key_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "key_algorithm": null,
+      "key_parseable_authorized_form": false,
+      "peer_ip": "",
+      "peer_fqdn": ""
+    },
+    {
+      "peer_address": "100.70.172.11",
+      "http_status": 200,
+      "grpc_status": "0",
+      "response_bytes": 141,
+      "found": true,
+      "key_bytes": 80,
+      "key_sha256": "a53d8049f1971c187b35efd9b4f506e85f894b3dd43f89a8665e54c09aaa6db5",
+      "key_algorithm": "ssh-ed25519",
+      "key_parseable_authorized_form": true,
+      "key_blob_sha256": "1ad1ebe30ee912052f1353b37981e1dedb7266a5df9cec9860897ff4b7a60f9d",
+      "peer_ip": "100.70.172.11",
+      "peer_fqdn": "willoptpc-172-11.netbird.selfhosted"
+    }
+  ],
+  "bridge_exit": 0,
+  "bridge_stderr_bytes": 0,
+  "bridge_stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+}
