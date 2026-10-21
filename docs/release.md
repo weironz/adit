@@ -28,7 +28,8 @@ gh run list --workflow ci.yml --branch main --limit 1   # 最近一次必须是 
   tag。CI 还在跑就等它跑完再触发，门禁不等人。
 
 可选的双保险——本地跑一遍和 CI 同样的门禁（`just ci` 只覆盖 Windows，CI 的
-Linux/macOS 构建本地看不到，所以它是补充，不是替代）：
+Linux 构建及真实协议集成本地看不到，所以它是补充，不是替代；当前正式 CI
+仅启用自托管 Windows/Linux x64，ARM64/macOS 已暂停，见 [CI 环境](ci.md)）：
 
 ```bash
 just ci

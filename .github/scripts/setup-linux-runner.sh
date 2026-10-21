@@ -3,6 +3,7 @@ set -euo pipefail
 
 [[ $(uname -sm) == 'Linux x86_64' ]] || { echo 'Linux x64 runner required' >&2; exit 1; }
 sudo -n true
+# winit dlopens libxkbcommon-x11: compiling alone cannot detect its absence.
 packages=(build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev
   libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev libdbus-1-dev
   xvfb mesa-vulkan-drivers libgl1-mesa-dri x11vnc tigervnc-standalone-server

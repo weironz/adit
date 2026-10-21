@@ -4,30 +4,83 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Fixed X displays and fixture names must never overlap across workflow runs.
+concurrency:
+  group: adit-self-hosted-ci
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_BUILD_JOBS: '2'
+  CARGO_PROFILE_DEV_DEBUG: '0'
+  CARGO_PROFILE_TEST_DEBUG: '0'
 
 jobs:
-  # ci.yml itself was once committed with CRLF despite .gitattributes asking for
-  # LF, and nothing noticed until a release failed: the release job's `git add`
-  # restaged it normalised, so the release commit carried a workflow file and the
-  # push was rejected for lacking `workflows` permission. The cause was invisible
-  # in every diff — only the stored bytes were wrong.
-  #
-  # `--renormalize` re-applies the .gitattributes filters to every tracked file.
-  # Anything that shows up as a change is stored differently from what the repo
-  # declares. Linux only: the runner's checkout is a byte-for-byte copy of the
-  # blobs there, whereas a Windows runner may have core.autocrlf rewriting the
-  # working tree, which would make this compare the wrong two things.
-  line-endings:
-    name: line endings · stored as .gitattributes declares
-    runs-on: ubuntu-latest
+  build:
+    name: build · clippy · test · integration (${{ matrix.platform }})
+    # Persistent runners execute trusted repository branches only, never fork PRs.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-x64
+            runner: [self-hosted, Windows, X64, home-workstation, repo-adit]
+            shell: pwsh
+          - platform: linux-x64
+            runner: [self-hosted, Linux, X64, home-workstation, repo-adit]
+            shell: bash
+    # ARM64 and macOS are intentionally paused. No hosted fallback is configured.
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: Every tracked file must match .gitattributes
+        with:
+          persist-credentials: false
+      - name: Complete Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .github/scripts/setup-windows-runner.ps1
+      - name: Complete Linux build dependencies
+        if: runner.os == 'Linux'
+        run: bash .github/scripts/setup-linux-runner.sh
+      - name: Install stable Rust and Clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Record toolchain
         run: |
+          rustc --version
+          cargo --version
+      - name: Check isolated Linux fixture resources
+        if: runner.os == 'Linux'
+        run: |
+          python3 - <<'PY'
+          import pathlib, socket
+          for display in (99, 104, 109, 114):
+              assert not pathlib.Path(f'/tmp/.X{display}-lock').exists(), f'X display {display} already in use'
+          for port in (12222, 15900, 15901, 15903, 15908, 15909, 15912, 15914):
+              with socket.socket() as s:
+                  s.bind(('127.0.0.1', port))
+          PY
+          for name in adit-vnc-integration adit-vnc-cursor; do
+            if docker container inspect "$name" >/dev/null 2>&1; then
+              echo "::error::fixture container $name already exists; refusing to replace it"
+              exit 1
+            fi
+          done
+      - name: Every tracked file must match .gitattributes
+        if: runner.os == 'Linux'
+        run: |
+          # A stored CRLF workflow once dirtied a release checkout and broke its push.
           git add --renormalize .
           if ! git diff --cached --quiet; then
             echo '::error::these files are stored with line endings that contradict .gitattributes — re-save them as LF and commit'
@@ -35,99 +88,27 @@ jobs:
             exit 1
           fi
           echo 'every tracked file is stored as .gitattributes declares'
-
-  vnc-evidence:
-    name: VNC captured Windows evidence audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      # This audits saved native observations; it does not claim a new live
-      # Windows keyboard test ran on this Linux job.
-      - name: Verify archive hashes, input sequences and acceptance boundaries
-        run: python tests/vnc/analyze_windows_layout.py tests/vnc/results/2026-10-19-windows-layout
-
-  build:
-    name: build · clippy · test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      # Windows is the shipping target; macOS and Linux are here to keep the code
-      # honest, since nothing else verifies that Adit even compiles there.
-      # Independent reporting on purpose — while those two are being brought up, a
-      # Linux failure must not hide a macOS one.
-      #
-      # The arm64 runners are what make a dual-architecture release checkable at
-      # all. macOS has no Intel entry because every macOS runner is Apple Silicon
-      # now; the Intel build is cross-compiled in the packaging job instead.
-      fail-fast: false
-      matrix:
-        os:
-          - windows-latest     # x86_64
-          - windows-11-arm     # aarch64
-          - ubuntu-latest      # x86_64
-          - ubuntu-24.04-arm   # aarch64
-          - macos-latest       # aarch64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy
-
-      # rust-cache only caches the workspaces it is told about, and the default
-      # is `.` alone — so `crates/adit-rdp`, a separate workspace with its own
-      # target directory, had its 409 dependencies recompiled from scratch on
-      # every run that built the helper, cache or no cache.
-      #
-      # The target path defaults to `target` *relative to each entry*. Writing
-      # the second one as `crates/adit-rdp -> crates/adit-rdp/target` therefore
-      # resolves to that path twice over, and caches nothing while reading as
-      # though it works.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            crates/adit-rdp
-
-      # iced pulls winit (X11/Wayland) and wgpu, rfd pulls GTK, keyring pulls
-      # D-Bus. Windows and macOS need none of this.
-      - name: Install Linux system dependencies
+      - name: Verify captured Windows evidence
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libxkbcommon-dev libwayland-dev \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libgtk-3-dev libdbus-1-dev
-
-      # `--locked` fails if Cargo.lock disagrees with the manifests, instead of
-      # silently rewriting it. Without this, a version bump that forgets the
-      # lockfile only surfaces as a dirty tree on someone's next local build.
+        run: python3 tests/vnc/analyze_windows_layout.py tests/vnc/results/2026-10-19-windows-layout
       - name: Build
         run: cargo build --workspace --locked
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
       - name: Clippy the opt-in native VNC acceptance harness
-        run: cargo clippy -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance -- -D warnings
+        run: cargo clippy -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked -- -D warnings
 
       - name: Test
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: VNC integration against x11vnc and TigerVNC
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         shell: bash
         env:
           ADIT_VNC_TRACE_FLOW: '1'
         run: |
-          sudo apt-get install -y --no-install-recommends \
-            xvfb x11vnc tigervnc-standalone-server tigervnc-tools x11-xserver-utils x11-utils xdotool xauth python3-tk
           export DISPLAY=:99
           Xvfb "$DISPLAY" -noreset -screen 0 800x600x24 > /tmp/adit-xvfb.log 2>&1 &
           xvfb_pid=$!
@@ -178,7 +159,7 @@ jobs:
             cargo test -p adit-session --test vnc_clipboard -- --ignored
 
       - name: VNC shared clients follow real desktop resize
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         timeout-minutes: 2
         shell: bash
         env:
@@ -198,7 +179,7 @@ jobs:
           cargo test -p adit-session --test vnc_resize -- --ignored --test-threads=1
 
       - name: Preserve real VNC server and input diagnostics
-        if: always() && matrix.os == 'ubuntu-latest'
+        if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: vnc-linux-server-diagnostics
@@ -211,21 +192,20 @@ jobs:
           if-no-files-found: warn
 
       - name: Build the VNC recovery probe
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         timeout-minutes: 5
         shell: bash
         run: |
-          sudo apt-get install -y --no-install-recommends iproute2
           cargo build -p adit-session --example vnc_recovery_probe --locked
 
       - name: VNC recovery across real isolated client interfaces
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         timeout-minutes: 4
         shell: bash
         run: timeout --signal=TERM --kill-after=10s 180s bash tests/vnc/network-recovery.sh target/debug/examples/vnc_recovery_probe "$RUNNER_TEMP/adit-vnc-network-result"
 
       - name: Preserve VNC network recovery evidence
-        if: always() && matrix.os == 'ubuntu-latest'
+        if: always() && runner.os == 'Linux'
         uses: actions/upload-artifact@v4
         with:
           name: vnc-network-recovery
@@ -233,12 +213,18 @@ jobs:
           if-no-files-found: warn
 
       - name: VNC SSH gateway and protected credential connections
-        if: matrix.os == 'ubuntu-latest'
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           docker build -t adit-vnc-integration:local tests/vnc
-          trap 'docker rm -f adit-vnc-integration adit-vnc-cursor 2>/dev/null || true' EXIT
-          docker run -d --name adit-vnc-integration --memory 1g \
+          cleanup() {
+            for name in adit-vnc-integration adit-vnc-cursor; do
+              owner=$(docker inspect -f '{{index .Config.Labels "adit.ci.run"}}' "$name" 2>/dev/null || true)
+              if [[ "$owner" == "$GITHUB_RUN_ID" ]]; then docker rm -f "$name"; fi
+            done
+          }
+          trap cleanup EXIT
+          docker run -d --name adit-vnc-integration --label "adit.ci.run=$GITHUB_RUN_ID" --memory 1g \
             -p 127.0.0.1:15901:15901 -p 127.0.0.1:12222:22 \
             -p 127.0.0.1:15903:15903 adit-vnc-integration:local
           for attempt in {1..100}; do
@@ -256,7 +242,7 @@ jobs:
           done
           cargo test -p adit-session --test vnc_gateway -- --ignored --test-threads=1
           cargo test -p adit-ui --test vault_connections -- --ignored --test-threads=1
-          docker create --name adit-vnc-cursor --memory 512m \
+          docker create --name adit-vnc-cursor --label "adit.ci.run=$GITHUB_RUN_ID" --memory 512m \
             -p 127.0.0.1:15912:15912 --entrypoint /bin/sh \
             adit-vnc-integration:local -c 'sleep 3600'
           docker cp tests/vnc/cursor_target.py adit-vnc-cursor:/cursor_target.py
@@ -272,12 +258,8 @@ jobs:
       # The RDP helper is excluded from the workspace (IronRDP's dependency pins
       # cannot coexist with russh's), so nothing above touches it — until now it
       # was built only at release time, where a break lands too late to be cheap.
-      # Windows only: it ships as adit-rdp-host.exe. Whether it builds for arm64
-      # at all is the open question behind a Windows arm64 release — IronRDP
-      # carries three vendored patches and exact-pinned RustCrypto crates, none
-      # of which has ever seen that target. This step on windows-11-arm is the
-      # answer; until it is green there is no arm64 installer, because shipping
-      # one whose RDP silently does not work is worse than not shipping it.
+      # Windows only: it ships as adit-rdp-host.exe. ARM64 is paused together
+      # with the other non-x64 targets; the independent helper stays covered.
       - name: Build the RDP helper
         if: runner.os == 'Windows'
         run: cargo build --manifest-path crates/adit-rdp/Cargo.toml --locked
@@ -290,66 +272,22 @@ jobs:
       - name: Clippy the RDP helper
         if: runner.os == 'Windows'
         run: cargo clippy --manifest-path crates/adit-rdp/Cargo.toml --all-targets --locked -- -D warnings
-
-  smoke:
-    name: smoke · launches headless (linux)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # Same set the build job installs, plus a virtual X server to open a window
-      # on and Mesa's software Vulkan (lavapipe) so wgpu has an adapter to pick —
-      # CI runners have no GPU.
-      #
-      # libxkbcommon-x11-0 is a *runtime* dependency, not a build one: winit
-      # dlopens it, so the build job compiles happily without it and the app then
-      # panics on startup. It has to be declared by any Linux package we ship.
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libgtk-3-dev libdbus-1-dev \
-            xvfb mesa-vulkan-drivers libgl1-mesa-dri
-
-      - name: Build the app
-        run: cargo build -p adit-app --locked
-
-      # Compiling proves nothing about starting up: adapter selection, window
-      # creation and font loading all happen at runtime, and all three can fail
-      # on a machine that built the binary happily. A GUI app has no run-and-exit
-      # mode, so the test is that it is *still alive* after being given time to
-      # get a window open. Exiting on its own means it crashed.
-      # Run twice. The first pass is the real assertion: whatever renderer iced
-      # picks, the app has to come up. The second forces Vulkan, because iced
-      # falls back to the tiny-skia software renderer silently — so a green first
-      # pass alone cannot tell "wgpu works" from "wgpu failed and nobody
-      # noticed", and wgpu is what ships.
       - name: Launch headless
+        if: runner.os == 'Linux'
         env:
           RUST_BACKTRACE: '1'
+          ADIT_CONFIG_DIR: ${{ runner.temp }}/adit-smoke-config
         run: |
           launch() {
             local label="$1" log="$2"
-            xvfb-run -a --server-args='-screen 0 1280x800x24' \
-              target/debug/adit-app > "$log" 2>&1 &
-            local pid=$!
-            sleep 25
-            if kill -0 "$pid" 2>/dev/null; then
-              kill "$pid" 2>/dev/null || true
-              echo "$label: still up after 25s"
-            else
+            local status=0
+            timeout --kill-after=5s 25s xvfb-run -a --server-args='-screen 0 1280x800x24' \
+              target/debug/adit-app > "$log" 2>&1 || status=$?
+            if [[ "$status" != 124 ]]; then
               echo "::error::$label: adit-app exited on its own during startup"
               return 1
             fi
+            echo "$label: still up after 25s; process group stopped"
           }
 
           status=0
@@ -360,68 +298,21 @@ jobs:
       # Always shown, including on failure — the panic or adapter error lands
       # here, not in the step above.
       - name: Startup logs
-        if: always()
+        if: always() && runner.os == 'Linux'
         run: |
           for log in smoke-default.log smoke-vulkan.log; do
             echo "===== $log ====="
             cat "$log" 2>/dev/null || echo '(not produced)'
           done
-
-  package-linux:
-    name: package · deb + rpm install and run clean (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            arch: x86_64
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # Restore, never save — see the note on the other packaging jobs too.
-      #
-      # The repo's Actions caches had reached 10.4 GB against GitHub's 10 GB
-      # ceiling, so every new entry evicted the least-recently-used one. The
-      # entry touched least often is the release job's, and it is also the one
-      # whose miss costs the most: two consecutive releases both logged
-      # "No cache found." and compiled all 1089 dependencies from zero, twice
-      # each, for ~23 minutes a run.
-      #
-      # These packaging jobs are the cheapest writers to stop. Restoring counts
-      # as access, so the entries they already have stay alive and keep being
-      # used; what ends is the 2.4 GB of *churn* they add whenever Cargo.lock
-      # moves. The cost is that their cache slowly drifts behind the lockfile
-      # instead of being refreshed — a prefix restore still lands the bulk of
-      # the dependency graph, which is the right trade for a job that is not on
-      # anyone's critical path.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config \
-            libxkbcommon-dev libwayland-dev \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libgtk-3-dev libdbus-1-dev
-
       - name: Build the app
+        if: runner.os == 'Linux'
         run: cargo build --release -p adit-app --locked
 
       # The same script release.yml runs — the dependency lists must not exist
       # twice.
       - name: Build the packages
+        if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends rpm
           installer/build-linux-packages.sh
 
       # The real test. Installing into a bare ubuntu image means apt has to
@@ -429,6 +320,7 @@ jobs:
       # steps above left lying around — so a missing entry fails here instead of
       # on a user's machine.
       - name: Install and run it in a clean container
+        if: runner.os == 'Linux'
         run: |
           docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -eu -c '
             export DEBIAN_FRONTEND=noninteractive
@@ -450,9 +342,10 @@ jobs:
       # on the Ubuntu runner is usable elsewhere at all — it carries that image's
       # glibc floor, which is the thing most likely to bite on older RPM distros.
       - name: Install and run the rpm in a clean container
+        if: runner.os == 'Linux'
         run: |
           docker run --rm -v "$PWD:/w" -w /w fedora:latest bash -eu -c '
-            dnf -y -q install ./rpmbuild/RPMS/${{ matrix.arch }}/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
+            dnf -y -q install ./rpmbuild/RPMS/x86_64/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
             xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/rpm-smoke.log 2>&1 &
             pid=$!
             sleep 25
@@ -466,7 +359,7 @@ jobs:
           '
 
       - name: Package startup logs
-        if: always()
+        if: always() && runner.os == 'Linux'
         run: |
           for log in pkg-smoke.log rpm-smoke.log; do
             echo "===== $log ====="
@@ -474,137 +367,14 @@ jobs:
           done
 
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && runner.os == 'Linux'
         with:
-          name: adit-linux-packages-${{ matrix.arch }}
+          name: adit-linux-packages-x86_64
           path: |
             adit_*.deb
             rpmbuild/RPMS/*/adit-*.rpm
           if-no-files-found: warn
 
-  package-macos:
-    name: package · app bundle + dmg (macos)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # Restore only, so the release job's cache stops being evicted — the long
-      # note is on package-linux.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-
-      - name: Build the app
-        run: |
-          rustup target add x86_64-apple-darwin
-          cargo build --release -p adit-app --locked --target x86_64-apple-darwin
-          cargo build --release -p adit-app --locked
-
-      # Intel first and native last, so the Adit.app left on disk for the launch
-      # check below is the one this runner can actually execute — the runners are
-      # Apple Silicon and Rosetta is not guaranteed to be installed on them.
-      - name: Build the bundles
-        run: |
-          installer/build-macos-bundle.sh '' x86_64-apple-darwin
-          installer/build-macos-bundle.sh
-
-      # GitHub's macOS runners have no dependable window session, so this may
-      # well fail for reasons that say nothing about the app. Kept as a hard
-      # assertion anyway: if it passes, macOS startup is proven the same way
-      # Linux's is, and if it fails the log says whether the cause is a missing
-      # display or a real crash. Delete it rather than let it flap.
-      - name: Launch the bundle
-        env:
-          RUST_BACKTRACE: '1'
-        run: |
-          Adit.app/Contents/MacOS/adit > macos-smoke.log 2>&1 &
-          pid=$!
-          sleep 25
-          if kill -0 "$pid" 2>/dev/null; then
-            kill "$pid" 2>/dev/null || true
-            echo "Adit.app stayed up; macOS startup is clean"
-          else
-            echo "::error::Adit.app exited on its own during startup"
-            exit 1
-          fi
-
-      - name: Startup log
-        if: always()
-        run: cat macos-smoke.log 2>/dev/null || echo '(not produced)'
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: adit-macos-unsigned
-          path: adit_*_unsigned.dmg
-          if-no-files-found: warn
-
-  # The Windows installer has never been built by CI — it was only ever produced
-  # at release time, where a broken .iss fails the release itself. Only arm64 is
-  # checked here: it is the new path, and it is the one whose binaries and Inno
-  # directives have never shipped. x64 takes the `#else` branch that every
-  # previous release used verbatim. Pushes only, since this is a release build
-  # and doubling it on every PR buys nothing.
-  package-windows-arm64:
-    name: package · installer builds (aarch64)
-    if: github.event_name == 'push'
-    runs-on: windows-11-arm
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # Restore only, so the release job's cache stops being evicted — the long
-      # note is on package-linux. The rdp workspace is listed because this job
-      # builds the helper: a restore-only entry still has to know where to put
-      # what it restores.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          save-if: false
-          workspaces: |
-            .
-            crates/adit-rdp
-
-      - name: Build the app
-        run: cargo build --release -p adit-app --locked
-
-      - name: Build the RDP helper
-        run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
-
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
-
-      # No /DAppVersion: the version is irrelevant to whether this packages, and
-      # the default keeps the artifact obviously not a release build.
-      - name: Build the installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DArch=arm64" installer\adit.iss'
-
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: adit-installer-aarch64
-          path: target/release/adit-installer-*_arm64.exe
-          if-no-files-found: warn
-
-  integration:
-    name: integration · real sshd (docker)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # ubuntu-latest runners ship Docker; the test harness builds the throwaway
-      # sshd image (docker/test-sshd) on first use and starts a container per test.
-      - name: Integration tests
-        run: cargo test -p adit-ssh --features integration -- --include-ignored --test-threads=4
+      - name: Real SSH integration
+        if: runner.os == 'Linux'
+        run: cargo test -p adit-ssh --features integration --locked -- --include-ignored --test-threads=4
