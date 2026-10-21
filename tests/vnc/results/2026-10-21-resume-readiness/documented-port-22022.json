@@ -1,0 +1,22 @@
+{
+  "utc": "2026-10-20T20:28:16.889973+00:00",
+  "address": "100.70.172.11",
+  "port": 22022,
+  "banner_received": false,
+  "valid_ssh_prefix": false,
+  "advertises_netbird_identifier": false,
+  "advertises_jwt_required": false,
+  "advertises_openssh": false,
+  "software_identifier": null,
+  "received_bytes": 0,
+  "banner_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "error_type": "TimeoutError",
+  "authentication_attempted": false,
+  "client_ssh_banner_sent": false,
+  "keyscan": {
+    "attempted": false,
+    "reason": "No valid SSH banner on bounded documented-port read"
+  },
+  "strict_metadata_query_precondition": false,
+  "timeout_phase": "Not recorded separately; cannot distinguish TCP connect timeout from banner-read timeout."
+}

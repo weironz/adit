@@ -1,0 +1,17 @@
+{
+  "source": "tests/vnc/results/2026-10-19-windows-layout/old-cleanup-independent.json",
+  "source_sha256": "7d85896eb9ca445130dc50e7188a332aff2eeafb36f746ffc970b0339f75e32d",
+  "power_result": {
+    "outcome": "returned",
+    "before_utc": "2026-10-19T11:27:09.4168942Z",
+    "scope": "Actual isolated VM OS suspend with a requested 30 second hardware wake timer",
+    "wake_timer_accepted": true,
+    "wake_timer_error": 0,
+    "suspend_return": true,
+    "suspend_error": 0,
+    "elapsed_ms": 7506030,
+    "after_utc": "2026-10-19T13:32:15.6495269Z"
+  },
+  "automatic_30_second_resume_proven": false,
+  "reason": "Accepted 30-second wake timer returned only after 7506030 ms; do not treat timer/API acceptance as automatic recovery."
+}

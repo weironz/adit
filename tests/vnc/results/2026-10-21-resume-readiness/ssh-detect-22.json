@@ -1,0 +1,18 @@
+{
+  "utc": "2026-10-20T20:22:46.976923+00:00",
+  "host": "willoptpc-172-11.netbird.selfhosted",
+  "port": 22,
+  "exit": 2,
+  "official_exit_mapping": {
+    "0": "netbird-jwt",
+    "1": "netbird-no-jwt",
+    "2": "regular"
+  },
+  "classification": "regular",
+  "stdout_bytes": 0,
+  "stderr_bytes": 0,
+  "error_marker": false,
+  "authentication_attempted": false,
+  "exit_two_alone_proves_regular_server": false,
+  "reason": "Official command also returns 2 on detection errors; independent received banner supplies the positive server-type observation."
+}

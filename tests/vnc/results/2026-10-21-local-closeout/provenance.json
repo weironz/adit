@@ -1,0 +1,228 @@
+{
+  "schema": 1,
+  "scope": "Existing local closeout evidence only; no new run, test, VM or network action during archiving.",
+  "files": [
+    {
+      "path": "unicode-error-final-targeted.txt",
+      "bytes": 2126,
+      "sha256": "0c6f63377f82ab077759419c2f9a67e1d8a8e3b66c7f85efd46ab4b8fdb7f8f9"
+    },
+    {
+      "path": "unicode-error-ci-accepted.txt",
+      "bytes": 72751,
+      "sha256": "af68699a843586c8cd43c3a267ed31fb09e5070fc59d262ff0bd1717ab223f88"
+    },
+    {
+      "path": "unicode-error-final-ci.txt",
+      "bytes": 35317,
+      "sha256": "4cebeacef89a4a80eb108f00546781b479ee4da105d5ccd35d854c01990803b8"
+    },
+    {
+      "path": "linux-closeout-clippy.txt",
+      "bytes": 235,
+      "sha256": "419a8f19499a4136e3a3ffefda0fec0ec0276f02e07b82be44a29d75c80dca9e"
+    },
+    {
+      "path": "linux-clippy-28c8546.txt",
+      "bytes": 33994,
+      "sha256": "4fc9dd740aa6e964b2cea8c107ab4b1287ff7aa591415ed0b3f818d64173557a"
+    },
+    {
+      "path": "linux-unicode-final-ci.txt",
+      "bytes": 3862,
+      "sha256": "689ce50f28971dc3c2208bf7f89f6b87b0c04fb7d8500d5a65bfeb8a150e2066"
+    },
+    {
+      "path": "linux-closeout-final-clippy.txt",
+      "bytes": 245,
+      "sha256": "0098e9668c1cd101b5d80fa9ed0cd2802371e0efb708cdcfb53a73da2b126015"
+    },
+    {
+      "path": "working-source-overlay.json",
+      "bytes": 2714,
+      "sha256": "46ab4fe9e0c29c93c29af12afa82cfabe22b62b138bd799e6d5388bea73ac229"
+    },
+    {
+      "path": "cleanup/result.json",
+      "kind": "controller-saved-actual-cleanup-metadata",
+      "bytes": 568,
+      "sha256": "76e406f80d5600e5c5b0b0d01bb01c91f35f983831448f1561a233ca78db6849"
+    },
+    {
+      "path": "cleanup/control-final.json",
+      "kind": "controller-reported-latest-connection-metadata",
+      "bytes": 321,
+      "sha256": "19c967f99ff5d84e124e7946255a96c2525d6018e40dff492a04a9389897bd92"
+    }
+  ],
+  "secret_marker_review": {
+    "counts": {
+      "unicode-error-final-targeted.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "unicode-error-ci-accepted.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "unicode-error-final-ci.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "linux-closeout-clippy.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "linux-clippy-28c8546.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "linux-unicode-final-ci.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "linux-closeout-final-clippy.txt": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      },
+      "working-source-overlay.json": {
+        "credential_assignment": 0,
+        "known_token": 0,
+        "bearer": 0,
+        "private_key": 0,
+        "url_userinfo": 0
+      }
+    },
+    "method": "Read allowlisted logs/metadata in-process; common credential, token, bearer, private-key and URL-userinfo marker counts are zero; does not prove absence of arbitrary unknown formats."
+  },
+  "first_ci_failure": {
+    "file": "unicode-error-final-ci.txt",
+    "root_partial": {
+      "passed": 375,
+      "failed": 1,
+      "ignored": 11,
+      "summaries": 19
+    },
+    "failed_test": "tests::vnc_releases_the_original_keysym_after_shift_or_focus_changes",
+    "subsequent_groups_not_run": true
+  },
+  "accepted_final_ci": {
+    "file": "unicode-error-ci-accepted.txt",
+    "root": {
+      "passed": 440,
+      "failed": 0,
+      "ignored": 12,
+      "summaries": 33
+    },
+    "native_feature": {
+      "passed": 155,
+      "failed": 0,
+      "ignored": 5
+    },
+    "graphics": {
+      "passed": 202,
+      "failed": 0,
+      "ignored": 0
+    },
+    "ui_groups_overlap": true,
+    "hosted_ci_run": false
+  },
+  "targeted": {
+    "file": "unicode-error-final-targeted.txt",
+    "wire_tests": {
+      "passed": 2,
+      "failed": 0
+    },
+    "ipc_parent_tests": 1,
+    "ipc_child_modes": [
+      "closed",
+      "eof"
+    ],
+    "child_modes_are_not_independent_tests": true,
+    "both_modes_input_count_after_error": 0,
+    "both_modes_specific_error_preserved": true
+  },
+  "product_source_sha256": [
+    {
+      "path": "crates/adit-ui/src/workspace.rs",
+      "bytes": 61416,
+      "sha256": "8b3738f756264e451759e5554ff6fa190172960676463b8cf585187aaf670e25"
+    },
+    {
+      "path": "crates/adit-ui/src/workspace_error_tests.rs",
+      "bytes": 10801,
+      "sha256": "786ac7f81d3cdc25f5b3979be129fd9b0c493e9a595bdbf51d621f7a8d936eb0"
+    },
+    {
+      "path": "crates/adit-session/src/lib.rs",
+      "bytes": 176994,
+      "sha256": "74ab61911ffa62ea0dfff6d11d8d0f19fc85357e1e932b6f3dd0704acec30e86"
+    },
+    {
+      "path": "crates/adit-rdp-proto/examples/rdp_failure_ipc_peer.rs",
+      "bytes": 4195,
+      "sha256": "c5fc388dbc2fa457a38472123cd36bdf98a4016940ba8d5e895d4a7d1a44d3b5"
+    }
+  ],
+  "source_hash_basis": "Current working-file bytes at archive time only; source files not copied; no Git commit or built-in binary source identity asserted.",
+  "transport_attributes": "* -text -whitespace; repository transport metadata is not original raw evidence.",
+  "linux_clippy_only": {
+    "accepted_log": "linux-closeout-final-clippy.txt",
+    "outcome": "passed",
+    "exit_code": 0,
+    "exit_code_basis": "Controller reports completed command exit 0; raw log shows two Finished profiles",
+    "os": "Ubuntu",
+    "linux_rust": "1.99.1",
+    "windows_host_rust": "1.98.0",
+    "scope": [
+      "root workspace clippy",
+      "native feature clippy"
+    ],
+    "linux_tests_run_this_round": false,
+    "complete_platform_matrix": false,
+    "retained_failures": [
+      {
+        "file": "linux-clippy-28c8546.txt",
+        "reason": "deprecated Atomic::fetch_update"
+      },
+      {
+        "file": "linux-unicode-final-ci.txt",
+        "reason": "non-Windows keyboard hook probe unused/dead code"
+      }
+    ],
+    "earlier_accepted_log": "linux-closeout-clippy.txt",
+    "source_overlay": "working-source-overlay.json",
+    "final_scope": "root+nativefeature Clippy completed after final driver ACK source overlay; earlier accepted log predates that ACK"
+  },
+  "product_commit": "eb118d7",
+  "product_commit_basis": "Controller reports 17 product files committed locally, not yet pushed; no Git command was used during this archival task.",
+  "cleanup": {
+    "actual_metadata": "cleanup/result.json",
+    "latest_control_metadata": "cleanup/control-final.json",
+    "lease_had_removed_share_tasks_processes": true,
+    "directory_was_left_after_lease": true,
+    "exact_directory_removed_after_owner_reparse_checks_basis": "Controller confirmation; result.json records the before and absent-after observations, not a byte-level owner dump",
+    "final_absent": true
+  }
+}

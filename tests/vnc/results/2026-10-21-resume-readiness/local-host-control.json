@@ -1,0 +1,121 @@
+{
+  "utc": "2026-10-20T20:25:54.7364006Z",
+  "scope": "Local metadata only; no VM/host power or network mutation",
+  "target_uuid": "A8A34D56-3ADC-763F-E8EC-203ACC603E63",
+  "vmware_tools": [
+    {
+      "Name": "vmrest.exe",
+      "Version": null
+    },
+    {
+      "Name": "vmrun.exe",
+      "Version": "26.0.0 build-25388281"
+    },
+    {
+      "Name": "vmware.exe",
+      "Version": "26.0.0 build-25388281"
+    }
+  ],
+  "vmrun_list_exit": 0,
+  "vmrun_list_output": [
+    "Total running VMs: 0"
+  ],
+  "inventory_vms": [
+    {
+      "name": "Ubuntu2404-75.10-template",
+      "exists": true,
+      "bios_uuid_windows_form": "3BB94D56-B895-9771-8967-8B848D399A1E",
+      "matches_target": false
+    },
+    {
+      "name": "Ubuntu2404-75.11",
+      "exists": true,
+      "bios_uuid_windows_form": "78AC4D56-E1D2-3259-7771-FF5D768830B4",
+      "matches_target": false
+    },
+    {
+      "name": "Ubuntu2404-75.12",
+      "exists": true,
+      "bios_uuid_windows_form": "5CBA4D56-AC00-5DF9-5695-DC48BF41C967",
+      "matches_target": false
+    }
+  ],
+  "vmware_processes": [],
+  "vmrest_8697_listeners": [],
+  "vmware_services": [
+    {
+      "Name": "VMnetDHCP",
+      "Status": "Running"
+    },
+    {
+      "Name": "VMware NAT Service",
+      "Status": "Running"
+    },
+    {
+      "Name": "VmwareAutostartService",
+      "Status": "Stopped"
+    }
+  ],
+  "hyperv": {
+    "status": "failed",
+    "exception_type": "VirtualizationException",
+    "message": "Value cannot be null. (Parameter 'name')",
+    "empty_success_claimed": false
+  },
+  "local_vmnet_ipv4": [
+    {
+      "InterfaceAlias": "VMware Network Adapter VMnet8",
+      "IPAddress": "192.168.75.1",
+      "PrefixLength": 24
+    },
+    {
+      "InterfaceAlias": "wt0",
+      "IPAddress": "100.70.228.252",
+      "PrefixLength": 16
+    }
+  ],
+  "target_route": [
+    {
+      "DestinationPrefix": "192.168.72.0/24",
+      "InterfaceAlias": "wt0",
+      "NextHop": "0.0.0.0",
+      "RouteMetric": 1
+    }
+  ],
+  "netbird": {
+    "routing_peer": [
+      {
+        "fqdn": "willoptpc-172-11.netbird.selfhosted",
+        "netbirdIp": "100.70.172.11",
+        "status": "Connected",
+        "connectionType": "Relayed",
+        "networks": [
+          "192.168.72.0/24"
+        ]
+      }
+    ],
+    "cli_version": "0.81.2",
+    "daemon_version": "0.81.2",
+    "daemon_status": "Connected"
+  },
+  "known_hosts": {
+    "managed_file_exists": false,
+    "checks": [
+      {
+        "host": "willoptpc-172-11.netbird.selfhosted",
+        "lookup_exit": 1,
+        "entry_count": 0
+      },
+      {
+        "host": "100.70.172.11",
+        "lookup_exit": 1,
+        "entry_count": 0
+      }
+    ],
+    "user_file_exists": true
+  },
+  "existing_management_sessions": {
+    "smb": [],
+    "powershell": []
+  }
+}

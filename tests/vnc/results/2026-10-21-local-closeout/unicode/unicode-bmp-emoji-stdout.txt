@@ -1,0 +1,3 @@
+ready_ms=216
+text_rejected=unicode_compatibility
+notice=VNC 瀛楃鍏煎妯″紡锛氭湰娆¤緭鍏ュ寘鍚笉鍏煎瀛楃锛堝閮ㄥ垎琛ㄦ儏锛夛紝鏁存鏈彂閫併€傝嫢鏈嶅姟绔敮鎸佽繖浜涘瓧绗︼紝鍙叧闂吋瀹规ā寮忓悗閲嶆柊杩炴帴

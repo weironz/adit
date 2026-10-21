@@ -1,0 +1,12 @@
+{
+    "outcome":  "failed",
+    "scope":  "Synthetic native GDI paint only; ClearCodec cache coverage requires separate real capture replay",
+    "started_utc":  "2026-10-20T20:40:24.2006021Z",
+    "owner_name":  "AditVncKeys-c11d36edff21422f8fd01acb1b637803",
+    "duration_seconds":  60,
+    "interval_ms":  350,
+    "process_identity":  null,
+    "timed_out":  false,
+    "owned_process_stopped":  false,
+    "codec_coverage_claimed":  false
+}

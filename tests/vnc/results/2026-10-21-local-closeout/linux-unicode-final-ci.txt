@@ -1,0 +1,94 @@
+rustc 1.99.1 (58cf8f9c3 2026-10-13)
+cargo 1.99.1 (5f94df478 2026-08-27)
+    Checking adit-domain v0.1.75 (/src/crates/adit-domain)
+    Checking ssh-key v0.7.0-rc.10
+    Checking vnc-rs v0.6.0 (/src/crates/adit-vnc)
+    Checking zbus v5.16.0
+    Checking swash v0.2.9
+    Checking wgpu-hal v27.0.4
+    Checking smithay-client-toolkit v0.20.0
+    Checking smithay-client-toolkit v0.19.2
+    Checking adit-rdp-proto v0.1.75 (/src/crates/adit-rdp-proto)
+    Checking sctk-adwaita v0.10.1
+    Checking smithay-clipboard v0.7.3
+    Checking russh v0.61.2
+    Checking winit v0.30.13
+    Checking clipboard_wayland v0.2.2
+    Checking window_clipboard v0.5.1
+    Checking cosmic-text v0.15.0
+    Checking wgpu-core-deps-windows-linux-android v27.0.0
+    Checking wgpu-core v27.0.3
+    Checking iced_graphics v0.14.0
+    Checking iced_tiny_skia v0.14.0
+    Checking iced_program v0.14.0
+    Checking secret-service v5.1.0
+    Checking mundy v0.2.3
+    Checking ashpd v0.10.3
+    Checking ashpd v0.11.1
+    Checking iced_winit v0.14.0
+    Checking adit-ssh v0.1.75 (/src/crates/adit-ssh)
+    Checking zbus-secret-service-keyring-store v1.0.0
+    Checking keyring v4.1.2
+    Checking adit-storage v0.1.75 (/src/crates/adit-storage)
+    Checking adit-session v0.1.75 (/src/crates/adit-session)
+    Checking adit-sync v0.1.75 (/src/crates/adit-sync)
+    Checking wgpu v27.0.1
+    Checking cryoglyph v0.1.0
+    Checking iced_wgpu v0.14.0
+    Checking dark-light v2.0.0
+    Checking rfd v0.15.4
+    Checking iced_renderer v0.14.0
+    Checking iced_widget v0.14.2
+    Checking iced v0.14.0
+    Checking adit-ui v0.1.75 (/src/crates/adit-ui)
+    Checking adit-app v0.1.75 (/src/crates/adit-app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.70s
+    Checking image v0.25.10
+    Checking iced_graphics v0.14.0
+    Checking adit-session v0.1.75 (/src/crates/adit-session)
+    Checking iced_wgpu v0.14.0
+    Checking iced_tiny_skia v0.14.0
+    Checking iced_program v0.14.0
+    Checking iced_winit v0.14.0
+    Checking iced_renderer v0.14.0
+    Checking iced_widget v0.14.2
+    Checking iced v0.14.0
+    Checking adit-ui v0.1.75 (/src/crates/adit-ui)
+error: unused import: `imp::worker_thread_id`
+   --> crates/adit-ui/examples/../src/keyboard_hook.rs:759:16
+    |
+759 | pub(crate) use imp::worker_thread_id;
+    |                ^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `-D unused-imports` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[allow(unused_imports)]`
+
+error: function `worker_thread_id` is never used
+   --> crates/adit-ui/examples/../src/keyboard_hook.rs:699:19
+    |
+699 |     pub(crate) fn worker_thread_id() -> Option<u32> {
+    |                   ^^^^^^^^^^^^^^^^
+    |
+    = note: `-D dead-code` implied by `-D warnings`
+    = help: to override `-D warnings` add `#[expect(dead_code)]` or `#[allow(dead_code)]`
+
+error: function `drain_vnc` is never used
+   --> crates/adit-ui/examples/../src/keyboard_hook.rs:731:19
+    |
+731 |     pub(crate) fn drain_vnc(_: Option<super::vnc_order::ModifierEdge>) -> (Vec<Stroke>, bool) {
+    |                   ^^^^^^^^^
+
+error: function `owns_vnc_window_modifier` is never used
+   --> crates/adit-ui/examples/../src/keyboard_hook.rs:734:19
+    |
+734 |     pub(crate) fn owns_vnc_window_modifier(_: super::vnc_order::ModifierEdge) -> bool {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: function `filtered_vnc_control_before_alt` is never used
+   --> crates/adit-ui/examples/../src/keyboard_hook.rs:737:19
+    |
+737 |     pub(crate) fn filtered_vnc_control_before_alt(
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: could not compile `adit-ui` (example "keyboard_hook_probe") due to 5 previous errors
+warning: build failed, waiting for other jobs to finish...

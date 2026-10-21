@@ -1,0 +1,7 @@
+{
+  "scope": "Latest control driver CLOSE completion only; earlier mixed stderr deliberately excluded",
+  "driver_pid": 54084,
+  "driver_exit": 0,
+  "helper_exit_code": 0,
+  "basis": "Controller confirmation after latest CLOSE; the later helper_exit=0 belongs to this connection, not the earlier probe deadline"
+}

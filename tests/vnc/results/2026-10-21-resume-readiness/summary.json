@@ -1,0 +1,38 @@
+{
+  "archived_utc": "2026-10-20T20:29:50.676765+00:00",
+  "target_uuid": "A8A34D56-3ADC-763F-E8EC-203ACC603E63",
+  "local_inventory_match_count": 0,
+  "local_hyperv_inventory": "failed, not empty-success",
+  "netbird_client_version": "0.81.2",
+  "netbird_daemon_version": "0.81.2",
+  "routing_peer": "willoptpc-172-11.netbird.selfhosted",
+  "routing_peer_ip": "100.70.172.11",
+  "strict_ssh_22": "rejected; no remote metadata received",
+  "daemon_public_key": {
+    "found": true,
+    "algorithm": "ssh-ed25519",
+    "fingerprint_sha256": "SHA256:GtHr4w7pEgUvE1OzeYHh3ttyZqXfnOyYYIl/9LemD50",
+    "public_key_bytes_archived": false
+  },
+  "port_22": {
+    "banner_software_identifier": "OpenSSH_for_Windows_9.5",
+    "daemon_bound_key_comparison": "mismatch",
+    "known_hosts_updated": false,
+    "authentication_sent_by_keyscan": false
+  },
+  "port_22022": {
+    "result": "No banner received within bounded attempt; TimeoutError",
+    "tcp_vs_read_timeout_distinguished": false,
+    "keyscan_attempted": false,
+    "authentication_attempted": false,
+    "metadata_query_attempted": false
+  },
+  "vm_host_uuid_mapping_verified": false,
+  "external_resume_route_verified": false,
+  "independent_nic_rollback_path_verified": false,
+  "actual_windows_nic_switch_acceptance": "not run",
+  "actual_windows_os_sleep_recovery_acceptance": "not run",
+  "raw_auth_stdout_stderr_archived": false,
+  "credentials_or_tokens_read": false,
+  "network_power_vm_changes_performed": false
+}

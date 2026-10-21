@@ -1,0 +1,45 @@
+{
+  "version": "0.81.2",
+  "sources": [
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/ssh/client/client.go#L418-L445",
+      "claim": "Strict callback tries daemon verification first; known_hosts only as fallback."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/ssh/client/client.go#L395-L414",
+      "claim": "Windows managed known_hosts location under ProgramData/ssh/ssh_known_hosts.d/99-netbird."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/ssh/server/server.go#L32-L35",
+      "claim": "External default SSH port 22; internal SSH port 22022. These constants do not prove remote reachability."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/ssh/detection/detection.go#L55-L93",
+      "claim": "Banner classification uses NetBird-SSH-Server and JWT marker."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/cmd/ssh.go#L794-L820",
+      "claim": "Detect exits 2 for regular server AND detection failure; exit code alone cannot discriminate."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/ssh/common.go#L59-L75",
+      "claim": "Daemon verifier requests GetPeerSSHHostKey; compares returned stored public key to presented key."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/ssh/common.go#L140-L180",
+      "claim": "Stored key parse and exact public-key bytes comparison; callback tries hostname then remote address."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/proto/daemon.proto",
+      "claim": "GetPeerSSHHostKey request field1 peerAddress; response key1/IP2/FQDN3/found4. No JWT/config RPC called."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/internal/daemonaddr/pipe.go",
+      "claim": "ProtectedPrefix/Administrators pipe is tried before the plain name; no plain/TCP downgrade used here."
+    },
+    {
+      "url": "https://github.com/netbirdio/netbird/blob/v0.81.2/client/internal/daemonaddr/pipe_windows.go",
+      "claim": "Official daemon pipe dial uses SECURITY_IDENTIFICATION; adapter matches this level."
+    }
+  ]
+}

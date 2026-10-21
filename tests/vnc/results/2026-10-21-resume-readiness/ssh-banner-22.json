@@ -1,0 +1,15 @@
+{
+  "utc": "2026-10-20T20:23:12.252660+00:00",
+  "address": "100.70.172.11",
+  "port": 22,
+  "banner_received": true,
+  "valid_ssh_prefix": true,
+  "advertises_netbird_identifier": false,
+  "advertises_openssh": true,
+  "software_identifier": "OpenSSH_for_Windows_9.5",
+  "received_bytes": 33,
+  "banner_sha256": "c9b12c3413ce68012d25b4df7e6a86fe706ff2112160d4b0b64ff4f5b30c8e6e",
+  "error_type": null,
+  "authentication_attempted": false,
+  "client_ssh_banner_sent": false
+}

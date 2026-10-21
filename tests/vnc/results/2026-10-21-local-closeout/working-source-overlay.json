@@ -1,0 +1,81 @@
+{
+  "base": "28c8546b9eebef24863d68db1129c2028bd3daa1",
+  "state": "frozen working source overlay, not yet committed",
+  "files": [
+    {
+      "path": "crates/adit-domain/src/lib.rs",
+      "sha256": "654be7739436181fa8514a5d600dd6ea3df169ae3c197fb32badf31a3c456e80",
+      "bytes": 23558
+    },
+    {
+      "path": "crates/adit-session/examples/vnc_fixture_driver.rs",
+      "sha256": "8da49ffcce82cac1ec43cdf61145be73fa782352014785592f2475fae8ba4e53",
+      "bytes": 7790
+    },
+    {
+      "path": "crates/adit-session/src/lib.rs",
+      "sha256": "74ab61911ffa62ea0dfff6d11d8d0f19fc85357e1e932b6f3dd0704acec30e86",
+      "bytes": 176994
+    },
+    {
+      "path": "crates/adit-session/src/vnc_client.rs",
+      "sha256": "c48ac3548f724bc16a42a48c18edfae8472214f8b33d6f860f049edd3f4aad08",
+      "bytes": 50975
+    },
+    {
+      "path": "crates/adit-storage/src/lib.rs",
+      "sha256": "41b842a67f93e55ee32a21c310d7651969f9ce7331f9e3ab6c11f116fda13bbb",
+      "bytes": 65754
+    },
+    {
+      "path": "crates/adit-ui/src/editor.rs",
+      "sha256": "c8e2d0a17a59e869f5366bab660c6472546ce558b8f154a1688c6f6ed4bd060f",
+      "bytes": 32971
+    },
+    {
+      "path": "crates/adit-ui/src/input.rs",
+      "sha256": "b5836645563e2f8cd1f2ef789859403452996143a100bfb0ba6ca7422dc14d31",
+      "bytes": 25607
+    },
+    {
+      "path": "crates/adit-ui/src/lib.rs",
+      "sha256": "9145ae84681383ff5d9afd63d2dd005bfcb8077d2f300c660d5db75269a1d394",
+      "bytes": 158872
+    },
+    {
+      "path": "crates/adit-ui/src/update_loop.rs",
+      "sha256": "fa837adc67d128fcdfca687d503be03cc72e1c248ec03d3e35b5911983b7eddc",
+      "bytes": 165683
+    },
+    {
+      "path": "crates/adit-ui/src/vnc_input_wire_tests.rs",
+      "sha256": "2d50b9a5b2ecf578ad2289e26b6ba392a3735cb610f5b9dd265fb0b9b1b3dbb6",
+      "bytes": 25747
+    },
+    {
+      "path": "crates/adit-ui/src/workspace.rs",
+      "sha256": "8b3738f756264e451759e5554ff6fa190172960676463b8cf585187aaf670e25",
+      "bytes": 61416
+    },
+    {
+      "path": "crates/adit-vnc/src/clipboard.rs",
+      "sha256": "6c40e7ed74b0c4acdc70a095214359a0e7e70c91ea1bc493cbba7113a4be9dbc",
+      "bytes": 21395
+    },
+    {
+      "path": "crates/adit-ui/src/workspace_error_tests.rs",
+      "sha256": "786ac7f81d3cdc25f5b3979be129fd9b0c493e9a595bdbf51d621f7a8d936eb0",
+      "bytes": 10801
+    },
+    {
+      "path": "crates/adit-rdp-proto/examples/rdp_failure_ipc_peer.rs",
+      "sha256": "c5fc388dbc2fa457a38472123cd36bdf98a4016940ba8d5e895d4a7d1a44d3b5",
+      "bytes": 4195
+    },
+    {
+      "path": "crates/adit-ui/examples/keyboard_hook_probe.rs",
+      "bytes": 4445,
+      "sha256": "1729d629fe85f275c3ea6c202b7889c3231663c2bc98b5a730b909569ac24bc0"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "utc": "2026-10-20T20:24:12.497Z",
+  "transport": "protected Windows named pipe",
+  "rpc": "/daemon.DaemonService/GetPeerSSHHostKey",
+  "read_only": true,
+  "raw_key_saved": false,
+  "results": [
+    {
+      "peer_address": "willoptpc-172-11.netbird.selfhosted:22",
+      "http_status": null,
+      "grpc_status": "missing",
+      "response_bytes": 0
+    },
+    {
+      "peer_address": "100.70.172.11",
+      "error": "ERR_HTTP2_INVALID_SESSION",
+      "http_status": null,
+      "grpc_status": "missing",
+      "response_bytes": 0
+    }
+  ],
+  "client_error": null
+}

@@ -1,0 +1,31 @@
+{
+  "algorithm": "SHA-256",
+  "captured_utc": "2026-10-21T00:02:31.433059+00:00",
+  "scope": "Current source after ACK/UTF-8 phase fix; not the source/binary identity used for the archived VM runs. No VM rerun of ACK fixture.",
+  "source_files": [
+    {
+      "path": "crates/adit-session/examples/vnc_fixture_driver.rs",
+      "sha256": "8da49ffcce82cac1ec43cdf61145be73fa782352014785592f2475fae8ba4e53"
+    },
+    {
+      "path": "tests/vnc/windows-vm-tight-unicode.ps1",
+      "sha256": "dae6c817d5170dfc25bfb13f177a2cd527b601aebf3f9671c27bd0df3f7eb4c3"
+    },
+    {
+      "path": "crates/adit-session/src/vnc_client.rs",
+      "sha256": "c48ac3548f724bc16a42a48c18edfae8472214f8b33d6f860f049edd3f4aad08"
+    },
+    {
+      "path": "crates/adit-ui/src/vnc_input_wire_tests.rs",
+      "sha256": "2d50b9a5b2ecf578ad2289e26b6ba392a3735cb610f5b9dd265fb0b9b1b3dbb6"
+    }
+  ],
+  "archive_review": {
+    "json_fields": "closed allowlist",
+    "text_fields": "synthetic fixture inputs only",
+    "stdout": "ready_ms, rejection marker, notice only; original mojibake retained",
+    "passwords_copied": false,
+    "screenshots_or_desktop_pixels_copied": false,
+    "executables_copied": false
+  }
+}
