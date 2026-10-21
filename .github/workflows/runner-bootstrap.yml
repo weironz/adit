@@ -1,0 +1,118 @@
+name: Runner bootstrap
+
+# Manual environment initialization, independent of version publishing.
+# Like Mica's bootstrap, fetch only the script before Git is guaranteed to exist.
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Runner to initialize/check'
+        type: choice
+        default: windows
+        options: [windows, linux, all]
+      check_only:
+        description: 'Check existing tools without installing or updating'
+        type: boolean
+        default: false
+      install_system_dependencies:
+        description: 'Windows: install missing system tools (requires an already elevated runner)'
+        type: boolean
+        default: false
+      validate_release_gate:
+        description: 'Read-only check of the exact-commit release gate (wait for CI success first)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  windows:
+    if: inputs.platform == 'windows' || inputs.platform == 'all'
+    runs-on: [self-hosted, Windows, X64, home-workstation, repo-adit]
+    timeout-minutes: 150
+    steps:
+      - name: Bootstrap actual Windows service identity
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_ONLY: ${{ inputs.check_only }}
+          INSTALL_SYSTEM: ${{ inputs.install_system_dependencies }}
+        run: |
+          $ErrorActionPreference='Stop'
+          [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072
+          $script=Join-Path $env:RUNNER_TEMP 'adit-runner-bootstrap-windows.ps1'
+          Invoke-WebRequest -UseBasicParsing -OutFile $script `
+            -Uri "$env:GITHUB_API_URL/repos/$env:GITHUB_REPOSITORY/contents/scripts/runner-bootstrap-windows.ps1?ref=$env:GITHUB_SHA" `
+            -Headers @{Authorization="Bearer $env:GH_TOKEN";Accept='application/vnd.github.raw'}
+          & $script -CheckOnly:($env:CHECK_ONLY -eq 'true') -InstallSystemDependencies:($env:INSTALL_SYSTEM -eq 'true')
+      - name: Check initialization is repeatable
+        shell: powershell
+        run: |
+          & (Join-Path $env:RUNNER_TEMP 'adit-runner-bootstrap-windows.ps1') -CheckOnly
+      - name: Compile native and installer dependency probes
+        shell: pwsh
+        run: |
+          $ErrorActionPreference='Stop'
+          $dir=Join-Path $env:RUNNER_TEMP ('adit-bootstrap-probe-'+[guid]::NewGuid().ToString('N'))
+          New-Item -ItemType Directory -Path $dir | Out-Null
+          $src=Join-Path $dir 'probe.rs'
+          $exe=Join-Path $dir 'probe.exe'
+          [IO.File]::WriteAllText($src,'fn main() { println!("Windows native link/run OK"); }')
+          rustc +stable $src -o $exe
+          if($LASTEXITCODE -ne 0){throw 'Native linker probe failed'}
+          & $exe
+          if($LASTEXITCODE -ne 0){throw 'Native execution failed'}
+          $iss=Join-Path $dir 'probe.iss'
+          $lines=@('[Setup]','AppName=Adit runner dependency probe','AppVersion=0.0.0','DefaultDirName={tmp}\AditDependencyProbe','PrivilegesRequired=lowest','Uninstallable=no',('OutputDir='+$dir),'OutputBaseFilename=dependency-probe','[Files]',('Source: "'+$exe+'"; DestDir: "{app}"'))
+          [IO.File]::WriteAllLines($iss,$lines,[Text.UTF8Encoding]::new($false))
+          & $env:ADIT_ISCC $iss
+          if($LASTEXITCODE -ne 0){throw 'Inno compiler probe failed'}
+          if(-not (Test-Path -LiteralPath (Join-Path $dir 'dependency-probe.exe'))){throw 'Probe installer missing'}
+          "Windows bootstrap, CheckOnly, native link/run and Inno compile passed. No installer was run or published." >> $env:GITHUB_STEP_SUMMARY
+      # Git is now available; never require checkout before the initial bootstrap.
+      - uses: actions/checkout@v4
+        if: inputs.validate_release_gate
+        with:
+          clean: false
+          persist-credentials: false
+      - name: Check release gate without bumping, tagging or publishing
+        if: inputs.validate_release_gate
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/test-release-gate.ps1
+          . ./scripts/release-validation.ps1
+          $current=[version](Get-AditWorkspaceVersion $PWD.Path)
+          $next='{0}.{1}.{2}' -f $current.Major,$current.Minor,($current.Build+1)
+          ./scripts/check-release-gate.ps1 -Version $next
+          'Pure negative cases and the live exact-commit gate passed; no publishing.' >> $env:GITHUB_STEP_SUMMARY
+  linux:
+    if: inputs.platform == 'linux' || inputs.platform == 'all'
+    runs-on: [self-hosted, Linux, X64, home-workstation, repo-adit]
+    timeout-minutes: 30
+    steps:
+      - name: Bootstrap Linux dependencies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHECK_ONLY: ${{ inputs.check_only }}
+        run: |
+          set -euo pipefail
+          script="$RUNNER_TEMP/adit-setup-linux-runner.sh"
+          curl -fsSL --retry 3 -H "Authorization: Bearer $GH_TOKEN" -H 'Accept: application/vnd.github.raw' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/contents/.github/scripts/setup-linux-runner.sh?ref=$GITHUB_SHA" -o "$script"
+          if [[ "$CHECK_ONLY" == true ]]; then bash "$script" --check-only; else bash "$script"; fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: inputs.check_only == false
+        with:
+          components: clippy
+      - name: Check Linux toolchain
+        shell: bash
+        run: |
+          rustc +stable --version
+          cargo +stable --version
+          docker info --format 'Docker {{.ServerVersion}}'
+          echo 'Linux dependencies and Rust toolchain ready; no publishing.' >> "$GITHUB_STEP_SUMMARY"

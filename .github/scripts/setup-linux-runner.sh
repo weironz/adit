@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+check_only=false
+if [[ ${1:-} == --check-only ]]; then check_only=true; shift; fi
+if (($#)); then echo 'usage: setup-linux-runner.sh [--check-only]' >&2; exit 2; fi
 
 [[ $(uname -sm) == 'Linux x86_64' ]] || { echo 'Linux x64 runner required' >&2; exit 1; }
 sudo -n true
@@ -14,6 +17,7 @@ for package in "${packages[@]}"; do
   [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true) == 'install ok installed' ]] || missing+=("$package")
 done
 if ((${#missing[@]})); then
+  if "$check_only"; then printf 'Missing dependency: %s\n' "${missing[@]}" >&2; exit 1; fi
   sudo apt-get update
   sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}"
 fi

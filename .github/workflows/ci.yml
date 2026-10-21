@@ -382,3 +382,118 @@ jobs:
       - name: Real SSH integration
         if: runner.os == 'Linux'
         run: cargo test -p adit-ssh --features integration --locked -- --include-ignored --test-threads=4
+
+# === ORIGINAL NON-X64 PLATFORM CONFIGURATION (PAUSED) ===
+# Original build matrix: windows-latest, windows-11-arm, ubuntu-latest,
+# ubuntu-24.04-arm, macos-latest. Original Linux packaging also included ARM64.
+#   package-macos:
+#     name: package · app bundle + dmg (macos)
+#     runs-on: macos-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#
+#       # Restore only, so the release job's cache stops being evicted — the long
+#       # note is on package-linux.
+#       - name: Cache cargo
+#         uses: Swatinem/rust-cache@v2
+#         with:
+#           save-if: false
+#
+#       - name: Build the app
+#         run: |
+#           rustup target add x86_64-apple-darwin
+#           cargo build --release -p adit-app --locked --target x86_64-apple-darwin
+#           cargo build --release -p adit-app --locked
+#
+#       # Intel first and native last, so the Adit.app left on disk for the launch
+#       # check below is the one this runner can actually execute — the runners are
+#       # Apple Silicon and Rosetta is not guaranteed to be installed on them.
+#       - name: Build the bundles
+#         run: |
+#           installer/build-macos-bundle.sh '' x86_64-apple-darwin
+#           installer/build-macos-bundle.sh
+#
+#       # GitHub's macOS runners have no dependable window session, so this may
+#       # well fail for reasons that say nothing about the app. Kept as a hard
+#       # assertion anyway: if it passes, macOS startup is proven the same way
+#       # Linux's is, and if it fails the log says whether the cause is a missing
+#       # display or a real crash. Delete it rather than let it flap.
+#       - name: Launch the bundle
+#         env:
+#           RUST_BACKTRACE: '1'
+#         run: |
+#           Adit.app/Contents/MacOS/adit > macos-smoke.log 2>&1 &
+#           pid=$!
+#           sleep 25
+#           if kill -0 "$pid" 2>/dev/null; then
+#             kill "$pid" 2>/dev/null || true
+#             echo "Adit.app stayed up; macOS startup is clean"
+#           else
+#             echo "::error::Adit.app exited on its own during startup"
+#             exit 1
+#           fi
+#
+#       - name: Startup log
+#         if: always()
+#         run: cat macos-smoke.log 2>/dev/null || echo '(not produced)'
+#
+#       - uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: adit-macos-unsigned
+#           path: adit_*_unsigned.dmg
+#           if-no-files-found: warn
+#
+#   # The Windows installer has never been built by CI — it was only ever produced
+#   # at release time, where a broken .iss fails the release itself. Only arm64 is
+#   # checked here: it is the new path, and it is the one whose binaries and Inno
+#   # directives have never shipped. x64 takes the `#else` branch that every
+#   # previous release used verbatim. Pushes only, since this is a release build
+#   # and doubling it on every PR buys nothing.
+#   package-windows-arm64:
+#     name: package · installer builds (aarch64)
+#     if: github.event_name == 'push'
+#     runs-on: windows-11-arm
+#     steps:
+#       - uses: actions/checkout@v4
+#
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#
+#       # Restore only, so the release job's cache stops being evicted — the long
+#       # note is on package-linux. The rdp workspace is listed because this job
+#       # builds the helper: a restore-only entry still has to know where to put
+#       # what it restores.
+#       - name: Cache cargo
+#         uses: Swatinem/rust-cache@v2
+#         with:
+#           save-if: false
+#           workspaces: |
+#             .
+#             crates/adit-rdp
+#
+#       - name: Build the app
+#         run: cargo build --release -p adit-app --locked
+#
+#       - name: Build the RDP helper
+#         run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
+#
+#       - name: Install Inno Setup
+#         run: choco install innosetup --no-progress -y
+#
+#       # No /DAppVersion: the version is irrelevant to whether this packages, and
+#       # the default keeps the artifact obviously not a release build.
+#       - name: Build the installer
+#         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DArch=arm64" installer\adit.iss'
+#
+#       - uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: adit-installer-aarch64
+#           path: target/release/adit-installer-*_arm64.exe
+#           if-no-files-found: warn
+#
+#

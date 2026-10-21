@@ -29,4 +29,4 @@ Linux 额外执行换行和已保存输入证据审计、真实 x11vnc/TigerVNC�
 
 本地开发仍使用 `just ci` / `just ci-vnc`。正式 runner 的依赖准备不安装或启动生产 VNC 服务，不修改系统显示/键盘/睡眠配置。
 
-这次迁移只处理正式 `ci.yml`。历史专用验收工作流与 `release.yml` 没有被自动触发；发布流程仍须另行明确授权。本 CI 不改版本、不打 tag、不创建 GitHub Release。
+正式 CI 和发布工作流均使用自托管 x64 runner；发布只启用 Windows x64，原始多平台配置保留为注释。手动环境初始化入口为 `.github/workflows/runner-bootstrap.yml`，Windows 与 CI/发布共用 `scripts/runner-bootstrap-windows.ps1`，Linux 复用已有依赖脚本。历史专用验收工作流不自动触发；发布流程仍须另行明确授权。普通 CI 和 bootstrap 不改版本、不打 tag、不创建 GitHub Release。

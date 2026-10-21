@@ -1,3 +1,62 @@
+# 发布操作手册
+
+当前发布工作流只使用仓库专用 Windows x64 runner `home-workstation-windows-adit-01`，没有托管 runner 回退。ARM64、macOS 和额外 Linux 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
+
+## 初始化与只读检查
+
+运行环境初始化，不会构建正式版本或发布：
+
+```powershell
+gh workflow run runner-bootstrap.yml -f platform=windows
+```
+
+已准备好环境后，只检查依赖，并验证精确提交门禁（需先让当前 main CI 通过）：
+
+```powershell
+gh workflow run runner-bootstrap.yml -f platform=windows -f check_only=true -f validate_release_gate=true
+```
+
+Windows 脚本 `scripts/runner-bootstrap-windows.ps1` 与普通 CI 共用。GitHub CLI、just 和 Inno Setup 使用校验 SHA-256 的便携工具，安装在 runner 可写缓存；不提升 NETWORK SERVICE 权限、不更改服务账号、不重启服务。裸机缺少 Git/PowerShell/MSVC/SDK 时，已提升权限的管理员可显式使用 `-InstallSystemDependencies`，默认服务模式不会尝试提权。
+
+Linux 初始化可用 `-f platform=linux`，两平台一起检查用 `-f platform=all`。Linux 使用现有依赖脚本，支持 `--check-only`。
+
+## 发布门禁
+
+`scripts/check-release-gate.ps1` 只读检查以下条件：
+
+- 只能从 main 发布，而且远端 main 仍等于启动时的 SHA。
+- 工作区、RDP helper、IPC crate 当前版本一致；请求必须是下一个 patch 版本。
+- 同一 SHA 的 push CI 必须 completed/success；两个实际任务都必须在指定的 Windows/Linux x64 自托管 runner 上成功，不能用 skipped/托管 runner/其他提交替代。
+- 请求的 tag 与 Release 都不存在；API 权限或网络错误不当作“尚不存在”。
+
+`scripts/test-release-gate.ps1` 覆盖合法路径和拒绝条件，不连接网络、不推送。bootstrap 可在只读 token 下验证真实门禁；其临时 0.0.0 依赖探针安装包只在临时目录编译，不运行或发布。
+
+## 正式发布（必须另行明确授权）
+
+先确认当前 main 的 CI 成功，然后按实际下一个 patch 版本手动触发：
+
+```powershell
+gh run list --workflow ci.yml --branch main --limit 1
+gh workflow run release.yml -f version=0.1.76
+gh run watch <run-id> --exit-status --interval 30
+```
+
+示例版本仅展示格式，不能直接照抄旧版本。`all_platforms` 输入已注释停用，不能用它恢复多平台发布。发布期间不要往 main 推送，包括文档提交。
+
+工作流顺序：checkout 精确 SHA → 只读门禁 → 检查依赖 → bump 三份 manifest/两个 lockfile → 校验版本锁步 → locked release 构建 app 和独立 helper → Inno 编译并确认资产 → 再检查 main → 原子推送 bump/tag → 创建 GitHub Release。只有这些步骤全部完成才算发布成功。
+
+安装包失败时不会先推 tag。远端 main/tag 原子推送失败不会只落一个引用；若引用已推送而后续 GitHub Release 创建失败，需要检查现有 tag/Release，不能假设完全回滚或盲目重用版本。
+
+最后以实际资产确认：
+
+```powershell
+gh release view v0.1.76
+git pull --ff-only
+```
+
+应有 `adit-installer-vX.Y.Z.exe`。不从本地上传发布物，不手工绕过绿灯门禁，不把依赖探针或 CI artifact 当正式发布。
+
+<!-- 以下是迁移前的完整操作手册，仅为历史参考，当前规则以上方为准。
 # 发版操作手册
 
 给人看的一步一步发版流程。发版**全程在 CI 上完成**——本地不构建、不发布任何
@@ -145,3 +204,5 @@ git pull --ff-only
   对应的 bump 提交，版本号会对不上。
 - **发版期间不要推 main。** 见第 4 步——这是唯一一种"绿得毫无破绽却什么都没
   发布"的失败方式。
+
+-->

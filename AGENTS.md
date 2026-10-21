@@ -157,7 +157,14 @@ reproduce.
   gh workflow run release.yml -f version=0.1.60
   ```
 
-  That publishes the **Windows x64 installer only**. The arm64, Linux and macOS
+  That publishes the **Windows x64 installer only**, on the designated self-hosted
+  Windows x64 runner. ARM64/macOS and extra Linux release jobs are commented out,
+  with their original configuration preserved. `all_platforms` is paused; do not
+  dispatch it. Use `runner-bootstrap.yml` for environment initialization and read-only
+  gate checks, never `release.yml` just to test dependencies. See `docs/release.md`.
+
+  <!-- Historical multi-platform switch, preserved but currently disabled:
+  The arm64, Linux and macOS
   jobs are every slow job in the release and none of the three is exercised day
   to day, so they are off unless asked for:
 
@@ -171,6 +178,7 @@ reproduce.
   update**, not the app: the updater matches assets on architecture strictly and
   never offers an x64 installer to an ARM machine, so it shows 「该版本暂无
   Windows 安装包」 and those users update from a release that did build it.
+  -->
 
   That dispatches [`.github/workflows/release.yml`](.github/workflows/release.yml)
   (a `workflow_dispatch`), which **requires `ci.yml` to already be green on the

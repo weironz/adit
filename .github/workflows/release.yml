@@ -1,393 +1,502 @@
 name: Release
 
-# Manually triggered — Actions tab → "Release" → Run workflow, or from a shell:
-#   gh workflow run release.yml -f version=0.1.60
-#
-# The whole release happens HERE, on CI: it requires ci.yml to be green on the
-# commit being released, bumps the three crate versions, builds both binaries,
-# packages the installer, commits+tags the bump, and publishes the GitHub
-# Release. Nothing is built or published from a developer's machine, and `just`
-# is NOT involved in triggering it.
+# Manual publishing only. Bootstrap has its own read-only workflow.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Patch version to release, e.g. 0.1.60 (no leading v)'
+        description: 'Next patch version, e.g. 0.1.76 (no leading v)'
         required: true
         type: string
-      # Off by default because development is Windows-first and on x64: a
-      # default release publishes the x64 installer and nothing else. The
-      # arm64, Linux and macOS jobs are every slow job in the release — arm64
-      # alone was 11.9 minutes of it, serialised behind the x64 job at that —
-      # and none of the three is exercised day to day. A checkbox rather than a
-      # code change, so re-enabling them is a decision made when triggering the
-      # release instead of a commit someone has to remember — and so a release
-      # that skipped them says so in its own run inputs afterwards.
-      #
-      # Turning it on does not rebuild the x64 installer. These jobs only ever
-      # attach extra assets to the release the x64 job already published, which
-      # is also why a release can be topped up later by re-running with it set.
-      all_platforms:
-        description: 'Also build the arm64, Linux and macOS packages'
-        required: false
-        default: false
-        type: boolean
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: adit-release
+  cancel-in-progress: false
 
 env:
   CARGO_TERM_COLOR: always
-  # Cloud-sync OAuth client ids, baked in at build time and read with
-  # `option_env!` (crates/adit-sync/src/backend/mod.rs). Set at the workflow
-  # level because several jobs build binaries and each target needs them.
-  #
-  # These are public identifiers, not secrets: PKCE exists precisely because a
-  # client id in a distributed binary cannot be kept private, and every user
-  # sees theirs in the authorize URL. They live in repository secrets only to
-  # keep the shared API quota from being copy-pasted straight out of the repo.
-  #
-  # An unset one is not an error — the provider simply reports itself as
-  # unconfigured in the panel, which is also what a local or forked build sees.
+  CARGO_BUILD_JOBS: '2'
+  RELEASE_VERSION: ${{ inputs.version }}
+  # Public OAuth client IDs are compiled into the app, never printed here.
   ADIT_SYNC_GOOGLE_CLIENT_ID: ${{ secrets.ADIT_SYNC_GOOGLE_CLIENT_ID }}
   ADIT_SYNC_ONEDRIVE_CLIENT_ID: ${{ secrets.ADIT_SYNC_ONEDRIVE_CLIENT_ID }}
   ADIT_SYNC_DROPBOX_CLIENT_ID: ${{ secrets.ADIT_SYNC_DROPBOX_CLIENT_ID }}
 
-# Needed to push the bump commit + tag and to create the GitHub Release.
-permissions:
-  contents: write
-  # Reading ci.yml's conclusion for the commit being released. Once a
-  # `permissions` block exists at all, every scope left out of it is `none` — so
-  # without this line the green-CI check gets a 403 instead of an answer, and
-  # fails every release rather than gating it.
-  actions: read
-
 jobs:
   release:
-    name: require green CI · bump · build · package · publish
-    runs-on: windows-latest
+    name: guarded Windows x64 installer release
+    # Previously: runs-on: windows-latest (complete original workflow below).
+    runs-on: [self-hosted, Windows, X64, home-workstation, repo-adit]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: pwsh
     steps:
       - uses: actions/checkout@v4
-
-      - name: Validate version
-        shell: bash
+        with:
+          ref: ${{ github.sha }}
+          clean: false
+          persist-credentials: true
+      - name: Clean checkout while retaining compiler outputs
+        run: git clean -ffdx -e /target/ -e /crates/adit-rdp/target/
+      - name: Require main, next patch and exact successful self-hosted CI
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\scripts\check-release-gate.ps1
+      - name: Prepare Windows build and release tools
+        shell: powershell
+        run: .\scripts\runner-bootstrap-windows.ps1
+      - name: Bump package and lockfile versions
         run: |
-          v='${{ github.event.inputs.version }}'
-          if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error::version must be X.Y.Z with no leading v (got '$v')"
-            exit 1
-          fi
-
-      # Release only from a commit ci.yml has already passed on.
-      #
-      # This replaces re-running clippy and the tests here, which spent 6.5
-      # minutes re-deriving an answer ci.yml had already computed for the same
-      # tree when it was pushed. It is *stricter* than what it replaces, not
-      # looser: nothing used to check that main was green at all — the gate
-      # merely happened to recompute it, so a release could be cut from a commit
-      # whose CI had never run or had been cancelled, and nobody would know.
-      #
-      # Deliberately fails rather than waits when CI is still in flight. A
-      # release is cut from a commit already known good; waiting here would
-      # spend the runner on it and then still have to decide what a timeout
-      # means.
-      - name: Require a green CI run on this commit
-        shell: bash
+          . ./scripts/release-validation.ps1
+          $current = Get-AditWorkspaceVersion $PWD.Path
+          Assert-AditReleaseVersion $current $env:RELEASE_VERSION
+          foreach ($file in @('Cargo.toml','crates/adit-rdp/Cargo.toml','crates/adit-rdp-proto/Cargo.toml')) {
+            $text = [IO.File]::ReadAllText((Join-Path $PWD $file))
+            $text = [regex]::Replace($text, '(?m)^version = ".*"\r?$', ('version = "' + $env:RELEASE_VERSION + '"'))
+            [IO.File]::WriteAllText((Join-Path $PWD $file), $text, [Text.UTF8Encoding]::new($false))
+          }
+          cargo update --workspace --offline
+          if ($LASTEXITCODE -ne 0) { throw 'Root lockfile update failed' }
+          cargo update --workspace --offline --manifest-path crates/adit-rdp/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'RDP lockfile update failed' }
+          if ((Get-AditWorkspaceVersion $PWD.Path) -cne $env:RELEASE_VERSION) { throw 'Version lockstep failed' }
+      - name: Build app (release)
+        run: cargo build --release -p adit-app --locked
+      - name: Build independent RDP helper (release)
+        run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
+      # Package before creating any remote commit/tag; a broken .iss must not push.
+      - name: Build and verify installer
+        run: |
+          & $env:ADIT_ISCC "/DAppVersion=$env:RELEASE_VERSION" installer/adit.iss
+          if ($LASTEXITCODE -ne 0) { throw 'Inno Setup failed' }
+          $asset = Get-Item -LiteralPath "target/release/adit-installer-v$env:RELEASE_VERSION.exe"
+          if ($asset.Length -eq 0) { throw 'Installer asset is empty' }
+      - name: Recheck main and atomically push bump and tag
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # gh's own jq, so this does not depend on jq being on the image. An
-          # empty run list yields "none" rather than tripping over null.
-          out=$(gh api \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" \
-            --jq '(.workflow_runs[0] // {}) | "\(.status // "none")|\(.conclusion // "none")|\(.html_url // "none")"')
-          status=${out%%|*}; rest=${out#*|}
-          conclusion=${rest%%|*}; url=${rest#*|}
-
-          if [ "$status" = none ]; then
-            echo "::error::ci.yml has never run on $GITHUB_SHA — push the commit and let CI finish before releasing"
-            exit 1
-          fi
-          if [ "$status" != completed ]; then
-            echo "::error::ci.yml is still '$status' on $GITHUB_SHA ($url) — wait for it, then dispatch again"
-            exit 1
-          fi
-          if [ "$conclusion" != success ]; then
-            echo "::error::ci.yml concluded '$conclusion' on $GITHUB_SHA ($url) — a release is only cut from a green commit"
-            exit 1
-          fi
-          echo "ci.yml is green on $GITHUB_SHA — $url"
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # `crates/adit-rdp` is a separate workspace with its own target directory,
-      # and rust-cache's default of `.` alone never covered it — the helper's
-      # 409 dependencies were rebuilt from scratch on every release no matter
-      # what the cache did. The target path defaults to `target` relative to
-      # each entry, so spelling the second one as `crates/adit-rdp/target`
-      # would resolve to that path twice over and silently cache nothing.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            crates/adit-rdp
-
-      # Bump the root workspace + both RDP crates in lockstep. sed (not PowerShell
-      # 5.1's Set-Content) so the UTF-8 em-dashes in Cargo.toml survive — see the
-      # justfile's `bump` note. Each of the three files has exactly one top-level
-      # `version = "..."` line.
-      - name: Bump versions
-        shell: bash
-        run: |
-          v='${{ github.event.inputs.version }}'
-          for f in Cargo.toml crates/adit-rdp/Cargo.toml crates/adit-rdp-proto/Cargo.toml; do
-            sed -i -E "s/^version = \".*\"/version = \"$v\"/" "$f"
-          done
-
-      # The one thing the bump can break that a green ci.yml cannot have caught,
-      # because it is introduced by the step above and by nothing else.
-      #
-      # adit-rdp-proto defines the IPC types, and both the root workspace and
-      # the helper's separate workspace depend on it by path. Path dependencies
-      # carry no version requirement, so an app and a helper built from
-      # different versions of it compile perfectly and then disagree about the
-      # wire format at runtime — and being separate workspaces, neither build
-      # is in a position to notice.
-      #
-      # This also catches the bump silently doing nothing: `sed` matching no
-      # line exits 0 and leaves the file alone, so a manifest whose `version =`
-      # line ever stops looking the way the pattern expects would ship the old
-      # version with everything green. The tests this replaced would not have
-      # noticed that either.
-      - name: Versions must be in lockstep
-        shell: bash
-        run: |
-          v='${{ github.event.inputs.version }}'
-          fail=0
-          for f in Cargo.toml crates/adit-rdp/Cargo.toml crates/adit-rdp-proto/Cargo.toml; do
-            got=$(sed -nE 's/^version = "(.*)"/\1/p' "$f" | head -1)
-            if [ "$got" != "$v" ]; then
-              echo "::error file=$f::version is '${got:-missing}', expected '$v'"
-              fail=1
-            fi
-          done
-          [ "$fail" -eq 0 ] && echo "all three manifests are at $v"
-
-      # ── Build both shippable binaries (release profile) ──
-      #
-      # With clippy and the tests gone these are the only compile here, which is
-      # the point: they build exactly what ships, and nothing else.
-      - name: Build app (release)
-        run: cargo build --release -p adit-app
-
-      # The RDP helper is a SEPARATE workspace (own Cargo.lock); build it with its
-      # own manifest, not `-p`. See crates/adit-rdp.
-      - name: Build RDP helper (release)
-        run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml
-
-      # Commit the bump only now that the build succeeded and both Cargo.lock files
-      # are settled, so a failed gate leaves no tag or commit behind.
-      - name: Commit, tag, and push
-        shell: bash
-        run: |
-          v='${{ github.event.inputs.version }}'
-          git config user.name  'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          # Only what the bump touches. `git add -A` once swept in an unrelated
-          # line-ending normalisation of ci.yml, and the push was rejected —
-          # the release token deliberately has no `workflows` permission. A
-          # release commit has no business carrying anything but the bump.
-          git add Cargo.toml Cargo.lock \
-                  crates/adit-rdp/Cargo.toml crates/adit-rdp/Cargo.lock \
-                  crates/adit-rdp-proto/Cargo.toml
-          git commit -m "chore: release v$v"
-          git tag "v$v"
-          git push origin HEAD:main
-          git push origin "v$v"
-
-      # ── Package the Inno Setup installer ──
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
-
-      - name: Build installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ github.event.inputs.version }}" installer\adit.iss'
-
-      # ── Publish the GitHub Release with the installer attached ──
+          $main = gh api "repos/$env:GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha
+          if ($LASTEXITCODE -ne 0 -or $main -cne $env:GITHUB_SHA) { throw 'Main advanced; refusing to publish' }
+          git config --local user.name 'github-actions[bot]'
+          if ($LASTEXITCODE -ne 0) { throw 'Git identity failed' }
+          git config --local user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ($LASTEXITCODE -ne 0) { throw 'Git identity failed' }
+          # Never stage workflow files or unrelated runner files.
+          git add Cargo.toml Cargo.lock crates/adit-rdp/Cargo.toml crates/adit-rdp/Cargo.lock crates/adit-rdp-proto/Cargo.toml
+          if ($LASTEXITCODE -ne 0) { throw 'Version staging failed' }
+          git commit -m "chore: release v$env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Version commit failed' }
+          git tag "v$env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Tag creation failed' }
+          git push --atomic origin HEAD:refs/heads/main "refs/tags/v$env:RELEASE_VERSION"
+          if ($LASTEXITCODE -ne 0) { throw 'Atomic main/tag push failed' }
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "v${{ github.event.inputs.version }}"
-          "target/release/adit-installer-v${{ github.event.inputs.version }}.exe"
-          --title "Adit v${{ github.event.inputs.version }}"
-          --generate-notes
-
-  # Windows-on-ARM, built natively rather than cross-compiled: the RDP helper
-  # pins RustCrypto crates exactly and carries three vendored IronRDP patches,
-  # and a native build on this runner is what CI proves works.
-  #
-  # Upload order is NOT what keeps updaters older than 0.1.61 off this asset —
-  # the API returns a release's assets sorted by name, whenever each arrived.
-  # The underscore in `_arm64` is what does it, by sorting after the '.' in the
-  # x64 installer's name. See installer/adit.iss.
-  # Gated with the rest, so a default release is x64 only. This job is 11.9 of
-  # the 35.4 minutes a release took, almost all of it serialised: `needs:
-  # release` means it does not even start until the x64 job has published.
-  #
-  # What an arm64 machine loses is the in-app update, not the app: the updater
-  # matches assets on architecture strictly and will not hand an ARM machine an
-  # x64 installer, so with no `_arm64` asset `pick_installer_asset` finds
-  # nothing and the dialog says 「该版本暂无 Windows 安装包」 beside a link to the
-  # release. Those users update by downloading a release that did build it.
-  # `installer_asset_ordering_favours_x64` covers the other direction and is
-  # unaffected.
-  windows-arm64:
-    name: windows · installer (aarch64)
-    needs: release
-    if: ${{ github.event.inputs.all_platforms == 'true' }}
-    runs-on: windows-11-arm
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v${{ github.event.inputs.version }}
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      # These attach-to-the-release jobs had no cache at all, so each one
-      # rebuilt every dependency from scratch — this job's two release builds ran
-      # 569s between them. The version bump changes Cargo.lock, so the exact key
-      # never hits on a release, but rust-cache's prefix restore-keys still land
-      # the dependency graph and only the workspace crates recompile.
-      #
-      # `crates/adit-rdp` is a second workspace and has to be named, or the
-      # helper's 409 dependencies stay outside the cache entirely.
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: |
-            .
-            crates/adit-rdp
-
-      - name: Build app (release)
-        run: cargo build --release -p adit-app --locked
-
-      - name: Build RDP helper (release)
-        run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
-
-      - name: Install Inno Setup
-        run: choco install innosetup --no-progress -y
-
-      - name: Build installer
-        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ github.event.inputs.version }}" "/DArch=arm64" installer\adit.iss'
-
-      - name: Attach to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload "v${{ github.event.inputs.version }}"
-          "target/release/adit-installer-v${{ github.event.inputs.version }}_arm64.exe"
-          --clobber
-
-  # The jobs below attach to the release the Windows job already published,
-  # rather than being folded into it. That ordering is deliberate: if a
-  # non-Windows package breaks, the release still exists with its installer and
-  # the missing asset can be uploaded afterwards, instead of a packaging bug
-  # taking the whole release down. They check out the tag, so they build exactly
-  # what was published rather than whatever main has drifted to since.
-  #
-  # Both are gated on `all_platforms`, so by default a release publishes the two
-  # Windows installers and stops. Compared as a STRING against 'true' rather
-  # than tested for truthiness: `github.event.inputs.*` values arrive as strings
-  # whatever their declared type, and the string 'false' is itself truthy here —
-  # a bare `if: ${{ github.event.inputs.all_platforms }}` would run these jobs
-  # every single time while looking exactly like it does not.
-  linux-packages:
-    name: linux · deb + rpm (${{ matrix.arch }})
-    needs: release
-    if: ${{ github.event.inputs.all_platforms == 'true' }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - runner: ubuntu-latest
-            arch: x86_64
-          - runner: ubuntu-24.04-arm
-            arch: aarch64
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v${{ github.event.inputs.version }}
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            pkg-config rpm \
-            libxkbcommon-dev libwayland-dev \
-            libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
-            libgtk-3-dev libdbus-1-dev
+          gh release create "v$env:RELEASE_VERSION" "target/release/adit-installer-v$env:RELEASE_VERSION.exe" --verify-tag --title "Adit v$env:RELEASE_VERSION" --generate-notes
+          if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed; inspect the pushed tag before retrying' }
 
-      - name: Build
-        run: cargo build --release -p adit-app --locked
-
-      - name: Package
-        run: installer/build-linux-packages.sh "${{ github.event.inputs.version }}"
-
-      - name: Attach to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload "v${{ github.event.inputs.version }}"
-          adit_${{ github.event.inputs.version }}_*.deb
-          rpmbuild/RPMS/${{ matrix.arch }}/adit-${{ github.event.inputs.version }}-1.*.rpm
-          --clobber
-
-  macos-bundle:
-    name: macos · dmg (unsigned)
-    needs: release
-    if: ${{ github.event.inputs.all_platforms == 'true' }}
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: v${{ github.event.inputs.version }}
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      # Both architectures from this one Apple Silicon runner: every macOS runner
-      # image is arm64 now, and Apple's clang cross-compiles to Intel happily, so
-      # this does not depend on an Intel image continuing to be offered.
-      - name: Build
-        run: |
-          rustup target add x86_64-apple-darwin
-          cargo build --release -p adit-app --locked --target x86_64-apple-darwin
-          cargo build --release -p adit-app --locked
-
-      - name: Package
-        run: |
-          installer/build-macos-bundle.sh "${{ github.event.inputs.version }}" x86_64-apple-darwin
-          installer/build-macos-bundle.sh "${{ github.event.inputs.version }}"
-
-      # Unsigned and un-notarised — Gatekeeper blocks a double-click, so the
-      # filename says so rather than letting someone find that out by
-      # downloading it. Globbed over the architecture rather than spelled out:
-      # the script names the dmg after the arch it was built on, and that naming
-      # rule must live in one place.
-      - name: Attach to the release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release upload "v${{ github.event.inputs.version }}"
-          adit_${{ github.event.inputs.version }}_*_unsigned.dmg
-          --clobber
+# === ORIGINAL HOSTED / MULTI-PLATFORM CONFIGURATION (PAUSED) ===
+# Kept in full by request. No uncommented hosted, ARM64, Linux or macOS release
+# job remains. Restore only after explicitly re-enabling the corresponding policy.
+# name: Release
+#
+# # Manually triggered — Actions tab → "Release" → Run workflow, or from a shell:
+# #   gh workflow run release.yml -f version=0.1.60
+# #
+# # The whole release happens HERE, on CI: it requires ci.yml to be green on the
+# # commit being released, bumps the three crate versions, builds both binaries,
+# # packages the installer, commits+tags the bump, and publishes the GitHub
+# # Release. Nothing is built or published from a developer's machine, and `just`
+# # is NOT involved in triggering it.
+# on:
+#   workflow_dispatch:
+#     inputs:
+#       version:
+#         description: 'Patch version to release, e.g. 0.1.60 (no leading v)'
+#         required: true
+#         type: string
+#       # Off by default because development is Windows-first and on x64: a
+#       # default release publishes the x64 installer and nothing else. The
+#       # arm64, Linux and macOS jobs are every slow job in the release — arm64
+#       # alone was 11.9 minutes of it, serialised behind the x64 job at that —
+#       # and none of the three is exercised day to day. A checkbox rather than a
+#       # code change, so re-enabling them is a decision made when triggering the
+#       # release instead of a commit someone has to remember — and so a release
+#       # that skipped them says so in its own run inputs afterwards.
+#       #
+#       # Turning it on does not rebuild the x64 installer. These jobs only ever
+#       # attach extra assets to the release the x64 job already published, which
+#       # is also why a release can be topped up later by re-running with it set.
+#       all_platforms:
+#         description: 'Also build the arm64, Linux and macOS packages'
+#         required: false
+#         default: false
+#         type: boolean
+#
+# env:
+#   CARGO_TERM_COLOR: always
+#   # Cloud-sync OAuth client ids, baked in at build time and read with
+#   # `option_env!` (crates/adit-sync/src/backend/mod.rs). Set at the workflow
+#   # level because several jobs build binaries and each target needs them.
+#   #
+#   # These are public identifiers, not secrets: PKCE exists precisely because a
+#   # client id in a distributed binary cannot be kept private, and every user
+#   # sees theirs in the authorize URL. They live in repository secrets only to
+#   # keep the shared API quota from being copy-pasted straight out of the repo.
+#   #
+#   # An unset one is not an error — the provider simply reports itself as
+#   # unconfigured in the panel, which is also what a local or forked build sees.
+#   ADIT_SYNC_GOOGLE_CLIENT_ID: ${{ secrets.ADIT_SYNC_GOOGLE_CLIENT_ID }}
+#   ADIT_SYNC_ONEDRIVE_CLIENT_ID: ${{ secrets.ADIT_SYNC_ONEDRIVE_CLIENT_ID }}
+#   ADIT_SYNC_DROPBOX_CLIENT_ID: ${{ secrets.ADIT_SYNC_DROPBOX_CLIENT_ID }}
+#
+# # Needed to push the bump commit + tag and to create the GitHub Release.
+# permissions:
+#   contents: write
+#   # Reading ci.yml's conclusion for the commit being released. Once a
+#   # `permissions` block exists at all, every scope left out of it is `none` — so
+#   # without this line the green-CI check gets a 403 instead of an answer, and
+#   # fails every release rather than gating it.
+#   actions: read
+#
+# jobs:
+#   release:
+#     name: require green CI · bump · build · package · publish
+#     runs-on: windows-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#
+#       - name: Validate version
+#         shell: bash
+#         run: |
+#           v='${{ github.event.inputs.version }}'
+#           if [[ ! "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+#             echo "::error::version must be X.Y.Z with no leading v (got '$v')"
+#             exit 1
+#           fi
+#
+#       # Release only from a commit ci.yml has already passed on.
+#       #
+#       # This replaces re-running clippy and the tests here, which spent 6.5
+#       # minutes re-deriving an answer ci.yml had already computed for the same
+#       # tree when it was pushed. It is *stricter* than what it replaces, not
+#       # looser: nothing used to check that main was green at all — the gate
+#       # merely happened to recompute it, so a release could be cut from a commit
+#       # whose CI had never run or had been cancelled, and nobody would know.
+#       #
+#       # Deliberately fails rather than waits when CI is still in flight. A
+#       # release is cut from a commit already known good; waiting here would
+#       # spend the runner on it and then still have to decide what a timeout
+#       # means.
+#       - name: Require a green CI run on this commit
+#         shell: bash
+#         env:
+#           GH_TOKEN: ${{ github.token }}
+#         run: |
+#           # gh's own jq, so this does not depend on jq being on the image. An
+#           # empty run list yields "none" rather than tripping over null.
+#           out=$(gh api \
+#             "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&per_page=1" \
+#             --jq '(.workflow_runs[0] // {}) | "\(.status // "none")|\(.conclusion // "none")|\(.html_url // "none")"')
+#           status=${out%%|*}; rest=${out#*|}
+#           conclusion=${rest%%|*}; url=${rest#*|}
+#
+#           if [ "$status" = none ]; then
+#             echo "::error::ci.yml has never run on $GITHUB_SHA — push the commit and let CI finish before releasing"
+#             exit 1
+#           fi
+#           if [ "$status" != completed ]; then
+#             echo "::error::ci.yml is still '$status' on $GITHUB_SHA ($url) — wait for it, then dispatch again"
+#             exit 1
+#           fi
+#           if [ "$conclusion" != success ]; then
+#             echo "::error::ci.yml concluded '$conclusion' on $GITHUB_SHA ($url) — a release is only cut from a green commit"
+#             exit 1
+#           fi
+#           echo "ci.yml is green on $GITHUB_SHA — $url"
+#
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#
+#       # `crates/adit-rdp` is a separate workspace with its own target directory,
+#       # and rust-cache's default of `.` alone never covered it — the helper's
+#       # 409 dependencies were rebuilt from scratch on every release no matter
+#       # what the cache did. The target path defaults to `target` relative to
+#       # each entry, so spelling the second one as `crates/adit-rdp/target`
+#       # would resolve to that path twice over and silently cache nothing.
+#       - name: Cache cargo
+#         uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: |
+#             .
+#             crates/adit-rdp
+#
+#       # Bump the root workspace + both RDP crates in lockstep. sed (not PowerShell
+#       # 5.1's Set-Content) so the UTF-8 em-dashes in Cargo.toml survive — see the
+#       # justfile's `bump` note. Each of the three files has exactly one top-level
+#       # `version = "..."` line.
+#       - name: Bump versions
+#         shell: bash
+#         run: |
+#           v='${{ github.event.inputs.version }}'
+#           for f in Cargo.toml crates/adit-rdp/Cargo.toml crates/adit-rdp-proto/Cargo.toml; do
+#             sed -i -E "s/^version = \".*\"/version = \"$v\"/" "$f"
+#           done
+#
+#       # The one thing the bump can break that a green ci.yml cannot have caught,
+#       # because it is introduced by the step above and by nothing else.
+#       #
+#       # adit-rdp-proto defines the IPC types, and both the root workspace and
+#       # the helper's separate workspace depend on it by path. Path dependencies
+#       # carry no version requirement, so an app and a helper built from
+#       # different versions of it compile perfectly and then disagree about the
+#       # wire format at runtime — and being separate workspaces, neither build
+#       # is in a position to notice.
+#       #
+#       # This also catches the bump silently doing nothing: `sed` matching no
+#       # line exits 0 and leaves the file alone, so a manifest whose `version =`
+#       # line ever stops looking the way the pattern expects would ship the old
+#       # version with everything green. The tests this replaced would not have
+#       # noticed that either.
+#       - name: Versions must be in lockstep
+#         shell: bash
+#         run: |
+#           v='${{ github.event.inputs.version }}'
+#           fail=0
+#           for f in Cargo.toml crates/adit-rdp/Cargo.toml crates/adit-rdp-proto/Cargo.toml; do
+#             got=$(sed -nE 's/^version = "(.*)"/\1/p' "$f" | head -1)
+#             if [ "$got" != "$v" ]; then
+#               echo "::error file=$f::version is '${got:-missing}', expected '$v'"
+#               fail=1
+#             fi
+#           done
+#           [ "$fail" -eq 0 ] && echo "all three manifests are at $v"
+#
+#       # ── Build both shippable binaries (release profile) ──
+#       #
+#       # With clippy and the tests gone these are the only compile here, which is
+#       # the point: they build exactly what ships, and nothing else.
+#       - name: Build app (release)
+#         run: cargo build --release -p adit-app
+#
+#       # The RDP helper is a SEPARATE workspace (own Cargo.lock); build it with its
+#       # own manifest, not `-p`. See crates/adit-rdp.
+#       - name: Build RDP helper (release)
+#         run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml
+#
+#       # Commit the bump only now that the build succeeded and both Cargo.lock files
+#       # are settled, so a failed gate leaves no tag or commit behind.
+#       - name: Commit, tag, and push
+#         shell: bash
+#         run: |
+#           v='${{ github.event.inputs.version }}'
+#           git config user.name  'github-actions[bot]'
+#           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+#           # Only what the bump touches. `git add -A` once swept in an unrelated
+#           # line-ending normalisation of ci.yml, and the push was rejected —
+#           # the release token deliberately has no `workflows` permission. A
+#           # release commit has no business carrying anything but the bump.
+#           git add Cargo.toml Cargo.lock \
+#                   crates/adit-rdp/Cargo.toml crates/adit-rdp/Cargo.lock \
+#                   crates/adit-rdp-proto/Cargo.toml
+#           git commit -m "chore: release v$v"
+#           git tag "v$v"
+#           git push origin HEAD:main
+#           git push origin "v$v"
+#
+#       # ── Package the Inno Setup installer ──
+#       - name: Install Inno Setup
+#         run: choco install innosetup --no-progress -y
+#
+#       - name: Build installer
+#         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ github.event.inputs.version }}" installer\adit.iss'
+#
+#       # ── Publish the GitHub Release with the installer attached ──
+#       - name: Publish release
+#         env:
+#           GH_TOKEN: ${{ github.token }}
+#         run: >-
+#           gh release create "v${{ github.event.inputs.version }}"
+#           "target/release/adit-installer-v${{ github.event.inputs.version }}.exe"
+#           --title "Adit v${{ github.event.inputs.version }}"
+#           --generate-notes
+#
+#   # Windows-on-ARM, built natively rather than cross-compiled: the RDP helper
+#   # pins RustCrypto crates exactly and carries three vendored IronRDP patches,
+#   # and a native build on this runner is what CI proves works.
+#   #
+#   # Upload order is NOT what keeps updaters older than 0.1.61 off this asset —
+#   # the API returns a release's assets sorted by name, whenever each arrived.
+#   # The underscore in `_arm64` is what does it, by sorting after the '.' in the
+#   # x64 installer's name. See installer/adit.iss.
+#   # Gated with the rest, so a default release is x64 only. This job is 11.9 of
+#   # the 35.4 minutes a release took, almost all of it serialised: `needs:
+#   # release` means it does not even start until the x64 job has published.
+#   #
+#   # What an arm64 machine loses is the in-app update, not the app: the updater
+#   # matches assets on architecture strictly and will not hand an ARM machine an
+#   # x64 installer, so with no `_arm64` asset `pick_installer_asset` finds
+#   # nothing and the dialog says 「该版本暂无 Windows 安装包」 beside a link to the
+#   # release. Those users update by downloading a release that did build it.
+#   # `installer_asset_ordering_favours_x64` covers the other direction and is
+#   # unaffected.
+#   windows-arm64:
+#     name: windows · installer (aarch64)
+#     needs: release
+#     if: ${{ github.event.inputs.all_platforms == 'true' }}
+#     runs-on: windows-11-arm
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           ref: v${{ github.event.inputs.version }}
+#
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#
+#       # These attach-to-the-release jobs had no cache at all, so each one
+#       # rebuilt every dependency from scratch — this job's two release builds ran
+#       # 569s between them. The version bump changes Cargo.lock, so the exact key
+#       # never hits on a release, but rust-cache's prefix restore-keys still land
+#       # the dependency graph and only the workspace crates recompile.
+#       #
+#       # `crates/adit-rdp` is a second workspace and has to be named, or the
+#       # helper's 409 dependencies stay outside the cache entirely.
+#       - name: Cache cargo
+#         uses: Swatinem/rust-cache@v2
+#         with:
+#           workspaces: |
+#             .
+#             crates/adit-rdp
+#
+#       - name: Build app (release)
+#         run: cargo build --release -p adit-app --locked
+#
+#       - name: Build RDP helper (release)
+#         run: cargo build --release --manifest-path crates/adit-rdp/Cargo.toml --locked
+#
+#       - name: Install Inno Setup
+#         run: choco install innosetup --no-progress -y
+#
+#       - name: Build installer
+#         run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=${{ github.event.inputs.version }}" "/DArch=arm64" installer\adit.iss'
+#
+#       - name: Attach to the release
+#         env:
+#           GH_TOKEN: ${{ github.token }}
+#         run: >-
+#           gh release upload "v${{ github.event.inputs.version }}"
+#           "target/release/adit-installer-v${{ github.event.inputs.version }}_arm64.exe"
+#           --clobber
+#
+#   # The jobs below attach to the release the Windows job already published,
+#   # rather than being folded into it. That ordering is deliberate: if a
+#   # non-Windows package breaks, the release still exists with its installer and
+#   # the missing asset can be uploaded afterwards, instead of a packaging bug
+#   # taking the whole release down. They check out the tag, so they build exactly
+#   # what was published rather than whatever main has drifted to since.
+#   #
+#   # Both are gated on `all_platforms`, so by default a release publishes the two
+#   # Windows installers and stops. Compared as a STRING against 'true' rather
+#   # than tested for truthiness: `github.event.inputs.*` values arrive as strings
+#   # whatever their declared type, and the string 'false' is itself truthy here —
+#   # a bare `if: ${{ github.event.inputs.all_platforms }}` would run these jobs
+#   # every single time while looking exactly like it does not.
+#   linux-packages:
+#     name: linux · deb + rpm (${{ matrix.arch }})
+#     needs: release
+#     if: ${{ github.event.inputs.all_platforms == 'true' }}
+#     runs-on: ${{ matrix.runner }}
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         include:
+#           - runner: ubuntu-latest
+#             arch: x86_64
+#           - runner: ubuntu-24.04-arm
+#             arch: aarch64
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           ref: v${{ github.event.inputs.version }}
+#
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#
+#       - name: Cache cargo
+#         uses: Swatinem/rust-cache@v2
+#
+#       - name: Install system dependencies
+#         run: |
+#           sudo apt-get update
+#           sudo apt-get install -y --no-install-recommends \
+#             pkg-config rpm \
+#             libxkbcommon-dev libwayland-dev \
+#             libx11-dev libxcursor-dev libxrandr-dev libxi-dev \
+#             libgtk-3-dev libdbus-1-dev
+#
+#       - name: Build
+#         run: cargo build --release -p adit-app --locked
+#
+#       - name: Package
+#         run: installer/build-linux-packages.sh "${{ github.event.inputs.version }}"
+#
+#       - name: Attach to the release
+#         env:
+#           GH_TOKEN: ${{ github.token }}
+#         run: >-
+#           gh release upload "v${{ github.event.inputs.version }}"
+#           adit_${{ github.event.inputs.version }}_*.deb
+#           rpmbuild/RPMS/${{ matrix.arch }}/adit-${{ github.event.inputs.version }}-1.*.rpm
+#           --clobber
+#
+#   macos-bundle:
+#     name: macos · dmg (unsigned)
+#     needs: release
+#     if: ${{ github.event.inputs.all_platforms == 'true' }}
+#     runs-on: macos-latest
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           ref: v${{ github.event.inputs.version }}
+#
+#       - name: Install Rust
+#         uses: dtolnay/rust-toolchain@stable
+#
+#       - name: Cache cargo
+#         uses: Swatinem/rust-cache@v2
+#
+#       # Both architectures from this one Apple Silicon runner: every macOS runner
+#       # image is arm64 now, and Apple's clang cross-compiles to Intel happily, so
+#       # this does not depend on an Intel image continuing to be offered.
+#       - name: Build
+#         run: |
+#           rustup target add x86_64-apple-darwin
+#           cargo build --release -p adit-app --locked --target x86_64-apple-darwin
+#           cargo build --release -p adit-app --locked
+#
+#       - name: Package
+#         run: |
+#           installer/build-macos-bundle.sh "${{ github.event.inputs.version }}" x86_64-apple-darwin
+#           installer/build-macos-bundle.sh "${{ github.event.inputs.version }}"
+#
+#       # Unsigned and un-notarised — Gatekeeper blocks a double-click, so the
+#       # filename says so rather than letting someone find that out by
+#       # downloading it. Globbed over the architecture rather than spelled out:
+#       # the script names the dmg after the arch it was built on, and that naming
+#       # rule must live in one place.
+#       - name: Attach to the release
+#         env:
+#           GH_TOKEN: ${{ github.token }}
+#         run: >-
+#           gh release upload "v${{ github.event.inputs.version }}"
+#           adit_${{ github.event.inputs.version }}_*_unsigned.dmg
+#           --clobber
+#
