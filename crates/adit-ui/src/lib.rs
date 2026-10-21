@@ -2867,13 +2867,14 @@ mod tests {
     }
 
     #[test]
-    fn vnc_releases_the_original_keysym_after_shift_or_focus_changes() {
+    fn vnc_without_live_transport_does_not_adopt_keyboard_ownership() {
         let mut app = drag_test_app();
         let physical = Physical::Code(Code::KeyA);
         let press = key_press(Key::Character("a".into()), Key::Character("A".into()),
             physical, keyboard::Modifiers::SHIFT, Some("A"));
         send_vnc_keyboard(&mut app, &press);
-        assert_eq!(app.vnc_pressed_keys, vec![(physical, 0x41)]);
+        assert!(!app.manager.active_is_vnc());
+        assert!(app.vnc_pressed_keys.is_empty());
         let release = keyboard::Event::KeyReleased {
             key: Key::Character("a".into()), modified_key: Key::Character("a".into()),
             physical_key: physical, location: keyboard::Location::Standard,

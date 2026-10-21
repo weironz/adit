@@ -1,5 +1,6 @@
 param([Parameter(Mandatory)][string]$Directory,
-    [ValidatePattern('^[a-z0-9-]{1,64}$')][string]$ResultName='tight-unicode')
+    [ValidatePattern('^[a-z0-9-]{1,64}$')][string]$ResultName='tight-unicode',
+    [switch]$BmpCompatibility)
 $ErrorActionPreference='Stop'
 $root=[IO.Path]::GetFullPath($Directory)
 if($PSVersionTable.PSEdition -ne 'Desktop' -or [Diagnostics.Process]::GetCurrentProcess().SessionId -eq 0 -or -not [Environment]::Is64BitProcess -or
@@ -16,6 +17,9 @@ $token=[guid]::NewGuid().ToString('N')
 $serverPath=Join-Path $payload 'tvnserver.exe'
 $driverPath=Join-Path $payload 'vnc_fixture_driver.exe'
 $record=[ordered]@{outcome='failed';scope='TightVNC application mode to native Windows TextBox via production TEXT; no IME acceptance';clipboard_send_used=$false;registry_owner_token=$token;started_utc=[DateTime]::UtcNow.ToString('o');cases=@();cleanup_verified=$false}
+$record.mode=if($BmpCompatibility){'bmp_compatibility'}else{'full_unicode'}
+$record.pass_interpretation=if($BmpCompatibility){'BMP input and whole-commit rejection are correct; no complete server Unicode support claim'}else{'All four native TextBox inputs match their complete Unicode scalars'}
+if($BmpCompatibility){$record.scope+='; compatibility rejection only, not complete server Unicode support'}
 $server=$null;$target=$null;$driver=$null;$registryOwned=$false;$parentExisted=$true
 $cu=$null;$lm=$null;$key=$null;$baseline=$null
 $controllerIdentity=$null
@@ -126,6 +130,35 @@ function Read-Target($Path){
     }
     throw 'Actual TextBox snapshot is unavailable'
 }
+function Read-DriverLine($Driver,$Capture,[int]$TimeoutMs){
+    if($Capture.eof){return $null}
+    if(-not $Capture.pending){$Capture.pending=$Driver.StandardOutput.ReadLineAsync()}
+    if($TimeoutMs -le 0 -or -not $Capture.pending.Wait($TimeoutMs)){throw 'Driver stdout line deadline expired'}
+    $line=$Capture.pending.Result;$Capture.pending=$null
+    if($null -eq $line){$Capture.eof=$true;return $null}
+    [void]$Capture.lines.Add($line)
+    return $line
+}
+function Wait-DriverAck($Driver,$Capture,[string]$Token,[int]$TimeoutMs){
+    $deadline=[DateTime]::UtcNow.AddMilliseconds($TimeoutMs)
+    while($true){
+        $remaining=[int][Math]::Max(0,($deadline-[DateTime]::UtcNow).TotalMilliseconds)
+        $line=Read-DriverLine $Driver $Capture $remaining
+        if($null -eq $line){throw ('Driver EOF before ACK '+$Token)}
+        if($line -ceq ('ack='+$Token)){return}
+        if($line.StartsWith('ack=')){throw 'Unexpected driver ACK token'}
+    }
+}
+function Drain-DriverStdout($Driver,$Capture){
+    $deadline=[DateTime]::UtcNow.AddSeconds(2)
+    while(-not $Capture.eof){
+        $remaining=[int][Math]::Max(0,($deadline-[DateTime]::UtcNow).TotalMilliseconds)
+        [void](Read-DriverLine $Driver $Capture $remaining)
+    }
+}
+function Counter-Delta($Earlier,$Later){
+    return [ordered]@{press=($Later.press-$Earlier.press);release=($Later.release-$Earlier.release);keypress=($Later.keypress-$Earlier.keypress);text_changes=($Later.text_changes-$Earlier.text_changes)}
+}
 function Scalars([string]$Text){
     $values=New-Object 'System.Collections.Generic.List[string]'
     for($i=0;$i -lt $Text.Length;$i++){
@@ -223,10 +256,13 @@ public static class TightTextTarget {
 }
 '@
     $cases=@(@('ascii','abc'),@('bmp-cjk',([string][char]0x4e2d+[char]0x6587)),@('nonbmp-emoji',[char]::ConvertFromUtf32(0x1f60a)),@('combining',('e'+[char]0x301)))
+    if($BmpCompatibility){$cases+=,@('mixed-nonbmp',('abc'+[char]::ConvertFromUtf32(0x1f60a)+'xyz'))}
     foreach($item in $cases){
         $casePath=Join-Path $result $item[0];[void][IO.Directory]::CreateDirectory($casePath)
-        $sample=[ordered]@{case=$item[0];outcome='failed';expected=$item[1];expected_scalars=(Scalars $item[1]);clipboard_send_used=$false}
-        $target=$null;$driver=$null;$targetIdentity=$null;$driverIdentity=$null;$stdout=$null;$stderr=$null
+        $reject=($BmpCompatibility -and $item[0] -in @('nonbmp-emoji','mixed-nonbmp'))
+        $expected=if($reject){''}else{$item[1]}
+        $sample=[ordered]@{case=$item[0];mode=$record.mode;outcome='failed';input=$item[1];input_scalars=(Scalars $item[1]);expected=$expected;expected_scalars=(Scalars $expected);rejection_expected=$reject;clipboard_send_used=$false}
+        $target=$null;$driver=$null;$targetIdentity=$null;$driverIdentity=$null;$stdout=$null;$stderr=$null;$writer=$null
         try{
             $target=Start-Process -FilePath $targetPath -ArgumentList ('"'+$casePath+'"') -PassThru
             $targetIdentity=Track-Process $target
@@ -236,26 +272,50 @@ public static class TightTextTarget {
             $sample.before=$before;$sample.native_before=$focus
             if($before.pid -ne $target.Id -or $before.text -ne '' -or -not $before.focused -or $focus.foreground_pid -ne $target.Id -or -not $focus.gui_ok -or $focus.focus_hwnd -ne $before.box_hwnd){throw 'Target is not empty and natively focused; no TEXT sent'}
             $info=New-Object Diagnostics.ProcessStartInfo;$info.FileName=$driverPath;$info.Arguments='127.0.0.1 15911 25';$info.UseShellExecute=$false;$info.CreateNoWindow=$true;$info.RedirectStandardInput=$true;$info.RedirectStandardOutput=$true;$info.RedirectStandardError=$true
+            $info.StandardOutputEncoding=$utf8;$info.StandardErrorEncoding=$utf8
+            if($BmpCompatibility){$info.Arguments+=' --bmp-only'}
             $driver=New-Object Diagnostics.Process;$driver.StartInfo=$info;[void]$driver.Start();$driverIdentity=Track-Process $driver
-            $stdout=$driver.StandardOutput.ReadToEndAsync();$stderr=$driver.StandardError.ReadToEndAsync()
+            $stdout=@{lines=(New-Object 'System.Collections.Generic.List[string]');pending=$null;eof=$false};$stderr=$driver.StandardError.ReadToEndAsync()
             $writer=New-Object IO.StreamWriter($driver.StandardInput.BaseStream,$utf8)
-            try{$writer.WriteLine('adit-ci');$writer.WriteLine('WAIT 500');$writer.WriteLine('TEXT '+$item[1]);$writer.WriteLine('WAIT 1500');$writer.WriteLine('CLOSE')}finally{$writer.Dispose()}
+            $ackBefore='before-'+[guid]::NewGuid().ToString('N');$ackAfter='after-'+[guid]::NewGuid().ToString('N')
+            $writer.WriteLine('adit-ci');$writer.WriteLine('WAIT 500');$writer.WriteLine('ACK '+$ackBefore);$writer.Flush()
+            Wait-DriverAck $driver $stdout $ackBefore 15000
+            $sample.ack_before_received=$true
+            $connectedBefore=Read-Target (Join-Path $casePath 'actual.json');$connectedBeforeFocus=Native-Focus
+            $sample.connected_before=$connectedBefore;$sample.native_connected_before=$connectedBeforeFocus
+            $sample.connection_delta=Counter-Delta $before $connectedBefore
+            if($connectedBefore.pid -ne $target.Id -or $connectedBefore.text -ne '' -or -not $connectedBefore.focused -or $connectedBeforeFocus.foreground_pid -ne $target.Id -or -not $connectedBeforeFocus.gui_ok -or $connectedBeforeFocus.focus_hwnd -ne $connectedBefore.box_hwnd){throw 'Connected target is not empty and natively focused; no TEXT sent'}
+            $writer.WriteLine('TEXT '+$item[1]);$writer.WriteLine('WAIT 1500');$writer.WriteLine('ACK '+$ackAfter);$writer.Flush()
+            Wait-DriverAck $driver $stdout $ackAfter 8000
+            $connectedAfter=Read-Target (Join-Path $casePath 'actual.json');$connectedAfterFocus=Native-Focus
+            $sample.connected_after=$connectedAfter;$sample.native_connected_after=$connectedAfterFocus
+            $sample.input_delta=Counter-Delta $connectedBefore $connectedAfter
+            $sample.ack_after_received=$true
+            $writer.WriteLine('CLOSE');$writer.Flush();$writer.Dispose();$writer=$null
             if(-not $driver.WaitForExit(35000)){throw 'Production driver timeout'}
-            [IO.File]::WriteAllText((Join-Path $casePath 'driver.stdout.txt'),$stdout.Result,$utf8);[IO.File]::WriteAllText((Join-Path $casePath 'driver.stderr.txt'),$stderr.Result,$utf8)
+            Drain-DriverStdout $driver $stdout
+            $stdoutText=[string]::Join([Environment]::NewLine,$stdout.lines.ToArray())
+            [IO.File]::WriteAllText((Join-Path $casePath 'driver.stdout.txt'),$stdoutText,$utf8);[IO.File]::WriteAllText((Join-Path $casePath 'driver.stderr.txt'),$stderr.Result,$utf8)
             $after=Read-Target (Join-Path $casePath 'actual.json');$focus=Native-Focus
             $sample.after=$after;$sample.native_after=$focus;$sample.driver_exit=$driver.ExitCode
-            $sample.checks=[ordered]@{driver_ready=($stdout.Result -match 'ready_ms=\d+');driver_exit_zero=($driver.ExitCode -eq 0);same_target=($after.pid -eq $target.Id);target_focused=($after.focused -and $focus.foreground_pid -eq $target.Id -and $focus.gui_ok -and $focus.focus_hwnd -eq $after.box_hwnd);all_input_focused=($after.unfocused_input -eq 0 -and $after.focus_losses -eq 0);actual_input=($after.press -gt 0 -and $after.release -gt 0 -and $after.keypress -gt 0 -and $after.text_changes -gt 0);exact_scalars=((@($after.scalars) -join ',') -ceq (@($sample.expected_scalars) -join ','))}
+            $sample.close_delta=Counter-Delta $connectedAfter $after
+            $delta=$sample.input_delta
+            $inputCountsCorrect=if($reject){$delta.press -eq 0 -and $delta.release -eq 0 -and $delta.keypress -eq 0 -and $delta.text_changes -eq 0 -and $connectedAfter.text -ceq ''}else{$delta.press -gt 0 -and $delta.release -gt 0 -and $delta.keypress -gt 0 -and $delta.text_changes -gt 0}
+            $noticeCorrect=if($reject){$stdoutText -match '(?m)^text_rejected=unicode_compatibility\r?$' -and $stdoutText -match '(?m)^notice=VNC .+'}else{$stdoutText -notmatch '(?m)^text_rejected='}
+            $connectedFocused=($connectedAfter.focused -and $connectedAfterFocus.foreground_pid -eq $target.Id -and $connectedAfterFocus.gui_ok -and $connectedAfterFocus.focus_hwnd -eq $connectedAfter.box_hwnd)
+            $sample.checks=[ordered]@{driver_ready=($stdoutText -match 'ready_ms=\d+');driver_exit_zero=($driver.ExitCode -eq 0);acknowledged_input_phase=($sample.ack_before_received -and $sample.ack_after_received);same_target=($connectedAfter.pid -eq $target.Id -and $after.pid -eq $target.Id);target_focused=($connectedFocused -and $after.focused -and $focus.foreground_pid -eq $target.Id -and $focus.gui_ok -and $focus.focus_hwnd -eq $after.box_hwnd);all_input_focused=($after.unfocused_input -eq 0 -and $after.focus_losses -eq 0);input_counts_correct=$inputCountsCorrect;compatibility_notice_correct=$noticeCorrect;exact_scalars=((@($connectedAfter.scalars) -join ',') -ceq (@($sample.expected_scalars) -join ','));final_scalars_unchanged=((@($after.scalars) -join ',') -ceq (@($connectedAfter.scalars) -join ','))}
             if(@($sample.checks.Values|Where-Object {-not $_}).Count -eq 0){$sample.outcome='passed'}
         }catch{$sample.error=$_.Exception.Message}
         finally{
+            if($writer){try{$writer.Dispose()}catch{}}
             try{if($driverIdentity){Stop-Owned $driverIdentity};if($targetIdentity){Stop-Owned $targetIdentity}}catch{$sample.cleanup_error=$_.Exception.Message;$sample.outcome='failed'}
-            if($stdout -and $stdout.Wait(2000)){[IO.File]::WriteAllText((Join-Path $casePath 'driver.stdout.txt'),$stdout.Result,$utf8)}
+            if($stdout){try{Drain-DriverStdout $driver $stdout}catch{$sample.stdout_error=$_.Exception.Message};[IO.File]::WriteAllText((Join-Path $casePath 'driver.stdout.txt'),[string]::Join([Environment]::NewLine,$stdout.lines.ToArray()),$utf8)}
             if($stderr -and $stderr.Wait(2000)){[IO.File]::WriteAllText((Join-Path $casePath 'driver.stderr.txt'),$stderr.Result,$utf8)}
             Save-Json (Join-Path $casePath 'result.json') $sample
             $record.cases+=,$sample
         }
     }
-    if($record.cases.Count -eq 4 -and @($record.cases|Where-Object {$_.outcome -ne 'passed'}).Count -eq 0){$record.outcome='passed'}
+    if($record.cases.Count -eq $cases.Count -and @($record.cases|Where-Object {$_.outcome -ne 'passed'}).Count -eq 0){$record.outcome='passed'}
 }catch{$record.error=$_.Exception.Message}
 finally{
     $cleanupErrors=New-Object 'System.Collections.Generic.List[string]'

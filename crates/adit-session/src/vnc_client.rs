@@ -14,6 +14,16 @@ use tokio::sync::{mpsc, watch, Notify};
 use vnc::{PixelFormat, Rect, VncClient, VncConnector, VncEncoding, VncError, VncEvent, X11Event};
 use zeroize::Zeroizing;
 
+pub(crate) const BMP_ONLY_NOTICE: &str = "VNC 字符兼容模式：本次输入包含不兼容字符（如部分表情），整段未发送。若服务端支持这些字符，可关闭兼容模式后重新连接";
+// Text shares the 256-slot discrete-key queue, rather than the bulk clipboard
+// path. Bound queued text bodies to 1 MiB and avoid one long, uncancellable batch.
+const MAX_TEXT_BYTES: usize = 4 * 1024;
+pub(crate) const TEXT_TOO_LONG_NOTICE: &str = "VNC：单次文本超过 4 KiB，整段未发送；请分段输入";
+
+fn non_bmp_keysym(keysym: u32) -> bool {
+    (0x0101_0000..=0x0110_ffff).contains(&keysym)
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct VncCursor {
     pub width: u16,
@@ -118,6 +128,7 @@ pub(super) struct VncClientHandle {
 enum Command {
     Input(RdpInput),
     Key { keysym: u32, pressed: bool },
+    Text(String),
     ReadOnly(bool),
     ResizeRemote(bool),
     Quality(VncQuality),
@@ -173,6 +184,11 @@ impl VncClientHandle {
     }
     pub(super) fn send_input(&self, input: RdpInput) {
         let state = self.state.lock().unwrap();
+        if matches!(&input, RdpInput::Unicode { ch, .. } if state.options.unicode_bmp_only && u32::from(*ch) > 0xffff) {
+            drop(state);
+            self.unicode_rejected();
+            return;
+        }
         let allowed = match &input {
             RdpInput::Resize { .. } => state.options.resize_remote,
             RdpInput::ClipboardText(_) => {
@@ -190,11 +206,39 @@ impl VncClientHandle {
     }
     pub(super) fn send_key(&self, keysym: u32, pressed: bool) {
         let state = self.state.lock().unwrap();
+        if state.options.unicode_bmp_only && non_bmp_keysym(keysym) {
+            drop(state);
+            self.unicode_rejected();
+            return;
+        }
         let allowed = !state.options.read_only && state.accepting_input;
         drop(state);
         if allowed {
             self.send(Command::Key { keysym, pressed });
         }
+    }
+    pub(super) fn accepts_keysym(&self, keysym: u32) -> bool {
+        !self.state.lock().unwrap().options.unicode_bmp_only || !non_bmp_keysym(keysym)
+    }
+    pub(super) fn send_text(&self, text: &str) -> Result<(), &'static str> {
+        if text.len() > MAX_TEXT_BYTES {
+            return Err(TEXT_TOO_LONG_NOTICE);
+        }
+        let state = self.state.lock().unwrap();
+        // Validate the whole composition before queueing even its first scalar.
+        // A single command also prevents queue saturation from splitting it.
+        if state.options.unicode_bmp_only && text.chars().any(|ch| u32::from(ch) > 0xffff) {
+            return Err(BMP_ONLY_NOTICE);
+        }
+        let allowed = !state.options.read_only && state.accepting_input;
+        drop(state);
+        if allowed {
+            self.send(Command::Text(text.to_owned()));
+        }
+        Ok(())
+    }
+    fn unicode_rejected(&self) {
+        let _ = self.errors.send(RdpClientEvent::Notice(BMP_ONLY_NOTICE.into()));
     }
     pub(super) fn send_gateway(&self, command: LiveShellCommand) {
         let _ = self.gateway.send(command);
@@ -520,6 +564,19 @@ impl Worker {
                         Command::Key { keysym, pressed } => {
                             vec![X11Event::KeyEvent((keysym, pressed).into())]
                         }
+                        Command::Text(text) => {
+                            // Preserve this command's FIFO position, but only
+                            // keep one scalar pair live. send_event observes
+                            // cancellation on every edge, including a blocked peer.
+                            for ch in text.chars().filter(|ch| !ch.is_control()) {
+                                let symbol = crate::vnc_input::unicode_keysym(ch);
+                                for pressed in [true, false] {
+                                    self.send_event(client, X11Event::KeyEvent((symbol, pressed).into())).await?;
+                                    if pressed { keys.insert(symbol); } else { keys.remove(&symbol); }
+                                }
+                            }
+                            vec![]
+                        },
                         Command::Input(input) => pointer.input(input),
                     };
                     for input in inputs {

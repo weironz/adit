@@ -1,8 +1,11 @@
 //! Explicit Windows hook delivery probe. Only injected F24 is generated;
 //! ordinary input is never recorded. Run on an authorized test desktop.
+// The shared module's non-Windows stubs serve the GUI, not this native probe.
+#[cfg(windows)]
 #[path = "../src/keyboard_hook.rs"]
 mod keyboard_hook;
 
+#[cfg(windows)]
 fn main() {
     let injection_second: u32 = std::env::args()
         .find_map(|value| value.strip_prefix("--inject-after=").map(str::to_owned))
@@ -109,4 +112,9 @@ fn main() {
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
     keyboard_hook::disarm();
+}
+
+#[cfg(not(windows))]
+fn main() {
+    eprintln!("keyboard_hook_probe requires Windows");
 }

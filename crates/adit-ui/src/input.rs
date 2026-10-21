@@ -336,11 +336,12 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
         // including combining marks, without leaving a synthetic key held.
         if text.chars().count() > 1 && !modifiers.control() && !modifiers.alt() && !modifiers.logo()
         {
-            for ch in text.chars().filter(|ch| !ch.is_control()) {
-                let symbol = adit_session::unicode_keysym(ch);
-                app.manager.send_vnc_key_to_active(symbol, true);
-                app.manager.send_vnc_key_to_active(symbol, false);
-            }
+            send_vnc_text(app, text);
+            return;
+        }
+        if !modifiers.control() && !modifiers.alt() && !modifiers.logo()
+            && text.chars().any(|ch| !vnc_character_allowed(app, adit_session::unicode_keysym(ch)))
+        {
             return;
         }
     }
@@ -404,6 +405,9 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
         vnc_keysym(key, physical)
     };
     if let Some(keysym) = keysym {
+        if pressed && !vnc_character_allowed(app, keysym) {
+            return;
+        }
         if pressed && tracked.is_none() {
             app.vnc_pressed_keys.push((physical, keysym));
         }
@@ -412,11 +416,22 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
         text: Some(text), ..
     } = event
     {
-        for ch in text.chars().filter(|ch| !ch.is_control()) {
-            let keysym = adit_session::unicode_keysym(ch);
-            app.manager.send_vnc_key_to_active(keysym, true);
-            app.manager.send_vnc_key_to_active(keysym, false);
-        }
+        send_vnc_text(app, text);
+    }
+}
+
+pub(super) fn send_vnc_text(app: &mut AditApp, text: &str) {
+    if let Err(notice) = app.manager.send_vnc_text_to_active(text) {
+        app.notice = notice.into();
+    }
+}
+
+fn vnc_character_allowed(app: &mut AditApp, symbol: u32) -> bool {
+    if app.manager.active_vnc_accepts_keysym(symbol) {
+        true
+    } else {
+        app.notice = SessionManager::vnc_bmp_only_notice().into();
+        false
     }
 }
 
@@ -664,6 +679,9 @@ fn route_vnc_chord(app: &mut AditApp, stroke: keyboard_hook::vnc_chord::Stroke) 
     } else {
         match keyboard_hook::vnc_chord::translate(&stroke) {
             Ok(symbol) => {
+                if !vnc_character_allowed(app, symbol) {
+                    return;
+                }
                 app.vnc_pressed_keys.push((physical, symbol));
                 symbol
             }

@@ -3102,11 +3102,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 match event {
                     Event::Commit(text) => {
                         app.vnc_preedit = None;
-                        for ch in text.chars().filter(|ch| !ch.is_control()) {
-                            let symbol = adit_session::unicode_keysym(ch);
-                            app.manager.send_vnc_key_to_active(symbol, true);
-                            app.manager.send_vnc_key_to_active(symbol, false);
-                        }
+                        send_vnc_text(app, &text);
                     }
                     Event::Preedit(content, selection) => {
                         app.vnc_preedit = Some(Preedit {
@@ -3131,6 +3127,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             3 => app.profile_vnc.auto_reconnect = value,
             4 => app.profile_vnc.resize_remote = value,
             5 => app.profile_vnc.clipboard_legacy = value,
+            6 => app.profile_vnc.unicode_bmp_only = value,
             _ => {}
         },
         Message::ToggleVncReadOnly => {
