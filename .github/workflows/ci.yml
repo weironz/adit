@@ -45,6 +45,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # These dedicated runners keep Cargo outputs; clean everything else below.
+          clean: false
+      - name: Clean checkout while retaining compiler outputs
+        run: git clean -ffdx -e /target/ -e /crates/adit-rdp/target/
       - name: Complete Windows build dependencies
         if: runner.os == 'Windows'
         shell: powershell

@@ -15,7 +15,7 @@ ARM64 与 macOS 暂停，不回退到 GitHub 托管机器。工作流可由 main
 - Linux：Ubuntu/Debian x64、可用的 Docker daemon 及免交互 sudo。`.github/scripts/setup-linux-runner.sh` 按缺失项安装编译器、GUI 库、Xvfb、TigerVNC/x11vnc、Python Tk/YAML、RPM 和网络测试工具；Rust stable/Clippy 由工作流准备。
 - 两个平台都在 runner 实际服务账号下准备和使用工具链，不能以登录用户的 PATH 代替服务环境。
 
-每个平台只执行一个连续任务，复用任务内的 Cargo 产物。编译并行数为 2，开发/测试产物关闭调试信息以控制 VM 的内存与磁盘使用。不上传 Cargo 构建缓存。
+每个平台只执行一个连续任务。checkout 强制切换到被测提交，再清理除两个 workspace 的 target 目录以外的未跟踪文件，保留本机 Cargo 产物供复验和后续运行复用；产物有效性由 Cargo 按源码和工具链校验。编译并行数为 2，开发/测试产物关闭调试信息以控制 VM 的内存与磁盘使用。不上传 Cargo 构建缓存。
 
 ## 验证范围
 

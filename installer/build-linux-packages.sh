@@ -14,6 +14,10 @@
 
 set -euo pipefail
 
+# Runner services may use umask 077. Packages need traversable directories,
+# independently of the account's private-file policy outside this process.
+umask 022
+
 # Defaults to the workspace version; release.yml passes it explicitly so the
 # package matches the tag even before the bump is committed.
 version="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
