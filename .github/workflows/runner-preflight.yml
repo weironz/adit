@@ -10,6 +10,25 @@ jobs:
     runs-on: [self-hosted, Windows, X64, home-workstation, repo-adit]
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Complete Windows prerequisites
+        shell: powershell
+        run: .github/scripts/setup-windows-runner.ps1
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Verify Windows compiler and linker
+        shell: pwsh
+        run: |
+          $src=Join-Path $env:RUNNER_TEMP 'adit-toolchain-probe.rs'
+          $exe=Join-Path $env:RUNNER_TEMP 'adit-toolchain-probe.exe'
+          [IO.File]::WriteAllText($src,'fn main() { println!("MSVC link and run OK"); }')
+          rustc $src -o $exe
+          if($LASTEXITCODE -ne 0){throw 'Rust MSVC linking failed'}
+          & $exe
+          if($LASTEXITCODE -ne 0){throw 'Rust native executable failed'}
       - name: Inventory Windows build prerequisites
         shell: powershell
         run: |
@@ -26,6 +45,20 @@ jobs:
     runs-on: [self-hosted, Linux, X64, home-workstation, repo-adit]
     timeout-minutes: 10
     steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Complete Linux prerequisites
+        shell: bash
+        run: bash .github/scripts/setup-linux-runner.sh
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Verify Linux compiler and linker
+        run: |
+          printf 'fn main() { println!("Linux link and run OK"); }' > "$RUNNER_TEMP/adit-toolchain-probe.rs"
+          rustc "$RUNNER_TEMP/adit-toolchain-probe.rs" -o "$RUNNER_TEMP/adit-toolchain-probe"
+          "$RUNNER_TEMP/adit-toolchain-probe"
       - name: Inventory Linux build prerequisites
         shell: bash
         run: |
