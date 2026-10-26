@@ -2,12 +2,12 @@ name: Native UI regressions
 
 on:
   pull_request:
-  workflow_dispatch:
     paths:
       - 'crates/adit-ui/**'
       - 'crates/adit-session/**'
       - 'Cargo.lock'
       - '.github/workflows/ui-native.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -21,7 +21,7 @@ concurrency:
 jobs:
   ui:
     name: native UI unit and loopback tests (linux-x64)
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, Linux, X64, home-workstation, repo-adit]
     timeout-minutes: 60
     env:

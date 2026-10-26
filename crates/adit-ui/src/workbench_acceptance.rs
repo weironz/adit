@@ -87,6 +87,14 @@ fn env_or(name: &str, fallback: &str) -> Result<String, std::env::VarError> {
     }
 }
 
+fn capture_surface_ready(size: iced::Size, minimized: Option<bool>) -> bool {
+    minimized == Some(false)
+        && size.width.is_finite()
+        && size.height.is_finite()
+        && size.width >= 1.0
+        && size.height >= 1.0
+}
+
 impl Config {
     fn read() -> Result<Self, Box<dyn Error>> {
         let config_dir = PathBuf::from(
@@ -373,6 +381,7 @@ fn plan(view: CaptureView, ids: &[SessionId]) -> Vec<Step> {
 enum Phase {
     Waiting,
     Settling,
+    CheckingSurface,
     Capturing,
     Writing,
     Finishing,
@@ -390,6 +399,8 @@ struct State {
     changed: Instant,
     window: Option<window::Id>,
     os_scale: Option<f32>,
+    surface_size: iced::Size,
+    deferred_captures: usize,
     captures: Vec<Value>,
     executed_messages: Vec<String>,
     outcome: Outcome,
@@ -401,6 +412,7 @@ enum NativeMessage {
     Window(window::Id, window::Event),
     Tick,
     Advance,
+    CaptureSurface(window::Id, iced::Size, Option<bool>),
     Captured(window::Screenshot),
     Saved(Result<Value, String>),
     Finished(Result<(), String>),
@@ -466,10 +478,12 @@ fn interactive_message_allowed(state: &State, message: &Message) -> bool {
         | Message::SidebarDragMove(_)
         | Message::EndSidebarDrag => true,
         Message::ActivateMissionSession(id) | Message::TabDragOver(id) => state.ids.contains(id),
-        Message::GridProfilePressed(id, _) | Message::ProfilePressed(id)
-        | Message::ProfileDropped(id) | Message::GridProfileHovered(id, _)
-        | Message::ProfileHoverExited(id) | Message::OpenExistingProfile(id) =>
-            state.app.manager.profile(*id).is_some(),
+        Message::GridProfilePressed(id, _)
+        | Message::ProfilePressed(id)
+        | Message::ProfileDropped(id)
+        | Message::GridProfileHovered(id, _)
+        | Message::ProfileHoverExited(id)
+        | Message::OpenExistingProfile(id) => state.app.manager.profile(*id).is_some(),
         Message::FocusPane(index)
         | Message::ClosePane(index)
         | Message::PaneMousePressed(index)
@@ -543,16 +557,25 @@ fn repaint_mock_terminals(state: &mut State) {
     let active = state.app.manager.active_session();
     for (index, id) in state.ids.iter().enumerate() {
         state.app.manager.activate(*id).expect("fixture session");
-        state.app.manager.send_input_to_active(format!(
-            "\x1b[2J\x1b[HSYNTHETIC node-{:02}\r\n\
+        state
+            .app
+            .manager
+            .send_input_to_active(format!(
+                "\x1b[2J\x1b[HSYNTHETIC node-{:02}\r\n\
              In-memory fixture / no network transport\r\n\r\n\
              $ hostname\r\nsynthetic-node-{:02}\r\n\
              $ echo native-workbench\r\nnative-workbench\r\n$ ",
-            index + 1, index + 1,
-        )).expect("fixture redraw");
+                index + 1,
+                index + 1,
+            ))
+            .expect("fixture redraw");
     }
     if let Some(id) = active {
-        state.app.manager.activate(id).expect("restore fixture focus");
+        state
+            .app
+            .manager
+            .activate(id)
+            .expect("restore fixture focus");
     }
 }
 
@@ -572,6 +595,8 @@ fn snapshot(state: &State) -> Value {
         "logical_size": [state.app.window_width, state.app.window_height],
         "os_scale": state.os_scale,
         "application_scale": state.config.scale,
+        "last_surface_size": [state.surface_size.width, state.surface_size.height],
+        "deferred_captures": state.deferred_captures,
         "elapsed_ms": state.started.elapsed().as_millis(),
         "executed_dispatcher_messages": state.executed_messages,
         "expected_mission": state.steps.get(state.index).map(|step| step.expected.mission),
@@ -678,6 +703,7 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             state.window = Some(id);
             match event {
                 window::Event::Opened { size, .. } | window::Event::Resized(size) => {
+                    state.surface_size = size;
                     state.changed = Instant::now();
                     dispatch(
                         state,
@@ -708,15 +734,39 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             }
             // The first capture gets extra time for initial font/GPU setup.
             let delay = state.config.settle * if state.index == 0 { 2 } else { 1 };
-            if state.phase == Phase::Settling && state.changed.elapsed() >= delay {
+            if state.phase == Phase::Settling
+                && state.changed.elapsed() >= delay
+                && capture_surface_ready(state.surface_size, Some(false))
+            {
                 if let Err(error) = verify(state) {
                     return finish(state, Err(error));
                 }
-                state.phase = Phase::Capturing;
-                return window::screenshot(state.window.expect("opened acceptance window"))
-                    .map(NativeMessage::Captured);
+                state.phase = Phase::CheckingSurface;
+                let id = state.window.expect("opened acceptance window");
+                return window::size(id).then(move |size| {
+                    window::is_minimized(id)
+                        .map(move |minimized| NativeMessage::CaptureSurface(id, size, minimized))
+                });
             }
             Task::none()
+        }
+        NativeMessage::CaptureSurface(id, size, minimized)
+            if state.phase == Phase::CheckingSurface =>
+        {
+            // wgpu cannot allocate an offscreen texture for a minimized 0x0
+            // viewport. Check the live window, not just the app's last positive
+            // terminal size, and wait for a visible surface before capture.
+            if state.window != Some(id)
+                || !capture_surface_ready(size, minimized)
+                || !capture_surface_ready(state.surface_size, Some(false))
+            {
+                state.deferred_captures += 1;
+                state.phase = Phase::Settling;
+                state.changed = Instant::now();
+                return Task::none();
+            }
+            state.phase = Phase::Capturing;
+            window::screenshot(id).map(NativeMessage::Captured)
         }
         NativeMessage::Advance => {
             if state.index == state.steps.len() {
@@ -894,6 +944,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 changed: Instant::now(),
                 window: None,
                 os_scale: None,
+                surface_size: iced::Size::new(0.0, 0.0),
+                deferred_captures: 0,
                 captures: Vec::new(),
                 executed_messages: Vec::new(),
                 outcome: Arc::clone(&boot_outcome),
@@ -936,4 +988,26 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         .unwrap_or_else(|| Err("acceptance window closed before the report completed".into()));
     result.map_err(io::Error::other)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn screenshot_requires_a_positive_visible_window_surface() {
+        let normal = iced::Size::new(1360.0, 860.0);
+        assert!(capture_surface_ready(normal, Some(false)));
+        assert!(!capture_surface_ready(normal, Some(true)));
+        assert!(!capture_surface_ready(normal, None));
+        for size in [
+            iced::Size::new(0.0, 860.0),
+            iced::Size::new(1360.0, 0.0),
+            iced::Size::new(0.0, 0.0),
+            iced::Size::new(f32::NAN, 860.0),
+            iced::Size::new(1360.0, f32::INFINITY),
+        ] {
+            assert!(!capture_surface_ready(size, Some(false)));
+        }
+    }
 }

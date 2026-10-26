@@ -866,20 +866,24 @@ mod tests {
         let terminal = ConnectionProfile::new("synthetic terminal", "adit.invalid", 22, "test");
         let terminal_profile = terminal.id;
         let (profile_a, profile_b) = (profiles[0].id, profiles[1].id);
-        let mut manager =
-            SessionManager::with_profiles(profiles.into_iter().chain([terminal]).collect());
-        let a = manager
-            .open_live_vnc_session(profile_a, String::new())
-            .unwrap();
-        let b = manager
-            .open_live_vnc_session(profile_b, String::new())
-            .unwrap();
-        let terminal = manager.open_mock_session(terminal_profile).unwrap();
+        // Complete settings/theme initialization before opening peers whose
+        // handshake deadline must cover the transport, not platform startup.
         let mut app = AditApp {
-            manager,
+            manager: SessionManager::with_profiles(
+                profiles.into_iter().chain([terminal]).collect(),
+            ),
             desktop_window_focused: true,
             ..AditApp::default()
         };
+        let a = app
+            .manager
+            .open_live_vnc_session(profile_a, String::new())
+            .unwrap();
+        let b = app
+            .manager
+            .open_live_vnc_session(profile_b, String::new())
+            .unwrap();
+        let terminal = app.manager.open_mock_session(terminal_profile).unwrap();
         missions::tile_mission(&mut app, vec![a, b, terminal], TileMode::Grid);
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
