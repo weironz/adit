@@ -1,0 +1,202 @@
+{
+  "contract": "Local synthetic-data UI prototype. Compare A/B/C information architecture and D/E/F Termius-inspired styling. 24 synthetic hosts, 12 initially open sessions. Avoid duplicated host lists; A/C/D/E/F have no per-session top tabs, B caps visible tabs at 3 without closing connections. No real SSH/RDP/VNC or secret access.",
+  "targetViewports": [
+    "1440x900",
+    "1440x960",
+    "1024x768",
+    "390x844"
+  ],
+  "accessibility": {
+    "status": "pass",
+    "evidence": "Checked labeled buttons/forms, Ctrl K session search, Tab containment and Escape focus return in dialogs, read-only confirmation/input disabling, keyboard switching of B tabs, inspector Escape return, and reduced-motion handling. This is a focused prototype check, not a full WCAG or screen-reader certification."
+  },
+  "responsive": {
+    "status": "pass",
+    "evidence": "All six studies rendered at desktop, 1024x768 and 390x844 with no horizontal page overflow. Below 600px navigation becomes a dismissible drawer. Terminal lines scroll internally; task panes stack. Fixed VNC preview window containment in short split panes."
+  },
+  "contentStates": {
+    "loading": {
+      "status": "pass",
+      "evidence": "Visible progress with cancel; cancellation returns to current work area. Screenshot retained for both prototype sets."
+    },
+    "empty": {
+      "status": "pass",
+      "evidence": "Zero open sessions shows a useful choose-host recovery action; missing search matches show empty search feedback."
+    },
+    "error": {
+      "status": "pass",
+      "evidence": "Specific connection timeout with same-view retry; simulated retry restores terminal. Checked readable light-theme error background."
+    },
+    "partial": {
+      "status": "pass",
+      "evidence": "One failing host is named while other connection content stays available; no blanket success state."
+    },
+    "success": {
+      "status": "pass",
+      "evidence": "Connected indicators, synthetic hostname command consumption, host selection, 12-session switching, 3-tab cap, and focus/split restoration checked."
+    },
+    "permission": {
+      "status": "pass",
+      "evidence": "Prototype input policy: view-only mode disables input, names the target, and requires confirmation before enabling control. This is a frontend policy demonstration, not server authorization proof."
+    }
+  },
+  "renderedEvidence": [
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-a-workspace-1440.png",
+      "observation": "Rendered browser capture of adit-proto-a-workspace-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1024x768",
+      "artifact": "adit-proto-a-workspace-1024.png",
+      "observation": "Rendered browser capture of adit-proto-a-workspace-1024. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "adit-proto-a-workspace-390.png",
+      "observation": "Rendered browser capture of adit-proto-a-workspace-390. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-b-workspace-1440.png",
+      "observation": "Rendered browser capture of adit-proto-b-workspace-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1024x768",
+      "artifact": "adit-proto-b-workspace-1024.png",
+      "observation": "Rendered browser capture of adit-proto-b-workspace-1024. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "adit-proto-b-workspace-390.png",
+      "observation": "Rendered browser capture of adit-proto-b-workspace-390. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-c-workspace-1440.png",
+      "observation": "Rendered browser capture of adit-proto-c-workspace-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1024x768",
+      "artifact": "adit-proto-c-workspace-1024.png",
+      "observation": "Rendered browser capture of adit-proto-c-workspace-1024. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "adit-proto-c-workspace-390.png",
+      "observation": "Rendered browser capture of adit-proto-c-workspace-390. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-loading-1440.png",
+      "observation": "Rendered browser capture of adit-proto-loading-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-error-1440.png",
+      "observation": "Rendered browser capture of adit-proto-error-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-empty-1440.png",
+      "observation": "Rendered browser capture of adit-proto-empty-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-partial-1440.png",
+      "observation": "Rendered browser capture of adit-proto-partial-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-readonly-1440.png",
+      "observation": "Rendered browser capture of adit-proto-readonly-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-d-1440.png",
+      "observation": "Rendered browser capture of adit-termius-d-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1024x768",
+      "artifact": "adit-termius-d-1024.png",
+      "observation": "Rendered browser capture of adit-termius-d-1024. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "adit-termius-d-390.png",
+      "observation": "Rendered browser capture of adit-termius-d-390. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-e-1440.png",
+      "observation": "Rendered browser capture of adit-termius-e-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1024x768",
+      "artifact": "adit-termius-e-1024.png",
+      "observation": "Rendered browser capture of adit-termius-e-1024. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "adit-termius-e-390.png",
+      "observation": "Rendered browser capture of adit-termius-e-390. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-f-1440.png",
+      "observation": "Rendered browser capture of adit-termius-f-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1024x768",
+      "artifact": "adit-termius-f-1024.png",
+      "observation": "Rendered browser capture of adit-termius-f-1024. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "390x844",
+      "artifact": "adit-termius-f-390.png",
+      "observation": "Rendered browser capture of adit-termius-f-390. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-loading-1440.png",
+      "observation": "Rendered browser capture of adit-termius-loading-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-error-1440.png",
+      "observation": "Rendered browser capture of adit-termius-error-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-empty-1440.png",
+      "observation": "Rendered browser capture of adit-termius-empty-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-partial-1440.png",
+      "observation": "Rendered browser capture of adit-termius-partial-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-readonly-1440.png",
+      "observation": "Rendered browser capture of adit-termius-readonly-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x900",
+      "artifact": "adit-proto-a-library-1440.png",
+      "observation": "Rendered browser capture of adit-proto-a-library-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    },
+    {
+      "viewport": "1440x960",
+      "artifact": "adit-termius-d-details-1440.png",
+      "observation": "Rendered browser capture of adit-termius-d-details-1440. Desktop layouts and narrow navigation inspected; terminal text can scroll inside its own surface."
+    }
+  ],
+  "qaNotes": [
+    "An initial screenshot exposed a shared desktop CSS class collision; corrected by scoping remote-desktop styles and rechecked compact protocol icons.",
+    "An initial keyboard test expected focus at the switcher after Esc; corrected the test to verify return to the actual previous control.",
+    "Screenshot capture now disables transient CSS animations so preview images show settled layouts."
+  ],
+  "productCodeChanged": false,
+  "remoteConnectionsPerformed": false
+}

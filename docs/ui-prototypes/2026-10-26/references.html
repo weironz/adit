@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Adit 原型 · 参考与取舍</title><link rel="icon" href="data:,">
+<style>
+*{box-sizing:border-box}body{margin:0;background:#eeeae3;color:#29382e;font:14px/1.9 "Microsoft YaHei UI","PingFang SC",sans-serif}main{max-width:1000px;margin:50px auto;padding:0 26px 50px}a{color:#176e59;text-underline-offset:4px}a:focus-visible{outline:2px solid #176e59;outline-offset:4px}.eyebrow{font:11px "Bahnschrift",sans-serif;letter-spacing:2px;color:#657064;margin-top:35px}h1{font-size:29px;letter-spacing:-1px;font-weight:600;margin:9px 0 8px}h2{font-size:18px;font-weight:600;margin:33px 0 12px}p{color:#58665b}table{border-collapse:collapse;width:100%;text-align:left;font-size:13px}td,th{padding:13px 14px;border-bottom:1px solid #cfd4ca;vertical-align:top}th{font-weight:500;color:#617264}th:first-child{width:19%}blockquote{margin:22px 0;padding:15px 20px;border-left:3px solid #6b9276;background:#f9f7f1}li{margin-bottom:9px}code{font:12px "Cascadia Code","Consolas",monospace;background:#e1e5da;padding:2px 5px}small{color:#6c776b}@media(max-width:600px){main{margin:22px auto;padding:0 16px}h1{font-size:23px}table{font-size:11px}td,th{padding:9px 7px}}
+</style>
+<main>
+<a href="index.html">← 返回交互原型</a>
+<div class="eyebrow">ADIT / DESIGN RATIONALE / 2026.10.26</div>
+<h1>少一层重复，多一层秩序。</h1>
+<p>本组原型只比较导航与会话组织：侧栏不再复刻主区域的主机清单，多连接不再无限增加顶部标签。主机、终端输出、地址及远程桌面均为合成内容；没有真实网络连接。</p>
+<h2>借鉴哪些主流模式</h2>
+<table>
+<thead><tr><th>官方参考</th><th>确认的模式</th><th>Adit 原型如何取舍</th></tr></thead>
+<tbody>
+<tr><td><a href="https://www.vandyke.com/products/securecrt/features.html">SecureCRT</a></td><td>Session Manager 管理保存的资源，Active Sessions Manager 管理打开的连接；两者提供停靠和查找能力。</td><td>B 保留会话树作为资源入口，主区域专注会话内容；侧栏可收起。</td></tr>
+<tr><td><a href="https://termius.com/blog/workspaces-focus-without-losing-context">Termius</a></td><td>工作区按任务组织连接；Focus 模式显示一个终端和侧边会话列表，Split 模式同时展示多个终端。</td><td>A 借鉴 Focus 模式的垂直会话切换；C 借鉴任务工作区和 Focus / Split 切换，具体资源导航为 Adit 的设计探索。</td></tr>
+<tr><td><a href="https://code.visualstudio.com/docs/configure/custom-layout">VS Code</a></td><td>固定标签和编辑器组用于组织大量打开内容，也可采用紧凑的标签显示方式。</td><td>B 将可见标签上限设计为 3 个，隐藏的远程连接继续存在。3 个是本原型的取舍，不代表参考产品的默认值。</td></tr>
+<tr><td><a href="https://mobaxterm.mobatek.net/documentation.html">MobaXterm</a></td><td>侧栏可作为会话管理器，主区域提供标签终端与多终端布局。</td><td>B 取熟悉的连接树模型；C 取多目标同屏的任务模式。资源列表与内容区各自负责一件事。</td></tr>
+</tbody>
+</table>
+<h2>三套方案，解决同一个问题</h2>
+<table>
+<thead><tr><th>方案</th><th>侧栏职责</th><th>顶部与主区域</th><th>取舍</th></tr></thead>
+<tbody>
+<tr><td><b>A · 优先推荐</b><br>资源与工作分离</td><td>工作区：仅已打开连接。<br>资源库：仅分组，不再列出具体主机。</td><td>0 个逐会话标签。<br>主区域：单个活动会话，或唯一的资源列表。</td><td>消除重复最彻底，适合多连接长时间工作；需要在资源库和工作区之间切换。</td></tr>
+<tr><td><b>B · 熟悉易迁移</b><br>连接树与有限标签</td><td>保存的主机树是唯一的资源管理入口。</td><td>最多 3 个标签：固定/常用与当前会话。全部连接通过切换器访问。</td><td>学习成本低；主机名称仍会出现在活动标签中，但右侧不再重画完整主机目录。</td></tr>
+<tr><td><b>C · 并行排障</b><br>任务工作区与分屏</td><td>只显示任务工作区，不显示会话或主机清单。</td><td>没有逐会话标签。任务内多个会话直接分屏，可聚焦单个窗格。</td><td>适合多机对照；需要引入任务工作区的管理概念，产品改动范围更大。</td></tr>
+</tbody>
+</table>
+<blockquote>建议先实现 A 的资源/工作分离，再按实际需要加入 C 的任务分屏。B 适合偏好传统连接管理器的用户，作为保守方向保留。</blockquote>
+<h2>可以试什么</h2>
+<ol>
+<li>切换 A / B / C，用同一组 12 个打开会话比较侧栏与标签占用。</li>
+<li>A 切换“打开会话”和“主机资源库”，观察侧栏从具体会话变成仅分组。</li>
+<li>B 点击“全部 12”或按 <code>Ctrl K</code>，搜索并切换隐藏连接；原有连接不关闭。</li>
+<li>C 切换三个任务，点击窗格“聚焦”，再返回分屏。</li>
+<li>切换明暗主题、舒适/紧凑密度，收起或展开侧栏。</li>
+<li>使用页面顶部状态选择器，查看连接中、错误、空、部分失败与只读状态；可以取消、重试或确认启用控制。</li>
+<li>终端可以输入 <code>hostname</code>、<code>whoami</code> 和 <code>pwd</code>；其他命令只显示原型提示。</li>
+</ol>
+<p><small>原型范围：导航、布局、可见标签限制、分屏聚焦与连接状态。没有真实 SSH/RDP/VNC、文件传输、持久化工作区或操作系统级快捷键抓取。不同方案里的数据仅存在于当前页面内存中，刷新会恢复初始样本。</small></p>
+</main>
+</html>
