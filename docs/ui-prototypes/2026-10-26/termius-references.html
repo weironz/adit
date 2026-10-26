@@ -8,7 +8,7 @@
 *{box-sizing:border-box}body{margin:0;background:#101525;color:#e0e8f8;font:14px/1.9 "Microsoft YaHei UI","PingFang SC",sans-serif}main{max-width:1050px;padding:42px 27px 70px;margin:auto}a{color:#9fc4ff;text-underline-offset:4px}a:focus-visible{outline:2px solid #9fc4ff;outline-offset:4px}.eyebrow{font:11px "Bahnschrift",sans-serif;letter-spacing:2px;color:#9eacc8;margin-top:35px}h1{font-weight:500;font-size:30px;margin:10px 0}h2{font-weight:500;font-size:18px;margin:32px 0 13px}p{color:#aebcd5}table{border-collapse:collapse;width:100%;font-size:13px;text-align:left}th,td{padding:14px;border-bottom:1px solid #35415b;vertical-align:top}th{font-weight:500;color:#9faccc}blockquote{margin:23px 0;padding:15px 20px;background:#1b2943;border-left:3px solid #86a9e5}li{margin-bottom:9px;color:#b7c5dd}b{color:#e2eafd}code{background:#25314c;padding:2px 5px;border-radius:3px;font:12px "Consolas",monospace}.links{display:flex;gap:20px;flex-wrap:wrap}@media(max-width:600px){main{padding:25px 16px}h1{font-size:24px}table{font-size:11px}th,td{padding:10px 7px}}
 </style>
 <main>
-<div class="links"><a href="termius.html">← 返回 D / E / F</a><a href="index.html">查看原 A / B / C</a></div>
+<div class="links"><a href="termius.html">← 返回 D / E / F</a><span>用户已选定 D / E / F</span></div>
 <div class="eyebrow">ADIT / TERMIUS-INSPIRED STUDIES / 2026.10.26</div>
 <h1>借鉴成熟视觉语言，保留 Adit 的工作方式。</h1>
 <p>参考用户指定的 <a href="https://termius.com/" target="_blank" rel="noopener">Termius 官网</a>及其中展示的桌面客户端。本组借鉴深蓝灰表面、彩色主机图块、轻边界、分组卡片、主机详情和专注/分屏组织方式。Adit 名称、图标和全部主机内容均独立制作；没有复制 Termius 品牌资源或代码。</p>
@@ -25,11 +25,11 @@
 <thead><tr><th>原型</th><th>重点</th><th>可以实际操作</th><th>适合场景</th></tr></thead>
 <tbody>
 <tr><td><b>D · Vault</b><br>资源卡片库</td><td>最接近官网展示的主机资源界面：功能导航、分组卡片、彩色主机图块、右侧详情。</td><td>搜索、切换分组、卡片/列表切换、点选详情、连接或切换现有会话。</td><td>主机多，先查找与选择目标。</td></tr>
-<tr><td><b>E · Focus</b><br>专注终端</td><td>打开会话的垂直列表与单个活动终端；没有逐会话的顶部标签。</td><td>在 12 个打开连接中切换，Ctrl K 查找，使用只读确认、连接重试及侧栏收起。</td><td>每天长时间在多个连接之间切换。建议作为主工作界面。</td></tr>
+<tr><td><b>E · Focus</b><br>专注终端</td><td>打开会话的垂直列表与单个活动终端；没有逐会话的顶部标签。</td><td>在 12 个打开连接中切换，Ctrl K 查找，使用只读确认、连接重试及侧栏收起。</td><td>每天长时间在多个连接之间切换。已选定为日常工作界面。</td></tr>
 <tr><td><b>F · Mission</b><br>任务分屏</td><td>左侧按任务组织，主区域同时观察多个 SSH/VNC 窗格。</td><td>切换三个任务，聚焦单窗格，再返回分屏；通过切换器访问所有连接。</td><td>排障时并行对照应用、网关、数据库与远程桌面。</td></tr>
 </tbody>
 </table>
-<blockquote>D 可以作为“资源入口”，E 作为“日常工作”，F 作为“并行排障”。三版可组合成同一套产品体验，无需把每个界面都做成主机清单。</blockquote>
+<blockquote>用户已选定 D/E/F 共同组成新界面：D 是资源入口，E 是日常工作，F 是并行排障。三者均属于本次重构范围，任务持久化、恢复与协作能力不因选择界面而自动包含。</blockquote>
 <h2>官方参考</h2>
 <ul>
 <li><a href="https://termius.com/" target="_blank" rel="noopener">Termius 官网</a>：当前主页的客户端演示、主机卡片、资源导航及详情面板。</li>
