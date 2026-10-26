@@ -656,8 +656,7 @@ impl Default for AppSettings {
     fn default() -> Self {
         Self {
             language: Language::default(),
-            // Dark-first, matching the Termius-style look.
-            dark_mode: true,
+            dark_mode: false,
             theme_mode: None,
             host_layout: HostLayout::Grid,
             recent_hosts: Vec::new(),
@@ -1534,6 +1533,26 @@ Host db
         assert_eq!(loaded.profiles.len(), 1);
         assert_eq!(loaded.profiles[0].group, "Lab");
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn missing_settings_start_light_and_saved_theme_choices_are_preserved() {
+        let path = temp_config_path("light-default", "settings.json");
+        let store = SettingsStore::new(&path);
+        let defaults = store.load().expect("missing settings use defaults");
+        assert!(!defaults.dark_mode);
+        assert_eq!(defaults.theme_mode, None);
+
+        for theme_mode in [None, Some(ThemeMode::Dark), Some(ThemeMode::System)] {
+            let saved = AppSettings {
+                dark_mode: true,
+                theme_mode,
+                ..defaults.clone()
+            };
+            store.save(&saved).expect("save chosen theme");
+            assert_eq!(store.load().expect("load chosen theme"), saved);
+        }
         let _ = fs::remove_file(path);
     }
 

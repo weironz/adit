@@ -136,8 +136,6 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
-            text("ADIT").size(13).font(Font { weight: Weight::Semibold, ..Font::DEFAULT })
-                .color(Color::from_rgb8(224, 231, 240)),
             global_view_button(app, MainView::Hosts, "资源库"),
             global_view_button(app, MainView::Terminal, "专注工作区"),
             global_view_button(app, MainView::Missions, "任务分屏"),
