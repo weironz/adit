@@ -385,8 +385,16 @@ fn plan(view: CaptureView, ids: &[SessionId]) -> Vec<Step> {
         expected,
     });
     steps.push(Step {
+        name: "d-filter-hides-connection-target",
+        messages: vec![Message::SessionFilterChanged("node-02".into())],
+        expected,
+    });
+    steps.push(Step {
         name: "d-grid-with-inspector",
-        messages: vec![Message::HostLayoutChanged(HostLayout::Grid)],
+        messages: vec![
+            Message::SessionFilterChanged(String::new()),
+            Message::HostLayoutChanged(HostLayout::Grid),
+        ],
         expected,
     });
     steps.push(Step {
@@ -466,6 +474,7 @@ fn dispatch(state: &mut State, mut message: Message) -> Task<NativeMessage> {
         | Message::WindowFocused
         | Message::WindowUnfocused
         | Message::HostLayoutChanged(_)
+        | Message::SessionFilterChanged(_)
         | Message::RunMenu(MenuCommand::Options)
         | Message::SettingsCategoryPicked(_)
         | Message::CloseSettings
@@ -552,6 +561,11 @@ fn interactive_message_allowed(state: &State, message: &Message) -> bool {
 }
 
 fn verify(state: &State) -> Result<(), String> {
+    if state.steps[state.index].name == "d-filter-hides-connection-target"
+        && host_connect_target(&state.app).is_some()
+    {
+        return Err("resource search exposed a connection action for a hidden selection".into());
+    }
     let sessions = state.app.manager.sessions();
     let actual: Vec<_> = sessions.iter().map(|session| session.id).collect();
     if state.ids.len() != FIXTURE_COUNT

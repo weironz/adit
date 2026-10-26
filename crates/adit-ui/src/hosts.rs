@@ -965,13 +965,7 @@ pub(crate) fn reorder_grid(app: &mut AditApp, source: ProfileId, target: Profile
 pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     let filter = app.session_filter.trim().to_ascii_lowercase();
     let profiles = grid_ordered_profiles(app);
-    let matches = |profile: &ConnectionProfile| {
-        filter.is_empty()
-            || profile.name.to_ascii_lowercase().contains(&filter)
-            || profile.host.to_ascii_lowercase().contains(&filter)
-            || profile.username.to_ascii_lowercase().contains(&filter)
-              || profile.group.to_ascii_lowercase().contains(&filter)
-    };
+    let matches = |profile: &ConnectionProfile| profile_matches_filter(profile, &filter);
 
     let layout = app.host_layout;
     let switcher = row![
@@ -1186,6 +1180,13 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
 
 const HOST_DETAILS_WIDTH: f32 = 280.0;
 
+pub(crate) fn host_connect_target(app: &AditApp) -> Option<ProfileId> {
+    let filter = app.session_filter.trim().to_ascii_lowercase();
+    app.selected_profile.filter(|id| {
+        app.manager.profile(*id).is_some_and(|profile| profile_matches_filter(profile, &filter))
+    })
+}
+
 fn host_details_visible(app: &AditApp) -> bool {
     app.host_details_open && app.selected_profile.is_some()
         && app.window_width - sidebar_offset(app) >= 820.0
@@ -1267,4 +1268,27 @@ fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
     ])
         .width(if compact { Fill } else { Length::Fixed(HOST_DETAILS_WIDTH) }).height(Fill)
         .style(|_| inspector_style()).into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resource_search_disables_connect_for_a_hidden_selection() {
+        let mut app = AditApp {
+            manager: SessionManager::with_profiles(vec![
+                ConnectionProfile::new("synthetic", "node.example.test", 22, "fixture"),
+            ]),
+            ..AditApp::default()
+        };
+        let id = app.manager.profiles()[0].id;
+        app.selected_profile = Some(id);
+        assert_eq!(host_connect_target(&app), Some(id));
+        app.session_filter = "no-such-synthetic-resource".into();
+        assert_eq!(host_connect_target(&app), None);
+        assert_eq!(app.selected_profile, Some(id));
+        app.session_filter = app.manager.profile(id).unwrap().host.to_ascii_uppercase();
+        assert_eq!(host_connect_target(&app), Some(id));
+    }
 }

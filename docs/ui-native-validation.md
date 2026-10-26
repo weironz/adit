@@ -33,13 +33,14 @@ $env:ADIT_WORKBENCH_SCALE = "1"     # application scale: 1 | 1.5 | 2
 
 The harness rejects an existing nonempty config/output directory. Config must
 be beneath OS temp. It creates 12 explicitly synthetic mock sessions, performs
-21 captures through `window::screenshot`, and writes `report.json`. It checks
+22 captures through `window::screenshot`, and writes `report.json`. It checks
 session IDs, order and status across resource/focus/task navigation, sidebar
 hiding, two separate task member sets, and focus/return. A mock PTY has no
 remote process to redraw after a resize, so the harness repaints its labelled
 synthetic terminal text after layout changes.
 
-The final five captures cover the resource list and grid with the inspector,
+The final six captures cover the resource list and grid with the inspector,
+search hiding the selected connection target,
 the terminal and appearance settings categories, and return to the existing
 mission. These use real view functions and settings messages; the capture
 sequence does not change terminal preferences or open cloud account flows.

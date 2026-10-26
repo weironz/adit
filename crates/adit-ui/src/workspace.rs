@@ -56,8 +56,14 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     let mut layout = column![].height(Fill).width(Fill);
     if !rdp_fullscreen && app.main_view == MainView::Hosts {
         let mut connect = button(text(t("连接")).size(TEXT_META))
-            .padding([4, 10]).style(|_, status| secondary_button_style(status));
-        if let Some(id) = app.selected_profile {
+            .padding([4, 10]).style(|_, status| {
+                let mut style = secondary_button_style(status);
+                if matches!(status, button::Status::Disabled) {
+                    style.text_color = muted_text();
+                }
+                style
+            });
+        if let Some(id) = host_connect_target(app) {
             connect = connect.on_press(Message::ProfileDoubleClicked(id));
         }
         layout = layout.push(
