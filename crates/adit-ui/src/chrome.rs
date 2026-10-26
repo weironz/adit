@@ -136,14 +136,10 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
-            text("▣").size(TEXT_TITLE).color(accent()),
-            menu_button(app, MenuKind::File, t("文件")),
-            menu_button(app, MenuKind::Session, t("会话")),
-            menu_button(app, MenuKind::Edit, t("编辑")),
-            menu_button(app, MenuKind::View, t("视图")),
-            menu_button(app, MenuKind::Transfer, t("传输")),
-            menu_button(app, MenuKind::Script, t("脚本")),
-            menu_button(app, MenuKind::Help, t("帮助")),
+            text("ADIT").size(TEXT_TITLE).color(primary_text()),
+            global_view_button(app, MainView::Hosts, "资源库"),
+            global_view_button(app, MainView::Terminal, "专注工作区"),
+            menu_button(app, MenuKind::File, t("菜单")),
             Space::new().width(Fill),
             text(app.manager.status_line()).size(11).color(muted_text()),
         ]
@@ -155,6 +151,15 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .style(|_theme| top_bar_style())
     .into()
+}
+
+pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static str) -> Element<'static, Message> {
+    let active = app.main_view == view;
+    button(text(t(label)).size(TEXT_BODY))
+        .padding([5, 12])
+        .style(move |_, status| menu_button_style(active, status))
+        .on_press(Message::ShowMainView(view))
+        .into()
 }
 
 pub(crate) fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a, Message> {
@@ -178,9 +183,19 @@ pub(crate) fn menu_overlay(menu: MenuKind) -> Element<'static, Message> {
     let positioned = column![
         Space::new().height(Length::Fixed(MENU_BAR_HEIGHT)),
         row![
-            Space::new().width(Length::Fixed(menu_dropdown_offset(menu))),
-            container(commands)
-                .width(Length::Fixed(182.0))
+            container(row![
+                column![
+                    menu_category_button(menu, MenuKind::File, "文件"),
+                    menu_category_button(menu, MenuKind::Session, "会话"),
+                    menu_category_button(menu, MenuKind::Edit, "编辑"),
+                    menu_category_button(menu, MenuKind::View, "视图"),
+                    menu_category_button(menu, MenuKind::Transfer, "传输"),
+                    menu_category_button(menu, MenuKind::Script, "脚本"),
+                    menu_category_button(menu, MenuKind::Help, "帮助"),
+                ].width(96),
+                scrollable(commands).height(Length::Shrink).width(210),
+            ])
+                .width(Length::Fixed(306.0))
                 .padding([5, 0])
                 .style(|_theme| menu_dropdown_style()),
             Space::new().width(Fill),
@@ -203,6 +218,11 @@ pub(crate) fn menu_overlay(menu: MenuKind) -> Element<'static, Message> {
     stack(vec![backdrop.into(), positioned.into()]).into()
 }
 
+fn menu_category_button(current: MenuKind, kind: MenuKind, label: &'static str) -> Element<'static, Message> {
+    button(text(t(label)).size(TEXT_BODY)).padding([6, 10]).width(Fill)
+        .style(move |_, status| menu_button_style(current == kind, status))
+        .on_press(Message::ToggleMenu(kind)).into()
+}
 pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
     match menu {
         MenuKind::File => &[
@@ -256,18 +276,6 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
             ("检查更新…", MenuCommand::CheckUpdate),
             ("关于", MenuCommand::About),
         ],
-    }
-}
-
-pub(crate) fn menu_dropdown_offset(menu: MenuKind) -> f32 {
-    match menu {
-        MenuKind::File => 28.0,
-        MenuKind::Session => 72.0,
-        MenuKind::Edit => 138.0,
-        MenuKind::View => 184.0,
-        MenuKind::Transfer => 236.0,
-        MenuKind::Script => 318.0,
-        MenuKind::Help => 436.0,
     }
 }
 

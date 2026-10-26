@@ -722,33 +722,6 @@ pub(crate) fn protocol_button(app: &AditApp, protocol: Protocol) -> Element<'sta
         .into()
 }
 
-/// The pinned first tab. The host list is a tab rather than a view behind its
-/// own rail: tabs already exist, everyone knows what they do, and a second
-/// navigation surface for one more destination was never worth it.
-pub(crate) fn hosts_tab_button(active: bool) -> Element<'static, Message> {
-    button(
-        // Centred explicitly: a button does not do it, and this box is taller
-        // than the text in it. See TAB_HEIGHT.
-        container(
-            row![text("\u{25a6}").size(12), text("主机").size(12)]
-                .spacing(6)
-                .align_y(Alignment::Center),
-        )
-        .center_y(Fill),
-    )
-    .height(TAB_HEIGHT)
-    .padding([0, 12])
-    .style(move |_theme, status| {
-        if active {
-            primary_button_style(status)
-        } else {
-            secondary_button_style(status)
-        }
-    })
-    .on_press(Message::ShowMainView(MainView::Hosts))
-    .into()
-}
-
 fn vnc_options_editor(app: &AditApp) -> Element<'_, Message> {
     let option = &app.profile_vnc;
     let security = row![

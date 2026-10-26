@@ -528,10 +528,21 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.host_layout = layout;
         }
         Message::ShowMainView(view) => {
+            release_rdp_modifiers(app);
             app.main_view = view;
             // The terminal only takes keystrokes while it is the thing on
             // screen; leaving focus behind would send typing into a hidden pane.
             app.terminal_focused = matches!(view, MainView::Terminal);
+            sync_terminal_size(app);
+        }
+        Message::FindOpenSession => {
+            release_rdp_modifiers(app);
+            app.main_view = MainView::Terminal;
+            app.sidebar_visible = true;
+            app.session_filter.clear();
+            app.terminal_focused = false;
+            sync_terminal_size(app);
+            return focus_session_filter();
         }
         Message::HostDetailsClosed => app.host_details_open = false,
         Message::OpenExistingProfile(profile_id) => {

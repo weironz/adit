@@ -2,33 +2,6 @@ use super::*;
 use iced::widget::column;
 
 pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
-    let tabs = app
-        .manager
-        .sessions()
-        .into_iter()
-        .fold(
-            // `Row` aligns to Start by default, so TAB_HEIGHT tabs in a
-            // TAB_BAR_HEIGHT row sat against the top with all 8px of the
-            // difference below them.
-            row![hosts_tab_button(app.main_view == MainView::Hosts)]
-                .spacing(2)
-                .align_y(Alignment::Center)
-                .height(TAB_BAR_HEIGHT),
-            |tabs, session| {
-            let accent = profile_accent(app, session.profile_id);
-            let badge = profile_badge(app, session.profile_id);
-            let selected = app.selected_tabs.contains(&session.id);
-            tabs.push(tab_button(
-                session,
-                app.manager.active_session(),
-                app.dragged_tab,
-                selected,
-                accent,
-                badge,
-                ))
-            },
-        );
-
     // Split panes: 2–4 tiled sessions. Otherwise the single-pane view, left
     // byte-for-byte as before (it is the well-tested selection/hit-test path).
     let body: Element<'_, Message> = if app.main_view == MainView::Hosts {
@@ -72,41 +45,26 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     // floating toolbar is what replaces those controls, and a terminal session
     // in fullscreen has no such thing, so hiding its tabs would strand it.
     let rdp_fullscreen = app.fullscreen && app.manager.active_is_desktop();
-    let has_sessions = !app.manager.sessions().is_empty() && !rdp_fullscreen;
     let mut layout = column![].height(Fill).width(Fill);
-    if has_sessions {
+    if !rdp_fullscreen {
+        let title = if app.main_view == MainView::Hosts {
+            String::from(t("资源库"))
+        } else {
+            app.manager.active_session_summary().map(|s| s.title)
+                .unwrap_or_else(|| String::from(t("专注工作区")))
+        };
         layout = layout.push(
             row![
-                scrollable(tabs).direction(scrollable::Direction::Horizontal(
-                    scrollable::Scrollbar::new()
-                )),
-                // Directly after the last tab, not pinned to the far right: it
-                // adds a tab, so it belongs where the next one would appear.
-                // Pinned right it read as a window control and sat an entire
-                // empty row away from the thing it acts on.
-                //
-                // Same button as the sidebar's 新建会话 — same glyph, same tip,
-                // same message — so the two cannot drift into meaning different
-                // things.
-                container(sidebar_tool_button(
-                    "+",
-                    20.0,
-                    "新建会话",
-                    Message::NewProfileDraft,
-                ))
-                .padding([0, 2])
-                .center_y(TAB_BAR_HEIGHT),
+                text(title).size(TEXT_BODY).color(primary_text()).width(Fill),
                 active_session_action(app),
-                // The connection status used to sit here. It is already in the
-                // status bar and the title bar, and a third copy right beside
-                // the tab naming the same session spent the row's most useful
-                // space — the part next to the tabs — on nothing new.
-                Space::new().width(Fill),
+                button(text(t("打开的连接")).size(TEXT_META))
+                    .on_press(Message::FindOpenSession)
+                    .style(|_, status| secondary_button_style(status)),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
             .height(TAB_BAR_HEIGHT)
-            .width(Fill),
+            .width(Fill).padding([0, 12]),
         );
     }
     if app.search_open {
@@ -963,7 +921,7 @@ pub(crate) fn tab_button(
         );
     }
     let inner = inner
-        .push(text(session.title).size(12).color(primary_text()))
+        .push(text(session.title).size(12).color(primary_text()).width(Fill))
         .push(
             button(text("×").size(15))
                 .padding([2, 7])
@@ -975,7 +933,8 @@ pub(crate) fn tab_button(
         container(inner)
             .padding([0, 6])
             // The same height as the 主机 tab and the +, so the strip holds one.
-            .center_y(TAB_HEIGHT)
+            .width(Fill)
+            .center_y(40)
             .style(move |_theme| {
                 if is_dragging {
                     tab_container_style_dnd(active, true)

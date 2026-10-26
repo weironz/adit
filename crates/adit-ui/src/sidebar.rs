@@ -208,7 +208,7 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     let mut content = column![
         container(
             row![
-                text("Session Manager").size(13).color(primary_text()),
+                text(t("打开的连接")).size(TEXT_BODY).color(primary_text()),
                 Space::new().width(Fill),
                 // Just the essentials on the right (SecureCRT-style): new session
                 // and a button to hide the whole panel.
@@ -234,13 +234,26 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     ];
 
     content = content.push(
-        text_input("Filter by group/session name <Alt+I>", &app.session_filter)
+        text_input(t("查找打开的连接…"), &app.session_filter)
             .id(session_filter_id())
             .on_input(Message::SessionFilterChanged)
             .padding([4, 6])
             .style(toolbar_input_style),
     );
-    content = content.push(scrollable(session_tree(app)).height(Fill));
+    let filter = app.session_filter.trim().to_lowercase();
+    let sessions = app.manager.sessions().into_iter().filter(|s| {
+        filter.is_empty() || s.title.to_lowercase().contains(&filter)
+            || app.manager.profile(s.profile_id).is_some_and(|p| {
+                p.host.to_lowercase().contains(&filter) || p.group.to_lowercase().contains(&filter)
+            })
+    }).fold(column![].spacing(4).padding(6), |rows, session| {
+        let accent = profile_accent(app, session.profile_id);
+        let badge = profile_badge(app, session.profile_id);
+        let selected = app.selected_tabs.contains(&session.id);
+        rows.push(tab_button(session, app.manager.active_session(), app.dragged_tab,
+            selected, accent, badge))
+    });
+    content = content.push(scrollable(sessions).height(Fill));
 
     // No action bar for a multi-selection, deliberately. Every action it
     // carried is on the right-click menu and the menu bar, which is where the

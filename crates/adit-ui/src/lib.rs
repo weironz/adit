@@ -770,6 +770,7 @@ pub enum Message {
     ShowMainView(MainView),
     HostDetailsClosed,
     OpenExistingProfile(ProfileId),
+    FindOpenSession,
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
     /// Flip one keyword-highlight rule, by its stable id.
@@ -1212,7 +1213,7 @@ const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
 /// too — but the strip stands next to the terminal for as long as the panel is
 /// hidden, so it is sized to disappear rather than to be noticed.
 const SIDEBAR_REVEAL_WIDTH: f32 = 16.0;
-const MENU_BAR_HEIGHT: f32 = 28.0;
+const MENU_BAR_HEIGHT: f32 = 44.0;
 const TOOLBAR_HEIGHT: f32 = 36.0;
 /// How long after the last local change auto-sync waits before pushing, so a
 /// burst of edits is one sync and not one per keystroke.
