@@ -1313,29 +1313,32 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
             .text_size(12))]
     .spacing(10);
 
+    let option = |label: &'static str, enabled, on_toggle: fn(bool) -> Message| {
+        row![
+            text(t(label)).size(12).color(primary_text()).width(Fill),
+            iced::widget::toggler(enabled).size(18).on_toggle(on_toggle)
+                .style(|theme, status| {
+                    use iced::widget::toggler::{self, Status};
+                    let mut style = toggler::default(theme, status);
+                    if matches!(status, Status::Active { is_toggled: true } | Status::Hovered { is_toggled: true }) {
+                        style.background = accent().into();
+                        style.foreground = Color::WHITE.into();
+                    }
+                    style
+                }),
+        ].spacing(20).align_y(Alignment::Center).padding([7, 0])
+    };
     let mouse_section = column![
-        text(t("终端复制 / 粘贴（PuTTY 风格）"))
-            .size(13)
-            .color(primary_text()),
-        setting_card(checkbox(app.copy_on_select)
-            .label(t("选中内容即复制到剪贴板"))
-            .on_toggle(Message::ToggleCopyOnSelect)
-            .size(16)
-            .text_size(12)),
-        setting_card(checkbox(app.right_click_paste)
-            .label(t("右键直接粘贴（不弹出菜单）"))
-            .on_toggle(Message::ToggleRightClickPaste)
-            .size(16)
-            .text_size(12)),
-        setting_card(checkbox(app.confirm_multiline_paste)
-            .label(t("粘贴多行内容前先确认"))
-            .on_toggle(Message::ToggleConfirmMultilinePaste)
-            .size(16)
-            .text_size(12)),
-        setting_card(text(t("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。"))
+        setting_card(column![
+            text(t("复制与粘贴")).size(12).font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
+            option("选中内容即复制到剪贴板", app.copy_on_select, Message::ToggleCopyOnSelect),
+            option("右键直接粘贴（不弹出菜单）", app.right_click_paste, Message::ToggleRightClickPaste),
+            option("粘贴多行内容前先确认", app.confirm_multiline_paste, Message::ToggleConfirmMultilinePaste),
+        ].spacing(8)),
+        text(t("提示：右键粘贴开启后，清屏 / 回到底部可用工具栏或 Edit 菜单。程序也支持 bracketed paste（应用开启后粘贴不会被自动执行）。"))
             .size(11)
-            .color(muted_text()))]
-    .spacing(10);
+            .color(muted_text())]
+    .spacing(16);
 
 
     [config_section.into(), log_section.into(), mouse_section.into()]
@@ -2095,7 +2098,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
 fn setting_card<'a>(inner: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(inner)
         .width(Fill)
-        .padding([14, 16])
+        .padding(20)
         .style(|_theme| settings_card_style(false))
         .into()
 }
@@ -2189,15 +2192,9 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let rail_item = |category: SettingsCategory| {
         let selected = app.settings_category == category;
         button(text(t(category.label())).size(12))
-            .padding([9, 14])
+            .padding([10, 12])
             .width(Fill)
-            .style(move |_theme, status| {
-                if selected {
-                    primary_button_style(status)
-                } else {
-                    secondary_button_style(status)
-                }
-            })
+            .style(move |_, status| menu_button_style(selected, status))
             .on_press(Message::SettingsCategoryPicked(category))
     };
 
@@ -2210,10 +2207,11 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
             rail_item(SettingsCategory::Sync),
             rail_item(SettingsCategory::Shortcuts),
         ]
-        .spacing(6),
+        .spacing(3).height(Fill),
     )
-    .width(Length::Fixed(168.0))
-    .padding(10)
+    .width(Length::Fixed(172.0))
+    .height(Fill)
+    .padding([14, 8])
     .style(|_theme| settings_rail_style());
 
     // Endonyms, deliberately: a reader who cannot read the current language
@@ -2255,10 +2253,13 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         SettingsCategory::Shortcuts => shortcuts_section(),
     };
 
+    let dialog_height = (app.window_height - 120.0).clamp(300.0, 580.0);
+    let dialog_width = (app.window_width - 80.0).clamp(400.0, 900.0);
     let card = container(
         column![
-            row![
-                text(t("设置")).size(15).color(primary_text()),
+            container(row![
+                text(t("设置")).size(13).color(primary_text())
+                    .font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
                 Space::new().width(Fill),
                 button(text("×").size(16))
                     .width(Length::Fixed(24.0))
@@ -2266,23 +2267,25 @@ pub(crate) fn settings_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                     .padding(0)
                     .style(|_theme, status| close_button_style(status))
                     .on_press(Message::CloseSettings),
-            ]
-            .align_y(Alignment::Center),
+            ].align_y(Alignment::Center)).padding([0, 20]).center_y(48).width(Fill),
             row![
                 rail,
                 // Fixed height so switching category does not resize the dialog
                 // under the cursor — a rail whose items move as you use them is
                 // worse than a slightly tall panel.
-                container(scrollable(container(body).padding([0, 20])))
-                    .height(Length::Fixed(560.0))
-                    .width(Fill),
+                container(scrollable(container(column![
+                    text(t(app.settings_category.label())).size(18).color(primary_text()),
+                    body,
+                ].spacing(20)).padding(24).width(Fill)))
+                    .height(Fill)
+                    .width(Fill)
+                    .style(|_| inspector_style()),
             ]
-            .spacing(18),
+            .height(dialog_height),
         ]
-        .spacing(16),
+        .spacing(0),
     )
-    .width(Length::Fixed(900.0))
-    .padding(24)
+    .width(dialog_width)
     .style(|_theme| connection_dialog_style());
 
     container(card)

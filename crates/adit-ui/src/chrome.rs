@@ -136,18 +136,20 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
-            text("ADIT").size(TEXT_TITLE).color(primary_text()),
+            text("ADIT").size(13).font(Font { weight: Weight::Semibold, ..Font::DEFAULT })
+                .color(Color::from_rgb8(224, 231, 240)),
             global_view_button(app, MainView::Hosts, "资源库"),
             global_view_button(app, MainView::Terminal, "专注工作区"),
             global_view_button(app, MainView::Missions, "任务分屏"),
             menu_button(app, MenuKind::File, t("菜单")),
             Space::new().width(Fill),
-            text(app.manager.status_line()).size(11).color(muted_text()),
+            text(tf("{} 个已打开会话", &[&app.manager.sessions().len()]))
+                .size(TEXT_META).color(Color::from_rgb8(158, 171, 190)),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
     )
-    .padding([3, 10])
+    .padding([0, 12])
     .center_y(MENU_BAR_HEIGHT)
     .width(Fill)
     .style(|_theme| top_bar_style())
@@ -156,9 +158,17 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
 
 pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static str) -> Element<'static, Message> {
     let active = app.main_view == view;
-    button(text(t(label)).size(TEXT_BODY))
-        .padding([5, 12])
-        .style(move |_, status| menu_button_style(active, status))
+    let icon = match view {
+        MainView::Hosts => UiIcon::Hosts,
+        MainView::Terminal => UiIcon::Terminal,
+        MainView::Missions => UiIcon::Tasks,
+    };
+    button(row![
+        ui_icon(icon, 14.0, Color::from_rgb8(202, 214, 229)),
+        text(t(label)).size(12),
+    ].spacing(7).align_y(Alignment::Center))
+        .padding([5, 10])
+        .style(move |_, status| global_navigation_style(active, status))
         .on_press(Message::ShowMainView(view))
         .into()
 }
@@ -166,9 +176,9 @@ pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static 
 pub(crate) fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a, Message> {
     let active = app.active_menu == Some(kind);
 
-    button(text(label).size(13))
-        .padding([6, 10])
-        .style(move |_theme, status| menu_button_style(active, status))
+    button(text(label).size(12))
+        .padding([5, 10])
+        .style(move |_theme, status| global_navigation_style(active, status))
         .on_press(Message::ToggleMenu(kind))
         .into()
 }

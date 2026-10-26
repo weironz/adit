@@ -374,6 +374,41 @@ fn plan(view: CaptureView, ids: &[SessionId]) -> Vec<Step> {
         messages: vec![Message::ShowMainView(MainView::Missions)],
         expected,
     });
+    expected.view = MainView::Hosts;
+    expected.pane_count = 0;
+    steps.push(Step {
+        name: "d-list-with-inspector",
+        messages: vec![
+            Message::ShowMainView(MainView::Hosts),
+            Message::HostLayoutChanged(HostLayout::List),
+        ],
+        expected,
+    });
+    steps.push(Step {
+        name: "d-grid-with-inspector",
+        messages: vec![Message::HostLayoutChanged(HostLayout::Grid)],
+        expected,
+    });
+    steps.push(Step {
+        name: "settings-terminal",
+        messages: vec![
+            Message::RunMenu(MenuCommand::Options),
+            Message::SettingsCategoryPicked(SettingsCategory::Terminal),
+        ],
+        expected,
+    });
+    steps.push(Step {
+        name: "settings-appearance",
+        messages: vec![Message::SettingsCategoryPicked(SettingsCategory::Appearance)],
+        expected,
+    });
+    expected.view = MainView::Missions;
+    expected.pane_count = 4;
+    steps.push(Step {
+        name: "f-after-settings",
+        messages: vec![Message::CloseSettings, Message::ShowMainView(MainView::Missions)],
+        expected,
+    });
     steps
 }
 
@@ -430,6 +465,10 @@ fn dispatch(state: &mut State, mut message: Message) -> Task<NativeMessage> {
         | Message::ReturnToMission
         | Message::WindowFocused
         | Message::WindowUnfocused
+        | Message::HostLayoutChanged(_)
+        | Message::RunMenu(MenuCommand::Options)
+        | Message::SettingsCategoryPicked(_)
+        | Message::CloseSettings
         | Message::WindowResized { .. } => true,
         Message::TabClicked(id) => state.ids.contains(id),
         Message::AddMissionSession(id) => state.ids.contains(id),

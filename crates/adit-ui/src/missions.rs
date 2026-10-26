@@ -305,13 +305,15 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
         let selected = app.missions.active == Some(task.id);
         tasks = tasks.push(
             button(
-                column![
-                    text(task.name.clone()).size(TEXT_BODY),
+                row![
+                    ui_icon(UiIcon::Tasks, 18.0, muted_text()),
+                    column![
+                    text(task.name.clone()).size(12),
                     text(tf("{} 个窗格", &[&task.members.len()]))
-                        .size(TEXT_META)
+                        .size(10)
                         .color(muted_text()),
-                ]
-                .spacing(4),
+                    ].spacing(4),
+                ].spacing(10).align_y(Alignment::Center),
             )
             .padding(10)
             .width(Fill)
@@ -321,7 +323,7 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
     }
     let mut content = column![
         row![
-            text(t("任务分屏")).size(TEXT_BODY).width(Fill),
+            text(t("任务分屏")).size(12).width(Fill),
             sidebar_tool_button("+", 20.0, "新建任务", Message::NewMission),
             sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
         ]
@@ -341,6 +343,7 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
                 .push(
                     text_input(t("任务名称"), draft)
                         .id(mission_name_id())
+                        .size(12)
                         .on_input(Message::MissionNameChanged)
                         .on_submit(Message::FinishMissionName(true))
                         .padding(8)
@@ -348,10 +351,10 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
                 )
                 .push(
                     row![
-                        button(text(t("保存")))
+                        button(text(t("保存")).size(12))
                             .on_press(Message::FinishMissionName(true))
                             .style(|_, s| primary_button_style(s)),
-                        button(text(t("取消")))
+                        button(text(t("取消")).size(12))
                             .on_press(Message::FinishMissionName(false))
                             .style(|_, s| secondary_button_style(s)),
                     ]
@@ -363,7 +366,7 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
                     .on_press(Message::BeginMissionName)
                     .padding(8)
                     .width(Fill)
-                    .style(|_, s| secondary_button_style(s)),
+                    .style(|_, s| toolbar_icon_button_style(s)),
             );
         }
         for id in &task.members {
@@ -380,11 +383,11 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
             }
         }
         content = content.push(
-            button(text(t("添加已打开会话")))
+            button(text(t("添加已打开会话")).size(12))
                 .padding(8)
                 .width(Fill)
                 .on_press(Message::MissionPickerToggled)
-                .style(|_, s| secondary_button_style(s)),
+                .style(|_, s| toolbar_icon_button_style(s)),
         );
         if app.missions.picker {
             let mut choices = column![].spacing(3);
@@ -407,7 +410,7 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
         );
     }
     container(content)
-        .padding(12)
+        .padding([0, 8])
         .width(Length::Fixed(app.sidebar_width))
         .height(Fill)
         .style(|_| sidebar_style())

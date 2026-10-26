@@ -211,16 +211,9 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     let mut content = column![
         container(
             row![
-                text(t("打开的连接")).size(TEXT_BODY).color(primary_text()),
+                text(t("打开的连接")).size(12).color(primary_text()),
                 Space::new().width(Fill),
-                // Just the essentials on the right (SecureCRT-style): new session
-                // and a button to hide the whole panel.
-                sidebar_tool_button(
-                    "▦",
-                    14.0,
-                    "返回主机列表",
-                    Message::ShowMainView(MainView::Hosts),
-                ),
+                text(app.manager.sessions().len()).size(10).color(muted_text()),
                 sidebar_tool_button("+", 20.0, "新建会话", Message::NewProfileDraft),
                 sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
             ]
@@ -237,18 +230,21 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     ];
 
     content = content.push(
-        text_input(t("查找打开的连接…"), &app.open_session_filter)
+        container(text_input(t("查找打开的连接…"), &app.open_session_filter)
             .id(session_filter_id())
             .on_input(Message::OpenSessionFilterChanged)
             .padding([4, 6])
-            .style(toolbar_input_style),
+            .size(11)
+            .style(toolbar_input_style)).padding([4, 8]),
     );
-    let sessions = visible_open_sessions(app).into_iter().fold(column![].spacing(4).padding(6), |rows, session| {
+    let sessions = visible_open_sessions(app).into_iter().fold(column![].spacing(2).padding(6), |rows, session| {
         let accent = profile_accent(app, session.profile_id);
         let badge = profile_badge(app, session.profile_id);
         let selected = app.selected_tabs.contains(&session.id);
+        let tile = app.manager.profile(session.profile_id)
+            .map(|profile| host_tile(app, profile, 26.0, false));
         rows.push(tab_button(session, app.manager.active_session(), app.dragged_tab,
-            selected, accent, badge))
+            selected, accent, badge, tile))
     });
     content = content.push(scrollable(sessions).height(Fill));
 
@@ -287,33 +283,34 @@ pub(crate) fn visible_open_sessions(app: &AditApp) -> Vec<SessionSummary> {
 }
 
 pub(crate) fn resource_sidebar(app: &AditApp) -> Element<'_, Message> {
-    let action = |label: &'static str, message: Message| {
-        button(text(t(label)).size(TEXT_BODY))
-            .padding([10, 12])
+    let action = |icon, label: &'static str, selected, message: Message| {
+        button(row![
+            ui_icon(icon, 16.0, if selected { primary_text() } else { muted_text() }),
+            text(t(label)).size(12),
+        ].spacing(12).align_y(Alignment::Center))
+            .padding([9, 10])
             .width(Fill)
-            .style(|_, status| menu_button_style(false, status))
+            .style(move |_, status| menu_button_style(selected, status))
             .on_press(message)
     };
     container(
         column![
             row![
-                text("ADIT").size(TEXT_TITLE).color(primary_text()),
+                text(t("本地资源库")).size(12).color(muted_text()),
                 Space::new().width(Fill),
                 sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
             ].align_y(Alignment::Center).height(TAB_BAR_HEIGHT),
-            text(t("本地资源库")).size(TEXT_META).color(muted_text()),
-            action("主机", Message::ShowMainView(MainView::Hosts)),
-            action("新建主机", Message::NewProfileDraft),
-            action("新建分组", Message::NewGroupDraft),
-            action("主机密钥…", Message::RunMenu(MenuCommand::KnownHosts)),
-            action("代码片段", Message::RunMenu(MenuCommand::Snippets)),
+            action(UiIcon::Hosts, "主机", true, Message::ShowMainView(MainView::Hosts)),
+            action(UiIcon::Key, "主机密钥…", false, Message::RunMenu(MenuCommand::KnownHosts)),
+            action(UiIcon::Forward, "端口转发", false, Message::RunMenu(MenuCommand::Tunnels)),
+            action(UiIcon::Code, "代码片段", false, Message::RunMenu(MenuCommand::Snippets)),
             Space::new().height(Fill),
-            action("设置…", Message::RunMenu(MenuCommand::Options)),
+            action(UiIcon::Settings, "设置…", false, Message::RunMenu(MenuCommand::Options)),
             text(tf("{} 个已打开会话", &[&app.manager.sessions().len()]))
                 .size(TEXT_META).color(muted_text()),
-        ].spacing(SPACE_SM),
+        ].spacing(3),
     )
-    .padding(12)
+    .padding([0, 8])
     .width(Length::Fixed(app.sidebar_width))
     .height(Fill)
     .style(|_| sidebar_style())
@@ -363,12 +360,15 @@ pub(crate) fn sidebar_offset(app: &AditApp) -> f32 {
 /// subscription that is only active while `sidebar_dragging` is set.
 pub(crate) fn sidebar_divider() -> Element<'static, Message> {
     mouse_area(
-        container(Space::new().width(Length::Fixed(SIDEBAR_DIVIDER_WIDTH)).height(Fill))
+        container(
+            container(Space::new().width(1).height(Fill))
+                .style(|_| container::Style {
+                    background: Some(border_color().into()),
+                    ..Default::default()
+                })
+        ).center_x(SIDEBAR_DIVIDER_WIDTH)
             .height(Fill)
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(border_color())),
-                ..container::Style::default()
-            }),
+            .style(|_| sidebar_style()),
     )
     .on_press(Message::BeginSidebarDrag)
     .interaction(mouse::Interaction::ResizingHorizontally)

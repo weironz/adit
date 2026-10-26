@@ -16,7 +16,7 @@ pub enum MainView {
 
 pub(crate) const HOST_CARD_WIDTH: f32 = 260.0;
 /// Shared by the actual card and animated slots; hit regions cannot drift.
-pub(crate) const HOST_CARD_HEIGHT: f32 = 78.0;
+pub(crate) const HOST_CARD_HEIGHT: f32 = 68.0;
 
 
 /// One preset a profile's tile can use.
@@ -269,6 +269,7 @@ pub(crate) fn host_card(
 
     let profile_id = profile.id;
     let selected = app.selected_profile == Some(profile_id);
+    let hovered = app.hovered_profile == Some(profile_id);
     let dragging = app.dragged_profile == Some(profile_id);
     // Whether the dragged card would land on this one.
     let incoming = matches!(
@@ -307,8 +308,10 @@ pub(crate) fn host_card(
     .padding(10)
     .center_y(HOST_CARD_HEIGHT)
     .style(move |_theme| container::Style {
-        background: Some(Background::Color(if dragging {
+        background: Some(Background::Color(if dragging || selected {
             panel_background_hover()
+        } else if hovered {
+            surface()
         } else {
             app_background()
         })),
@@ -317,7 +320,7 @@ pub(crate) fn host_card(
         // Without it the drag read as inert even while it worked: the move
         // happened, and nothing on screen had said it would.
         border: Border {
-            color: if dragging || incoming || selected {
+            color: if dragging || incoming {
                 accent()
             } else {
                 border_color()
@@ -367,18 +370,6 @@ pub(crate) fn host_section_header(
     // 最近连接, 搜索结果 and 主机, which are not groups a host can move into.
     drop_group: Option<String>,
 ) -> Element<'static, Message> {
-    let pill = |label: String, color: Color| {
-        container(text(label).size(11).color(color))
-            .padding([2, 8])
-            .style(|_theme| container::Style {
-                background: Some(Background::Color(surface_alt())),
-                border: Border {
-                    radius: 999.0.into(),
-                    ..Border::default()
-                },
-                ..container::Style::default()
-            })
-    };
     // Bold and dark: these separate one band from the next, and at the same
     // weight as the host names under them they stop doing that.
     let mut header = row![].spacing(6).align_y(Alignment::Center);
@@ -386,16 +377,16 @@ pub(crate) fn host_section_header(
         header = header.push(text(icon).size(12).color(muted_text()));
     }
     header = header
-        .push(text(title).size(13).color(primary_text()).font(Font {
-            weight: Weight::Bold,
+        .push(text(title).size(12).color(primary_text()).font(Font {
+            weight: Weight::Semibold,
             ..Font::DEFAULT
         }))
         .push(Space::new().width(Fill));
     if online > 0 {
-        header = header.push(pill(tf("{} 个在线", &[&online]), success()));
+        header = header.push(text(tf("{} 个在线", &[&online])).size(10).color(muted_text()));
     }
     let header = header
-        .push(pill(tf("{} 台", &[&count]), muted_text()))
+        .push(text(tf("{} 台", &[&count])).size(10).color(muted_text()))
         .spacing(8)
         .align_y(Alignment::Center);
 
@@ -420,58 +411,45 @@ pub(crate) fn host_row(
     // As on `host_card`: which band drew this row.
     in_pinned: bool,
 ) -> Element<'static, Message> {
-    // The accent while idle, the success colour while a session is up: one mark
-    // doing both jobs keeps the row from growing a second column of dots.
-    let dot_color = if online {
-        success()
-    } else {
-        host_icon(app, profile).1
-    };
-    let dot = container(Space::new())
-        .width(Length::Fixed(8.0))
-        .height(Length::Fixed(8.0))
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(dot_color)),
-            border: Border {
-                radius: 999.0.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        });
     let subtitle = if profile.username.trim().is_empty() {
-        profile.host.clone()
+        protocol_tag(profile.protocol).to_owned()
     } else {
-        format!("{}@{}", profile.username, profile.host)
+        format!("{} · {}", protocol_tag(profile.protocol), profile.username)
     };
 
     let profile_id = profile.id;
     let dragging = app.dragged_profile == Some(profile_id);
+    let selected = app.selected_profile == Some(profile_id);
+    let hovered = app.hovered_profile == Some(profile_id);
     mouse_area(
         container(
             row![
                 Space::new().width(Length::Fixed(indent)),
-                dot,
-                text(profile.name.clone()).size(13).color(primary_text()),
-                // The list layout is the same host, drawn flat — it gets the
-                // same pill, or switching layout would lose the answer.
-                protocol_pill(profile.protocol),
+                host_tile(app, profile, 32.0, dragging),
+                column![
+                    text(profile.name.clone()).size(12).color(primary_text()),
+                    text(subtitle).size(10).color(muted_text()),
+                ].spacing(3),
                 Space::new().width(Fill),
-                text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
+                text(profile.host.clone()).size(11).color(muted_text()),
+                text(if online { "●" } else { "" }).size(6).color(success()),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
         )
         .width(Fill)
-        .padding([7, 10])
+        .padding([9, 12])
         .style(move |_theme| container::Style {
-            background: Some(Background::Color(if dragging {
+            background: Some(Background::Color(if dragging || selected {
                 panel_background_hover()
+            } else if hovered {
+                surface()
             } else {
                 Color::TRANSPARENT
             })),
             text_color: Some(primary_text()),
             border: Border {
-                radius: RADIUS_SM.into(),
+                radius: 0.0.into(),
                 ..Border::default()
             },
             ..container::Style::default()
@@ -491,17 +469,18 @@ pub(crate) fn host_row(
 
 pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label: &'static str) -> Element<'static, Message> {
     let selected = current == target;
-    button(text(label).size(12))
-        .padding([5, 12])
-        .style(move |_theme, status| {
-            if selected {
-                primary_button_style(status)
-            } else {
-                secondary_button_style(status)
-            }
-        })
-        .on_press(Message::HostLayoutChanged(target))
-        .into()
+    let icon = match target {
+        HostLayout::Grid => UiIcon::Grid,
+        HostLayout::List => UiIcon::List,
+        HostLayout::Tree => UiIcon::Tree,
+    };
+    tooltip(
+        button(ui_icon(icon, 15.0, if selected { primary_text() } else { muted_text() }))
+            .padding(6).style(move |_, status| menu_button_style(selected, status))
+            .on_press(Message::HostLayoutChanged(target)),
+        text(t(label)).size(11),
+        tooltip::Position::Bottom,
+    ).into()
 }
 
 
@@ -533,13 +512,13 @@ fn host_content_width(app: &AditApp) -> f32 {
 pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: bool) -> Element<'static, Message> {
     let (press, enter, hover, release) =
         (name.clone(), name.clone(), name.clone(), name.clone());
-    let tile = container(text(if expanded { "\u{25be}" } else { "\u{25b8}" }).size(15).color(Color::WHITE))
+    let tile = container(ui_icon(UiIcon::Folder, 20.0, muted_text()))
         .width(Length::Fixed(34.0))
         .height(Length::Fixed(34.0))
         .center_x(Length::Fixed(34.0))
         .center_y(Length::Fixed(34.0))
         .style(|_theme| container::Style {
-            background: Some(Background::Color(accent())),
+            background: Some(Background::Color(surface_sunken())),
             border: Border {
                 radius: RADIUS_SM.into(),
                 ..Border::default()
@@ -555,7 +534,8 @@ pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: b
                     text(name).size(13).color(primary_text()),
                     text(tf("{} 台主机", &[&count])).size(11).color(muted_text()),
                 ]
-                .spacing(3),
+                .spacing(3).width(Fill),
+                text(if expanded { "⌄" } else { "›" }).size(15).color(muted_text()),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
@@ -993,21 +973,13 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
               || profile.group.to_ascii_lowercase().contains(&filter)
     };
 
-    let search = text_input("搜索主机、地址或用户名…", &app.session_filter)
-        .id(session_filter_id())
-        .on_input(Message::SessionFilterChanged)
-        .padding(9)
-        .size(13);
-
     let layout = app.host_layout;
-    // Grid and list. Tree was a third option that reproduced the sidebar, and
-    // the sidebar does it better because doing it is all the sidebar does.
     let switcher = row![
         host_layout_button(layout, HostLayout::Grid, "网格"),
         host_layout_button(layout, HostLayout::List, "列表"),
         host_layout_button(layout, HostLayout::Tree, "管理"),
     ]
-    .spacing(6);
+    .spacing(2);
 
     let style = BandStyle {
         layout,
@@ -1154,38 +1126,34 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
-    let pane: Element<'_, Message> = container(
-        column![
-            row![
-                text(t("主机")).size(24).color(primary_text()).width(Fill),
-                text(tf("{} 个配置", &[&profiles.len()])).size(TEXT_META).color(muted_text()),
-            ].align_y(Alignment::Center),
-            // Search, then the shapes, then the one action. No tag filter or
-            // multi-select alongside them: the reference client has both, Adit
-            // has neither tags nor a bulk operation to select for, and a control
-            // that opens onto nothing is worse than its absence.
-            row![
-                search,
-                switcher,
-                button(text("+ 新建主机").size(12))
-                    .padding([6, 14])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::NewProfileDraft),
-            ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-            if layout == HostLayout::Tree {
-                scrollable(session_tree(app)).height(Fill)
-            } else {
-                scrollable(body).height(Fill)
-            },
-        ]
-        .spacing(SPACE_MD),
-    )
-    .width(Fill)
-    .height(Fill)
-    .padding(20)
-    .into();
+    let toolbar = container(row![
+        button(row![
+            ui_icon(UiIcon::Plus, 14.0, primary_text()),
+            text(t("新建主机")).size(12),
+        ].spacing(6).align_y(Alignment::Center))
+            .padding([6, 10]).style(|_, status| secondary_button_style(status))
+            .on_press(Message::NewProfileDraft),
+        button(row![
+            ui_icon(UiIcon::Folder, 14.0, muted_text()),
+            text(t("新建分组")).size(12),
+        ].spacing(6).align_y(Alignment::Center))
+            .padding([6, 8]).style(|_, status| toolbar_icon_button_style(status))
+            .on_press(Message::NewGroupDraft),
+        Space::new().width(Fill),
+        text(tf("{} 个配置", &[&profiles.len()])).size(TEXT_META).color(muted_text()),
+        switcher,
+    ].spacing(8).align_y(Alignment::Center))
+        .padding([0, 16]).center_y(46).width(Fill)
+        .style(|_| sidebar_style());
+    let entries: Element<'_, Message> = if layout == HostLayout::Tree {
+        session_tree(app)
+    } else {
+        body.into()
+    };
+    let pane: Element<'_, Message> = container(column![
+        toolbar,
+        scrollable(container(entries).padding(20).width(Fill)).height(Fill),
+    ]).style(|_| app_background_style()).width(Fill).height(Fill).into();
 
     // Track the cursor for the drag ghost. Tracked always rather than only
     // mid-drag, so the ghost's first frame appears where the drag began instead
@@ -1229,38 +1197,74 @@ fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
     };
     let id = profile.id;
     let existing = app.manager.sessions().iter().any(|s| s.profile_id == id);
-    let mut details = column![
-        row![
-            text(t("主机详情")).size(TEXT_BODY).width(Fill),
-            button("×").on_press(Message::HostDetailsClosed)
-                .style(|_, status| close_button_style(status)),
-        ].align_y(Alignment::Center),
-        host_tile(app, profile, 48.0, false),
-        text(profile.name.clone()).size(TEXT_TITLE).color(primary_text()),
-        protocol_pill(profile.protocol),
-        text(format!("{}:{}", profile.host, profile.port))
-            .size(TEXT_BODY).font(Font::MONOSPACE),
-        text(profile.username.clone()).size(TEXT_BODY),
-        text(profile.group.clone()).size(TEXT_META).color(muted_text()),
-    ].spacing(SPACE_MD);
+    let field = |label: &'static str, value: String| -> Element<'static, Message> {
+        column![
+            text(t(label)).size(10).color(muted_text()),
+            container(text(if value.is_empty() { String::from(t("未设置")) } else { value })
+                .size(12).color(primary_text()))
+                .width(Fill).padding([8, 10])
+                .style(|_| container::Style {
+                    background: Some(field_background().into()),
+                    border: border(5.0, 1.0, border_color()),
+                    ..Default::default()
+                }),
+        ].spacing(5).into()
+    };
+    let section = |label: &'static str, body: Element<'static, Message>| -> Element<'static, Message> {
+        container(column![
+            text(t(label)).size(11).font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
+            body,
+        ].spacing(12)).padding(SPACE_MD).width(Fill).style(|_| settings_card_style(false)).into()
+    };
+    let details = column![
+        section("地址", column![
+            row![
+                host_tile(app, profile, 36.0, false),
+                column![
+                    text(profile.name.clone()).size(13).color(primary_text()),
+                    protocol_pill(profile.protocol),
+                ].spacing(4).width(Fill),
+            ].spacing(10).align_y(Alignment::Center),
+            field("主机", profile.host.clone()),
+            field("端口", profile.port.to_string()),
+        ].spacing(12).into()),
+        section("常规", field("分组", if profile.group.is_empty() {
+            String::from(t("未分组"))
+        } else { profile.group.clone() })),
+        section("连接信息", field("用户名", profile.username.clone())),
+    ].spacing(12);
+    let header = container(row![
+        text(t("主机详情")).size(12).width(Fill)
+            .font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
+        button(text(t("编辑")).size(11))
+            .padding([4, 8]).style(|_, status| toolbar_icon_button_style(status))
+            .on_press(Message::EditProfileFromContext(id)),
+        button("×").on_press(Message::HostDetailsClosed)
+            .style(|_, status| close_button_style(status)),
+    ].align_y(Alignment::Center))
+        .padding([0, 12]).center_y(46).width(Fill).style(|_| sidebar_style());
+    let mut actions = column![].spacing(8);
     if existing {
-        details = details.push(
-            button(text(t("切换到已打开会话"))).padding(10).width(Fill)
+        actions = actions.push(
+            button(container(text(t("切换到已打开会话")).size(12)).center_x(Fill))
+                .padding([9, 10]).width(Fill)
                 .style(|_, status| primary_button_style(status))
                 .on_press(Message::OpenExistingProfile(id)),
         );
     }
-    details = details.push(
-        button(text(t(if existing { "新开一个会话" } else { "连接" })))
-            .padding(10).width(Fill)
-            .style(|_, status| secondary_button_style(status))
+    actions = actions.push(
+        button(container(text(t(if existing { "新开一个会话" } else { "连接" })).size(12)).center_x(Fill))
+            .padding([9, 10]).width(Fill)
+            .style(move |_, status| if existing {
+                secondary_button_style(status)
+            } else { primary_button_style(status) })
             .on_press(Message::ProfileDoubleClicked(id)),
-    ).push(
-        button(text(t("编辑会话"))).padding(10).width(Fill)
-            .style(|_, status| secondary_button_style(status))
-            .on_press(Message::EditProfileFromContext(id)),
     );
-    container(scrollable(details)).padding(20)
+    container(column![
+        header,
+        scrollable(container(details).padding(12).width(Fill)).height(Fill),
+        container(actions).padding(12).width(Fill),
+    ])
         .width(if compact { Fill } else { Length::Fixed(HOST_DETAILS_WIDTH) }).height(Fill)
-        .style(|_| sidebar_style()).into()
+        .style(|_| inspector_style()).into()
 }

@@ -1,7 +1,7 @@
 use super::*;
 
-pub(crate) const RADIUS_SM: f32 = 8.0;
-pub(crate) const RADIUS_MD: f32 = 12.0;
+pub(crate) const RADIUS_SM: f32 = 6.0;
+pub(crate) const RADIUS_MD: f32 = 10.0;
 pub(crate) const SPACE_SM: f32 = 8.0;
 pub(crate) const SPACE_MD: f32 = 16.0;
 pub(crate) const TEXT_TITLE: f32 = 18.0;
@@ -20,38 +20,38 @@ pub(crate) fn pick(light: Color, dark: Color) -> Color {
 // Palette inspired by Termius: deep navy-charcoal dark chrome, a clean light
 // theme, and a blue accent. Terminal colours remain an independent preference.
 pub(crate) fn muted_text() -> Color {
-    pick(Color::from_rgb8(83, 103, 134), Color::from_rgb8(164, 177, 206))
+    pick(Color::from_rgb8(95, 111, 125), Color::from_rgb8(153, 167, 185))
 }
 
 pub(crate) fn primary_text() -> Color {
-    pick(Color::from_rgb8(37, 56, 84), Color::from_rgb8(229, 235, 248))
+    pick(Color::from_rgb8(31, 43, 58), Color::from_rgb8(226, 232, 240))
 }
 
 pub(crate) fn app_background() -> Color {
-    pick(Color::from_rgb8(247, 249, 255), Color::from_rgb8(26, 30, 48))
+    pick(Color::WHITE, Color::from_rgb8(24, 28, 38))
 }
 
 /// Raised surface: sidebar, cards, dialogs, floating menus.
 pub(crate) fn surface() -> Color {
-    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(34, 39, 61))
+    pick(Color::from_rgb8(248, 250, 251), Color::from_rgb8(35, 41, 54))
 }
 
 /// Secondary chrome: toolbar, status bar, tab strip.
 pub(crate) fn surface_alt() -> Color {
-    pick(Color::from_rgb8(234, 240, 251), Color::from_rgb8(21, 24, 39))
+    pick(Color::from_rgb8(245, 248, 249), Color::from_rgb8(29, 34, 46))
 }
 
 /// Recessed area the terminal panel floats on.
 pub(crate) fn surface_sunken() -> Color {
-    pick(Color::from_rgb8(234, 240, 251), Color::from_rgb8(16, 20, 34))
+    pick(Color::from_rgb8(236, 241, 243), Color::from_rgb8(22, 26, 35))
 }
 
 pub(crate) fn panel_background_hover() -> Color {
-    pick(Color::from_rgb8(226, 234, 251), Color::from_rgb8(37, 46, 72))
+    pick(Color::from_rgb8(229, 235, 238), Color::from_rgb8(43, 51, 66))
 }
 
 pub(crate) fn field_background() -> Color {
-    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(26, 30, 48))
+    pick(Color::from_rgb8(247, 249, 250), Color::from_rgb8(29, 35, 47))
 }
 
 pub(crate) fn terminal_background() -> Color {
@@ -65,16 +65,16 @@ pub(crate) fn selection_background() -> Color {
 }
 
 pub(crate) fn border_color() -> Color {
-    pick(Color::from_rgb8(203, 215, 234), Color::from_rgb8(51, 60, 85))
+    pick(Color::from_rgb8(225, 232, 236), Color::from_rgb8(49, 58, 73))
 }
 
 pub(crate) fn border_strong() -> Color {
-    pick(Color::from_rgb8(93, 130, 188), Color::from_rgb8(96, 127, 178))
+    pick(Color::from_rgb8(157, 177, 194), Color::from_rgb8(94, 116, 144))
 }
 
 pub(crate) fn accent() -> Color {
     // Deep enough that white button text stays legible.
-    pick(Color::from_rgb8(46, 99, 177), Color::from_rgb8(77, 126, 201))
+    pick(Color::from_rgb8(27, 126, 220), Color::from_rgb8(75, 150, 235))
 }
 
 /// Colour for OSC 8 hyperlink runs — a readable link blue on both light and dark
@@ -223,9 +223,8 @@ pub(crate) fn app_background_style() -> container::Style {
 
 pub(crate) fn top_bar_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(surface())),
-        text_color: Some(primary_text()),
-        border: border(0.0, 1.0, border_color()),
+        background: Some(Background::Color(Color::from_rgb8(38, 42, 57))),
+        text_color: Some(Color::from_rgb8(226, 232, 240)),
         ..container::Style::default()
     }
 }
@@ -253,7 +252,6 @@ pub(crate) fn sidebar_style() -> container::Style {
     container::Style {
         background: Some(Background::Color(surface_alt())),
         text_color: Some(primary_text()),
-        border: border(0.0, 1.0, border_color()),
         ..container::Style::default()
     }
 }
@@ -271,10 +269,10 @@ pub(crate) fn terminal_panel_style(focused: bool) -> container::Style {
         background: Some(Background::Color(terminal_background())),
         text_color: Some(default_foreground()),
         border: border(
-            RADIUS_MD,
-            1.5,
+            0.0,
+            1.0,
             if focused {
-                accent()
+                pick(Color::from_rgb8(112, 145, 180), Color::from_rgb8(76, 105, 140))
             } else {
                 Color::from_rgb8(38, 43, 54)
             },
@@ -293,9 +291,9 @@ pub(crate) fn pane_header_style(focused: bool) -> container::Style {
         })),
         text_color: Some(primary_text()),
         border: border(
-            RADIUS_SM,
+            0.0,
             1.0,
-            if focused { accent() } else { border_color() },
+            if focused { border_strong() } else { border_color() },
         ),
         ..container::Style::default()
     }
@@ -307,7 +305,7 @@ pub(crate) fn dialog_scrim_style() -> container::Style {
             r: 0.04,
             g: 0.06,
             b: 0.10,
-            a: 0.42,
+            a: if is_dark() { 0.36 } else { 0.10 },
         })),
         ..container::Style::default()
     }
@@ -418,12 +416,29 @@ pub(crate) fn method_button_style(selected: bool, status: button::Status) -> but
 
 pub(crate) fn menu_button_style(active: bool, status: button::Status) -> button::Style {
     let background = match (active, status) {
-        (true, _) => accent_soft(),
+        (true, _) => panel_background_hover(),
         (false, button::Status::Hovered) => panel_background_hover(),
         (false, button::Status::Pressed) => accent_soft(),
         _ => transparent(),
     };
     base_button_style(background, primary_text(), transparent())
+}
+
+pub(crate) fn global_navigation_style(active: bool, status: button::Status) -> button::Style {
+    let fill = match (active, status) {
+        (true, _) => Color::from_rgb8(61, 67, 85),
+        (_, button::Status::Hovered | button::Status::Pressed) => Color::from_rgb8(49, 55, 73),
+        _ => transparent(),
+    };
+    base_button_style(fill, Color::from_rgb8(224, 231, 240), transparent())
+}
+
+pub(crate) fn inspector_style() -> container::Style {
+    container::Style {
+        background: Some(surface_sunken().into()),
+        text_color: Some(primary_text()),
+        ..Default::default()
+    }
 }
 
 /// The whole-tab pill: an accent-bordered surface when active, a flat chip
@@ -433,19 +448,19 @@ pub(crate) fn tab_container_style_dnd(active: bool, dragging: bool) -> container
     let background = if dragging {
         accent_soft()
     } else if active {
-        surface()
+        panel_background_hover()
     } else {
-        surface_alt()
+        transparent()
     };
-    let border_color = if active || dragging {
+    let border_color = if dragging {
         accent()
     } else {
-        border_color()
+        transparent()
     };
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
-        border: border(RADIUS_SM, if dragging { 2.0 } else { 1.0 }, border_color),
+        border: border(RADIUS_SM, if dragging { 2.0 } else { 0.0 }, border_color),
         // Lift the dragged tab so it reads as picked up while it slides.
         shadow: if dragging {
             subtle_shadow()
@@ -605,12 +620,12 @@ pub(crate) fn settings_card_style(selected: bool) -> container::Style {
         background: Some(Background::Color(if selected {
             accent_soft()
         } else {
-            surface_alt()
+            surface()
         })),
         text_color: Some(primary_text()),
         border: border(
             RADIUS_SM,
-            1.0,
+            if selected { 1.0 } else { 0.0 },
             if selected { accent() } else { border_color() },
         ),
         ..container::Style::default()

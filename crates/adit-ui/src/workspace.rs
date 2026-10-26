@@ -9,9 +9,9 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     } else if app.main_view == MainView::Missions && mission_is_empty(app) {
         container(column![
             text(t("添加已打开会话开始任务")).size(TEXT_TITLE),
-            button(text(t("打开的连接"))).on_press(Message::FindOpenSession)
+            button(text(t("打开的连接")).size(12)).on_press(Message::FindOpenSession)
                 .style(|_, s| primary_button_style(s)),
-            button(text(t("资源库"))).on_press(Message::ShowMainView(MainView::Hosts))
+            button(text(t("资源库")).size(12)).on_press(Message::ShowMainView(MainView::Hosts))
                 .style(|_, s| secondary_button_style(s)),
         ].spacing(16)).center_x(Fill).center_y(Fill).into()
     } else if app.panes.len() >= 2 && !app.fullscreen {
@@ -54,10 +54,26 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     // in fullscreen has no such thing, so hiding its tabs would strand it.
     let rdp_fullscreen = app.fullscreen && app.manager.active_is_desktop();
     let mut layout = column![].height(Fill).width(Fill);
-    if !rdp_fullscreen {
-        let title = if app.main_view == MainView::Hosts {
-            String::from(t("资源库"))
-        } else if app.main_view == MainView::Missions {
+    if !rdp_fullscreen && app.main_view == MainView::Hosts {
+        let mut connect = button(text(t("连接")).size(TEXT_META))
+            .padding([4, 10]).style(|_, status| secondary_button_style(status));
+        if let Some(id) = app.selected_profile {
+            connect = connect.on_press(Message::ProfileDoubleClicked(id));
+        }
+        layout = layout.push(
+            container(row![
+                ui_icon(UiIcon::Search, 14.0, muted_text()),
+                text_input(t("搜索主机、地址或用户名…"), &app.session_filter)
+                    .id(session_filter_id())
+                    .on_input(Message::SessionFilterChanged)
+                    .padding([4, 8]).size(12).style(toolbar_input_style),
+                connect,
+            ].spacing(8).align_y(Alignment::Center))
+                .padding([0, 12]).center_y(TAB_BAR_HEIGHT).width(Fill)
+                .style(|_| sidebar_style()),
+        );
+    } else if !rdp_fullscreen {
+        let title = if app.main_view == MainView::Missions {
             mission_title(app)
         } else {
             app.manager.active_session_summary().map(|s| s.title)
@@ -73,14 +89,14 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
                         } else { Message::ReturnToMission })
                         .style(|_, status| secondary_button_style(status))
                 } else {
-                    button(text(t("任务分屏")).size(TEXT_META))
+                    button(ui_icon(UiIcon::Tasks, 14.0, muted_text()))
                         .on_press(Message::ShowMainView(MainView::Missions))
-                        .style(|_, status| secondary_button_style(status))
+                        .style(|_, status| toolbar_icon_button_style(status))
                 },
                 active_session_action(app),
                 button(text(t("打开的连接")).size(TEXT_META))
                     .on_press(Message::FindOpenSession)
-                    .style(|_, status| secondary_button_style(status)),
+                    .style(|_, status| toolbar_icon_button_style(status)),
             ]
             .spacing(6)
             .align_y(Alignment::Center)
@@ -926,6 +942,7 @@ pub(crate) fn tab_button(
     selected: bool,
     accent: Option<Color>,
     badge: Option<String>,
+    tile: Option<Element<'static, Message>>,
 ) -> Element<'static, Message> {
     let id = session.id;
     let active = Some(id) == active_session;
@@ -935,9 +952,12 @@ pub(crate) fn tab_button(
 
     // The whole pill is a mouse_area (click = activate, drag = reorder); only the
     // close × stays a button so it can consume its own click.
-    let mut inner = row![text("●").size(10).color(status_color(session.status))]
-        .spacing(6)
+    let mut inner = row![]
+        .spacing(8)
         .align_y(Alignment::Center);
+    if let Some(tile) = tile {
+        inner = inner.push(tile);
+    }
     // Environment badge (e.g. PROD) so an operator can tell prod from staging.
     if let Some(badge_text) = badge {
         let badge_bg = accent.unwrap_or_else(muted_text);
@@ -951,8 +971,15 @@ pub(crate) fn tab_button(
                 }),
         );
     }
+    let subtitle = row![
+        text("●").size(6).color(status_color(session.status)),
+        text(t(session.status.label())).size(10).color(muted_text()),
+    ].spacing(4).align_y(Alignment::Center);
     let inner = inner
-        .push(text(session.title).size(12).color(primary_text()).width(Fill))
+        .push(column![
+            text(session.title).size(12).color(primary_text()),
+            subtitle,
+        ].spacing(3).width(Fill))
         .push(
             button(text("×").size(15))
                 .padding([2, 7])
@@ -965,7 +992,7 @@ pub(crate) fn tab_button(
             .padding([0, 6])
             // The same height as the 主机 tab and the +, so the strip holds one.
             .width(Fill)
-            .center_y(40)
+            .center_y(52)
             .style(move |_theme| {
                 if is_dragging {
                     tab_container_style_dnd(active, true)
@@ -1428,7 +1455,7 @@ pub(crate) fn palette_color(index: u8) -> Color {
 
 pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
     let status = if let Some(error) = &app.last_error {
-        format!("Error: {error}")
+        tf("错误：{}", &[&error])
     } else {
         app.notice.clone()
     };
@@ -1448,32 +1475,32 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
             .push(text("⇶").size(12).color(accent()))
             .push(text(tf("广播 ×{}", &[&reach])).size(11).color(accent()));
     }
-    left = left.push(text(status).size(12).color(muted_text()));
+    left = left.push(text(status).size(11).color(muted_text()));
 
     container(
         row![
             left,
             Space::new().width(Fill),
-            text(app.manager.status_line()).size(12).color(muted_text()),
+            text(app.manager.status_line()).size(11).color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
-            text(format!("Profiles: {}", app.manager.profiles().len()))
-                .size(12)
+            text(tf("{} 个配置", &[&app.manager.profiles().len()]))
+                .size(11)
                 .color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
             text(format!(
                 "{}x{}",
                 app.terminal_size.cols, app.terminal_size.rows
             ))
-            .size(12)
+            .size(11)
             .color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
-            text("Adit Native").size(12).color(muted_text()),
+            text(format!("v{}", env!("CARGO_PKG_VERSION"))).size(11).color(muted_text()),
         ]
         .spacing(12)
         .align_y(Alignment::Center),
     )
-    .padding([6, 14])
-    .height(STATUS_BAR_HEIGHT)
+    .padding([0, 14])
+    .center_y(STATUS_BAR_HEIGHT)
     .width(Fill)
     .style(|_theme| status_bar_style())
     .into()

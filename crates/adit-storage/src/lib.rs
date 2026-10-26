@@ -603,7 +603,7 @@ fn default_auto_reconnect() -> bool {
 }
 
 fn default_sidebar_width() -> f32 {
-    348.0
+    224.0
 }
 
 fn default_sidebar_visible() -> bool {
