@@ -454,6 +454,7 @@ fn interactive_message_allowed(state: &State, message: &Message) -> bool {
         | Message::RemoveMission
         | Message::FindOpenSession
         | Message::SessionFilterChanged(_)
+        | Message::OpenSessionFilterChanged(_)
         | Message::GlobalCursorMoved(_)
         | Message::ModifiersChanged(_)
         | Message::CancelProfileDrag

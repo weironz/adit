@@ -959,11 +959,21 @@ mod tests {
         app.settings_open = true;
         release_owned(&mut app);
         release_owned(&mut app);
-        for mask in [0, 1, 0] {
-            assert_eq!(
-                wire_a.recv_timeout(Duration::from_secs(5)).unwrap(),
-                (mask, 1, 0)
-            );
+        // Hover and press both send the position. The asynchronous input queue
+        // may coalesce those zero-mask moves or deliver both; require the real
+        // press/up order rather than a scheduling-dependent packet count.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut saw_press = false;
+        loop {
+            let (mask, x, y) = wire_a.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert_eq!((x, y), (1, 0));
+            if mask == 1 {
+                saw_press = true;
+            }
+            if saw_press && mask == 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "owned button was not released");
         }
         assert!(app.desktop_panes.owned_buttons.is_empty());
         app.settings_open = false;

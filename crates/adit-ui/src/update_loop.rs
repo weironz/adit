@@ -288,6 +288,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             } else if app.fullscreen
                 && app.manager.active_rdp_live()
                 && !app.manager.active_is_vnc()
+                && remote_workspace_accepts_input(app)
             {
                 for stroke in keyboard_hook::drain() {
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
@@ -296,7 +297,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         pressed: stroke.pressed,
                     });
                 }
-            } else if !app.fullscreen || app.manager.active_is_vnc() {
+            } else {
                 // The session can end or the mode can change without passing
                 // through ToggleFullscreen — a dropped connection, a closed
                 // tab. Leaving a global hook armed after that would swallow
@@ -571,7 +572,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             release_rdp_modifiers(app);
             change_main_view(app, MainView::Terminal);
             app.sidebar_visible = true;
-            app.session_filter.clear();
+            app.open_session_filter.clear();
             app.terminal_focused = false;
             sync_terminal_size(app);
             return focus_session_filter();
@@ -1819,6 +1820,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.profile_select_anchor = None;
             }
         }
+        Message::OpenSessionFilterChanged(value) => {
+            app.terminal_focused = false;
+            app.open_session_filter = value;
+            let visible: HashSet<_> = visible_open_sessions(app).iter().map(|s| s.id).collect();
+            app.selected_tabs.retain(|id| visible.contains(id));
+            if app.tab_select_anchor.is_some_and(|id| !visible.contains(&id)) {
+                app.tab_select_anchor = None;
+            }
+        }
         Message::NewProfileDraft => {
             new_profile_draft(app);
         }
@@ -2266,7 +2276,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Ctrl+Shift+X) reach the remote instead of being eaten locally,
             // and it is global, so it is armed for exactly as long as the user
             // is plainly aiming keys at a remote desktop.
-            if app.fullscreen && app.manager.active_is_desktop() && !app.manager.active_is_vnc() {
+            if app.fullscreen && app.manager.active_is_desktop() && !app.manager.active_is_vnc()
+                && remote_workspace_accepts_input(app) {
                 keyboard_hook::arm();
             } else {
                 keyboard_hook::disarm();
@@ -2368,6 +2379,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             {
                 app.search_open = true;
                 app.terminal_focused = false;
+                sync_terminal_size(app);
                 recompute_search(app);
                 return focus_search_input();
             }
@@ -2376,6 +2388,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.search_matches.clear();
                 app.search_index = None;
                 app.terminal_focused = true;
+                sync_terminal_size(app);
                 return Task::none();
             }
             // Escape drops a multi-selection back to the focused row. Checked
@@ -2458,6 +2471,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // conflict with. It is the pairing every file manager uses for the
             // same gesture on a list row.
             if !remote_workspace_accepts_input(app) {
+                if app.main_view != MainView::Hosts || desktop_panes::local_input_blocked(app) {
+                    return Task::none();
+                }
                 if plain_ctrl_shortcut(&event, 'c') {
                     let ids = crate::profiles::selected_profile_ids(app);
                     if !ids.is_empty() {
@@ -2532,7 +2548,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0 {
                 app.window_width = width;
                 app.window_height = height;
-                sync_terminal_size(app);
+                if app.main_view == MainView::Missions {
+                    restore_mission(app);
+                } else {
+                    sync_terminal_size(app);
+                }
                 // Re-probe the display scale: the window may have moved to a
                 // monitor with a different DPI, and the RDP viewport request
                 // is in physical pixels.
@@ -2835,7 +2855,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 let anchor = app.tab_select_anchor.or(app.manager.active_session());
                 if let Some(anchor_id) = anchor {
                     let sessions: Vec<SessionId> =
-                        app.manager.sessions().into_iter().map(|s| s.id).collect();
+                        visible_open_sessions(app).into_iter().map(|s| s.id).collect();
                     let anchor_pos = sessions.iter().position(|id| *id == anchor_id);
                     let click_pos = sessions.iter().position(|id| *id == session_id);
                     if let (Some(a), Some(c)) = (anchor_pos, click_pos) {
@@ -3037,6 +3057,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ToggleCommandWindow => {
             app.command_window_open = !app.command_window_open;
+            sync_terminal_size(app);
             if app.command_window_open {
                 app.command_history_pos = None;
                 return focus_command_input();
@@ -3114,6 +3135,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.search_matches.clear();
             app.search_index = None;
             app.terminal_focused = true;
+            sync_terminal_size(app);
         }
         Message::SearchQueryChanged(query) => {
             app.search_query = query;

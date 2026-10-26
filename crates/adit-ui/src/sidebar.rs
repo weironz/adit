@@ -237,19 +237,13 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     ];
 
     content = content.push(
-        text_input(t("查找打开的连接…"), &app.session_filter)
+        text_input(t("查找打开的连接…"), &app.open_session_filter)
             .id(session_filter_id())
-            .on_input(Message::SessionFilterChanged)
+            .on_input(Message::OpenSessionFilterChanged)
             .padding([4, 6])
             .style(toolbar_input_style),
     );
-    let filter = app.session_filter.trim().to_lowercase();
-    let sessions = app.manager.sessions().into_iter().filter(|s| {
-        filter.is_empty() || s.title.to_lowercase().contains(&filter)
-            || app.manager.profile(s.profile_id).is_some_and(|p| {
-                p.host.to_lowercase().contains(&filter) || p.group.to_lowercase().contains(&filter)
-            })
-    }).fold(column![].spacing(4).padding(6), |rows, session| {
+    let sessions = visible_open_sessions(app).into_iter().fold(column![].spacing(4).padding(6), |rows, session| {
         let accent = profile_accent(app, session.profile_id);
         let badge = profile_badge(app, session.profile_id);
         let selected = app.selected_tabs.contains(&session.id);
@@ -280,6 +274,16 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     )
     .on_move(Message::SidebarCursorMoved)
     .into()
+}
+
+pub(crate) fn visible_open_sessions(app: &AditApp) -> Vec<SessionSummary> {
+    let filter = app.open_session_filter.trim().to_lowercase();
+    app.manager.sessions().into_iter().filter(|s| {
+        filter.is_empty() || s.title.to_lowercase().contains(&filter)
+            || app.manager.profile(s.profile_id).is_some_and(|p| {
+                p.host.to_lowercase().contains(&filter) || p.group.to_lowercase().contains(&filter)
+            })
+    }).collect()
 }
 
 pub(crate) fn resource_sidebar(app: &AditApp) -> Element<'_, Message> {

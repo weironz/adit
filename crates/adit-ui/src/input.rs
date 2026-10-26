@@ -197,6 +197,7 @@ pub(crate) fn remote_workspace_accepts_input(app: &AditApp) -> bool {
     app.desktop_window_focused
         && app.terminal_focused
         && app.main_view != MainView::Hosts
+        && (app.main_view != MainView::Missions || mission_has_active_member(app))
         && app.active_menu.is_none()
         && app.profile_context_menu.is_none()
         && app.tab_context_menu.is_none()

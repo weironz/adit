@@ -21,6 +21,14 @@ struct Mission {
 
 pub(crate) fn change_main_view(app: &mut AditApp, view: MainView) {
     release_rdp_modifiers(app);
+    app.active_menu = None;
+    app.tab_context_menu = None;
+    app.profile_context_menu = None;
+    app.group_context_menu = None;
+    app.terminal_context_menu = false;
+    app.move_to_group_menu = false;
+    app.rdp_quality_menu_open = false;
+    app.terminal_selecting = false;
     if app.main_view == MainView::Missions {
         remember_mission(app);
     }
@@ -253,7 +261,9 @@ pub(crate) fn reconcile_missions(app: &mut AditApp) {
             task.active = task.members.first().copied();
         }
     }
-    if app.main_view == MainView::Missions && changed {
+    if app.main_view == MainView::Missions
+        && (changed || (!mission_is_empty(app) && !mission_has_active_member(app)))
+    {
         restore_mission(app);
     } else if app.main_view != MainView::Missions && !app.panes.is_empty() {
         app.panes.clear();
@@ -270,9 +280,23 @@ pub(crate) fn mission_is_empty(app: &AditApp) -> bool {
         .is_none_or(|m| m.members.is_empty())
 }
 
+pub(crate) fn mission_has_active_member(app: &AditApp) -> bool {
+    app.manager.active_session().is_some_and(|id| {
+        app.missions
+            .items
+            .iter()
+            .find(|m| Some(m.id) == app.missions.active)
+            .is_some_and(|m| m.members.contains(&id))
+    })
+}
+
 pub(crate) fn mission_title(app: &AditApp) -> String {
-    app.missions.items.iter().find(|m| Some(m.id) == app.missions.active)
-        .map(|m| m.name.clone()).unwrap_or_else(|| String::from(t("任务分屏")))
+    app.missions
+        .items
+        .iter()
+        .find(|m| Some(m.id) == app.missions.active)
+        .map(|m| m.name.clone())
+        .unwrap_or_else(|| String::from(t("任务分屏")))
 }
 
 pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
@@ -445,7 +469,7 @@ pub(crate) fn remove_mission(app: &mut AditApp) {
 pub(crate) fn toggle_mission_picker(app: &mut AditApp) {
     release_rdp_modifiers(app);
     app.missions.picker = !app.missions.picker;
-    app.terminal_focused = !app.missions.picker;
+    app.terminal_focused = !app.missions.picker && mission_has_active_member(app);
 }
 
 pub(crate) fn activate_mission_session(app: &mut AditApp, id: SessionId) {
@@ -595,7 +619,7 @@ mod tests {
     }
 
     #[test]
-    fn local_task_controls_block_remote_input_and_escape_restores_focus() {
+    fn local_task_controls_block_remote_input_and_cancel_restores_focus() {
         let (mut app, ids) = fixture();
         create_mission(&mut app, vec![ids[0], ids[1]]);
         assert!(remote_workspace_accepts_input(&app));
@@ -614,5 +638,109 @@ mod tests {
         app.tab_context_menu = None;
         change_main_view(&mut app, MainView::Hosts);
         assert!(!remote_workspace_accepts_input(&app));
+    }
+
+    fn key(ch: char, modifiers: keyboard::Modifiers) -> Message {
+        let key = Key::Character(ch.to_string().into());
+        Message::KeyboardInput(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    #[test]
+    fn filtered_shift_selection_cannot_close_a_hidden_session() {
+        let (mut app, ids) = fixture();
+        app.manager.rename_session(ids[0], "shown-A");
+        app.manager.rename_session(ids[1], "hidden-B");
+        app.manager.rename_session(ids[2], "shown-C");
+        let _ = update_loop::update(&mut app, Message::OpenSessionFilterChanged("shown".into()));
+        let _ = update_loop::update(&mut app, Message::TabClicked(ids[0]));
+        app.modifiers = keyboard::Modifiers::SHIFT;
+        let _ = update_loop::update(&mut app, Message::TabClicked(ids[2]));
+        assert_eq!(app.selected_tabs, HashSet::from([ids[0], ids[2]]));
+        let _ = update_loop::update(&mut app, Message::CloseSelectedTabs);
+        assert!(app.manager.session_summary(ids[1]).is_some());
+        assert_eq!(app.manager.sessions().len(), 10);
+        app.selected_tabs.insert(ids[1]);
+        let _ = update_loop::update(&mut app, Message::OpenSessionFilterChanged("shown".into()));
+        assert!(app.selected_tabs.is_empty());
+    }
+
+    #[test]
+    fn empty_task_never_owns_input_for_a_background_connection() {
+        let (mut app, ids) = fixture();
+        create_mission(&mut app, vec![ids[0]]);
+        app.manager.close(ids[0]);
+        reconcile_missions(&mut app);
+        toggle_mission_picker(&mut app);
+        toggle_mission_picker(&mut app);
+        assert!(!app.terminal_focused);
+        assert!(!mission_has_active_member(&app));
+        app.terminal_focused = true;
+        assert!(!remote_workspace_accepts_input(&app));
+        assert_eq!(app.manager.sessions().len(), 11);
+    }
+
+    #[test]
+    fn fullscreen_return_reprojects_the_task_after_window_resize() {
+        let (mut app, ids) = fixture();
+        create_mission(&mut app, ids[..4].to_vec());
+        focus_mission(&mut app, Some(2));
+        app.fullscreen = true;
+        focus_mission(&mut app, None);
+        assert!(app.panes.is_empty());
+        app.fullscreen = false;
+        let _ = update_loop::update(
+            &mut app,
+            Message::WindowResized {
+                width: 1360.0,
+                height: 860.0,
+                window: window::Id::unique(),
+            },
+        );
+        assert_eq!(app.panes, ids[..4]);
+        assert_eq!(app.manager.active_session(), Some(ids[2]));
+    }
+
+    #[test]
+    fn global_navigation_dismisses_menus_and_blocked_keys_cannot_copy_profiles() {
+        let (mut app, _) = fixture();
+        change_main_view(&mut app, MainView::Terminal);
+        let profiles: Vec<_> = app.manager.profiles().iter().map(|p| p.id).collect();
+        app.selected_profile = Some(profiles[0]);
+        app.profile_clipboard = vec![profiles[1]];
+        app.active_menu = Some(MenuKind::File);
+        let _ = update_loop::update(&mut app, key('c', keyboard::Modifiers::CTRL));
+        assert_eq!(app.profile_clipboard, vec![profiles[1]]);
+        change_main_view(&mut app, MainView::Missions);
+        assert!(app.active_menu.is_none());
+        assert!(remote_workspace_accepts_input(&app));
+    }
+
+    #[test]
+    fn local_tool_bars_resize_the_terminal_in_both_directions() {
+        let (mut app, _) = fixture();
+        change_main_view(&mut app, MainView::Terminal);
+        let original = app.terminal_size;
+        let _ = update_loop::update(
+            &mut app,
+            key('f', keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT),
+        );
+        assert!(app.search_open);
+        assert!(app.terminal_size.rows < original.rows);
+        let _ = update_loop::update(&mut app, Message::CloseSearch);
+        assert_eq!(app.terminal_size, original);
+        let _ = update_loop::update(&mut app, Message::ToggleCommandWindow);
+        assert!(app.terminal_size.rows < original.rows);
+        let _ = update_loop::update(&mut app, Message::ToggleCommandWindow);
+        assert_eq!(app.terminal_size, original);
     }
 }
