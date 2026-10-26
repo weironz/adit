@@ -914,7 +914,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             if state.phase == Phase::Held {
                 Subscription::batch([
                     windows,
-                    event::listen_with(runtime_event).map(NativeMessage::App),
+                    runtime_subscription(&state.app).map(NativeMessage::App),
                 ])
             } else {
                 Subscription::batch([

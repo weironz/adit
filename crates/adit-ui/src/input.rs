@@ -205,6 +205,7 @@ pub(crate) fn remote_workspace_accepts_input(app: &AditApp) -> bool {
         && !app.move_to_group_menu
         && !app.terminal_context_menu
         && !mission_name_editing(app)
+        && !app.missions.picker
         && !app.settings_open
         && app.profile_editor.is_none()
         && app.connection_dialog.is_none()

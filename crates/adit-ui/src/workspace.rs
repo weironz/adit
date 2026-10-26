@@ -9,8 +9,10 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     } else if app.main_view == MainView::Missions && mission_is_empty(app) {
         container(column![
             text(t("添加已打开会话开始任务")).size(TEXT_TITLE),
-            button(text(t("打开的连接"))).on_press(Message::FindOpenSession),
-            button(text(t("资源库"))).on_press(Message::ShowMainView(MainView::Hosts)),
+            button(text(t("打开的连接"))).on_press(Message::FindOpenSession)
+                .style(|_, s| primary_button_style(s)),
+            button(text(t("资源库"))).on_press(Message::ShowMainView(MainView::Hosts))
+                .style(|_, s| secondary_button_style(s)),
         ].spacing(16)).center_x(Fill).center_y(Fill).into()
     } else if app.panes.len() >= 2 && !app.fullscreen {
         tiled_workspace_body(app)

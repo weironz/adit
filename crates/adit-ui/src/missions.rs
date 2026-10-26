@@ -348,8 +348,12 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
                 )
                 .push(
                     row![
-                        button(text(t("保存"))).on_press(Message::FinishMissionName(true)),
-                        button(text(t("取消"))).on_press(Message::FinishMissionName(false)),
+                        button(text(t("保存")))
+                            .on_press(Message::FinishMissionName(true))
+                            .style(|_, s| primary_button_style(s)),
+                        button(text(t("取消")))
+                            .on_press(Message::FinishMissionName(false))
+                            .style(|_, s| secondary_button_style(s)),
                     ]
                     .spacing(8),
                 );
@@ -389,6 +393,7 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
                     choices = choices.push(
                         button(text(summary.title).size(TEXT_META))
                             .width(Fill)
+                            .style(|_, s| secondary_button_style(s))
                             .on_press(Message::AddMissionSession(summary.id)),
                     );
                 }
@@ -742,5 +747,47 @@ mod tests {
         assert!(app.terminal_size.rows < original.rows);
         let _ = update_loop::update(&mut app, Message::ToggleCommandWindow);
         assert_eq!(app.terminal_size, original);
+    }
+
+    #[test]
+    fn captured_escape_stays_local_through_release_then_cancels_rename() {
+        let (mut app, ids) = fixture();
+        create_mission(&mut app, vec![ids[0]]);
+        let original = mission_title(&app);
+        let _ = begin_mission_name(&mut app);
+        rename_mission(&mut app, "uncommitted".into());
+        let escape = Key::Named(Named::Escape);
+        let down = keyboard::Event::KeyPressed {
+            key: escape.clone(),
+            modified_key: escape.clone(),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        };
+        let up = keyboard::Event::KeyReleased {
+            key: escape.clone(),
+            modified_key: escape,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+        };
+        let window = window::Id::unique();
+        assert!(mission_name_runtime_event(
+            event::Event::Keyboard(down),
+            event::Status::Captured,
+            window
+        )
+        .is_none());
+        assert!(mission_name_editing(&app));
+        let message =
+            mission_name_runtime_event(event::Event::Keyboard(up), event::Status::Captured, window)
+                .expect("captured Escape-up must cancel locally");
+        assert!(matches!(message, Message::FinishMissionName(false)));
+        let _ = update_loop::update(&mut app, message);
+        assert!(!mission_name_editing(&app));
+        assert_eq!(mission_title(&app), original);
+        assert!(remote_workspace_accepts_input(&app));
     }
 }

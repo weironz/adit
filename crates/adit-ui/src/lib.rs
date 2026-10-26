@@ -1910,7 +1910,7 @@ fn app_theme(app: &AditApp) -> Theme {
 fn subscription(app: &AditApp) -> Subscription<Message> {
     let mut subs = vec![
         iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
-        event::listen_with(runtime_event),
+        runtime_subscription(app),
     ];
     // RDP is a video surface: while the ACTIVE session is a live RDP session,
     // sample its framebuffer every frame (vsync-paced) so the desktop stays
@@ -2013,6 +2013,29 @@ fn sidebar_drag_event(
             Some(Message::EndSidebarDrag)
         }
         _ => None,
+    }
+}
+
+fn runtime_subscription(app: &AditApp) -> Subscription<Message> {
+    if mission_name_editing(app) {
+        event::listen_with(mission_name_runtime_event)
+    } else {
+        event::listen_with(runtime_event)
+    }
+}
+
+fn mission_name_runtime_event(
+    event: event::Event,
+    status: event::Status,
+    window: window::Id,
+) -> Option<Message> {
+    match &event {
+        // text_input consumes Escape to blur itself. Retain the local lease
+        // through key-up, then cancel, so neither half reaches the desktop.
+        event::Event::Keyboard(keyboard::Event::KeyPressed { key: Key::Named(Named::Escape), .. }) => None,
+        event::Event::Keyboard(keyboard::Event::KeyReleased { key: Key::Named(Named::Escape), .. }) =>
+            Some(Message::FinishMissionName(false)),
+        _ => runtime_event(event, status, window),
     }
 }
 
