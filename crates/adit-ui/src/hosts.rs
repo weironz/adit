@@ -285,7 +285,7 @@ pub(crate) fn host_card(
                     // ("this name means RDP"), and putting the dot in between
                     // would attach it to neither.
                     let mut title = row![
-                        text(profile.name.clone()).size(13).color(primary_text()),
+                        text(profile.name.clone()).size(TEXT_BODY).color(primary_text()),
                         protocol_pill(profile.protocol),
                     ]
                     .spacing(6)
@@ -295,11 +295,11 @@ pub(crate) fn host_card(
                     }
                     title
                 },
-                text(subtitle).size(11).font(Font::MONOSPACE).color(muted_text()),
+                text(subtitle).size(TEXT_META).font(Font::MONOSPACE).color(muted_text()),
             ]
             .spacing(3),
         ]
-        .spacing(10)
+        .spacing(SPACE_SM)
         .align_y(Alignment::Center),
     )
     .width(Fill)
@@ -1168,7 +1168,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             .align_y(Alignment::Center),
             scrollable(body).height(Fill),
         ]
-        .spacing(16),
+        .spacing(SPACE_MD),
     )
     .width(Fill)
     .height(Fill)

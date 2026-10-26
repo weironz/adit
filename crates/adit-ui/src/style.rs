@@ -2,6 +2,11 @@ use super::*;
 
 pub(crate) const RADIUS_SM: f32 = 8.0;
 pub(crate) const RADIUS_MD: f32 = 12.0;
+pub(crate) const SPACE_SM: f32 = 8.0;
+pub(crate) const SPACE_MD: f32 = 16.0;
+pub(crate) const TEXT_TITLE: f32 = 18.0;
+pub(crate) const TEXT_BODY: f32 = 13.0;
+pub(crate) const TEXT_META: f32 = 11.0;
 
 /// Resolve a token to its light or dark value based on the active mode.
 pub(crate) fn pick(light: Color, dark: Color) -> Color {
@@ -13,40 +18,40 @@ pub(crate) fn pick(light: Color, dark: Color) -> Color {
 }
 
 // Palette inspired by Termius: deep navy-charcoal dark chrome, a clean light
-// theme, and a teal-green accent. Tokens resolve to a (light, dark) pair.
+// theme, and a blue accent. Terminal colours remain an independent preference.
 pub(crate) fn muted_text() -> Color {
-    pick(Color::from_rgb8(108, 113, 134), Color::from_rgb8(139, 144, 160))
+    pick(Color::from_rgb8(83, 103, 134), Color::from_rgb8(164, 177, 206))
 }
 
 pub(crate) fn primary_text() -> Color {
-    pick(Color::from_rgb8(28, 34, 48), Color::from_rgb8(230, 232, 238))
+    pick(Color::from_rgb8(37, 56, 84), Color::from_rgb8(229, 235, 248))
 }
 
 pub(crate) fn app_background() -> Color {
-    pick(Color::from_rgb8(244, 246, 249), Color::from_rgb8(21, 22, 30))
+    pick(Color::from_rgb8(247, 249, 255), Color::from_rgb8(26, 30, 48))
 }
 
 /// Raised surface: sidebar, cards, dialogs, floating menus.
 pub(crate) fn surface() -> Color {
-    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(27, 29, 41))
+    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(34, 39, 61))
 }
 
 /// Secondary chrome: toolbar, status bar, tab strip.
 pub(crate) fn surface_alt() -> Color {
-    pick(Color::from_rgb8(238, 241, 246), Color::from_rgb8(27, 29, 41))
+    pick(Color::from_rgb8(234, 240, 251), Color::from_rgb8(21, 24, 39))
 }
 
 /// Recessed area the terminal panel floats on.
 pub(crate) fn surface_sunken() -> Color {
-    pick(Color::from_rgb8(231, 235, 241), Color::from_rgb8(18, 18, 25))
+    pick(Color::from_rgb8(234, 240, 251), Color::from_rgb8(16, 20, 34))
 }
 
 pub(crate) fn panel_background_hover() -> Color {
-    pick(Color::from_rgb8(232, 242, 240), Color::from_rgb8(38, 42, 56))
+    pick(Color::from_rgb8(226, 234, 251), Color::from_rgb8(37, 46, 72))
 }
 
 pub(crate) fn field_background() -> Color {
-    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(32, 35, 47))
+    pick(Color::from_rgb8(255, 255, 255), Color::from_rgb8(26, 30, 48))
 }
 
 pub(crate) fn terminal_background() -> Color {
@@ -60,16 +65,16 @@ pub(crate) fn selection_background() -> Color {
 }
 
 pub(crate) fn border_color() -> Color {
-    pick(Color::from_rgb8(225, 230, 236), Color::from_rgb8(38, 42, 56))
+    pick(Color::from_rgb8(203, 215, 234), Color::from_rgb8(51, 60, 85))
 }
 
 pub(crate) fn border_strong() -> Color {
-    pick(Color::from_rgb8(157, 217, 208), Color::from_rgb8(54, 64, 85))
+    pick(Color::from_rgb8(93, 130, 188), Color::from_rgb8(96, 127, 178))
 }
 
 pub(crate) fn accent() -> Color {
     // Deep enough that white button text stays legible.
-    Color::from_rgb8(15, 158, 140)
+    pick(Color::from_rgb8(46, 99, 177), Color::from_rgb8(77, 126, 201))
 }
 
 /// Colour for OSC 8 hyperlink runs — a readable link blue on both light and dark
@@ -109,16 +114,16 @@ pub(crate) fn profile_badge(app: &AditApp, profile_id: ProfileId) -> Option<Stri
 }
 
 pub(crate) fn accent_hover() -> Color {
-    Color::from_rgb8(22, 182, 164)
+    Color::from_rgb8(65, 121, 205)
 }
 
 pub(crate) fn accent_pressed() -> Color {
-    Color::from_rgb8(11, 124, 110)
+    Color::from_rgb8(38, 83, 151)
 }
 
 /// Soft accent tint for selected/active backgrounds.
 pub(crate) fn accent_soft() -> Color {
-    pick(Color::from_rgb8(220, 242, 238), Color::from_rgb8(26, 48, 43))
+    pick(Color::from_rgb8(220, 232, 252), Color::from_rgb8(42, 60, 90))
 }
 
 pub(crate) fn danger() -> Color {
@@ -246,7 +251,7 @@ pub(crate) fn toolbar_style() -> container::Style {
 
 pub(crate) fn sidebar_style() -> container::Style {
     container::Style {
-        background: Some(Background::Color(surface())),
+        background: Some(Background::Color(surface_alt())),
         text_color: Some(primary_text()),
         border: border(0.0, 1.0, border_color()),
         ..container::Style::default()

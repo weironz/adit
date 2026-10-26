@@ -136,7 +136,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
-            text("▣").size(14).color(accent()),
+            text("▣").size(TEXT_TITLE).color(accent()),
             menu_button(app, MenuKind::File, t("文件")),
             menu_button(app, MenuKind::Session, t("会话")),
             menu_button(app, MenuKind::Edit, t("编辑")),
