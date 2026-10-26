@@ -533,6 +533,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // screen; leaving focus behind would send typing into a hidden pane.
             app.terminal_focused = matches!(view, MainView::Terminal);
         }
+        Message::HostDetailsClosed => app.host_details_open = false,
+        Message::OpenExistingProfile(profile_id) => {
+            if let Some(id) = app.manager.sessions().iter()
+                .find(|s| s.profile_id == profile_id).map(|s| s.id)
+            {
+                app.main_view = MainView::Terminal;
+                activate_session(app, id);
+            }
+        }
         Message::HighlightRuleToggled(id) => {
             let shipped = highlight::rules()
                 .iter()
@@ -704,6 +713,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.hosts_cursor = Some(point);
         }
         Message::GridProfilePressed(profile_id, in_pinned) => {
+            app.host_details_open = true;
             // Same arming as ProfilePressed — selection, drag state, origin
             // point — with the origin remembered as the grid, and the same
             // rule about not collapsing a selection the pressed card is in.

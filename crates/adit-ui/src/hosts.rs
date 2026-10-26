@@ -12,7 +12,6 @@ pub enum MainView {
     Terminal,
 }
 
-pub(crate) const NAV_RAIL_WIDTH: f32 = 156.0;
 pub(crate) const HOST_CARD_WIDTH: f32 = 260.0;
 /// What a grid card builds out to (10px padding around a 34px tile), for the
 /// absolute layout the animated bands use.
@@ -510,12 +509,8 @@ pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label:
 /// tracked, and the rail and padding around the grid are fixed — so this is
 /// arithmetic rather than a guess.
 pub(crate) fn host_columns(app: &AditApp) -> usize {
-    let rail = if app.main_view == MainView::Hosts {
-        NAV_RAIL_WIDTH
-    } else {
-        0.0
-    };
-    let available = app.window_width - rail - 40.0;
+    let details = if host_details_visible(app) { HOST_DETAILS_WIDTH + 16.0 } else { 0.0 };
+    let available = app.window_width - sidebar_offset(app) - details - 40.0;
     ((available / (HOST_CARD_WIDTH + 8.0)).floor() as usize).clamp(1, 8)
 }
 
@@ -1002,6 +997,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     let switcher = row![
         host_layout_button(layout, HostLayout::Grid, "网格"),
         host_layout_button(layout, HostLayout::List, "列表"),
+        host_layout_button(layout, HostLayout::Tree, "管理"),
     ]
     .spacing(6);
 
@@ -1166,7 +1162,11 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            scrollable(body).height(Fill),
+            if layout == HostLayout::Tree {
+                scrollable(session_tree(app)).height(Fill)
+            } else {
+                scrollable(body).height(Fill)
+            },
         ]
         .spacing(SPACE_MD),
     )
@@ -1180,6 +1180,11 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     // of wherever the ghost last was.
     let pane: Element<'_, Message> =
         mouse_area(pane).on_move(Message::HostsCursorMoved).into();
+    let pane: Element<'_, Message> = if host_details_visible(app) {
+        row![pane, host_details(app)].height(Fill).into()
+    } else {
+        pane
+    };
 
     // The ghost rides above the pane while a card drag is live. Nothing in it
     // handles events, so the cards underneath keep receiving enter/move — the
@@ -1195,4 +1200,53 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         }
     }
     pane
+}
+
+const HOST_DETAILS_WIDTH: f32 = 280.0;
+
+fn host_details_visible(app: &AditApp) -> bool {
+    app.host_details_open && app.selected_profile.is_some()
+        && app.window_width - sidebar_offset(app) >= 820.0
+}
+
+fn host_details(app: &AditApp) -> Element<'_, Message> {
+    let Some(profile) = app.selected_profile.and_then(|id| app.manager.profile(id)) else {
+        return Space::new().into();
+    };
+    let id = profile.id;
+    let existing = app.manager.sessions().iter().any(|s| s.profile_id == id);
+    let mut details = column![
+        row![
+            text(t("主机详情")).size(TEXT_BODY).width(Fill),
+            button("×").on_press(Message::HostDetailsClosed)
+                .style(|_, status| close_button_style(status)),
+        ].align_y(Alignment::Center),
+        host_tile(app, profile, 48.0, false),
+        text(profile.name.clone()).size(TEXT_TITLE).color(primary_text()),
+        protocol_pill(profile.protocol),
+        text(format!("{}:{}", profile.host, profile.port))
+            .size(TEXT_BODY).font(Font::MONOSPACE),
+        text(profile.username.clone()).size(TEXT_BODY),
+        text(profile.group.clone()).size(TEXT_META).color(muted_text()),
+    ].spacing(SPACE_MD);
+    if existing {
+        details = details.push(
+            button(text(t("切换到已打开会话"))).padding(10).width(Fill)
+                .style(|_, status| primary_button_style(status))
+                .on_press(Message::OpenExistingProfile(id)),
+        );
+    }
+    details = details.push(
+        button(text(t(if existing { "新开一个会话" } else { "连接" })))
+            .padding(10).width(Fill)
+            .style(|_, status| secondary_button_style(status))
+            .on_press(Message::ProfileDoubleClicked(id)),
+    ).push(
+        button(text(t("编辑会话"))).padding(10).width(Fill)
+            .style(|_, status| secondary_button_style(status))
+            .on_press(Message::EditProfileFromContext(id)),
+    );
+    container(scrollable(details)).padding(20)
+        .width(Length::Fixed(HOST_DETAILS_WIDTH)).height(Fill)
+        .style(|_| sidebar_style()).into()
 }

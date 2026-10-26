@@ -181,6 +181,9 @@ pub(crate) fn visible_profile_ids(app: &AditApp) -> Vec<ProfileId> {
 }
 
 pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
+    if app.main_view == MainView::Hosts {
+        return resource_sidebar(app);
+    }
     let error = app
         .last_error
         .as_ref()
@@ -260,6 +263,40 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
             .style(|_theme| sidebar_style()),
     )
     .on_move(Message::SidebarCursorMoved)
+    .into()
+}
+
+pub(crate) fn resource_sidebar(app: &AditApp) -> Element<'_, Message> {
+    let action = |label: &'static str, message: Message| {
+        button(text(t(label)).size(TEXT_BODY))
+            .padding([10, 12])
+            .width(Fill)
+            .style(|_, status| menu_button_style(false, status))
+            .on_press(message)
+    };
+    container(
+        column![
+            row![
+                text("ADIT").size(TEXT_TITLE).color(primary_text()),
+                Space::new().width(Fill),
+                sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
+            ].align_y(Alignment::Center).height(TAB_BAR_HEIGHT),
+            text(t("本地资源库")).size(TEXT_META).color(muted_text()),
+            action("主机", Message::ShowMainView(MainView::Hosts)),
+            action("新建主机", Message::NewProfileDraft),
+            action("新建分组", Message::NewGroupDraft),
+            action("主机密钥…", Message::RunMenu(MenuCommand::KnownHosts)),
+            action("代码片段", Message::RunMenu(MenuCommand::Snippets)),
+            Space::new().height(Fill),
+            action("设置…", Message::RunMenu(MenuCommand::Options)),
+            text(tf("{} 个已打开会话", &[&app.manager.sessions().len()]))
+                .size(TEXT_META).color(muted_text()),
+        ].spacing(SPACE_SM),
+    )
+    .padding(12)
+    .width(Length::Fixed(app.sidebar_width))
+    .height(Fill)
+    .style(|_| sidebar_style())
     .into()
 }
 

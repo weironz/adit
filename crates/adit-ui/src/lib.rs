@@ -472,6 +472,7 @@ pub struct AditApp {
     context_menu_pos: Point,
     /// Which top-level view fills the area beside the nav rail.
     main_view: MainView,
+    host_details_open: bool,
     /// How the host manager lays its entries out.
     host_layout: HostLayout,
     /// Hosts most recently connected to, newest first.
@@ -767,6 +768,8 @@ pub enum Message {
     ColorSchemeChanged(u8),
     /// Switch the top-level view beside the nav rail.
     ShowMainView(MainView),
+    HostDetailsClosed,
+    OpenExistingProfile(ProfileId),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
     /// Flip one keyword-highlight rule, by its stable id.
@@ -1657,6 +1660,7 @@ impl AditApp {
             // Opens on the host list rather than an empty terminal: with no
             // session running there is nothing for the terminal view to show.
             main_view: MainView::Hosts,
+            host_details_open: false,
             host_layout,
             recent_hosts,
             grid_order,
