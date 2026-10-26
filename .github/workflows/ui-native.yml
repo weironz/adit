@@ -1,0 +1,50 @@
+name: Native UI regressions
+
+on:
+  pull_request:
+    paths:
+      - 'crates/adit-ui/**'
+      - 'crates/adit-session/**'
+      - 'Cargo.lock'
+      - '.github/workflows/ui-native.yml'
+
+permissions:
+  contents: read
+
+# These unit/loopback tests use ephemeral ports and an isolated config directory.
+# They can run independently of ci.yml's fixed-display/fixed-port fixtures.
+concurrency:
+  group: adit-ui-unit-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui:
+    name: native UI unit and loopback tests (linux-x64)
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, X64, home-workstation, repo-adit]
+    timeout-minutes: 60
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_BUILD_JOBS: '2'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          clean: false
+      - name: Clean checkout while retaining compiler outputs
+        run: git clean -ffdx -e /target/ -e /crates/adit-rdp/target/
+      - name: Complete Linux build dependencies
+        run: bash .github/scripts/setup-linux-runner.sh
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Record toolchain
+        run: rustc --version
+      - name: Isolate fixture configuration
+        run: echo "ADIT_CONFIG_DIR=$RUNNER_TEMP/adit-ui-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - name: Check both native acceptance feature sets
+        run: cargo clippy -p adit-ui --all-targets --features native-vnc-acceptance,native-workbench-acceptance --locked -- -D warnings
+      - name: Run native UI unit and loopback regressions
+        run: cargo test -p adit-ui --lib --features native-vnc-acceptance,native-workbench-acceptance --locked
