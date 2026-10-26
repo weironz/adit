@@ -2065,6 +2065,45 @@ impl SessionManager {
             .is_some_and(SessionRecord::is_desktop)
     }
 
+    /// The named desktop's concrete error, without changing the active session.
+    #[must_use]
+    pub fn session_desktop_error(&self, session_id: SessionId) -> Option<&str> {
+        self.sessions
+            .get(&session_id)
+            .and_then(|record| record.desktop_error.as_deref())
+    }
+
+    /// Read the live VNC input policy rather than the saved profile's default.
+    /// RDP currently has no read-only mode.
+    #[must_use]
+    pub fn session_desktop_read_only(&self, session_id: SessionId) -> bool {
+        self.sessions
+            .get(&session_id)
+            .and_then(|record| record.vnc.as_ref())
+            .is_some_and(VncClientHandle::read_only)
+    }
+
+    /// Sample this session's own RDP/VNC framebuffer. Generation counters belong
+    /// to individual transports; callers must keep one counter per session.
+    /// Failed transports retain pixels internally for diagnostics, but those
+    /// pixels must not revive an interactive pane after an error.
+    #[must_use]
+    pub fn session_desktop_frame_if_newer(
+        &self,
+        session_id: SessionId,
+        last_generation: u64,
+    ) -> Option<RdpFrame> {
+        let record = self.sessions.get(&session_id)?;
+        if record.summary.status != SessionStatus::Connected || record.desktop_error.is_some() {
+            return None;
+        }
+        if let Some(rdp) = &record.rdp {
+            rdp.frame_if_newer(last_generation)
+        } else {
+            record.vnc.as_ref()?.frame_if_newer(last_generation)
+        }
+    }
+
     /// Whether the *active* session is a live RDP session (connecting or
     /// connected). Drives the per-frame redraw subscription: only the visible,
     /// live RDP tab needs 60 fps sampling — a background RDP tab updates its own

@@ -106,6 +106,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
             app.manager.poll_events();
+            desktop_panes::refresh(app);
             if let Some(notice) = app.manager.take_desktop_notice() {
                 app.notice = notice;
             }
@@ -125,6 +126,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(error) = app.profile_store.take_write_error() {
                 app.last_error = Some(tf("保存会话配置失败: {}", &[&error]));
             }
+            reconcile_missions(app);
             let panes_before = app.panes.len();
             sync_panes(app);
             if app.panes.len() != panes_before {
@@ -271,6 +273,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::RdpTick => {
+            desktop_panes::refresh(app);
             flush_pending_rdp_resize(app);
             // Keys the hook swallowed, replayed to the remote as scancodes.
             // Drained here rather than in the callback because the callback runs
@@ -412,6 +415,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::RdpPointerMoved(point) => {
+            if app.main_view == MainView::Hosts || desktop_panes::local_input_blocked(app) {
+                return Task::none();
+            }
             // `point` already carries surface pixel coords (mapped in the view).
             app.manager.send_rdp_input_to_active(RdpInput::MouseMove {
                 x: point.x.max(0.0) as u16,
@@ -419,6 +425,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             });
         }
         Message::RdpPressed(button) => {
+            if app.main_view == MainView::Hosts || desktop_panes::local_input_blocked(app) {
+                return Task::none();
+            }
             if let Some(b) = rdp_mouse_button(button) {
                 app.terminal_focused = true;
                 app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
@@ -436,6 +445,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::RdpScrolled(delta) => {
+            if app.main_view == MainView::Hosts || desktop_panes::local_input_blocked(app) {
+                return Task::none();
+            }
             let (vertical, amount) = match delta {
                 mouse::ScrollDelta::Lines { x, y } => {
                     if y.abs() >= x.abs() {
@@ -462,6 +474,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ToggleMenu(menu) => {
+            release_rdp_modifiers(app);
             app.active_menu = if app.active_menu == Some(menu) {
                 None
             } else {
@@ -528,16 +541,35 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.host_layout = layout;
         }
         Message::ShowMainView(view) => {
+            change_main_view(app, view);
+        }
+        Message::NewMission => {
             release_rdp_modifiers(app);
-            app.main_view = view;
-            // The terminal only takes keystrokes while it is the thing on
-            // screen; leaving focus behind would send typing into a hidden pane.
-            app.terminal_focused = matches!(view, MainView::Terminal);
-            sync_terminal_size(app);
+            create_mission(app, Vec::new());
+        }
+        Message::PickMission(id) => pick_mission(app, id),
+        Message::MissionNameChanged(name) => rename_mission(app, name),
+        Message::BeginMissionName => return begin_mission_name(app),
+        Message::FinishMissionName(commit) => finish_mission_name(app, commit),
+        Message::MissionPickerToggled => toggle_mission_picker(app),
+        Message::AddMissionSession(id) => add_mission_session(app, id),
+        Message::ActivateMissionSession(id) => activate_mission_session(app, id),
+        Message::RemoveMission => remove_mission(app),
+        Message::FocusMissionPane(index) => focus_mission(app, Some(index)),
+        Message::ReturnToMission => focus_mission(app, None),
+        Message::DesktopPaneMoved(id, point) => desktop_panes::moved(app, id, point),
+        Message::DesktopPanePressed(id, button) => desktop_panes::pressed(app, id, button),
+        Message::DesktopPaneReleased(id, button) => desktop_panes::released(app, id, button),
+        Message::DesktopPaneScrolled(id, delta) => desktop_panes::scrolled(app, id, delta),
+        Message::GlobalPointerReleased(button, ignored) => {
+            desktop_panes::global_button_released(app, button);
+            if button == mouse::Button::Left && ignored {
+                return Task::done(Message::CancelProfileDrag);
+            }
         }
         Message::FindOpenSession => {
             release_rdp_modifiers(app);
-            app.main_view = MainView::Terminal;
+            change_main_view(app, MainView::Terminal);
             app.sidebar_visible = true;
             app.session_filter.clear();
             app.terminal_focused = false;
@@ -549,7 +581,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(id) = app.manager.sessions().iter()
                 .find(|s| s.profile_id == profile_id).map(|s| s.id)
             {
-                app.main_view = MainView::Terminal;
+                change_main_view(app, MainView::Terminal);
                 activate_session(app, id);
             }
         }
@@ -724,7 +756,6 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.hosts_cursor = Some(point);
         }
         Message::GridProfilePressed(profile_id, in_pinned) => {
-            app.host_details_open = true;
             // Same arming as ProfilePressed — selection, drag state, origin
             // point — with the origin remembered as the grid, and the same
             // rule about not collapsing a selection the pressed card is in.
@@ -738,10 +769,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.drag_in_pinned = in_pinned;
             app.profile_drop = None;
             app.profile_drag_active = false;
-            app.profile_drag_origin = Some(Point::new(
-                app.cursor_pos.x,
-                app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
-            ));
+            app.profile_drag_origin = Some(app.cursor_pos);
             app.group_drop_target = None;
         }
         Message::ProfilePressed(profile_id) => {
@@ -846,10 +874,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Record the press point; the drag only "activates" once the pointer
             // leaves a small dead zone (cursor_pos is window-absolute; the sidebar
             // starts just below the menu bar + toolbar).
-            app.profile_drag_origin = Some(Point::new(
-                app.cursor_pos.x,
-                app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
-            ));
+            app.profile_drag_origin = Some(app.cursor_pos);
             app.group_drop_target = None;
             app.profile_context_menu = None;
             app.group_context_menu = None;
@@ -871,7 +896,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // And it leaves the host grid, which shares the tab bar with the
             // sessions: connecting from there and staying put would leave the
             // new session running behind a list of hosts.
-            app.main_view = MainView::Terminal;
+            change_main_view(app, MainView::Terminal);
             connect_profile(app);
         }
         Message::ProfileHovered(profile_id) => {
@@ -969,6 +994,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ProfileDropped(_profile_id) => {
+            if app.drag_from_grid && !app.profile_drag_active {
+                app.host_details_open = true;
+            }
             finish_profile_drag(app);
         }
         Message::ProfileDragOverGroup(group) => {
@@ -1129,16 +1157,28 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Already window-absolute; keeps the anchor fresh over widgets (like
             // the tab strip) that don't report their own cursor moves.
             app.cursor_pos = point;
+            // Profiles and groups now live in the main resource area. Window
+            // coordinates keep the drag dead zone independent of its layout.
+            if app.dragged_profile.is_some()
+                && app.profile_drag_origin.is_some_and(|origin| point.distance(origin) > 5.0)
+            {
+                app.profile_drag_active = true;
+            }
+            if app.dragged_group.is_some()
+                && app.group_drag_origin.is_some_and(|origin| point.distance(origin) > 5.0)
+            {
+                app.group_drag_active = true;
+            }
         }
         Message::SidebarCursorMoved(point) => {
             // `point` is sidebar-relative; the context-menu anchor wants it in
             // window-absolute coordinates.
-            app.cursor_pos = Point::new(point.x, point.y + MENU_BAR_HEIGHT + TOOLBAR_HEIGHT);
+            app.cursor_pos = Point::new(point.x, point.y + MENU_BAR_HEIGHT);
             if app.dragged_profile.is_some() {
                 // Promote to a real drag once the pointer leaves a small dead zone
                 // around the press point — a click/double-click stays inside it.
                 if let Some(origin) = app.profile_drag_origin {
-                    if point.distance(origin) > 5.0 {
+                    if app.cursor_pos.distance(origin) > 5.0 {
                         app.profile_drag_active = true;
                     }
                 }
@@ -1147,7 +1187,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // Same dead-zone promotion for a folder drag, so a plain folder
                 // click still toggles collapse instead of reordering.
                 if let Some(origin) = app.group_drag_origin {
-                    if point.distance(origin) > 5.0 {
+                    if app.cursor_pos.distance(origin) > 5.0 {
                         app.group_drag_active = true;
                     }
                 }
@@ -1604,10 +1644,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.dragged_group = Some(group);
             app.group_drag_active = false;
             app.group_drop = None;
-            app.group_drag_origin = Some(Point::new(
-                app.cursor_pos.x,
-                app.cursor_pos.y - MENU_BAR_HEIGHT - TOOLBAR_HEIGHT,
-            ));
+            app.group_drag_origin = Some(app.cursor_pos);
             // A folder press cancels any in-flight session drag / menus and saves
             // any in-place rename (clicking away commits — no confirm buttons).
             app.dragged_profile = None;
@@ -2252,6 +2289,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             return window::latest().and_then(move |id| window::set_mode(id, mode));
         }
         Message::KeyboardInput(event) => {
+            if is_escape_key(&event) && app.active_menu.take().is_some() {
+                return Task::none();
+            }
+            if mission_name_editing(app) {
+                if is_escape_key(&event) { finish_mission_name(app, false); }
+                return Task::none();
+            }
             // Stop at each pass-through modifier until its window event has
             // been forwarded. Draining the entire hook queue here let a later
             // Win-down overtake an earlier Shift/Alt-up in the window queue.
@@ -2287,6 +2331,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // list is what turned it up, since every entry there had to be found
             // in this dispatch before it could be printed.
             if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && alt_shortcut(&event, 'i') {
+                release_rdp_modifiers(app);
+                if app.main_view == MainView::Missions {
+                    change_main_view(app, MainView::Terminal);
+                }
                 // Filtering is pointless with the sidebar hidden; reveal it first.
                 if !app.sidebar_visible {
                     app.sidebar_visible = true;
@@ -2299,8 +2347,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // (SecureCRT-style), regardless of focus. This is the `sftp>` prompt,
             // not the dual-pane panel — that one has its own toolbar button.
             if !(app.manager.active_is_vnc() && app.vnc_grab_keys) && alt_shortcut(&event, 'p') {
+                release_rdp_modifiers(app);
                 match app.manager.open_sftp_shell_for_active() {
                     Ok(_) => {
+                        change_main_view(app, MainView::Terminal);
                         app.terminal_focused = true;
                         app.last_error = None;
                         app.notice = String::from(t("已打开 SFTP 命令行 (输入 help 查看命令)"));
@@ -2360,7 +2410,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // silently died while clicks kept landing — "can click the logon
             // screen but can't type into it". A focused local text field still
             // wins: its captured events never reach this handler at all.
-            if app.manager.active_is_desktop() && app.main_view == MainView::Terminal {
+            if app.manager.active_is_desktop() && remote_workspace_accepts_input(app) {
                 // A dead session: Enter reconnects (SecureCRT-style) rather
                 // than firing a scancode at a closed helper.
                 if is_enter_key(&event) && active_session_is_dead(app) {
@@ -2407,7 +2457,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // the terminal's copy/paste, and here there is no terminal to
             // conflict with. It is the pairing every file manager uses for the
             // same gesture on a list row.
-            if !app.terminal_focused {
+            if !remote_workspace_accepts_input(app) {
                 if plain_ctrl_shortcut(&event, 'c') {
                     let ids = crate::profiles::selected_profile_ids(app);
                     if !ids.is_empty() {
@@ -2544,6 +2594,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_context_menu = true;
         }
         Message::PanePointerMoved(index, point) => {
+            if app.terminal_selecting && index != app.focused_pane {
+                return Task::none();
+            }
             let terminal_point = terminal_point_from_cursor(app, point);
             app.terminal_pointer = Some(terminal_point);
             // Anchor the floating context menu using this pane's screen origin,
@@ -2563,9 +2616,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_pointer = Some(terminal_point);
             // Track the window-absolute cursor so a right-click can anchor the
             // floating terminal context menu at the pointer.
-            let terminal_left = sidebar_offset(app);
-            let terminal_top = MENU_BAR_HEIGHT + TOOLBAR_HEIGHT + TAB_BAR_HEIGHT;
-            app.cursor_pos = Point::new(point.x + terminal_left, point.y + terminal_top);
+            let origin = pane_layout(app).pane_body_origin(0);
+            app.cursor_pos = Point::new(point.x + origin.x, point.y + origin.y);
 
             if maybe_report_mouse_motion(app) {
                 return Task::none();
@@ -2761,7 +2813,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // It also leaves the host list, which shares this tab bar — without
             // that the grid would stay on screen with a session selected behind
             // it, and the two would disagree about what is in front.
-            app.main_view = MainView::Terminal;
+            change_main_view(app, MainView::Terminal);
 
             let modifiers = app.modifiers;
             if modifiers.control() {
@@ -2899,6 +2951,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::CloneSessionFromTab(session_id) => {
+            release_rdp_modifiers(app);
             app.tab_context_menu = None;
             // RDP keeps no password in session state (vault-only), so clone it like
             // a fresh connect: load the vault password and open a new RDP session,
@@ -2932,6 +2985,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                             };
                             match result {
                                 Ok(_) => {
+                                    change_main_view(app, MainView::Terminal);
                                     remember_recent_host(app, profile_id);
                                     app.rdp_target_size = (rw > 0).then_some((rw, rh));
                                     app.terminal_focused = true;
@@ -2952,6 +3006,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             match app.manager.clone_session(session_id) {
                 Ok(_) => {
+                    change_main_view(app, MainView::Terminal);
                     app.terminal_focused = true;
                     app.terminal_scroll_offset = 0;
                     app.terminal_selection = None;

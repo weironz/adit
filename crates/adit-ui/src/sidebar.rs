@@ -184,6 +184,9 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     if app.main_view == MainView::Hosts {
         return resource_sidebar(app);
     }
+    if app.main_view == MainView::Missions {
+        return mission_sidebar(app);
+    }
     let error = app
         .last_error
         .as_ref()

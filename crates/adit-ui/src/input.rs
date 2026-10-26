@@ -182,8 +182,7 @@ pub(super) fn encode_rdp_scancode(event: &keyboard::Event) -> Option<(u8, bool, 
     Some((scancode, extended, pressed))
 }
 
-/// Local overlays and text fields own input even when their ignored keys bubble
-/// to the runtime. Keep this VNC-only so the existing RDP focus contract stays intact.
+/// Local overlays and text fields own ignored keys before any remote transport.
 pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
     app.manager.active_is_vnc()
         && app
@@ -191,10 +190,20 @@ pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
             .active_session_summary()
             .is_some_and(|s| s.status == SessionStatus::Connected)
         && !app.manager.active_vnc_read_only()
-        && app.desktop_window_focused
+        && remote_workspace_accepts_input(app)
+}
+
+pub(crate) fn remote_workspace_accepts_input(app: &AditApp) -> bool {
+    app.desktop_window_focused
         && app.terminal_focused
-        && app.main_view == MainView::Terminal
+        && app.main_view != MainView::Hosts
         && app.active_menu.is_none()
+        && app.profile_context_menu.is_none()
+        && app.tab_context_menu.is_none()
+        && app.group_context_menu.is_none()
+        && !app.move_to_group_menu
+        && !app.terminal_context_menu
+        && !mission_name_editing(app)
         && !app.settings_open
         && app.profile_editor.is_none()
         && app.connection_dialog.is_none()

@@ -1,9 +1,11 @@
 use super::*;
 
 pub(crate) fn open_selected_mock_tab(app: &mut AditApp) {
+    release_rdp_modifiers(app);
     if let Some(profile_id) = save_profile_from_form(app, false) {
         match app.manager.open_mock_session(profile_id) {
             Ok(_) => {
+                change_main_view(app, MainView::Terminal);
                 app.terminal_focused = true;
                 app.terminal_scroll_offset = 0;
                 app.terminal_selection = None;
@@ -62,7 +64,7 @@ pub(crate) fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: Stri
     };
     match result {
         Ok(_) => {
-            app.main_view = MainView::Terminal;
+            change_main_view(app, MainView::Terminal);
             app.connection_dialog = None;
             app.password.clear();
             app.remember_connection_password = false;
@@ -95,6 +97,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
         app.last_error = Some(String::from(t("请选择要连接的会话配置")));
         return;
     };
+    change_main_view(app, MainView::Terminal);
 
     if profile.protocol == Protocol::Vnc {
         let password = app
@@ -365,7 +368,7 @@ pub(crate) fn connect_or_prompt(app: &mut AditApp) {
         // Terminal` while the pointer path is not, so connecting from the
         // host grid without this produced a desktop that could be clicked
         // but not typed into — the exact symptom that gate was added to fix.
-        app.main_view = MainView::Terminal;
+        change_main_view(app, MainView::Terminal);
         connect_profile(app);
     } else {
         open_connection_dialog(app);
@@ -377,6 +380,9 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
         open_connection_dialog(app);
         return;
     };
+    if dialog.retry_session.is_none() {
+        change_main_view(app, MainView::Terminal);
+    }
 
     if app
         .manager
@@ -733,6 +739,7 @@ pub(crate) fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
 /// that is not down is a no-op on the remote, whereas state drifting out of step
 /// with the remote is the bug being fixed here.
 pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
+    desktop_panes::release_owned(app);
     if app.vnc_grab_keys { keyboard_hook::disarm(); }
     app.vnc_grab_keys = false;
     app.vnc_preedit = None;
@@ -1108,7 +1115,7 @@ pub(crate) fn terminal_cursor_blinks(app: &AditApp) -> bool {
 }
 
 pub(crate) fn window_to_pane_local(app: &AditApp, position: Point) -> Point {
-    let index = if app.panes.is_empty() {
+    let index = if app.panes.is_empty() || app.fullscreen {
         0
     } else {
         app.focused_pane.min(app.panes.len() - 1)
@@ -1125,7 +1132,7 @@ pub(crate) fn scrollbar_drag_to(app: &mut AditApp, window_y: f32) {
     if max_offset == 0 {
         return;
     }
-    let index = if app.panes.is_empty() {
+    let index = if app.panes.is_empty() || app.fullscreen {
         0
     } else {
         app.focused_pane.min(app.panes.len().saturating_sub(1))
@@ -1686,17 +1693,19 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
 /// and the status bar without this following — 62 points of desktop that was
 /// asked for and never used, split top and bottom by the centring.
 pub(crate) fn chrome_height(app: &AditApp) -> f32 {
+    let tools = if app.search_open { TOOLBAR_HEIGHT } else { 0.0 }
+        + if app.command_window_open { TOOLBAR_HEIGHT } else { 0.0 };
     if !app.fullscreen {
-        return MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT;
+        return MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT + tools;
     }
     // Fullscreen over a remote desktop keeps nothing at all — see
     // `chrome::view` and `workspace`, which drop the tab strip and the status
     // bar for it. Every other session type keeps both, because the status bar
     // is the only thing left there naming the way out.
     if app.manager.active_is_desktop() {
-        0.0
+        tools
     } else {
-        TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
+        TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT + tools
     }
 }
 
@@ -2092,7 +2101,7 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         chrome_height(app),
     );
 
-    let count = app.panes.len().max(1);
+    let count = if app.fullscreen { 1 } else { app.panes.len().max(1) };
     let (cols, rows) = pane_grid_dims(count, app.tile_mode);
     let header = if count > 1 { PANE_HEADER_HEIGHT } else { 0.0 };
 
@@ -2104,7 +2113,10 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         pane_w,
         pane_h,
         origin_x: effective_sidebar,
-        origin_y: MENU_BAR_HEIGHT + TAB_BAR_HEIGHT,
+        origin_y: if app.fullscreen && app.manager.active_is_desktop() { 0.0 }
+            else if app.fullscreen { TAB_BAR_HEIGHT }
+            else { MENU_BAR_HEIGHT + TAB_BAR_HEIGHT }
+            + if app.search_open { TOOLBAR_HEIGHT } else { 0.0 },
         header,
     }
 }
@@ -2269,6 +2281,7 @@ pub(crate) fn tile_all_sessions(app: &mut AditApp, mode: TileMode) {
         return;
     }
 
+    tile_mission(app, ids.clone(), mode);
     app.panes = ids;
     app.tile_mode = mode;
     // Keep the active session focused if it is among the tiled panes.
@@ -2293,6 +2306,10 @@ pub(crate) fn tile_all_sessions(app: &mut AditApp, mode: TileMode) {
 
 /// Collapse split panes back to the single-pane tabbed view.
 pub(crate) fn untile_sessions(app: &mut AditApp) {
+    if app.main_view == MainView::Missions {
+        focus_mission(app, Some(app.focused_pane));
+        return;
+    }
     app.panes.clear();
     app.focused_pane = 0;
     app.terminal_scroll_offset = 0;
@@ -2302,60 +2319,9 @@ pub(crate) fn untile_sessions(app: &mut AditApp) {
 }
 
 pub(crate) fn split_pane(app: &mut AditApp) {
-    // RDP is a full-surface graphical session and isn't rendered inside a tile, so
-    // it can't participate in split panes.
-    if app.panes.is_empty() && app.manager.active_is_desktop() {
-        app.last_error = Some(String::from(t("远程桌面会话不支持分屏")));
-        return;
-    }
-
-    app.tile_mode = TileMode::Grid;
-    // Seed the tiling from the active session on the first split.
-    if app.panes.is_empty() {
-        match app.manager.active_session() {
-            Some(active) => {
-                app.panes.push(active);
-                app.focused_pane = 0;
-            }
-            None => {
-                app.last_error = Some(String::from(t("请先连接一个会话再分屏")));
-                return;
-            }
-        }
-    }
-
-    if app.panes.len() >= MAX_PANES {
-        app.notice = tf("最多同时分屏 {} 个终端", &[&MAX_PANES]);
-        return;
-    }
-
-    // First open session not already shown in a pane. RDP sessions are excluded —
-    // they render as a full surface, not a terminal tile.
-    let candidate = app
-        .manager
-        .sessions()
-        .into_iter()
-        .map(|summary| summary.id)
-        .find(|id| !app.panes.contains(id) && !app.manager.session_is_desktop(*id));
-
-    let Some(session_id) = candidate else {
-        app.panes.clear();
-        app.focused_pane = 0;
-        app.notice = String::from(t("没有更多会话可分屏（先在侧栏连接另一个会话）"));
-        return;
-    };
-
-    let insert_at = (app.focused_pane + 1).min(app.panes.len());
-    app.panes.insert(insert_at, session_id);
-    app.focused_pane = insert_at;
-    let _ = app.manager.activate(session_id);
-    app.terminal_focused = true;
-    app.terminal_scroll_offset = 0;
-    app.terminal_selection = None;
-    app.terminal_context_menu = false;
-    sync_terminal_size(app);
-    app.notice = tf("已分屏：{} 个终端并排", &[&app.panes.len()]);
+    split_mission(app);
 }
+
 
 /// Close one tab and settle the workspace behind it.
 ///
@@ -2392,6 +2358,10 @@ pub(crate) fn close_session_tab(app: &mut AditApp, session_id: SessionId) {
 /// Remove a pane from the tiling (does not close the session). Collapses back to
 /// the single-pane view when one or fewer remain.
 pub(crate) fn close_pane(app: &mut AditApp, index: usize) {
+    if app.main_view == MainView::Missions {
+        remove_mission_pane(app, index);
+        return;
+    }
     if index >= app.panes.len() {
         return;
     }
@@ -2461,6 +2431,7 @@ pub(crate) fn focus_pane(app: &mut AditApp, index: usize) {
     };
     let changed =
         app.focused_pane != index || app.manager.active_session() != Some(session_id);
+    if changed { release_rdp_modifiers(app); }
     app.focused_pane = index;
     if app.manager.active_session() != Some(session_id) {
         let _ = app.manager.activate(session_id);
@@ -2470,6 +2441,10 @@ pub(crate) fn focus_pane(app: &mut AditApp, index: usize) {
     if changed {
         app.terminal_scroll_offset = 0;
         app.terminal_selection = None;
+    }
+    if app.main_view == MainView::Missions {
+        // Remember focus independently of the visible pane vector.
+        missions::activate_mission_session(app, session_id);
     }
 }
 

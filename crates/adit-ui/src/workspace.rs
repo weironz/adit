@@ -6,7 +6,13 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     // byte-for-byte as before (it is the well-tested selection/hit-test path).
     let body: Element<'_, Message> = if app.main_view == MainView::Hosts {
         hosts_view(app)
-    } else if app.panes.len() >= 2 {
+    } else if app.main_view == MainView::Missions && mission_is_empty(app) {
+        container(column![
+            text(t("添加已打开会话开始任务")).size(TEXT_TITLE),
+            button(text(t("打开的连接"))).on_press(Message::FindOpenSession),
+            button(text(t("资源库"))).on_press(Message::ShowMainView(MainView::Hosts)),
+        ].spacing(16)).center_x(Fill).center_y(Fill).into()
+    } else if app.panes.len() >= 2 && !app.fullscreen {
         tiled_workspace_body(app)
     } else if app.manager.active_is_desktop() {
         rdp_surface_view(app)
@@ -49,6 +55,8 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     if !rdp_fullscreen {
         let title = if app.main_view == MainView::Hosts {
             String::from(t("资源库"))
+        } else if app.main_view == MainView::Missions {
+            mission_title(app)
         } else {
             app.manager.active_session_summary().map(|s| s.title)
                 .unwrap_or_else(|| String::from(t("专注工作区")))
@@ -56,6 +64,17 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         layout = layout.push(
             row![
                 text(title).size(TEXT_BODY).color(primary_text()).width(Fill),
+                if app.main_view == MainView::Missions {
+                    button(text(t(if app.panes.len() >= 2 { "聚焦当前窗格" } else { "返回分屏" })).size(TEXT_META))
+                        .on_press(if app.panes.len() >= 2 {
+                            Message::FocusMissionPane(app.focused_pane)
+                        } else { Message::ReturnToMission })
+                        .style(|_, status| secondary_button_style(status))
+                } else {
+                    button(text(t("任务分屏")).size(TEXT_META))
+                        .on_press(Message::ShowMainView(MainView::Missions))
+                        .style(|_, status| secondary_button_style(status))
+                },
                 active_session_action(app),
                 button(text(t("打开的连接")).size(TEXT_META))
                     .on_press(Message::FindOpenSession)
@@ -645,6 +664,7 @@ pub(crate) fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     )
     .padding([4, 8])
+    .height(TOOLBAR_HEIGHT)
     .width(Fill)
     .style(|_theme| toolbar_style())
     .into()
@@ -718,6 +738,7 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     )
     .padding([4, 8])
+    .height(TOOLBAR_HEIGHT)
     .width(Fill)
     .style(|_theme| toolbar_style())
     .into()
@@ -733,11 +754,16 @@ pub(crate) fn tiled_workspace_body(app: &AditApp) -> Element<'_, Message> {
         let mut r = row![].spacing(PANE_GAP).width(Fill).height(Fill);
         for _ in 0..layout.cols {
             if idx >= app.panes.len() {
-                break;
+                r = r.push(Space::new().width(Length::FillPortion(1)));
+                continue;
             }
             let session_id = app.panes[idx];
             r = r.push(
-                container(terminal_pane(app, session_id, idx))
+                  container(if app.manager.session_is_desktop(session_id) {
+                      desktop_panes::pane_view(app, session_id, idx)
+                  } else {
+                      terminal_pane(app, session_id, idx)
+                  })
                     .width(Length::FillPortion(1))
                     .height(Fill),
             );
@@ -767,6 +793,9 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
             row![
                 text("●").size(9).color(status_color(status)),
                 text(title).size(11).color(primary_text()).width(Fill),
+                  button(text(t("聚焦")).size(11))
+                      .padding([0, 6]).on_press(Message::FocusMissionPane(index))
+                      .style(|_, status| secondary_button_style(status)),
                 button(text("×").size(13))
                     .padding([0, 6])
                     .style(|_theme, status| tab_close_button_style(status))

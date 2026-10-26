@@ -64,6 +64,10 @@ mod keyboard_hook;
 mod vnc_cursor;
 #[cfg(feature = "native-vnc-acceptance")]
 mod vnc_native_acceptance;
+#[cfg(feature = "native-workbench-acceptance")]
+mod workbench_acceptance;
+#[cfg(feature = "native-workbench-acceptance")]
+pub use workbench_acceptance::run as run_workbench_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
@@ -90,6 +94,9 @@ mod sidebar;
 use sidebar::*;
 mod hosts;
 use hosts::*;
+mod missions;
+use missions::*;
+mod desktop_panes;
 mod editor;
 use editor::*;
 mod update_loop;
@@ -472,6 +479,8 @@ pub struct AditApp {
     context_menu_pos: Point,
     /// Which top-level view fills the area beside the nav rail.
     main_view: MainView,
+    missions: Missions,
+    desktop_panes: desktop_panes::DesktopPanes,
     host_details_open: bool,
     /// How the host manager lays its entries out.
     host_layout: HostLayout,
@@ -771,6 +780,22 @@ pub enum Message {
     HostDetailsClosed,
     OpenExistingProfile(ProfileId),
     FindOpenSession,
+    NewMission,
+    PickMission(u64),
+    MissionNameChanged(String),
+    BeginMissionName,
+    FinishMissionName(bool),
+    MissionPickerToggled,
+    AddMissionSession(SessionId),
+    ActivateMissionSession(SessionId),
+    RemoveMission,
+    FocusMissionPane(usize),
+    ReturnToMission,
+    DesktopPaneMoved(SessionId, Point),
+    DesktopPanePressed(SessionId, mouse::Button),
+    DesktopPaneReleased(SessionId, mouse::Button),
+    DesktopPaneScrolled(SessionId, mouse::ScrollDelta),
+    GlobalPointerReleased(mouse::Button, bool),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
     /// Flip one keyword-highlight rule, by its stable id.
@@ -1661,6 +1686,8 @@ impl AditApp {
             // Opens on the host list rather than an empty terminal: with no
             // session running there is nothing for the terminal view to show.
             main_view: MainView::Hosts,
+            missions: Missions::default(),
+            desktop_panes: desktop_panes::DesktopPanes::default(),
             host_details_open: false,
             host_layout,
             recent_hosts,
@@ -1886,7 +1913,7 @@ fn subscription(app: &AditApp) -> Subscription<Message> {
     // sample its framebuffer every frame (vsync-paced) so the desktop stays
     // smooth (the 100 ms Tick would look choppy). Gating on the active tab avoids
     // pinning the app at 60 fps just because a background RDP tab is open.
-    if app.manager.active_rdp_live() {
+    if app.manager.active_rdp_live() || desktop_panes::needs_frames(app) {
         subs.push(window::frames().map(|_| Message::RdpTick));
     }
     // Cards easing to new positions need a frame each; the 100 ms Tick would
@@ -2015,11 +2042,8 @@ fn runtime_event(
         event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
             Some(Message::GlobalCursorMoved(position))
         }
-        event::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
-            if status == event::Status::Ignored =>
-        {
-            Some(Message::CancelProfileDrag)
-        }
+        event::Event::Mouse(mouse::Event::ButtonReleased(button)) =>
+            Some(Message::GlobalPointerReleased(button, status == event::Status::Ignored)),
         // Files dragged from the OS file manager onto the window.
         event::Event::Window(window::Event::FileDropped(path)) => {
             Some(Message::SftpFileDropped(path))

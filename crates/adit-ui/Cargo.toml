@@ -7,6 +7,11 @@ license.workspace = true
 
 [features]
 native-vnc-acceptance = []
+native-workbench-acceptance = ["dep:image"]
+
+[[example]]
+name = "workbench_acceptance"
+required-features = ["native-workbench-acceptance"]
 
 [[example]]
 name = "vnc_native_acceptance"
@@ -33,6 +38,7 @@ name = "keyboard_hook_winit_probe"
 required-features = ["native-vnc-acceptance"]
 
 [dependencies]
+image = { version = "=0.25.10", default-features = false, features = ["png"], optional = true }
 adit-domain.workspace = true
 adit-session.workspace = true
 adit-storage.workspace = true

@@ -133,6 +133,7 @@ dependencies = [
  "dark-light",
  "hex",
  "iced",
+ "image",
  "regex",
  "rfd",
  "serde_json",

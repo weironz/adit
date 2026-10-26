@@ -139,6 +139,7 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
             text("ADIT").size(TEXT_TITLE).color(primary_text()),
             global_view_button(app, MainView::Hosts, "资源库"),
             global_view_button(app, MainView::Terminal, "专注工作区"),
+            global_view_button(app, MainView::Missions, "任务分屏"),
             menu_button(app, MenuKind::File, t("菜单")),
             Space::new().width(Fill),
             text(app.manager.status_line()).size(11).color(muted_text()),
@@ -147,7 +148,7 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center),
     )
     .padding([3, 10])
-    .height(MENU_BAR_HEIGHT)
+    .center_y(MENU_BAR_HEIGHT)
     .width(Fill)
     .style(|_theme| top_bar_style())
     .into()

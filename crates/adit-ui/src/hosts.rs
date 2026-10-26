@@ -10,12 +10,13 @@ pub enum MainView {
     Hosts,
     /// Session tabs and the terminal.
     Terminal,
+    /// Runtime tasks share existing sessions without owning their connections.
+    Missions,
 }
 
 pub(crate) const HOST_CARD_WIDTH: f32 = 260.0;
-/// What a grid card builds out to (10px padding around a 34px tile), for the
-/// absolute layout the animated bands use.
-pub(crate) const HOST_CARD_HEIGHT: f32 = 54.0;
+/// Shared by the actual card and animated slots; hit regions cannot drift.
+pub(crate) const HOST_CARD_HEIGHT: f32 = 78.0;
 
 
 /// One preset a profile's tile can use.
@@ -267,6 +268,7 @@ pub(crate) fn host_card(
     };
 
     let profile_id = profile.id;
+    let selected = app.selected_profile == Some(profile_id);
     let dragging = app.dragged_profile == Some(profile_id);
     // Whether the dragged card would land on this one.
     let incoming = matches!(
@@ -303,6 +305,7 @@ pub(crate) fn host_card(
     )
     .width(Fill)
     .padding(10)
+    .center_y(HOST_CARD_HEIGHT)
     .style(move |_theme| container::Style {
         background: Some(Background::Color(if dragging {
             panel_background_hover()
@@ -314,7 +317,7 @@ pub(crate) fn host_card(
         // Without it the drag read as inert even while it worked: the move
         // happened, and nothing on screen had said it would.
         border: Border {
-            color: if dragging || incoming {
+            color: if dragging || incoming || selected {
                 accent()
             } else {
                 border_color()
@@ -509,9 +512,13 @@ pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label:
 /// tracked, and the rail and padding around the grid are fixed — so this is
 /// arithmetic rather than a guess.
 pub(crate) fn host_columns(app: &AditApp) -> usize {
-    let details = if host_details_visible(app) { HOST_DETAILS_WIDTH + 16.0 } else { 0.0 };
-    let available = app.window_width - sidebar_offset(app) - details - 40.0;
+    let available = host_content_width(app);
     ((available / (HOST_CARD_WIDTH + 8.0)).floor() as usize).clamp(1, 8)
+}
+
+fn host_content_width(app: &AditApp) -> f32 {
+    let details = if host_details_visible(app) { HOST_DETAILS_WIDTH } else { 0.0 };
+    (app.window_width - sidebar_offset(app) - details - 40.0 - 16.0).max(80.0)
 }
 
 /// A group, as a card. Collapsed by nature: the point of the band is to show
@@ -756,8 +763,8 @@ pub(crate) fn host_band(
         HostLayout::Grid => {
             // The same arithmetic wrap_cards lays them out with, so the midpoint
             // a card tests against is the midpoint it actually has.
-            let card_width =
-                ((app.window_width - app.sidebar_width - 56.0) / columns as f32 - 8.0).max(80.0);
+            let card_width = ((host_content_width(app) - 8.0 * columns.saturating_sub(1) as f32)
+                / columns as f32).max(80.0);
             if animated {
                 // Absolute positions in a stack, not flowing cells. A flowing
                 // layout cannot draw a card outside its own cell, so an animated
@@ -983,6 +990,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
             || profile.name.to_ascii_lowercase().contains(&filter)
             || profile.host.to_ascii_lowercase().contains(&filter)
             || profile.username.to_ascii_lowercase().contains(&filter)
+              || profile.group.to_ascii_lowercase().contains(&filter)
     };
 
     let search = text_input("搜索主机、地址或用户名…", &app.session_filter)
@@ -1148,6 +1156,10 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
 
     let pane: Element<'_, Message> = container(
         column![
+            row![
+                text(t("主机")).size(24).color(primary_text()).width(Fill),
+                text(tf("{} 个配置", &[&profiles.len()])).size(TEXT_META).color(muted_text()),
+            ].align_y(Alignment::Center),
             // Search, then the shapes, then the one action. No tag filter or
             // multi-select alongside them: the reference client has both, Adit
             // has neither tags nor a bulk operation to select for, and a control
@@ -1181,7 +1193,9 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     let pane: Element<'_, Message> =
         mouse_area(pane).on_move(Message::HostsCursorMoved).into();
     let pane: Element<'_, Message> = if host_details_visible(app) {
-        row![pane, host_details(app)].height(Fill).into()
+        row![pane, host_details(app, false)].height(Fill).into()
+    } else if app.host_details_open && app.selected_profile.is_some() {
+        column![pane, container(host_details(app, true)).height(230)].height(Fill).into()
     } else {
         pane
     };
@@ -1209,7 +1223,7 @@ fn host_details_visible(app: &AditApp) -> bool {
         && app.window_width - sidebar_offset(app) >= 820.0
 }
 
-fn host_details(app: &AditApp) -> Element<'_, Message> {
+fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
     let Some(profile) = app.selected_profile.and_then(|id| app.manager.profile(id)) else {
         return Space::new().into();
     };
@@ -1247,6 +1261,6 @@ fn host_details(app: &AditApp) -> Element<'_, Message> {
             .on_press(Message::EditProfileFromContext(id)),
     );
     container(scrollable(details)).padding(20)
-        .width(Length::Fixed(HOST_DETAILS_WIDTH)).height(Fill)
+        .width(if compact { Fill } else { Length::Fixed(HOST_DETAILS_WIDTH) }).height(Fill)
         .style(|_| sidebar_style()).into()
 }

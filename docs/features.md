@@ -128,9 +128,14 @@ packages. Issue states remain the source of truth for planned work.
 - **Profiles** with group/folder organisation, manual ordering, and drag-reorder.
   Sessions and folders share one ordering scale, so a session can sit above, between, or
   inside folders.
-- **Tabs** — click to activate, drag to reorder live, right-click for rename / disconnect
+- **Focus sidebar** — lists only open sessions. Click to activate, drag to reorder live, right-click for rename / disconnect
   / reconnect / clone / close. A status dot and an optional environment badge (e.g.
-  `PROD`, tinted by the profile's accent) ride on each tab.
+  `PROD`, tinted by the profile's accent) ride on each row. Search and the
+  "open sessions" action remain reachable when the sidebar is hidden.
+- **Resource library** — functional navigation on the left; grouped host cards,
+  lists or the management tree in the main area, with pinned/recent hosts and
+  optional host details. Switching to an existing session and opening another
+  session are separate actions.
 - **Auto-titling**: repeated sessions to one profile become `name`, `name (1)`, `name (2)`.
   Hand-renamed tabs are never renumbered, and closing one re-tidies the rest.
 - **Auto-reconnect** with exponential backoff (1→30 s, 10 attempts). Arms only if the
@@ -138,8 +143,11 @@ packages. Issue states remain the source of truth for planned work.
   password or an intentional `exit` never loops.
 - **Enter reconnects** a dropped session; SSH reconnects in place with stored
   credentials, other protocols reopen the dialog.
-- **Split panes / tiling** — up to 6 sessions tiled as columns, rows, or a grid. Only the
-  focused pane shows a cursor and drives scrolling. RDP and VNC cannot be split.
+- **Runtime missions / split panes** — name tasks and add up to 6 existing sessions,
+  tiled as columns, rows, or a grid. Terminal, RDP and VNC panes share the layout;
+  only the focused session owns keyboard input. Focus one pane and return to
+  its split, or switch tasks/views without closing connections. Missions are
+  scoped to this run; they are not persisted or automatically restored.
 - **Broadcast input** fans keystrokes to every connected session, with a persistent
   warning in the status bar showing the reach count.
 
@@ -289,15 +297,16 @@ implementing three things IronRDP doesn't provide: EGFX graphics compositing inc
 **RemoteFX Progressive decoding**, **Server Redirection**, and **RDSTLS** handover auth.
 See [rdp-gnome-remote-desktop.md](rdp-gnome-remote-desktop.md).
 
-The framebuffer is sampled per vsync frame, but only while an RDP tab is *active*, so a
-background RDP session doesn't pin the app at 60 fps.
+The framebuffer is sampled per vsync frame while a desktop is active or visible
+in a mission. Each visible desktop has its own frame cache; a hidden background
+desktop alone does not keep the window repainting.
 
 ### The fullscreen toolbar
 
 Fullscreen drops the menu bar — that is the point of the mode — which left the status
 bar's one line of text as the only thing telling anyone how to get back out. So a
 floating bar (RustDesk-style) appears at the top edge in fullscreen, and **only** in
-fullscreen: windowed sessions already have the menu bar and the tab strip, and a
+fullscreen: windowed sessions already have global navigation and a context header, and a
 permanent icon row there is the 36px of duplicated shortcuts the previous toolbar was
 deleted for. This one reserves no layout space at all. The clipboard toggle
 lights up when it is on, so the bar shows state and not just actions.
