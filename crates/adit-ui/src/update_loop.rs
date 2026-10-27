@@ -221,129 +221,123 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_surface_size_prev = None;
             }
 
-            if native_windows::owns_selected_session(app) {
-                if app.desktop_window_focused {
-                    // RDP clipboard bridge: the helper is a windowless process, so only
-                    // this one has a Windows clipboard. Remote copies land here...
-                    if let Some(text) = app
+            if native_windows::owns_selected_session(app) && app.desktop_window_focused {
+                // RDP clipboard bridge: the helper is a windowless process, so only
+                // this one has a Windows clipboard. Remote copies land here...
+                if let Some(text) = app
+                    .manager
+                    .take_rdp_clipboard()
+                    .filter(|_| app.rdp_clipboard)
+                {
+                    // Record it as already-offered so the poll below doesn't bounce
+                    // the remote's own text straight back at it.
+                    app.rdp_clipboard_offered = Some(text.clone());
+                    return clipboard::write(text);
+                }
+                // An image the remote copied. Written straight through as CF_DIB —
+                // iced's clipboard is text-only, so this is Win32 directly.
+                if let Some(image) = app.manager.take_rdp_clipboard_image() {
+                    if app.rdp_clipboard && clipboard_files::set_clipboard_image(&image) {
+                        // Writing bumps the sequence number; claiming it here is what
+                        // stops the poll below offering the remote its own image back.
+                        let seq = clipboard_files::clipboard_sequence();
+                        app.rdp_clipboard_seq = seq;
+                        app.rdp_image_offered_seq = seq;
+                    }
+                }
+                // ...and the local clipboard is sampled for the remote. Only while an
+                // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
+                // opens the system clipboard, and doing that ten times a second would
+                // fight every other app on the machine for it.
+                // Files the remote copied: publish them on the Windows clipboard.
+                // Delay-rendered, so this costs one data object and no wire traffic.
+                if let Some(offer) = app.manager.take_rdp_clipboard_files() {
+                    app.rdp_chunk_bridge.close();
+                    app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
+                    app.rdp_file_scope = None;
+                    if app.rdp_clipboard
+                        && app.manager.active_session() == Some(offer.session)
+                        && !offer.files.is_empty()
+                        && offer.is_current()
+                    {
+                        app.rdp_file_scope = Some((offer.session, offer.generation));
+                        clipboard_files::offer_remote_files(
+                            offer.files,
+                            app.rdp_chunk_bridge.clone(),
+                            offer.requester,
+                            RDP_FILE_CHUNK_BYTES,
+                        );
+                    }
+                }
+                let drag_events = app.manager.take_rdp_file_drag_events();
+                if let Some((session, notice)) =
+                    app.rdp_file_drag
+                        .update(drag_events, app.rdp_clipboard, |id| {
+                            app.manager.rdp_file_drag_live(id)
+                        })
+                {
+                    if app.manager.active_session() == Some(session) {
+                        app.notice = notice;
+                    }
+                }
+                // Chunks answering a local paste. Handed straight to the COM stream
+                // blocked on them over on Explorer's thread.
+                for chunk in app.manager.take_rdp_file_chunks() {
+                    if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
+                        app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+                    }
+                }
+                // With no live RDP session there is nothing that can answer a paste,
+                // so release any Explorer thread waiting on one instead of leaving it
+                // to time out — file by file, thirty seconds each.
+                if app
+                    .rdp_file_scope
+                    .is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session))
+                {
+                    app.rdp_chunk_bridge.close();
+                }
+
+                // Byte ranges the remote is pasting. Answered before the polls below
+                // because a remote paste is *blocked* on each one, and every request
+                // gets a reply even when the read fails — `None` becomes the
+                // protocol's error response, where silence would hang Explorer over
+                // there indefinitely.
+                for read in app.manager.take_rdp_file_reads() {
+                    let data = app
+                        .rdp_offered_files
+                        .get(read.index as usize)
+                        .and_then(|file| {
+                            clipboard_files::read_range(&file.path, read.offset, read.length)
+                        });
+                    app.manager.answer_rdp_file_read(read.stream_id, data);
+                }
+
+                let clipboard_ready = !app.manager.active_is_vnc()
+                    || app
                         .manager
-                        .take_rdp_clipboard()
-                        .filter(|_| app.rdp_clipboard)
-                    {
-                        // Record it as already-offered so the poll below doesn't bounce
-                        // the remote's own text straight back at it.
-                        app.rdp_clipboard_offered = Some(text.clone());
-                        return clipboard::write(text);
-                    }
-                    // An image the remote copied. Written straight through as CF_DIB —
-                    // iced's clipboard is text-only, so this is Win32 directly.
-                    if let Some(image) = app.manager.take_rdp_clipboard_image() {
-                        if app.rdp_clipboard && clipboard_files::set_clipboard_image(&image) {
-                            // Writing bumps the sequence number; claiming it here is what
-                            // stops the poll below offering the remote its own image back.
-                            let seq = clipboard_files::clipboard_sequence();
-                            app.rdp_clipboard_seq = seq;
-                            app.rdp_image_offered_seq = seq;
-                        }
-                    }
-                    // ...and the local clipboard is sampled for the remote. Only while an
-                    // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
-                    // opens the system clipboard, and doing that ten times a second would
-                    // fight every other app on the machine for it.
-                    // Files the remote copied: publish them on the Windows clipboard.
-                    // Delay-rendered, so this costs one data object and no wire traffic.
-                    if let Some(offer) = app.manager.take_rdp_clipboard_files() {
-                        app.rdp_chunk_bridge.close();
-                        app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
-                        app.rdp_file_scope = None;
-                        if app.rdp_clipboard
-                            && app.manager.active_session() == Some(offer.session)
-                            && !offer.files.is_empty()
-                            && offer.is_current()
-                        {
-                            app.rdp_file_scope = Some((offer.session, offer.generation));
-                            clipboard_files::offer_remote_files(
-                                offer.files,
-                                app.rdp_chunk_bridge.clone(),
-                                offer.requester,
-                                RDP_FILE_CHUNK_BYTES,
-                            );
-                        }
-                    }
-                    let drag_events = app.manager.take_rdp_file_drag_events();
-                    if let Some((session, notice)) =
-                        app.rdp_file_drag
-                            .update(drag_events, app.rdp_clipboard, |id| {
-                                app.manager.rdp_file_drag_live(id)
-                            })
-                    {
-                        if app.manager.active_session() == Some(session) {
-                            app.notice = notice;
-                        }
-                    }
-                    // Chunks answering a local paste. Handed straight to the COM stream
-                    // blocked on them over on Explorer's thread.
-                    for chunk in app.manager.take_rdp_file_chunks() {
-                        if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
-                            app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
-                        }
-                    }
-                    // With no live RDP session there is nothing that can answer a paste,
-                    // so release any Explorer thread waiting on one instead of leaving it
-                    // to time out — file by file, thirty seconds each.
+                        .active_session_summary()
+                        .is_some_and(|s| s.status == SessionStatus::Connected);
+                if app.desktop_window_focused
+                    && app.rdp_clipboard
+                    && app.manager.active_is_desktop()
+                    && clipboard_ready
+                {
+                    app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
                     if app
-                        .rdp_file_scope
-                        .is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session))
+                        .rdp_clipboard_ticks
+                        .is_multiple_of(RDP_CLIPBOARD_POLL_TICKS)
                     {
-                        app.rdp_chunk_bridge.close();
-                    }
-
-                    // Byte ranges the remote is pasting. Answered before the polls below
-                    // because a remote paste is *blocked* on each one, and every request
-                    // gets a reply even when the read fails — `None` becomes the
-                    // protocol's error response, where silence would hang Explorer over
-                    // there indefinitely.
-                    for read in app.manager.take_rdp_file_reads() {
-                        let data =
-                            app.rdp_offered_files
-                                .get(read.index as usize)
-                                .and_then(|file| {
-                                    clipboard_files::read_range(
-                                        &file.path,
-                                        read.offset,
-                                        read.length,
-                                    )
-                                });
-                        app.manager.answer_rdp_file_read(read.stream_id, data);
-                    }
-
-                    let clipboard_ready = !app.manager.active_is_vnc()
-                        || app
-                            .manager
-                            .active_session_summary()
-                            .is_some_and(|s| s.status == SessionStatus::Connected);
-                    if app.desktop_window_focused
-                        && app.rdp_clipboard
-                        && app.manager.active_is_desktop()
-                        && clipboard_ready
-                    {
-                        app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
-                        if app
-                            .rdp_clipboard_ticks
-                            .is_multiple_of(RDP_CLIPBOARD_POLL_TICKS)
-                        {
-                            // Explorer also offers file names as text. RDP checks files
-                            // first; VNC supports text only and never requests local files.
-                            if !app.manager.active_is_vnc() {
-                                offer_local_files_if_changed(app);
-                                offer_local_image_if_changed(app);
-                            }
-                            if let Some(session) = app.manager.active_session() {
-                                let epoch = app.desktop_clipboard_epoch;
-                                return clipboard::read().map(move |contents| {
-                                    Message::RdpClipboardPolled(session, epoch, contents)
-                                });
-                            }
+                        // Explorer also offers file names as text. RDP checks files
+                        // first; VNC supports text only and never requests local files.
+                        if !app.manager.active_is_vnc() {
+                            offer_local_files_if_changed(app);
+                            offer_local_image_if_changed(app);
+                        }
+                        if let Some(session) = app.manager.active_session() {
+                            let epoch = app.desktop_clipboard_epoch;
+                            return clipboard::read().map(move |contents| {
+                                Message::RdpClipboardPolled(session, epoch, contents)
+                            });
                         }
                     }
                 }
