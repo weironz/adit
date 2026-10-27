@@ -2155,18 +2155,36 @@ impl SessionManager {
 
     /// A file list the remote copied, if one arrived since the last call.
     pub fn take_rdp_clipboard_files(&mut self) -> Option<RdpClipboardFileOffer> {
-        self.pending_rdp_clipboard_files.take().filter(|offer|
-            Some(offer.session) == self.active_session &&
-            self.sessions.get(&offer.session).and_then(|r| r.rdp.as_ref())
-                .is_some_and(|rdp| rdp.owns_file_requester(&offer.requester)))
+        let offer = self.pending_rdp_clipboard_files.as_ref()?;
+        if Some(offer.session) != self.active_session {
+            return None;
+        }
+        let owned = self
+            .sessions
+            .get(&offer.session)
+            .and_then(|r| r.rdp.as_ref())
+            .is_some_and(|rdp| rdp.owns_file_requester(&offer.requester));
+        if owned {
+            self.pending_rdp_clipboard_files.take()
+        } else {
+            self.pending_rdp_clipboard_files = None;
+            None
+        }
     }
 
     /// Chunks that arrived for local pastes. Drained.
     pub fn take_rdp_file_chunks(&mut self) -> Vec<RdpFileChunk> {
-        std::mem::take(&mut self.pending_rdp_file_chunks).into_iter().filter(|chunk|
-            Some(chunk.session) == self.active_session &&
-            self.sessions.get(&chunk.session).and_then(|r| r.rdp.as_ref())
-                .is_some_and(|rdp| rdp.owns_file_requester(&chunk.owner))).collect()
+        let active = self.active_session;
+        self.pending_rdp_file_chunks
+            .extract_if(.., |chunk| {
+                Some(chunk.session) == active
+                    && self
+                        .sessions
+                        .get(&chunk.session)
+                        .and_then(|r| r.rdp.as_ref())
+                        .is_some_and(|rdp| rdp.owns_file_requester(&chunk.owner))
+            })
+            .collect()
     }
 
     /// A handle for the current offer. Historical metadata must retain the

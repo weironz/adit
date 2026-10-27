@@ -273,6 +273,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             }
         }
+        }
         Message::RdpClipboardPolled(session, epoch, contents) => {
             // A read can finish after a tab switch or after sharing was disabled.
             if !app.rdp_clipboard

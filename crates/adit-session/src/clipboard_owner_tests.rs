@@ -76,7 +76,7 @@ fn temporary_window_projection_preserves_pending_offers_and_focus_retirement_kee
     let (a_id, b_id) = (a.id, b.id);
     let mut manager = SessionManager::with_profiles(vec![a, b]);
     let a = manager.open_mock_session(a_id).unwrap();
-    let _b = manager.open_mock_session(b_id).unwrap();
+    let b = manager.open_mock_session(b_id).unwrap();
     let requester = attach_test_rdp(&mut manager, a);
     manager.pending_rdp_clipboard = Some((a, PendingDesktopClipboard::Rdp("fixture-a".into())));
     manager.select_session_context(b).unwrap();
