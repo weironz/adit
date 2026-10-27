@@ -1,8 +1,10 @@
 mod sftp_shell;
 mod terminal_encoding;
 mod triggers;
+mod sftp_transfers;
 
 pub use sftp_shell::SftpShell;
+pub use adit_ssh::TransferMode;
 
 use adit_domain::{
     AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
@@ -329,7 +331,10 @@ pub struct TransferItem {
     pub bps: u64,
     /// Failure reason, set when `status` becomes `Failed`.
     pub error: Option<String>,
+    /// Recovery/partial/backup location survives later directory refreshes.
+    pub note: Option<String>,
     started_at: Option<Instant>,
+    baseline_bytes: u64,
 }
 
 impl TransferItem {
@@ -351,7 +356,9 @@ impl TransferItem {
             status: TransferStatus::Pending,
             bps: 0,
             error: None,
+            note: None,
             started_at: Some(Instant::now()),
+            baseline_bytes: 0,
         }
     }
 
@@ -359,7 +366,7 @@ impl TransferItem {
         if let Some(start) = self.started_at {
             let elapsed = now.duration_since(start).as_secs_f64();
             if elapsed > 0.05 {
-                self.bps = (self.done as f64 / elapsed) as u64;
+                self.bps = (self.done.saturating_sub(self.baseline_bytes) as f64 / elapsed) as u64;
             }
         }
     }
@@ -377,7 +384,7 @@ pub enum TransferStatus {
     Active,
     Done,
     Failed,
-    /// Stopped by the user (partial output was cleaned up by the worker).
+    /// Stopped by the user; partial data remains available for explicit resume.
     Cancelled,
 }
 
@@ -2985,7 +2992,8 @@ impl SessionManager {
     /// of the server, so a file that appeared since the last refresh is missed.
     /// That is the right trade for a prompt: it matches what the user is
     /// looking at, and the alternative is a round trip on the way to every
-    /// transfer. It does mean this narrows the window rather than closing it.
+    /// transfer. This is only the prompt hint: the worker independently enforces
+    /// exclusive creation and checks target identity/content while transferring.
     pub fn sftp_remote_file_exists(&self, name: &str) -> bool {
         self.sftp
             .as_ref()
@@ -3005,41 +3013,15 @@ impl SessionManager {
 
     /// Download a remote file into the current local pane directory.
     pub fn sftp_download(&mut self, name: &str) {
-        if let Some(browser) = &mut self.sftp {
-            let id = browser.next_transfer_id;
-            browser.next_transfer_id += 1;
-            let remote = join_remote(&browser.cwd, name);
-            let local = browser.local_cwd.join(name);
-            browser.transfers.push(TransferItem::new(
-                id,
-                TransferDirection::Download,
-                name.to_string(),
-                remote.clone(),
-                local.display().to_string(),
-            ));
-            browser.busy = true;
-            browser.status = format!("downloading {name}…");
-            let _ = browser.handle.send(SftpCommand::Download { id, remote, local });
-        }
+        self.sftp_download_mode(name, TransferMode::CreateNew);
     }
 
     /// Upload a file from the current local pane directory to the remote pane.
     pub fn sftp_upload_local(&mut self, name: &str) {
-        if let Some(browser) = &mut self.sftp {
-            let id = browser.next_transfer_id;
-            browser.next_transfer_id += 1;
+        if let Some(browser) = &self.sftp {
             let local = browser.local_cwd.join(name);
             let remote = join_remote(&browser.cwd, name);
-            browser.transfers.push(TransferItem::new(
-                id,
-                TransferDirection::Upload,
-                name.to_string(),
-                local.display().to_string(),
-                remote.clone(),
-            ));
-            browser.busy = true;
-            browser.status = format!("uploading {name}…");
-            let _ = browser.handle.send(SftpCommand::Upload { id, local, remote });
+            let _ = self.sftp_upload_to(&local, &remote, TransferMode::CreateNew);
         }
     }
 
@@ -3051,25 +3033,9 @@ impl SessionManager {
             .and_then(|n| n.to_str())
             .ok_or_else(|| SessionError::Sftp(String::from("invalid local file path")))?
             .to_string();
-        let browser = self.sftp.as_mut().ok_or(SessionError::NoActiveSshSession)?;
-        let id = browser.next_transfer_id;
-        browser.next_transfer_id += 1;
+        let browser = self.sftp.as_ref().ok_or(SessionError::NoActiveSshSession)?;
         let remote = join_remote(&browser.cwd, &name);
-        browser.transfers.push(TransferItem::new(
-            id,
-            TransferDirection::Upload,
-            name.clone(),
-            local.display().to_string(),
-            remote.clone(),
-        ));
-        browser.busy = true;
-        browser.status = format!("uploading {name}…");
-        browser.handle.send(SftpCommand::Upload {
-            id,
-            local: local.to_path_buf(),
-            remote,
-        })?;
-        Ok(())
+        self.sftp_upload_to(local, &remote, TransferMode::CreateNew)
     }
 
     fn poll_sftp_events(&mut self) {
@@ -3098,6 +3064,10 @@ impl SessionManager {
                         // Correlate by id, not name: two transfers can share a
                         // filename and would otherwise cross-attribute progress.
                         if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
+                            if item.status == TransferStatus::Pending {
+                                item.baseline_bytes = done;
+                                item.started_at = Some(Instant::now());
+                            }
                             item.status = TransferStatus::Active;
                             item.done = done;
                             item.total = total;
@@ -3127,11 +3097,24 @@ impl SessionManager {
                         if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
                             item.status = TransferStatus::Cancelled;
                         }
-                        // A partial download may have been removed and an upload's
-                        // partial file deleted remotely — refresh both panes.
+                        // Show any retained partial file so explicit resume is
+                        // available after cancellation.
                         let cwd = browser.cwd.clone();
                         let _ = browser.handle.send(SftpCommand::ListDir(cwd));
                         browser.local_entries = read_local_dir(&browser.local_cwd);
+                    }
+                    SftpEvent::TransferFailed { id, label, error } => {
+                        browser.busy = false;
+                        browser.status = format!("{label}: {error}");
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
+                            item.status = TransferStatus::Failed;
+                            item.error = Some(error);
+                        }
+                    }
+                    SftpEvent::TransferNote { id, note } => {
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| t.id == id) {
+                            item.note = Some(note);
+                        }
                     }
                     SftpEvent::Error(error) => {
                         browser.busy = false;

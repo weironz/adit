@@ -395,7 +395,7 @@ fn wait_sftp_done(handle: &adit_ssh::SftpHandle, timeout: Duration) {
         || handle.try_recv(),
         |event| match event {
             SftpEvent::Done { .. } => ControlFlow::Break(true),
-            SftpEvent::Error(error) => panic!("sftp error: {error}"),
+            SftpEvent::Error(error) | SftpEvent::TransferFailed { error, .. } => panic!("sftp error: {error}"),
             _ => ControlFlow::Continue(()),
         },
     );

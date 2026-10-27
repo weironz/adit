@@ -162,6 +162,7 @@ pub(crate) enum PendingTransfer {
     /// An arbitrary local path: the picker or a typed path, neither of which is
     /// necessarily in the pane the panel is showing.
     UploadPath(std::path::PathBuf),
+    Prepared(sftp::PreparedTransfer),
 }
 
 pub struct AditApp {
@@ -947,6 +948,9 @@ pub enum Message {
     SftpLocalRefresh,
     SftpUploadLocal(String),
     SftpDownload(String),
+    SftpSaveAs(String),
+    SftpPrepared(Result<Option<sftp::PreparedTransfer>, String>),
+    SftpResume(SftpPane, String),
     SftpRowPress(SftpPane, String),
     // Right-click a pane entry: track the cursor for the anchor, open/close the menu.
     SftpCursorMoved(Point),
@@ -3519,6 +3523,16 @@ mod tests {
         );
 
         assert_eq!(encode_keyboard_event(event), Some(vec![0x03]));
+    }
+
+    #[test]
+    fn sftp_history_search_ctrl_r_reaches_the_terminal_byte_path() {
+        let event = key_press(
+            Key::Character("r".into()), Key::Character("r".into()),
+            Physical::Code(Code::KeyR), keyboard::Modifiers::CTRL, None,
+        );
+        assert!(!is_terminal_copy_shortcut(&event));
+        assert_eq!(encode_keyboard_event(event), Some(vec![0x12]));
     }
 
     #[test]

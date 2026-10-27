@@ -11,15 +11,13 @@
 
 use std::path::{Path, PathBuf};
 
-use adit_ssh::{SftpCommand, SftpEntry, SftpEvent, SftpHandle};
-use adit_terminal::VtTerminal;
+use adit_ssh::{SftpCommand, SftpEntry, SftpEvent, SftpHandle, TransferMode};
+use adit_terminal::{TerminalCore, Viewport, VtTerminal};
+mod line_editor;
+use line_editor::LineEditor;
+use unicode_width::UnicodeWidthStr;
 
 const PROMPT: &str = "sftp> ";
-
-/// The `id` every command-line-shell transfer carries. The shell runs transfers
-/// one at a time and never cancels, so it doesn't need unique ids — its handle's
-/// cancel set is never populated, and the worker clears the id after each.
-const SHELL_TRANSFER_ID: u64 = 0;
 
 const HELP: &str = "\
 可用命令:
@@ -30,14 +28,19 @@ const HELP: &str = "\
   lcd <路径>            切换本地目录
   lpwd                  显示本地目录
   get <远程> [本地]     下载文件
+  reget <远程> [本地]   校验完整已有前缀后继续下载
   put <本地> [远程]     上传文件 (也可以直接把文件拖进窗口)
+  reput <本地> [远程]   校验远程前缀后继续上传
   mkdir <路径>          新建远程目录
   rmdir <路径>          删除远程目录
   rm <路径>             删除远程文件
   rename <原名> <新名>  重命名远程文件
   clear                 清屏
   help                  显示本帮助
-  exit                  关闭 SFTP 连接";
+  exit                  关闭 SFTP 连接
+编辑: 左右/Home/End/Delete；Ctrl+A/E/U/K/W；Ctrl+R 搜索，
+      Ctrl+R 查找更早匹配，Enter 接受后再次 Enter 执行，Esc/Ctrl+G 退出搜索。
+传输: Ctrl+C 停止；get/put 不覆盖已有文件，续传使用 reget/reput。";
 
 /// What the shell is waiting on, so a reply prints against the right command.
 #[derive(Debug, Clone, Copy)]
@@ -61,20 +64,16 @@ pub struct SftpShell {
     /// Local working directory, for `lls`/`lcd`/`get`/`put`.
     pub local_cwd: PathBuf,
     /// The line being typed. Echoed by us; see the module docs.
-    line: String,
-    history: Vec<String>,
-    /// Where an Up/Down walk currently sits in `history`. `None` means the user
-    /// is back on the line they were typing, which `draft` holds so walking
-    /// forward returns it instead of an empty prompt.
-    history_pos: Option<usize>,
-    draft: String,
+    editor: LineEditor,
+    next_transfer_id: u64,
+    active_transfer: Option<u64>,
     /// Characters collected after an ESC, so an arrow key is read as one key.
     /// Without this the ESC was dropped as a control character and the `[A`
     /// behind it was typed into the line.
     escape: Option<String>,
     /// Where a Tab-triggered completion should splice its result, while the
     /// remote listing it needs is still on its way back.
-    completing: Option<(usize, String)>,
+    completing: Option<(usize, String, String, usize)>,
     pub connected: bool,
     pending: Option<Pending>,
 }
@@ -82,7 +81,7 @@ pub struct SftpShell {
 /// Command names, for completing the first word.
 const COMMANDS: &[&str] = &[
     "ls", "cd", "pwd", "lls", "lcd", "lpwd", "get", "put", "mkdir", "rmdir", "rm", "rename",
-    "clear", "help", "exit",
+    "clear", "help", "exit", "reget", "reput",
 ];
 
 impl SftpShell {
@@ -92,10 +91,9 @@ impl SftpShell {
             cwd: String::from("/"),
             home: String::from("/"),
             local_cwd,
-            line: String::new(),
-            history: Vec::new(),
-            history_pos: None,
-            draft: String::new(),
+            editor: LineEditor::default(),
+            next_transfer_id: 0,
+            active_transfer: None,
             escape: None,
             completing: None,
             connected: false,
@@ -113,6 +111,10 @@ impl SftpShell {
         // The UI sends whole UTF-8 characters, so decoding per batch is safe.
         let text = String::from_utf8_lossy(bytes).into_owned();
         for ch in text.chars() {
+            if self.escape.as_deref() == Some("") && !matches!(ch, '[' | 'O') {
+                self.escape = None;
+                self.editor.cancel_search();
+            }
             // Mid-escape: collect until the sequence's final byte, then act on
             // the whole thing. An arrow key is ESC `[` `A`, and handling the
             // characters one at a time dropped the ESC and typed the rest.
@@ -120,46 +122,66 @@ impl SftpShell {
                 let complete = {
                     let buffer = self.escape.as_mut().expect("just checked");
                     buffer.push(ch);
-                    ch.is_ascii_alphabetic() || ch == '~'
+                    (buffer.len() > 1 && ('@'..='~').contains(&ch)) || buffer.len() > 24
                 };
                 if complete {
                     match self.escape.take().unwrap_or_default().as_str() {
                         // `[` is the usual form; `O` is what a terminal in
                         // application-cursor mode sends for the same keys.
-                        "[A" | "OA" => self.recall(terminal, true),
-                        "[B" | "OB" => self.recall(terminal, false),
+                        "[A" | "OA" => self.editor.recall(true),
+                        "[B" | "OB" => self.editor.recall(false),
+                        "[D" | "OD" => self.editor.left(),
+                        "[C" | "OC" => self.editor.right(),
+                        "[H" | "OH" | "[1~" | "[7~" => self.editor.home(),
+                        "[F" | "OF" | "[4~" | "[8~" => self.editor.end(),
+                        "[3~" => { self.editor.accept_search(); self.editor.delete(); }
                         _ => {}
                     }
+                    self.redraw(terminal);
                 }
                 continue;
             }
             match ch {
-                '\u{1b}' => self.escape = Some(String::new()),
+                '\u{1b}' => {
+                    self.editor.cancel_search();
+                    self.redraw(terminal);
+                    self.escape = Some(String::new());
+                }
                 '\t' => self.complete(terminal),
-                '\r' | '\n' => self.submit(terminal),
+                '\r' | '\n' => {
+                    if self.editor.accept_search() { self.redraw(terminal); }
+                    else if self.pending.is_none() && self.active_transfer.is_none() { self.submit(terminal); }
+                }
                 // Backspace / DEL.
                 '\u{8}' | '\u{7f}' => {
-                    if self.line.pop().is_some() {
-                        terminal.feed_str("\u{8} \u{8}");
-                    }
+                    self.editor.backspace();
+                    self.redraw(terminal);
                 }
                 // Ctrl+C: abandon the line, like a shell.
                 '\u{3}' => {
-                    self.line.clear();
+                    self.editor.clear();
+                    if let Some(id) = self.active_transfer { self.handle.cancel(id); }
                     terminal.feed_str("^C\r\n");
-                    self.prompt(terminal);
+                    if self.active_transfer.is_none() { self.prompt(terminal); }
                 }
                 // Ctrl+U: kill the line.
                 '\u{15}' => {
-                    while self.line.pop().is_some() {
-                        terminal.feed_str("\u{8} \u{8}");
-                    }
+                    self.editor.kill_before(); self.redraw(terminal);
                 }
+                '\u{1}' => { self.editor.home(); self.redraw(terminal); }
+                '\u{5}' => { self.editor.end(); self.redraw(terminal); }
+                '\u{2}' => { self.editor.left(); self.redraw(terminal); }
+                '\u{6}' => { self.editor.right(); self.redraw(terminal); }
+                '\u{4}' => { self.editor.accept_search(); self.editor.delete(); self.redraw(terminal); }
+                '\u{b}' => { self.editor.kill_after(); self.redraw(terminal); }
+                '\u{17}' => { self.editor.kill_word(); self.redraw(terminal); }
+                '\u{12}' => { self.editor.reverse_search(); self.redraw(terminal); }
+                '\u{7}' => { self.editor.cancel_search(); self.redraw(terminal); }
                 // Ignore the remaining control characters.
                 ch if (ch as u32) < 0x20 => {}
                 ch => {
-                    self.line.push(ch);
-                    terminal.feed_str(&ch.to_string());
+                    self.editor.insert(ch);
+                    self.redraw(terminal);
                 }
             }
         }
@@ -167,6 +189,10 @@ impl SftpShell {
 
     /// Queue an upload of a dropped file into the current remote directory.
     pub(crate) fn upload_dropped(&mut self, terminal: &mut VtTerminal, local: &Path) {
+        if self.pending.is_some() {
+            self.writeln(terminal, "已有传输进行中；Ctrl+C 可停止");
+            return;
+        }
         if !self.connected {
             self.writeln(terminal, "尚未连接，无法上传");
             self.prompt(terminal);
@@ -182,10 +208,9 @@ impl SftpShell {
         terminal.feed_str("\r\n");
         self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
         self.pending = Some(Pending::Transfer);
-        // The shell runs one transfer at a time and never cancels, so a fixed id
-        // is safe: its handle's cancel set is never populated.
-        let _ = self.handle.send(SftpCommand::Upload {
-            id: SHELL_TRANSFER_ID,
+        let id = self.begin_transfer();
+        self.send(terminal, SftpCommand::Upload {
+            id,
             local: local.to_path_buf(),
             remote,
         });
@@ -196,7 +221,8 @@ impl SftpShell {
         match event {
             SftpEvent::Status(status) => {
                 // Only interesting before the prompt exists; afterwards it is noise.
-                if !self.connected {
+                if !self.connected || self.active_transfer.is_some() {
+                    terminal.feed_str("\r\n");
                     self.writeln(terminal, &status);
                 }
             }
@@ -235,15 +261,19 @@ impl SftpShell {
             },
             // Per-chunk progress would fight the prompt for the line; `Done` reports.
             SftpEvent::Progress { .. } => {}
-            SftpEvent::Done { label, bytes, .. } => {
+            SftpEvent::Done { id, label, bytes } => {
+                if self.active_transfer != Some(id) { return false; }
+                self.active_transfer = None;
                 self.pending = None;
+                terminal.feed_str("\r\n");
                 self.writeln(terminal, &format!("{label} 完成 ({})", human_size(bytes)));
                 self.prompt(terminal);
             }
-            // The shell never cancels its own transfers, but the variant must be
-            // handled; if one ever arrives, report it plainly.
-            SftpEvent::Cancelled { label, .. } => {
+            SftpEvent::Cancelled { id, label } => {
+                if self.active_transfer != Some(id) { return false; }
+                self.active_transfer = None;
                 self.pending = None;
+                terminal.feed_str("\r\n");
                 self.writeln(terminal, &format!("{label} 已停止"));
                 self.prompt(terminal);
             }
@@ -252,8 +282,24 @@ impl SftpShell {
                 self.writeln(terminal, &format!("错误: {error}"));
                 self.prompt(terminal);
             }
+            SftpEvent::TransferFailed { id, error, .. } => {
+                if self.active_transfer != Some(id) { return false; }
+                self.active_transfer = None;
+                self.pending = None;
+                terminal.feed_str("\r\n");
+                self.writeln(terminal, &format!("传输失败: {error}"));
+                self.prompt(terminal);
+            }
+            SftpEvent::TransferNote { id, note } => {
+                if self.active_transfer == Some(id) {
+                    terminal.feed_str("\r\n");
+                    self.writeln(terminal, &note);
+                }
+            }
             SftpEvent::Closed => {
                 self.connected = false;
+                self.pending = None;
+                self.active_transfer = None;
                 self.writeln(terminal, "SFTP 连接已关闭");
                 return true;
             }
@@ -262,46 +308,18 @@ impl SftpShell {
     }
 
     fn submit(&mut self, terminal: &mut VtTerminal) {
+        // Editing uses a horizontal viewport; commit the complete command to
+        // scrollback/logging before executing it.
+        terminal.feed_str("\r\u{1b}[K");
+        terminal.feed_str(PROMPT);
+        terminal.feed_str(&self.editor.line);
         terminal.feed_str("\r\n");
-        let line = std::mem::take(&mut self.line);
-        let line = line.trim().to_owned();
+        let line = self.editor.submit();
         if line.is_empty() {
             self.prompt(terminal);
             return;
         }
-        // A run of the same command should not have to be walked past.
-        if self.history.last() != Some(&line) {
-            self.history.push(line.clone());
-        }
-        self.history_pos = None;
-        self.draft.clear();
         self.execute(terminal, &line);
-    }
-
-    /// Walk the history. `back` steps towards older entries.
-    fn recall(&mut self, terminal: &mut VtTerminal, back: bool) {
-        if self.history.is_empty() {
-            return;
-        }
-        let target = match (self.history_pos, back) {
-            // Stepping off the line being typed: keep it, so walking forward
-            // again gives it back rather than nothing.
-            (None, true) => {
-                self.draft = self.line.clone();
-                Some(self.history.len() - 1)
-            }
-            (None, false) => None,
-            (Some(0), true) => Some(0),
-            (Some(index), true) => Some(index - 1),
-            (Some(index), false) if index + 1 < self.history.len() => Some(index + 1),
-            (Some(_), false) => None,
-        };
-        self.history_pos = target;
-        self.line = match target {
-            Some(index) => self.history[index].clone(),
-            None => std::mem::take(&mut self.draft),
-        };
-        self.redraw(terminal);
     }
 
     /// Repaint the prompt and the current line in place.
@@ -309,19 +327,42 @@ impl SftpShell {
         // Carriage return, then erase to end of line: shorter than counting
         // backspaces, and correct when the new line is shorter than the old.
         terminal.feed_str("\r\u{1b}[K");
-        terminal.feed_str(PROMPT);
-        let line = self.line.clone();
-        terminal.feed_str(&line);
+        let cols = usize::from(terminal.snapshot(Viewport::tail(1)).size.cols).max(8);
+        let caption = self.editor.search_caption().unwrap_or_else(|| PROMPT.into());
+        let caption: String = caption.chars().scan(0usize, |width, ch| {
+            *width += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            (*width < cols / 2).then_some(ch)
+        }).collect();
+        let budget = cols.saturating_sub(UnicodeWidthStr::width(caption.as_str()) + 1).max(1);
+        let mut start = self.editor.cursor;
+        let mut before = 0;
+        for (index, ch) in self.editor.line[..self.editor.cursor].char_indices().rev() {
+            let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+            if before + width > budget / 2 { break; }
+            before += width;
+            start = index;
+        }
+        let mut width = 0;
+        let visible: String = self.editor.line[start..].chars().take_while(|ch| {
+            width += unicode_width::UnicodeWidthChar::width(*ch).unwrap_or(0);
+            width <= budget
+        }).collect();
+        terminal.feed_str(&caption);
+        terminal.feed_str(&visible);
+        terminal.feed_str("\r");
+        let column = UnicodeWidthStr::width(caption.as_str()) + before;
+        if column > 0 { terminal.feed_str(&format!("\u{1b}[{column}C")); }
     }
 
     /// Complete the word under the cursor: a command name in first position, a
     /// path after that — local or remote depending on which argument of which
     /// command it is.
     fn complete(&mut self, terminal: &mut VtTerminal) {
-        let start = word_start(&self.line);
-        let word = self.line[start..].to_owned();
+        if self.editor.search_caption().is_some() || self.active_transfer.is_some() { return; }
+        let start = word_start(&self.editor.line[..self.editor.cursor]);
+        let word = self.editor.line[start..self.editor.cursor].to_owned();
 
-        if self.line[..start].trim().is_empty() {
+        if self.editor.line[..start].trim().is_empty() {
             let candidates: Vec<String> = COMMANDS
                 .iter()
                 .filter(|name| name.starts_with(&word))
@@ -331,13 +372,13 @@ impl SftpShell {
             return;
         }
 
-        let args = split_args(&self.line);
+        let args = split_args(&self.editor.line);
         let command = args.first().map(String::as_str).unwrap_or_default();
         // Which argument the cursor sits in; 0 is the command itself.
-        let index = split_args(&self.line[..start]).len();
+        let index = split_args(&self.editor.line[..start]).len();
         let local = matches!(
             (command, index),
-            ("lcd" | "lls", _) | ("put", 1) | ("get", 2)
+            ("lcd" | "lls", _) | ("put" | "reput", 1) | ("get" | "reget", 2)
         );
         if local {
             self.complete_local(terminal, start, &word);
@@ -381,19 +422,19 @@ impl SftpShell {
         }
         let (dir_part, _) = split_path(word, |ch| ch == '/');
         let target = resolve_remote(&self.cwd, &self.home, dir_part);
-        self.completing = Some((start, word.to_owned()));
+        self.completing = Some((start, word.to_owned(), self.editor.line.clone(), self.editor.cursor));
         self.pending = Some(Pending::Complete);
         self.send(terminal, SftpCommand::ListDir(target));
     }
 
     /// Finish a remote completion once its listing lands.
     fn finish_remote_completion(&mut self, terminal: &mut VtTerminal, entries: &[SftpEntry]) {
-        let Some((start, word)) = self.completing.take() else {
+        let Some((start, word, original, cursor)) = self.completing.take() else {
             return;
         };
         // The line may have moved on while the request was in flight; splicing
         // into a stale offset would corrupt it.
-        if start > self.line.len() || !self.line[start..].starts_with(&word) {
+        if self.editor.line != original || self.editor.cursor != cursor {
             return;
         }
         let (dir_part, partial) = split_path(&word, |ch| ch == '/');
@@ -427,11 +468,13 @@ impl SftpShell {
         }
         let common = longest_common_prefix(candidates);
         if common.len() > word.len() {
-            self.line.truncate(start);
-            self.line.push_str(&common);
+            self.editor.line.replace_range(start..self.editor.cursor, &common);
+            self.editor.cursor = start + common.len();
             // A single match is settled; save the space bar.
-            if candidates.len() == 1 && !common.ends_with('/') {
-                self.line.push(' ');
+            if candidates.len() == 1 && !common.ends_with('/')
+                && !self.editor.line[self.editor.cursor..].starts_with(' ') {
+                self.editor.line.insert(self.editor.cursor, ' ');
+                self.editor.cursor += 1;
             }
             self.redraw(terminal);
         } else if candidates.len() > 1 {
@@ -453,7 +496,7 @@ impl SftpShell {
         // Remote work needs a live connection; fail fast rather than hang.
         let remote_command = matches!(
             command.as_str(),
-            "ls" | "dir" | "cd" | "get" | "put" | "mkdir" | "rmdir" | "rm" | "del" | "rename" | "mv"
+            "ls" | "dir" | "cd" | "get" | "put" | "reget" | "reput" | "mkdir" | "rmdir" | "rm" | "del" | "rename" | "mv"
         );
         if remote_command && !self.connected {
             self.writeln(terminal, "尚未连接");
@@ -508,7 +551,7 @@ impl SftpShell {
                 self.pending = Some(Pending::Cd);
                 self.send(terminal, SftpCommand::ListDir(target));
             }
-            "get" => {
+            "get" | "reget" => {
                 let Some(remote_arg) = rest.first() else {
                     self.usage(terminal, "get <远程> [本地]");
                     return;
@@ -529,9 +572,11 @@ impl SftpShell {
                 };
                 self.writeln(terminal, &format!("下载 {remote} -> {}", local.display()));
                 self.pending = Some(Pending::Transfer);
-                self.send(terminal, SftpCommand::Download { id: SHELL_TRANSFER_ID, remote, local });
+                let id = self.begin_transfer();
+                let mode = if command == "reget" { TransferMode::Resume } else { TransferMode::CreateNew };
+                self.send(terminal, SftpCommand::DownloadWith { id, remote, local, mode });
             }
-            "put" => {
+            "put" | "reput" => {
                 let Some(local_arg) = rest.first() else {
                     self.usage(terminal, "put <本地> [远程]");
                     return;
@@ -552,7 +597,9 @@ impl SftpShell {
                     });
                 self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
                 self.pending = Some(Pending::Transfer);
-                self.send(terminal, SftpCommand::Upload { id: SHELL_TRANSFER_ID, local, remote });
+                let id = self.begin_transfer();
+                let mode = if command == "reput" { TransferMode::Resume } else { TransferMode::CreateNew };
+                self.send(terminal, SftpCommand::UploadWith { id, local, remote, mode });
             }
             "mkdir" => {
                 let Some(arg) = rest.first() else {
@@ -595,10 +642,18 @@ impl SftpShell {
     fn send(&mut self, terminal: &mut VtTerminal, command: SftpCommand) {
         if self.handle.send(command).is_err() {
             self.pending = None;
+            self.active_transfer = None;
             self.connected = false;
             self.writeln(terminal, "SFTP 连接已断开");
             self.prompt(terminal);
         }
+    }
+
+    fn begin_transfer(&mut self) -> u64 {
+        let id = self.next_transfer_id;
+        self.next_transfer_id = self.next_transfer_id.saturating_add(1);
+        self.active_transfer = Some(id);
+        id
     }
 
     fn usage(&mut self, terminal: &mut VtTerminal, usage: &str) {
@@ -698,19 +753,14 @@ impl SftpShell {
     }
 
     fn prompt(&mut self, terminal: &mut VtTerminal) {
-        terminal.feed_str(PROMPT);
-        // Redraw anything already typed (a reply can land mid-line).
-        if !self.line.is_empty() {
-            let line = self.line.clone();
-            terminal.feed_str(&line);
-        }
+        self.redraw(terminal);
     }
 }
 
 /// Byte offset where the word under the cursor begins.
 ///
-/// The cursor is always at the end here — this line editor has no left/right
-/// movement — so the word is whatever follows the last unquoted space.
+/// The caller passes the prefix ending at the editor cursor, so completion can
+/// replace that word while retaining the suffix to the cursor's right.
 fn word_start(line: &str) -> usize {
     let mut quoted = false;
     let mut start = 0;

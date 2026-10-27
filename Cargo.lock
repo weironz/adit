@@ -61,6 +61,7 @@ dependencies = [
  "socket2",
  "thiserror 2.0.18",
  "tokio",
+ "unicode-width",
  "vnc-rs",
  "windows-sys 0.61.2",
  "zeroize",
@@ -79,8 +80,11 @@ dependencies = [
  "russh-sftp",
  "serialport",
  "sha1 0.10.7",
+ "sha2 0.10.9",
  "thiserror 2.0.18",
  "tokio",
+ "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,5 +1,8 @@
 use super::*;
 use iced::widget::column;
+mod transfers;
+pub(crate) use transfers::{begin_save_as, resume_transfer, run_transfers, start_transfers};
+pub use transfers::PreparedTransfer;
 
 pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     let Some(browser) = app.manager.sftp_browser() else {
@@ -450,8 +453,10 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
     };
     // On failure, show the reason in place of the destination so it's visible.
     let (detail, detail_color) = match (&item.status, &item.error) {
-        (TransferStatus::Failed, Some(reason)) => (reason.clone(), danger()),
-        _ => (item.dest.clone(), muted_text()),
+        (TransferStatus::Failed, Some(reason)) => (item.note.as_ref().map_or_else(
+            || reason.clone(), |note| format!("{reason} — {note}")), danger()),
+        _ => (item.note.as_ref().map_or_else(|| item.dest.clone(),
+            |note| format!("{} — {note}", item.dest)), muted_text()),
     };
 
     let progress = row![
@@ -667,7 +672,16 @@ pub(crate) fn sftp_context_menu_card(
         SftpPane::Local => ("上传 ↑", Message::SftpUploadLocal(name.clone())),
     };
     items = items
-        .push(profile_menu_item(transfer_label, transfer_msg, false))
+        .push(profile_menu_item(transfer_label, transfer_msg, false));
+    if !is_dir {
+        if pane == SftpPane::Remote {
+            items = items.push(profile_menu_item("下载另存为…", Message::SftpSaveAs(name.clone()), false));
+        }
+        items = items.push(profile_menu_item(
+            "校验并断点续传", Message::SftpResume(pane, name.clone()), false,
+        ));
+    }
+    items = items
         .push(profile_menu_item(
             "重命名",
             Message::SftpBeginRename(pane, name.clone()),

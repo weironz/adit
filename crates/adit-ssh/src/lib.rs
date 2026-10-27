@@ -1,4 +1,5 @@
 pub mod desktop_gateway;
+mod sftp_transfer;
 pub use adit_domain::JumpHop;
 use bytes::Bytes;
 use russh::{
@@ -2328,6 +2329,7 @@ struct TransferCtx<'a> {
     label: &'a str,
     cancel: &'a CancelSet,
     events: &'a mpsc::Sender<SftpEvent>,
+    mode: TransferMode,
 }
 
 impl TransferCtx<'_> {
@@ -2347,6 +2349,9 @@ impl TransferCtx<'_> {
     fn status(&self, message: String) {
         let _ = self.events.send(SftpEvent::Status(message));
     }
+    fn note(&self, note: String) {
+        let _ = self.events.send(SftpEvent::TransferNote { id: self.id, note });
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -2355,10 +2360,20 @@ pub enum SftpCommand {
     /// `id` identifies the transfer for progress correlation and cancellation.
     Download { id: u64, remote: String, local: PathBuf },
     Upload { id: u64, local: PathBuf, remote: String },
+    DownloadWith { id: u64, remote: String, local: PathBuf, mode: TransferMode },
+    UploadWith { id: u64, local: PathBuf, remote: String, mode: TransferMode },
     Mkdir(String),
     Rename { from: String, to: String },
     Remove { path: String, is_dir: bool },
     Disconnect,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TransferMode {
+    #[default]
+    CreateNew,
+    Replace,
+    Resume,
 }
 
 #[derive(Debug, Clone)]
@@ -2368,8 +2383,10 @@ pub enum SftpEvent {
     Listing { path: String, entries: Vec<SftpEntry> },
     Progress { id: u64, label: String, done: u64, total: u64 },
     Done { id: u64, label: String, bytes: u64 },
-    /// A transfer was stopped by the user (partial output cleaned up for downloads).
+    /// Stopped by the user; verified-prefix resume can reuse the retained partial.
     Cancelled { id: u64, label: String },
+    TransferFailed { id: u64, label: String, error: String },
+    TransferNote { id: u64, note: String },
     Error(String),
     Closed,
 }
@@ -2615,21 +2632,25 @@ async fn run_sftp_commands(
     list_dir(&sftp, &home, &events).await;
 
     while let Some(command) = commands.recv().await {
+        let mode = match &command {
+            SftpCommand::DownloadWith { mode, .. } | SftpCommand::UploadWith { mode, .. } => *mode,
+            _ => TransferMode::CreateNew,
+        };
         match command {
             SftpCommand::ListDir(path) => list_dir(&sftp, &path, &events).await,
-            SftpCommand::Download { id, remote, local } => {
+            SftpCommand::Download { id, remote, local } | SftpCommand::DownloadWith { id, remote, local, .. } => {
                 let label = remote.rsplit('/').next().unwrap_or(&remote).to_string();
                 // Cancelled while still queued behind a running transfer: skip it.
                 if is_cancelled(&cancel, id) {
                     let _ = events.send(SftpEvent::Cancelled { id, label });
                 } else if let Err(error) =
-                    sftp_download(&sftp, id, &remote, &local, &cancel, &events).await
+                    sftp_download(&sftp, id, &remote, &local, mode, &cancel, &events).await
                 {
-                    let _ = events.send(SftpEvent::Error(error.to_string()));
+                    let _ = events.send(SftpEvent::TransferFailed { id, label, error: error.to_string() });
                 }
                 forget_transfer(&cancel, id);
             }
-            SftpCommand::Upload { id, local, remote } => {
+            SftpCommand::Upload { id, local, remote } | SftpCommand::UploadWith { id, local, remote, .. } => {
                 let label = local
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -2637,9 +2658,9 @@ async fn run_sftp_commands(
                 if is_cancelled(&cancel, id) {
                     let _ = events.send(SftpEvent::Cancelled { id, label });
                 } else if let Err(error) =
-                    sftp_upload(&sftp, id, &local, &remote, &cancel, &events).await
+                    sftp_upload(&sftp, id, &local, &remote, mode, &cancel, &events).await
                 {
-                    let _ = events.send(SftpEvent::Error(error.to_string()));
+                    let _ = events.send(SftpEvent::TransferFailed { id, label, error: error.to_string() });
                 }
                 forget_transfer(&cancel, id);
             }
@@ -2721,6 +2742,8 @@ fn is_safe_child_name(name: &str) -> bool {
         && !name.contains('/')
         && !name.contains('\\')
         && !name.contains('\0')
+        && !name.contains(':')
+        && !name.ends_with(['.', ' '])
 }
 
 /// Download a remote path — a single file, or a whole directory tree — into
@@ -2730,6 +2753,7 @@ async fn sftp_download(
     id: u64,
     remote: &str,
     local: &Path,
+    mode: TransferMode,
     cancel: &CancelSet,
     events: &mpsc::Sender<SftpEvent>,
 ) -> Result<(), SshError> {
@@ -2739,6 +2763,7 @@ async fn sftp_download(
         label: &label,
         cancel,
         events,
+        mode,
     };
     let is_dir = sftp
         .metadata(remote.to_string())
@@ -2747,6 +2772,9 @@ async fn sftp_download(
         .is_some_and(|meta| meta.is_dir());
 
     if is_dir {
+        if mode == TransferMode::Resume {
+            return Err(SshError::Sftp("目录不支持整体断点续传，请对文件选择续传".into()));
+        }
         let (bytes, skipped, cancelled) = download_dir(sftp, remote, local, &ctx).await?;
         if cancelled {
             let _ = events.send(SftpEvent::Cancelled { id, label });
@@ -2788,6 +2816,7 @@ async fn download_dir(
     root_local: &Path,
     ctx: &TransferCtx<'_>,
 ) -> Result<(u64, usize, bool), SshError> {
+    sftp_transfer::check_directory(root_local)?;
     tokio::fs::create_dir_all(root_local)
         .await
         .map_err(|error| SshError::LocalIo(error.to_string()))?;
@@ -2799,6 +2828,7 @@ async fn download_dir(
         if ctx.cancelled() {
             return Ok((total, skipped, true));
         }
+        sftp_transfer::check_directory(&local_dir)?;
         let read_dir = match sftp.read_dir(remote_dir.clone()).await {
             Ok(read_dir) => read_dir,
             Err(error) => {
@@ -2824,6 +2854,11 @@ async fn download_dir(
             let child_remote = join_remote_path(&remote_dir, &name);
             let child_local = local_dir.join(&name);
             if entry.metadata().is_dir() {
+                if let Err(error) = sftp_transfer::check_directory(&child_local) {
+                    ctx.status(format!("跳过 {name}: {error}"));
+                    skipped += 1;
+                    continue;
+                }
                 match tokio::fs::create_dir_all(&child_local).await {
                     Ok(()) => stack.push((child_remote, child_local)),
                     Err(error) => {
@@ -2864,26 +2899,7 @@ async fn download_file(
     base: u64,
     grand_total: u64,
 ) -> Result<(u64, bool), SshError> {
-    let mut remote_file = sftp
-        .open(remote.to_string())
-        .await
-        .map_err(|error| SshError::Sftp(error.to_string()))?;
-    let mut local_file = tokio::fs::File::create(local)
-        .await
-        .map_err(|error| SshError::LocalIo(error.to_string()))?;
-
-    let (bytes, cancelled) =
-        stream_copy(&mut remote_file, &mut local_file, ctx, base, grand_total).await?;
-    local_file
-        .flush()
-        .await
-        .map_err(|error| SshError::LocalIo(error.to_string()))?;
-    // Don't leave a half-written file behind when the user stops a download.
-    if cancelled {
-        drop(local_file);
-        let _ = tokio::fs::remove_file(local).await;
-    }
-    Ok((bytes, cancelled))
+    sftp_transfer::download(sftp, remote, local, ctx, base, grand_total).await
 }
 
 /// Upload a local path — a single file, or a whole directory tree — to `remote`,
@@ -2893,6 +2909,7 @@ async fn sftp_upload(
     id: u64,
     local: &Path,
     remote: &str,
+    mode: TransferMode,
     cancel: &CancelSet,
     events: &mpsc::Sender<SftpEvent>,
 ) -> Result<(), SshError> {
@@ -2902,6 +2919,7 @@ async fn sftp_upload(
         label: &label,
         cancel,
         events,
+        mode,
     };
     let is_dir = tokio::fs::metadata(local)
         .await
@@ -2909,6 +2927,9 @@ async fn sftp_upload(
         .unwrap_or(false);
 
     if is_dir {
+        if mode == TransferMode::Resume {
+            return Err(SshError::Sftp("目录不支持整体断点续传，请对文件选择续传".into()));
+        }
         let (bytes, skipped, cancelled) = upload_dir(sftp, local, remote, &ctx).await?;
         if cancelled {
             let _ = events.send(SftpEvent::Cancelled { id, label });
@@ -3038,25 +3059,7 @@ async fn upload_file(
     base: u64,
     grand_total: u64,
 ) -> Result<(u64, bool), SshError> {
-    let mut local_file = tokio::fs::File::open(local)
-        .await
-        .map_err(|error| SshError::LocalIo(error.to_string()))?;
-    let mut remote_file = sftp
-        .create(remote.to_string())
-        .await
-        .map_err(|error| SshError::Sftp(error.to_string()))?;
-
-    let (bytes, cancelled) =
-        stream_copy(&mut local_file, &mut remote_file, ctx, base, grand_total).await?;
-    remote_file
-        .shutdown()
-        .await
-        .map_err(|error| SshError::Sftp(error.to_string()))?;
-    // Remove the partial remote file when the user stops an upload.
-    if cancelled {
-        let _ = sftp.remove_file(remote.to_string()).await;
-    }
-    Ok((bytes, cancelled))
+    sftp_transfer::upload(sftp, local, remote, ctx, base, grand_total).await
 }
 
 /// Copy `reader` into `writer` in chunks, emitting throttled progress events.
@@ -3068,7 +3071,7 @@ async fn upload_file(
 /// `write`), so a stop takes effect within one `SFTP_CHUNK` of I/O rather than
 /// waiting for the whole file — the whole reason the check lives in the byte loop
 /// and not just at the command boundary. On cancel it returns the bytes written
-/// so far and `true`; the caller cleans up any partial output.
+/// so far and `true`; the caller preserves partial data for an explicit resume.
 ///
 /// Progress is always reported under the ctx's `label` (for a folder, the
 /// top-level folder name, never an inner filename — so it can't alias an
@@ -3102,6 +3105,9 @@ where
         if read == 0 {
             break;
         }
+        if ctx.cancelled() {
+            return Ok((done, true));
+        }
         writer
             .write_all(&buffer[..read])
             .await
@@ -3112,7 +3118,8 @@ where
             ctx.progress(base + done, grand_total);
         }
     }
-    Ok((done, false))
+    ctx.progress(base + done, grand_total);
+    Ok((done, ctx.cancelled()))
 }
 
 // ===== Port forwarding (SSH tunnels) =====
@@ -4918,6 +4925,8 @@ mod tests {
         assert!(!is_safe_child_name("..\\evil.exe"));
         assert!(!is_safe_child_name("a/b"));
         assert!(!is_safe_child_name("/abs"));
+        assert!(!is_safe_child_name("file:stream"));
+        assert!(!is_safe_child_name("trailing."));
     }
 
     #[test]
