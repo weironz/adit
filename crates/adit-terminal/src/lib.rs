@@ -6,6 +6,7 @@
 //! public types here are intentionally renderer-agnostic so `adit-ui` (or any
 //! other front end) never has to understand escape sequences.
 
+mod sixel;
 mod vt;
 
 pub use vt::{set_scrollback_limit, VtTerminal};
@@ -172,6 +173,10 @@ impl TerminalCell {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalLine {
     pub cells: Vec<TerminalCell>,
+    /// Cell-sized RGBA tiles. Keeping graphics attached to cells makes erase,
+    /// scrolling, insert/delete and primary-screen reflow use the text path.
+    #[serde(default)]
+    pub images: Vec<TerminalImage>,
     /// The text ran off the right margin and continues on the next line — a
     /// *soft* wrap, not a newline.
     ///
@@ -189,6 +194,7 @@ impl TerminalLine {
     pub fn from_cells(cells: impl IntoIterator<Item = TerminalCell>) -> Self {
         Self {
             cells: cells.into_iter().collect(),
+            images: Vec::new(),
             wrapped: false,
         }
     }
@@ -197,6 +203,7 @@ impl TerminalLine {
     pub fn plain(text: impl Into<String>) -> Self {
         Self {
             cells: vec![TerminalCell::plain(text)],
+            images: Vec::new(),
             wrapped: false,
         }
     }
@@ -207,6 +214,49 @@ impl TerminalLine {
         self.wrapped = true;
         self
     }
+}
+
+/// A tile in the terminal's virtual 8 x 16 pixel cell coordinate system.
+/// Renderers scale it to their actual font metrics, without changing the grid.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalImage {
+    pub col: usize,
+    pub rgba: Vec<u8>,
+}
+
+pub const SIXEL_CELL_WIDTH: usize = 8;
+pub const SIXEL_CELL_HEIGHT: usize = 16;
+
+/// Split a coalesced run into the glyphs used by the terminal grid. Zero-width
+/// suffixes, emoji modifiers and ZWJ continuations stay with their base so a
+/// renderer or copy operation never gives a combining mark its own column.
+pub fn glyphs(text: &str) -> impl Iterator<Item = &str> {
+    let mut rest = text;
+    std::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let mut end = rest.len();
+        let mut previous = '\0';
+        for (i, c) in rest.char_indices() {
+            let continuation = unicode_width::UnicodeWidthChar::width(c) == Some(0)
+                || matches!(c, '\u{1f3fb}'..='\u{1f3ff}')
+                || previous == '\u{200d}';
+            if i > 0 && !continuation {
+                end = i;
+                break;
+            }
+            previous = c;
+        }
+        let (glyph, remaining) = rest.split_at(end);
+        rest = remaining;
+        Some(glyph)
+    })
+}
+
+#[must_use]
+pub fn glyph_width(text: &str) -> usize {
+    unicode_width::UnicodeWidthStr::width(text).clamp(1, 2)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -249,6 +299,9 @@ impl TerminalSnapshot {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalChangeSet {
+    /// Sorted, unique screen-relative row indices. Cursor movement damages the
+    /// old and new cursor rows; scrolling damages the affected screen region.
+    /// A size change or history renumbering invalidates the entire new screen.
     pub dirty_rows: Vec<usize>,
 }
 

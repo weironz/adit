@@ -7,16 +7,56 @@
 //! insert/delete, the alternate screen, and device-status replies.
 
 use crate::{
-    Color, LogicalAnchor, TerminalCell, TerminalChangeSet, TerminalCore, TerminalLine, TerminalSize,
-    TerminalSnapshot, Viewport,
+    Color, LogicalAnchor, TerminalCell, TerminalChangeSet, TerminalCore, TerminalLine,
+    TerminalSize, TerminalSnapshot, Viewport,
 };
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use unicode_width::UnicodeWidthChar;
 use vte::{Params, Parser, Perform};
 
 const DEFAULT_SCROLLBACK: usize = 5000;
 const TAB_WIDTH: usize = 8;
+const MAX_GLYPH_BYTES: usize = 128;
+const MAX_GRAPHIC_TILES: usize = 16_384;
+
+#[derive(Debug, Clone, Copy, Default)]
+enum Charset {
+    #[default]
+    Ascii,
+    Uk,
+    DecSpecial,
+}
+
+impl Charset {
+    fn map(self, c: char) -> char {
+        match self {
+            Self::Uk if c == '#' => '\u{00a3}',
+            Self::DecSpecial if ('_'..='~').contains(&c) => {
+                const DEC: [char; 32] = [
+                    ' ', '\u{25c6}', '\u{2592}', '\u{2409}', '\u{240c}', '\u{240d}', '\u{240a}',
+                    '\u{00b0}', '\u{00b1}', '\u{2424}', '\u{240b}', '\u{2518}', '\u{2510}',
+                    '\u{250c}', '\u{2514}', '\u{253c}', '\u{23ba}', '\u{23bb}', '\u{2500}',
+                    '\u{23bc}', '\u{23bd}', '\u{251c}', '\u{2524}', '\u{2534}', '\u{252c}',
+                    '\u{2502}', '\u{2264}', '\u{2265}', '\u{03c0}', '\u{2260}', '\u{00a3}',
+                    '\u{00b7}',
+                ];
+                DEC[c as usize - '_' as usize]
+            }
+            _ => c,
+        }
+    }
+}
+
+enum Dcs {
+    Sixel {
+        bytes: Vec<u8>,
+        transparent: bool,
+        aspect: u16,
+    },
+    Status(Vec<u8>),
+}
 
 /// Max scrollback rows kept per terminal. A global user preference (like a
 /// theme) so it applies to every session without threading it through each
@@ -63,12 +103,18 @@ impl Default for Pen {
 /// column is owned by the wide character immediately to its left. `link` is an
 /// OSC 8 hyperlink id (0 ⇒ none) into the state's interning table — kept OFF the
 /// [`Pen`] so an SGR reset mid-link doesn't drop the hyperlink.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct Cell {
     ch: char,
     pen: Pen,
     spacer: bool,
     link: u32,
+    /// Only complex glyphs allocate. Cloning for reflow shares their bytes.
+    glyph: Option<Arc<str>>,
+    image: Option<Arc<Vec<u8>>>,
+    /// Reflow drops wide spacers. Carry their graphics on the lead cell until
+    /// the new spacer is created (also across a temporary one-column resize).
+    right_image: Option<Arc<Vec<u8>>>,
 }
 
 impl Cell {
@@ -82,7 +128,22 @@ impl Cell {
             },
             spacer: false,
             link: 0,
+            glyph: None,
+            image: None,
+            right_image: None,
         }
+    }
+
+    fn text(&self) -> String {
+        self.glyph
+            .as_deref()
+            .map_or_else(|| self.ch.to_string(), str::to_owned)
+    }
+
+    fn width(&self) -> usize {
+        self.glyph
+            .as_deref()
+            .map_or_else(|| self.ch.width().unwrap_or(1).max(1), crate::glyph_width)
     }
 }
 
@@ -100,6 +161,7 @@ impl Cell {
 struct Row {
     cells: Vec<Cell>,
     wrapped: bool,
+    dirty: bool,
 }
 
 impl Row {
@@ -107,6 +169,7 @@ impl Row {
         Self {
             cells: vec![Cell::blank(bg); cols],
             wrapped: false,
+            dirty: true,
         }
     }
 }
@@ -121,6 +184,7 @@ impl std::ops::Deref for Row {
 
 impl std::ops::DerefMut for Row {
     fn deref_mut(&mut self) -> &mut [Cell] {
+        self.dirty = true;
         &mut self.cells
     }
 }
@@ -131,6 +195,8 @@ struct SavedCursor {
     col: usize,
     pen: Pen,
     pending_wrap: bool,
+    charsets: [Charset; 4],
+    active_charset: usize,
 }
 
 /// The primary-screen state stashed while the alternate screen is active.
@@ -145,6 +211,8 @@ struct AltSaved {
     scroll_bottom: usize,
     autowrap: bool,
     current_link: u32,
+    charsets: [Charset; 4],
+    active_charset: usize,
 }
 
 /// The mutable terminal model. Kept separate from the [`Parser`] so a single
@@ -174,6 +242,17 @@ struct TermState {
     /// (0 ⇒ no link). `current_link` is the id applied to newly-printed cells.
     links: Vec<String>,
     current_link: u32,
+    charsets: [Charset; 4],
+    active_charset: usize,
+    single_shift: Option<usize>,
+    tabs: Vec<bool>,
+    dcs: Option<Dcs>,
+    pending_dcs: Option<Dcs>,
+    sixel_scrolling: bool,
+    force_dirty: bool,
+    /// Only consecutive printing may extend a cluster. Cursor/erase controls
+    /// break the association, including a control split across feed calls.
+    last_printed: Option<(usize, usize)>,
 }
 
 impl TermState {
@@ -201,6 +280,17 @@ impl TermState {
             responses: Vec::new(),
             links: Vec::new(),
             current_link: 0,
+            charsets: [Charset::Ascii; 4],
+            active_charset: 0,
+            single_shift: None,
+            tabs: (0..cols)
+                .map(|col| col > 0 && col % TAB_WIDTH == 0)
+                .collect(),
+            dcs: None,
+            pending_dcs: None,
+            sixel_scrolling: true,
+            force_dirty: false,
+            last_printed: None,
         }
     }
 
@@ -227,9 +317,17 @@ impl TermState {
     }
 
     fn put_char(&mut self, c: char) {
+        let charset = self.single_shift.take().unwrap_or(self.active_charset);
+        let c = self.charsets[charset].map(c);
         let width = c.width().unwrap_or(0);
-        if width == 0 {
-            // Combining marks / zero-width: not modelled yet.
+        let continuation = self.last_printed.is_some_and(|(row, col)| {
+            self.grid[row][col]
+                .glyph
+                .as_deref()
+                .is_some_and(|s| s.ends_with('\u{200d}'))
+        });
+        if width == 0 || continuation || matches!(c, '\u{1f3fb}'..='\u{1f3ff}') {
+            self.extend_glyph(c);
             return;
         }
 
@@ -247,7 +345,7 @@ impl TermState {
             }
         }
 
-        if width == 2 && self.cursor_col + 1 >= self.cols {
+        if width == 2 && self.cols > 1 && self.cursor_col + 1 >= self.cols {
             // A wide glyph cannot straddle the right margin.
             if self.autowrap {
                 self.mark_wrapped();
@@ -269,6 +367,9 @@ impl TermState {
             pen,
             spacer: false,
             link,
+            glyph: None,
+            image: None,
+            right_image: None,
         };
 
         if width == 2 && col + 1 < self.cols {
@@ -278,10 +379,54 @@ impl TermState {
                 pen,
                 spacer: true,
                 link,
+                glyph: None,
+                image: None,
+                right_image: None,
             };
             self.advance_cursor(2);
         } else {
             self.advance_cursor(1);
+        }
+        self.last_printed = Some((row, col));
+    }
+
+    fn extend_glyph(&mut self, c: char) {
+        let Some((row, col)) = self.last_printed else {
+            // A leading mark has no base; retain it on a space without moving
+            // the cursor. The next spacing character replaces it normally.
+            let row = self.cursor_row;
+            let col = self.cursor_col;
+            if self.grid[row][col].spacer {
+                return;
+            }
+            self.last_printed = Some((row, col));
+            self.extend_glyph(c);
+            return;
+        };
+        let old_width = self.grid[row][col].width().min(self.cols);
+        let mut text = self.grid[row][col].text();
+        if text.len() + c.len_utf8() > MAX_GLYPH_BYTES {
+            return;
+        }
+        text.push(c);
+        let new_width = crate::glyph_width(&text).min(self.cols);
+        // A late VS16 cannot claim a column outside the grid. Retain the
+        // suffix; a later reflow can restore its natural width.
+        let actual_width = new_width.min(self.cols - col);
+        if actual_width > old_width {
+            self.clear_wide_artifacts(row, col + 1);
+            let mut spacer = Cell::blank(self.pen.bg);
+            spacer.spacer = true;
+            self.grid[row][col + 1] = spacer;
+        } else if actual_width < old_width && col + 1 < self.cols {
+            self.grid[row][col + 1] = Cell::blank(self.pen.bg);
+        }
+        self.grid[row][col].glyph = Some(Arc::from(text));
+        if old_width != actual_width {
+            self.cursor_row = row;
+            self.cursor_col = col;
+            self.pending_wrap = false;
+            self.advance_cursor(actual_width);
         }
     }
 
@@ -292,7 +437,7 @@ impl TermState {
         }
         if col + 1 < self.cols
             && !self.grid[row][col].spacer
-            && self.grid[row][col].ch.width().unwrap_or(1) == 2
+            && self.grid[row][col].width() == 2
             && self.grid[row][col + 1].spacer
         {
             self.grid[row][col + 1] = Cell::blank(self.pen.bg);
@@ -317,8 +462,17 @@ impl TermState {
     }
 
     fn tab(&mut self) {
-        let next = ((self.cursor_col / TAB_WIDTH) + 1) * TAB_WIDTH;
-        self.cursor_col = next.min(self.cols - 1);
+        self.cursor_col = ((self.cursor_col + 1)..self.cols)
+            .find(|&col| self.tabs[col])
+            .unwrap_or(self.cols - 1);
+        self.pending_wrap = false;
+    }
+
+    fn back_tab(&mut self) {
+        self.cursor_col = (0..self.cursor_col)
+            .rev()
+            .find(|&col| self.tabs[col])
+            .unwrap_or(0);
         self.pending_wrap = false;
     }
 
@@ -348,7 +502,7 @@ impl TermState {
     // --- scrolling ----------------------------------------------------------
 
     fn scroll_up(&mut self, n: usize) {
-        for _ in 0..n {
+        for _ in 0..n.min(self.scroll_bottom - self.scroll_top + 1) {
             let removed = self.grid.remove(self.scroll_top);
             if self.scroll_top == 0 && self.alt.is_none() {
                 self.push_scrollback(removed);
@@ -356,13 +510,21 @@ impl TermState {
             self.grid
                 .insert(self.scroll_bottom, blank_row(self.cols, self.pen.bg));
         }
+        self.damage_scroll_region();
     }
 
     fn scroll_down(&mut self, n: usize) {
-        for _ in 0..n {
+        for _ in 0..n.min(self.scroll_bottom - self.scroll_top + 1) {
             self.grid.remove(self.scroll_bottom);
             self.grid
                 .insert(self.scroll_top, blank_row(self.cols, self.pen.bg));
+        }
+        self.damage_scroll_region();
+    }
+
+    fn damage_scroll_region(&mut self) {
+        for row in &mut self.grid[self.scroll_top..=self.scroll_bottom] {
+            row.dirty = true;
         }
     }
 
@@ -370,6 +532,7 @@ impl TermState {
     fn mark_wrapped(&mut self) {
         if let Some(row) = self.grid.get_mut(self.cursor_row) {
             row.wrapped = true;
+            row.dirty = true;
         }
     }
 
@@ -426,7 +589,16 @@ impl TermState {
 
         for abs in 0..self.total_rows() {
             let row = self.row_at(abs);
-            current.extend(row.cells[..logical_keep(row)].iter().filter(|c| !c.spacer).copied());
+            for (col, cell) in row.cells[..logical_keep(row)].iter().enumerate() {
+                if cell.spacer {
+                    continue;
+                }
+                let mut cell = cell.clone();
+                if row.cells.get(col + 1).is_some_and(|next| next.spacer) {
+                    cell.right_image = row.cells[col + 1].image.clone();
+                }
+                current.push(cell);
+            }
 
             if !row.wrapped {
                 lines.push(std::mem::take(&mut current));
@@ -538,6 +710,7 @@ impl TermState {
     fn push_scrollback(&mut self, row: Row) {
         while self.scrollback.len() >= scrollback_limit() {
             self.scrollback.pop_front();
+            self.force_dirty = true;
         }
         self.scrollback.push_back(row);
     }
@@ -617,6 +790,7 @@ impl TermState {
                     self.grid[row] = blank_row(self.cols, bg);
                 }
                 self.scrollback.clear();
+                self.force_dirty = true;
             }
             _ => {}
         }
@@ -638,6 +812,7 @@ impl TermState {
             _ => return,
         };
         for col in start..end.min(self.cols) {
+            self.clear_wide_artifacts(row, col);
             self.grid[row][col] = Cell::blank(bg);
         }
     }
@@ -647,6 +822,7 @@ impl TermState {
         let row = self.cursor_row;
         let end = (self.cursor_col + n).min(self.cols);
         for col in self.cursor_col..end {
+            self.clear_wide_artifacts(row, col);
             self.grid[row][col] = Cell::blank(bg);
         }
         self.pending_wrap = false;
@@ -657,11 +833,16 @@ impl TermState {
         let row = self.cursor_row;
         let col = self.cursor_col;
         let n = n.min(self.cols - col);
+        if self.grid[row][col].spacer {
+            self.clear_wide_artifacts(row, col);
+        }
+        self.grid[row].dirty = true;
         let line = &mut self.grid[row].cells;
         for _ in 0..n {
             line.pop();
             line.insert(col, Cell::blank(bg));
         }
+        repair_wide(&mut self.grid[row]);
         self.pending_wrap = false;
     }
 
@@ -670,11 +851,19 @@ impl TermState {
         let row = self.cursor_row;
         let col = self.cursor_col;
         let n = n.min(self.cols - col);
+        if self.grid[row][col].spacer {
+            self.clear_wide_artifacts(row, col);
+        }
+        if col + n < self.cols && self.grid[row][col + n].spacer {
+            self.clear_wide_artifacts(row, col + n);
+        }
+        self.grid[row].dirty = true;
         let line = &mut self.grid[row].cells;
         for _ in 0..n {
             line.remove(col);
             line.push(Cell::blank(bg));
         }
+        repair_wide(&mut self.grid[row]);
         self.pending_wrap = false;
     }
 
@@ -683,10 +872,11 @@ impl TermState {
             return;
         }
         let bg = self.pen.bg;
-        for _ in 0..n {
+        for _ in 0..n.min(self.scroll_bottom - self.cursor_row + 1) {
             self.grid.remove(self.scroll_bottom);
             self.grid.insert(self.cursor_row, blank_row(self.cols, bg));
         }
+        self.damage_scroll_region();
         self.pending_wrap = false;
     }
 
@@ -695,11 +885,12 @@ impl TermState {
             return;
         }
         let bg = self.pen.bg;
-        for _ in 0..n {
+        for _ in 0..n.min(self.scroll_bottom - self.cursor_row + 1) {
             self.grid.remove(self.cursor_row);
             self.grid
                 .insert(self.scroll_bottom, blank_row(self.cols, bg));
         }
+        self.damage_scroll_region();
         self.pending_wrap = false;
     }
 
@@ -724,6 +915,8 @@ impl TermState {
             col: self.cursor_col,
             pen: self.pen,
             pending_wrap: self.pending_wrap,
+            charsets: self.charsets,
+            active_charset: self.active_charset,
         });
     }
 
@@ -733,6 +926,8 @@ impl TermState {
             self.cursor_col = saved.col.min(self.cols - 1);
             self.pen = saved.pen;
             self.pending_wrap = saved.pending_wrap;
+            self.charsets = saved.charsets;
+            self.active_charset = saved.active_charset;
         } else {
             self.move_to(0, 0);
         }
@@ -741,6 +936,8 @@ impl TermState {
     // --- alternate screen ---------------------------------------------------
 
     fn enter_alt_screen(&mut self) {
+        self.force_dirty = true;
+        self.single_shift = None;
         if self.alt.is_some() {
             self.grid = blank_grid(self.cols, self.rows);
             self.move_to(0, 0);
@@ -756,6 +953,8 @@ impl TermState {
             scroll_bottom: self.scroll_bottom,
             autowrap: self.autowrap,
             current_link: self.current_link,
+            charsets: self.charsets,
+            active_charset: self.active_charset,
         };
         self.alt = Some(saved);
         self.move_to(0, 0);
@@ -767,6 +966,8 @@ impl TermState {
 
     fn leave_alt_screen(&mut self) {
         if let Some(saved) = self.alt.take() {
+            self.force_dirty = true;
+            self.single_shift = None;
             self.grid = saved.grid;
             self.cursor_row = saved.cursor_row.min(self.rows - 1);
             self.cursor_col = saved.cursor_col.min(self.cols - 1);
@@ -777,6 +978,8 @@ impl TermState {
             self.autowrap = saved.autowrap;
             self.pending_wrap = false;
             self.current_link = saved.current_link;
+            self.charsets = saved.charsets;
+            self.active_charset = saved.active_charset;
         }
     }
 
@@ -798,6 +1001,20 @@ impl TermState {
         // the scrollback that referenced them was just cleared).
         self.current_link = 0;
         self.links.clear();
+        self.charsets = [Charset::Ascii; 4];
+        self.active_charset = 0;
+        self.single_shift = None;
+        self.tabs = (0..self.cols)
+            .map(|col| col > 0 && col % TAB_WIDTH == 0)
+            .collect();
+        self.dcs = None;
+        self.pending_dcs = None;
+        self.sixel_scrolling = true;
+        self.bracketed_paste = false;
+        self.mouse_mode = crate::MouseMode::Off;
+        self.mouse_sgr = false;
+        self.force_dirty = true;
+        self.last_printed = None;
     }
 
     // --- DEC private / ANSI modes ------------------------------------------
@@ -806,6 +1023,7 @@ impl TermState {
         match mode {
             7 => self.autowrap = enable,
             25 => self.cursor_visible = enable,
+            80 => self.sixel_scrolling = enable,
             47 | 1047 => {
                 if enable {
                     self.enter_alt_screen();
@@ -827,7 +1045,13 @@ impl TermState {
                     self.leave_alt_screen();
                 }
             }
-            1000 => self.mouse_mode = if enable { crate::MouseMode::Normal } else { crate::MouseMode::Off },
+            1000 => {
+                self.mouse_mode = if enable {
+                    crate::MouseMode::Normal
+                } else {
+                    crate::MouseMode::Off
+                }
+            }
             1002 => {
                 self.mouse_mode = if enable {
                     crate::MouseMode::ButtonEvent
@@ -862,8 +1086,182 @@ impl TermState {
     }
 
     fn device_attributes(&mut self) {
-        // Identify as a VT102-class terminal.
-        self.responses.extend_from_slice(b"\x1b[?6c");
+        // VT220 with ANSI color and Sixel graphics.
+        self.responses.extend_from_slice(b"\x1b[?62;4;22c");
+    }
+
+    fn finish_dcs(&mut self) {
+        match self.pending_dcs.take() {
+            Some(Dcs::Sixel {
+                bytes,
+                transparent,
+                aspect,
+            }) => {
+                if let Some(raster) = crate::sixel::decode(&bytes, aspect) {
+                    self.paint_sixel(raster, transparent);
+                }
+            }
+            Some(Dcs::Status(query)) => {
+                let status = match query.as_slice() {
+                    b"m" => Some(self.sgr_status()),
+                    b"r" => Some(format!(
+                        "{};{}r",
+                        self.scroll_top + 1,
+                        self.scroll_bottom + 1
+                    )),
+                    _ => None,
+                };
+                if let Some(status) = status {
+                    self.responses
+                        .extend_from_slice(format!("\x1bP1$r{status}\x1b\\").as_bytes());
+                } else {
+                    self.responses.extend_from_slice(b"\x1bP0$r\x1b\\");
+                }
+            }
+            None => {}
+        }
+    }
+
+    fn sgr_status(&self) -> String {
+        let mut params = vec!["0".to_string()];
+        for (flag, code) in [
+            (BOLD, 1),
+            (DIM, 2),
+            (ITALIC, 3),
+            (UNDERLINE, 4),
+            (REVERSE, 7),
+            (HIDDEN, 8),
+            (STRIKE, 9),
+        ] {
+            if self.pen.flags & flag != 0 {
+                params.push(code.to_string());
+            }
+        }
+        for (prefix, color) in [(38, self.pen.fg), (48, self.pen.bg)] {
+            match color {
+                Color::Default => {}
+                Color::Indexed(index) => params.push(format!("{prefix};5;{index}")),
+                Color::Rgb(r, g, b) => params.push(format!("{prefix};2;{r};{g};{b}")),
+            }
+        }
+        format!("{}m", params.join(";"))
+    }
+
+    fn window_report(&mut self, kind: u16) {
+        // Graphics and geometry replies share virtual coordinates; the UI
+        // scales the same cell to its font metrics, preserving image size.
+        let report = match kind {
+            14 => format!(
+                "\x1b[4;{};{}t",
+                self.rows * crate::SIXEL_CELL_HEIGHT,
+                self.cols * crate::SIXEL_CELL_WIDTH
+            ),
+            16 => format!(
+                "\x1b[6;{};{}t",
+                crate::SIXEL_CELL_HEIGHT,
+                crate::SIXEL_CELL_WIDTH
+            ),
+            18 => format!("\x1b[8;{};{}t", self.rows, self.cols),
+            _ => return,
+        };
+        self.responses.extend_from_slice(report.as_bytes());
+    }
+
+    fn paint_sixel(&mut self, raster: crate::sixel::Raster, transparent: bool) {
+        use crate::{SIXEL_CELL_HEIGHT as H, SIXEL_CELL_WIDTH as W};
+        let (start_row, start_col) = if self.sixel_scrolling {
+            (self.cursor_row, self.cursor_col)
+        } else {
+            (0, 0)
+        };
+        let columns = raster.width.div_ceil(W).min(self.cols - start_col);
+        let rows = raster.height.div_ceil(H);
+        let tile_count = rows * columns;
+        if tile_count > MAX_GRAPHIC_TILES {
+            return;
+        }
+        // Bound retained graphics across BOTH screens and history. Evict the
+        // oldest tiles first, before allocation; grid cell count alone is not
+        // a useful bound on attacker-controlled scrollback graphics.
+        let retained: usize = self
+            .scrollback
+            .iter()
+            .chain(self.grid.iter())
+            .chain(self.alt.iter().flat_map(|alt| alt.grid.iter()))
+            .map(|row| {
+                row.cells
+                    .iter()
+                    .map(|cell| {
+                        usize::from(cell.image.is_some()) + usize::from(cell.right_image.is_some())
+                    })
+                    .sum::<usize>()
+            })
+            .sum();
+        let mut evict = (retained + tile_count).saturating_sub(MAX_GRAPHIC_TILES);
+        if evict > 0 {
+            for row in self
+                .scrollback
+                .iter_mut()
+                .chain(self.grid.iter_mut())
+                .chain(self.alt.iter_mut().flat_map(|alt| alt.grid.iter_mut()))
+            {
+                for cell in &mut row.cells {
+                    if evict > 0 && cell.image.take().is_some() {
+                        evict -= 1;
+                        row.dirty = true;
+                    }
+                    if evict > 0 && cell.right_image.take().is_some() {
+                        evict -= 1;
+                        row.dirty = true;
+                    }
+                }
+            }
+            self.force_dirty = true;
+        }
+        self.pending_wrap = false;
+        for tile_y in 0..rows {
+            let row = if self.sixel_scrolling {
+                self.cursor_row
+            } else {
+                start_row + tile_y
+            };
+            if row >= self.rows {
+                break;
+            }
+            for tile_x in 0..columns {
+                let col = start_col + tile_x;
+                let mut pixels = if transparent {
+                    self.grid[row][col]
+                        .image
+                        .as_deref()
+                        .cloned()
+                        .unwrap_or_else(|| vec![0; W * H * 4])
+                } else {
+                    vec![0; W * H * 4]
+                };
+                for y in 0..H.min(raster.height - tile_y * H) {
+                    for x in 0..W.min(raster.width - tile_x * W) {
+                        let src = ((tile_y * H + y) * raster.width + tile_x * W + x) * 4;
+                        let dst = (y * W + x) * 4;
+                        if raster.pixels[src + 3] != 0 {
+                            pixels[dst..dst + 4].copy_from_slice(&raster.pixels[src..src + 4]);
+                        }
+                    }
+                }
+                if !transparent {
+                    self.clear_wide_artifacts(row, col);
+                    self.grid[row][col] = Cell::blank(self.pen.bg);
+                }
+                self.grid[row][col].image = Some(Arc::new(pixels));
+            }
+            if self.sixel_scrolling {
+                self.line_feed();
+            }
+        }
+        if self.sixel_scrolling {
+            self.cursor_col = start_col;
+        }
+        self.last_printed = None;
     }
 
     // --- SGR ----------------------------------------------------------------
@@ -1013,9 +1411,16 @@ impl TermState {
 
         self.cols = cols;
         self.rows = rows;
+        let old_tabs = self.tabs.len();
+        self.tabs.resize(cols, false);
+        for (col, stop) in self.tabs.iter_mut().enumerate().skip(old_tabs) {
+            *stop = col > 0 && col % TAB_WIDTH == 0;
+        }
         self.scroll_top = 0;
         self.scroll_bottom = rows - 1;
         self.pending_wrap = false;
+        self.last_printed = None;
+        self.force_dirty = true;
     }
 
     /// Resize the primary screen — `self.grid` plus `self.scrollback` — without
@@ -1058,18 +1463,75 @@ impl Perform for TermState {
     }
 
     fn execute(&mut self, byte: u8) {
+        self.last_printed = None;
         match byte {
             0x07 => self.bell = true,
             0x08 => self.backspace(),
             0x09 => self.tab(),
             0x0A..=0x0C => self.line_feed(),
             0x0D => self.carriage_return(),
+            0x0E => self.active_charset = 1,
+            0x0F => self.active_charset = 0,
+            0x18 | 0x1A => {
+                self.dcs = None;
+                self.pending_dcs = None;
+            }
             _ => {}
         }
     }
 
-    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
+    fn hook(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        self.last_printed = None;
+        self.dcs = if ignore {
+            None
+        } else if intermediates.is_empty() && action == 'q' {
+            Some(Dcs::Sixel {
+                bytes: Vec::new(),
+                transparent: params.iter().nth(1).and_then(|p| p.first()).copied() == Some(1),
+                aspect: params
+                    .iter()
+                    .next()
+                    .and_then(|p| p.first())
+                    .copied()
+                    .unwrap_or(0),
+            })
+        } else if intermediates == b"$" && action == 'q' {
+            Some(Dcs::Status(Vec::new()))
+        } else {
+            None
+        };
+    }
+
+    fn put(&mut self, byte: u8) {
+        let (bytes, limit) = match &mut self.dcs {
+            Some(Dcs::Sixel { bytes, .. }) => (bytes, crate::sixel::MAX_BYTES),
+            Some(Dcs::Status(bytes)) => (bytes, 128),
+            None => return,
+        };
+        if bytes.len() < limit {
+            bytes.push(byte);
+        } else {
+            self.dcs = None;
+        }
+    }
+
+    fn unhook(&mut self) {
+        // vte calls unhook for ESC, ST AND CAN/SUB. Publication is delayed
+        // until feed sees the terminator, so cancelled images never flash.
+        self.pending_dcs = self.dcs.take();
+    }
+
+    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        if action != 'm' {
+            self.last_printed = None;
+        }
+        if ignore || (!intermediates.is_empty() && intermediates != b"?") {
+            return;
+        }
         let private = intermediates.first() == Some(&b'?');
+        if private && !matches!(action, 'h' | 'l') {
+            return;
+        }
         let ps: Vec<u16> = params
             .iter()
             .map(|p| p.first().copied().unwrap_or(0))
@@ -1087,6 +1549,21 @@ impl Perform for TermState {
             'B' | 'e' => self.cursor_down(count(0)),
             'C' | 'a' => self.cursor_right(count(0)),
             'D' => self.cursor_left(count(0)),
+            'I' if !private => {
+                for _ in 0..count(0).min(self.cols) {
+                    self.tab();
+                }
+            }
+            'Z' if !private => {
+                for _ in 0..count(0).min(self.cols) {
+                    self.back_tab();
+                }
+            }
+            'g' if !private => match raw(0) {
+                0 => self.tabs[self.cursor_col] = false,
+                3 => self.tabs.fill(false),
+                _ => {}
+            },
             'E' => {
                 self.carriage_return();
                 self.cursor_down(count(0));
@@ -1128,15 +1605,35 @@ impl Perform for TermState {
             }
             'n' if !private => self.device_status(raw(0)),
             'c' if !private => self.device_attributes(),
+            't' if !private => self.window_report(raw(0)),
             's' => self.save_cursor(),
             'u' => self.restore_cursor(),
             _ => {}
         }
     }
 
-    fn esc_dispatch(&mut self, intermediates: &[u8], _ignore: bool, byte: u8) {
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        self.last_printed = None;
+        if ignore {
+            return;
+        }
+        if let [slot @ (b'(' | b')' | b'*' | b'+')] = intermediates {
+            let charset = match byte {
+                b'B' => Charset::Ascii,
+                b'A' => Charset::Uk,
+                b'0' => Charset::DecSpecial,
+                _ => return,
+            };
+            let index = match slot {
+                b'(' => 0,
+                b')' => 1,
+                b'*' => 2,
+                _ => 3,
+            };
+            self.charsets[index] = charset;
+            return;
+        }
         if !intermediates.is_empty() {
-            // Charset designation and similar: not modelled.
             return;
         }
         match byte {
@@ -1144,6 +1641,11 @@ impl Perform for TermState {
             b'8' => self.restore_cursor(),
             b'M' => self.reverse_index(),
             b'D' => self.line_feed(),
+            b'H' => self.tabs[self.cursor_col] = true,
+            b'N' => self.single_shift = Some(2),
+            b'O' => self.single_shift = Some(3),
+            b'n' => self.active_charset = 2,
+            b'o' => self.active_charset = 3,
             b'E' => {
                 self.carriage_return();
                 self.line_feed();
@@ -1272,14 +1774,73 @@ impl VtTerminal {
 
 impl TerminalCore for VtTerminal {
     fn resize(&mut self, size: TerminalSize) -> TerminalChangeSet {
+        if usize::from(size.cols.max(1)) == self.state.cols
+            && usize::from(size.rows.max(1)) == self.state.rows
+        {
+            return TerminalChangeSet {
+                dirty_rows: Vec::new(),
+            };
+        }
         self.state
             .resize(size.cols.max(1) as usize, size.rows.max(1) as usize);
         TerminalChangeSet::all(self.state.rows as u16)
     }
 
     fn feed(&mut self, bytes: &[u8]) -> TerminalChangeSet {
-        self.parser.advance(&mut self.state, bytes);
-        TerminalChangeSet::all(self.state.rows as u16)
+        let before = (
+            self.state.cursor_row,
+            self.state.cursor_col,
+            self.state.cursor_visible,
+        );
+        let history = self.state.scrollback.len();
+        self.state.force_dirty = false;
+        for row in &mut self.state.grid {
+            row.dirty = false;
+        }
+        // A DCS can end halfway through a network packet or ESC/ST can span
+        // packets. Inspect the terminating bytes rather than trusting unhook,
+        // which also fires for cancellation and arbitrary ESC sequences.
+        let mut offset = 0;
+        while offset < bytes.len() {
+            let byte = bytes[offset];
+            if self.state.pending_dcs.is_some() {
+                if byte == b'\\' {
+                    self.state.finish_dcs();
+                } else {
+                    self.state.pending_dcs = None;
+                }
+            }
+            let end = bytes[offset..]
+                .iter()
+                .position(|byte| matches!(byte, 0x1b | 0x9c | 0x18 | 0x1a))
+                .map_or(bytes.len(), |n| offset + n + 1);
+            self.parser.advance(&mut self.state, &bytes[offset..end]);
+            if bytes[end - 1] == 0x9c && self.state.pending_dcs.is_some() {
+                self.state.finish_dcs();
+            }
+            offset = end;
+        }
+        if self.state.force_dirty || history != self.state.scrollback.len() {
+            return TerminalChangeSet::all(self.state.rows as u16);
+        }
+        let after = (
+            self.state.cursor_row,
+            self.state.cursor_col,
+            self.state.cursor_visible,
+        );
+        let dirty_rows = self
+            .state
+            .grid
+            .iter()
+            .enumerate()
+            .filter_map(|(index, row)| {
+                (row.dirty
+                    || (before != after
+                        && ((before.2 && index == before.0) || (after.2 && index == after.0))))
+                    .then_some(index)
+            })
+            .collect();
+        TerminalChangeSet { dirty_rows }
     }
 
     fn snapshot(&self, viewport: Viewport) -> TerminalSnapshot {
@@ -1294,7 +1855,7 @@ impl TerminalCore for VtTerminal {
 fn content_len(cells: &[Cell]) -> usize {
     cells
         .iter()
-        .rposition(|cell| cell.ch != ' ' || cell.pen.bg != Color::Default)
+        .rposition(|cell| !is_default_blank(cell))
         .map_or(0, |index| index + 1)
 }
 
@@ -1334,24 +1895,27 @@ fn rewrap(lines: &[Vec<Cell>], cols: usize, cursor: (usize, usize)) -> (Vec<Row>
             // A wide glyph claims two columns — except on a one-column screen,
             // where no pair can fit; draw it narrow rather than panicking on the
             // spacer write or dropping the character outright.
-            let width = if cell.ch.width().unwrap_or(1) == 2 && cols >= 2 {
-                2
-            } else {
-                1
-            };
+            let width = if cell.width() == 2 && cols >= 2 { 2 } else { 1 };
             if col + width > cols {
                 row.wrapped = true;
-                rows.push(std::mem::replace(&mut row, Row::blank(cols, Color::Default)));
+                rows.push(std::mem::replace(
+                    &mut row,
+                    Row::blank(cols, Color::Default),
+                ));
                 col = 0;
             }
             if index == cursor.0 && offset == cursor.1 {
                 cursor_out = (rows.len(), col);
             }
-            row.cells[col] = *cell;
+            row.cells[col] = cell.clone();
             if width == 2 {
-                let mut spacer = *cell;
+                row.cells[col].right_image = None;
+                let mut spacer = cell.clone();
                 spacer.ch = ' ';
                 spacer.spacer = true;
+                spacer.glyph = None;
+                spacer.image = cell.right_image.clone();
+                spacer.right_image = None;
                 row.cells[col + 1] = spacer;
             }
             col += width;
@@ -1398,12 +1962,28 @@ fn resize_grid(old: &[Row], cols: usize, rows: usize, src_start: usize) -> Vec<R
         let src = &old[src_start + i];
         let dst = &mut grid[i];
         let width = cols.min(src.len());
-        dst[..width].copy_from_slice(&src[..width]);
+        dst.cells[..width].clone_from_slice(&src.cells[..width]);
         // A row clipped at the new width no longer continues anywhere, so the
         // soft-wrap flag would be a lie. Only a row that survived intact keeps it.
         dst.wrapped = src.wrapped && width == src.len();
+        repair_wide(dst);
     }
     grid
+}
+
+/// Insert/delete and a clipped alternate-screen resize can bisect a wide
+/// glyph. Never leave an orphan spacer or a glyph owning an unrelated column.
+fn repair_wide(row: &mut Row) {
+    for col in 0..row.len() {
+        let invalid = if row[col].spacer {
+            col == 0 || row[col - 1].spacer || row[col - 1].width() != 2
+        } else {
+            row[col].width() == 2 && row.len() > 1 && (col + 1 == row.len() || !row[col + 1].spacer)
+        };
+        if invalid {
+            row.cells[col] = Cell::blank(row[col].pen.bg);
+        }
+    }
 }
 
 /// Parse the `;`-separated tail of an SGR 38/48 extended-color sequence.
@@ -1441,6 +2021,9 @@ fn colon_color(part: &[u16]) -> Option<Color> {
 fn is_default_blank(cell: &Cell) -> bool {
     !cell.spacer
         && cell.ch == ' '
+        && cell.glyph.is_none()
+        && cell.image.is_none()
+        && cell.right_image.is_none()
         && cell.pen.bg == Color::Default
         && cell.pen.flags & (UNDERLINE | REVERSE) == 0
 }
@@ -1536,6 +2119,23 @@ fn render_row(
     links: &[String],
     wrapped: bool,
 ) -> TerminalLine {
+    let cursor_col = cursor_col.map(|col| {
+        if col > 0 && cells.get(col).is_some_and(|cell| cell.spacer) {
+            col - 1
+        } else {
+            col
+        }
+    });
+    let images = cells
+        .iter()
+        .enumerate()
+        .filter_map(|(col, cell)| {
+            cell.image.as_deref().map(|rgba| crate::TerminalImage {
+                col,
+                rgba: rgba.clone(),
+            })
+        })
+        .collect();
     // A soft-wrapped row keeps its trailing blanks. It is full by definition, so
     // those blanks are text: `docker ps` pads its columns with spaces, and a row
     // that wraps just after such padding would otherwise be trimmed and pull the
@@ -1559,15 +2159,15 @@ fn render_row(
         (None, None) => {
             return TerminalLine {
                 cells: Vec::new(),
+                images,
                 wrapped,
             };
         }
     };
 
     // Resolve a cell's `link` id to its interned URL (id 0 / out of range ⇒ none).
-    let link_url = |id: u32| -> Option<String> {
-        (id > 0).then(|| links.get((id - 1) as usize).cloned())?
-    };
+    let link_url =
+        |id: u32| -> Option<String> { (id > 0).then(|| links.get((id - 1) as usize).cloned())? };
 
     let default_cell = Cell::blank(Color::Default);
     let mut out: Vec<TerminalCell> = Vec::new();
@@ -1579,17 +2179,25 @@ fn render_row(
         if cell.spacer {
             continue;
         }
-        let ch = if cell.ch == '\0' { ' ' } else { cell.ch };
+        let mut encoded = [0; 4];
+        let glyph = match cell.glyph.as_deref() {
+            Some(text) => text,
+            None => cell.ch.encode_utf8(&mut encoded),
+        };
 
         if cursor_col == Some(col) {
             if let Some((text, fg, bg, attrs, id)) = run.take() {
                 out.push(run_cell(text, fg, bg, attrs, link_url(id)));
             }
-            let mut s = String::new();
-            s.push(ch);
             // Keep the cell's own colours; the renderer decides how to mark it.
             let (fg, bg, attrs) = resolve(cell);
-            out.push(cursor_cell(s, fg, bg, attrs, link_url(cell.link)));
+            out.push(cursor_cell(
+                glyph.to_owned(),
+                fg,
+                bg,
+                attrs,
+                link_url(cell.link),
+            ));
             continue;
         }
 
@@ -1599,15 +2207,13 @@ fn render_row(
             Some((text, rfg, rbg, rattrs, rid))
                 if *rfg == fg && *rbg == bg && *rattrs == attrs && *rid == id =>
             {
-                text.push(ch);
+                text.push_str(glyph);
             }
             _ => {
                 if let Some((text, pfg, pbg, pattrs, pid)) = run.take() {
                     out.push(run_cell(text, pfg, pbg, pattrs, link_url(pid)));
                 }
-                let mut s = String::new();
-                s.push(ch);
-                run = Some((s, fg, bg, attrs, id));
+                run = Some((glyph.to_owned(), fg, bg, attrs, id));
             }
         }
     }
@@ -1618,9 +2224,14 @@ fn render_row(
 
     TerminalLine {
         cells: out,
+        images,
         wrapped,
     }
 }
+
+#[cfg(test)]
+#[path = "compatibility_tests.rs"]
+mod compatibility_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1730,7 +2341,10 @@ mod tests {
         // Returning to the primary screen restores its still-open link state.
         t.feed_str("\x1b[?1049lBACK");
         let back = t.snapshot(Viewport::tail(3));
-        assert_eq!(link_of(&back, 0, "BACK").as_deref(), Some("https://primary"));
+        assert_eq!(
+            link_of(&back, 0, "BACK").as_deref(),
+            Some("https://primary")
+        );
     }
 
     #[test]
@@ -1968,7 +2582,11 @@ mod tests {
         let start = t.resolve_anchor(start);
         let end = t.resolve_anchor(end);
         // The row it lived on split in two, so the anchor moved with the text.
-        assert_ne!(start, (0, 12), "the reflow was expected to renumber this row");
+        assert_ne!(
+            start,
+            (0, 12),
+            "the reflow was expected to renumber this row"
+        );
         assert_eq!(cell_at(&t, start.0, start.1), 'c');
         assert_eq!(span_text(&t, start, end), "cdef");
     }
@@ -1986,7 +2604,11 @@ mod tests {
 
         let start = t.resolve_anchor(start);
         let end = t.resolve_anchor(end);
-        assert_ne!(start, (1, 2), "the reflow was expected to renumber this row");
+        assert_ne!(
+            start,
+            (1, 2),
+            "the reflow was expected to renumber this row"
+        );
         assert_eq!(span_text(&t, start, end), "cdef");
     }
 
@@ -2002,8 +2624,14 @@ mod tests {
             height: 4,
         });
         assert!(snap.lines[0].wrapped, "the row that ran off the margin");
-        assert!(!snap.lines[1].wrapped, "its continuation ended with a newline");
-        assert!(!snap.lines[2].wrapped, "and a line of its own is not a wrap");
+        assert!(
+            !snap.lines[1].wrapped,
+            "its continuation ended with a newline"
+        );
+        assert!(
+            !snap.lines[2].wrapped,
+            "and a line of its own is not a wrap"
+        );
     }
 
     /// `docker ps` pads its columns with spaces, so a row can wrap *just after*

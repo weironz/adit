@@ -1200,7 +1200,7 @@ pub(crate) fn terminal_line(
     let cell_w = cell_width();
     let cell_h = cell_height();
 
-    if line.cells.is_empty() {
+    if line.cells.is_empty() && line.images.is_empty() {
         // Preserve the exact row height of a visually blank terminal line.
         return container(text(" ").size(font_size).font(base_font))
             .height(Length::Fixed(cell_h))
@@ -1211,6 +1211,8 @@ pub(crate) fn terminal_line(
         selection.and_then(|selection| selection_range_for_row(selection, row_index));
     let selected_fg = selection_foreground();
     let mut col = 0_usize;
+    let mut scalar_col = 0_usize;
+    let mut legacy_col = 0_usize;
     let mut row_widget = row![].spacing(0);
 
     for cell in line.cells {
@@ -1223,11 +1225,13 @@ pub(crate) fn terminal_line(
         // The glyph is wrapped in a click target only while the open modifier
         // (Ctrl/Cmd) is held, so a plain click always falls through to selection
         // and mouse-report passthrough rather than being swallowed.
-        let link_url = cell
-            .hyperlink
-            .filter(|url| is_openable_http_url(url));
+        let link_url = cell.hyperlink.filter(|url| is_openable_http_url(url));
         let is_link = link_url.is_some();
-        let link_click = if links_clickable { link_url.clone() } else { None };
+        let link_click = if links_clickable {
+            link_url.clone()
+        } else {
+            None
+        };
         let font = Font {
             weight: if cell.bold {
                 Weight::Bold
@@ -1242,18 +1246,27 @@ pub(crate) fn terminal_line(
             ..base_font
         };
 
-        for ch in cell.text.chars() {
+        for glyph_text in adit_terminal::glyphs(&cell.text) {
             // A CJK/wide glyph occupies two grid columns; size its cell to two so
             // it doesn't overflow into (and garble) the next column, and advance
             // the column counter by two to keep selection/hit-testing aligned.
-            let ch_width = UnicodeWidthChar::width(ch).unwrap_or(1).max(1);
-            let selected = selected_range.is_some_and(|range| col >= range.0 && col < range.1);
-            let search_hit = search
-                .iter()
-                .find_map(|(start, end, current)| (col >= *start && col < *end).then_some(*current));
-            let keyword_hit = keywords
-                .iter()
-                .find_map(|(start, end, color)| (col >= *start && col < *end).then_some(*color));
+            let ch_width = adit_terminal::glyph_width(glyph_text);
+            // Search matches are Unicode-scalar offsets; the keyword engine
+            // counts each scalar at its old display width. Translate both at
+            // this boundary, while selection continues to use real grid cells.
+            let scalar_count = glyph_text.chars().count();
+            let legacy_width: usize = glyph_text
+                .chars()
+                .map(|ch| UnicodeWidthChar::width(ch).unwrap_or(1).max(1))
+                .sum();
+            let selected =
+                selected_range.is_some_and(|range| col < range.1 && col + ch_width > range.0);
+            let search_hit = search.iter().find_map(|(start, end, current)| {
+                (scalar_col < *end && scalar_col + scalar_count > *start).then_some(*current)
+            });
+            let keyword_hit = keywords.iter().find_map(|(start, end, color)| {
+                (legacy_col < *end && legacy_col + legacy_width > *start).then_some(*color)
+            });
 
             // The text cursor is a reverse-video block on its own cell: the glyph
             // takes the background colour and vice-versa, so it reads correctly in
@@ -1285,9 +1298,10 @@ pub(crate) fn terminal_line(
             } else {
                 fg
             };
-            let label = text(ch.to_string())
+            let label = text(glyph_text.to_owned())
                 .size(font_size)
                 .font(font)
+                .shaping(iced::widget::text::Shaping::Advanced)
                 .color(glyph_color);
 
             let background = if cursor_here {
@@ -1378,10 +1392,59 @@ pub(crate) fn terminal_line(
             row_widget = row_widget.push(glyph);
 
             col += ch_width;
+            scalar_col += scalar_count;
+            legacy_col += legacy_width;
         }
     }
 
-    row_widget.into()
+    let mut layers = iced::widget::Stack::new()
+        .push(row_widget)
+        .height(Length::Fixed(cell_h))
+        .clip(true);
+    for tile in line.images {
+        if tile.rgba.len() != adit_terminal::SIXEL_CELL_WIDTH * adit_terminal::SIXEL_CELL_HEIGHT * 4
+        {
+            continue;
+        }
+        let handle = terminal_image_handle(tile.rgba);
+        layers = layers.push(row![
+            Space::new().width(Length::Fixed(tile.col as f32 * cell_w)),
+            iced::widget::image(handle)
+                .width(Length::Fixed(cell_w))
+                .height(Length::Fixed(cell_h))
+                .content_fit(iced::ContentFit::Fill)
+                .filter_method(iced::widget::image::FilterMethod::Nearest),
+        ]);
+    }
+    layers.into()
+}
+
+fn terminal_image_handle(pixels: Vec<u8>) -> iced::widget::image::Handle {
+    use iced::widget::image::Handle;
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        static IMAGES: RefCell<HashMap<Vec<u8>, Handle>> = RefCell::new(HashMap::new());
+    }
+    IMAGES.with(|images| {
+        let mut images = images.borrow_mut();
+        if let Some(handle) = images.get(&pixels) {
+            return handle.clone();
+        }
+        // Match the terminal's tile budget; stale sessions cannot retain an
+        // unlimited number of image allocations in this presentation cache.
+        if images.len() >= 16_384 {
+            images.clear();
+        }
+        let handle = Handle::from_rgba(
+            adit_terminal::SIXEL_CELL_WIDTH as u32,
+            adit_terminal::SIXEL_CELL_HEIGHT as u32,
+            pixels.clone(),
+        );
+        images.insert(pixels, handle.clone());
+        handle
+    })
 }
 
 /// Dim (SGR 2) foreground: scale the glyph color toward black so faint text

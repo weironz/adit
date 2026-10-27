@@ -100,24 +100,28 @@ pub(super) fn selection_to_text(snapshot: &TerminalSnapshot, selection: Terminal
         let wrapped = line.wrapped && row_index < end.row;
 
         let text = raw_line_text(line);
-        let chars = text.chars().collect::<Vec<_>>();
         let start_col = if row_index == start.row { start.col } else { 0 };
         let end_col = if row_index == end.row {
             end.col
         } else {
-            chars.len()
+            usize::MAX
         };
-
-        if start_col >= end_col || start_col >= chars.len() {
-            rows.push((String::new(), wrapped));
-            continue;
-        }
-
-        let end_col = end_col.min(chars.len());
-        rows.push((chars[start_col..end_col].iter().collect(), wrapped));
+        rows.push((slice_columns(&text, start_col, end_col), wrapped));
     }
 
     join_rows(&rows).trim_end().to_string()
+}
+
+fn slice_columns(text: &str, start: usize, end: usize) -> String {
+    let mut col = 0;
+    adit_terminal::glyphs(text)
+        .filter(|glyph| {
+            let width = adit_terminal::glyph_width(glyph);
+            let selected = col < end && col + width > start;
+            col += width;
+            selected
+        })
+        .collect()
 }
 
 pub(super) fn normalized_selection(selection: TerminalSelection) -> Option<(TerminalPoint, TerminalPoint)> {
@@ -147,25 +151,58 @@ pub(super) fn snapshot_line_text(snapshot: &TerminalSnapshot, row: usize) -> Str
 /// "Word" chars are alphanumerics plus the punctuation that commonly appears
 /// mid-token in paths, URLs, and hostnames, so `/usr/local/bin` stays one word.
 pub(super) fn word_bounds(line: &str, col: usize) -> Option<(usize, usize)> {
-    let chars: Vec<char> = line.chars().collect();
-    if col >= chars.len() {
-        return None;
+    let glyphs: Vec<&str> = adit_terminal::glyphs(line).collect();
+    let mut offsets = vec![0];
+    for glyph in &glyphs {
+        offsets.push(offsets.last().copied().unwrap_or(0) + adit_terminal::glyph_width(glyph));
     }
+    let index = offsets
+        .windows(2)
+        .position(|span| col >= span[0] && col < span[1])?;
     let is_word =
         |c: char| c.is_alphanumeric() || matches!(c, '_' | '-' | '.' | '/' | '~' | ':' | '@' | '+');
-    if !is_word(chars[col]) {
+    let word = |index: usize| {
+        glyphs[index]
+            .chars()
+            .find(|c| UnicodeWidthChar::width(*c).unwrap_or(0) > 0)
+            .is_some_and(is_word)
+    };
+    if !word(index) {
         // On whitespace or a separator: grab just that single cell.
-        return Some((col, col + 1));
+        return Some((offsets[index], offsets[index + 1]));
     }
-    let mut start = col;
-    while start > 0 && is_word(chars[start - 1]) {
+    let mut start = index;
+    while start > 0 && word(start - 1) {
         start -= 1;
     }
-    let mut end = col + 1;
-    while end < chars.len() && is_word(chars[end]) {
+    let mut end = index + 1;
+    while end < glyphs.len() && word(end) {
         end += 1;
     }
-    Some((start, end))
+    Some((offsets[start], offsets[end]))
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn column_selection_keeps_combining_and_wide_glyphs_whole() {
+        assert_eq!(slice_columns("e\u{301}\u{754c}x", 0, 1), "e\u{301}");
+        assert_eq!(slice_columns("e\u{301}\u{754c}x", 1, 3), "\u{754c}");
+        assert_eq!(slice_columns("e\u{301}\u{754c}x", 3, 4), "x");
+        assert_eq!(
+            slice_columns("\u{1f469}\u{200d}\u{1f4bb}!", 0, 2),
+            "\u{1f469}\u{200d}\u{1f4bb}"
+        );
+    }
+
+    #[test]
+    fn word_selection_returns_grid_columns() {
+        assert_eq!(word_bounds("e\u{301}clair ok", 1), Some((0, 6)));
+        assert_eq!(word_bounds("\u{754c} x", 1), Some((0, 2)));
+        assert_eq!(word_bounds("\u{754c} x", 2), Some((2, 3)));
+    }
 }
 
 pub(super) fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(usize, usize)> {
