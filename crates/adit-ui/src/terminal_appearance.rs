@@ -322,6 +322,7 @@ mod tests {
                 palette: style(&TerminalAppearance::default()).palette,
             };
             let _render = terminal_view(
+                None,
                 style,
                 snapshot.clone(),
                 true,

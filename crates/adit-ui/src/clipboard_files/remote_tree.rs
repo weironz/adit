@@ -231,7 +231,7 @@ mod tests {
         let tree = RemoteTree::new(&[file("binary", 4)]).unwrap();
         let node = tree.lookup(ROOT, "binary").unwrap();
         assert_eq!(reader.read(node, 1, 100).unwrap(), [0, 255]);
-        assert_eq!(reader.read(node, 4, 100).unwrap(), []);
+        assert!(reader.read(node, 4, 100).unwrap().is_empty());
         assert_eq!(
             reader.read(tree.get(ROOT).unwrap(), 0, 10),
             Err(ReadError::NotAFile)
