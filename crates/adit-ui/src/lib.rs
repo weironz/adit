@@ -101,6 +101,9 @@ use missions::*;
 mod desktop_panes;
 mod editor;
 use editor::*;
+mod profile_options;
+pub use profile_options::ProfileOptionEdit;
+use profile_options::{ProfileOptionsForm, profile_options_editor};
 mod update_loop;
 use update_loop::*;
 mod updater;
@@ -243,6 +246,7 @@ pub struct AditApp {
     profile_passphrase: String,
     profile_protocol: Protocol,
     profile_vnc: VncOptions,
+    profile_options: ProfileOptionsForm,
     /// Preset icon key being edited; empty means "work it out".
     profile_icon: String,
     profile_identity_file: String,
@@ -978,6 +982,7 @@ pub enum Message {
     /// Fold / unfold the session editor's 高级 section.
     ToggleProfileAdvanced,
     ProfileNameChanged(String),
+    ProfileOptionChanged(ProfileOptionEdit),
     ProfileHostChanged(String),
     ProfilePortChanged(String),
     ProfileUsernameChanged(String),
@@ -1573,6 +1578,7 @@ impl AditApp {
             profile_passphrase: String::new(),
             profile_protocol: Protocol::Ssh,
             profile_vnc: VncOptions::default(),
+            profile_options: ProfileOptionsForm::default(),
             profile_icon: String::new(),
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),

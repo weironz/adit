@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
 
+mod session_options;
+pub use session_options::{DesktopQuality, LogPolicy, ReconnectPolicy, SessionOptions, TerminalEncoding};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProfileId(Uuid);
 
@@ -67,6 +70,8 @@ pub struct ConnectionProfile {
     pub protocol: Protocol,
     #[serde(default)]
     pub vnc: VncOptions,
+    #[serde(default)]
+    pub session_options: SessionOptions,
     /// A command sent to the shell right after it opens (e.g. `tmux attach`,
     /// `cd /srv`). Empty means nothing is sent.
     #[serde(default)]
@@ -371,6 +376,7 @@ impl ConnectionProfile {
             tunnels: Vec::new(),
             protocol: Protocol::Ssh,
             vnc: VncOptions::default(),
+            session_options: SessionOptions::default(),
             startup_command: String::new(),
             terminal_type: String::new(),
             jumps: Vec::new(),

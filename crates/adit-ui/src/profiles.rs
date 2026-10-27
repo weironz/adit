@@ -581,6 +581,7 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_identity_file = profile.identity_file;
         app.profile_protocol = profile.protocol;
         app.profile_vnc = profile.vnc.clone();
+        app.profile_options = ProfileOptionsForm::from_options(profile.session_options.clone());
         app.profile_icon = profile.icon.clone();
         app.profile_startup_command = profile.startup_command;
         app.profile_jumps = jumps_to_spec(&profile.jumps);
@@ -916,6 +917,13 @@ pub(crate) fn parse_jumps_checked(spec: &str) -> Result<Vec<JumpHop>, String> {
 }
 
 pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<ProfileId> {
+    let options = match app.profile_options.value() {
+        Ok(options) => options,
+        Err(error) => {
+            app.last_error = Some(error);
+            return None;
+        }
+    };
     let Some(port) = parse_port(&app.profile_port) else {
         app.last_error = Some(String::from(t("端口必须是 1-65535 的数字")));
         return None;
@@ -991,6 +999,10 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
             // Protocol is edited separately from the core fields, so apply it here
             // before persisting.
             if let Some(profile_id) = app.selected_profile {
+                if let Err(error) = app.manager.set_profile_session_options(profile_id, options) {
+                    app.last_error = Some(error.to_string());
+                    return None;
+                }
                 app.manager
                     .set_profile_protocol(profile_id, app.profile_protocol);
                 app.manager

@@ -543,7 +543,9 @@ fn rdp_quality_menu_overlay(app: &AditApp) -> Element<'_, Message> {
         (RdpQuality::Balanced, "均衡", "默认：保留壁纸与主题"),
         (RdpQuality::Speed, "流畅", "慢速链路：关闭壁纸与主题"),
     ] {
-        let chosen = app.rdp_quality == quality;
+        let selected_quality = app.manager.active_session_summary()
+            .map_or(app.rdp_quality, |session| app.manager.profile_rdp_quality(session.profile_id));
+        let chosen = selected_quality == quality;
         entries = entries.push(
             button(
                 column![

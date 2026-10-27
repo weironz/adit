@@ -3214,6 +3214,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
         }
+        Message::ProfileOptionChanged(edit) => app.profile_options.update(edit),
         Message::VncSecurityChanged(value) => app.profile_vnc.security = value,
         Message::VncQualityChanged(value) => app.profile_vnc.quality = value,
         Message::VncTlsCaChanged(value) => app.profile_vnc.tls_ca_file = value,
@@ -3306,11 +3307,32 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::RdpQualityChosen(quality) => {
             app.rdp_quality_menu_open = false;
-            if app.rdp_quality == quality {
+            let profile_id = app.manager.active_session_summary().map(|s| s.profile_id);
+            let current = profile_id.map_or(app.rdp_quality, |id| app.manager.profile_rdp_quality(id));
+            if current == quality {
                 return Task::none();
             }
-            app.rdp_quality = quality;
-            app.manager.set_rdp_quality(quality);
+            if let Some(id) = profile_id {
+                if let Some(profile) = app.manager.profile(id) {
+                    let mut options = profile.session_options.clone();
+                    options.rdp_quality = Some(match quality {
+                        RdpQuality::High => adit_domain::DesktopQuality::High,
+                        RdpQuality::Balanced => adit_domain::DesktopQuality::Balanced,
+                        RdpQuality::Speed => adit_domain::DesktopQuality::Speed,
+                    });
+                    if let Err(error) = app.manager.set_profile_session_options(id, options.clone()) {
+                        app.last_error = Some(error.to_string());
+                        return Task::none();
+                    }
+                    if app.selected_profile == Some(id) {
+                        app.profile_options = ProfileOptionsForm::from_options(options);
+                    }
+                    persist_profiles(app);
+                }
+            } else {
+                app.rdp_quality = quality;
+                app.manager.set_rdp_quality(quality);
+            }
             // RDP fixes the performance flags during the handshake, so the only
             // way to apply this to what is on screen is to open the session
             // again. Doing it silently would look like the button did nothing

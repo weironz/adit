@@ -80,6 +80,7 @@ pub struct LiveShellRequest {
     pub startup_command: String,
     /// `TERM` requested for the PTY (empty ⇒ `xterm-256color`).
     pub term: String,
+    pub environment: std::collections::BTreeMap<String, String>,
     /// Abort the TCP/handshake if it takes longer than this many seconds
     /// (0 disables the cap).
     pub connect_timeout_secs: u64,
@@ -111,6 +112,7 @@ impl LiveShellRequest {
             keepalive_secs: DEFAULT_KEEPALIVE_SECS,
             startup_command: String::new(),
             term: String::new(),
+            environment: std::collections::BTreeMap::new(),
             connect_timeout_secs: 20,
             auto_accept_host_keys: false,
             jumps: Vec::new(),
@@ -1479,6 +1481,9 @@ async fn run_live_password_shell(
             &[],
         )
         .await?;
+    for (name, value) in &request.environment {
+        channel.set_env(false, name.clone(), value.clone()).await?;
+    }
     channel.request_shell(true).await?;
 
     let _ = events.send(LiveShellEvent::Status(String::from("connected")));

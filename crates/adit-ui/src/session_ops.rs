@@ -1554,9 +1554,9 @@ pub(crate) fn toggle_active_logging(app: &mut AditApp) {
             app.notice = tf("已停止记录会话日志: {}", &[&path.display()]);
         }
     } else {
-        let dir = effective_log_dir(app);
-        let name = render_log_name(&effective_log_pattern(app), &summary.title, &summary.endpoint);
-        match app.manager.start_active_logging(&dir, &name, app.log_plaintext) {
+        let (dir, pattern, plaintext, _) = effective_session_log_policy(app, summary.id);
+        let name = render_log_name(&pattern, &summary.title, &summary.endpoint);
+        match app.manager.start_active_logging(&dir, &name, plaintext) {
             Ok(path) => {
                 app.last_error = None;
                 app.notice = tf("正在记录会话输出到: {}", &[&path.display()]);
@@ -1587,6 +1587,22 @@ pub(crate) fn effective_log_pattern(app: &AditApp) -> String {
     } else {
         app.log_name_pattern.clone()
     }
+}
+
+fn effective_session_log_policy(app: &AditApp, session: SessionId)
+    -> (std::path::PathBuf, String, bool, bool)
+{
+    let Some(policy) = app.manager.session_options(session).and_then(|o| o.logging.as_ref()) else {
+        return (effective_log_dir(app), effective_log_pattern(app), app.log_plaintext, app.auto_log_on_connect);
+    };
+    (
+        if policy.directory.trim().is_empty() { effective_log_dir(app) }
+            else { std::path::PathBuf::from(policy.directory.trim()) },
+        if policy.filename_pattern.trim().is_empty() { effective_log_pattern(app) }
+            else { policy.filename_pattern.clone() },
+        policy.plaintext,
+        policy.auto_start,
+    )
 }
 
 /// Current local time broken into (year, month, day, hour, minute, second).
@@ -1647,22 +1663,16 @@ pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
 
 /// Start logging any freshly-connected sessions when auto-log is enabled.
 pub(crate) fn auto_log_connected_sessions(app: &mut AditApp) {
-    if !app.auto_log_on_connect {
-        return;
-    }
-    let dir = effective_log_dir(app);
-    let pattern = effective_log_pattern(app);
     let targets: Vec<(SessionId, String, String)> = app
         .manager
-        .sessions()
+        .pending_auto_log_sessions(app.auto_log_on_connect)
         .into_iter()
-        .filter(|summary| summary.status == SessionStatus::Connected)
-        .filter(|summary| !app.manager.session_is_logging(summary.id))
         .map(|summary| (summary.id, summary.title, summary.endpoint))
         .collect();
 
-    let plaintext = app.log_plaintext;
     for (session_id, title, endpoint) in targets {
+        let (dir, pattern, plaintext, auto_start) = effective_session_log_policy(app, session_id);
+        if !auto_start { continue; }
         let name = render_log_name(&pattern, &title, &endpoint);
         if let Err(error) = app.manager.start_logging(session_id, &dir, &name, plaintext) {
             app.last_error = Some(tf("自动日志开启失败: {}", &[&error]));

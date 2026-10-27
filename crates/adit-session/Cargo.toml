@@ -17,6 +17,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg"] }
 zeroize.workspace = true
 rustls-pemfile = "2"
 socket2 = "0.6"
+encoding_rs = "0.8.35"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Networking_WinSock"] }

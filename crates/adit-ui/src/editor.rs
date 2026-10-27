@@ -361,6 +361,7 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
+    form = form.push(profile_options_editor(app));
     let actions = row![
         Space::new().width(Fill),
         button(text("取消").size(12))

@@ -1,10 +1,11 @@
 mod sftp_shell;
+mod terminal_encoding;
 
 pub use sftp_shell::SftpShell;
 
 use adit_domain::{
     AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
-    SessionStatus, TunnelDef,
+    SessionStatus, TunnelDef, SessionOptions, DesktopQuality, ReconnectPolicy,
 };
 pub use adit_domain::Environment as ProfileEnvironment;
 pub use adit_domain::JumpHop as ProfileJumpHop;
@@ -50,13 +51,11 @@ use vnc_client::VncClientHandle;
 const DEFAULT_RDP_WIDTH: u16 = 1280;
 const DEFAULT_RDP_HEIGHT: u16 = 720;
 
-/// Give up auto-reconnect after this many consecutive failed attempts.
-const MAX_RECONNECT_ATTEMPTS: u32 = 10;
-
 /// Cap on retained SFTP transfer-queue entries before old finished ones are dropped.
 const MAX_TRANSFER_HISTORY: usize = 200;
 
 /// Exponential backoff (1,2,4,8,16,30,30,…s) between reconnect attempts.
+#[cfg(test)]
 fn reconnect_delay(attempts: u32) -> Duration {
     Duration::from_secs((1u64 << attempts.min(5)).min(30))
 }
@@ -105,6 +104,9 @@ pub struct SshProbeSession {
 }
 
 struct SessionRecord {
+    options: SessionOptions,
+    codec: terminal_encoding::TerminalCodec,
+    auto_log_consumed: bool,
     summary: SessionSummary,
     terminal: VtTerminal,
     live: Option<LiveShellHandle>,
@@ -188,6 +190,17 @@ impl SessionRecord {
     fn is_desktop(&self) -> bool {
         self.rdp.is_some() || self.vnc.is_some()
     }
+
+    fn record_input(&mut self, bytes: &[u8]) {
+        let Some(log) = &mut self.log else { return };
+        if !log.record_input { return; }
+        let escaped: String = bytes.iter()
+            .flat_map(|byte| std::ascii::escape_default(*byte).map(char::from)).collect();
+        if writeln!(log.writer, "\n# input: {escaped}").is_err() {
+            self.log = None;
+            self.terminal.append_status("session log write failed; logging off");
+        }
+    }
 }
 
 /// Whether an RDP helper error reads as a credential rejection, so the UI can
@@ -224,6 +237,7 @@ struct SessionLog {
     /// When set, output is run through this ANSI stripper before writing, for a
     /// human-readable plaintext transcript.
     stripper: Option<AnsiStripper>,
+    record_input: bool,
 }
 
 /// Auto-reconnect bookkeeping for a live SSH session.
@@ -563,6 +577,27 @@ impl SessionManager {
     pub fn set_profile_terminal_type(&mut self, profile_id: ProfileId, term: impl Into<String>) {
         if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
             profile.terminal_type = term.into();
+        }
+    }
+
+    pub fn set_profile_session_options(
+        &mut self,
+        profile_id: ProfileId,
+        options: SessionOptions,
+    ) -> Result<(), SessionError> {
+        options.validate().map_err(SessionError::Unsupported)?;
+        let profile = self.profiles.iter_mut().find(|p| p.id == profile_id)
+            .ok_or(SessionError::ProfileNotFound)?;
+        profile.session_options = options;
+        Ok(())
+    }
+
+    pub fn profile_rdp_quality(&self, profile_id: ProfileId) -> RdpQuality {
+        match self.profile(profile_id).and_then(|p| p.session_options.rdp_quality) {
+            Some(DesktopQuality::High) => RdpQuality::High,
+            Some(DesktopQuality::Balanced) => RdpQuality::Balanced,
+            Some(DesktopQuality::Speed) => RdpQuality::Speed,
+            None => self.rdp_quality,
         }
     }
 
@@ -1006,6 +1041,9 @@ impl SessionManager {
                 auth_rejected: None,
                 shared_session: None,
                 keep_connection_after_exit: profile.keep_connection_after_exit,
+                options: profile.session_options.clone(),
+                codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                auto_log_consumed: false,
                 reconnect: None,
             },
         );
@@ -1140,6 +1178,9 @@ impl SessionManager {
                 auth_rejected: None,
                 shared_session: None,
                 keep_connection_after_exit: profile.keep_connection_after_exit,
+                options: profile.session_options.clone(),
+                codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                auto_log_consumed: false,
                 reconnect,
             },
         );
@@ -1331,6 +1372,9 @@ impl SessionManager {
                 reconnect: None,
                 shared_session: None,
                 keep_connection_after_exit: false,
+                options: profile.session_options.clone(),
+                codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                auto_log_consumed: false,
             },
         );
         self.order.push(session_id);
@@ -1513,7 +1557,7 @@ impl SessionManager {
             // data to a remote machine.
             enable_clipboard: self.rdp_clipboard,
             enable_audio: false,
-            quality: self.rdp_quality,
+            quality: self.profile_rdp_quality(profile_id),
         };
 
         let handle = rdp_client::spawn_rdp_session(request)
@@ -1547,6 +1591,9 @@ impl SessionManager {
                 auth_rejected: None,
                 shared_session: None,
                 keep_connection_after_exit: profile.keep_connection_after_exit,
+                options: profile.session_options.clone(),
+                codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                auto_log_consumed: false,
                 reconnect: None,
             },
         );
@@ -1591,6 +1638,7 @@ impl SessionManager {
         let terminal =
             probe_terminal(&probe.title, &probe.endpoint, &probe.transcript, self.default_size);
         let profile_id = probe.profile_id;
+        let options = self.profile(profile_id).map(|p| p.session_options.clone()).unwrap_or_default();
         let summary = SessionSummary {
             id: session_id,
             profile_id,
@@ -1615,6 +1663,9 @@ impl SessionManager {
                 auth_rejected: None,
                 shared_session: None,
                 keep_connection_after_exit: false,
+                codec: terminal_encoding::TerminalCodec::new(options.encoding),
+                options,
+                auto_log_consumed: false,
                 reconnect: None,
             },
         );
@@ -1795,8 +1846,10 @@ impl SessionManager {
             return Ok(());
         }
 
+        let bytes = record.codec.encode(input.as_bytes().to_vec()).map_err(SessionError::Unsupported)?;
+        record.record_input(&bytes);
         if let Some(live) = &record.live {
-            live.send(LiveShellCommand::Input(input.into_bytes()))?;
+            live.send(LiveShellCommand::Input(bytes))?;
         } else {
             record.terminal.feed(input.as_bytes());
             record.terminal.feed(b"\r\n");
@@ -1835,8 +1888,10 @@ impl SessionManager {
             return Ok(());
         }
 
+        let bytes = record.codec.encode(input.clone()).map_err(SessionError::Unsupported)?;
+        record.record_input(&bytes);
         if let Some(live) = &record.live {
-            live.send(LiveShellCommand::Input(input))?;
+            live.send(LiveShellCommand::Input(bytes))?;
         } else {
             record.terminal.feed(&input);
         }
@@ -1872,10 +1927,16 @@ impl SessionManager {
             return Ok(0);
         }
 
+        let encoded = self.sessions.iter().filter(|(_, record)| record.live.is_some())
+            .map(|(id, record)| record.codec.encode(input.clone())
+                .map(|bytes| (*id, bytes)).map_err(SessionError::Unsupported))
+            .collect::<Result<Vec<_>, _>>()?;
         let mut sent = 0usize;
-        for record in self.sessions.values_mut() {
+        for (id, bytes) in encoded {
+            let record = self.sessions.get_mut(&id).ok_or(SessionError::SessionNotFound)?;
+            record.record_input(&bytes);
             if let Some(live) = &record.live {
-                if live.send(LiveShellCommand::Input(input.clone())).is_ok() {
+                if live.send(LiveShellCommand::Input(bytes)).is_ok() {
                     sent += 1;
                 }
             }
@@ -2176,6 +2237,7 @@ impl SessionManager {
         if let Some(log) = &record.log {
             return Ok(log.path.clone());
         }
+        record.auto_log_consumed = true;
 
         fs::create_dir_all(dir).map_err(|error| SessionError::Logging(error.to_string()))?;
         let name = sanitize_log_file_name(file_name, &record.summary.title, session_id);
@@ -2200,6 +2262,7 @@ impl SessionManager {
             path: path.clone(),
             writer,
             stripper: plaintext.then(AnsiStripper::default),
+            record_input: record.options.logging.as_ref().is_some_and(|policy| policy.record_input),
         });
         record
             .terminal
@@ -2225,6 +2288,21 @@ impl SessionManager {
         self.active_session
             .and_then(|session_id| self.sessions.get(&session_id))
             .is_some_and(|record| record.log.is_some())
+    }
+
+    pub fn session_options(&self, session_id: SessionId) -> Option<&SessionOptions> {
+        self.sessions.get(&session_id).map(|record| &record.options)
+    }
+
+    pub fn pending_auto_log_sessions(&mut self, default_enabled: bool) -> Vec<SessionSummary> {
+        self.sessions.values_mut().filter_map(|record| {
+            let enabled = record.options.logging.as_ref().map_or(default_enabled, |p| p.auto_start);
+            if record.is_desktop() || !enabled || record.auto_log_consumed
+                || record.log.is_some() || record.summary.status != SessionStatus::Connected
+            { return None; }
+            record.auto_log_consumed = true;
+            Some(record.summary.clone())
+        }).collect()
     }
 
     #[must_use]
@@ -2513,6 +2591,9 @@ impl SessionManager {
                 auth_rejected: None,
                 shared_session: None,
                 keep_connection_after_exit: profile.keep_connection_after_exit,
+                options: profile.session_options.clone(),
+                codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                auto_log_consumed: false,
                 reconnect: None,
             },
         );
@@ -2575,6 +2656,9 @@ impl SessionManager {
                 auth_rejected: None,
                 shared_session: None,
                 keep_connection_after_exit: profile.keep_connection_after_exit,
+                options: profile.session_options.clone(),
+                codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                auto_log_consumed: false,
                 reconnect: None,
             },
         );
@@ -3227,6 +3311,9 @@ impl SessionManager {
                         // terminal — they only cluttered the scrollback. Failures
                         // still surface via LiveShellEvent::Error below.
                         if status == "connected" {
+                            if record.summary.status != SessionStatus::Connected {
+                                record.auto_log_consumed = false;
+                            }
                             record.summary.status = SessionStatus::Connected;
                             if let Some(reconnect) = &mut record.reconnect {
                                 reconnect.ever_connected = true;
@@ -3244,7 +3331,8 @@ impl SessionManager {
                         }
                     }
                     LiveShellEvent::Output(bytes) => {
-                        record.terminal.feed(&bytes);
+                        let decoded = record.codec.decode(&bytes);
+                        record.terminal.feed(&decoded);
                         record.summary.status = SessionStatus::Connected;
                         let mut log_failed = false;
                         if let Some(log) = &mut record.log {
@@ -3322,15 +3410,18 @@ impl SessionManager {
                             record.shared_session = None;
                         }
                         record.pending_auth_prompt = None;
-                        let can_retry = auto_reconnect
+                        let retry_policy = record.options.reconnect.clone().unwrap_or(ReconnectPolicy {
+                            enabled: auto_reconnect, ..Default::default()
+                        });
+                        let can_retry = retry_policy.enabled
                             && record
                                 .reconnect
                                 .as_ref()
                                 .is_some_and(|rc| rc.ever_connected && !rc.manual);
                         let attempts = record.reconnect.as_ref().map_or(0, |rc| rc.attempts);
 
-                        if can_retry && attempts < MAX_RECONNECT_ATTEMPTS {
-                            let delay = reconnect_delay(attempts);
+                        if can_retry && attempts < retry_policy.max_attempts {
+                            let delay = Duration::from_secs(retry_policy.delay_secs(attempts));
                             if let Some(reconnect) = &mut record.reconnect {
                                 reconnect.retry_at = Some(Instant::now() + delay);
                             }
@@ -3493,6 +3584,8 @@ impl SessionManager {
             .sessions
             .iter()
             .filter(|(_, record)| record.live.is_none())
+            .filter(|(_, record)| record.options.reconnect.as_ref()
+                .map_or(self.auto_reconnect, |policy| policy.enabled))
             .filter(|(_, record)| {
                 record
                     .reconnect
@@ -3550,6 +3643,7 @@ impl SessionManager {
                         .terminal
                         .append_status(format!("reconnecting (attempt {attempt_no})…"));
                     record.live = Some(live);
+                    record.codec = terminal_encoding::TerminalCodec::new(record.options.encoding);
                     record.summary.status = SessionStatus::Connecting;
                     if let Some(reconnect) = &mut record.reconnect {
                         reconnect.attempts = attempt_no;
@@ -3561,14 +3655,15 @@ impl SessionManager {
                 if let Some(record) = self.sessions.get_mut(&session_id) {
                     if let Some(reconnect) = &mut record.reconnect {
                         reconnect.attempts = attempt_no;
-                        if attempt_no >= MAX_RECONNECT_ATTEMPTS {
+                        let policy = record.options.reconnect.clone().unwrap_or_default();
+                        if attempt_no >= policy.max_attempts {
                             reconnect.retry_at = None;
                             record.summary.status = SessionStatus::Error;
                             record
                                 .terminal
                                 .append_status(format!("reconnect failed: {error}"));
                         } else {
-                            reconnect.retry_at = Some(Instant::now() + reconnect_delay(attempt_no));
+                            reconnect.retry_at = Some(Instant::now() + Duration::from_secs(policy.delay_secs(attempt_no)));
                         }
                     }
                 }
@@ -3817,6 +3912,8 @@ fn spawn_live_shell(
     request.auto_accept_host_keys = auto_accept_host_keys;
     request.startup_command = profile.startup_command.clone();
     request.term = profile.terminal_type.clone();
+    profile.session_options.validate().map_err(SessionError::Unsupported)?;
+    request.environment = profile.session_options.environment.clone();
     request.connect_timeout_secs = connect_timeout_secs;
     request.jumps = profile.jumps.clone();
     Ok(adit_ssh::spawn_password_shell(request)?)
@@ -4110,6 +4207,68 @@ fn probe_terminal(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn session_options_are_persisted_and_open_sessions_keep_independent_snapshots() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile = manager.profiles()[0].id;
+        let first_options = SessionOptions {
+            rdp_quality: Some(DesktopQuality::Speed),
+            reconnect: Some(ReconnectPolicy { max_attempts: 3, ..Default::default() }),
+            ..Default::default()
+        };
+        manager.set_profile_session_options(profile, first_options.clone()).unwrap();
+        let first = manager.open_mock_session(profile).unwrap();
+        let second_options = SessionOptions {
+            rdp_quality: Some(DesktopQuality::High),
+            ..Default::default()
+        };
+        manager.set_profile_session_options(profile, second_options.clone()).unwrap();
+        let second = manager.open_mock_session(profile).unwrap();
+        assert_eq!(manager.session_options(first), Some(&first_options));
+        assert_eq!(manager.session_options(second), Some(&second_options));
+        let serialized = serde_json::to_string(manager.profile(profile).unwrap()).unwrap();
+        let restored: ConnectionProfile = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(restored.session_options, second_options);
+        let mut old = serde_json::to_value(restored).unwrap();
+        old.as_object_mut().unwrap().remove("session_options");
+        let old_profile: ConnectionProfile = serde_json::from_value(old).unwrap();
+        assert_eq!(old_profile.session_options, SessionOptions::default());
+    }
+
+    #[test]
+    fn keyboard_logging_requires_the_sessions_explicit_opt_in() {
+        let root = std::env::temp_dir().join(format!("adit-input-log-{}", SessionId::new()));
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile = manager.profiles()[0].id;
+        let first = manager.open_mock_session(profile).unwrap();
+        let first_path = manager.start_logging(first, &root, "output-only.log", false).unwrap();
+        manager.send_input_bytes_to_active(b"never-record-this".to_vec()).unwrap();
+        manager.stop_active_logging();
+        assert!(!fs::read_to_string(first_path).unwrap().contains("never-record-this"));
+        manager.set_profile_session_options(profile, SessionOptions {
+            logging: Some(adit_domain::LogPolicy { record_input: true, ..Default::default() }),
+            ..Default::default()
+        }).unwrap();
+        let second = manager.open_mock_session(profile).unwrap();
+        let second_path = manager.start_logging(second, &root, "input.log", false).unwrap();
+        manager.send_input_bytes_to_active(b"fixture-only\r".to_vec()).unwrap();
+        manager.stop_active_logging();
+        assert!(fs::read_to_string(second_path).unwrap().contains("# input: fixture-only\\r"));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn manually_stopping_a_log_does_not_restart_it_on_the_next_tick() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let id = manager.open_mock_session(manager.profiles()[0].id).unwrap();
+        assert_eq!(manager.pending_auto_log_sessions(true).len(), 1);
+        assert!(manager.pending_auto_log_sessions(true).is_empty());
+        manager.sessions.get_mut(&id).unwrap().auto_log_consumed = false;
+        manager.sessions.get_mut(&id).unwrap().options.logging =
+            Some(adit_domain::LogPolicy { auto_start: false, ..Default::default() });
+        assert!(manager.pending_auto_log_sessions(true).is_empty());
+    }
+
     use super::*;
     use adit_terminal::Color as TermColor;
 
