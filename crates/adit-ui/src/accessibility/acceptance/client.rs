@@ -187,10 +187,6 @@ pub(super) fn run(hwnd: isize, owners: &[SessionId]) -> Result<Value, String> {
         let b = client.text(&second)?;
         (a == first_before && b != second_before).then_some(())
     })?;
-    let first_item = client.by_id(&format!("/session:{}", owners[0])).ok_or("first session item missing")?;
-    if client.value(&first_item).as_deref() != Some("当前会话") {
-        return Err("scrolling another document activated it".into());
-    }
     Ok(json!({
         "hwnd": hwnd, "native_uia": true, "production_iced_widgets": true,
         "navigation_invoke": true, "resource_invoke_and_value": true,

@@ -30,6 +30,7 @@ struct Route {
     invoke: Option<Message>,
     set_value: Option<fn(String) -> Message>,
     focus: Option<iced::advanced::widget::Id>,
+    range: Option<(window::Id, SessionId)>,
 }
 
 struct Shared {
@@ -73,8 +74,13 @@ impl accesskit::ActionHandler for Actions {
         match (request.action, request.data) {
             (Action::Focus, _) if route.focus.is_some() => {}
             (Action::Click, _) if route.invoke.is_some() => {}
-            (Action::SetValue, Some(ActionData::Value(value))) if route.set_value.is_some() && value.len() <= 8192 => {
+            (Action::SetValue, Some(ActionData::Value(value)))
+                if (route.set_value.is_some() || route.range.is_some()) && value.len() <= 8192 =>
+            {
                 out.value = Some(value.into());
+            }
+            (Action::SetValue, Some(ActionData::NumericValue(value))) if route.range.is_some() => {
+                out.value = Some(value.to_string());
             }
             _ => return,
         }
@@ -225,7 +231,7 @@ pub(super) fn publish(
             let role = match control.kind {
                 Kind::Button => Role::Button, Kind::Item => Role::ListItem,
                 Kind::Edit => Role::TextInput, Kind::Protected => Role::PasswordInput,
-                Kind::Document => Role::Terminal, Kind::Range => Role::ScrollBar,
+                Kind::Document => Role::Terminal, Kind::Range => Role::Slider,
             };
             let mut node = Node::new(role);
             node.set_label(control.label);
@@ -238,11 +244,15 @@ pub(super) fn publish(
                     if control.value.is_empty() { String::new() } else { "••••".into() }
                 } else { control.value.clone() });
             }
-            if matches!(control.kind, Kind::Item | Kind::Protected | Kind::Range) { node.set_read_only(); }
+            if matches!(control.kind, Kind::Item | Kind::Protected) { node.set_read_only(); }
             if matches!(control.kind, Kind::Button) && control.invoke.is_none() { node.set_disabled(); }
             if control.invoke.is_some() { node.add_action(Action::Click); }
-            if control.set_value.is_some() { node.add_action(Action::SetValue); }
-            if let Some((_, value, max)) = control.range {
+            if control.set_value.is_some()
+                || control.range.is_some_and(|(window, _, _, _)| window.is_some())
+            {
+                node.add_action(Action::SetValue);
+            }
+            if let Some((_, _, value, max)) = control.range {
                 node.set_numeric_value(value as f64);
                 node.set_min_numeric_value(0.0);
                 node.set_max_numeric_value(max as f64);
@@ -261,7 +271,12 @@ pub(super) fn publish(
                 children.entry(item.id).or_default().push(text_id);
                 nodes.insert(text_id, run);
             }
-            routes.insert(item.id, Route { invoke: control.invoke, set_value: control.set_value, focus: control.focus });
+            routes.insert(item.id, Route {
+                invoke: control.invoke,
+                set_value: control.set_value,
+                focus: control.focus,
+                range: control.range.and_then(|(window, owner, _, _)| window.map(|window| (window, owner))),
+            });
             let parent = if valid.contains(&item.parent) { item.parent } else { ROOT };
             children.entry(parent).or_default().push(item.id);
             nodes.insert(item.id, node);
@@ -314,6 +329,15 @@ pub(super) fn drain(registered: &HashSet<window::Id>, namespace: &str) -> Vec<(w
                     Action::Click => route.invoke.clone(),
                     Action::SetValue if route.set_value.is_some() =>
                         request.value.map(|value| (route.set_value.unwrap())(value)),
+                    Action::SetValue if route.range.is_some() =>
+                        request.value.and_then(|value| value.parse::<f64>().ok()).and_then(|value| {
+                            let (window, owner) = route.range?;
+                            value.is_finite().then(|| Message::AccessibilityScroll {
+                                window,
+                                owner,
+                                offset: value.max(0.0).round() as usize,
+                            })
+                        }),
                     _ => None,
                 };
                 if let Some(message) = message { messages.push((*id, request.namespace, message)); }
@@ -344,7 +368,7 @@ mod tests {
     fn protected_actions_accept_only_explicit_focus_and_never_queue_values() {
         use accesskit::ActionHandler;
         let (mut handler, rx) = handler(Route {
-            invoke: None, set_value: None,
+            invoke: None, set_value: None, range: None,
             focus: Some(iced::advanced::widget::Id::new("fixture-password")),
         });
         handler.do_action(request(Action::SetValue, Some(ActionData::Value("SYNTHETIC-SECRET".into()))));
@@ -356,10 +380,28 @@ mod tests {
     }
 
     #[test]
+    fn writable_range_actions_accept_numeric_set_value() {
+        use accesskit::ActionHandler;
+        let (mut handler, rx) = handler(Route {
+            invoke: None,
+            set_value: None,
+            focus: None,
+            range: Some((window::Id::unique(), SessionId::new())),
+        });
+        handler.do_action(request(
+            Action::SetValue,
+            Some(ActionData::NumericValue(42.0)),
+        ));
+        let request = rx.try_recv().unwrap();
+        assert_eq!(request.action, Action::SetValue);
+        assert_eq!(request.value.as_deref(), Some("42"));
+    }
+
+    #[test]
     fn queues_are_bounded_and_old_modal_or_revoked_actions_are_rejected() {
         use accesskit::ActionHandler;
         let (mut handler, rx) = handler(Route {
-            invoke: Some(Message::CloseProfileEditor), set_value: None, focus: None,
+            invoke: Some(Message::CloseProfileEditor), set_value: None, focus: None, range: None,
         });
         for _ in 0..100 { handler.do_action(request(Action::Click, None)); }
         let queued: Vec<_> = rx.try_iter().collect();

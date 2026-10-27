@@ -85,7 +85,7 @@ pub(crate) struct Control {
     value: String,
     invoke: Option<Message>,
     set_value: Option<fn(String) -> Message>,
-    range: Option<(SessionId, usize, usize)>,
+    range: Option<(Option<window::Id>, SessionId, usize, usize)>,
     focus: Option<iced::advanced::widget::Id>,
 }
 
@@ -132,7 +132,7 @@ impl Control {
     pub fn scroll(owner: SessionId, value: usize, max: usize) -> Self {
         Self { key: format!("terminal-scroll:{owner}"), label: t("终端滚动位置").into(),
             kind: Kind::Range, value: String::new(), invoke: None, set_value: None,
-            range: Some((owner, value.min(max), max)), focus: None }
+            range: Some((BUILD_WINDOW.with(Cell::get), owner, value.min(max), max)), focus: None }
     }
 }
 
@@ -242,8 +242,9 @@ pub(crate) fn scroll_lines(app: &mut AditApp, window: window::Id, owner: Session
 }
 
 /// These are actual visible buttons over the existing full-height rail.
-/// AccessKit's Windows ScrollBar range is read-only; don't advertise a setter
-/// the adapter can't perform, or substitute a misleading slider role.
+/// AccessKit treats `ScrollBar` ranges as read-only on Windows, so the numeric
+/// position is exposed as a slider while the visible rail and step buttons stay
+/// the real controls.
 pub(crate) fn scroll_controls(owner: SessionId, offset: usize, max: usize, rail: Element<'static, Message>) -> Element<'static, Message> {
     let Some(window) = BUILD_WINDOW.with(Cell::get) else { return rail };
     if max == 0 { return rail; }
