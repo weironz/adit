@@ -505,6 +505,7 @@ mod tests {
                 host: "real.test".into(),
                 username: "ops".into(),
                 port: 2022,
+                auth_profile: None,
             }]
         );
     }
