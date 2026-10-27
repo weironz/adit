@@ -10,6 +10,7 @@ pub(super) fn sftp_request(request: &SftpRequest) -> LiveShellRequest {
     );
     out.auth = request.auth.clone();
     out.jumps = request.jumps.clone();
+    out.proxy_command = request.proxy_command.clone();
     out.jump_credentials = request.jump_credentials.clone();
     out.known_hosts_path = request.known_hosts_path.clone();
     out.connect_timeout_secs = request.connect_timeout_secs;
@@ -26,11 +27,17 @@ pub(super) fn tunnel_request(request: &TunnelRequest) -> LiveShellRequest {
     );
     out.auth = request.auth.clone();
     out.jumps = request.jumps.clone();
+    out.proxy_command = request.proxy_command.clone();
     out.jump_credentials = request.jump_credentials.clone();
     out.known_hosts_path = request.known_hosts_path.clone();
     out.connect_timeout_secs = request.connect_timeout_secs;
     out.keepalive_secs = request.keepalive_secs;
     out
+}
+
+pub(super) struct ConnectionLifetime {
+    _jumps: Vec<client::Handle<KnownHostsClient>>,
+    _proxy: Option<proxy_command::Process>,
 }
 
 pub(super) async fn connect(
@@ -40,10 +47,12 @@ pub(super) async fn connect(
 ) -> Result<
     (
         client::Handle<KnownHostsClient>,
-        Vec<client::Handle<KnownHostsClient>>,
+        ConnectionLifetime,
     ),
     SshError,
 > {
+    validate_live_request(&request)?;
+    let mut proxy_process = None;
     let config = Arc::new(client::Config {
         inactivity_timeout: None,
         keepalive_interval: (request.keepalive_secs > 0)
@@ -67,11 +76,7 @@ pub(super) async fn connect(
     let (mut session, jumps) = if request.jumps.is_empty() {
         let session = tokio::time::timeout(
             Duration::from_secs(effective_timeout_secs(request.connect_timeout_secs)),
-            client::connect(
-                config.clone(),
-                (request.host.as_str(), request.port),
-                handler,
-            ),
+            proxy_command::connect_endpoint(&request, config.clone(), handler, &mut proxy_process),
         )
         .await
         .map_err(|_| SshError::Timeout(request.connect_timeout_secs))??;
@@ -104,5 +109,5 @@ pub(super) async fn connect(
         Some(&mut interactive),
     )
     .await?;
-    Ok((session, jumps))
+    Ok((session, ConnectionLifetime { _jumps: jumps, _proxy: proxy_process }))
 }

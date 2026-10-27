@@ -42,6 +42,31 @@ type. There is no credential plumbing at all: the login prompt is ordinary termi
 output, so the username and password are typed into the terminal and never touch the
 credential store.
 
+### Explicit local ProxyCommand
+
+An SSH/SFTP profile's advanced section can explicitly enable a local executable
+as its transport. The program is an absolute path (a local `.exe` on Windows);
+arguments are a JSON string array, not a shell command line. `%h`, `%p`, `%r`
+and `%%` expand once inside each argument. Unknown or trailing tokens, control
+characters, invalid endpoints and oversized arguments fail before execution.
+ProxyJump and ProxyCommand together are rejected; there is no direct fallback.
+
+The executable's stdin/stdout feed the existing `russh::connect_stream` path.
+SSH authentication, host-key prompts, SFTP and tunnels keep their normal protocol
+handling. A configured SSH gateway can use this transport too. RDP/VNC profiles
+cannot directly use it. The process stays alive while a shared SSH connection
+still carries channels, and cancellation, failed handshakes or exit clean it up.
+Windows starts it suspended, assigns a kill-on-close job, then resumes it so
+descendants cannot escape cleanup during startup; Unix uses a separate process
+group.
+
+New and old profiles leave the option disabled. Importing `~/.ssh/config` does not
+interpret or run its shell-style `ProxyCommand` text. The executable and argv are
+saved locally in plaintext: do not put passwords or tokens in them. Adit supplies
+no SSH passwords, key passphrases or inherited application environment to the
+child; only Windows loader directories are preserved there. Stderr is discarded,
+and command diagnostics and Debug output do not include argv.
+
 ### VNC desktop connections
 
 Choose **VNC** in the session editor, enter a host and TCP port (default 5900;

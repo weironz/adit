@@ -2,6 +2,7 @@ pub mod desktop_gateway;
 mod sftp_transfer;
 mod auth_ui;
 mod auxiliary;
+mod proxy_command;
 use auth_ui::{AuthEventSink, hop_credentials};
 pub use auth_ui::JumpCredential;
 pub type JumpCredentials = std::collections::HashMap<adit_domain::ProfileId, JumpCredential>;
@@ -96,6 +97,7 @@ pub struct LiveShellRequest {
     /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`). Empty ⇒
     /// connect directly.
     pub jumps: Vec<JumpHop>,
+    pub proxy_command: adit_domain::ProxyCommand,
     pub jump_credentials: JumpCredentials,
 }
 
@@ -123,6 +125,7 @@ impl LiveShellRequest {
             connect_timeout_secs: 20,
             auto_accept_host_keys: false,
             jumps: Vec::new(),
+            proxy_command: adit_domain::ProxyCommand::default(),
             jump_credentials: JumpCredentials::new(),
         }
     }
@@ -355,6 +358,8 @@ impl LiveShellHandle {
 
 #[derive(Debug, Error)]
 pub enum SshError {
+    #[error("{0}")]
+    ProxyCommand(&'static str),
     #[error("host is required")]
     EmptyHost,
     #[error("username is required")]
@@ -1295,6 +1300,10 @@ fn validate_live_request(request: &LiveShellRequest) -> Result<(), SshError> {
         return Err(SshError::InvalidPort);
     }
 
+    request.proxy_command.validate_route(
+        &request.host, request.port, &request.username, !request.jumps.is_empty(),
+    ).map_err(SshError::ProxyCommand)?;
+
     Ok(())
 }
 
@@ -1326,6 +1335,7 @@ async fn run_live_password_shell(
 
     // Connect to the target — directly, or chained through jump hosts. The chain
     // (jump handles) must stay alive for the whole session, so it is bound here.
+    let mut proxy_process = None;
     let (mut session, _jump_handles): (
         client::Handle<KnownHostsClient>,
         Vec<client::Handle<KnownHostsClient>>,
@@ -1344,7 +1354,7 @@ async fn run_live_password_shell(
         .with_auto_accept(request.auto_accept_host_keys)
         .with_forwards(forwards.clone());
 
-        let connect = client::connect(config.clone(), (request.host.as_str(), request.port), handler);
+        let connect = proxy_command::connect_endpoint(&request, config.clone(), handler, &mut proxy_process);
         tokio::pin!(connect);
         let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
         tokio::pin!(deadline);
@@ -2372,6 +2382,7 @@ pub struct SftpRequest {
     pub known_hosts_path: PathBuf,
     /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
     pub jumps: Vec<JumpHop>,
+    pub proxy_command: adit_domain::ProxyCommand,
     pub jump_credentials: JumpCredentials,
     /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
     pub connect_timeout_secs: u64,
@@ -2395,6 +2406,7 @@ impl SftpRequest {
             auth: AuthOptions::default(),
             known_hosts_path: default_known_hosts_path(),
             jumps: Vec::new(),
+            proxy_command: adit_domain::ProxyCommand::default(),
             jump_credentials: JumpCredentials::new(),
             connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
             keepalive_secs: DEFAULT_KEEPALIVE_SECS,
@@ -3214,6 +3226,7 @@ pub struct TunnelRequest {
     pub target_port: u16,
     /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
     pub jumps: Vec<JumpHop>,
+    pub proxy_command: adit_domain::ProxyCommand,
     pub jump_credentials: JumpCredentials,
     /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
     pub connect_timeout_secs: u64,
@@ -3248,6 +3261,7 @@ impl TunnelRequest {
             target_host: target_host.into(),
             target_port,
             jumps: Vec::new(),
+            proxy_command: adit_domain::ProxyCommand::default(),
             jump_credentials: JumpCredentials::new(),
             connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
             keepalive_secs: DEFAULT_KEEPALIVE_SECS,

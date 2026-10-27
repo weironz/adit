@@ -103,6 +103,13 @@ fn fill(template: &str, args: &[&dyn std::fmt::Display]) -> String {
 }
 
 const COMMON: &[(&str, &str)] = &[
+    ("跳板机、ProxyCommand、启动命令、TERM、环境色标、连接保留", "Jump hosts, ProxyCommand, startup command, TERM, environment and connection retention"),
+    ("启用此配置的 ProxyCommand（在本机执行外部程序）", "Enable ProxyCommand for this profile (runs a local program)"),
+    ("ProxyCommand 程序绝对路径（不调用 shell）", "ProxyCommand executable path (absolute; no shell)"),
+    ("参数 JSON 数组（仅支持 %h / %p / %r / %%）", "Arguments as a JSON array (%h / %p / %r / %% only)"),
+    ("参数以明文保存；不要填写密码或令牌。导入不会启用外部命令；不能与 ProxyJump 同用。", "Arguments are stored as plain text; do not include passwords or tokens. Imports never enable external commands. Cannot be combined with ProxyJump."),
+    ("ProxyCommand 参数必须是 JSON 字符串数组", "ProxyCommand arguments must be a JSON array of strings"),
+    ("ProxyCommand 仅支持 SSH 和 SFTP 配置", "ProxyCommand is supported only for SSH and SFTP profiles"),
     ("字号必须为 9–28 的整数；留空继承全局", "Font size must be an integer from 9 to 28; leave blank to inherit"),
     ("颜色请填写 #RRGGBB，例如 #201818", "Enter a color as #RRGGBB, for example #201818"),
     ("继承全局", "Inherit global"),
@@ -959,6 +966,22 @@ const CONTEXTUAL: &[(&str, &str, &str)] = &[
 // Source templates from domain/session/storage are kept here, so the engine
 // stays language-neutral and every translation still has a Chinese source.
 const RUNTIME: &[(&str, &str)] = &[
+    ("ProxyCommand 程序必须是无引号、无 token 的绝对路径", "ProxyCommand requires an absolute executable path without quotes or tokens"),
+    ("ProxyCommand 不支持 shell 或脚本启动器", "ProxyCommand does not support shells or script launchers"),
+    ("ProxyCommand 必须指向本地 .exe 程序", "ProxyCommand must point to a local .exe program"),
+    ("ProxyCommand 主机、端口或用户名无效", "Invalid ProxyCommand host, port or username"),
+    ("ProxyCommand 参数不能超过 128 项", "ProxyCommand cannot have more than 128 arguments"),
+    ("ProxyCommand 参数不能含控制字符或超过 4096 字节", "ProxyCommand arguments cannot contain control characters or exceed 4096 bytes"),
+    ("ProxyCommand 仅支持 %h、%p、%r 和 %%", "ProxyCommand supports only %h, %p, %r and %%"),
+    ("ProxyCommand 展开后的参数过长", "Expanded ProxyCommand arguments are too long"),
+    ("ProxyCommand 不能与 ProxyJump 同时启用", "ProxyCommand and ProxyJump cannot be enabled together"),
+    ("ProxyCommand 已退出或关闭输出", "ProxyCommand exited or closed its output"),
+    ("ProxyCommand 程序启动失败；请检查路径和执行权限", "Could not start ProxyCommand; check its path and execution permissions"),
+    ("无法为 ProxyCommand 建立进程清理边界", "Could not establish process cleanup ownership for ProxyCommand"),
+    ("无法启动 ProxyCommand 清理任务", "Could not start the ProxyCommand cleanup task"),
+    ("ProxyCommand 启动任务失败", "ProxyCommand startup task failed"),
+    ("VNC 配置不能直接启用 ProxyJump 或 ProxyCommand；请指定独立 SSH 网关", "VNC profiles cannot directly enable ProxyJump or ProxyCommand; select a separate SSH gateway"),
+    ("RDP 配置不支持 ProxyCommand", "RDP profiles do not support ProxyCommand"),
     ("终端外观配置无效", "Invalid terminal appearance settings"),
     ("无效的自定义配色", "Invalid custom palette"),
     ("自定义配色包含未知字段", "Custom palette contains unknown fields"),

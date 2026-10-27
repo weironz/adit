@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
+mod proxy_command;
+pub use proxy_command::ProxyCommand;
 
 mod session_options;
 pub use session_options::{DesktopMonitor, DesktopQuality, LogPolicy, OutputTrigger, ReconnectPolicy, SessionOptions, TerminalAppearance, TerminalEncoding, TerminalPalette, TriggerAction};
@@ -83,6 +85,9 @@ pub struct ConnectionProfile {
     /// (OpenSSH `ProxyJump`). Empty ⇒ connect directly.
     #[serde(default)]
     pub jumps: Vec<JumpHop>,
+    /// Local executable route. Importers must not enable external commands.
+    #[serde(default, skip_serializing_if = "ProxyCommand::is_empty")]
+    pub proxy_command: ProxyCommand,
     /// Colour-coding to tell prod/staging tabs apart at a glance.
     #[serde(default)]
     pub environment: Environment,
@@ -386,6 +391,7 @@ impl ConnectionProfile {
             startup_command: String::new(),
             terminal_type: String::new(),
             jumps: Vec::new(),
+            proxy_command: ProxyCommand::default(),
             environment: Environment::None,
             accent_color: None,
             label: None,

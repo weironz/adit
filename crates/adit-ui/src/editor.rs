@@ -568,7 +568,7 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
         text(t("高级")).size(12),
         // Name what is inside while it is shut: ProxyJump used to be findable
         // by scrolling, and a nameless disclosure would just have lost it.
-        text(t("跳板机、启动命令、TERM、环境色标、标签徽标、连接保留"))
+        text(t("跳板机、ProxyCommand、启动命令、TERM、环境色标、连接保留"))
             .size(10)
             .color(muted_text()),
         Space::new().width(Fill),
@@ -601,6 +601,23 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
             Message::ProfileJumpsChanged,
         ))
         .push(jump_auth_ui::view(app))
+        .push(checkbox(app.profile_proxy_enabled)
+            .label(t("启用此配置的 ProxyCommand（在本机执行外部程序）"))
+            .on_toggle(Message::ProfileProxyEnabled).size(16).text_size(12))
+        .push(text_field(
+            "ProxyCommand 程序绝对路径（不调用 shell）",
+            "C:\\Tools\\proxy.exe",
+            &app.profile_proxy_program,
+            |value| Message::ProfileProxyProgram(jump_auth_ui::SecretAnswer(value)),
+        ))
+        .push(text_field(
+            "参数 JSON 数组（仅支持 %h / %p / %r / %%）",
+            r#"["%h", "%p"]"#,
+            &app.profile_proxy_args,
+            |value| Message::ProfileProxyArgs(jump_auth_ui::SecretAnswer(value)),
+        ))
+        .push(text(t("参数以明文保存；不要填写密码或令牌。导入不会启用外部命令；不能与 ProxyJump 同用。"))
+            .size(10).color(muted_text()))
         .push(
             row![
                 cell(
@@ -684,6 +701,7 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
 /// the collapsed header. Display only; the section's open state is its own.
 fn advanced_field_count(app: &AditApp) -> usize {
     usize::from(!app.profile_jumps.trim().is_empty())
+        + usize::from(app.profile_proxy_enabled)
         + usize::from(!app.profile_startup_command.trim().is_empty())
         + usize::from(!app.profile_terminal_type.trim().is_empty())
         + usize::from(app.profile_environment != Environment::None)

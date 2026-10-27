@@ -1836,6 +1836,18 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_focused = false;
             app.profile_startup_command = value;
         }
+        Message::ProfileProxyEnabled(enabled) => {
+            app.terminal_focused = false;
+            app.profile_proxy_enabled = enabled;
+        }
+        Message::ProfileProxyProgram(value) => {
+            app.terminal_focused = false;
+            app.profile_proxy_program = value.0;
+        }
+        Message::ProfileProxyArgs(value) => {
+            app.terminal_focused = false;
+            app.profile_proxy_args = value.0;
+        }
         Message::ProfileJumpsChanged(value) => {
             app.terminal_focused = false;
             jump_auth_ui::edit_chain(app, value);

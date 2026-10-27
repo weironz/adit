@@ -9,6 +9,7 @@ pub struct GatewayStream {
     stream: russh::ChannelStream<client::Msg>,
     // Dropping the VNC stream also drops its claim on the SSH connection.
     _session: client::Handle<KnownHostsClient>,
+    _proxy: Option<proxy_command::Process>,
 }
 
 impl AsyncRead for GatewayStream {
@@ -73,8 +74,9 @@ pub async fn connect(
     );
     // Gateway trust is always explicit, including when terminal TOFU is enabled.
     let connect = async {
+        let mut proxy_process = None;
         let mut session =
-            client::connect(config, (request.host.as_str(), request.port), handler).await?;
+            proxy_command::connect_endpoint(&request, config, handler, &mut proxy_process).await?;
         let mut interactive = InteractiveKbd {
             events: AuthEventSink::Shell(&events),
             endpoint: format!("{}@{}:{}", request.username, request.host, request.port),
@@ -95,6 +97,7 @@ pub async fn connect(
         Ok(GatewayStream {
             stream: channel.into_stream(),
             _session: session,
+            _proxy: proxy_process,
         })
     };
     tokio::pin!(connect);

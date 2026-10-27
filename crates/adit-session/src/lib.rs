@@ -1096,6 +1096,10 @@ impl SessionManager {
             .clone();
         validate_session_options(&profile.session_options).map_err(SessionError::Unsupported)?;
 
+        if profile.proxy_command.enabled && !profile.protocol.is_ssh_based() {
+            return Err(SessionError::Unsupported("ProxyCommand 仅支持 SSH 和 SFTP 配置".into()));
+        }
+
         // SFTP carries no byte stream to drive a PTY, so it is built on its own
         // rather than bent into the live-shell shape below.
         if profile.protocol == Protocol::Sftp {
@@ -1327,6 +1331,12 @@ impl SessionManager {
         }
     }
 
+    pub fn set_profile_proxy_command(&mut self, id: ProfileId, command: adit_domain::ProxyCommand) {
+        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == id) {
+            profile.proxy_command = command;
+        }
+    }
+
     /// Set a profile's tab colour-coding (environment + optional custom accent +
     /// optional badge label).
     pub fn set_profile_appearance(
@@ -1362,9 +1372,9 @@ impl SessionManager {
         if profile.host.trim().is_empty() {
             return Err(SessionError::Unsupported("请填写 VNC 主机".into()));
         }
-        if !profile.jumps.is_empty() {
+        if !profile.jumps.is_empty() || profile.proxy_command.enabled {
             return Err(SessionError::Unsupported(
-                "VNC 暂不支持 SSH 跳板，请先建立隧道或使用 VPN".into(),
+                "VNC 配置不能直接启用 ProxyJump 或 ProxyCommand；请指定独立 SSH 网关".into(),
             ));
         }
         let gateway = self.vnc_gateway_request(&profile, gateway_password)?;
@@ -1423,6 +1433,7 @@ impl SessionManager {
         }
         let credentials = password.unwrap_or_default();
         let mut request = LiveShellRequest::new(gateway.host.clone(), gateway.port, gateway.username.clone(), credentials.password.clone());
+        request.proxy_command = gateway.proxy_command.clone();
         request.auth = auth_options_for_profile(gateway, &credentials.password, &credentials.passphrase);
         request.connect_timeout_secs = self.connect_timeout_secs.max(30);
         request.auto_accept_host_keys = false;
@@ -1510,9 +1521,9 @@ impl SessionManager {
         if profile.host.trim().is_empty() || profile.port == 0 {
             return Err(SessionError::Unsupported("请填写有效的 VNC 主机和端口".into()));
         }
-        if !profile.jumps.is_empty() {
+        if !profile.jumps.is_empty() || profile.proxy_command.enabled {
             return Err(SessionError::Unsupported(
-                "VNC 暂不支持 SSH 跳板，请先建立隧道或使用 VPN".into(),
+                "VNC 配置不能直接启用 ProxyJump 或 ProxyCommand；请指定独立 SSH 网关".into(),
             ));
         }
         let gateway = self.vnc_gateway_request(profile, gateway_password)?;
@@ -1556,6 +1567,10 @@ impl SessionManager {
             .find(|p| p.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?
             .clone();
+
+        if profile.proxy_command.enabled {
+            return Err(SessionError::Unsupported("RDP 配置不支持 ProxyCommand".into()));
+        }
 
         let host = profile.host.trim();
         if host.is_empty() {
@@ -2467,6 +2482,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
+        request.proxy_command = profile.proxy_command.clone();
         request.jump_credentials = self.resolve_jump_credentials(&profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = open_tunnel_for(record, request)?;
@@ -2613,6 +2629,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
+        request.proxy_command = profile.proxy_command.clone();
         request.jump_credentials = self.resolve_jump_credentials(&profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = open_sftp_for(record, request)?;
@@ -2678,6 +2695,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(profile, password, passphrase);
         request.jumps = profile.jumps.clone();
+        request.proxy_command = profile.proxy_command.clone();
         request.jump_credentials = self.resolve_jump_credentials(profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = adit_ssh::spawn_sftp_session(request)?;
@@ -2783,6 +2801,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
+        request.proxy_command = profile.proxy_command.clone();
         request.jump_credentials = self.resolve_jump_credentials(&profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = open_sftp_for(record, request)?;
@@ -4030,6 +4049,7 @@ fn spawn_live_shell(
     request.environment = profile.session_options.environment.clone();
     request.connect_timeout_secs = connect_timeout_secs;
     request.jumps = profile.jumps.clone();
+    request.proxy_command = profile.proxy_command.clone();
     request.jump_credentials = jump_credentials.clone();
     Ok(adit_ssh::spawn_password_shell(request)?)
 }

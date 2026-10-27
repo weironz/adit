@@ -254,6 +254,9 @@ pub struct AditApp {
     /// Jump-host chain as an editable OpenSSH-style spec (`user@host:port`,
     /// comma/newline separated), parsed to `profile.jumps` on save.
     profile_jumps: String,
+    profile_proxy_enabled: bool,
+    profile_proxy_program: String,
+    profile_proxy_args: String,
     profile_jump_auth: Vec<JumpHop>,
     profile_terminal_type: String,
     /// Per-profile tab colour-coding drafts.
@@ -1014,6 +1017,9 @@ pub enum Message {
     SecureCrtFolderPicked(Option<std::path::PathBuf>),
     ProfileStartupCommandChanged(String),
     ProfileJumpsChanged(String),
+    ProfileProxyEnabled(bool),
+    ProfileProxyProgram(jump_auth_ui::SecretAnswer),
+    ProfileProxyArgs(jump_auth_ui::SecretAnswer),
     ProfileHopAuthChanged { index: usize, owner: Option<ProfileId> },
     ProfileEnvironmentChanged(Environment),
     ProfileAccentColorChanged(String),
@@ -1575,6 +1581,9 @@ impl AditApp {
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
             profile_jumps: String::new(),
+            profile_proxy_enabled: false,
+            profile_proxy_program: String::new(),
+            profile_proxy_args: String::new(),
             profile_jump_auth: Vec::new(),
             profile_terminal_type: String::new(),
             profile_environment: Environment::None,
@@ -2109,6 +2118,48 @@ mod tests {
             let _ = update(&mut app, Message::DisplayScale(invalid));
             assert_eq!(app.display_scale, 1.0);
         }
+    }
+
+    #[test]
+    fn proxy_form_saves_explicit_argv_and_rejects_conflicting_routes() {
+        let mut app = drag_test_app();
+        app.credential_store = CredentialStore::with_path(
+            "adit-proxy-test", app.profile_store.path().with_file_name("credentials.json"));
+        app.selected_profile = Some(app.manager.profiles()[0].id);
+        load_selected_profile(&mut app);
+        assert!(!app.profile_proxy_enabled);
+        app.profile_proxy_enabled = true;
+        app.profile_proxy_program = if cfg!(windows) { "C:\\test proxy\\proxy.exe" } else { "/test proxy/proxy" }.into();
+        app.profile_proxy_args = r#"["--host=%h", "%p", "%r", "%%"]"#.into();
+        let id = save_profile_from_form(&mut app, false).unwrap();
+        let command = app.manager.profile(id).unwrap().proxy_command.clone();
+        assert!(command.enabled);
+        assert_eq!(command.args, ["--host=%h", "%p", "%r", "%%"]);
+        app.profile_proxy_enabled = false;
+        load_selected_profile(&mut app);
+        assert!(app.profile_proxy_enabled);
+        app.profile_jumps = "bastion.invalid".into();
+        assert!(save_profile_from_form(&mut app, false).is_none());
+        assert_eq!(app.manager.profile(id).unwrap().proxy_command, command);
+        assert!(app.manager.sessions().is_empty(), "saving a command must never execute it");
+    }
+
+    #[test]
+    fn proxy_form_rejects_bad_json_tokens_and_unsupported_protocols_without_exposing_arguments() {
+        let mut app = drag_test_app();
+        app.profile_proxy_enabled = true;
+        app.profile_proxy_program = if cfg!(windows) { "C:\\proxy.exe" } else { "/proxy" }.into();
+        for args in [r#"{"password": "synthetic-sensitive"}"#, r#"["synthetic-sensitive", "%x"]"#] {
+            app.profile_proxy_args = args.into();
+            assert!(save_profile_from_form(&mut app, false).is_none());
+            assert!(!app.last_error.as_deref().unwrap().contains("synthetic-sensitive"));
+        }
+        app.profile_proxy_args = "[]".into();
+        app.profile_protocol = Protocol::Rdp;
+        assert!(save_profile_from_form(&mut app, false).is_none());
+        let message = Message::ProfileProxyArgs(jump_auth_ui::SecretAnswer("synthetic-sensitive".into()));
+        assert!(!format!("{message:?}").contains("synthetic-sensitive"));
+        assert!(app.manager.sessions().is_empty());
     }
 
     #[test]

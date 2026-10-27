@@ -593,6 +593,9 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_options = ProfileOptionsForm::from_options(profile.session_options.clone());
         app.profile_icon = profile.icon.clone();
         app.profile_startup_command = profile.startup_command;
+        app.profile_proxy_enabled = profile.proxy_command.enabled;
+        app.profile_proxy_program = profile.proxy_command.program;
+        app.profile_proxy_args = serde_json::to_string(&profile.proxy_command.args).unwrap_or_else(|_| "[]".into());
         app.profile_jumps = jumps_to_spec(&profile.jumps);
         app.profile_jump_auth = profile.jumps.clone();
         app.profile_terminal_type = profile.terminal_type;
@@ -949,6 +952,33 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
         }
     };
 
+    let proxy_args = if app.profile_proxy_args.trim().is_empty() {
+        Vec::new()
+    } else {
+        match serde_json::from_str::<Vec<String>>(&app.profile_proxy_args) {
+            Ok(args) => args,
+            Err(_) => {
+                app.last_error = Some(String::from(t("ProxyCommand 参数必须是 JSON 字符串数组")));
+                return None;
+            }
+        }
+    };
+    let proxy_command = adit_domain::ProxyCommand {
+        enabled: app.profile_proxy_enabled,
+        program: app.profile_proxy_program.clone(),
+        args: proxy_args,
+    };
+    if proxy_command.enabled && !app.profile_protocol.is_ssh_based() {
+        app.last_error = Some(String::from(t("ProxyCommand 仅支持 SSH 和 SFTP 配置")));
+        return None;
+    }
+    if let Err(error) = proxy_command.validate_route(
+        &app.profile_host, port, &app.profile_username, !jumps.is_empty(),
+    ) {
+        app.last_error = Some(error.into());
+        return None;
+    }
+
     for (hop, configured) in jumps.iter_mut().zip(&app.profile_jump_auth) {
         hop.auth_profile = configured.auth_profile;
     }
@@ -1026,6 +1056,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
                     app.profile_startup_command.clone(),
                 );
                 app.manager.set_profile_jumps(profile_id, jumps.clone());
+                app.manager.set_profile_proxy_command(profile_id, proxy_command.clone());
                 app.manager
                     .set_profile_terminal_type(profile_id, app.profile_terminal_type.clone());
                 let accent_color = (!app.profile_accent_color.trim().is_empty())

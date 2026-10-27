@@ -75,6 +75,7 @@ dependencies = [
  "base64 0.22.1",
  "bytes",
  "hmac 0.12.1",
+ "libc",
  "portable-pty",
  "russh",
  "russh-sftp",

@@ -182,6 +182,7 @@ export function audit(sourceRoot = root) {
 // fail the audit without building either Rust workspace.
 const producers = [
   "adit-domain/src/lib.rs", "adit-domain/src/session_options.rs",
+  "adit-domain/src/proxy_command.rs", "adit-ssh/src/proxy_command.rs",
   "adit-session/src/lib.rs", "adit-session/src/rdp_client.rs",
   "adit-session/src/terminal_encoding.rs", "adit-session/src/triggers.rs",
   "adit-ssh/src/sftp_transfer.rs", "adit-session/src/sftp_transfers.rs",
