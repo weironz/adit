@@ -76,8 +76,10 @@ pub(crate) fn run_catalog_transfer(
                         .and_then(|()| file.sync_all());
                     drop(file);
                     if let Err(error) = result {
-                        let _ = std::fs::remove_file(&path);
-                        return Err(error.to_string());
+                        return Err(format!(
+                            "导出未完成：{error}。已创建的文件可能不完整，请检查 {}",
+                            path.display()
+                        ));
                     }
                     Ok(())
                 })
