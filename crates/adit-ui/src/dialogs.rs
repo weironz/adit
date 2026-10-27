@@ -1583,7 +1583,9 @@ pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
         TunnelKind::Dynamic => format!("{}  (SOCKS5)", tunnel.bind),
         TunnelKind::Remote => tf("远端 {} → 本地 {}", &[&tunnel.bind, &tunnel.target]),
     };
-    let status_color = if tunnel.error.is_some() {
+    let status_color = if tunnel.retry.is_some() {
+        accent()
+    } else if tunnel.error.is_some() {
         danger()
     } else if tunnel.listening {
         Color::from_rgb8(34, 197, 94)
@@ -1599,11 +1601,11 @@ pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
                 .size(10)
                 .color(muted_text())
                 .width(Length::Fixed(60.0)),
-            text(runtime(&tunnel.status))
+            text(crate::tunnel_feedback::status(tunnel))
                 .size(10)
                 .color(status_color)
                 .width(Length::Fixed(190.0)),
-            button(text(t("关闭")).size(11))
+            button(text(t(if tunnel.retry.is_some() { "取消重拨" } else { "关闭" })).size(11))
                 .padding([3, 10])
                 .style(|_theme, status| close_button_style(status))
                 .on_press(Message::CloseTunnel(tunnel.id)),

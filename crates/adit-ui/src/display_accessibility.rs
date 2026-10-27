@@ -23,6 +23,7 @@ pub(crate) fn base_theme(dark: bool) -> iced::Theme {
                     primary: action_fill(button::Status::Active),
                     success: Color::from_rgb8(16, 138, 122),
                     danger: Color::from_rgb8(181, 49, 59),
+                    warning: Color::from_rgb8(181, 119, 34),
                 },
             )
         })

@@ -355,9 +355,11 @@ fn auxiliary_and_gateway_cancellation_close_stdio() {
             0,
         );
         request.proxy_command = fixture.request.proxy_command.clone();
-        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel();
         let (events, _events) = mpsc::channel();
-        let task = tokio::spawn(run_tunnel_session(request, rx, events));
+        let task = tokio::spawn(async move {
+            crate::tunnel::run_tunnel_session_for_test(request, None, &mut rx, events).await
+        });
         let pid = fixture.pid("").await;
         tx.send(TunnelCommand::Disconnect).unwrap();
         tokio::time::timeout(Duration::from_secs(5), task)

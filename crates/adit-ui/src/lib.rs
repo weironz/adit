@@ -50,6 +50,7 @@ pub enum SftpSortKey {
 /// work; almost nothing emits them.
 mod autolink;
 mod i18n;
+mod tunnel_feedback;
 pub(crate) use i18n::{runtime, set_language, t, t_in, tf};
 mod style;
 use style::*;

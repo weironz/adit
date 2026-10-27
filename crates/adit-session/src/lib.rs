@@ -3,6 +3,8 @@ mod terminal_encoding;
 mod triggers;
 mod sftp_transfers;
 mod jump_auth;
+mod tunnels;
+pub use tunnels::{TunnelRetry, TunnelState};
 pub use jump_auth::jump_credential;
 pub use adit_ssh::{JumpCredential, JumpCredentials};
 
@@ -436,6 +438,7 @@ pub struct SessionManager {
     rdp_quality: adit_rdp_proto::Quality,
     sftp: Option<SftpBrowser>,
     tunnels: Vec<TunnelState>,
+    suppressed_tunnels: Vec<(SessionId, TunnelDef)>,
     next_tunnel_id: u64,
     /// Text a remote desktop copied, waiting for the UI to put it on the real
     /// Windows clipboard (only the UI process has one). Held here rather than
@@ -468,22 +471,6 @@ pub struct RdpFileRead {
     pub index: u32,
     pub offset: u64,
     pub length: u32,
-}
-
-/// A live port-forwarding tunnel and its observable state.
-pub struct TunnelState {
-    handle: adit_ssh::TunnelHandle,
-    owner: SessionId,
-    pending_auth_prompt: Option<AuthPromptRequest>,
-    pub id: u64,
-    pub kind: adit_ssh::TunnelKind,
-    pub bind: String,
-    pub target: String,
-    pub status: String,
-    pub listening: bool,
-    pub active: usize,
-    pub total: usize,
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -535,6 +522,7 @@ impl SessionManager {
             rdp_quality: adit_rdp_proto::Quality::default(),
             sftp: None,
             tunnels: Vec::new(),
+            suppressed_tunnels: Vec::new(),
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
             pending_desktop_notice: None,
@@ -583,6 +571,7 @@ impl SessionManager {
 
     pub fn set_auto_reconnect(&mut self, enabled: bool) {
         self.auto_reconnect = enabled;
+        self.update_tunnel_reconnect_enabled();
     }
 
     pub fn set_connect_timeout(&mut self, secs: u64) {
@@ -615,6 +604,7 @@ impl SessionManager {
         let profile = self.profiles.iter_mut().find(|p| p.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?;
         profile.session_options = options;
+        self.update_tunnel_reconnect_enabled();
         Ok(())
     }
 
@@ -1744,6 +1734,7 @@ impl SessionManager {
     }
 
     pub fn close(&mut self, session_id: SessionId) {
+        self.cancel_tunnels_for_owner(session_id);
         let closed_profile = self.sessions.get(&session_id).map(|record| {
             if let Some(live) = &record.live {
                 let _ = live.send(LiveShellCommand::Disconnect);
@@ -1775,6 +1766,7 @@ impl SessionManager {
     }
 
     pub fn disconnect(&mut self, session_id: SessionId) -> Result<(), SessionError> {
+        self.cancel_tunnels_for_owner(session_id);
         let record = self
             .sessions
             .get_mut(&session_id)
@@ -2423,173 +2415,6 @@ impl SessionManager {
 
     /// Open an SFTP browser for the active live session, reusing its
     /// credentials over a separate SSH connection.
-    /// Live port-forwarding tunnels (most recently opened last).
-    #[must_use]
-    pub fn tunnels(&self) -> &[TunnelState] {
-        &self.tunnels
-    }
-
-    /// Open a new tunnel reusing the active session's profile and credentials.
-    pub fn open_tunnel(
-        &mut self,
-        kind: TunnelKind,
-        bind_address: String,
-        bind_port: u16,
-        target_host: String,
-        target_port: u16,
-    ) -> Result<(), SessionError> {
-        let session_id = self.active_session.ok_or(SessionError::NoActiveSshSession)?;
-        let record = self
-            .sessions
-            .get(&session_id)
-            .ok_or(SessionError::NoActiveSshSession)?;
-        let reconnect = record
-            .reconnect
-            .as_ref()
-            .ok_or(SessionError::NoActiveSshSession)?;
-        let profile_id = record.summary.profile_id;
-        let password = reconnect.password.clone();
-        let passphrase = reconnect.passphrase.clone();
-        let profile = self
-            .profiles
-            .iter()
-            .find(|p| p.id == profile_id)
-            .cloned()
-            .ok_or(SessionError::ProfileNotFound)?;
-
-        let bind_address = if bind_address.trim().is_empty() {
-            String::from("127.0.0.1")
-        } else {
-            bind_address
-        };
-        let bind = format!("{bind_address}:{bind_port}");
-        let target = match kind {
-            TunnelKind::Local => format!("{target_host}:{target_port}"),
-            TunnelKind::Dynamic => String::from("SOCKS5 代理"),
-            TunnelKind::Remote => format!("{target_host}:{target_port}"),
-        };
-
-        let mut request = TunnelRequest::new(
-            profile.host.clone(),
-            profile.port,
-            profile.username.clone(),
-            password.clone(),
-            kind,
-            bind_address,
-            bind_port,
-            target_host,
-            target_port,
-        );
-        request.auth = auth_options_for_profile(&profile, &password, &passphrase);
-        request.jumps = profile.jumps.clone();
-        request.proxy_command = profile.proxy_command.clone();
-        request.jump_credentials = self.resolve_jump_credentials(&profile)?;
-        request.connect_timeout_secs = self.connect_timeout_secs;
-        let handle = open_tunnel_for(record, request)?;
-
-        let id = self.next_tunnel_id;
-        self.next_tunnel_id += 1;
-        self.tunnels.push(TunnelState {
-            handle,
-            owner: session_id,
-            pending_auth_prompt: None,
-            id,
-            kind,
-            bind,
-            target,
-            status: String::from("connecting"),
-            listening: false,
-            active: 0,
-            total: 0,
-            error: None,
-        });
-        Ok(())
-    }
-
-    /// Append a saved tunnel definition to a profile (deduplicated).
-    pub fn add_profile_tunnel(&mut self, profile_id: ProfileId, def: TunnelDef) {
-        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
-            if !profile.tunnels.contains(&def) {
-                profile.tunnels.push(def);
-            }
-        }
-    }
-
-    /// Remove the saved tunnel definition at `index` from a profile.
-    pub fn remove_profile_tunnel(&mut self, profile_id: ProfileId, index: usize) {
-        if let Some(profile) = self.profiles.iter_mut().find(|p| p.id == profile_id) {
-            if index < profile.tunnels.len() {
-                profile.tunnels.remove(index);
-            }
-        }
-    }
-
-    /// Open every saved tunnel of a profile (called after it connects).
-    pub fn start_profile_tunnels(&mut self, profile_id: ProfileId) {
-        let defs = self
-            .profiles
-            .iter()
-            .find(|p| p.id == profile_id)
-            .map(|p| p.tunnels.clone())
-            .unwrap_or_default();
-        for def in defs {
-            let _ = self.open_tunnel(
-                def.kind,
-                def.bind_address,
-                def.bind_port,
-                def.target_host,
-                def.target_port,
-            );
-        }
-    }
-
-    /// Close a tunnel by id (stops its listener and SSH connection).
-    pub fn close_tunnel(&mut self, id: u64) {
-        if let Some(index) = self.tunnels.iter().position(|t| t.id == id) {
-            let tunnel = self.tunnels.remove(index);
-            let _ = tunnel.handle.send(TunnelCommand::Disconnect);
-        }
-    }
-
-    /// Drain tunnel events into observable state; drop stopped tunnels.
-    pub fn poll_tunnel_events(&mut self) {
-        let mut stopped = Vec::new();
-        for tunnel in &mut self.tunnels {
-            while let Some(event) = tunnel.handle.try_recv() {
-                match event {
-                    TunnelEvent::AuthPrompt(prompt) => tunnel.pending_auth_prompt = Some(prompt),
-                    TunnelEvent::Status(status) => tunnel.status = status,
-                    TunnelEvent::Listening { bind } => {
-                        tunnel.listening = true;
-                        tunnel.status = format!("监听 {bind}");
-                    }
-                    TunnelEvent::Opened { .. } => {
-                        tunnel.active += 1;
-                        tunnel.total += 1;
-                    }
-                    TunnelEvent::Closed { .. } => {
-                        tunnel.active = tunnel.active.saturating_sub(1);
-                    }
-                    TunnelEvent::Error(error) => {
-                        tunnel.error = Some(error.clone());
-                        tunnel.status = format!("error: {error}");
-                    }
-                    TunnelEvent::Stopped => {
-                        tunnel.listening = false;
-                        tunnel.active = 0;
-                        tunnel.pending_auth_prompt = None;
-                        // Keep a failed handshake visible until the user closes
-                        // it; otherwise Error + Stopped vanishes in one poll.
-                        if tunnel.error.is_none() { stopped.push(tunnel.id); }
-                    }
-                }
-            }
-        }
-        if !stopped.is_empty() {
-            self.tunnels.retain(|t| !stopped.contains(&t.id));
-        }
-    }
-
     /// Open a command-line SFTP tab for the active SSH session (SecureCRT's Alt+P).
     ///
     /// This is the `sftp>` prompt, not the dual-pane panel ([`Self::open_sftp_for_active`]).

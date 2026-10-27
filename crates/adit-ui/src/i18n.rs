@@ -103,6 +103,15 @@ fn fill(template: &str, args: &[&dyn std::fmt::Display]) -> String {
 }
 
 const COMMON: &[(&str, &str)] = &[
+    ("隧道已断开，{} 秒后重拨（{}/{}）", "Tunnel disconnected; retry in {}s ({}/{})"),
+    ("隧道正在重拨（{}/{}）", "Reconnecting tunnel ({}/{})"),
+    ("隧道已停止", "Tunnel stopped"),
+    ("隧道已停止：{}", "Tunnel stopped: {}"),
+    ("隧道正在监听 {}", "Tunnel listening on {}"),
+    ("监听中；最近错误：{}", "Listening; last error: {}"),
+    ("隧道正在连接…", "Connecting tunnel..."),
+    ("取消重拨", "Cancel retry"),
+    ("隧道重拨已耗尽（{} 次）：{}", "Tunnel retry budget exhausted ({} attempts): {}"),
     ("{}：同名认证配置已跳过，跳板恢复独立认证；请检查后重新选择凭据", "{}: a matching authentication profile was skipped; the jump now authenticates independently. Review and select credentials again."),
     ("跳板机、ProxyCommand、启动命令、TERM、环境色标、连接保留", "Jump hosts, ProxyCommand, startup command, TERM, environment and connection retention"),
     ("启用此配置的 ProxyCommand（在本机执行外部程序）", "Enable ProxyCommand for this profile (runs a local program)"),

@@ -3,6 +3,11 @@ mod sftp_transfer;
 mod auth_ui;
 mod auxiliary;
 mod proxy_command;
+mod tunnel;
+pub use tunnel::{
+    spawn_tunnel_session, spawn_tunnel_session_on, TunnelCommand, TunnelEvent, TunnelHandle,
+    TunnelKind, TunnelRequest,
+};
 use auth_ui::{AuthEventSink, hop_credentials};
 pub use auth_ui::JumpCredential;
 pub type JumpCredentials = std::collections::HashMap<adit_domain::ProfileId, JumpCredential>;
@@ -3207,521 +3212,6 @@ where
     Ok((done, ctx.cancelled()))
 }
 
-// ===== Port forwarding (SSH tunnels) =====
-
-pub use adit_domain::TunnelKind;
-
-#[derive(Clone)]
-pub struct TunnelRequest {
-    pub host: String,
-    pub port: u16,
-    pub username: String,
-    pub password: String,
-    pub auth: AuthOptions,
-    pub known_hosts_path: PathBuf,
-    pub kind: TunnelKind,
-    pub bind_address: String,
-    pub bind_port: u16,
-    /// Forward target (Local only; ignored for Dynamic).
-    pub target_host: String,
-    pub target_port: u16,
-    /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
-    pub jumps: Vec<JumpHop>,
-    pub proxy_command: adit_domain::ProxyCommand,
-    pub jump_credentials: JumpCredentials,
-    /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
-    pub connect_timeout_secs: u64,
-    /// Keepalive probe interval in seconds (0 ⇒ disabled), as for a shell session.
-    pub keepalive_secs: u64,
-}
-
-impl TunnelRequest {
-    #[must_use]
-    #[allow(clippy::too_many_arguments)]
-    pub fn new(
-        host: impl Into<String>,
-        port: u16,
-        username: impl Into<String>,
-        password: impl Into<String>,
-        kind: TunnelKind,
-        bind_address: impl Into<String>,
-        bind_port: u16,
-        target_host: impl Into<String>,
-        target_port: u16,
-    ) -> Self {
-        Self {
-            host: host.into(),
-            port,
-            username: username.into(),
-            password: password.into(),
-            auth: AuthOptions::default(),
-            known_hosts_path: default_known_hosts_path(),
-            kind,
-            bind_address: bind_address.into(),
-            bind_port,
-            target_host: target_host.into(),
-            target_port,
-            jumps: Vec::new(),
-            proxy_command: adit_domain::ProxyCommand::default(),
-            jump_credentials: JumpCredentials::new(),
-            connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
-            keepalive_secs: DEFAULT_KEEPALIVE_SECS,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum TunnelCommand {
-    Disconnect,
-}
-
-#[derive(Debug, Clone)]
-pub enum TunnelEvent {
-    AuthPrompt(AuthPromptRequest),
-    Status(String),
-    Listening { bind: String },
-    Opened { peer: String },
-    Closed { peer: String },
-    Error(String),
-    Stopped,
-}
-
-pub struct TunnelHandle {
-    command_tx: tokio_mpsc::UnboundedSender<TunnelCommand>,
-    event_rx: mpsc::Receiver<TunnelEvent>,
-}
-
-impl TunnelHandle {
-    pub fn send(&self, command: TunnelCommand) -> Result<(), SshError> {
-        self.command_tx
-            .send(command)
-            .map_err(|_| SshError::CommandChannelClosed)
-    }
-
-    #[must_use]
-    pub fn try_recv(&self) -> Option<TunnelEvent> {
-        self.event_rx.try_recv().ok()
-    }
-}
-
-/// Start a tunnel on a connection that is already authenticated, instead of
-/// dialling a second one. See [`spawn_sftp_session_on`] for the lifetime note:
-/// the connection is driven by the runtime that created it.
-pub fn spawn_tunnel_session_on(
-    shared: SharedSession,
-    request: TunnelRequest,
-) -> Result<TunnelHandle, SshError> {
-    if request.bind_port == 0 {
-        return Err(SshError::InvalidPort);
-    }
-    if matches!(request.kind, TunnelKind::Local) && request.target_host.trim().is_empty() {
-        return Err(SshError::Tunnel(String::from(
-            "本地转发需要填写目标主机",
-        )));
-    }
-
-    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
-    let (event_tx, event_rx) = mpsc::channel();
-
-    thread::Builder::new()
-        .name(format!(
-            "adit-tunnel-{}:{}",
-            request.bind_address, request.bind_port
-        ))
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build();
-            match runtime {
-                Ok(runtime) => {
-                    if let Err(error) = runtime.block_on(run_tunnel_session_on(
-                        shared,
-                        request,
-                        command_rx,
-                        event_tx.clone(),
-                    )) {
-                        let _ = event_tx.send(TunnelEvent::Error(error.to_string()));
-                    }
-                }
-                Err(error) => {
-                    let _ = event_tx.send(TunnelEvent::Error(error.to_string()));
-                }
-            }
-            let _ = event_tx.send(TunnelEvent::Closed { peer: String::new() });
-        })
-        .map_err(|error| SshError::Runtime(error.to_string()))?;
-
-    Ok(TunnelHandle {
-        command_tx,
-        event_rx,
-    })
-}
-
-pub fn spawn_tunnel_session(request: TunnelRequest) -> Result<TunnelHandle, SshError> {
-    if request.host.trim().is_empty() {
-        return Err(SshError::EmptyHost);
-    }
-    if request.username.trim().is_empty() {
-        return Err(SshError::EmptyUsername);
-    }
-    if request.port == 0 || request.bind_port == 0 {
-        return Err(SshError::InvalidPort);
-    }
-    if matches!(request.kind, TunnelKind::Local) && request.target_host.trim().is_empty() {
-        return Err(SshError::Tunnel(String::from(
-            "本地转发需要填写目标主机",
-        )));
-    }
-
-    let (command_tx, command_rx) = tokio_mpsc::unbounded_channel();
-    let (event_tx, event_rx) = mpsc::channel();
-
-    thread::Builder::new()
-        .name(format!(
-            "adit-tunnel-{}:{}",
-            request.bind_address, request.bind_port
-        ))
-        .spawn(move || {
-            let runtime = tokio::runtime::Builder::new_multi_thread()
-                .enable_all()
-                .build();
-            match runtime {
-                Ok(runtime) => {
-                    if let Err(error) =
-                        runtime.block_on(run_tunnel_session(request, command_rx, event_tx.clone()))
-                    {
-                        let _ = event_tx.send(TunnelEvent::Error(error.to_string()));
-                    }
-                }
-                Err(error) => {
-                    let _ = event_tx.send(TunnelEvent::Error(error.to_string()));
-                }
-            }
-            let _ = event_tx.send(TunnelEvent::Stopped);
-        })
-        .map_err(|error| SshError::Runtime(error.to_string()))?;
-
-    Ok(TunnelHandle {
-        command_tx,
-        event_rx,
-    })
-}
-
-async fn run_tunnel_session(
-    request: TunnelRequest,
-    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
-    events: mpsc::Sender<TunnelEvent>,
-) -> Result<(), SshError> {
-    let _ = events.send(TunnelEvent::Status("connecting".to_owned()));
-    let forwards = ForwardRegistry::default();
-    let (session, _jump_handles) = {
-        let handshake = auxiliary::connect(
-            auxiliary::tunnel_request(&request),
-            AuthEventSink::Tunnel(&events),
-            forwards.clone(),
-        );
-        tokio::pin!(handshake);
-        tokio::select! {
-            result = &mut handshake => result?,
-            _ = commands.recv() => return Ok(()),
-        }
-    };
-    let session = Arc::new(session);
-    let result = run_tunnel_over(Arc::clone(&session), forwards, request, commands, events).await;
-    let _ = session
-        .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
-        .await;
-    result
-}
-
-/// Run a tunnel over a connection the caller has already authenticated.
-///
-/// Same reasoning as SFTP: a tunnel is just more channels, so riding on the
-/// connection means the server authenticates once. Dialling per tunnel re-runs
-/// the auth chain each time — an MFA host would demand a fresh one-time code for
-/// every tunnel and reject them.
-async fn run_tunnel_session_on(
-    shared: SharedSession,
-    request: TunnelRequest,
-    commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
-    events: mpsc::Sender<TunnelEvent>,
-) -> Result<(), SshError> {
-    // Never disconnect here: the shell owns this connection and is still on it.
-    // The registry comes from the shell's handler for the same reason — that
-    // handler is the one russh will hand the forwarded channels to.
-    run_tunnel_over(shared.handle(), shared.forwards(), request, commands, events).await
-}
-
-/// Serve a tunnel over `session` until it is closed.
-///
-/// Shared by both entry points. What happens to the *connection* afterwards is
-/// deliberately left to the caller, because that is the only thing that differs.
-async fn run_tunnel_over(
-    session: Arc<client::Handle<KnownHostsClient>>,
-    forwards: ForwardRegistry,
-    request: TunnelRequest,
-    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
-    events: mpsc::Sender<TunnelEvent>,
-) -> Result<(), SshError> {
-    if matches!(request.kind, TunnelKind::Remote) {
-        return run_remote_forward(session, forwards, request, commands, events).await;
-    }
-
-    let bind = format!("{}:{}", request.bind_address, request.bind_port);
-    let listener = tokio::net::TcpListener::bind(&bind)
-        .await
-        .map_err(|error| SshError::Tunnel(format!("bind {bind}: {error}")))?;
-    let _ = events.send(TunnelEvent::Listening { bind });
-
-    let kind = request.kind;
-    let target_host = request.target_host.clone();
-    let target_port = request.target_port;
-
-    loop {
-        tokio::select! {
-            command = commands.recv() => match command {
-                Some(TunnelCommand::Disconnect) | None => break,
-            },
-            accepted = listener.accept() => {
-                let (socket, peer) = match accepted {
-                    Ok(pair) => pair,
-                    Err(error) => {
-                        let _ = events.send(TunnelEvent::Error(format!("accept: {error}")));
-                        continue;
-                    }
-                };
-                let peer_label = peer.to_string();
-                let _ = events.send(TunnelEvent::Opened { peer: peer_label.clone() });
-                let session = Arc::clone(&session);
-                let events = events.clone();
-                let target_host = target_host.clone();
-                tokio::spawn(async move {
-                    let result = match kind {
-                        TunnelKind::Local => {
-                            forward_local(socket, &session, &target_host, target_port, peer).await
-                        }
-                        TunnelKind::Dynamic => forward_dynamic(socket, &session, peer).await,
-                        TunnelKind::Remote => unreachable!("remote forward handled separately"),
-                    };
-                    if let Err(error) = result {
-                        let _ = events.send(TunnelEvent::Error(format!("{peer_label}: {error}")));
-                    }
-                    let _ = events.send(TunnelEvent::Closed { peer: peer_label });
-                });
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Remote forward (`-R`): ask the server to listen, then idle until closed —
-/// incoming connections arrive as forwarded channels handled by the connection
-/// handler (`server_channel_open_forwarded_tcpip`).
-async fn run_remote_forward(
-    session: Arc<client::Handle<KnownHostsClient>>,
-    forwards: ForwardRegistry,
-    request: TunnelRequest,
-    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
-    events: mpsc::Sender<TunnelEvent>,
-) -> Result<(), SshError> {
-    // Register before asking the server to listen, not after: the first
-    // forwarded connection can arrive the moment `tcpip_forward` returns, and a
-    // channel that resolves to no target is dropped without a word.
-    forwards.register(
-        &request.bind_address,
-        request.bind_port,
-        ForwardTarget {
-            host: request.target_host.clone(),
-            port: request.target_port,
-            events: events.clone(),
-        },
-    );
-
-    if let Err(error) = session
-        .tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
-        .await
-    {
-        forwards.deregister(&request.bind_address, request.bind_port);
-        return Err(SshError::Tunnel(format!("remote forward: {error}")));
-    }
-    let _ = events.send(TunnelEvent::Listening {
-        bind: format!("远端 {}:{}", request.bind_address, request.bind_port),
-    });
-
-    // Idle until a Disconnect command arrives (or the command channel closes);
-    // forwarded connections are served by the handler in the meantime.
-    let _ = commands.recv().await;
-
-    let _ = session
-        .cancel_tcpip_forward(request.bind_address.clone(), u32::from(request.bind_port))
-        .await;
-    // The connection outlives this tunnel whenever the tunnel was riding on the
-    // shell's, so the registration has to be withdrawn with it — otherwise a
-    // later forward on the same port would resolve to a dead target.
-    forwards.deregister(&request.bind_address, request.bind_port);
-    Ok(())
-}
-
-/// Pipe a server-opened `forwarded-tcpip` channel to a local target.
-async fn pipe_forwarded(
-    channel: russh::Channel<client::Msg>,
-    target_host: &str,
-    target_port: u16,
-) -> Result<(), SshError> {
-    let mut target = tokio::net::TcpStream::connect((target_host, target_port))
-        .await
-        .map_err(|error| SshError::Tunnel(error.to_string()))?;
-    let mut stream = channel.into_stream();
-    tokio::io::copy_bidirectional(&mut target, &mut stream)
-        .await
-        .map_err(|error| SshError::Tunnel(error.to_string()))?;
-    Ok(())
-}
-
-/// Pipe one accepted local socket to a `direct-tcpip` channel to a fixed target.
-async fn forward_local(
-    mut socket: tokio::net::TcpStream,
-    session: &client::Handle<KnownHostsClient>,
-    target_host: &str,
-    target_port: u16,
-    peer: std::net::SocketAddr,
-) -> Result<(), SshError> {
-    let channel = session
-        .channel_open_direct_tcpip(
-            target_host.to_string(),
-            u32::from(target_port),
-            peer.ip().to_string(),
-            u32::from(peer.port()),
-        )
-        .await?;
-    let mut stream = channel.into_stream();
-    tokio::io::copy_bidirectional(&mut socket, &mut stream)
-        .await
-        .map_err(|error| SshError::Tunnel(error.to_string()))?;
-    Ok(())
-}
-
-/// Serve one SOCKS5 client: negotiate, open a `direct-tcpip` channel to the
-/// requested target, then pipe.
-async fn forward_dynamic(
-    mut socket: tokio::net::TcpStream,
-    session: &client::Handle<KnownHostsClient>,
-    peer: std::net::SocketAddr,
-) -> Result<(), SshError> {
-    let (host, port) = socks5_negotiate(&mut socket)
-        .await
-        .map_err(SshError::Tunnel)?;
-    match session
-        .channel_open_direct_tcpip(
-            host,
-            u32::from(port),
-            peer.ip().to_string(),
-            u32::from(peer.port()),
-        )
-        .await
-    {
-        Ok(channel) => {
-            socks5_reply(&mut socket, 0x00).await.map_err(SshError::Tunnel)?;
-            let mut stream = channel.into_stream();
-            tokio::io::copy_bidirectional(&mut socket, &mut stream)
-                .await
-                .map_err(|error| SshError::Tunnel(error.to_string()))?;
-            Ok(())
-        }
-        Err(error) => {
-            let _ = socks5_reply(&mut socket, 0x05).await; // connection refused
-            Err(SshError::from(error))
-        }
-    }
-}
-
-/// Minimal SOCKS5 negotiation (no-auth + CONNECT); returns the requested target.
-async fn socks5_negotiate<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
-    socket: &mut S,
-) -> Result<(String, u16), String> {
-    let mut greeting = [0u8; 2];
-    socket
-        .read_exact(&mut greeting)
-        .await
-        .map_err(|error| error.to_string())?;
-    if greeting[0] != 0x05 {
-        return Err(String::from("not a SOCKS5 client"));
-    }
-    let mut methods = vec![0u8; greeting[1] as usize];
-    socket
-        .read_exact(&mut methods)
-        .await
-        .map_err(|error| error.to_string())?;
-    // Select "no authentication".
-    socket
-        .write_all(&[0x05, 0x00])
-        .await
-        .map_err(|error| error.to_string())?;
-
-    let mut request = [0u8; 4];
-    socket
-        .read_exact(&mut request)
-        .await
-        .map_err(|error| error.to_string())?;
-    if request[0] != 0x05 {
-        return Err(String::from("bad SOCKS5 request"));
-    }
-    if request[1] != 0x01 {
-        let _ = socks5_reply(socket, 0x07).await; // command not supported
-        return Err(String::from("only CONNECT is supported"));
-    }
-    let host = match request[3] {
-        0x01 => {
-            let mut addr = [0u8; 4];
-            socket
-                .read_exact(&mut addr)
-                .await
-                .map_err(|error| error.to_string())?;
-            std::net::Ipv4Addr::from(addr).to_string()
-        }
-        0x03 => {
-            let mut len = [0u8; 1];
-            socket
-                .read_exact(&mut len)
-                .await
-                .map_err(|error| error.to_string())?;
-            let mut name = vec![0u8; len[0] as usize];
-            socket
-                .read_exact(&mut name)
-                .await
-                .map_err(|error| error.to_string())?;
-            String::from_utf8(name).map_err(|_| String::from("invalid hostname"))?
-        }
-        0x04 => {
-            let mut addr = [0u8; 16];
-            socket
-                .read_exact(&mut addr)
-                .await
-                .map_err(|error| error.to_string())?;
-            std::net::Ipv6Addr::from(addr).to_string()
-        }
-        _ => return Err(String::from("unsupported address type")),
-    };
-    let mut port = [0u8; 2];
-    socket
-        .read_exact(&mut port)
-        .await
-        .map_err(|error| error.to_string())?;
-    Ok((host, u16::from_be_bytes(port)))
-}
-
-/// Send a SOCKS5 reply with the given status code and a zeroed bind address.
-async fn socks5_reply<S: tokio::io::AsyncWrite + Unpin>(
-    socket: &mut S,
-    code: u8,
-) -> Result<(), String> {
-    socket
-        .write_all(&[0x05, code, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-        .await
-        .map_err(|error| error.to_string())
-}
-
 /// Where a server-opened `forwarded-tcpip` channel gets piped, keyed by the
 /// `address:port` the server was asked to listen on.
 ///
@@ -3742,12 +3232,28 @@ struct ForwardTarget {
     host: String,
     port: u16,
     events: mpsc::Sender<TunnelEvent>,
+    cancelled: tokio::sync::watch::Receiver<()>,
 }
 
 impl ForwardRegistry {
-    fn register(&self, bind_address: &str, bind_port: u16, target: ForwardTarget) {
-        if let Ok(mut targets) = self.targets.lock() {
-            targets.insert((bind_address.to_string(), bind_port), target);
+    fn register(
+        &self,
+        bind_address: &str,
+        bind_port: u16,
+        target: ForwardTarget,
+    ) -> Result<(), SshError> {
+        let mut targets = self
+            .targets
+            .lock()
+            .map_err(|_| SshError::Tunnel("forward registry poisoned".into()))?;
+        match targets.entry((bind_address.to_string(), bind_port)) {
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                entry.insert(target);
+                Ok(())
+            }
+            std::collections::hash_map::Entry::Occupied(_) => Err(SshError::Tunnel(
+                "remote bind is already registered".into(),
+            )),
         }
     }
 
@@ -3869,16 +3375,24 @@ impl client::Handler for KnownHostsClient {
         // single target the handler was built with, so a forward opened on a
         // shared connection — where the handler belongs to the shell — matched
         // nothing and the channel was silently dropped.
-        if let Some(ForwardTarget { host, port, events }) = self
+        if let Some(ForwardTarget { host, port, events, mut cancelled }) = self
             .forwards
             .resolve(connected_address, u16::try_from(connected_port).unwrap_or_default())
         {
+            if cancelled.has_changed().is_err() {
+                return Ok(());
+            }
             let origin = format!("{originator_address}:{originator_port}");
             let _ = events.send(TunnelEvent::Opened {
                 peer: origin.clone(),
             });
             tokio::spawn(async move {
-                if let Err(error) = pipe_forwarded(channel, &host, port).await {
+                let result = tokio::select! {
+                    biased;
+                    _ = cancelled.changed() => Ok(()),
+                    result = tunnel::pipe_forwarded(channel, &host, port) => result,
+                };
+                if let Err(error) = result {
                     let _ = events.send(TunnelEvent::Error(format!("{origin}: {error}")));
                 }
                 let _ = events.send(TunnelEvent::Closed { peer: origin });
@@ -4990,7 +4504,7 @@ mod tests {
             request.extend_from_slice(&[0x01, 0xBB]);
             client.write_all(&request).await.unwrap();
 
-            let (host, port) = socks5_negotiate(&mut server).await.unwrap();
+            let (host, port) = tunnel::socks5_negotiate(&mut server).await.unwrap();
             assert_eq!(host, "example.com");
             assert_eq!(port, 443);
 
@@ -5012,7 +4526,7 @@ mod tests {
                 ])
                 .await
                 .unwrap();
-            let (host, port) = socks5_negotiate(&mut server).await.unwrap();
+            let (host, port) = tunnel::socks5_negotiate(&mut server).await.unwrap();
             assert_eq!(host, "127.0.0.1");
             assert_eq!(port, 8080);
         });
