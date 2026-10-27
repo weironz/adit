@@ -391,7 +391,7 @@ had already captured, so nothing stays queued for the next remote that asks.
 
 ### Files (CLIPRDR file transfer)
 
-**Files copy both ways, any file, byte for byte** — the transfer path carries raw
+**Ordinary files copy both ways, byte for byte** — the transfer path carries raw
 bytes and knows nothing about text. Copy a selection in Explorer and paste it into the
 remote desktop, or the reverse. Directory trees travel as a flat list of relative paths
 with the directories included as their own entries, which is how MS-RDPECLIP represents
@@ -426,8 +426,40 @@ Each clipboard offer gets its own bridge. Closing one is permanent — that is h
 waiter learns the answer is never coming — so a shared bridge would make every paste
 after the first disconnect fail forever.
 
-Not covered: images on the clipboard (`CF_DIB` is a third format, not a file), and
-drag-and-drop, which is a separate shell interaction.
+File names share one validator across the helper and COM boundary: absolute paths,
+parent components, alternate streams, device names, duplicate paths and excessive
+descriptors are rejected. Remote reparse/device attributes are checked before they
+are reduced to the app's metadata; local reparse selections are skipped. The shared
+validator rejects unsafe names instead of rewriting them.
+
+### Explicit OLE file drag out (Windows)
+
+The RDP toolbar opens a session-labelled native transfer window. After selecting
+and copying ordinary files in that remote session, hold the transfer window's
+content area and drag into Explorer. This uses `IDropSource` and `DoDragDrop`, not
+clipboard paste or a simulated shortcut. Opening the window reads no file content;
+the target's `IStream::Read` fetches ranges lazily from the captured RDP session.
+Only COPY is allowed; MOVE, LINK and Shift-move gestures are rejected. Adit never
+creates a destination path or overwrites a local file: the receiving shell handles
+its destination and conflict confirmation.
+
+The first slice accepts 1–256 distinct, flat, nonempty files with known sizes:
+16 GiB per file, 64 GiB total. Directories, hierarchical virtual paths, unknown
+sizes and ambiguous empty files are explicitly refused. Empty metadata cannot
+silently turn into a successful empty stream, nor can an oversized or prematurely
+empty range response.
+
+A dedicated STA owns both the transfer HWND and its `IDropTarget` registration,
+leaving iced free to service RDP replies. Registration is revoked on that STA;
+owner-window destruction, fullscreen changes, disconnect, a replacement remote
+selection or disabling the channel cancel the lease and wake blocked streams.
+Responses carry their session ID and wire stream IDs are never reused across
+offers, preventing a late reply from filling another file's stream.
+
+**Dragging into the remote desktop remains unsupported.** CLIPRDR has no remote
+shell drop-location operation. The native target returns NONE without reading
+the incoming object; it does not advertise success and then send Ctrl+V.
+Explorer end-to-end acceptance is separate from the synthetic COM/STA tests.
 
 The design is worth knowing, because the obvious one doesn't work here. IronRDP's
 `cliprdr-native` backend owns the real system clipboard and therefore needs a window and

@@ -92,6 +92,7 @@ windows = { version = "0.62", features = [
     "Win32_System_DataExchange",
     "Win32_System_Memory",
     "Win32_System_Ole",
+    "Win32_System_SystemServices",
     # GetCurrentThreadId / PostThreadMessageW / GetMessageW: OleSetClipboard is
     # apartment-bound, so it runs on a dedicated STA thread with a message pump.
     "Win32_System_Threading",

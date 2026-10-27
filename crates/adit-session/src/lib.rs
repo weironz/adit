@@ -50,6 +50,7 @@ mod rdp_client;
 mod vnc_client;
 mod vnc_input;
 pub use adit_rdp_proto::{
+    validate_clipboard_file_list, validate_clipboard_relative_name,
     ClipFile, InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
@@ -464,6 +465,14 @@ pub struct SessionManager {
     /// Chunks answering local pastes, waiting to be handed to the waiting COM
     /// streams. A `Vec` because a folder paste has several streams open at once.
     pending_rdp_file_chunks: Vec<(SessionId, u32, Option<Vec<u8>>)>,
+    pending_rdp_drag_events: Vec<RdpFileDragEvent>,
+}
+
+/// Session-tagged events for explicit OLE drags, independent of clipboard focus.
+pub enum RdpFileDragEvent {
+    Offered { session: SessionId, files: Vec<ClipFile>, requester: RdpFileRequester },
+    Chunk { session: SessionId, stream_id: u32, data: Option<Vec<u8>> },
+    Closed { session: SessionId },
 }
 
 /// A byte range the remote wants from a file this side offered.
@@ -533,6 +542,7 @@ impl SessionManager {
             pending_rdp_clipboard_image: None,
             pending_rdp_clipboard_files: None,
             pending_rdp_file_chunks: Vec::new(),
+            pending_rdp_drag_events: Vec::new(),
         }
     }
 
@@ -2128,6 +2138,15 @@ impl SessionManager {
         record.rdp.as_ref().map(RdpClientHandle::file_requester)
     }
 
+    pub fn take_rdp_file_drag_events(&mut self) -> Vec<RdpFileDragEvent> {
+        std::mem::take(&mut self.pending_rdp_drag_events)
+    }
+
+    pub fn rdp_file_drag_live(&self, id: SessionId) -> bool {
+        self.sessions.get(&id).is_some_and(|record|
+            record.rdp.is_some() && record.summary.status == SessionStatus::Connected)
+    }
+
     /// Offer a local file selection to the active RDP desktop (metadata only).
     pub fn offer_rdp_files_to_active(&self, files: Vec<ClipFile>) {
         if let Some(session_id) = self.active_session {
@@ -3484,9 +3503,19 @@ impl SessionManager {
                         self.pending_rdp_clipboard_image = Some((record.summary.id, image));
                     }
                     RdpClientEvent::ClipboardFiles(files) => {
+                        self.pending_rdp_drag_events.retain(|event| !matches!(event,
+                            RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
+                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Offered {
+                            session: record.summary.id,
+                            files: files.clone(),
+                            requester: record.rdp.as_ref().expect("RDP event owner").file_requester(),
+                        });
                         self.pending_rdp_clipboard_files = Some((record.summary.id, files));
                     }
                     RdpClientEvent::FileContents { stream_id, data } => {
+                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Chunk {
+                            session: record.summary.id, stream_id, data: data.clone(),
+                        });
                         self.pending_rdp_file_chunks.push((record.summary.id, stream_id, data));
                     }
                     RdpClientEvent::FileContentsNeeded {
@@ -3519,6 +3548,7 @@ impl SessionManager {
                         }
                     }
                     RdpClientEvent::Closed => {
+                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Closed { session: record.summary.id });
                         record.summary.status = status_after_closed(record.summary.status);
                     }
                 }

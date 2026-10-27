@@ -258,6 +258,11 @@ pub struct ClipFile {
     pub is_dir: bool,
 }
 
+mod file_safety;
+pub use file_safety::{
+    validate_clipboard_file_list, validate_clipboard_relative_name, MAX_CLIPBOARD_DESCRIPTORS,
+};
+
 /// App → helper (over the helper's stdin).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {

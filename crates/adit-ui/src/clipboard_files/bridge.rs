@@ -28,6 +28,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 /// How long one chunk may take before the read is failed.
@@ -41,6 +42,17 @@ const CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
 /// Ceiling on requests in flight at once. Explorer opens a stream per file, and
 /// a paste of a large folder would otherwise let an unbounded map grow.
 const MAX_IN_FLIGHT: usize = 256;
+// Clipboard offers and OLE drags can read concurrently on the same RDP pipe.
+// Never reuse an id on a replacement offer, or a late response can fill a new
+// stream with the previous file's bytes. Exhaustion fails rather than wrapping.
+static NEXT_STREAM_ID: AtomicU64 = AtomicU64::new(1);
+
+fn reserve_stream_id(counter: &AtomicU64) -> Result<u32, ChunkError> {
+    counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id|
+        id.checked_add(1).filter(|_| id <= u64::from(u32::MAX)))
+        .map(|id| id as u32)
+        .map_err(|_| ChunkError::TooManyRequests)
+}
 
 /// One request's slot: `None` while in flight, `Some` once answered.
 type Slot = Option<Result<Vec<u8>, ChunkError>>;
@@ -65,7 +77,6 @@ struct Inner {
     /// full timeout one after another — a folder paste against a dead session
     /// would otherwise take `files × 30s` to give up.
     closed: bool,
-    next_stream_id: u32,
 }
 
 /// Shared between the COM streams (which wait) and the app's event pump (which
@@ -95,11 +106,7 @@ impl ChunkBridge {
         if inner.slots.len() >= MAX_IN_FLIGHT {
             return Err(ChunkError::TooManyRequests);
         }
-        // Wrapping is fine and collisions are not a concern in practice: an id
-        // is retired as soon as its wait ends, so 2^32 would have to be issued
-        // while one is still outstanding.
-        inner.next_stream_id = inner.next_stream_id.wrapping_add(1);
-        let id = inner.next_stream_id;
+        let id = reserve_stream_id(&NEXT_STREAM_ID)?;
         inner.slots.insert(id, None);
         Ok(id)
     }
@@ -181,6 +188,14 @@ impl ChunkBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exhausting_the_wire_id_space_never_wraps_to_an_old_request() {
+        let counter = AtomicU64::new(u64::from(u32::MAX));
+        assert_eq!(reserve_stream_id(&counter), Ok(u32::MAX));
+        assert_eq!(reserve_stream_id(&counter), Err(ChunkError::TooManyRequests));
+        assert_eq!(reserve_stream_id(&counter), Err(ChunkError::TooManyRequests));
+    }
 
     /// The ordinary path: a reader blocks, the pump answers, the bytes come out
     /// verbatim — binary included, since that is the whole point.

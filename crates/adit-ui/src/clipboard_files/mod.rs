@@ -33,7 +33,7 @@
 #[cfg_attr(not(windows), allow(dead_code))]
 mod bridge;
 #[cfg(windows)]
-mod data_object;
+pub(crate) mod data_object;
 #[cfg(windows)]
 mod ole;
 #[allow(unused_imports)]
@@ -135,6 +135,12 @@ fn push_entry(out: &mut Vec<OfferedFile>, path: &Path, base: &Path, depth: u32) 
         return;
     };
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if meta.file_attributes() & 0x400 != 0 { return; } // FILE_ATTRIBUTE_REPARSE_POINT
+    }
+    if meta.file_type().is_symlink() { return; }
     if meta.is_dir() {
         out.push(OfferedFile {
             path: path.to_path_buf(),
@@ -181,7 +187,8 @@ fn relative_name(path: &Path, base: &Path) -> Option<String> {
         .join("\\");
     // An empty name is meaningless on the wire and upstream drops it anyway;
     // catching it here keeps a degenerate root from producing a blank entry.
-    (!name.is_empty()).then_some(name)
+    adit_session::validate_clipboard_relative_name(&name).ok()?;
+    Some(name)
 }
 
 /// Read one byte range out of an offered file.

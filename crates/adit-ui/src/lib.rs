@@ -59,6 +59,7 @@ mod display_accessibility;
 /// clipboard, which iced provides — files need Win32 directly, and the three
 /// platforms do not share a mechanism. See the module docs.
 mod clipboard_files;
+mod rdp_dragdrop;
 /// Passing global hotkeys through to a fullscreen remote desktop. A Win32
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
@@ -454,6 +455,7 @@ pub struct AditApp {
     /// outlive the session it started in, and the bridge is what tells those
     /// waiters the answer is never coming.
     rdp_chunk_bridge: clipboard_files::ChunkBridge,
+    rdp_file_drag: rdp_dragdrop::State,
     /// Whether the last settings write failed. Only there to report the failure
     /// once per streak; the retry itself is driven by the usual comparison.
     settings_save_failed: bool,
@@ -1057,6 +1059,8 @@ pub enum Message {
     WindowUnfocused,
     /// The window gained focus. Carries the deferred startup maximize on Windows.
     WindowFocused,
+    OpenRdpFileDrag,
+    RdpFileDragOwner { session: SessionId, owner: Option<isize> },
     WindowResized { width: f32, height: f32, window: window::Id },
     ToggleFullscreen,
     CloseSyncPanel,
@@ -1698,6 +1702,7 @@ impl AditApp {
             rdp_image_offered_seq: 0,
             rdp_offered_files: Vec::new(),
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
+            rdp_file_drag: rdp_dragdrop::State::default(),
             settings_save_failed: false,
             rdp_resize_requested_at: None,
             rdp_resize_pending: None,

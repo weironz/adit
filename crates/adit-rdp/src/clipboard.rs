@@ -207,6 +207,18 @@ fn from_descriptor(descriptor: &FileDescriptor) -> ClipFile {
     }
 }
 
+/// Validate before flattening attributes, so a reparse/device descriptor cannot
+/// lose its unsafe type and masquerade as a regular file in the GUI.
+fn validated_remote_files(files: &[FileDescriptor]) -> Result<Vec<ClipFile>, &'static str> {
+    if files.len() > MAX_CLIPBOARD_FILES { return Err("too many remote file descriptors"); }
+    if files.iter().any(|file| file.attributes.is_some_and(|a| a.bits() & (0x400 | 0x40) != 0)) {
+        return Err("remote reparse points and devices are unsupported");
+    }
+    let listed: Vec<_> = files.iter().map(from_descriptor).collect();
+    adit_rdp_proto::validate_clipboard_file_list(&listed)?;
+    Ok(listed)
+}
+
 /// Everything the backend and the session loop share. Session-scoped fields are
 /// reset when a new backend is built, because a server redirection rebuilds the
 /// CLIPRDR channel from scratch while the app's offered text stays valid.
@@ -315,6 +327,7 @@ impl ClipboardState {
     /// metadata crosses. Bytes are pulled one range at a time when — and only
     /// when — something on the remote actually pastes.
     pub(crate) fn offer_local_files(&mut self, files: Vec<ClipFile>) {
+        let files = if adit_rdp_proto::validate_clipboard_file_list(&files).is_ok() { files } else { Vec::new() };
         if self.local_files == files {
             return;
         }
@@ -733,13 +746,17 @@ impl CliprdrBackend for AditCliprdrBackend {
 
     /// Descriptors for a file list the remote copied.
     fn on_remote_file_list(&mut self, files: &[FileDescriptor], clip_data_id: Option<u32>) {
-        if files.len() > MAX_CLIPBOARD_FILES {
-            tracing::warn!(count = files.len(), "remote file list is implausibly long; dropping");
-            return;
-        }
-        let listed: Vec<ClipFile> = files.iter().map(from_descriptor).collect();
+        let (listed, accepted_id) = match validated_remote_files(files) {
+            Ok(listed) => (listed, clip_data_id),
+            Err(reason) => {
+                tracing::warn!(reason, "remote file descriptors refused");
+                // Invalidate the previous GUI offer as well. Leaving it alive
+                // would let a late read name an index in a different selection.
+                (Vec::new(), None)
+            }
+        };
         self.with_state(|state| {
-            state.remote_clip_data_id = clip_data_id;
+            state.remote_clip_data_id = accepted_id;
             state.actions.push_back(ClipboardAction::InboundFiles(listed));
         });
     }
@@ -910,6 +927,24 @@ mod tests {
     use ironrdp_core::{decode, Encode as _, WriteCursor};
 
     use super::*;
+
+    #[test]
+    fn unsafe_remote_file_descriptors_revoke_the_previous_offer() {
+        let (mut backend, state) = backend();
+        for name in ["C:\\escape", "..\\escape", "\\absolute", "NUL.txt"] {
+            let descriptor = FileDescriptor::new(name);
+            assert!(validated_remote_files(std::slice::from_ref(&descriptor)).is_err());
+            backend.on_remote_file_list(&[descriptor], Some(7));
+            assert!(actions(&state).iter().any(|a| matches!(a, ClipboardAction::InboundFiles(files) if files.is_empty())));
+            assert_eq!(state.lock().unwrap().remote_clip_data_id, None);
+        }
+        let mut reparse = FileDescriptor::new("link.txt");
+        reparse.attributes = Some(ClipboardFileAttributes::from_bits_retain(0x400));
+        assert!(validated_remote_files(&[reparse]).is_err());
+        let mut huge = FileDescriptor::new("huge.txt");
+        huge.file_size = Some(u64::MAX);
+        assert!(validated_remote_files(&[huge]).is_err());
+    }
 
     /// Drive the backend and take whatever it queued, ignoring the shared handle
     /// bookkeeping the session loop would otherwise do.

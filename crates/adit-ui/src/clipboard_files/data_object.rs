@@ -22,7 +22,7 @@
 //! as "Not Responding" and nothing else (see CLAUDE.md). Everything here is
 //! consequently `Send + Sync` and touches no `AditApp` state.
 
-use std::sync::Arc;
+use std::sync::{Arc, atomic::{AtomicBool, Ordering}};
 
 use adit_session::ClipFile;
 use windows::core::{implement, Result as WinResult, BOOL, HRESULT};
@@ -87,6 +87,14 @@ struct Source {
     /// Largest range to ask for in one round trip. Mirrors the helper's own
     /// clamp; asking for more just gets clamped there and wastes a message.
     chunk: u32,
+    cancelled: Option<Arc<AtomicBool>>,
+    valid_names: bool,
+}
+
+impl Source {
+    fn cancelled(&self) -> bool {
+        self.cancelled.as_ref().is_some_and(|c| c.load(Ordering::Acquire))
+    }
 }
 
 /// `IDataObject` over a remote file list.
@@ -102,14 +110,28 @@ impl FileDataObject {
         request: ChunkRequester,
         chunk: u32,
     ) -> Self {
+        let valid_names = adit_session::validate_clipboard_file_list(&files).is_ok();
         Self {
             source: Arc::new(Source {
                 files,
                 bridge,
                 request,
                 chunk,
+                cancelled: None,
+                valid_names,
             }),
         }
+    }
+
+    pub(crate) fn for_drag(
+        files: Vec<ClipFile>, bridge: ChunkBridge, request: ChunkRequester,
+        chunk: u32, cancelled: Arc<AtomicBool>,
+    ) -> WinResult<Self> {
+        crate::rdp_dragdrop::validate_files(&files)
+            .map_err(|_| windows::core::Error::from(E_INVALIDARG))?;
+        Ok(Self { source: Arc::new(Source {
+            files, bridge, request, chunk: chunk.clamp(1, 64 * 1024), cancelled: Some(cancelled), valid_names: true,
+        }) })
     }
 }
 
@@ -185,9 +207,16 @@ fn descriptor_for(file: &ClipFile) -> FILEDESCRIPTORW {
 
 impl IDataObject_Impl for FileDataObject_Impl {
     fn GetData(&self, format: *const FORMATETC) -> WinResult<STGMEDIUM> {
+        if !self.source.valid_names { return Err(E_INVALIDARG.into()); }
+        if self.source.cancelled() {
+            return Err(windows::Win32::Foundation::E_ABORT.into());
+        }
         // SAFETY: the shell always passes a valid FORMATETC.
         let format =
             unsafe { format.as_ref() }.ok_or_else(|| windows::core::Error::from(E_INVALIDARG))?;
+        if self.source.cancelled.is_some() && self.QueryGetData(format).is_err() {
+            return Err(DV_E_FORMATETC.into());
+        }
 
         if format.cfFormat == descriptor_format() {
             return descriptor_block(&self.source.files);
@@ -226,9 +255,18 @@ impl IDataObject_Impl for FileDataObject_Impl {
     }
 
     fn QueryGetData(&self, format: *const FORMATETC) -> HRESULT {
+        if !self.source.valid_names { return DV_E_FORMATETC; }
+        if self.source.cancelled() { return windows::Win32::Foundation::E_ABORT; }
         let Some(format) = (unsafe { format.as_ref() }) else {
             return E_INVALIDARG;
         };
+        if self.source.cancelled.is_some() {
+            let supported = format.dwAspect == DVASPECT_CONTENT
+                && ((format.cfFormat == descriptor_format() && format.lindex == -1 && format.tymed & TYMED_HGLOBAL != 0)
+                    || (format.cfFormat == contents_format() && format.tymed & TYMED_ISTREAM != 0
+                        && usize::try_from(format.lindex).is_ok_and(|i| i < self.source.files.len())));
+            return if supported { S_OK } else { DV_E_FORMATETC };
+        }
         if format.cfFormat == descriptor_format() || format.cfFormat == contents_format() {
             S_OK
         } else {
@@ -385,6 +423,9 @@ impl FileStream {
 
 impl ISequentialStream_Impl for FileStream_Impl {
     fn Read(&self, buffer: *mut core::ffi::c_void, len: u32, read: *mut u32) -> HRESULT {
+        if !read.is_null() { unsafe { *read = 0; } }
+        if self.source.cancelled() { return windows::Win32::Foundation::E_ABORT; }
+        if self.source.cancelled.is_some() && buffer.is_null() && len > 0 { return E_INVALIDARG; }
         let mut position = self
             .position
             .lock()
@@ -411,6 +452,10 @@ impl ISequentialStream_Impl for FileStream_Impl {
         // Blocks on *Explorer's* thread, never Adit's UI thread.
         match self.source.bridge.wait(stream_id) {
             Ok(bytes) => {
+                if self.source.cancelled() { return windows::Win32::Foundation::E_ABORT; }
+                if self.source.cancelled.is_some() && (bytes.is_empty() || bytes.len() > want as usize) {
+                    return E_UNEXPECTED;
+                }
                 let copied = bytes.len().min(len as usize);
                 // SAFETY: the caller guarantees `buffer` holds `len` bytes, and
                 // `copied` is clamped to it.
@@ -425,6 +470,7 @@ impl ISequentialStream_Impl for FileStream_Impl {
             }
             // A failed read must not look like end-of-file, or the shell writes a
             // truncated file and reports success.
+            Err(_) if self.source.cancelled() => windows::Win32::Foundation::E_ABORT,
             Err(ChunkError::TimedOut) => HRESULT_TIMEOUT,
             Err(_) => E_UNEXPECTED,
         }
@@ -438,6 +484,7 @@ impl ISequentialStream_Impl for FileStream_Impl {
 
 impl IStream_Impl for FileStream_Impl {
     fn Seek(&self, offset: i64, origin: STREAM_SEEK, new_position: *mut u64) -> WinResult<()> {
+        if self.source.cancelled() { return Err(windows::Win32::Foundation::E_ABORT.into()); }
         let mut position = self
             .position
             .lock()
@@ -461,6 +508,7 @@ impl IStream_Impl for FileStream_Impl {
     }
 
     fn Stat(&self, out: *mut STATSTG, _flag: &STATFLAG) -> WinResult<()> {
+        if self.source.cancelled() { return Err(windows::Win32::Foundation::E_ABORT.into()); }
         // The shell asks for this to size its progress dialog. The size is the
         // only field it needs; pwcsName stays null (STATFLAG_NONAME).
         let Some(out) = (unsafe { out.as_mut() }) else {
@@ -475,6 +523,7 @@ impl IStream_Impl for FileStream_Impl {
     }
 
     fn Clone(&self) -> WinResult<IStream> {
+        if self.source.cancelled() { return Err(windows::Win32::Foundation::E_ABORT.into()); }
         let at = *self
             .position
             .lock()

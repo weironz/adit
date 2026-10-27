@@ -497,6 +497,10 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
             app.rdp_clipboard,
             Some(Message::ToggleRdpClipboard(!app.rdp_clipboard)),
         ),
+        rdp_toolbar_button(
+            "↗", t("远端普通文件拖出（OLE，只复制）"), false,
+            (live && !app.manager.active_is_vnc() && app.rdp_clipboard).then_some(Message::OpenRdpFileDrag),
+        ),
         rdp_toolbar_separator(),
         // The label follows the state it toggles. It was hard-coded to 退出全屏
         // and so read as "leave fullscreen" while windowed — the button offered

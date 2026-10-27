@@ -219,6 +219,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     }
                 }
             }
+            let drag_events = app.manager.take_rdp_file_drag_events();
+            if let Some((session, notice)) = app.rdp_file_drag.update(
+                drag_events, app.rdp_clipboard, |id| app.manager.rdp_file_drag_live(id),
+            ) {
+                if app.manager.active_session() == Some(session) { app.notice = notice; }
             }
             // Chunks answering a local paste. Handed straight to the COM stream
             // blocked on them over on Explorer's thread.
@@ -2370,6 +2375,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ToggleFullscreen => {
+            app.rdp_file_drag.cancel();
             // The RDP fullscreen policy below disarms the hook for VNC. End
             // that grab's ownership first, including keys already forwarded;
             // otherwise the toolbar remains active while Windows owns the keys.
@@ -2651,6 +2657,23 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
 
             if let Some(bytes) = encode_keyboard_event(event) {
                 send_terminal_bytes(app, bytes);
+            }
+        }
+        Message::OpenRdpFileDrag => {
+            if app.rdp_clipboard && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
+                if let Some(session) = app.manager.active_session() {
+                    return window::latest().and_then(move |id| rdp_dragdrop::owner_task(id, session));
+                }
+            }
+            app.notice = String::from(t("文件拖出需要已连接的 RDP 会话及剪贴板文件通道"));
+        }
+        Message::RdpFileDragOwner { session, owner } => {
+            if app.manager.active_session() == Some(session) && app.rdp_clipboard
+                && app.manager.rdp_file_drag_live(session) {
+                let title = app.manager.active_session_summary().map(|s| s.title.clone()).unwrap_or_default();
+                let result = owner.ok_or("原窗口已失效，请重新打开文件拖出")
+                    .and_then(|owner| app.rdp_file_drag.open(session, owner, title));
+                if let Err(error) = result { app.notice = error.into(); }
             }
         }
         Message::WindowResized {
@@ -3403,6 +3426,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // otherwise the last thing copied stays queued for the next remote
             // that asks — the setting would read as off while still leaking.
             if !enabled {
+                app.rdp_file_drag.cancel();
                 app.rdp_clipboard_offered = None;
             }
             app.notice = if app.manager.active_is_vnc() {
