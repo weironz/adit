@@ -1634,7 +1634,7 @@ mod cost_merge_tests {
         let mut expected = vec![0u8; 128 * 96 * 4];
         let mut before = expected.clone();
         // Distinct old pixels make a wrongly zero-filled merged gap observable.
-        for (i, pixel) in expected.chunks_exact_mut(4).enumerate() {
+        for (i, pixel) in expected.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             pixel.copy_from_slice(&[(i % 251) as u8, (i % 97) as u8, 7, 255]);
         }
         before.copy_from_slice(&expected);
