@@ -33,6 +33,7 @@ name = "adit-domain"
 version = "0.1.77"
 dependencies = [
  "serde",
+ "serde_json",
  "uuid",
 ]
 

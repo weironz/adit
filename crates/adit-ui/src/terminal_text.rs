@@ -182,29 +182,6 @@ pub(super) fn word_bounds(line: &str, col: usize) -> Option<(usize, usize)> {
     Some((offsets[start], offsets[end]))
 }
 
-#[cfg(test)]
-mod compatibility_tests {
-    use super::*;
-
-    #[test]
-    fn column_selection_keeps_combining_and_wide_glyphs_whole() {
-        assert_eq!(slice_columns("e\u{301}\u{754c}x", 0, 1), "e\u{301}");
-        assert_eq!(slice_columns("e\u{301}\u{754c}x", 1, 3), "\u{754c}");
-        assert_eq!(slice_columns("e\u{301}\u{754c}x", 3, 4), "x");
-        assert_eq!(
-            slice_columns("\u{1f469}\u{200d}\u{1f4bb}!", 0, 2),
-            "\u{1f469}\u{200d}\u{1f4bb}"
-        );
-    }
-
-    #[test]
-    fn word_selection_returns_grid_columns() {
-        assert_eq!(word_bounds("e\u{301}clair ok", 1), Some((0, 6)));
-        assert_eq!(word_bounds("\u{754c} x", 1), Some((0, 2)));
-        assert_eq!(word_bounds("\u{754c} x", 2), Some((2, 3)));
-    }
-}
-
 pub(super) fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(usize, usize)> {
     let (start, end) = normalized_selection(selection)?;
     if row < start.row || row > end.row {
@@ -252,4 +229,27 @@ pub(super) fn selection_for_viewport(
         }
     };
     Some(TerminalSelection { start, end })
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn column_selection_keeps_combining_and_wide_glyphs_whole() {
+        assert_eq!(slice_columns("e\u{301}\u{754c}x", 0, 1), "e\u{301}");
+        assert_eq!(slice_columns("e\u{301}\u{754c}x", 1, 3), "\u{754c}");
+        assert_eq!(slice_columns("e\u{301}\u{754c}x", 3, 4), "x");
+        assert_eq!(
+            slice_columns("\u{1f469}\u{200d}\u{1f4bb}!", 0, 2),
+            "\u{1f469}\u{200d}\u{1f4bb}"
+        );
+    }
+
+    #[test]
+    fn word_selection_returns_grid_columns() {
+        assert_eq!(word_bounds("e\u{301}clair ok", 1), Some((0, 6)));
+        assert_eq!(word_bounds("\u{754c} x", 1), Some((0, 2)));
+        assert_eq!(word_bounds("\u{754c} x", 2), Some((2, 3)));
+    }
 }
