@@ -1,5 +1,10 @@
 use super::*;
 
+mod catalog;
+pub(crate) use catalog::{
+    begin_catalog_transfer, begin_putty_registry_import, finish_catalog_import, run_catalog_transfer,
+};
+
 pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
     match command {
         MenuCommand::NewProfile => new_profile_draft(app),
@@ -58,7 +63,12 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
             app.settings_open = true;
             app.settings_category = SettingsCategory::App;
         }
-        MenuCommand::ImportSshConfig => import_ssh_config(app),
+        // File pickers and disk IO return Tasks through update_loop.
+        MenuCommand::ImportSshConfig
+        | MenuCommand::ImportPutty
+        | MenuCommand::ImportCatalog
+        | MenuCommand::ExportCatalog
+        | MenuCommand::ImportPuttyRegistry => {}
         // Handled in the RunMenu message arm (opens an async folder picker).
         MenuCommand::ImportSecureCrt => {}
         MenuCommand::Snippets => app.snippets_open = true,
@@ -1177,8 +1187,6 @@ pub(crate) fn sort_profiles(app: &mut AditApp, key: ProfileSortKey) {
     }
 }
 
-/// Import hosts from `~/.ssh/config` into the profile list (group "Imported"),
-/// skipping any whose name already exists.
 /// Import SecureCRT sessions from a `.ini` session tree (folders → groups).
 /// Passwords are not imported (SecureCRT stores them encrypted).
 pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
@@ -1255,86 +1263,6 @@ pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
         };
     } else {
         app.notice = String::from(t("没有新的 SecureCRT 会话需要导入（可能都已存在）"));
-    }
-}
-
-pub(crate) fn import_ssh_config(app: &mut AditApp) {
-    let Some(path) = adit_storage::ssh_config_path() else {
-        app.last_error = Some(String::from(t("找不到用户主目录")));
-        return;
-    };
-    if !path.exists() {
-        app.last_error = Some(tf("未找到 {}", &[&path.display()]));
-        return;
-    }
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(error) => {
-            app.last_error = Some(tf("读取 ssh config 失败: {}", &[&error]));
-            return;
-        }
-    };
-
-    let hosts = adit_storage::parse_ssh_config(&text);
-    if hosts.is_empty() {
-        app.notice = String::from(t("~/.ssh/config 中没有可导入的主机"));
-        return;
-    }
-
-    let existing: BTreeSet<String> = app
-        .manager
-        .profiles()
-        .iter()
-        .map(|profile| profile.name.clone())
-        .collect();
-    let fallback_user = adit_storage::current_username().unwrap_or_default();
-    let group = "Imported";
-    let mut added = 0usize;
-    let mut skipped = 0usize;
-
-    for host in hosts {
-        if existing.contains(&host.alias) {
-            skipped += 1;
-            continue;
-        }
-        let username = if host.user.is_empty() {
-            fallback_user.clone()
-        } else {
-            host.user
-        };
-        let auth = if host.identity_file.is_empty() {
-            AuthMethod::Auto
-        } else {
-            AuthMethod::Key
-        };
-        if app
-            .manager
-            .create_profile(
-                group,
-                &host.alias,
-                &host.hostname,
-                host.port,
-                username,
-                auth,
-                host.identity_file,
-            )
-            .is_ok()
-        {
-            added += 1;
-        }
-    }
-
-    if added > 0 {
-        add_group(&mut app.groups, group);
-        persist_profiles(app);
-        app.last_error = None;
-        app.notice = if skipped > 0 {
-            tf("已从 ~/.ssh/config 导入 {} 个会话（跳过 {} 个已存在）", &[&added, &skipped])
-        } else {
-            tf("已从 ~/.ssh/config 导入 {} 个会话", &[&added])
-        };
-    } else {
-        app.notice = String::from(t("没有新的主机需要导入（可能都已存在）"));
     }
 }
 

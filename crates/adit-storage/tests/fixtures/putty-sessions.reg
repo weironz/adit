@@ -1,0 +1,35 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\Default%20Settings]
+"HostName"=""
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\prod%20web%25]
+"HostName"="web.example.test"
+"UserName"="deploy"
+"PortNumber"=dword:000008ae
+"Protocol"="ssh"
+"PublicKeyFile"="C:\\fixture\\keys\\id_ed25519"
+"RemoteCommand"="echo should-never-run"
+"Password"="fixture-secret-not-a-real-password"
+"ProxyPassword"="fixture-proxy-secret"
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\%E6%B5%8B%E8%AF%95]
+"HostName"="2001:db8::1"
+"UserName"="ops"
+"PortNumber"=dword:00000016
+"Protocol"="ssh"
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\proxied]
+"HostName"="private.example.test"
+"Protocol"="ssh"
+"ProxyMethod"=dword:00000005
+"ProxyTelnetCommand"="cmd.exe /c should-never-run"
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\telnet]
+"HostName"="old.example.test"
+"Protocol"="telnet"
+
+[HKEY_CURRENT_USER\Software\SimonTatham\PuTTY\Sessions\ppk]
+"HostName"="key.example.test"
+"Protocol"="ssh"
+"PublicKeyFile"="C:\\fixture\\putty.ppk"

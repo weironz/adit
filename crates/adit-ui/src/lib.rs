@@ -732,6 +732,10 @@ pub enum MenuCommand {
     Options,
     ImportSshConfig,
     ImportSecureCrt,
+    ImportPutty,
+    ImportPuttyRegistry,
+    ImportCatalog,
+    ExportCatalog,
     Snippets,
     ToggleBroadcast,
     ToggleCommandWindow,
@@ -838,6 +842,9 @@ pub enum Message {
     OpenLogFolder,
     ToggleBroadcast,
     RunMenu(MenuCommand),
+    CatalogFilePicked(MenuCommand, Option<std::path::PathBuf>),
+    CatalogImported(Result<adit_storage::ImportReport, String>),
+    CatalogExported(Result<(), String>),
     ProfilePressed(ProfileId),
     /// A press on a grid card: the same arming as ProfilePressed, remembered as
     /// grid-originated so the drop edits the grid's order.

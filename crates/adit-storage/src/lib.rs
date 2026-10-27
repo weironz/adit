@@ -1,6 +1,15 @@
+mod catalog_transfer;
 mod credentials;
+mod putty;
+mod ssh_config;
 
+pub use catalog_transfer::{
+    decode_import_text, export_catalog, import_catalog, read_import_file, ImportReport,
+    MAX_IMPORT_BYTES,
+};
 pub use credentials::{CredentialError, CredentialProtection, CredentialStore};
+pub use putty::{parse_putty_reg, read_putty_sessions};
+pub use ssh_config::{parse_ssh_config, parse_ssh_config_report, SshConfigHost};
 
 use adit_domain::{ConnectionProfile, ProfileId};
 use serde::{Deserialize, Serialize};
@@ -963,122 +972,6 @@ pub fn ssh_config_path() -> Option<PathBuf> {
     home_dir().map(|home| home.join(".ssh").join("config"))
 }
 
-/// A host entry parsed from `~/.ssh/config`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SshConfigHost {
-    /// The `Host` alias (a concrete, non-wildcard pattern).
-    pub alias: String,
-    /// `HostName`, or the alias when `HostName` is absent.
-    pub hostname: String,
-    /// `User` (empty ⇒ caller substitutes the current OS user).
-    pub user: String,
-    /// `Port` (defaults to 22).
-    pub port: u16,
-    /// `IdentityFile` with a leading `~` expanded (empty when absent).
-    pub identity_file: String,
-}
-
-/// Parse an OpenSSH client config into concrete host entries. Wildcard patterns
-/// (`*`, `?`, negations) and `Match` blocks are skipped; only literal `Host`
-/// aliases become entries.
-#[must_use]
-pub fn parse_ssh_config(text: &str) -> Vec<SshConfigHost> {
-    let mut hosts = Vec::new();
-    let mut patterns: Vec<String> = Vec::new();
-    let mut hostname = String::new();
-    let mut user = String::new();
-    let mut port: u16 = 22;
-    let mut identity = String::new();
-
-    fn flush(
-        patterns: &[String],
-        hostname: &str,
-        user: &str,
-        port: u16,
-        identity: &str,
-        out: &mut Vec<SshConfigHost>,
-    ) {
-        for alias in patterns {
-            let hostname = if hostname.is_empty() {
-                alias.clone()
-            } else {
-                hostname.to_string()
-            };
-            out.push(SshConfigHost {
-                alias: alias.clone(),
-                hostname,
-                user: user.to_string(),
-                port,
-                identity_file: identity.to_string(),
-            });
-        }
-    }
-
-    for raw in text.lines() {
-        let line = raw.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let (key, value) = split_ssh_kv(line);
-        match key.to_ascii_lowercase().as_str() {
-            "host" => {
-                flush(&patterns, &hostname, &user, port, &identity, &mut hosts);
-                patterns = value
-                    .split_whitespace()
-                    .filter(|p| !p.contains('*') && !p.contains('?') && !p.starts_with('!'))
-                    .map(str::to_string)
-                    .collect();
-                hostname = String::new();
-                user = String::new();
-                port = 22;
-                identity = String::new();
-            }
-            // A Match block ends the current Host's applicability.
-            "match" => {
-                flush(&patterns, &hostname, &user, port, &identity, &mut hosts);
-                patterns.clear();
-            }
-            _ if patterns.is_empty() => {}
-            "hostname" => hostname = unquote(value).to_string(),
-            "user" => user = unquote(value).to_string(),
-            "port" => port = unquote(value).parse().unwrap_or(22),
-            "identityfile" => identity = expand_tilde(unquote(value)),
-            _ => {}
-        }
-    }
-    flush(&patterns, &hostname, &user, port, &identity, &mut hosts);
-    hosts
-}
-
-/// Split an ssh_config line into its keyword and value (`Key value` or `Key=value`).
-fn split_ssh_kv(line: &str) -> (&str, &str) {
-    let end = line
-        .find(|c: char| c.is_whitespace() || c == '=')
-        .unwrap_or(line.len());
-    let key = &line[..end];
-    let value = line[end..]
-        .trim_start_matches(|c: char| c.is_whitespace() || c == '=')
-        .trim();
-    (key, value)
-}
-
-fn unquote(value: &str) -> &str {
-    value
-        .strip_prefix('"')
-        .and_then(|inner| inner.strip_suffix('"'))
-        .unwrap_or(value)
-}
-
-fn expand_tilde(path: &str) -> String {
-    let path = path.trim();
-    if let Some(rest) = path.strip_prefix("~/").or_else(|| path.strip_prefix("~\\")) {
-        if let Some(home) = home_dir() {
-            return home.join(rest).display().to_string();
-        }
-    }
-    path.to_string()
-}
-
 /// A session parsed from a SecureCRT `.ini` session file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecureCrtSession {
@@ -1292,7 +1185,7 @@ mod tests {
         let text = "\
 # comment
 Host *
-  User ignored
+  User global
 
 Host web1 web2
   HostName 10.0.0.5
@@ -1303,12 +1196,12 @@ Host db
   User root
 ";
         let hosts = parse_ssh_config(text);
-        // Wildcard Host * is skipped; web1/web2 share the block options; db uses
-        // its alias as the hostname (no HostName) and default port 22.
+        // Wildcards supply defaults, not new profiles; OpenSSH uses the first
+        // obtained value, so the earlier global User wins over each host.
         assert_eq!(hosts.len(), 3);
         assert_eq!(hosts[0].alias, "web1");
         assert_eq!(hosts[0].hostname, "10.0.0.5");
-        assert_eq!(hosts[0].user, "deploy");
+        assert_eq!(hosts[0].user, "global");
         assert_eq!(hosts[0].port, 2222);
         assert_eq!(hosts[1].alias, "web2");
         assert_eq!(hosts[1].hostname, "10.0.0.5");

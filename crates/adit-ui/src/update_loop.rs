@@ -712,6 +712,20 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             };
         }
         Message::RunMenu(command) => {
+            if command == MenuCommand::ImportPuttyRegistry {
+                app.active_menu = None;
+                return begin_putty_registry_import();
+            }
+            if matches!(
+                command,
+                MenuCommand::ImportSshConfig
+                    | MenuCommand::ImportPutty
+                    | MenuCommand::ImportCatalog
+                    | MenuCommand::ExportCatalog
+            ) {
+                app.active_menu = None;
+                return begin_catalog_transfer(command);
+            }
             // Intercepted rather than handled in `run_menu_command`: changing
             // the window mode is a `Task`, which that function has no way to
             // return. Routed to the same message the keyboard shortcut uses so
@@ -753,6 +767,19 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 import_securecrt(app, &path);
             }
         }
+        Message::CatalogFilePicked(command, path) => {
+            if let Some(path) = path {
+                return run_catalog_transfer(app, command, path);
+            }
+        }
+        Message::CatalogImported(result) => finish_catalog_import(app, result),
+        Message::CatalogExported(result) => match result {
+            Ok(()) => {
+                app.last_error = None;
+                app.notice = "会话目录已导出；不含密码、口令、密钥内容或启动命令".into();
+            }
+            Err(error) => app.last_error = Some(format!("导出失败：{error}")),
+        },
         Message::HostsCursorMoved(point) => {
             app.hosts_cursor = Some(point);
         }
