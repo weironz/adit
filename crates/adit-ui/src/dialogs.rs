@@ -170,6 +170,14 @@ pub(crate) fn host_key_dialog_overlay(
                         session_id,
                         decision: adit_session::HostKeyDecision::Reject,
                     }),
+                button(text(t("拒绝并记住")))
+                    .width(Fill)
+                    .padding([6, 10])
+                    .style(|_theme, status| secondary_button_style(status))
+                    .on_press(Message::RespondHostKey {
+                        session_id,
+                        decision: adit_session::HostKeyDecision::RejectAndRecord,
+                    }),
                 // Between refusing and vouching. Styled as a secondary action
                 // and placed in the middle so it reads as the cautious middle
                 // ground it is — and deliberately not the default, because a
@@ -1034,7 +1042,7 @@ pub(crate) fn options_path_row<'a>(
 /// `host → key type · SHA256 fingerprint` and forget individual entries.
 pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
     let header = row![
-        text(t("受信主机密钥")).size(15).color(primary_text()),
+        text(t("主机密钥")).size(15).color(primary_text()),
         Space::new().width(Fill),
         button("×")
             .width(Length::Fixed(26.0))
@@ -1046,9 +1054,11 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
     .align_y(Alignment::Center);
 
     let mut list = column![].spacing(4).width(Fill);
-    if app.known_hosts.is_empty() {
+    if app.known_hosts_busy {
+        list = list.push(text(t("正在更新主机密钥记录…")).size(12).color(muted_text()));
+    } else if app.known_hosts.is_empty() {
         list = list.push(
-            text(t("尚无受信主机密钥（首次连接会自动信任并记录）"))
+            text(t("尚无主机密钥记录。首次连接时按当前信任策略核对指纹。"))
                 .size(12)
                 .color(muted_text()),
         );
@@ -1061,7 +1071,12 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
                     row![
                         column![
                             text(entry.host.clone()).size(12).color(primary_text()),
-                            text(format!("{} · {}", entry.key_type, entry.fingerprint))
+                            text(format!("{} · {} · {}", match entry.marker.as_deref() {
+                                Some("@revoked") => t("已拒绝"),
+                                Some("@cert-authority") => t("证书颁发机构"),
+                                Some(_) => t("特殊标记"),
+                                None => t("受信"),
+                            }, entry.key_type, entry.fingerprint))
                                 .size(10)
                                 .font(Font::MONOSPACE)
                                 .color(muted_text()),
@@ -1071,7 +1086,8 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
                         button(text(t("删除")).size(11))
                             .padding([3, 10])
                             .style(|_theme, status| close_button_style(status))
-                            .on_press(Message::RemoveKnownHost(host, fingerprint)),
+                            .on_press_maybe((!app.known_hosts_busy)
+                                .then_some(Message::RemoveKnownHost(host, fingerprint))),
                     ]
                     .spacing(8)
                     .align_y(Alignment::Center),
@@ -1088,7 +1104,7 @@ pub(crate) fn known_hosts_overlay(app: &AditApp) -> Element<'_, Message> {
             .size(10)
             .font(Font::MONOSPACE)
             .color(muted_text()),
-        text(t("删除某台主机后，下次连接会重新记录其密钥；密钥被更改（可能的中间人）时仍会拦截。"))
+        text(t("删除记录会移除对应的信任或拒绝决定；下次连接时将重新校验密钥。"))
             .size(11)
             .color(muted_text()),
         scrollable(list).height(Length::Fixed(360.0)),

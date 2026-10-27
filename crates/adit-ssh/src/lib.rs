@@ -166,6 +166,8 @@ pub enum LiveShellEvent {
     Status(String),
     Output(Vec<u8>),
     Error(String),
+    /// Server identity or local trust-store failure; never retry as a network drop.
+    SecurityRejected(String),
     /// Authentication failed in a way the user can fix by supplying credentials
     /// (rejected password/key, a missing password, or no method available). Kept
     /// separate from [`LiveShellEvent::Error`] so the UI can re-prompt for the
@@ -297,6 +299,8 @@ pub struct AuthPromptField {
 pub enum HostKeyDecision {
     /// Abort the connection.
     Reject,
+    /// Reject and persist a revocation. Cancellation keeps using Reject.
+    RejectAndRecord,
     /// Connect, and leave `known_hosts` exactly as it was. The next connection
     /// asks again — which is the point: nothing has been vouched for.
     TrustOnce,
@@ -364,6 +368,8 @@ pub enum SshError {
     },
     #[error("host key was rejected by the user")]
     HostKeyRejected,
+    #[error("host key for {host} was previously rejected: {fingerprint}; remove its revoked entry before trusting it")]
+    HostKeyRevoked { host: String, fingerprint: String },
     #[error("known hosts storage failed: {0}")]
     KnownHosts(String),
     #[error("sftp error: {0}")]
@@ -425,8 +431,9 @@ pub fn spawn_password_shell(request: LiveShellRequest) -> Result<LiveShellHandle
 }
 
 /// Classify a failed handshake: credential problems the user can fix by typing a
-/// password become [`LiveShellEvent::AuthRejected`] (the UI re-prompts); everything
-/// else is a plain error. A *cancelled* auth is deliberately not included — the
+/// password become [`LiveShellEvent::AuthRejected`] (the UI re-prompts). Trust
+/// failures are terminal security errors; they cannot be repaired by retrying.
+/// A *cancelled* auth is deliberately not included — the
 /// user just dismissed the prompt, so re-opening it would trap them in a loop.
 fn live_shell_failure(error: &SshError) -> LiveShellEvent {
     match error {
@@ -435,6 +442,10 @@ fn live_shell_failure(error: &SshError) -> LiveShellEvent {
         | SshError::NoAuthenticationMethod
         | SshError::KeyPassphraseRequired(_)
         | SshError::KeyPassphraseWrong(_) => LiveShellEvent::AuthRejected(error.to_string()),
+        SshError::HostKeyRejected
+        | SshError::HostKeyRevoked { .. }
+        | SshError::HostKeyChanged { .. }
+        | SshError::KnownHosts(_) => LiveShellEvent::SecurityRejected(error.to_string()),
         _ => LiveShellEvent::Error(error.to_string()),
     }
 }
@@ -3883,6 +3894,14 @@ impl client::Handler for KnownHostsClient {
                         Ok(true)
                     }
                     HostKeyDecision::Reject => Err(SshError::HostKeyRejected),
+                    HostKeyDecision::RejectAndRecord => {
+                        append_known_host(
+                            &self.known_hosts_path,
+                            &format!("@revoked {host_spec}"),
+                            server_public_key,
+                        )?;
+                        Err(SshError::HostKeyRejected)
+                    }
                 }
             }
             HostKeyStatus::Changed {
@@ -3923,6 +3942,14 @@ impl client::Handler for KnownHostsClient {
                         Ok(true)
                     }
                     HostKeyDecision::Reject => Err(SshError::HostKeyRejected),
+                    HostKeyDecision::RejectAndRecord => {
+                        append_known_host(
+                            &self.known_hosts_path,
+                            &format!("@revoked {host_spec}"),
+                            server_public_key,
+                        )?;
+                        Err(SshError::HostKeyRejected)
+                    }
                 }
             }
         }
@@ -3950,6 +3977,7 @@ fn host_key_status(
     known_hosts_path: &Path,
     server_public_key: &russh::keys::ssh_key::PublicKey,
 ) -> Result<HostKeyStatus, SshError> {
+    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
     let host_spec = known_host_spec(host, port);
     let actual = host_key_fingerprint(server_public_key);
 
@@ -3960,6 +3988,8 @@ fn host_key_status(
     };
 
     let mut previous = Vec::new();
+    let mut trusted = false;
+    let mut unsupported_marker = false;
     for line in content.lines() {
         let Some((hosts, public_key)) = parse_known_host_line(line) else {
             continue;
@@ -3968,12 +3998,32 @@ fn host_key_status(
             continue;
         }
         let fingerprint = host_key_fingerprint(&public_key);
-        if fingerprint == actual {
-            return Ok(HostKeyStatus::Trusted { fingerprint: actual });
+        let marker = line.split_whitespace().next().filter(|token| token.starts_with('@'));
+        if marker == Some("@revoked") {
+            if fingerprint == actual {
+                return Err(SshError::HostKeyRevoked { host: host_spec, fingerprint: actual });
+            }
+            continue;
         }
-        previous.push(fingerprint);
+        if marker.is_some() {
+            unsupported_marker = true;
+            continue;
+        }
+        if fingerprint == actual {
+            trusted = true;
+        } else {
+            previous.push(fingerprint);
+        }
     }
 
+    if trusted {
+        return Ok(HostKeyStatus::Trusted { fingerprint: actual });
+    }
+    if unsupported_marker {
+        return Err(SshError::KnownHosts(
+            "matching known_hosts marker requires unsupported certificate/marker verification".into(),
+        ));
+    }
     if previous.is_empty() {
         Ok(HostKeyStatus::Unknown { fingerprint: actual })
     } else {
@@ -3989,6 +4039,7 @@ fn append_known_host(
     host_spec: &str,
     public_key: &russh::keys::ssh_key::PublicKey,
 ) -> Result<(), SshError> {
+    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
     if let Some(parent) = known_hosts_path.parent() {
         fs::create_dir_all(parent).map_err(|error| SshError::KnownHosts(error.to_string()))?;
     }
@@ -4014,6 +4065,7 @@ fn replace_known_host(
     host_spec: &str,
     public_key: &russh::keys::ssh_key::PublicKey,
 ) -> Result<(), SshError> {
+    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
     let content = match fs::read_to_string(known_hosts_path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -4022,7 +4074,7 @@ fn replace_known_host(
 
     let mut kept = String::new();
     for line in content.lines() {
-        let drop_line = parse_known_host_line(line)
+        let drop_line = !line.trim_start().starts_with('@') && parse_known_host_line(line)
             .is_some_and(|(hosts, _)| known_host_matches(&hosts, host_spec));
         if !drop_line {
             kept.push_str(line);
@@ -4040,6 +4092,8 @@ fn replace_known_host(
     }
     fs::write(known_hosts_path, kept).map_err(|error| SshError::KnownHosts(error.to_string()))
 }
+
+static KNOWN_HOSTS_IO: Mutex<()> = Mutex::new(());
 
 fn parse_known_host_line(line: &str) -> Option<(String, russh::keys::ssh_key::PublicKey)> {
     let line = line.trim();
@@ -4166,6 +4220,8 @@ pub struct KnownHostEntry {
     pub key_type: String,
     /// The OpenSSH `SHA256:…` fingerprint.
     pub fingerprint: String,
+    /// OpenSSH marker, including revocations; these are not ordinary trust pins.
+    pub marker: Option<String>,
 }
 
 /// List the trusted host keys in a `known_hosts` file (one row per host). A
@@ -4173,6 +4229,7 @@ pub struct KnownHostEntry {
 /// (`@revoked`/`@cert-authority`), comment lines, and `[host]:port` specs.
 #[must_use]
 pub fn list_known_hosts(path: &Path) -> Vec<KnownHostEntry> {
+    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -4207,6 +4264,7 @@ pub fn list_known_hosts(path: &Path) -> Vec<KnownHostEntry> {
                 host: host.to_string(),
                 key_type: key_type.to_string(),
                 fingerprint: fingerprint.clone(),
+                marker: first.starts_with('@').then(|| first.to_string()),
             });
         }
     }
@@ -4216,6 +4274,7 @@ pub fn list_known_hosts(path: &Path) -> Vec<KnownHostEntry> {
 /// Remove the trusted key matching `host` + `fingerprint` from a `known_hosts`
 /// file (the "forget this host" action — the host reverts to first-connect).
 pub fn remove_known_host(path: &Path, host: &str, fingerprint: &str) -> Result<(), SshError> {
+    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -4223,9 +4282,25 @@ pub fn remove_known_host(path: &Path, host: &str, fingerprint: &str) -> Result<(
     };
     let mut kept = String::new();
     for line in content.lines() {
-        let drop_line = parse_known_host_line(line).is_some_and(|(hosts, key)| {
-            known_host_matches(&hosts, host) && host_key_fingerprint(&key) == fingerprint
-        });
+        let mut drop_line = false;
+        if let Some((hosts, key)) = parse_known_host_line(line) {
+            if host_key_fingerprint(&key) == fingerprint {
+                if hosts.split(',').any(|item| item == host) {
+                    let remaining: Vec<_> = hosts.split(',').filter(|item| *item != host).collect();
+                    if !remaining.is_empty() {
+                        let mut tokens: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
+                        let host_index = usize::from(tokens[0].starts_with('@'));
+                        tokens[host_index] = remaining.join(",");
+                        kept.push_str(&tokens.join(" "));
+                        kept.push('\n');
+                        continue;
+                    }
+                    drop_line = true;
+                } else {
+                    drop_line = known_host_matches(&hosts, host);
+                }
+            }
+        }
         if !drop_line {
             kept.push_str(line);
             kept.push('\n');
@@ -5146,6 +5221,107 @@ mod tests {
         assert!(matches!(error, SshError::HostKeyRejected));
         assert!(!path.exists(), "rejected key must not be recorded");
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn explicit_rejection_is_remembered_and_auto_accept_cannot_bypass_it() {
+        let path = temp_known_hosts_path("remember-reject");
+        let key = public_key(ED25519_KEY);
+        let (events_tx, _events_rx) = mpsc::channel();
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "blocked.example.test".into(), 2222, path.clone(),
+            Some(events_tx), Some(decision_rx),
+        );
+        decision_tx.send(HostKeyDecision::RejectAndRecord).unwrap();
+        let error = current_thread_rt().block_on(handler.check_server_key(&key)).unwrap_err();
+        assert!(matches!(error, SshError::HostKeyRejected));
+        let entries = list_known_hosts(&path);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].marker.as_deref(), Some("@revoked"));
+        assert_eq!(entries[0].host, "[blocked.example.test]:2222");
+        let mut retry = KnownHostsClient::new(
+            "blocked.example.test".into(), 2222, path.clone(), None, None,
+        );
+        retry.auto_accept = true;
+        let error = current_thread_rt().block_on(retry.check_server_key(&key)).unwrap_err();
+        assert!(matches!(error, SshError::HostKeyRevoked { .. }));
+        assert!(matches!(host_key_status("blocked.example.test", 22, &path, &key).unwrap(),
+            HostKeyStatus::Unknown { .. }));
+        remove_known_host(&path, &entries[0].host, &entries[0].fingerprint).unwrap();
+        assert!(matches!(host_key_status("blocked.example.test", 2222, &path, &key).unwrap(),
+            HostKeyStatus::Unknown { .. }));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn host_key_rejections_are_terminal_security_failures_not_password_prompts() {
+        for error in [
+            SshError::HostKeyRejected,
+            SshError::HostKeyRevoked { host: "fixture.test".into(), fingerprint: "fixture".into() },
+            SshError::KnownHosts("fixture storage failure".into()),
+        ] {
+            assert!(matches!(live_shell_failure(&error), LiveShellEvent::SecurityRejected(_)));
+        }
+    }
+
+    #[test]
+    fn revocation_wins_over_a_trusted_duplicate_and_survives_pin_replacement() {
+        let path = temp_known_hosts_path("revocation-priority");
+        let key = public_key(ED25519_KEY);
+        let changed = public_key(ECDSA_KEY);
+        append_known_host(&path, "node.example.test", &key).unwrap();
+        append_known_host(&path, "@revoked node.example.test", &key).unwrap();
+        assert!(matches!(host_key_status("node.example.test", 22, &path, &key),
+            Err(SshError::HostKeyRevoked { .. })));
+        replace_known_host(&path, "node.example.test", &changed).unwrap();
+        assert!(matches!(host_key_status("node.example.test", 22, &path, &key),
+            Err(SshError::HostKeyRevoked { .. })));
+        assert!(matches!(host_key_status("node.example.test", 22, &path, &changed).unwrap(),
+            HostKeyStatus::Trusted { .. }));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn dropping_a_host_key_prompt_is_not_a_persistent_rejection() {
+        let path = temp_known_hosts_path("cancel-prompt");
+        let key = public_key(ED25519_KEY);
+        let (events_tx, _events_rx) = mpsc::channel();
+        let (decision_tx, decision_rx) = oneshot::channel();
+        let mut handler = KnownHostsClient::new(
+            "cancel.example.test".into(), 22, path.clone(), Some(events_tx), Some(decision_rx),
+        );
+        drop(decision_tx);
+        assert!(matches!(current_thread_rt().block_on(handler.check_server_key(&key)),
+            Err(SshError::HostKeyRejected)));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn removing_one_marked_host_keeps_other_hosts_on_the_same_line() {
+        let path = temp_known_hosts_path("remove-marked-row");
+        let key = public_key(ED25519_KEY);
+        append_known_host(&path, "@revoked first.example.test,second.example.test", &key).unwrap();
+        let fingerprint = host_key_fingerprint(&key);
+        remove_known_host(&path, "first.example.test", &fingerprint).unwrap();
+        assert!(matches!(host_key_status("first.example.test", 22, &path, &key).unwrap(),
+            HostKeyStatus::Unknown { .. }));
+        assert!(matches!(host_key_status("second.example.test", 22, &path, &key),
+            Err(SshError::HostKeyRevoked { .. })));
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn certificate_authority_marker_is_not_an_ordinary_trusted_host_key() {
+        let path = temp_known_hosts_path("certificate-authority");
+        let key = public_key(ED25519_KEY);
+        append_known_host(&path, "@cert-authority node.example.test", &key).unwrap();
+        assert!(matches!(host_key_status("node.example.test", 22, &path, &key),
+            Err(SshError::KnownHosts(_))));
+        append_known_host(&path, "node.example.test", &key).unwrap();
+        assert!(matches!(host_key_status("node.example.test", 22, &path, &key).unwrap(),
+            HostKeyStatus::Trusted { .. }));
         let _ = fs::remove_file(path);
     }
 

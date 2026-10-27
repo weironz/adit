@@ -3203,6 +3203,7 @@ impl SessionManager {
             HostKeyDecision::TrustAndRecord => "host key trusted and recorded",
             HostKeyDecision::TrustOnce => "host key trusted for this session only",
             HostKeyDecision::Reject => "host key rejected",
+            HostKeyDecision::RejectAndRecord => "host key rejection recording requested",
         });
         Ok(())
     }
@@ -3414,6 +3415,17 @@ impl SessionManager {
                         // An auth prompt can't be answered on a dead connection.
                         record.pending_auth_prompt = None;
                     }
+                    LiveShellEvent::SecurityRejected(error) => {
+                        record.terminal.append_status(format!("host identity rejected: {error}"));
+                        record.summary.status = SessionStatus::Error;
+                        record.pending_host_key = None;
+                        record.pending_auth_prompt = None;
+                        record.auth_rejected = None;
+                        if let Some(reconnect) = &mut record.reconnect {
+                            reconnect.manual = true;
+                            reconnect.retry_at = None;
+                        }
+                    }
                     LiveShellEvent::AuthRejected(error) => {
                         record.terminal.append_status(format!(
                             "authentication failed for {}: {error}",
@@ -3425,6 +3437,7 @@ impl SessionManager {
                         // password would only be re-rejected, so don't auto-retry.
                         record.auth_rejected = Some(error);
                         if let Some(reconnect) = &mut record.reconnect {
+                            reconnect.manual = true;
                             reconnect.retry_at = None;
                         }
                     }

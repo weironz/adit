@@ -643,14 +643,34 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.known_hosts_open = false;
         }
         Message::RemoveKnownHost(host, fingerprint) => {
-            match remove_known_host(&known_hosts_path(), &host, &fingerprint) {
-                Ok(()) => {
-                    app.known_hosts = list_known_hosts(&known_hosts_path());
-                    app.notice = tf("已删除受信主机密钥: {}", &[&host]);
+            if app.known_hosts_busy { return Task::none(); }
+            app.known_hosts_busy = true;
+            let completed_host = host.clone();
+            return Task::perform(async move {
+                tokio::task::spawn_blocking(move || {
+                    let path = known_hosts_path();
+                    remove_known_host(&path, &host, &fingerprint).map_err(|error| error.to_string())?;
+                    Ok(list_known_hosts(&path))
+                }).await.map_err(|error| error.to_string())?
+            }, move |result| Message::KnownHostRemoved(completed_host.clone(), result));
+        }
+        Message::KnownHostRemoved(host, result) => {
+            app.known_hosts_busy = false;
+            match result {
+                Ok(entries) => {
+                    app.known_hosts = entries;
+                    app.notice = tf("已删除主机密钥记录: {}", &[&host]);
                 }
                 Err(error) => {
                     app.last_error = Some(tf("删除主机密钥失败: {}", &[&error]));
                 }
+            }
+        }
+        Message::KnownHostsLoaded(result) => {
+            app.known_hosts_busy = false;
+            match result {
+                Ok(entries) => app.known_hosts = entries,
+                Err(error) => app.last_error = Some(error),
             }
         }
         Message::PickConfigDir => {
@@ -774,6 +794,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::perform(dialog.pick_folder(), |handle| {
                     Message::SecureCrtFolderPicked(handle.map(|h| h.path().to_path_buf()))
                 });
+            }
+            if command == MenuCommand::KnownHosts {
+                app.known_hosts_open = true;
+                app.active_menu = None;
+                if app.known_hosts_busy { return Task::none(); }
+                app.known_hosts_busy = true;
+                return Task::perform(async {
+                    tokio::task::spawn_blocking(|| list_known_hosts(&known_hosts_path()))
+                        .await.map_err(|error| error.to_string())
+                }, Message::KnownHostsLoaded);
             }
             run_menu_command(app, command);
             app.active_menu = None;
@@ -1399,6 +1429,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     // asks again.
                     adit_session::HostKeyDecision::TrustOnce => t("仅本次信任，未写入 known_hosts"),
                     adit_session::HostKeyDecision::Reject => t("已拒绝主机密钥"),
+                    adit_session::HostKeyDecision::RejectAndRecord => t("已请求拒绝并记录主机密钥"),
                 });
             }
         }

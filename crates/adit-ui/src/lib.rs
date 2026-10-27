@@ -531,6 +531,7 @@ pub struct AditApp {
     update_state: UpdateState,
     /// The trusted-host-keys (known_hosts) management dialog + its loaded list.
     known_hosts_open: bool,
+    known_hosts_busy: bool,
     known_hosts: Vec<KnownHostEntry>,
     /// Live copy of the persisted sync configuration, edited by the panel.
     sync: adit_storage::SyncSettings,
@@ -825,6 +826,8 @@ pub enum Message {
     // Trusted-host-keys (known_hosts) management.
     CloseKnownHosts,
     RemoveKnownHost(String, String),
+    KnownHostsLoaded(Result<Vec<KnownHostEntry>, String>),
+    KnownHostRemoved(String, Result<Vec<KnownHostEntry>, String>),
     // Relocate the configuration folder (e.g. onto a synced drive like Dropbox).
     PickConfigDir,
     ConfigDirPicked(Option<std::path::PathBuf>),
@@ -1729,6 +1732,7 @@ impl AditApp {
             update_dialog_open: false,
             update_state: UpdateState::Idle,
             known_hosts_open: false,
+            known_hosts_busy: false,
             known_hosts: Vec::new(),
             sync: settings.sync.clone(),
             sync_secret_saved: false,
