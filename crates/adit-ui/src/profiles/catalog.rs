@@ -108,7 +108,7 @@ pub(crate) fn finish_catalog_import(
     app: &mut AditApp,
     result: Result<adit_storage::ImportReport, String>,
 ) {
-    let report = match result {
+    let mut report = match result {
         Ok(report) => report,
         Err(error) => {
             app.last_error = Some(tf("导入失败：{}", &[&runtime(&error)]));
@@ -120,7 +120,8 @@ pub(crate) fn finish_catalog_import(
         app.group_icons.clone(),
         app.manager.profiles().to_vec(),
     );
-    let (catalog, added, skipped) = merge_catalog(existing, report.catalog);
+    let (catalog, added, skipped, merge_warnings) = merge_catalog(existing, report.catalog);
+    report.warnings.extend(merge_warnings);
     let changed =
         added > 0 || app.groups != catalog.groups || app.group_icons != catalog.group_icons;
     app.groups = catalog.groups;
@@ -147,7 +148,8 @@ pub(crate) fn finish_catalog_import(
 fn merge_catalog(
     mut existing: ProfileCatalog,
     incoming: ProfileCatalog,
-) -> (ProfileCatalog, usize, usize) {
+) -> (ProfileCatalog, usize, usize, Vec<String>) {
+    let existing_ids: std::collections::HashSet<_> = existing.profiles.iter().map(|p| p.id).collect();
     let mut names: HashMap<(String, String), ProfileId> = existing
         .profiles
         .iter()
@@ -156,6 +158,7 @@ fn merge_catalog(
     let mut remap = HashMap::new();
     let mut added = Vec::new();
     let mut skipped = 0;
+    let mut warnings = Vec::new();
     for profile in incoming.profiles {
         let key = (profile.group.clone(), profile.name.clone());
         if let Some(id) = names.get(&key) {
@@ -167,6 +170,18 @@ fn merge_catalog(
         }
     }
     for profile in &mut added {
+        for hop in &mut profile.jumps {
+            if let Some(replacement) = hop.auth_profile.and_then(|id| remap.get(&id)) {
+                // A matching name must never authorize sending this machine's
+                // stored credentials to a host chosen by an imported catalog.
+                if existing_ids.contains(replacement) {
+                    hop.auth_profile = None;
+                    warnings.push(tf("{}：同名认证配置已跳过，跳板恢复独立认证；请检查后重新选择凭据", &[&profile.name]));
+                } else {
+                    hop.auth_profile = Some(*replacement);
+                }
+            }
+        }
         if let Some(id) = profile.vnc.gateway_profile.as_mut() {
             if let Some(replacement) = remap.get(id) {
                 *id = *replacement;
@@ -187,12 +202,31 @@ fn merge_catalog(
         ProfileCatalog::with_group_icons(existing.groups, existing.group_icons, existing.profiles),
         count,
         skipped,
+        warnings,
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn imported_jump_owner_name_collision_never_inherits_existing_vault_credentials() {
+        let owner = ConnectionProfile::new("credential owner", "trusted.invalid", 22, "ops");
+        let imported_owner = ConnectionProfile::new("credential owner", "imported.invalid", 22, "ops");
+        let mut target = ConnectionProfile::new("new target", "target.invalid", 22, "ops");
+        let mut hop = JumpHop::parse("imported-bastion.invalid").unwrap();
+        hop.auth_profile = Some(imported_owner.id);
+        target.jumps.push(hop);
+        let (catalog, added, skipped, warnings) = merge_catalog(
+            ProfileCatalog::from_profiles(vec![owner.clone()]),
+            ProfileCatalog::from_profiles(vec![imported_owner, target]),
+        );
+        assert_eq!((added, skipped), (1, 1));
+        assert_eq!(catalog.profiles[0].id, owner.id);
+        assert_eq!(catalog.profiles[1].jumps[0].auth_profile, None);
+        assert_eq!(warnings.len(), 1);
+    }
 
     #[test]
     fn import_merges_without_replacing_existing_profiles_or_group_icons() {
@@ -209,7 +243,8 @@ mod tests {
             ],
         );
         incoming.group_icons.insert("prod".into(), "cloud".into());
-        let (merged, added, skipped) = merge_catalog(existing, incoming);
+        let (merged, added, skipped, warnings) = merge_catalog(existing, incoming);
+        assert!(warnings.is_empty());
         assert_eq!((added, skipped), (1, 2));
         assert_eq!(merged.profiles[0].id, id);
         assert_eq!(merged.profiles[0].host, "old.example");
@@ -244,10 +279,11 @@ mod tests {
             ConnectionProfile::with_group("prod", "desktop", "desktop.test", 5900, "");
         desktop.protocol = Protocol::Vnc;
         desktop.vnc.gateway_profile = Some(imported_gateway.id);
-        let (merged, added, skipped) = merge_catalog(
+        let (merged, added, skipped, warnings) = merge_catalog(
             ProfileCatalog::from_profiles(vec![gateway]),
             ProfileCatalog::from_profiles(vec![imported_gateway, desktop]),
         );
+        assert!(warnings.is_empty());
         assert_eq!((added, skipped), (1, 1));
         assert_eq!(merged.profiles[1].vnc.gateway_profile, Some(existing_id));
     }

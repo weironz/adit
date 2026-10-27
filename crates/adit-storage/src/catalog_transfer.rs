@@ -97,7 +97,7 @@ const VNC_FIELDS: &[&str] = &[
     "resize_remote",
     "gateway_profile",
 ];
-const JUMP_FIELDS: &[&str] = &["host", "port", "username"];
+const JUMP_FIELDS: &[&str] = &["host", "port", "username", "auth_profile"];
 const SESSION_OPTION_FIELDS: &[&str] = &[
     "environment", "encoding", "rdp_quality", "rdp_monitors", "rdp_selected_monitor",
     "reconnect", "logging", "triggers", "terminal_appearance",
@@ -181,6 +181,7 @@ fn check_profile_fields(value: &serde_json::Value) -> Result<(), String> {
 }
 
 pub fn export_catalog(catalog: &ProfileCatalog) -> Result<String, String> {
+    validate_jump_owners(&catalog.profiles)?;
     let mut profiles = Vec::new();
     for profile in &catalog.profiles {
         let mut value = serde_json::to_value(profile).map_err(|e| e.to_string())?;
@@ -263,10 +264,16 @@ pub fn import_catalog(text: &str) -> Result<ImportReport, String> {
         profile.session_options.validate()?;
     }
     for profile in &mut document.profiles {
+        for hop in &mut profile.jumps {
+            if let Some(old) = hop.auth_profile {
+                hop.auth_profile = Some(*ids.get(&old).ok_or("跳板认证配置未包含在导入目录中")?);
+            }
+        }
         if let Some(old) = profile.vnc.gateway_profile {
             profile.vnc.gateway_profile = Some(*ids.get(&old).ok_or("VNC 网关未包含在导入目录中")?);
         }
     }
+    validate_jump_owners(&document.profiles)?;
     Ok(ImportReport {
         catalog: ProfileCatalog::with_group_icons(
             document.groups,
@@ -275,6 +282,19 @@ pub fn import_catalog(text: &str) -> Result<ImportReport, String> {
         ),
         warnings,
     })
+}
+
+fn validate_jump_owners(profiles: &[ConnectionProfile]) -> Result<(), String> {
+    let owners: std::collections::HashSet<_> = profiles.iter()
+        .filter(|p| p.protocol.is_ssh_based())
+        .map(|p| p.id)
+        .collect();
+    for profile in profiles {
+        if profile.jumps.iter().filter_map(|hop| hop.auth_profile).any(|id| !owners.contains(&id)) {
+            return Err(format!("{}：跳板认证配置未包含在目录中或不是 SSH/SFTP 配置", profile.name));
+        }
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_profile(profile: &ConnectionProfile) -> Result<(), String> {

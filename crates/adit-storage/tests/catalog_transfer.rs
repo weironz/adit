@@ -5,6 +5,27 @@ use adit_storage::{
 };
 
 #[test]
+fn jump_credential_owners_are_remapped_only_within_the_imported_bundle() {
+    let owner = ConnectionProfile::new("owner", "owner.invalid", 22, "owner");
+    let mut target = ConnectionProfile::new("target", "target.invalid", 22, "target");
+    let mut hop = JumpHop::parse("bastion.invalid").unwrap();
+    hop.auth_profile = Some(owner.id);
+    target.jumps.push(hop);
+    let text = export_catalog(&ProfileCatalog::from_profiles(vec![owner.clone(), target.clone()])).unwrap();
+    let report = import_catalog(&text).unwrap();
+    let imported_owner = report.catalog.profiles.iter().find(|p| p.name == "owner").unwrap();
+    let imported_target = report.catalog.profiles.iter().find(|p| p.name == "target").unwrap();
+    assert_ne!(imported_owner.id, owner.id);
+    assert_ne!(imported_target.id, target.id);
+    assert_eq!(imported_target.jumps[0].auth_profile, Some(imported_owner.id));
+
+    let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+    value["profiles"].as_array_mut().unwrap().retain(|p| p["name"] != "owner");
+    assert!(import_catalog(&value.to_string()).is_err());
+    assert!(export_catalog(&ProfileCatalog::from_profiles(vec![target])).is_err());
+}
+
+#[test]
 fn catalog_transfer_preserves_public_policy_and_never_exports_environment_values() {
     let mut profile = ConnectionProfile::new("fixture", "example.test", 22, "fixture");
     profile.session_options.environment.insert("API_TOKEN".into(), "fixture-secret-value".into());

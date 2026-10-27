@@ -472,6 +472,7 @@ fn live_shell_failure(error: &SshError) -> LiveShellEvent {
         | SshError::InteractiveAuthenticationRequired
         | SshError::AdditionalFactorRequired
         | SshError::MissingJumpCredential(_)
+        | SshError::ProxyCommand(_)
         | SshError::JumpAuthentication { .. } => LiveShellEvent::ConnectStopped(error.to_string()),
         SshError::AuthenticationRejected
         | SshError::EmptyPassword
@@ -5330,6 +5331,7 @@ mod tests {
         for error in [
             SshError::AuthenticationCancelled,
             SshError::MissingJumpCredential(adit_domain::ProfileId::new()),
+            SshError::ProxyCommand("synthetic local executable failure"),
             SshError::JumpAuthentication {
                 index: 1,
                 host: "fixture.invalid".into(),

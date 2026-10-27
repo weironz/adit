@@ -103,6 +103,7 @@ fn fill(template: &str, args: &[&dyn std::fmt::Display]) -> String {
 }
 
 const COMMON: &[(&str, &str)] = &[
+    ("{}：同名认证配置已跳过，跳板恢复独立认证；请检查后重新选择凭据", "{}: a matching authentication profile was skipped; the jump now authenticates independently. Review and select credentials again."),
     ("跳板机、ProxyCommand、启动命令、TERM、环境色标、连接保留", "Jump hosts, ProxyCommand, startup command, TERM, environment and connection retention"),
     ("启用此配置的 ProxyCommand（在本机执行外部程序）", "Enable ProxyCommand for this profile (runs a local program)"),
     ("ProxyCommand 程序绝对路径（不调用 shell）", "ProxyCommand executable path (absolute; no shell)"),
@@ -966,6 +967,8 @@ const CONTEXTUAL: &[(&str, &str, &str)] = &[
 // Source templates from domain/session/storage are kept here, so the engine
 // stays language-neutral and every translation still has a Chinese source.
 const RUNTIME: &[(&str, &str)] = &[
+    ("跳板认证配置未包含在导入目录中", "The jump authentication profile is missing from the imported catalog"),
+    ("{}：跳板认证配置未包含在目录中或不是 SSH/SFTP 配置", "{}: the jump authentication profile is missing from the catalog or is not an SSH/SFTP profile"),
     ("ProxyCommand 程序必须是无引号、无 token 的绝对路径", "ProxyCommand requires an absolute executable path without quotes or tokens"),
     ("ProxyCommand 不支持 shell 或脚本启动器", "ProxyCommand does not support shells or script launchers"),
     ("ProxyCommand 必须指向本地 .exe 程序", "ProxyCommand must point to a local .exe program"),
