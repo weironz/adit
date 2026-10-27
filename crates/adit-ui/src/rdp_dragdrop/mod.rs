@@ -1,6 +1,7 @@
 //! Explicit OLE file drags. No clipboard polling, no synthetic paste, no writes
 //! to local paths: the destination shell owns its copy/overwrite confirmation.
 use crate::clipboard_files::ChunkBridge;
+use crate::i18n::t;
 use adit_domain::SessionId;
 use adit_session::{ClipFile, RdpFileDragEvent};
 use std::collections::HashMap;
@@ -156,13 +157,12 @@ impl State {
         owner: isize,
         title: String,
     ) -> Result<(), &'static str> {
-        let offer = self
-            .offers
-            .get(&session)
-            .ok_or("请先在该远端会话中选择并复制普通文件，再打开文件拖出窗口")?;
+        let offer = self.offers.get(&session).ok_or(t(
+            "请先在该远端会话中选择并复制普通文件，再打开文件拖出窗口",
+        ))?;
         validate_files(&offer.files)?;
         if !(offer.current)() {
-            return Err("该远端文件选择已失效，请重新复制后拖出");
+            return Err(t("该远端文件选择已失效，请重新复制后拖出"));
         }
         let generation = offer.generation;
         let current = offer.current.clone();
@@ -189,7 +189,7 @@ impl State {
         #[cfg(not(windows))]
         {
             let _ = (owner, title, files, request, generation, current);
-            return Err("OLE 文件拖放仅支持 Windows");
+            return Err(t("OLE 文件拖放仅支持 Windows"));
         }
         #[cfg(windows)]
         {
@@ -222,10 +222,10 @@ pub(crate) fn owner_task(
 /// names, duplicate destinations or truncated descriptors.
 pub(crate) fn validate_files(files: &[ClipFile]) -> Result<(), &'static str> {
     if files.is_empty() {
-        return Err("当前没有可安全拖出的文件；文件描述已拒绝或为空");
+        return Err(t("当前没有可安全拖出的文件；文件描述已拒绝或为空"));
     }
     if files.len() > 256 {
-        return Err("一次拖放仅支持 1–256 个普通文件");
+        return Err(t("一次拖放仅支持 1–256 个普通文件"));
     }
     adit_session::validate_clipboard_file_list(files)?;
     let mut total = 0u64;
@@ -233,11 +233,13 @@ pub(crate) fn validate_files(files: &[ClipFile]) -> Result<(), &'static str> {
         // ClipFile represents an absent size as zero; do not mistake an unknown
         // virtual file for a successfully transferred empty file.
         if file.is_dir || file.size == 0 || file.name.contains(['/', '\\']) {
-            return Err("仅支持已知大小的非空普通文件；目录、未知大小和虚拟路径已拒绝");
+            return Err(t(
+                "仅支持已知大小的非空普通文件；目录、未知大小和虚拟路径已拒绝",
+            ));
         }
-        total = total.checked_add(file.size).ok_or("文件描述长度溢出")?;
+        total = total.checked_add(file.size).ok_or(t("文件描述长度溢出"))?;
         if file.size > 16 * 1024 * 1024 * 1024 || total > 64 * 1024 * 1024 * 1024 {
-            return Err("拖放单文件上限 16 GiB，一次总量上限 64 GiB");
+            return Err(t("拖放单文件上限 16 GiB，一次总量上限 64 GiB"));
         }
     }
     Ok(())

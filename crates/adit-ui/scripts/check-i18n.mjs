@@ -147,8 +147,8 @@ export function audit(sourceRoot = root) {
   for (const file of files(sourceRoot)) {
     const relative = path.relative(sourceRoot, file).replaceAll("\\", "/");
     if (relative === "i18n.rs" || relative.startsWith("i18n/")) continue;
-    // These opt-in acceptance harnesses contain Chinese test data, not product UI.
-    if (/acceptance|_tests\.rs$/.test(relative)) continue;
+    // These opt-in acceptance and test modules contain Chinese fixtures, not product UI.
+    if (/acceptance|_tests\.rs$|(?:^|\/)tests?\.rs$/.test(relative)) continue;
     const source = fs.readFileSync(file, "utf8");
     const tokens = productionTokens(source);
     for (let i = 0; i < tokens.length; i++) {

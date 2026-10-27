@@ -7,9 +7,9 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     let body: Element<'_, Message> = if app.main_view == MainView::Hosts {
         hosts_view(app)
     } else if !native_windows::owns_selected_session(app) && app.native_window_id.is_some() {
-        let mut note = column![text("会话已在独立窗口打开").size(14)].spacing(12);
+        let mut note = column![text(t("会话已在独立窗口打开")).size(14)].spacing(12);
         if let Some(id) = app.manager.active_session() {
-            note = note.push(button("切换到会话窗口").on_press(Message::DetachSession(id)));
+            note = note.push(button(t("切换到会话窗口")).on_press(Message::DetachSession(id)));
         }
         container(note).center_x(Fill).center_y(Fill).into()
     } else if app.main_view == MainView::Missions && mission_is_empty(app) {

@@ -24,6 +24,19 @@ test("test-module exclusion ends at its matching brace", () => {
   assert.deepEqual(productionTokens(source).filter(t => t.kind === "string").map(t => t.value), ["before", "after"]);
 });
 
+test("test-only source files are excluded from product coverage", () => {
+  const fixture = fs.mkdtempSync(path.join(path.dirname(fileURLToPath(import.meta.url)), ".i18n-test-files-"));
+  try {
+    fs.writeFileSync(path.join(fixture, "i18n.rs"), 'const COMMON: &[(&str, &str)] = &[];');
+    fs.mkdirSync(path.join(fixture, "native"));
+    fs.writeFileSync(path.join(fixture, "tests.rs"), 'fn test_fixture() { text("\u62a5\u544a.txt"); }');
+    fs.writeFileSync(path.join(fixture, "native", "tests.rs"), 'fn test_fixture() { text("\u5408\u6210.bin"); }');
+    assert.deepEqual(audit(fixture).inventory, []);
+  } finally {
+    fs.rmSync(fixture, { recursive: true });
+  }
+});
+
 test("audit catches a translated entry bypassing lookup, missing text and broken templates", () => {
   const fixture = fs.mkdtempSync(path.join(path.dirname(fileURLToPath(import.meta.url)), ".i18n-audit-"));
   try {

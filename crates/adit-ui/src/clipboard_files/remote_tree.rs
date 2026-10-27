@@ -1,6 +1,7 @@
 //! A clipboard offer is an immutable read-only tree. Neither a FUSE inode nor
 //! a native file promise may turn a server-controlled name into a local path.
 use super::{ChunkBridge, ChunkError, ClipFile, MAX_CLIPBOARD_FILES};
+use crate::i18n::t;
 use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ pub(super) struct RemoteTree {
 impl RemoteTree {
     pub fn new(files: &[ClipFile]) -> Result<Self, &'static str> {
         if files.is_empty() || files.len() > MAX_CLIPBOARD_FILES {
-            return Err("远程剪贴板文件数量无效");
+            return Err(t("远程剪贴板文件数量无效"));
         }
         let mut tree = Self {
             nodes: vec![Node {
@@ -47,7 +48,7 @@ impl RemoteTree {
             let parts = relative_parts(&file.name)?;
             let path = parts.join("/");
             if !explicit.insert(path.clone()) || file.size > i64::MAX as u64 {
-                return Err("远程剪贴板包含重复名称或无效长度");
+                return Err(t("远程剪贴板包含重复名称或无效长度"));
             }
             let mut parent = ROOT;
             let mut current = String::new();
@@ -61,13 +62,13 @@ impl RemoteTree {
                 if let Some(ino) = paths.get(&current).copied() {
                     let node = &tree.nodes[(ino - 1) as usize];
                     if !node.is_dir || !is_dir {
-                        return Err("远程剪贴板文件与目录名称冲突");
+                        return Err(t("远程剪贴板文件与目录名称冲突"));
                     }
                     parent = ino;
                     continue;
                 }
                 if tree.nodes.len() > MAX_CLIPBOARD_FILES {
-                    return Err("远程剪贴板目录层级展开过大");
+                    return Err(t("远程剪贴板目录层级展开过大"));
                 }
                 let ino = tree.nodes.len() as u64 + 1;
                 tree.nodes.push(Node {
@@ -106,7 +107,7 @@ impl RemoteTree {
 
 fn relative_parts(name: &str) -> Result<Vec<&str>, &'static str> {
     if name.is_empty() || name.len() > MAX_PATH_BYTES || name.starts_with(['/', '\\']) {
-        return Err("远程剪贴板必须使用有界相对文件名");
+        return Err(t("远程剪贴板必须使用有界相对文件名"));
     }
     let parts: Vec<_> = name.split(['/', '\\']).collect();
     if parts.len() > MAX_DEPTH
@@ -120,7 +121,7 @@ fn relative_parts(name: &str) -> Result<Vec<&str>, &'static str> {
                     .any(|c| c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|'))
         })
     {
-        return Err("远程剪贴板文件名包含不安全的路径片段");
+        return Err(t("远程剪贴板文件名包含不安全的路径片段"));
     }
     Ok(parts)
 }

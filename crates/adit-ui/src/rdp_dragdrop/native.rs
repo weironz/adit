@@ -3,6 +3,7 @@
 //! Never register over winit's IDropTarget or pass COM pointers across threads.
 use super::{Lease, Request};
 use crate::clipboard_files::data_object::FileDataObject;
+use crate::i18n::tf;
 use adit_session::ClipFile;
 use std::{
     cell::{Cell, RefCell},
@@ -430,7 +431,10 @@ unsafe extern "system" fn window_proc(
                 rect.left += 16;
                 rect.right -= 16;
                 rect.top += 20;
-                let label = format!("{}\n{} 个远端非空普通文件\n\n按住本窗口内容区，拖到资源管理器目标文件夹。\n仅复制；按 Esc 取消。\n拖入远端、目录和虚拟路径暂不支持。", context.title, context.files.len());
+                let label = tf(
+                    "{}\n{} 个远端非空普通文件\n\n按住本窗口内容区，拖到资源管理器目标文件夹。\n仅复制；按 Esc 取消。\n拖入远端、目录和虚拟路径暂不支持。",
+                    &[&context.title, &context.files.len()],
+                );
                 let mut text: Vec<u16> = label.encode_utf16().collect();
                 DrawTextW(dc, &mut text, &mut rect, DT_CENTER | DT_WORDBREAK);
                 let _ = EndPaint(hwnd, &paint);

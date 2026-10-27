@@ -2828,7 +2828,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     .map(|s| s.title.clone())
                     .unwrap_or_default();
                 let result = owner
-                    .ok_or("原窗口已失效，请重新打开文件拖出")
+                    .ok_or(t("原窗口已失效，请重新打开文件拖出"))
                     .and_then(|owner| app.rdp_file_drag.open(session, owner, title));
                 if let Err(error) = result {
                     app.notice = error.into();

@@ -149,7 +149,7 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
             || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app)));
     if another_window_modal {
         layers.push(opaque(
-            container(text("请在另一窗口完成验证或文件操作"))
+            container(text(t("请在另一窗口完成验证或文件操作")))
                 .padding(12)
                 .center_x(Fill)
                 .center_y(Fill)

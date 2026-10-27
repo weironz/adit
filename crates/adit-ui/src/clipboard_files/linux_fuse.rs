@@ -1,5 +1,6 @@
 use super::remote_tree::{Node, RemoteReader, RemoteTree, ROOT};
 use super::{ChunkBridge, ClipFile};
+use crate::i18n::tf;
 use fuser::{
     BackgroundSession, Config, Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags,
     Generation, INodeNo, LockOwner, MountOption, OpenFlags, ReplyAttr, ReplyData, ReplyDirectory,
@@ -211,9 +212,15 @@ impl RemoteMount {
         ];
         let session = fuser::spawn_mount(fs, &directory.0, &options).map_err(|error| {
             if error.kind() == io::ErrorKind::PermissionDenied {
-                format!("无法挂载 RDP 文件剪贴板；请检查 FUSE 用户权限：{error}")
+                tf(
+                    "无法挂载 RDP 文件剪贴板；请检查 FUSE 用户权限：{}",
+                    &[&error],
+                )
             } else {
-                format!("无法挂载 RDP 文件剪贴板；需要可用的 /dev/fuse 和 fusermount3：{error}")
+                tf(
+                    "无法挂载 RDP 文件剪贴板；需要可用的 /dev/fuse 和 fusermount3：{}",
+                    &[&error],
+                )
             }
         })?;
         Ok(Self {

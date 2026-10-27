@@ -862,12 +862,12 @@ impl DesktopApplication {
         if state.search_open {
             body = body.push(
                 row![
-                    text_input("搜索终端输出", &state.search_query)
+                    text_input(t("搜索终端输出"), &state.search_query)
                         .id(search_input_id())
                         .on_input(Message::SearchQueryChanged)
                         .on_submit(Message::SearchNext),
-                    button("上一个").on_press(Message::SearchPrev),
-                    button("下一个").on_press(Message::SearchNext),
+                    button(t("上一个")).on_press(Message::SearchPrev),
+                    button(t("下一个")).on_press(Message::SearchNext),
                     button("×").on_press(Message::CloseSearch),
                 ]
                 .height(TOOLBAR_HEIGHT)
@@ -879,7 +879,7 @@ impl DesktopApplication {
             .as_ref()
             .map(|scene| window_presentation::surface_view(&self.app, window.session, state, scene))
             .unwrap_or_else(|| {
-                container(text("会话已关闭，可合回主窗口"))
+                container(text(t("会话已关闭，可合回主窗口")))
                     .center_x(Fill)
                     .center_y(Fill)
                     .into()
@@ -888,7 +888,7 @@ impl DesktopApplication {
         if state.command_window_open {
             body = body.push(
                 container(
-                    text_input("向当前会话发送一行", &state.terminal_input)
+                    text_input(t("向当前会话发送一行"), &state.terminal_input)
                         .on_input(Message::TerminalInputChanged)
                         .on_submit(Message::SendTerminalInput)
                         .padding(8),
@@ -959,11 +959,11 @@ impl DesktopApplication {
             layers.push(opaque(
                 container(
                     column![
-                        text("确认粘贴").size(16),
+                        text(t("确认粘贴")).size(16),
                         text(state.pending_paste.clone().unwrap_or_default()).size(12),
                         row![
-                            button("取消").on_press(Message::CancelPaste),
-                            button("粘贴").on_press(Message::ConfirmPaste)
+                            button(t("取消")).on_press(Message::CancelPaste),
+                            button(t("粘贴")).on_press(Message::ConfirmPaste)
                         ]
                         .spacing(8),
                     ]
@@ -976,7 +976,7 @@ impl DesktopApplication {
         }
         if self.modal_owner.is_some_and(|owner| owner != id) {
             layers.push(opaque(
-                container(text("请在另一窗口完成验证或文件操作"))
+                container(text(t("请在另一窗口完成验证或文件操作")))
                     .padding(12)
                     .center_x(Fill)
                     .center_y(Fill)
@@ -1060,7 +1060,7 @@ pub fn run_acceptance() -> iced::Result {
             let mut profiles: Vec<_> = (0..2)
                 .map(|index| {
                     let mut profile = ConnectionProfile::new(
-                        format!("原生验收 · 终端 {}", index + 1),
+                        tf("原生验收 · 终端 {}", &[&(index + 1)]),
                         "",
                         22,
                         "",
