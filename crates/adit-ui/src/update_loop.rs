@@ -2635,7 +2635,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::DisplayScale(scale) => {
-            if (scale - app.display_scale).abs() > f32::EPSILON && scale > 0.1 {
+            if scale.is_finite() && (scale - app.display_scale).abs() > f32::EPSILON && scale > 0.1 {
                 app.display_scale = scale;
                 // The physical-pixel viewport changed even though the logical
                 // window did not.

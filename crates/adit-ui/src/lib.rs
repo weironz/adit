@@ -53,6 +53,7 @@ mod i18n;
 pub(crate) use i18n::{runtime, set_language, t, t_in, tf};
 mod style;
 use style::*;
+mod display_accessibility;
 /// The local half of RDP clipboard file transfer. Separate from the text
 /// clipboard, which iced provides — files need Win32 directly, and the three
 /// platforms do not share a mechanism. See the module docs.
@@ -2065,6 +2066,8 @@ fn runtime_event(
             height: size.height,
             window,
         }),
+        // Moving between monitors can change DPI without a logical resize.
+        event::Event::Window(window::Event::Rescaled(scale)) => Some(Message::DisplayScale(scale)),
         // Window-absolute cursor for context-menu anchoring (the tab strip has no
         // local move tracker of its own).
         event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
@@ -2086,6 +2089,27 @@ fn runtime_event(
 mod tests {
     use super::*;
     use iced::keyboard::key::{Code, Physical};
+
+    #[test]
+    fn monitor_rescale_is_handled_without_resizing_or_remote_keyboard_focus() {
+        let mut app = drag_test_app();
+        let window = window::Id::unique();
+        let before = (app.window_width, app.window_height);
+        for scale in [1.25, 2.0, 1.5, 1.0] {
+            let message = runtime_event(
+                event::Event::Window(window::Event::Rescaled(scale)),
+                event::Status::Captured,
+                window,
+            ).expect("DPI events belong to the window even if input is captured");
+            let _ = update(&mut app, message);
+            assert_eq!(app.display_scale, scale);
+            assert_eq!((app.window_width, app.window_height), before);
+        }
+        for invalid in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let _ = update(&mut app, Message::DisplayScale(invalid));
+            assert_eq!(app.display_scale, 1.0);
+        }
+    }
 
     #[test]
     fn small_high_dpi_resize_updates_live_geometry_but_minimized_size_does_not() {

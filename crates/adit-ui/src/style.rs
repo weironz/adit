@@ -108,11 +108,11 @@ pub(crate) fn profile_badge(app: &AditApp, profile_id: ProfileId) -> Option<Stri
 }
 
 pub(crate) fn accent_hover() -> Color {
-    Color::from_rgb8(65, 121, 205)
+    display_accessibility::action_fill(button::Status::Hovered)
 }
 
 pub(crate) fn accent_pressed() -> Color {
-    Color::from_rgb8(38, 83, 151)
+    display_accessibility::action_fill(button::Status::Pressed)
 }
 
 /// Soft accent tint for selected/active backgrounds.
@@ -342,7 +342,7 @@ pub(crate) fn text_input_style(_theme: &Theme, status: text_input::Status) -> te
 
     text_input::Style {
         background: Background::Color(field_background()),
-        border: border(RADIUS_SM, 1.0, border_color),
+        border: border(RADIUS_SM, if matches!(status, text_input::Status::Focused { .. }) { 2.0 } else { 1.0 }, border_color),
         icon: muted_text(),
         placeholder: muted_text(),
         value: primary_text(),
@@ -364,7 +364,7 @@ pub(crate) fn primary_button_style(status: button::Status) -> button::Style {
         button::Status::Hovered => accent_hover(),
         button::Status::Pressed => accent_pressed(),
         button::Status::Disabled => Color::from_rgb8(206, 213, 224),
-        button::Status::Active => accent(),
+        button::Status::Active => display_accessibility::action_fill(status),
     };
     base_button_style(background, Color::WHITE, background)
 }
@@ -395,7 +395,7 @@ pub(crate) fn method_button_style(selected: bool, status: button::Status) -> but
     let background = match (selected, status) {
         (true, button::Status::Pressed) => accent_pressed(),
         (true, button::Status::Hovered) => accent_hover(),
-        (true, _) => accent(),
+        (true, _) => display_accessibility::action_fill(status),
         (false, button::Status::Hovered) => panel_background_hover(),
         (false, button::Status::Pressed) => accent_soft(),
         _ => surface(),
