@@ -120,10 +120,21 @@ pub(crate) fn restore_mission(app: &mut AditApp) {
         return;
     };
     // Membership survives detaching; only this window's presentation is filtered.
-    let visible: Vec<_> = task.members.iter().copied()
-        .filter(|id| app.native_auxiliary || !app.native_session_windows.contains_key(id)).collect();
-    let active = task.active.filter(|id| visible.contains(id)).or_else(|| visible.first().copied());
-    app.panes = if task.focused || visible.len() < 2 || app.fullscreen { Vec::new() } else { visible };
+    let visible: Vec<_> = task
+        .members
+        .iter()
+        .copied()
+        .filter(|id| app.native_auxiliary || !app.native_session_windows.contains_key(id))
+        .collect();
+    let active = task
+        .active
+        .filter(|id| visible.contains(id))
+        .or_else(|| visible.first().copied());
+    app.panes = if task.focused || visible.len() < 2 || app.fullscreen {
+        Vec::new()
+    } else {
+        visible
+    };
     app.tile_mode = task.mode;
     app.focused_pane = active
         .and_then(|id| app.panes.iter().position(|p| *p == id))
@@ -273,7 +284,11 @@ pub(crate) fn mission_is_empty(app: &AditApp) -> bool {
         .items
         .iter()
         .find(|m| Some(m.id) == app.missions.active)
-        .is_none_or(|m| m.members.iter().all(|id| app.native_session_windows.contains_key(id)))
+        .is_none_or(|m| {
+            m.members
+                .iter()
+                .all(|id| app.native_session_windows.contains_key(id))
+        })
 }
 
 pub(crate) fn mission_has_active_member(app: &AditApp) -> bool {
@@ -282,12 +297,18 @@ pub(crate) fn mission_has_active_member(app: &AditApp) -> bool {
             .items
             .iter()
             .find(|m| Some(m.id) == app.missions.active)
-            .is_some_and(|m| m.members.contains(&id) && (app.native_auxiliary || !app.native_session_windows.contains_key(&id)))
+            .is_some_and(|m| {
+                m.members.contains(&id)
+                    && (app.native_auxiliary || !app.native_session_windows.contains_key(&id))
+            })
     })
 }
 
 pub(crate) fn mission_contains_member(app: &AditApp, id: SessionId) -> bool {
-    app.missions.items.iter().find(|m| Some(m.id) == app.missions.active)
+    app.missions
+        .items
+        .iter()
+        .find(|m| Some(m.id) == app.missions.active)
         .is_some_and(|m| m.members.contains(&id))
 }
 
@@ -309,12 +330,15 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
                 row![
                     ui_icon(UiIcon::Tasks, 18.0, muted_text()),
                     column![
-                    text(task.name.clone()).size(12),
-                    text(tf("{} 个窗格", &[&task.members.len()]))
-                        .size(10)
-                        .color(muted_text()),
-                    ].spacing(4),
-                ].spacing(10).align_y(Alignment::Center),
+                        text(task.name.clone()).size(12),
+                        text(tf("{} 个窗格", &[&task.members.len()]))
+                            .size(10)
+                            .color(muted_text()),
+                    ]
+                    .spacing(4),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
             )
             .padding(10)
             .width(Fill)
@@ -499,8 +523,12 @@ pub(crate) fn activate_mission_session(app: &mut AditApp, id: SessionId) {
 
 #[cfg(test)]
 pub(crate) fn mission_members_for_test(app: &AditApp) -> Vec<SessionId> {
-    app.missions.items.iter().find(|m| Some(m.id) == app.missions.active)
-        .map(|m| m.members.clone()).unwrap_or_default()
+    app.missions
+        .items
+        .iter()
+        .find(|m| Some(m.id) == app.missions.active)
+        .map(|m| m.members.clone())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]

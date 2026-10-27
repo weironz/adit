@@ -28,10 +28,14 @@ pub(crate) fn begin_catalog_transfer(command: MenuCommand) -> Task<Message> {
             .set_title(t("选择 PuTTY Sessions 注册表导出文件（.reg）"))
             .add_filter(t("PuTTY 注册表导出"), &["reg"]),
         MenuCommand::ImportCatalog => dialog
-            .set_title(t("导入会话目录；启动命令、环境变量和触发器将移除，自动日志需重新启用"))
+            .set_title(t(
+                "导入会话目录；启动命令、环境变量和触发器将移除，自动日志需重新启用",
+            ))
             .add_filter(t("Adit 会话目录"), &["json"]),
         MenuCommand::ExportCatalog => dialog
-            .set_title(t("导出会话目录到新文件（不含凭据、启动命令、环境变量值和触发器）"))
+            .set_title(t(
+                "导出会话目录到新文件（不含凭据、启动命令、环境变量值和触发器）",
+            ))
             .set_file_name("adit-profiles.json")
             .add_filter(t("Adit 会话目录"), &["json"]),
         _ => return Task::none(),
@@ -76,7 +80,10 @@ pub(crate) fn run_catalog_transfer(
                         .and_then(|()| file.sync_all());
                     drop(file);
                     if let Err(error) = result {
-                        return Err(tf("导出未完成：{}。已创建的文件可能不完整，请检查 {}", &[&runtime(&error), &path.display()]));
+                        return Err(tf(
+                            "导出未完成：{}。已创建的文件可能不完整，请检查 {}",
+                            &[&runtime(&error), &path.display()],
+                        ));
                     }
                     Ok(())
                 })
@@ -130,7 +137,10 @@ pub(crate) fn finish_catalog_import(
     if changed && !persist_profiles(app) {
         return;
     }
-    app.notice = tf("已导入 {} 个会话，跳过 {} 个同分组同名会话；凭据未导入", &[&added, &skipped]);
+    app.notice = tf(
+        "已导入 {} 个会话，跳过 {} 个同分组同名会话；凭据未导入",
+        &[&added, &skipped],
+    );
     app.last_error = if report.warnings.is_empty() {
         None
     } else {
@@ -141,7 +151,10 @@ pub(crate) fn finish_catalog_import(
             .map(runtime)
             .collect::<Vec<_>>()
             .join("\n");
-        Some(tf("导入提示（共 {} 项）：\n{}", &[&report.warnings.len(), &details]))
+        Some(tf(
+            "导入提示（共 {} 项）：\n{}",
+            &[&report.warnings.len(), &details],
+        ))
     };
 }
 
@@ -149,7 +162,8 @@ fn merge_catalog(
     mut existing: ProfileCatalog,
     incoming: ProfileCatalog,
 ) -> (ProfileCatalog, usize, usize, Vec<String>) {
-    let existing_ids: std::collections::HashSet<_> = existing.profiles.iter().map(|p| p.id).collect();
+    let existing_ids: std::collections::HashSet<_> =
+        existing.profiles.iter().map(|p| p.id).collect();
     let mut names: HashMap<(String, String), ProfileId> = existing
         .profiles
         .iter()
@@ -176,7 +190,10 @@ fn merge_catalog(
                 // stored credentials to a host chosen by an imported catalog.
                 if existing_ids.contains(replacement) {
                     hop.auth_profile = None;
-                    warnings.push(tf("{}：同名认证配置已跳过，跳板恢复独立认证；请检查后重新选择凭据", &[&profile.name]));
+                    warnings.push(tf(
+                        "{}：同名认证配置已跳过，跳板恢复独立认证；请检查后重新选择凭据",
+                        &[&profile.name],
+                    ));
                 } else {
                     hop.auth_profile = Some(*replacement);
                 }
@@ -213,7 +230,8 @@ mod tests {
     #[test]
     fn imported_jump_owner_name_collision_never_inherits_existing_vault_credentials() {
         let owner = ConnectionProfile::new("credential owner", "trusted.invalid", 22, "ops");
-        let imported_owner = ConnectionProfile::new("credential owner", "imported.invalid", 22, "ops");
+        let imported_owner =
+            ConnectionProfile::new("credential owner", "imported.invalid", 22, "ops");
         let mut target = ConnectionProfile::new("new target", "target.invalid", 22, "ops");
         let mut hop = JumpHop::parse("imported-bastion.invalid").unwrap();
         hop.auth_profile = Some(imported_owner.id);

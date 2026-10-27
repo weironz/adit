@@ -36,16 +36,16 @@
 // the module would mean two different signatures for one function.
 #[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 mod bridge;
-#[cfg(any(target_os = "linux", test))]
-mod remote_tree;
+#[cfg(windows)]
+pub(crate) mod data_object;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
 mod linux_fuse;
 #[cfg(windows)]
-pub(crate) mod data_object;
-#[cfg(windows)]
 mod ole;
+#[cfg(any(target_os = "linux", test))]
+mod remote_tree;
 #[allow(unused_imports)]
 pub(crate) use bridge::{ChunkBridge, ChunkError};
 
@@ -75,7 +75,10 @@ pub(crate) fn offer_remote_files(
 /// Linux exposes URI metadata backed by a private read-only FUSE mount.
 #[cfg(target_os = "linux")]
 pub(crate) fn offer_remote_files(
-    files: Vec<ClipFile>, bridge: ChunkBridge, requester: adit_session::RdpFileRequester, chunk: u32,
+    files: Vec<ClipFile>,
+    bridge: ChunkBridge,
+    requester: adit_session::RdpFileRequester,
+    chunk: u32,
 ) {
     linux::offer(files, bridge, requester, chunk);
 }
@@ -169,9 +172,13 @@ fn push_entry(out: &mut Vec<OfferedFile>, path: &Path, base: &Path, depth: u32) 
     #[cfg(windows)]
     {
         use std::os::windows::fs::MetadataExt;
-        if meta.file_attributes() & 0x400 != 0 { return; } // FILE_ATTRIBUTE_REPARSE_POINT
+        if meta.file_attributes() & 0x400 != 0 {
+            return;
+        } // FILE_ATTRIBUTE_REPARSE_POINT
     }
-    if meta.file_type().is_symlink() { return; }
+    if meta.file_type().is_symlink() {
+        return;
+    }
     if meta.is_dir() {
         out.push(OfferedFile {
             path: path.to_path_buf(),
@@ -477,7 +484,10 @@ mod tests {
         let files = expand(&[root.join("work")]);
 
         let names: Vec<&str> = files.iter().map(|f| f.meta.name.as_str()).collect();
-        assert_eq!(names, ["work", "work\\a.bin", "work\\sub", "work\\sub\\b.txt"]);
+        assert_eq!(
+            names,
+            ["work", "work\\a.bin", "work\\sub", "work\\sub\\b.txt"]
+        );
 
         // Directories carry no size; files carry their real one.
         assert!(files[0].meta.is_dir && files[0].meta.size == 0);
@@ -496,7 +506,10 @@ mod tests {
         let root = tree();
         let path = root.join("work").join("a.bin");
 
-        assert_eq!(read_range(&path, 0, 8).expect("full read"), [0, 1, 2, 3, 4, 5, 6, 7]);
+        assert_eq!(
+            read_range(&path, 0, 8).expect("full read"),
+            [0, 1, 2, 3, 4, 5, 6, 7]
+        );
         assert_eq!(read_range(&path, 4, 2).expect("mid read"), [4, 5]);
         // Past the end: the tail, not an error.
         assert_eq!(read_range(&path, 6, 64).expect("tail read"), [6, 7]);

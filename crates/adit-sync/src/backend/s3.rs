@@ -287,7 +287,6 @@ fn amz_timestamps(now: std::time::SystemTime) -> Result<(String, String), SyncEr
     ))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

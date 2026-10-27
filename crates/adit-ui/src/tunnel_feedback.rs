@@ -18,7 +18,10 @@ pub(crate) fn status(tunnel: &TunnelState) -> String {
         if let Some(attempts) = tunnel.retries_exhausted {
             return tf(
                 "隧道重拨已耗尽（{} 次）：{}",
-                &[&attempts, &runtime(tunnel.error.as_deref().unwrap_or_default())],
+                &[
+                    &attempts,
+                    &runtime(tunnel.error.as_deref().unwrap_or_default()),
+                ],
             );
         }
         return tunnel.error.as_ref().map_or_else(

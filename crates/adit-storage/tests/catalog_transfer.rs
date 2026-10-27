@@ -11,16 +11,36 @@ fn jump_credential_owners_are_remapped_only_within_the_imported_bundle() {
     let mut hop = JumpHop::parse("bastion.invalid").unwrap();
     hop.auth_profile = Some(owner.id);
     target.jumps.push(hop);
-    let text = export_catalog(&ProfileCatalog::from_profiles(vec![owner.clone(), target.clone()])).unwrap();
+    let text = export_catalog(&ProfileCatalog::from_profiles(vec![
+        owner.clone(),
+        target.clone(),
+    ]))
+    .unwrap();
     let report = import_catalog(&text).unwrap();
-    let imported_owner = report.catalog.profiles.iter().find(|p| p.name == "owner").unwrap();
-    let imported_target = report.catalog.profiles.iter().find(|p| p.name == "target").unwrap();
+    let imported_owner = report
+        .catalog
+        .profiles
+        .iter()
+        .find(|p| p.name == "owner")
+        .unwrap();
+    let imported_target = report
+        .catalog
+        .profiles
+        .iter()
+        .find(|p| p.name == "target")
+        .unwrap();
     assert_ne!(imported_owner.id, owner.id);
     assert_ne!(imported_target.id, target.id);
-    assert_eq!(imported_target.jumps[0].auth_profile, Some(imported_owner.id));
+    assert_eq!(
+        imported_target.jumps[0].auth_profile,
+        Some(imported_owner.id)
+    );
 
     let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
-    value["profiles"].as_array_mut().unwrap().retain(|p| p["name"] != "owner");
+    value["profiles"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["name"] != "owner");
     assert!(import_catalog(&value.to_string()).is_err());
     assert!(export_catalog(&ProfileCatalog::from_profiles(vec![target])).is_err());
 }
@@ -28,13 +48,21 @@ fn jump_credential_owners_are_remapped_only_within_the_imported_bundle() {
 #[test]
 fn catalog_transfer_preserves_public_policy_and_never_exports_environment_values() {
     let mut profile = ConnectionProfile::new("fixture", "example.test", 22, "fixture");
-    profile.session_options.environment.insert("API_TOKEN".into(), "fixture-secret-value".into());
+    profile
+        .session_options
+        .environment
+        .insert("API_TOKEN".into(), "fixture-secret-value".into());
     profile.session_options.encoding = adit_domain::TerminalEncoding::Gbk;
     profile.session_options.reconnect = Some(adit_domain::ReconnectPolicy {
-        enabled: true, max_attempts: 4, initial_delay_secs: 2, max_delay_secs: 20,
+        enabled: true,
+        max_attempts: 4,
+        initial_delay_secs: 2,
+        max_delay_secs: 20,
     });
     profile.session_options.logging = Some(adit_domain::LogPolicy {
-        auto_start: true, record_input: true, ..Default::default()
+        auto_start: true,
+        record_input: true,
+        ..Default::default()
     });
     profile.session_options.triggers = vec![adit_domain::OutputTrigger {
         enabled: true,
@@ -82,11 +110,10 @@ fn appearance_import_rejects_unknown_palette_fields_and_out_of_range_size() {
     document["profiles"][0]["session_options"]["terminal_appearance"]["font_size"] =
         serde_json::json!(20);
     let ansi = [[0u8; 3]; 16];
-    document["profiles"][0]["session_options"]["terminal_appearance"]["custom_palette"] =
-        serde_json::json!({
-            "background": [1, 2, 3], "foreground": [4, 5, 6], "selection": [7, 8, 9],
-            "ansi": ansi, "startup_command": "must-not-run"
-        });
+    document["profiles"][0]["session_options"]["terminal_appearance"]["custom_palette"] = serde_json::json!({
+        "background": [1, 2, 3], "foreground": [4, 5, 6], "selection": [7, 8, 9],
+        "ansi": ansi, "startup_command": "must-not-run"
+    });
     assert!(import_catalog(&document.to_string()).is_err());
 }
 

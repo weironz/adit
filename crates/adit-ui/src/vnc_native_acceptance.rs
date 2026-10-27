@@ -112,11 +112,10 @@ fn auto_after_toggle(state: &mut State) {
                         .iter()
                         .all(|device| !(device["page"] == 1 && device["usage"] == 6)))
             );
-            current["other_devices_unchanged"] = serde_json::json!(
-                raw_without_keyboard(&current["baseline_raw"])
+            current["other_devices_unchanged"] =
+                serde_json::json!(raw_without_keyboard(&current["baseline_raw"])
                     .zip(raw_without_keyboard(&raw))
-                    .is_some_and(|(before, after)| before == after)
-            );
+                    .is_some_and(|(before, after)| before == after));
             auto.phase = AutoPhase::Observe;
             auto.phase_started = Instant::now();
         }
@@ -378,12 +377,10 @@ fn native_dpi(_window: window::Id) -> Task<NativeMessage> {
 }
 
 fn log(state: &State, mut event: serde_json::Value) {
-    event["unix_ms"] = serde_json::json!(
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_millis()
-    );
+    event["unix_ms"] = serde_json::json!(std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis());
     let _ = state.events.send(event.to_string());
 }
 

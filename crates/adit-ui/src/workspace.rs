@@ -13,13 +13,21 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         }
         container(note).center_x(Fill).center_y(Fill).into()
     } else if app.main_view == MainView::Missions && mission_is_empty(app) {
-        container(column![
-            text(t("添加已打开会话开始任务")).size(TEXT_TITLE),
-            button(text(t("打开的连接")).size(12)).on_press(Message::FindOpenSession)
-                .style(|_, s| primary_button_style(s)),
-            button(text(t("资源库")).size(12)).on_press(Message::ShowMainView(MainView::Hosts))
-                .style(|_, s| secondary_button_style(s)),
-        ].spacing(16)).center_x(Fill).center_y(Fill).into()
+        container(
+            column![
+                text(t("添加已打开会话开始任务")).size(TEXT_TITLE),
+                button(text(t("打开的连接")).size(12))
+                    .on_press(Message::FindOpenSession)
+                    .style(|_, s| primary_button_style(s)),
+                button(text(t("资源库")).size(12))
+                    .on_press(Message::ShowMainView(MainView::Hosts))
+                    .style(|_, s| secondary_button_style(s)),
+            ]
+            .spacing(16),
+        )
+        .center_x(Fill)
+        .center_y(Fill)
+        .into()
     } else if app.panes.len() >= 2 && !app.fullscreen {
         tiled_workspace_body(app)
     } else if app.manager.active_is_desktop() {
@@ -48,11 +56,24 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         .on_scroll(Message::TerminalScrolled)
         .interaction(mouse::Interaction::Text)
         .into();
-        if let Some(session) = app.manager.active_session().filter(|_| app.native_window_id.is_some()) {
-            stack![terminal, native_ime::layer(session, app.vnc_input_epoch,
-                remote_workspace_accepts_input(app), app.native_preedit.clone())].into()
-        } else { terminal }
-
+        if let Some(session) = app
+            .manager
+            .active_session()
+            .filter(|_| app.native_window_id.is_some())
+        {
+            stack![
+                terminal,
+                native_ime::layer(
+                    session,
+                    app.vnc_input_epoch,
+                    remote_workspace_accepts_input(app),
+                    app.native_preedit.clone()
+                )
+            ]
+            .into()
+        } else {
+            terminal
+        }
     };
 
     // With no sessions open the strip holds one 主机 tab and the word 空闲,
@@ -69,7 +90,8 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     let mut layout = column![].height(Fill).width(Fill);
     if !rdp_fullscreen && app.main_view == MainView::Hosts {
         let mut connect = button(text(t("连接")).size(TEXT_META))
-            .padding([4, 10]).style(|_, status| {
+            .padding([4, 10])
+            .style(|_, status| {
                 let mut style = secondary_button_style(status);
                 if matches!(status, button::Status::Disabled) {
                     style.text_color = muted_text();
@@ -80,33 +102,55 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
             connect = connect.on_press(Message::ProfileDoubleClicked(id));
         }
         layout = layout.push(
-            container(row![
-                ui_icon(UiIcon::Search, 14.0, muted_text()),
-                text_input(t("搜索主机、地址或用户名…"), &app.session_filter)
-                    .id(session_filter_id())
-                    .on_input(Message::SessionFilterChanged)
-                    .padding([4, 8]).size(12).style(toolbar_input_style),
-                connect,
-            ].spacing(8).align_y(Alignment::Center))
-                .padding([0, 12]).center_y(TAB_BAR_HEIGHT).width(Fill)
-                .style(|_| sidebar_style()),
+            container(
+                row![
+                    ui_icon(UiIcon::Search, 14.0, muted_text()),
+                    text_input(t("搜索主机、地址或用户名…"), &app.session_filter)
+                        .id(session_filter_id())
+                        .on_input(Message::SessionFilterChanged)
+                        .padding([4, 8])
+                        .size(12)
+                        .style(toolbar_input_style),
+                    connect,
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            )
+            .padding([0, 12])
+            .center_y(TAB_BAR_HEIGHT)
+            .width(Fill)
+            .style(|_| sidebar_style()),
         );
     } else if !rdp_fullscreen {
         let title = if app.main_view == MainView::Missions {
             mission_title(app)
         } else {
-            app.manager.active_session_summary().map(|s| s.title)
+            app.manager
+                .active_session_summary()
+                .map(|s| s.title)
                 .unwrap_or_else(|| String::from(t("专注工作区")))
         };
         layout = layout.push(
             row![
-                text(title).size(TEXT_BODY).color(primary_text()).width(Fill),
+                text(title)
+                    .size(TEXT_BODY)
+                    .color(primary_text())
+                    .width(Fill),
                 if app.main_view == MainView::Missions {
-                    button(text(t(if app.panes.len() >= 2 { "聚焦当前窗格" } else { "返回分屏" })).size(TEXT_META))
-                        .on_press(if app.panes.len() >= 2 {
-                            Message::FocusMissionPane(app.focused_pane)
-                        } else { Message::ReturnToMission })
-                        .style(|_, status| secondary_button_style(status))
+                    button(
+                        text(t(if app.panes.len() >= 2 {
+                            "聚焦当前窗格"
+                        } else {
+                            "返回分屏"
+                        }))
+                        .size(TEXT_META),
+                    )
+                    .on_press(if app.panes.len() >= 2 {
+                        Message::FocusMissionPane(app.focused_pane)
+                    } else {
+                        Message::ReturnToMission
+                    })
+                    .style(|_, status| secondary_button_style(status))
                 } else {
                     button(ui_icon(UiIcon::Tasks, 14.0, muted_text()))
                         .on_press(Message::ShowMainView(MainView::Missions))
@@ -116,7 +160,10 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
                     button(text(t("拆出窗口")).size(TEXT_META))
                         .on_press(Message::DetachSession(id))
                         .style(|_, status| secondary_button_style(status))
-                } else { button(text("").size(TEXT_META)).style(|_, status| toolbar_icon_button_style(status)) },
+                } else {
+                    button(text("").size(TEXT_META))
+                        .style(|_, status| toolbar_icon_button_style(status))
+                },
                 active_session_action(app),
                 button(text(t("打开的连接")).size(TEXT_META))
                     .on_press(Message::FindOpenSession)
@@ -125,7 +172,8 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
             .spacing(6)
             .align_y(Alignment::Center)
             .height(TAB_BAR_HEIGHT)
-            .width(Fill).padding([0, 12]),
+            .width(Fill)
+            .padding([0, 12]),
         );
     }
     if app.search_open {
@@ -173,29 +221,31 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         return with_rdp_toolbar(
             app,
             container(
-                text(runtime(app.manager.active_desktop_error().unwrap_or_else(|| {
-                    if app.manager.active_session_summary().is_some_and(|s| {
-                        matches!(s.status, SessionStatus::Disconnected | SessionStatus::Error)
-                    }) {
-                        t("连接已断开，按 Enter 重新连接")
-                    } else if app.manager.active_is_vnc() {
-                        t("正在连接 VNC…")
-                    } else {
-                        t("正在连接 RDP…")
-                    }
-                })))
+                text(runtime(app.manager.active_desktop_error().unwrap_or_else(
+                    || {
+                        if app.manager.active_session_summary().is_some_and(|s| {
+                            matches!(s.status, SessionStatus::Disconnected | SessionStatus::Error)
+                        }) {
+                            t("连接已断开，按 Enter 重新连接")
+                        } else if app.manager.active_is_vnc() {
+                            t("正在连接 VNC…")
+                        } else {
+                            t("正在连接 RDP…")
+                        }
+                    },
+                )))
                 .size(14)
                 .color(muted_text()),
             )
-                .width(Fill)
-                .height(Fill)
-                .center_x(Fill)
-                .center_y(Fill)
-                .style(|_theme| container::Style {
-                    background: Some(Color::BLACK.into()),
-                    ..container::Style::default()
-                })
-                .into(),
+            .width(Fill)
+            .height(Fill)
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_theme| container::Style {
+                background: Some(Color::BLACK.into()),
+                ..container::Style::default()
+            })
+            .into(),
         );
     }
 
@@ -224,22 +274,45 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     };
 
     let content: Element<'_, Message> = if app.manager.active_is_vnc() {
-        stack(vec![content, Element::new(vnc_cursor::CursorLayer {
-            cursor: app.vnc_cursor.clone(), handle: app.vnc_cursor_handle.clone(), scale_x, scale_y,
-            logical_size: iced::Size::new(f32::from(sw)/scale_x, f32::from(sh)/scale_y),
-            session_id: app.manager.active_session().expect("live desktop has a session"),
-            input_epoch: app.vnc_input_epoch,
-            ime_enabled: vnc_accepts_text_input(app),
-            preedit: app.vnc_preedit.clone(),
-        })]).into()
+        stack(vec![
+            content,
+            Element::new(vnc_cursor::CursorLayer {
+                cursor: app.vnc_cursor.clone(),
+                handle: app.vnc_cursor_handle.clone(),
+                scale_x,
+                scale_y,
+                logical_size: iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y),
+                session_id: app
+                    .manager
+                    .active_session()
+                    .expect("live desktop has a session"),
+                input_epoch: app.vnc_input_epoch,
+                ime_enabled: vnc_accepts_text_input(app),
+                preedit: app.vnc_preedit.clone(),
+            }),
+        ])
+        .into()
     } else {
-        stack(vec![content, desktop_panes::rdp_cursor_layer(app,
-            app.manager.active_session().expect("live desktop has a session"), scale_x, scale_y,
-            iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y)),
-            native_ime::surface_layer(app.manager.active_session().expect("desktop session"), app.vnc_input_epoch,
-                app.native_window_id.is_some() && remote_workspace_accepts_input(app), app.native_preedit.clone(),
-                iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y)),
-        ]).into()
+        stack(vec![
+            content,
+            desktop_panes::rdp_cursor_layer(
+                app,
+                app.manager
+                    .active_session()
+                    .expect("live desktop has a session"),
+                scale_x,
+                scale_y,
+                iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y),
+            ),
+            native_ime::surface_layer(
+                app.manager.active_session().expect("desktop session"),
+                app.vnc_input_epoch,
+                app.native_window_id.is_some() && remote_workspace_accepts_input(app),
+                app.native_preedit.clone(),
+                iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y),
+            ),
+        ])
+        .into()
     };
     let surface = mouse_area(content)
         .on_move(move |p| {
@@ -271,12 +344,18 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let logical_h = f32::from(sh) / scale_y;
     let overflows = logical_w > pane_w + 1.0 || logical_h > pane_h + 1.0;
     let desktop: Element<'_, Message> = if overflows {
-        container(scrollable(container(surface).center_x(Fill)).direction(
-            iced::widget::scrollable::Direction::Both {
-                vertical: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
-                horizontal: iced::widget::scrollable::Scrollbar::new().width(0).scroller_width(0),
-            },
-        ))
+        container(
+            scrollable(container(surface).center_x(Fill)).direction(
+                iced::widget::scrollable::Direction::Both {
+                    vertical: iced::widget::scrollable::Scrollbar::new()
+                        .width(0)
+                        .scroller_width(0),
+                    horizontal: iced::widget::scrollable::Scrollbar::new()
+                        .width(0)
+                        .scroller_width(0),
+                },
+            ),
+        )
         .width(Fill)
         .height(Fill)
         .style(|_theme| container::Style {
@@ -313,7 +392,11 @@ mod error_tests;
 /// every boundary. Rounding each cumulative edge once and taking differences
 /// means neighbours agree on their shared edge by construction, so the seams
 /// close exactly and the sizes still sum to the full surface.
-pub(crate) fn rdp_tile_grid(tiles: &[RdpTile], scale_x: f32, scale_y: f32) -> Element<'static, Message> {
+pub(crate) fn rdp_tile_grid(
+    tiles: &[RdpTile],
+    scale_x: f32,
+    scale_y: f32,
+) -> Element<'static, Message> {
     let edge_x = |device: u32| (device as f32 / scale_x).round();
     let edge_y = |device: u32| (device as f32 / scale_y).round();
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
@@ -474,16 +557,39 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
                 Some(Message::ToggleVncFit),
             )
         } else {
-            rdp_toolbar_button("⚡", t("画质"), app.rdp_quality_menu_open, Some(Message::ToggleRdpQualityMenu))
+            rdp_toolbar_button(
+                "⚡",
+                t("画质"),
+                app.rdp_quality_menu_open,
+                Some(Message::ToggleRdpQualityMenu),
+            )
         },
         if app.manager.active_is_vnc() {
             row![
                 vnc_connection_info(app),
-                rdp_toolbar_button("◉", "只读观察（切换前释放键鼠）", app.manager.active_vnc_read_only(), Some(Message::ToggleVncReadOnly)),
-                rdp_toolbar_button("↔", "请求远端单屏适应窗口（影响共享桌面）", app.manager.active_vnc_resize_remote(), Some(Message::ToggleVncResize)),
-                rdp_toolbar_button("⌘", "抓取系统键（Windows）；Ctrl+Alt+Enter 释放", app.vnc_grab_keys, (live && !app.manager.active_vnc_read_only()).then_some(Message::ToggleVncGrab)),
-            ].spacing(2)
-        } else { rdp_monitor_controls(app) },
+                rdp_toolbar_button(
+                    "◉",
+                    "只读观察（切换前释放键鼠）",
+                    app.manager.active_vnc_read_only(),
+                    Some(Message::ToggleVncReadOnly)
+                ),
+                rdp_toolbar_button(
+                    "↔",
+                    "请求远端单屏适应窗口（影响共享桌面）",
+                    app.manager.active_vnc_resize_remote(),
+                    Some(Message::ToggleVncResize)
+                ),
+                rdp_toolbar_button(
+                    "⌘",
+                    "抓取系统键（Windows）；Ctrl+Alt+Enter 释放",
+                    app.vnc_grab_keys,
+                    (live && !app.manager.active_vnc_read_only()).then_some(Message::ToggleVncGrab)
+                ),
+            ]
+            .spacing(2)
+        } else {
+            rdp_monitor_controls(app)
+        },
         // Ctrl+Alt+Del and the clipboard are meaningless without a live desktop
         // to receive them, so they grey out rather than firing into a dead pipe.
         rdp_toolbar_button(
@@ -499,8 +605,11 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
             Some(Message::ToggleRdpClipboard(!app.rdp_clipboard)),
         ),
         rdp_toolbar_button(
-            "↗", t("远端普通文件拖出（OLE，只复制）"), false,
-            (live && !app.manager.active_is_vnc() && app.rdp_clipboard).then_some(Message::OpenRdpFileDrag),
+            "↗",
+            t("远端普通文件拖出（OLE，只复制）"),
+            false,
+            (live && !app.manager.active_is_vnc() && app.rdp_clipboard)
+                .then_some(Message::OpenRdpFileDrag),
         ),
         rdp_toolbar_separator(),
         // The label follows the state it toggles. It was hard-coded to 退出全屏
@@ -508,7 +617,11 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         // the opposite of what it said.
         rdp_toolbar_button(
             "⛶",
-            if app.fullscreen { t("退出全屏") } else { t("全屏") },
+            if app.fullscreen {
+                t("退出全屏")
+            } else {
+                t("全屏")
+            },
             false,
             Some(Message::ToggleFullscreen),
         ),
@@ -520,7 +633,12 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         ),
         rdp_toolbar_separator(),
         // Collapse last, where the chevron sits in every bar that has one.
-        rdp_toolbar_button("⌃", t("收起工具栏"), false, Some(Message::ToggleRdpToolbarCollapsed)),
+        rdp_toolbar_button(
+            "⌃",
+            t("收起工具栏"),
+            false,
+            Some(Message::ToggleRdpToolbarCollapsed)
+        ),
     ]
     .spacing(3)
     .align_y(Alignment::Center);
@@ -554,12 +672,25 @@ fn vnc_connection_info(app: &AditApp) -> Element<'_, Message> {
         }
         Some(_) => "光标：远端形状在本地跟随鼠标绘制；桌面内隐藏系统箭头以避免重叠",
     };
-    let coverage = if d.framebuffer_pixels == 0 { 0.0 } else { d.covered_pixels as f64 * 100.0 / d.framebuffer_pixels as f64 };
+    let coverage = if d.framebuffer_pixels == 0 {
+        0.0
+    } else {
+        d.covered_pixels as f64 * 100.0 / d.framebuffer_pixels as f64
+    };
     let details = tf("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {} ms；完整更新 {} ms；覆盖完成 {} ms\n首屏覆盖 {}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}\n{}", &[&d.security, &d.tcp_ms, &d.handshake_ms, &format!("{:?}", d.first_pixel_ms), &format!("{:?}", d.first_complete_ms), &format!("{:?}", d.first_covered_ms), &format!("{:.1}", coverage), &d.covered_pixels, &d.framebuffer_pixels, &d.complete_updates, &d.wire_bytes, &d.pending_updates, &format!("{:?}", d.fence_rtt_ms), &d.queue_high_water, &d.encoding, &d.clipboard_utf8, &t(cursor_status), &runtime(&d.status)]);
-    let label = if d.security.is_empty() { t("连接信息").to_owned() } else { d.security };
-    tooltip(container(text(label).size(10)).padding([4,6]),
-        container(text(details).size(11)).padding(8).style(|_| tooltip_style()),
-        tooltip::Position::Bottom).into()
+    let label = if d.security.is_empty() {
+        t("连接信息").to_owned()
+    } else {
+        d.security
+    };
+    tooltip(
+        container(text(label).size(10)).padding([4, 6]),
+        container(text(details).size(11))
+            .padding(8)
+            .style(|_| tooltip_style()),
+        tooltip::Position::Bottom,
+    )
+    .into()
 }
 
 /// The ⚡ dropdown. Picking an entry reconnects the session, so each one says so.
@@ -570,8 +701,12 @@ fn rdp_quality_menu_overlay(app: &AditApp) -> Element<'_, Message> {
         (RdpQuality::Balanced, "均衡", "默认：保留壁纸与主题"),
         (RdpQuality::Speed, "流畅", "慢速链路：关闭壁纸与主题"),
     ] {
-        let selected_quality = app.manager.active_session_summary()
-            .map_or(app.rdp_quality, |session| app.manager.profile_rdp_quality(session.profile_id));
+        let selected_quality = app
+            .manager
+            .active_session_summary()
+            .map_or(app.rdp_quality, |session| {
+                app.manager.profile_rdp_quality(session.profile_id)
+            });
         let chosen = selected_quality == quality;
         entries = entries.push(
             button(
@@ -655,13 +790,17 @@ fn rdp_toolbar_button(
 }
 
 fn rdp_toolbar_separator() -> Element<'static, Message> {
-    container(Space::new().width(Length::Fixed(1.0)).height(Length::Fixed(18.0)))
-        .padding([0, 4])
-        .style(|_theme| container::Style {
-            background: Some(muted_text().scale_alpha(0.35).into()),
-            ..container::Style::default()
-        })
-        .into()
+    container(
+        Space::new()
+            .width(Length::Fixed(1.0))
+            .height(Length::Fixed(18.0)),
+    )
+    .padding([0, 4])
+    .style(|_theme| container::Style {
+        background: Some(muted_text().scale_alpha(0.35).into()),
+        ..container::Style::default()
+    })
+    .into()
 }
 
 /// Map an iced mouse button to the RDP button set (`Other` is ignored).
@@ -697,8 +836,7 @@ pub(crate) fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
                 .padding([4, 8])
                 .style(text_input_style)
                 .width(Length::Fixed(280.0)),
-            container(text(status).size(11).color(muted_text()))
-                .width(Length::Fixed(64.0)),
+            container(text(status).size(11).color(muted_text())).width(Length::Fixed(64.0)),
             button(text("↑").size(13))
                 .padding([3, 10])
                 .style(|_theme, status| secondary_button_style(status))
@@ -812,13 +950,13 @@ pub(crate) fn tiled_workspace_body(app: &AditApp) -> Element<'_, Message> {
             }
             let session_id = app.panes[idx];
             r = r.push(
-                  container(if app.manager.session_is_desktop(session_id) {
-                      desktop_panes::pane_view(app, session_id, idx)
-                  } else {
-                      terminal_pane(app, session_id, idx)
-                  })
-                    .width(Length::FillPortion(1))
-                    .height(Fill),
+                container(if app.manager.session_is_desktop(session_id) {
+                    desktop_panes::pane_view(app, session_id, idx)
+                } else {
+                    terminal_pane(app, session_id, idx)
+                })
+                .width(Length::FillPortion(1))
+                .height(Fill),
             );
             idx += 1;
         }
@@ -830,7 +968,11 @@ pub(crate) fn tiled_workspace_body(app: &AditApp) -> Element<'_, Message> {
 
 /// One split pane: a clickable header (session title + close-pane ×) over a
 /// terminal body wired to pane-scoped input/selection messages.
-pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) -> Element<'static, Message> {
+pub(crate) fn terminal_pane(
+    app: &AditApp,
+    session_id: SessionId,
+    index: usize,
+) -> Element<'static, Message> {
     let is_focused = index == app.focused_pane;
     let summary = app.manager.session_summary(session_id);
     let title = summary
@@ -846,11 +988,13 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
             row![
                 text("●").size(9).color(status_color(status)),
                 text(title).size(11).color(primary_text()).width(Fill),
-                button(text(t("拆出")).size(11)).on_press(Message::DetachSession(session_id))
+                button(text(t("拆出")).size(11))
+                    .on_press(Message::DetachSession(session_id))
                     .style(|_, status| secondary_button_style(status)),
-                  button(text(t("聚焦")).size(11))
-                      .padding([0, 6]).on_press(Message::FocusMissionPane(index))
-                      .style(|_, status| secondary_button_style(status)),
+                button(text(t("聚焦")).size(11))
+                    .padding([0, 6])
+                    .on_press(Message::FocusMissionPane(index))
+                    .style(|_, status| secondary_button_style(status)),
                 button(text("×").size(13))
                     .padding([0, 6])
                     .style(|_theme, status| tab_close_button_style(status))
@@ -884,7 +1028,11 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
         snapshot,
         is_focused,
         selection,
-        if is_focused { app.terminal_scroll_offset } else { accessibility::scroll_offset(app, session_id) },
+        if is_focused {
+            app.terminal_scroll_offset
+        } else {
+            accessibility::scroll_offset(app, session_id)
+        },
         highlights,
         link_open_modifier(app),
         // Only the focused pane shows a cursor — that's what marks it as the one
@@ -901,9 +1049,19 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
     .interaction(mouse::Interaction::Text);
 
     let body: Element<'static, Message> = if is_focused && app.native_window_id.is_some() {
-        stack![body, native_ime::layer(session_id, app.vnc_input_epoch,
-            remote_workspace_accepts_input(app), app.native_preedit.clone())].into()
-    } else { body.into() };
+        stack![
+            body,
+            native_ime::layer(
+                session_id,
+                app.vnc_input_epoch,
+                remote_workspace_accepts_input(app),
+                app.native_preedit.clone()
+            )
+        ]
+        .into()
+    } else {
+        body.into()
+    };
     column![header, body]
         .spacing(0)
         .width(Fill)
@@ -913,11 +1071,19 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
 
 /// Each accessible document's offset belongs to its session. Scrolling another
 /// pane never changes the active session or sends remote input.
-pub(crate) fn pane_snapshot(app: &AditApp, session_id: SessionId, is_focused: bool) -> TerminalSnapshot {
+pub(crate) fn pane_snapshot(
+    app: &AditApp,
+    session_id: SessionId,
+    is_focused: bool,
+) -> TerminalSnapshot {
     let rows = usize::from(session_terminal_size(app, session_id).rows);
     let tail = app.manager.snapshot_for(session_id, Viewport::tail(rows));
 
-    let requested = if is_focused { app.terminal_scroll_offset } else { accessibility::scroll_offset(app, session_id) };
+    let requested = if is_focused {
+        app.terminal_scroll_offset
+    } else {
+        accessibility::scroll_offset(app, session_id)
+    };
     if requested == 0 {
         return tail;
     }
@@ -938,17 +1104,18 @@ pub(crate) fn active_session_action(app: &AditApp) -> Element<'_, Message> {
     if has_selected {
         let mut buttons: Vec<Element<'_, Message>> = Vec::new();
         buttons.push(
-            button(
-                text(tf("关闭 {} 个标签", &[&app.selected_tabs.len()])).size(12),
-            )
-            .padding([4, 10])
-            .style(|_theme, status| danger_button_style(status))
-            .on_press(Message::CloseSelectedTabs)
-            .into(),
+            button(text(tf("关闭 {} 个标签", &[&app.selected_tabs.len()])).size(12))
+                .padding([4, 10])
+                .style(|_theme, status| danger_button_style(status))
+                .on_press(Message::CloseSelectedTabs)
+                .into(),
         );
         let has_live = app.manager.sessions().iter().any(|s| {
             app.selected_tabs.contains(&s.id)
-                && matches!(s.status, SessionStatus::Connected | SessionStatus::Connecting)
+                && matches!(
+                    s.status,
+                    SessionStatus::Connected | SessionStatus::Connecting
+                )
         });
         if has_live {
             buttons.push(
@@ -996,9 +1163,7 @@ pub(crate) fn tab_button(
 
     // The whole pill is a mouse_area (click = activate, drag = reorder); only the
     // close × stays a button so it can consume its own click.
-    let mut inner = row![]
-        .spacing(8)
-        .align_y(Alignment::Center);
+    let mut inner = row![].spacing(8).align_y(Alignment::Center);
     if let Some(tile) = tile {
         inner = inner.push(tile);
     }
@@ -1018,12 +1183,15 @@ pub(crate) fn tab_button(
     let subtitle = row![
         text("●").size(6).color(status_color(session.status)),
         text(t(session.status.label())).size(10).color(muted_text()),
-    ].spacing(4).align_y(Alignment::Center);
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
     let inner = inner
-        .push(column![
-            text(session.title).size(12).color(primary_text()),
-            subtitle,
-        ].spacing(3).width(Fill))
+        .push(
+            column![text(session.title).size(12).color(primary_text()), subtitle,]
+                .spacing(3)
+                .width(Fill),
+        )
         .push(
             button(text("×").size(15))
                 .padding([2, 7])
@@ -1053,9 +1221,22 @@ pub(crate) fn tab_button(
     .on_right_press(Message::ShowTabContextMenu(id))
     .interaction(mouse::Interaction::Pointer)
     .into();
-    accessibility::control(control, accessibility::Control::item(
-        format!("session:{id}"), accessible_name, Message::AccessibilityActivateSession(id),
-    ).read_value(if active { t("当前会话") } else { t(session.status.label()) }.into()))
+    accessibility::control(
+        control,
+        accessibility::Control::item(
+            format!("session:{id}"),
+            accessible_name,
+            Message::AccessibilityActivateSession(id),
+        )
+        .read_value(
+            if active {
+                t("当前会话")
+            } else {
+                t(session.status.label())
+            }
+            .into(),
+        ),
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1086,11 +1267,9 @@ pub(crate) fn terminal_view(
             .font(Font::MONOSPACE)
             .color(style.foreground())]
     } else {
-        snapshot
-            .lines
-            .into_iter()
-            .enumerate()
-            .fold(column![].spacing(0), |column, (row_index, line)| {
+        snapshot.lines.into_iter().enumerate().fold(
+            column![].spacing(0),
+            |column, (row_index, line)| {
                 let highlights = search_highlights
                     .get(row_index)
                     .map(Vec::as_slice)
@@ -1121,18 +1300,28 @@ pub(crate) fn terminal_view(
                     links_clickable,
                     show_cursor,
                 ))
-            })
+            },
+        )
     };
 
     // The context menu now floats (see the layers stack in `view`), so the
     // terminal body no longer reserves a strip for it. A scrollbar rides the right
     // edge, inside the panel padding, showing (and driving) the scrollback position.
-    let scrollbar = terminal_scrollbar(style, total_rows, viewport, scroll_offset, scrollbar_interactive);
+    let scrollbar = terminal_scrollbar(
+        style,
+        total_rows,
+        viewport,
+        scroll_offset,
+        scrollbar_interactive,
+    );
     let scrollbar = match owner {
         Some(owner) => {
             let max = total_rows.saturating_sub(viewport);
             let scrollbar = accessibility::scroll_controls(owner, scroll_offset, max, scrollbar);
-            accessibility::control(scrollbar, accessibility::Control::scroll(owner, scroll_offset, max))
+            accessibility::control(
+                scrollbar,
+                accessibility::Control::scroll(owner, scroll_offset, max),
+            )
         }
         None => scrollbar,
     };
@@ -1142,10 +1331,7 @@ pub(crate) fn terminal_view(
         None => text,
     };
     // The text document and its physical scrolling controls are siblings.
-    let body = row![
-        text,
-        scrollbar,
-    ];
+    let body = row![text, scrollbar,];
     container(body)
         .padding(TERMINAL_PANEL_PADDING as u16)
         .height(Fill)
@@ -1193,7 +1379,10 @@ pub(crate) fn terminal_scrollbar(
         .width(Fill)
         .height(Length::FillPortion(thumb.max(1)))
         .style(move |_theme| container::Style {
-            background: Some(Background::Color(Color { a: 0.35, ..style.foreground() })),
+            background: Some(Background::Color(Color {
+                a: 0.35,
+                ..style.foreground()
+            })),
             border: iced::border::rounded(SCROLLBAR_WIDTH / 2.0 - 2.0),
             ..container::Style::default()
         });
@@ -1210,7 +1399,10 @@ pub(crate) fn terminal_scrollbar(
         .height(Fill)
         .align_x(Alignment::Center)
         .style(move |_theme| container::Style {
-            background: Some(Background::Color(Color { a: 0.08, ..style.foreground() })),
+            background: Some(Background::Color(Color {
+                a: 0.08,
+                ..style.foreground()
+            })),
             border: iced::border::rounded(SCROLLBAR_WIDTH / 2.0),
             ..container::Style::default()
         });
@@ -1361,7 +1553,9 @@ pub(crate) fn terminal_line(
             };
             let label = text(glyph_text.to_owned())
                 .size(font_size)
-                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(cell_h)))
+                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(
+                    cell_h,
+                )))
                 .wrapping(iced::widget::text::Wrapping::None)
                 .font(font)
                 .shaping(iced::widget::text::Shaping::Advanced)
@@ -1550,7 +1744,9 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
         row![
             left,
             Space::new().width(Fill),
-            text(runtime(&app.manager.status_line())).size(11).color(muted_text()),
+            text(runtime(&app.manager.status_line()))
+                .size(11)
+                .color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
             text(tf("{} 个配置", &[&app.manager.profiles().len()]))
                 .size(11)
@@ -1563,7 +1759,9 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
             .size(11)
             .color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
-            text(format!("v{}", env!("CARGO_PKG_VERSION"))).size(11).color(muted_text()),
+            text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                .size(11)
+                .color(muted_text()),
         ]
         .spacing(12)
         .align_y(Alignment::Center),
@@ -1580,7 +1778,9 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         return row![];
     };
     if state.max_monitors == 0 {
-        return row![text(t("显示器：等待服务端能力")).size(10).color(muted_text())];
+        return row![text(t("显示器：等待服务端能力"))
+            .size(10)
+            .color(muted_text())];
     }
     let mut controls = row![
         rdp_toolbar_button(

@@ -49,13 +49,18 @@ struct VncSurface {
 
 impl VncSurface {
     fn new(width: u16, height: u16) -> Self {
-        Self { pixels: Surface::new(width, height), resize_epoch: 0 }
+        Self {
+            pixels: Surface::new(width, height),
+            resize_epoch: 0,
+        }
     }
 
     fn snapshot_if_newer(&self, generation: u64) -> Option<VncFrameSnapshot> {
         (self.generation != generation).then(|| VncFrameSnapshot {
             frame: RdpFrame {
-                rgba: self.rgba.clone(), width: self.width, height: self.height,
+                rgba: self.rgba.clone(),
+                width: self.width,
+                height: self.height,
                 generation: self.generation,
             },
             resize_epoch: self.resize_epoch,
@@ -65,10 +70,14 @@ impl VncSurface {
 
 impl std::ops::Deref for VncSurface {
     type Target = Surface;
-    fn deref(&self) -> &Surface { &self.pixels }
+    fn deref(&self) -> &Surface {
+        &self.pixels
+    }
 }
 impl std::ops::DerefMut for VncSurface {
-    fn deref_mut(&mut self) -> &mut Surface { &mut self.pixels }
+    fn deref_mut(&mut self) -> &mut Surface {
+        &mut self.pixels
+    }
 }
 
 /// Metadata only: never stores a password, key, clipboard body, or input text.
@@ -184,7 +193,8 @@ impl VncClientHandle {
     }
     pub(super) fn send_input(&self, input: RdpInput) {
         let state = self.state.lock().unwrap();
-        if matches!(&input, RdpInput::Unicode { ch, .. } if state.options.unicode_bmp_only && u32::from(*ch) > 0xffff) {
+        if matches!(&input, RdpInput::Unicode { ch, .. } if state.options.unicode_bmp_only && u32::from(*ch) > 0xffff)
+        {
             drop(state);
             self.unicode_rejected();
             return;
@@ -238,7 +248,9 @@ impl VncClientHandle {
         Ok(())
     }
     fn unicode_rejected(&self) {
-        let _ = self.errors.send(RdpClientEvent::Notice(BMP_ONLY_NOTICE.into()));
+        let _ = self
+            .errors
+            .send(RdpClientEvent::Notice(BMP_ONLY_NOTICE.into()));
     }
     pub(super) fn send_gateway(&self, command: LiveShellCommand) {
         let _ = self.gateway.send(command);
@@ -283,7 +295,8 @@ impl VncClientHandle {
         self.events.try_recv().ok()
     }
     pub(super) fn frame_if_newer(&self, generation: u64) -> Option<RdpFrame> {
-        self.frame_snapshot_if_newer(generation).map(|snapshot| snapshot.frame)
+        self.frame_snapshot_if_newer(generation)
+            .map(|snapshot| snapshot.frame)
     }
     pub(super) fn frame_snapshot_if_newer(&self, generation: u64) -> Option<VncFrameSnapshot> {
         let surface = self.surface.lock().ok()?;
@@ -520,8 +533,8 @@ impl Worker {
         // An incomplete pixel reply, however, needs another full request.
         let mut refresh_ready = false;
         let mut refresh_full = false;
-        let trace_flow = cfg!(debug_assertions)
-            && std::env::var_os("ADIT_VNC_TRACE_FLOW").is_some();
+        let trace_flow =
+            cfg!(debug_assertions) && std::env::var_os("ADIT_VNC_TRACE_FLOW").is_some();
         let mut fence_supported = false;
         let mut fence_pending: Option<(u64, Instant)> = None;
         let mut next_fence = Instant::now();
@@ -895,7 +908,9 @@ fn configure_tcp_liveness(tcp: &tokio::net::TcpStream) -> std::io::Result<()> {
             };
             if result == SOCKET_ERROR {
                 // SAFETY: read this thread's error immediately after failure.
-                return Err(std::io::Error::from_raw_os_error(unsafe { WSAGetLastError() }));
+                return Err(std::io::Error::from_raw_os_error(unsafe {
+                    WSAGetLastError()
+                }));
             }
         }
     }
@@ -1059,12 +1074,20 @@ mod tests {
         assert!(first.frame.rgba.iter().all(|byte| *byte == 255));
         resize(&surface, 3, 2).unwrap();
         resize(&surface, 2, 2).unwrap();
-        let current = surface.lock().unwrap().snapshot_if_newer(first.frame.generation).unwrap();
+        let current = surface
+            .lock()
+            .unwrap()
+            .snapshot_if_newer(first.frame.generation)
+            .unwrap();
         assert_eq!((current.frame.width, current.frame.height), (2, 2));
         assert_eq!(current.resize_epoch, 2);
         assert!(current.frame.rgba.iter().all(|byte| *byte == 0));
         assert_ne!(current.frame.generation, first.frame.generation);
-        assert!(surface.lock().unwrap().snapshot_if_newer(current.frame.generation).is_none());
+        assert!(surface
+            .lock()
+            .unwrap()
+            .snapshot_if_newer(current.frame.generation)
+            .is_none());
     }
 
     #[test]
@@ -1072,7 +1095,11 @@ mod tests {
         for connected_for in [None, Some(Duration::from_secs(29))] {
             let mut attempts = 0;
             let delays: Vec<_> = (0..10)
-                .map(|_| next_reconnect_delay(&mut attempts, connected_for).unwrap().as_secs())
+                .map(|_| {
+                    next_reconnect_delay(&mut attempts, connected_for)
+                        .unwrap()
+                        .as_secs()
+                })
                 .collect();
             assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30]);
             assert!(next_reconnect_delay(&mut attempts, connected_for).is_none());

@@ -5,7 +5,10 @@ mod proxy_command;
 pub use proxy_command::ProxyCommand;
 
 mod session_options;
-pub use session_options::{DesktopMonitor, DesktopQuality, LogPolicy, OutputTrigger, ReconnectPolicy, SessionOptions, TerminalAppearance, TerminalEncoding, TerminalPalette, TriggerAction};
+pub use session_options::{
+    DesktopMonitor, DesktopQuality, LogPolicy, OutputTrigger, ReconnectPolicy, SessionOptions,
+    TerminalAppearance, TerminalEncoding, TerminalPalette, TriggerAction,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProfileId(Uuid);
@@ -444,7 +447,12 @@ impl ConnectionProfile {
     /// otherwise the environment's own label (nothing for [`Environment::None`]).
     #[must_use]
     pub fn badge_label(&self) -> Option<String> {
-        if let Some(label) = self.label.as_deref().map(str::trim).filter(|l| !l.is_empty()) {
+        if let Some(label) = self
+            .label
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
             return Some(label.to_string());
         }
         match self.environment {

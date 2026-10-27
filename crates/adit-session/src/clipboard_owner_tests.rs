@@ -95,5 +95,8 @@ fn temporary_window_projection_preserves_pending_offers_and_focus_retirement_kee
     assert!(manager.take_rdp_clipboard().is_none());
     let chunks = manager.take_rdp_file_chunks();
     assert_eq!(chunks.len(), 1);
-    assert_eq!((chunks[0].stream_id, chunks[0].data.clone()), (1, Some(vec![7])));
+    assert_eq!(
+        (chunks[0].stream_id, chunks[0].data.clone()),
+        (1, Some(vec![7]))
+    );
 }

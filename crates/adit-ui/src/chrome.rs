@@ -84,10 +84,18 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
     if app.connection_dialog.is_some() && native_windows::dialog_visible(app) {
         layers.push(opaque(connection_dialog_overlay(app)));
     }
-    if let Some((session_id, prompt)) = app.manager.pending_host_key().filter(|(sid, _)| native_windows::prompt_visible(app, *sid)) {
+    if let Some((session_id, prompt)) = app
+        .manager
+        .pending_host_key()
+        .filter(|(sid, _)| native_windows::prompt_visible(app, *sid))
+    {
         layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
     }
-    if let Some((session_id, prompt)) = app.auth_prompt.as_ref().filter(|(sid, _)| native_windows::prompt_visible(app, *sid)) {
+    if let Some((session_id, prompt)) = app
+        .auth_prompt
+        .as_ref()
+        .filter(|(sid, _)| native_windows::prompt_visible(app, *sid))
+    {
         layers.push(opaque(auth_prompt_dialog_overlay(
             *session_id,
             prompt,
@@ -128,15 +136,25 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         layers.push(opaque(known_hosts_overlay(app)));
     }
 
-    let another_window_modal = app.native_window_id.is_some() && (
-        app.manager.pending_host_key().is_some_and(|(sid, _)| !native_windows::prompt_visible(app, sid))
-        || app.auth_prompt.as_ref().is_some_and(|(sid, _)| !native_windows::prompt_visible(app, *sid))
-        || (app.connection_dialog.is_some() && !native_windows::dialog_visible(app))
-        || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app))
-    );
+    let another_window_modal = app.native_window_id.is_some()
+        && (app
+            .manager
+            .pending_host_key()
+            .is_some_and(|(sid, _)| !native_windows::prompt_visible(app, sid))
+            || app
+                .auth_prompt
+                .as_ref()
+                .is_some_and(|(sid, _)| !native_windows::prompt_visible(app, *sid))
+            || (app.connection_dialog.is_some() && !native_windows::dialog_visible(app))
+            || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app)));
     if another_window_modal {
-        layers.push(opaque(container(text("请在另一窗口完成验证或文件操作"))
-            .padding(12).center_x(Fill).center_y(Fill).style(|_| dialog_scrim_style())));
+        layers.push(opaque(
+            container(text("请在另一窗口完成验证或文件操作"))
+                .padding(12)
+                .center_x(Fill)
+                .center_y(Fill)
+                .style(|_| dialog_scrim_style()),
+        ));
     }
     if layers.len() > 1 {
         let top = layers.pop().unwrap();
@@ -159,7 +177,8 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
             menu_button(app, MenuKind::File, t("菜单")),
             Space::new().width(Fill),
             text(tf("{} 个已打开会话", &[&app.manager.sessions().len()]))
-                .size(TEXT_META).color(Color::from_rgb8(158, 171, 190)),
+                .size(TEXT_META)
+                .color(Color::from_rgb8(158, 171, 190)),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
@@ -171,27 +190,44 @@ pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
-pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static str) -> Element<'static, Message> {
+pub(crate) fn global_view_button(
+    app: &AditApp,
+    view: MainView,
+    label: &'static str,
+) -> Element<'static, Message> {
     let active = app.main_view == view;
     let icon = match view {
         MainView::Hosts => UiIcon::Hosts,
         MainView::Terminal => UiIcon::Terminal,
         MainView::Missions => UiIcon::Tasks,
     };
-    let control: Element<'static, Message> = button(row![
-        ui_icon(icon, 14.0, Color::from_rgb8(202, 214, 229)),
-        text(t_in("navigation", label)).size(12),
-    ].spacing(7).align_y(Alignment::Center))
-        .padding([5, 10])
-        .style(move |_, status| global_navigation_style(active, status))
-        .on_press(Message::ShowMainView(view))
-        .into();
-    accessibility::control(control, accessibility::Control::button(
-        format!("navigation:{view:?}"), t_in("navigation", label), Message::ShowMainView(view),
-    ))
+    let control: Element<'static, Message> = button(
+        row![
+            ui_icon(icon, 14.0, Color::from_rgb8(202, 214, 229)),
+            text(t_in("navigation", label)).size(12),
+        ]
+        .spacing(7)
+        .align_y(Alignment::Center),
+    )
+    .padding([5, 10])
+    .style(move |_, status| global_navigation_style(active, status))
+    .on_press(Message::ShowMainView(view))
+    .into();
+    accessibility::control(
+        control,
+        accessibility::Control::button(
+            format!("navigation:{view:?}"),
+            t_in("navigation", label),
+            Message::ShowMainView(view),
+        ),
+    )
 }
 
-pub(crate) fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a, Message> {
+pub(crate) fn menu_button<'a>(
+    app: &AditApp,
+    kind: MenuKind,
+    label: &'a str,
+) -> Element<'a, Message> {
     let active = app.active_menu == Some(kind);
 
     button(text(t_in("navigation", label)).size(12))
@@ -221,12 +257,13 @@ pub(crate) fn menu_overlay(menu: MenuKind) -> Element<'static, Message> {
                     menu_category_button(menu, MenuKind::Transfer, "传输"),
                     menu_category_button(menu, MenuKind::Script, "脚本"),
                     menu_category_button(menu, MenuKind::Help, "帮助"),
-                ].width(96),
+                ]
+                .width(96),
                 scrollable(commands).height(Length::Shrink).width(210),
             ])
-                .width(Length::Fixed(306.0))
-                .padding([5, 0])
-                .style(|_theme| menu_dropdown_style()),
+            .width(Length::Fixed(306.0))
+            .padding([5, 0])
+            .style(|_theme| menu_dropdown_style()),
             Space::new().width(Fill),
         ],
         Space::new().height(Fill),
@@ -247,10 +284,17 @@ pub(crate) fn menu_overlay(menu: MenuKind) -> Element<'static, Message> {
     stack(vec![backdrop.into(), positioned.into()]).into()
 }
 
-fn menu_category_button(current: MenuKind, kind: MenuKind, label: &'static str) -> Element<'static, Message> {
-    button(text(t(label)).size(TEXT_BODY)).padding([6, 10]).width(Fill)
+fn menu_category_button(
+    current: MenuKind,
+    kind: MenuKind,
+    label: &'static str,
+) -> Element<'static, Message> {
+    button(text(t(label)).size(TEXT_BODY))
+        .padding([6, 10])
+        .width(Fill)
         .style(move |_, status| menu_button_style(current == kind, status))
-        .on_press(Message::ToggleMenu(kind)).into()
+        .on_press(Message::ToggleMenu(kind))
+        .into()
 }
 pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuCommand)] {
     match menu {
@@ -313,7 +357,10 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
     }
 }
 
-pub(crate) fn menu_dropdown_button(label: &'static str, command: MenuCommand) -> Element<'static, Message> {
+pub(crate) fn menu_dropdown_button(
+    label: &'static str,
+    command: MenuCommand,
+) -> Element<'static, Message> {
     button(text(t_in("navigation", label)).size(12))
         .width(Fill)
         .padding([6, 12])
@@ -321,6 +368,3 @@ pub(crate) fn menu_dropdown_button(label: &'static str, command: MenuCommand) ->
         .on_press(Message::RunMenu(command))
         .into()
 }
-
-
-

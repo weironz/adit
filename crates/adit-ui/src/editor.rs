@@ -22,10 +22,16 @@ fn editor_body_max_height(app: &AditApp) -> f32 {
     (app.window_height - 220.0).clamp(240.0, 720.0)
 }
 
-pub(crate) fn dialog_field<'a>(label: &'static str, input: Element<'a, Message>) -> Element<'a, Message> {
-    column![text(t_in("field", label)).size(11).color(muted_text()), input]
-        .spacing(3)
-        .into()
+pub(crate) fn dialog_field<'a>(
+    label: &'static str,
+    input: Element<'a, Message>,
+) -> Element<'a, Message> {
+    column![
+        text(t_in("field", label)).size(11).color(muted_text()),
+        input
+    ]
+    .spacing(3)
+    .into()
 }
 
 /// The shape every plain field in this dialog takes.
@@ -41,11 +47,15 @@ fn text_field<'a>(
 ) -> Element<'a, Message> {
     dialog_field(
         label,
-        accessibility::input(label, value, on_input, text_input(t(placeholder), value)
-            .on_input(on_input)
-            .padding([5, 8])
-            .style(text_input_style)
-            .width(Fill)
+        accessibility::input(
+            label,
+            value,
+            on_input,
+            text_input(t(placeholder), value)
+                .on_input(on_input)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
         ),
     )
 }
@@ -60,12 +70,16 @@ fn dial_field<'a>(
 ) -> Element<'a, Message> {
     dialog_field(
         label,
-        accessibility::input(label, value, on_input, text_input(t(placeholder), value)
-            .on_input(on_input)
-            .on_submit(Message::ConnectSelectedProfile)
-            .padding([5, 8])
-            .style(text_input_style)
-            .width(Fill)
+        accessibility::input(
+            label,
+            value,
+            on_input,
+            text_input(t(placeholder), value)
+                .on_input(on_input)
+                .on_submit(Message::ConnectSelectedProfile)
+                .padding([5, 8])
+                .style(text_input_style)
+                .width(Fill),
         ),
     )
 }
@@ -135,7 +149,12 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 .into(),
         ),
         dialog_field("分组", group_picker(app)),
-        text_field("名称", "会话名称", &app.profile_name, Message::ProfileNameChanged),
+        text_field(
+            "名称",
+            "会话名称",
+            &app.profile_name,
+            Message::ProfileNameChanged
+        ),
     ]
     .spacing(12);
 
@@ -149,12 +168,25 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
             form = form.push(
                 row![
                     cell(
-                        dial_field("主机", "10.0.0.5", &app.profile_host, Message::ProfileHostChanged),
+                        dial_field(
+                            "主机",
+                            "10.0.0.5",
+                            &app.profile_host,
+                            Message::ProfileHostChanged
+                        ),
                         3,
                     ),
-                    cell(text_field("端口", "22", &app.profile_port, Message::ProfilePortChanged), 1),
                     cell(
-                        text_field("用户名", "root", &app.profile_username, Message::ProfileUsernameChanged),
+                        text_field("端口", "22", &app.profile_port, Message::ProfilePortChanged),
+                        1
+                    ),
+                    cell(
+                        text_field(
+                            "用户名",
+                            "root",
+                            &app.profile_username,
+                            Message::ProfileUsernameChanged
+                        ),
                         3,
                     ),
                 ]
@@ -172,23 +204,29 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
             let secret: Element<'_, Message> = match app.profile_auth_method {
                 AuthMethod::Password => dialog_field(
                     "密码（加密保存，可随配置目录同步）",
-                    accessibility::protected("连接密码", !app.profile_password.is_empty(), text_input(t("连接密码"), &app.profile_password)
-                        .secure(true)
-                        .on_input(Message::ProfilePasswordChanged)
-                        .on_submit(Message::ConnectSelectedProfile)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
+                    accessibility::protected(
+                        "连接密码",
+                        !app.profile_password.is_empty(),
+                        text_input(t("连接密码"), &app.profile_password)
+                            .secure(true)
+                            .on_input(Message::ProfilePasswordChanged)
+                            .on_submit(Message::ConnectSelectedProfile)
+                            .padding([5, 8])
+                            .style(text_input_style)
+                            .width(Fill),
                     ),
                 ),
                 AuthMethod::Key | AuthMethod::Auto => dialog_field(
                     "密钥 passphrase（可选，加密保存；私钥加密时填写）",
-                    accessibility::protected("私钥 passphrase", !app.profile_passphrase.is_empty(), text_input(t("私钥 passphrase"), &app.profile_passphrase)
-                        .secure(true)
-                        .on_input(Message::ProfilePassphraseChanged)
-                        .padding([5, 8])
-                        .style(text_input_style)
-                        .width(Fill)
+                    accessibility::protected(
+                        "私钥 passphrase",
+                        !app.profile_passphrase.is_empty(),
+                        text_input(t("私钥 passphrase"), &app.profile_passphrase)
+                            .secure(true)
+                            .on_input(Message::ProfilePassphraseChanged)
+                            .padding([5, 8])
+                            .style(text_input_style)
+                            .width(Fill),
                     ),
                 ),
                 // ssh-agent holds the secret; there is nothing to ask for.
@@ -248,7 +286,12 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
             form = form.push(
                 row![
                     cell(
-                        dial_field("串口号", "COM3", &app.profile_host, Message::ProfileHostChanged),
+                        dial_field(
+                            "串口号",
+                            "COM3",
+                            &app.profile_host,
+                            Message::ProfileHostChanged
+                        ),
                         1,
                     ),
                     cell(
@@ -314,12 +357,18 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 )
                 .push(dialog_field(
                     "VNC 密码（加密保存）",
-                    accessibility::protected("VNC 密码", !app.profile_password.is_empty(), text_input(t("VNC 密码（前 8 字节）；无认证可留空"), &app.profile_password)
+                    accessibility::protected(
+                        "VNC 密码",
+                        !app.profile_password.is_empty(),
+                        text_input(
+                            t("VNC 密码（前 8 字节）；无认证可留空"),
+                            &app.profile_password,
+                        )
                         .secure(true)
                         .on_input(Message::ProfilePasswordChanged)
                         .padding([5, 8])
                         .style(text_input_style)
-                        .width(Fill)
+                        .width(Fill),
                     ),
                 ))
                 .push(vnc_options_editor(app));
@@ -329,10 +378,23 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 .push(
                     row![
                         cell(
-                            dial_field("主机", "10.0.0.5", &app.profile_host, Message::ProfileHostChanged),
+                            dial_field(
+                                "主机",
+                                "10.0.0.5",
+                                &app.profile_host,
+                                Message::ProfileHostChanged
+                            ),
                             3,
                         ),
-                        cell(text_field("端口", "3389", &app.profile_port, Message::ProfilePortChanged), 1),
+                        cell(
+                            text_field(
+                                "端口",
+                                "3389",
+                                &app.profile_port,
+                                Message::ProfilePortChanged
+                            ),
+                            1
+                        ),
                         cell(
                             text_field(
                                 "用户名",
@@ -351,12 +413,14 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                     // with it and shows "用户名或密码不正确" — a connected
                     // session that looks like a wrong password. Only the local
                     // account name works for the logon.
-                    text(t("原生 RDP（NLA/CredSSP）。用户名可用 域\\用户 形式指定域。\
+                    text(t(
+                        "原生 RDP（NLA/CredSSP）。用户名可用 域\\用户 形式指定域。\
                           微软账户请填本机账户名（远端 whoami 反斜杠后的那段，如 willz），\
                           不要填邮箱——邮箱能通过认证但无法登录桌面。\
-                          连接时在弹出的密码框输入密码（可勾选记住，存入系统凭据）。"))
-                        .size(11)
-                        .color(muted_text()),
+                          连接时在弹出的密码框输入密码（可勾选记住，存入系统凭据）。",
+                    ))
+                    .size(11)
+                    .color(muted_text()),
                 );
         }
     }
@@ -364,18 +428,33 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
     form = form.push(profile_options_editor(app));
     let actions = row![
         Space::new().width(Fill),
-        accessibility::button("editor:cancel", t("取消"), Message::CloseProfileEditor, button(text(t("取消")).size(12))
-            .padding([6, 16])
-            .style(|_theme, status| secondary_button_style(status))
-            .on_press(Message::CloseProfileEditor)),
-        accessibility::button("editor:connect", t("连接"), Message::ConnectSelectedProfile, button(text(t("连接")).size(12))
-            .padding([6, 16])
-            .style(|_theme, status| secondary_button_style(status))
-            .on_press(Message::ConnectSelectedProfile)),
-        accessibility::button("editor:save", t("保存"), Message::SaveProfile, button(text(t("保存")).size(12))
-            .padding([6, 18])
-            .style(|_theme, status| primary_button_style(status))
-            .on_press(Message::SaveProfile)),
+        accessibility::button(
+            "editor:cancel",
+            t("取消"),
+            Message::CloseProfileEditor,
+            button(text(t("取消")).size(12))
+                .padding([6, 16])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::CloseProfileEditor)
+        ),
+        accessibility::button(
+            "editor:connect",
+            t("连接"),
+            Message::ConnectSelectedProfile,
+            button(text(t("连接")).size(12))
+                .padding([6, 16])
+                .style(|_theme, status| secondary_button_style(status))
+                .on_press(Message::ConnectSelectedProfile)
+        ),
+        accessibility::button(
+            "editor:save",
+            t("保存"),
+            Message::SaveProfile,
+            button(text(t("保存")).size(12))
+                .padding([6, 18])
+                .style(|_theme, status| primary_button_style(status))
+                .on_press(Message::SaveProfile)
+        ),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -405,7 +484,10 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
         .into()
 }
 
-pub(crate) fn auth_method_button(app: &AditApp, auth_method: AuthMethod) -> Element<'static, Message> {
+pub(crate) fn auth_method_button(
+    app: &AditApp,
+    auth_method: AuthMethod,
+) -> Element<'static, Message> {
     let selected = app.profile_auth_method == auth_method;
 
     button(text(t(auth_method.label())).size(11))
@@ -415,7 +497,10 @@ pub(crate) fn auth_method_button(app: &AditApp, auth_method: AuthMethod) -> Elem
         .into()
 }
 
-pub(crate) fn environment_button(app: &AditApp, environment: Environment) -> Element<'static, Message> {
+pub(crate) fn environment_button(
+    app: &AditApp,
+    environment: Environment,
+) -> Element<'static, Message> {
     let selected = app.profile_environment == environment;
     // Tint the selected chip with the environment's own colour so the picker is
     // itself a legend (green=dev, amber=staging, red=prod).
@@ -447,7 +532,10 @@ pub(crate) fn icon_button(
     let icon: Element<'static, Message> = if key == "debian" {
         iced::widget::svg(iced::widget::svg::Handle::from_memory(
             logo_bytes(key).expect("Debian artwork is embedded"),
-        )).width(14).height(14).into()
+        ))
+        .width(14)
+        .height(14)
+        .into()
     } else {
         text(glyph).size(12).color(color).into()
     };
@@ -493,7 +581,11 @@ fn group_picker(app: &AditApp) -> Element<'_, Message> {
     // instant one was picked, leaving no way back to them but clearing the
     // field.
     let settled = typed.is_empty() || app.groups.iter().any(|group| group == typed);
-    let needle = if settled { String::new() } else { typed.to_lowercase() };
+    let needle = if settled {
+        String::new()
+    } else {
+        typed.to_lowercase()
+    };
 
     let mut chips = row![].spacing(6);
     let mut shown = 0usize;
@@ -503,7 +595,12 @@ fn group_picker(app: &AditApp) -> Element<'_, Message> {
     // It only appears while nothing is being filtered on, because "no folder"
     // is what an empty field already means.
     if needle.is_empty() {
-        chips = chips.push(group_chip(app, String::new(), String::from(t("未分组")), None));
+        chips = chips.push(group_chip(
+            app,
+            String::new(),
+            String::from(t("未分组")),
+            None,
+        ));
         shown += 1;
     }
     for group in &app.groups {
@@ -522,12 +619,17 @@ fn group_picker(app: &AditApp) -> Element<'_, Message> {
         shown += 1;
     }
 
-    let mut picker = column![accessibility::input("分组", &app.profile_group, Message::ProfileGroupChanged, text_input(t("筛选分组，或直接输入新分组名"), &app.profile_group)
-        .on_input(Message::ProfileGroupChanged)
-        .on_submit(Message::SaveProfile)
-        .padding([5, 8])
-        .style(text_input_style)
-        .width(Fill))]
+    let mut picker = column![accessibility::input(
+        "分组",
+        &app.profile_group,
+        Message::ProfileGroupChanged,
+        text_input(t("筛选分组，或直接输入新分组名"), &app.profile_group)
+            .on_input(Message::ProfileGroupChanged)
+            .on_submit(Message::SaveProfile)
+            .padding([5, 8])
+            .style(text_input_style)
+            .width(Fill)
+    )]
     .spacing(6);
 
     if shown > 0 {
@@ -564,13 +666,17 @@ fn group_picker(app: &AditApp) -> Element<'_, Message> {
 fn advanced_section(app: &AditApp) -> Element<'_, Message> {
     let open = app.profile_advanced_open;
     let mut head = row![
-        text(if open { "▾" } else { "▸" }).size(11).color(muted_text()),
+        text(if open { "▾" } else { "▸" })
+            .size(11)
+            .color(muted_text()),
         text(t("高级")).size(12),
         // Name what is inside while it is shut: ProxyJump used to be findable
         // by scrolling, and a nameless disclosure would just have lost it.
-        text(t("跳板机、ProxyCommand、启动命令、TERM、环境色标、连接保留"))
-            .size(10)
-            .color(muted_text()),
+        text(t(
+            "跳板机、ProxyCommand、启动命令、TERM、环境色标、连接保留"
+        ))
+        .size(10)
+        .color(muted_text()),
         Space::new().width(Fill),
     ]
     .spacing(6)
@@ -601,9 +707,13 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
             Message::ProfileJumpsChanged,
         ))
         .push(jump_auth_ui::view(app))
-        .push(checkbox(app.profile_proxy_enabled)
-            .label(t("启用此配置的 ProxyCommand（在本机执行外部程序）"))
-            .on_toggle(Message::ProfileProxyEnabled).size(16).text_size(12))
+        .push(
+            checkbox(app.profile_proxy_enabled)
+                .label(t("启用此配置的 ProxyCommand（在本机执行外部程序）"))
+                .on_toggle(Message::ProfileProxyEnabled)
+                .size(16)
+                .text_size(12),
+        )
         .push(text_field(
             "ProxyCommand 程序绝对路径（不调用 shell）",
             "C:\\Tools\\proxy.exe",
@@ -616,8 +726,13 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
             &app.profile_proxy_args,
             |value| Message::ProfileProxyArgs(jump_auth_ui::SecretAnswer(value)),
         ))
-        .push(text(t("参数以明文保存；不要填写密码或令牌。导入不会启用外部命令；不能与 ProxyJump 同用。"))
-            .size(10).color(muted_text()))
+        .push(
+            text(t(
+                "参数以明文保存；不要填写密码或令牌。导入不会启用外部命令；不能与 ProxyJump 同用。",
+            ))
+            .size(10)
+            .color(muted_text()),
+        )
         .push(
             row![
                 cell(
@@ -755,36 +870,87 @@ fn vnc_options_editor(app: &AditApp) -> Element<'_, Message> {
         button(t("密码认证")).on_press(Message::VncSecurityChanged(VncSecurity::RequireVncAuth)),
         button(t("允许无认证")).on_press(Message::VncSecurityChanged(VncSecurity::AllowNone)),
         button(t("TLS + 证书")).on_press(Message::VncSecurityChanged(VncSecurity::RequireTls)),
-    ].spacing(6).wrap();
+    ]
+    .spacing(6)
+    .wrap();
     let label = match option.security {
         VncSecurity::RequireVncAuth => "当前：必须密码认证（传输不加密）",
         VncSecurity::AllowNone => "当前：允许无认证（仅用于受控网络）",
         VncSecurity::RequireTls => "当前：必须 TLS，验证主机名与受信 CA",
     };
-    let mut fields = column![security, text(t(label)).size(11),
-        text_field("TLS CA 证书（PEM，可空用内置公共根）", "证书文件路径", &option.tls_ca_file, Message::VncTlsCaChanged),
-        row![button(t("无损文字")).on_press(Message::VncQualityChanged(VncQuality::Lossless)),
-             button(t("弱网 JPEG")).on_press(Message::VncQualityChanged(VncQuality::Wan)),
-             button(t("兼容无损 ZRLE")).on_press(Message::VncQualityChanged(VncQuality::Zrle)),
-             text(t(match option.quality {
-                 VncQuality::Lossless => "当前：无损",
-                 VncQuality::Wan => "当前：弱网（有损）",
-                 VncQuality::Zrle => "当前：兼容无损（禁用 Tight/JPEG）",
-             })).size(11)].spacing(6).wrap(),
-        checkbox(option.read_only).label(t("只读观察（禁止键鼠及发送剪贴板）")).on_toggle(|v| Message::VncPolicyChanged(0,v)),
-        checkbox(option.clipboard_send).label(t("允许本地文本发送到远端")).on_toggle(|v| Message::VncPolicyChanged(1,v)),
-        checkbox(option.clipboard_receive).label(t("允许接收远端文本剪贴板")).on_toggle(|v| Message::VncPolicyChanged(2,v)),
-        checkbox(option.clipboard_legacy).label(t("传统剪贴板兼容模式（Latin-1，不支持中文）")).on_toggle(|v| Message::VncPolicyChanged(5,v)),
-        checkbox(option.unicode_bmp_only).label(t("Windows VNC 字符兼容模式")).on_toggle(|v| Message::VncPolicyChanged(6,v)),
-        text(t("适用于会错误输入部分表情的服务端。开启后，遇到不兼容字符会提示，整段文本不发送。")).size(11),
-        checkbox(option.auto_reconnect).label(t("连接中断后自动重连")).on_toggle(|v| Message::VncPolicyChanged(3,v)),
-        checkbox(option.resize_remote).label(t("请求远端单屏适应窗口（会影响其他观察者）")).on_toggle(|v| Message::VncPolicyChanged(4,v)),
+    let mut fields = column![
+        security,
+        text(t(label)).size(11),
+        text_field(
+            "TLS CA 证书（PEM，可空用内置公共根）",
+            "证书文件路径",
+            &option.tls_ca_file,
+            Message::VncTlsCaChanged
+        ),
+        row![
+            button(t("无损文字")).on_press(Message::VncQualityChanged(VncQuality::Lossless)),
+            button(t("弱网 JPEG")).on_press(Message::VncQualityChanged(VncQuality::Wan)),
+            button(t("兼容无损 ZRLE")).on_press(Message::VncQualityChanged(VncQuality::Zrle)),
+            text(t(match option.quality {
+                VncQuality::Lossless => "当前：无损",
+                VncQuality::Wan => "当前：弱网（有损）",
+                VncQuality::Zrle => "当前：兼容无损（禁用 Tight/JPEG）",
+            }))
+            .size(11)
+        ]
+        .spacing(6)
+        .wrap(),
+        checkbox(option.read_only)
+            .label(t("只读观察（禁止键鼠及发送剪贴板）"))
+            .on_toggle(|v| Message::VncPolicyChanged(0, v)),
+        checkbox(option.clipboard_send)
+            .label(t("允许本地文本发送到远端"))
+            .on_toggle(|v| Message::VncPolicyChanged(1, v)),
+        checkbox(option.clipboard_receive)
+            .label(t("允许接收远端文本剪贴板"))
+            .on_toggle(|v| Message::VncPolicyChanged(2, v)),
+        checkbox(option.clipboard_legacy)
+            .label(t("传统剪贴板兼容模式（Latin-1，不支持中文）"))
+            .on_toggle(|v| Message::VncPolicyChanged(5, v)),
+        checkbox(option.unicode_bmp_only)
+            .label(t("Windows VNC 字符兼容模式"))
+            .on_toggle(|v| Message::VncPolicyChanged(6, v)),
+        text(t(
+            "适用于会错误输入部分表情的服务端。开启后，遇到不兼容字符会提示，整段文本不发送。"
+        ))
+        .size(11),
+        checkbox(option.auto_reconnect)
+            .label(t("连接中断后自动重连"))
+            .on_toggle(|v| Message::VncPolicyChanged(3, v)),
+        checkbox(option.resize_remote)
+            .label(t("请求远端单屏适应窗口（会影响其他观察者）"))
+            .on_toggle(|v| Message::VncPolicyChanged(4, v)),
         text(t("SSH 网关（目标地址由网关访问）")).size(11),
-        button(t(if option.gateway_profile.is_none() { "● 直接连接" } else { "直接连接" })).on_press(Message::VncGatewayChanged(None)),
-    ].spacing(8);
-    for gateway in app.manager.profiles().iter().filter(|p| p.protocol == Protocol::Ssh) {
-        let label = format!("{} {}", if option.gateway_profile == Some(gateway.id) { "●" } else { "○" }, gateway.name);
-        fields = fields.push(button(text(label)).on_press(Message::VncGatewayChanged(Some(gateway.id))));
+        button(t(if option.gateway_profile.is_none() {
+            "● 直接连接"
+        } else {
+            "直接连接"
+        }))
+        .on_press(Message::VncGatewayChanged(None)),
+    ]
+    .spacing(8);
+    for gateway in app
+        .manager
+        .profiles()
+        .iter()
+        .filter(|p| p.protocol == Protocol::Ssh)
+    {
+        let label = format!(
+            "{} {}",
+            if option.gateway_profile == Some(gateway.id) {
+                "●"
+            } else {
+                "○"
+            },
+            gateway.name
+        );
+        fields =
+            fields.push(button(text(label)).on_press(Message::VncGatewayChanged(Some(gateway.id))));
     }
     fields.into()
 }

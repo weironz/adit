@@ -24,8 +24,7 @@ fn spawn_browser(url: &str) -> std::io::Result<std::process::Child> {
     if cfg!(target_os = "windows") {
         // rundll32 receives the URL as a single argv — no cmd.exe re-parsing.
         no_window(
-            std::process::Command::new("rundll32.exe")
-                .args(["url.dll,FileProtocolHandler", url]),
+            std::process::Command::new("rundll32.exe").args(["url.dll,FileProtocolHandler", url]),
         )
         .spawn()
     } else if cfg!(target_os = "macos") {
@@ -104,7 +103,12 @@ pub(crate) fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> 
         &url,
     ]))
     .output()
-    .map_err(|error| tf("无法运行 curl（检查更新需要系统自带的 curl）: {}", &[&error]))?;
+    .map_err(|error| {
+        tf(
+            "无法运行 curl（检查更新需要系统自带的 curl）: {}",
+            &[&error],
+        )
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -178,7 +182,11 @@ pub(crate) async fn download_installer(url: String, name: String) -> Result<Stri
 pub(crate) fn download_installer_blocking(url: &str, name: &str) -> Result<String, String> {
     let dir = std::env::temp_dir().join("adit-update");
     std::fs::create_dir_all(&dir).map_err(|error| tf("创建下载目录失败: {}", &[&error]))?;
-    let safe_name = if name.is_empty() { "adit-installer.exe" } else { name };
+    let safe_name = if name.is_empty() {
+        "adit-installer.exe"
+    } else {
+        name
+    };
     let dest = dir.join(safe_name);
 
     let output = no_window(std::process::Command::new("curl").args([
@@ -226,7 +234,10 @@ pub(crate) fn download_installer_blocking(url: &str, name: &str) -> Result<Strin
 /// Falls back to any `.exe` rather than refusing to update, so a future release
 /// that renames things degrades to the old behaviour instead of stranding
 /// everyone on their current version.
-pub(crate) fn pick_installer_asset(assets: &[serde_json::Value], arch: &str) -> Option<(String, String)> {
+pub(crate) fn pick_installer_asset(
+    assets: &[serde_json::Value],
+    arch: &str,
+) -> Option<(String, String)> {
     let want_arm = arch == "aarch64";
     let mut fallback: Option<(String, String)> = None;
 

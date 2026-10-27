@@ -44,13 +44,7 @@ pub(super) async fn connect(
     request: LiveShellRequest,
     events: AuthEventSink<'_>,
     forwards: ForwardRegistry,
-) -> Result<
-    (
-        client::Handle<KnownHostsClient>,
-        ConnectionLifetime,
-    ),
-    SshError,
-> {
+) -> Result<(client::Handle<KnownHostsClient>, ConnectionLifetime), SshError> {
     validate_live_request(&request)?;
     let mut proxy_process = None;
     let config = Arc::new(client::Config {
@@ -109,5 +103,11 @@ pub(super) async fn connect(
         Some(&mut interactive),
     )
     .await?;
-    Ok((session, ConnectionLifetime { _jumps: jumps, _proxy: proxy_process }))
+    Ok((
+        session,
+        ConnectionLifetime {
+            _jumps: jumps,
+            _proxy: proxy_process,
+        },
+    ))
 }

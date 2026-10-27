@@ -420,7 +420,9 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
     expected.settings = Some(SettingsCategory::Appearance);
     steps.push(Step {
         name: "settings-appearance",
-        messages: vec![Message::SettingsCategoryPicked(SettingsCategory::Appearance)],
+        messages: vec![Message::SettingsCategoryPicked(
+            SettingsCategory::Appearance,
+        )],
         expected,
     });
     expected.view = MainView::Missions;
@@ -428,7 +430,10 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
     expected.settings = None;
     steps.push(Step {
         name: "f-after-settings",
-        messages: vec![Message::CloseSettings, Message::ShowMainView(MainView::Missions)],
+        messages: vec![
+            Message::CloseSettings,
+            Message::ShowMainView(MainView::Missions),
+        ],
         expected,
     });
     expected.editor_open = true;
@@ -440,7 +445,10 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
     expected.editor_open = false;
     steps.push(Step {
         name: "f-after-editor",
-        messages: vec![Message::CloseProfileEditor, Message::ShowMainView(MainView::Missions)],
+        messages: vec![
+            Message::CloseProfileEditor,
+            Message::ShowMainView(MainView::Missions),
+        ],
         expected,
     });
     steps
@@ -615,7 +623,9 @@ fn verify(state: &State) -> Result<(), String> {
         || state.app.terminal_focused != (expected.view != MainView::Hosts && !expected.editor_open)
         || state.app.profile_editor.is_some() != expected.editor_open
         || state.app.settings_open != expected.settings.is_some()
-        || expected.settings.is_some_and(|category| category != state.app.settings_category)
+        || expected
+            .settings
+            .is_some_and(|category| category != state.app.settings_category)
     {
         return Err(format!(
             "unexpected navigation/focus state at {}",
@@ -868,7 +878,10 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                 let description = format!("{message:?}");
                 let task = dispatch(state, message);
                 if state.executed_messages.len() != before + 1 {
-                    return finish(state, Err(format!("planned action was rejected: {description}")));
+                    return finish(
+                        state,
+                        Err(format!("planned action was rejected: {description}")),
+                    );
                 }
                 tasks.push(task);
             }

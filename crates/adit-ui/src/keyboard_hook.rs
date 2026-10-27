@@ -72,9 +72,9 @@ mod imp {
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, DispatchMessageW, GetForegroundWindow, GetMessageW,
-        GetWindowThreadProcessId, KBDLLHOOKSTRUCT, KillTimer, MSG, PM_NOREMOVE, PeekMessageW,
-        PostThreadMessageW, SetTimer, SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx,
-        WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_NULL, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        GetWindowThreadProcessId, KillTimer, PeekMessageW, PostThreadMessageW, SetTimer,
+        SetWindowsHookExW, TranslateMessage, UnhookWindowsHookEx, KBDLLHOOKSTRUCT, MSG,
+        PM_NOREMOVE, WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_NULL, WM_SYSKEYDOWN, WM_SYSKEYUP,
     };
 
     /// Whether the hook should currently swallow and forward. Read on the hook
@@ -449,8 +449,8 @@ mod imp {
         let generation = GENERATION.fetch_add(1, Ordering::AcqRel).wrapping_add(1);
         let (preheld, caps, layout) = unsafe {
             use windows::Win32::UI::Input::KeyboardAndMouse::{
-                GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MAPVK_VK_TO_VSC_EX,
-                MapVirtualKeyExW,
+                GetAsyncKeyState, GetKeyState, GetKeyboardLayout, MapVirtualKeyExW,
+                MAPVK_VK_TO_VSC_EX,
             };
             let thread = GetWindowThreadProcessId(GetForegroundWindow(), None);
             let layout = GetKeyboardLayout(thread);
@@ -766,9 +766,9 @@ mod native_tests {
     use super::*;
     use std::time::{Duration, Instant};
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput, VK_F24,
+        SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, VK_F24,
     };
-    use windows::Win32::UI::WindowsAndMessaging::{MSG, PM_REMOVE, PeekMessageW};
+    use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_REMOVE};
 
     #[test]
     #[ignore = "changes only this test process's raw keyboard registration"]

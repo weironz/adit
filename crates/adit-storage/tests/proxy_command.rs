@@ -38,11 +38,14 @@ fn old_and_ssh_imported_profiles_never_enable_external_processes() {
     let loaded: ConnectionProfile = serde_json::from_value(value).unwrap();
     assert!(!loaded.proxy_command.enabled);
 
-    let command_config = "Host synthetic\n HostName example.invalid\n ProxyCommand cmd /c unwanted\n";
+    let command_config =
+        "Host synthetic\n HostName example.invalid\n ProxyCommand cmd /c unwanted\n";
     let error = adit_storage::parse_ssh_config_report(command_config).unwrap_err();
     assert!(!error.contains("unwanted"));
-    assert!(parse_ssh_config(command_config).is_empty(),
-        "an unsupported required proxy must never silently turn into a direct route");
+    assert!(
+        parse_ssh_config(command_config).is_empty(),
+        "an unsupported required proxy must never silently turn into a direct route"
+    );
     let hosts = parse_ssh_config("Host synthetic\n HostName example.invalid\n");
     assert_eq!(hosts.len(), 1);
     // Importers create profiles through this constructor, rather than importing

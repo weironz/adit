@@ -91,19 +91,17 @@ pub(crate) fn session_tree(app: &AditApp) -> Element<'_, Message> {
                 }
                 if editing {
                     // Rename in place: the header itself becomes an editable field.
-                    profiles = profiles
-                        .push(tree_group_edit_row(app.group_name_draft.clone(), collapsed));
+                    profiles =
+                        profiles.push(tree_group_edit_row(app.group_name_draft.clone(), collapsed));
                 } else {
                     profiles = profiles.push(tree_group_row(
                         group.clone(),
                         collapsed,
                         group_count,
                         group_drop_target,
-                        app.group_icons
-                            .get(&group)
-                            .and_then(|key| {
-                                crate::hosts::HOST_ICONS.iter().find(|icon| icon.key == key)
-                            }),
+                        app.group_icons.get(&group).and_then(|key| {
+                            crate::hosts::HOST_ICONS.iter().find(|icon| icon.key == key)
+                        }),
                     ));
                 }
                 if !collapsed {
@@ -208,44 +206,59 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
         })
         .map(Element::from);
 
-    let mut content = column![
-        container(
-            row![
-                text(t("打开的连接")).size(12).color(primary_text()),
-                Space::new().width(Fill),
-                text(app.manager.sessions().len()).size(10).color(muted_text()),
-                sidebar_tool_button("+", 20.0, "新建会话", Message::NewProfileDraft),
-                sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
-            ]
-            .spacing(4)
-            .align_y(Alignment::Center),
-        )
-        // Same height as the tab strip beside it, and centred rather than just
-        // sized: `Container` aligns to the top by default, so height alone left
-        // these buttons hugging the top edge while the + across the divider —
-        // the one thing that *was* centred — sat 4px below them.
-        .center_y(TAB_BAR_HEIGHT)
-        .padding([0, 8])
-        .style(|_theme| sidebar_header_style()),
-    ];
+    let mut content = column![container(
+        row![
+            text(t("打开的连接")).size(12).color(primary_text()),
+            Space::new().width(Fill),
+            text(app.manager.sessions().len())
+                .size(10)
+                .color(muted_text()),
+            sidebar_tool_button("+", 20.0, "新建会话", Message::NewProfileDraft),
+            sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    // Same height as the tab strip beside it, and centred rather than just
+    // sized: `Container` aligns to the top by default, so height alone left
+    // these buttons hugging the top edge while the + across the divider —
+    // the one thing that *was* centred — sat 4px below them.
+    .center_y(TAB_BAR_HEIGHT)
+    .padding([0, 8])
+    .style(|_theme| sidebar_header_style()),];
 
     content = content.push(
-        container(text_input(t("查找打开的连接…"), &app.open_session_filter)
-            .id(session_filter_id())
-            .on_input(Message::OpenSessionFilterChanged)
-            .padding([4, 6])
-            .size(11)
-            .style(toolbar_input_style)).padding([4, 8]),
+        container(
+            text_input(t("查找打开的连接…"), &app.open_session_filter)
+                .id(session_filter_id())
+                .on_input(Message::OpenSessionFilterChanged)
+                .padding([4, 6])
+                .size(11)
+                .style(toolbar_input_style),
+        )
+        .padding([4, 8]),
     );
-    let sessions = visible_open_sessions(app).into_iter().fold(column![].spacing(2).padding(6), |rows, session| {
-        let accent = profile_accent(app, session.profile_id);
-        let badge = profile_badge(app, session.profile_id);
-        let selected = app.selected_tabs.contains(&session.id);
-        let tile = app.manager.profile(session.profile_id)
-            .map(|profile| host_tile(app, profile, 26.0, false));
-        rows.push(tab_button(session, app.manager.active_session(), app.dragged_tab,
-            selected, accent, badge, tile))
-    });
+    let sessions = visible_open_sessions(app).into_iter().fold(
+        column![].spacing(2).padding(6),
+        |rows, session| {
+            let accent = profile_accent(app, session.profile_id);
+            let badge = profile_badge(app, session.profile_id);
+            let selected = app.selected_tabs.contains(&session.id);
+            let tile = app
+                .manager
+                .profile(session.profile_id)
+                .map(|profile| host_tile(app, profile, 26.0, false));
+            rows.push(tab_button(
+                session,
+                app.manager.active_session(),
+                app.dragged_tab,
+                selected,
+                accent,
+                badge,
+                tile,
+            ))
+        },
+    );
     content = content.push(scrollable(sessions).height(Fill));
 
     // No action bar for a multi-selection, deliberately. Every action it
@@ -254,7 +267,10 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
     // whose buttons wrapped once the sidebar was narrow, was a third place to
     // learn for nothing new.
 
-    let mut content = content.spacing(0).height(Fill).width(Length::Fixed(app.sidebar_width));
+    let mut content = content
+        .spacing(0)
+        .height(Fill)
+        .width(Length::Fixed(app.sidebar_width));
 
     if let Some(error) = error {
         content = content.push(error);
@@ -274,24 +290,42 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
 
 pub(crate) fn visible_open_sessions(app: &AditApp) -> Vec<SessionSummary> {
     let filter = app.open_session_filter.trim().to_lowercase();
-    app.manager.sessions().into_iter().filter(|s| {
-        filter.is_empty() || s.title.to_lowercase().contains(&filter)
-            || app.manager.profile(s.profile_id).is_some_and(|p| {
-                p.host.to_lowercase().contains(&filter) || p.group.to_lowercase().contains(&filter)
-            })
-    }).collect()
+    app.manager
+        .sessions()
+        .into_iter()
+        .filter(|s| {
+            filter.is_empty()
+                || s.title.to_lowercase().contains(&filter)
+                || app.manager.profile(s.profile_id).is_some_and(|p| {
+                    p.host.to_lowercase().contains(&filter)
+                        || p.group.to_lowercase().contains(&filter)
+                })
+        })
+        .collect()
 }
 
 pub(crate) fn resource_sidebar(app: &AditApp) -> Element<'_, Message> {
     let action = |icon, label: &'static str, selected, message: Message| {
-        button(row![
-            ui_icon(icon, 16.0, if selected { primary_text() } else { muted_text() }),
-            text(t(label)).size(12),
-        ].spacing(12).align_y(Alignment::Center))
-            .padding([9, 10])
-            .width(Fill)
-            .style(move |_, status| menu_button_style(selected, status))
-            .on_press(message)
+        button(
+            row![
+                ui_icon(
+                    icon,
+                    16.0,
+                    if selected {
+                        primary_text()
+                    } else {
+                        muted_text()
+                    }
+                ),
+                text(t(label)).size(12),
+            ]
+            .spacing(12)
+            .align_y(Alignment::Center),
+        )
+        .padding([9, 10])
+        .width(Fill)
+        .style(move |_, status| menu_button_style(selected, status))
+        .on_press(message)
     };
     container(
         column![
@@ -299,16 +333,45 @@ pub(crate) fn resource_sidebar(app: &AditApp) -> Element<'_, Message> {
                 text(t("本地资源库")).size(12).color(muted_text()),
                 Space::new().width(Fill),
                 sidebar_tool_button("«", 14.0, "隐藏会话栏", Message::ToggleSidebar),
-            ].align_y(Alignment::Center).height(TAB_BAR_HEIGHT),
-            action(UiIcon::Hosts, "主机", true, Message::ShowMainView(MainView::Hosts)),
-            action(UiIcon::Key, "主机密钥…", false, Message::RunMenu(MenuCommand::KnownHosts)),
-            action(UiIcon::Forward, "端口转发", false, Message::RunMenu(MenuCommand::Tunnels)),
-            action(UiIcon::Code, "代码片段", false, Message::RunMenu(MenuCommand::Snippets)),
+            ]
+            .align_y(Alignment::Center)
+            .height(TAB_BAR_HEIGHT),
+            action(
+                UiIcon::Hosts,
+                "主机",
+                true,
+                Message::ShowMainView(MainView::Hosts)
+            ),
+            action(
+                UiIcon::Key,
+                "主机密钥…",
+                false,
+                Message::RunMenu(MenuCommand::KnownHosts)
+            ),
+            action(
+                UiIcon::Forward,
+                "端口转发",
+                false,
+                Message::RunMenu(MenuCommand::Tunnels)
+            ),
+            action(
+                UiIcon::Code,
+                "代码片段",
+                false,
+                Message::RunMenu(MenuCommand::Snippets)
+            ),
             Space::new().height(Fill),
-            action(UiIcon::Settings, "设置…", false, Message::RunMenu(MenuCommand::Options)),
+            action(
+                UiIcon::Settings,
+                "设置…",
+                false,
+                Message::RunMenu(MenuCommand::Options)
+            ),
             text(tf("{} 个已打开会话", &[&app.manager.sessions().len()]))
-                .size(TEXT_META).color(muted_text()),
-        ].spacing(3),
+                .size(TEXT_META)
+                .color(muted_text()),
+        ]
+        .spacing(3),
     )
     .padding([0, 8])
     .width(Length::Fixed(app.sidebar_width))
@@ -361,14 +424,14 @@ pub(crate) fn sidebar_offset(app: &AditApp) -> f32 {
 pub(crate) fn sidebar_divider() -> Element<'static, Message> {
     mouse_area(
         container(
-            container(Space::new().width(1).height(Fill))
-                .style(|_| container::Style {
-                    background: Some(border_color().into()),
-                    ..Default::default()
-                })
-        ).center_x(SIDEBAR_DIVIDER_WIDTH)
-            .height(Fill)
-            .style(|_| sidebar_style()),
+            container(Space::new().width(1).height(Fill)).style(|_| container::Style {
+                background: Some(border_color().into()),
+                ..Default::default()
+            }),
+        )
+        .center_x(SIDEBAR_DIVIDER_WIDTH)
+        .height(Fill)
+        .style(|_| sidebar_style()),
     )
     .on_press(Message::BeginSidebarDrag)
     .interaction(mouse::Interaction::ResizingHorizontally)
@@ -501,13 +564,25 @@ pub(crate) fn group_context_menu_card(
 
     container(
         column![
-            profile_menu_item("重命名", Message::RenameGroupFromContext(group.clone()), false),
+            profile_menu_item(
+                "重命名",
+                Message::RenameGroupFromContext(group.clone()),
+                false
+            ),
             profile_menu_item("新会话", Message::NewProfileInGroup(group.clone()), false),
-            profile_menu_item(toggle_label, Message::ToggleProfileGroup(group.clone()), false),
+            profile_menu_item(
+                toggle_label,
+                Message::ToggleProfileGroup(group.clone()),
+                false
+            ),
             profile_menu_divider(),
             container(text(t("分组图标")).size(10).color(muted_text())).padding([2, 6]),
             container(swatches).padding([0, 6]),
-            profile_menu_item("清除图标", Message::GroupIconPicked(group.clone(), ""), false),
+            profile_menu_item(
+                "清除图标",
+                Message::GroupIconPicked(group.clone(), ""),
+                false
+            ),
             profile_menu_divider(),
             profile_menu_item("删除分组", Message::DeleteGroupFromContext(group), true),
         ]
@@ -519,7 +594,11 @@ pub(crate) fn group_context_menu_card(
     .into()
 }
 
-pub(crate) fn group_context_overlay(app: &AditApp, group: String, collapsed: bool) -> Element<'_, Message> {
+pub(crate) fn group_context_overlay(
+    app: &AditApp,
+    group: String,
+    collapsed: bool,
+) -> Element<'_, Message> {
     floating_context_menu(
         app,
         group_context_menu_card(
@@ -558,7 +637,10 @@ pub(crate) fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'st
 
 /// A session row in rename mode: the name line becomes an editable field in place
 /// (no popup). Enter or clicking away saves; Esc reverts. No confirm/cancel buttons.
-pub(crate) fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -> Element<'static, Message> {
+pub(crate) fn tree_profile_edit_row(
+    profile: ConnectionProfile,
+    draft: String,
+) -> Element<'static, Message> {
     container(
         row![
             Space::new().width(Length::Fixed(4.0)),
@@ -585,7 +667,10 @@ pub(crate) fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -
 /// Render one session row for the sidebar. Shared by the ungrouped top-level
 /// list and every group. During a drag the row stays put (SecureCRT-style) and
 /// only an insertion line marks where the drop will land.
-pub(crate) fn sidebar_profile_row(app: &AditApp, profile: &ConnectionProfile) -> Element<'static, Message> {
+pub(crate) fn sidebar_profile_row(
+    app: &AditApp,
+    profile: &ConnectionProfile,
+) -> Element<'static, Message> {
     // Rename in place: the row's name becomes an editable field (no popup).
     if app.editing_profile == Some(profile.id) {
         return tree_profile_edit_row(profile.clone(), app.profile_name_draft.clone());
@@ -646,7 +731,11 @@ pub(crate) fn drop_line() -> Element<'static, Message> {
 /// A drop zone at the very top of the tree (shown only during a drag) so a
 /// session can be pulled out of any group to the very top level.
 pub(crate) fn top_level_drop_zone(targeted: bool) -> Element<'static, Message> {
-    edge_drop_zone(targeted, "↥ 拖到此处 · 移到最顶（顶层）", Message::ProfileDragOverTop)
+    edge_drop_zone(
+        targeted,
+        "↥ 拖到此处 · 移到最顶（顶层）",
+        Message::ProfileDragOverTop,
+    )
 }
 
 /// A drop zone at the very bottom of the tree so a session can be placed below
@@ -671,20 +760,22 @@ pub(crate) fn edge_drop_zone(
     };
     let label = if targeted { accent() } else { muted_text() };
     mouse_area(
-        container(
-            column![indicator, text(t(label_text)).size(10).color(label)].spacing(2),
-        )
-        .width(Fill)
-        .padding([2, 8])
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(if targeted {
-                accent_soft()
-            } else {
-                surface_alt()
-            })),
-            border: border(RADIUS_SM, 1.0, if targeted { accent() } else { border_color() }),
-            ..container::Style::default()
-        }),
+        container(column![indicator, text(t(label_text)).size(10).color(label)].spacing(2))
+            .width(Fill)
+            .padding([2, 8])
+            .style(move |_theme| container::Style {
+                background: Some(Background::Color(if targeted {
+                    accent_soft()
+                } else {
+                    surface_alt()
+                })),
+                border: border(
+                    RADIUS_SM,
+                    1.0,
+                    if targeted { accent() } else { border_color() },
+                ),
+                ..container::Style::default()
+            }),
     )
     // on_enter arms the drop; the global release (CancelProfileDrag) commits it.
     .on_enter(on_enter)
@@ -737,10 +828,15 @@ pub(crate) fn tree_profile_row(
     .on_exit(Message::ProfileHoverExited(profile_id))
     .interaction(interaction)
     .into();
-    accessibility::control(control, accessibility::Control::item(
-        format!("resource:tree_profile_row:{}", profile.id), profile.name.clone(),
-        Message::AccessibilitySelectProfile(profile.id),
-    ).read_value(profile.host.clone()))
+    accessibility::control(
+        control,
+        accessibility::Control::item(
+            format!("resource:tree_profile_row:{}", profile.id),
+            profile.name.clone(),
+            Message::AccessibilitySelectProfile(profile.id),
+        )
+        .read_value(profile.host.clone()),
+    )
 }
 
 pub(crate) fn profile_drop_position(point: Point) -> ProfileDropPosition {
@@ -779,9 +875,9 @@ pub(crate) fn avatar_initials(name: &str) -> String {
 }
 
 pub(crate) fn avatar_color(name: &str) -> Color {
-    let hash = name
-        .bytes()
-        .fold(0u32, |acc, b| acc.wrapping_mul(31).wrapping_add(u32::from(b)));
+    let hash = name.bytes().fold(0u32, |acc, b| {
+        acc.wrapping_mul(31).wrapping_add(u32::from(b))
+    });
     match hash % 6 {
         0 => Color::from_rgb8(15, 158, 140),  // teal
         1 => Color::from_rgb8(44, 123, 214),  // blue
@@ -831,9 +927,21 @@ pub(crate) fn profile_context_menu(
         false,
     )];
     if !multi {
-        items.push(profile_menu_item("重命名", Message::RenameProfileFromContext(profile_id), false));
-        items.push(profile_menu_item("编辑", Message::EditProfileFromContext(profile_id), false));
-        items.push(profile_menu_item("克隆", Message::CloneProfileFromContext(profile_id), false));
+        items.push(profile_menu_item(
+            "重命名",
+            Message::RenameProfileFromContext(profile_id),
+            false,
+        ));
+        items.push(profile_menu_item(
+            "编辑",
+            Message::EditProfileFromContext(profile_id),
+            false,
+        ));
+        items.push(profile_menu_item(
+            "克隆",
+            Message::CloneProfileFromContext(profile_id),
+            false,
+        ));
         items.push(profile_menu_item(
             pin_label,
             Message::TogglePinnedFromContext(profile_id),
@@ -841,8 +949,16 @@ pub(crate) fn profile_context_menu(
         ));
     }
     items.push(profile_menu_divider());
-    items.push(profile_menu_item("移动到分组", Message::ShowMoveToGroupMenu, false));
-    items.push(profile_menu_item("删除", Message::DeleteSelectedProfiles, true));
+    items.push(profile_menu_item(
+        "移动到分组",
+        Message::ShowMoveToGroupMenu,
+        false,
+    ));
+    items.push(profile_menu_item(
+        "删除",
+        Message::DeleteSelectedProfiles,
+        true,
+    ));
     container(column(items).spacing(1))
         .padding(4)
         .width(Length::Fixed(PROFILE_MENU_WIDTH))
@@ -864,7 +980,10 @@ pub(crate) fn profile_menu_is_multi(app: &AditApp) -> bool {
 
 /// A floating context menu anchored at the cursor, over a transparent scrim that
 /// dismisses it on any outside click.
-pub(crate) fn profile_context_overlay(app: &AditApp, profile_id: ProfileId) -> Element<'_, Message> {
+pub(crate) fn profile_context_overlay(
+    app: &AditApp,
+    profile_id: ProfileId,
+) -> Element<'_, Message> {
     let multi = profile_menu_is_multi(app);
     let pinned = app
         .manager
@@ -930,7 +1049,11 @@ pub(crate) fn tab_context_overlay(app: &AditApp, session_id: SessionId) -> Eleme
 }
 
 /// The session-tab right-click menu card (rename / (dis)connect / clone / close).
-pub(crate) fn tab_context_menu(session_id: SessionId, connected: bool, multi: bool) -> Element<'static, Message> {
+pub(crate) fn tab_context_menu(
+    session_id: SessionId,
+    connected: bool,
+    multi: bool,
+) -> Element<'static, Message> {
     let connection_item = if connected {
         profile_menu_item("断开连接", Message::DisconnectSession(session_id), false)
     } else {
@@ -943,11 +1066,23 @@ pub(crate) fn tab_context_menu(session_id: SessionId, connected: bool, multi: bo
         profile_menu_divider(),
     ];
     if multi {
-        items.push(profile_menu_item("关闭选中标签", Message::CloseSelectedTabs, true));
-        items.push(profile_menu_item("断开选中标签", Message::DisconnectSelectedTabs, false));
+        items.push(profile_menu_item(
+            "关闭选中标签",
+            Message::CloseSelectedTabs,
+            true,
+        ));
+        items.push(profile_menu_item(
+            "断开选中标签",
+            Message::DisconnectSelectedTabs,
+            false,
+        ));
         items.push(profile_menu_divider());
     }
-    items.push(profile_menu_item("关闭", Message::CloseSession(session_id), true));
+    items.push(profile_menu_item(
+        "关闭",
+        Message::CloseSession(session_id),
+        true,
+    ));
     container(column(items).spacing(1))
         .padding(4)
         .width(Length::Fixed(PROFILE_MENU_WIDTH))
@@ -970,13 +1105,30 @@ pub(crate) fn floating_context_menu<'a>(
     card: Element<'a, Message>,
     hide: Message,
 ) -> Element<'a, Message> {
-    floating_context_menu_at(app.window_width, app.window_height, app.context_menu_pos, card, hide)
+    floating_context_menu_at(
+        app.window_width,
+        app.window_height,
+        app.context_menu_pos,
+        card,
+        hide,
+    )
 }
 
-pub(crate) fn floating_context_menu_at<'a>(width: f32, height: f32, point: Point,
-    card: Element<'a, Message>, hide: Message) -> Element<'a, Message> {
-    let x = point.x.min((width - PROFILE_MENU_WIDTH - 6.0).max(0.0)).max(0.0);
-    let y = point.y.min((height - PROFILE_MENU_HEIGHT - 6.0).max(0.0)).max(0.0);
+pub(crate) fn floating_context_menu_at<'a>(
+    width: f32,
+    height: f32,
+    point: Point,
+    card: Element<'a, Message>,
+    hide: Message,
+) -> Element<'a, Message> {
+    let x = point
+        .x
+        .min((width - PROFILE_MENU_WIDTH - 6.0).max(0.0))
+        .max(0.0);
+    let y = point
+        .y
+        .min((height - PROFILE_MENU_HEIGHT - 6.0).max(0.0))
+        .max(0.0);
 
     let positioned = column![
         Space::new().height(Length::Fixed(y)),
@@ -994,7 +1146,11 @@ pub(crate) fn floating_context_menu_at<'a>(width: f32, height: f32, point: Point
     .into()
 }
 
-pub(crate) fn profile_menu_item(label: &'static str, message: Message, danger: bool) -> Element<'static, Message> {
+pub(crate) fn profile_menu_item(
+    label: &'static str,
+    message: Message,
+    danger: bool,
+) -> Element<'static, Message> {
     button(text(t(label)).size(12))
         .width(Fill)
         .padding([6, 10])
@@ -1012,7 +1168,6 @@ pub(crate) fn profile_menu_divider() -> Element<'static, Message> {
         })
         .into()
 }
-
 
 pub(crate) fn profile_matches_filter(profile: &ConnectionProfile, filter: &str) -> bool {
     if filter.is_empty() {
@@ -1061,8 +1216,8 @@ pub(crate) fn sidebar_tool_button(
     .width(Length::Fixed(28.0))
     .height(Length::Fixed(TAB_HEIGHT))
     .padding(0)
-        .style(|_theme, status| sidebar_tool_button_style(status))
-        .on_press(message);
+    .style(|_theme, status| sidebar_tool_button_style(status))
+    .on_press(message);
 
     tooltip(
         control,

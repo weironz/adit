@@ -79,7 +79,10 @@ fn canonical_catalog(catalog: &ProfileCatalog) -> String {
 }
 
 fn index(profiles: &[ConnectionProfile]) -> HashMap<ProfileId, &ConnectionProfile> {
-    profiles.iter().map(|profile| (profile.id, profile)).collect()
+    profiles
+        .iter()
+        .map(|profile| (profile.id, profile))
+        .collect()
 }
 
 /// Merge `local` and `remote`, using `base` as the common ancestor.
@@ -307,7 +310,12 @@ mod tests {
             &catalog(vec![mine.clone()]),
             &catalog(vec![theirs.clone()]),
         );
-        let names: Vec<_> = out.catalog.profiles.iter().map(|p| p.name.as_str()).collect();
+        let names: Vec<_> = out
+            .catalog
+            .profiles
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         assert_eq!(names, ["mine", "theirs"]);
         assert!(out.conflicts.is_empty());
     }
@@ -363,7 +371,10 @@ mod tests {
         assert_eq!(out.catalog.profiles[0].port, 2222);
         assert_eq!(out.conflicts.len(), 1);
         assert_eq!(out.conflicts[0].kind, ConflictKind::BothEdited);
-        assert_eq!(out.conflicts[0].discarded.as_ref().expect("kept").port, 2022);
+        assert_eq!(
+            out.conflicts[0].discarded.as_ref().expect("kept").port,
+            2022
+        );
     }
 
     /// Identical edits on both machines are not a conflict.
@@ -373,7 +384,11 @@ mod tests {
         let base = catalog(vec![original.clone()]);
         let mut edited = original;
         edited.port = 6379;
-        let out = three_way(&base, &catalog(vec![edited.clone()]), &catalog(vec![edited]));
+        let out = three_way(
+            &base,
+            &catalog(vec![edited.clone()]),
+            &catalog(vec![edited]),
+        );
         assert_eq!(out.catalog.profiles[0].port, 6379);
         assert!(out.conflicts.is_empty());
     }
@@ -384,7 +399,11 @@ mod tests {
     fn a_first_sync_unions_both_machines() {
         let mine = profile("a");
         let theirs = profile("b");
-        let out = three_way(&catalog(vec![]), &catalog(vec![mine]), &catalog(vec![theirs]));
+        let out = three_way(
+            &catalog(vec![]),
+            &catalog(vec![mine]),
+            &catalog(vec![theirs]),
+        );
         assert_eq!(out.catalog.profiles.len(), 2);
         assert!(out.conflicts.is_empty());
     }
@@ -394,12 +413,13 @@ mod tests {
     #[test]
     fn local_ordering_survives_and_remote_extras_append() {
         let (a, b, c) = (profile("a"), profile("b"), profile("c"));
-        let out = three_way(
-            &catalog(vec![]),
-            &catalog(vec![b, a]),
-            &catalog(vec![c]),
-        );
-        let names: Vec<_> = out.catalog.profiles.iter().map(|p| p.name.as_str()).collect();
+        let out = three_way(&catalog(vec![]), &catalog(vec![b, a]), &catalog(vec![c]));
+        let names: Vec<_> = out
+            .catalog
+            .profiles
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect();
         assert_eq!(names, ["b", "a", "c"]);
     }
 

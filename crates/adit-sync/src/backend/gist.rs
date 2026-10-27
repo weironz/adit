@@ -147,7 +147,10 @@ impl SyncBackend for GistBackend {
         };
 
         let response = self
-            .auth(self.agent.get(&format!("https://api.github.com/gists/{id}")))
+            .auth(
+                self.agent
+                    .get(&format!("https://api.github.com/gists/{id}")),
+            )
             .call();
         let response = match response {
             Ok(response) => response,

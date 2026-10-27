@@ -124,8 +124,7 @@ impl SyncBackend for WebDavBackend {
 /// Inlined rather than pulled in as a dependency: this is the only base64 in
 /// the crate, encode-only, on inputs measured in bytes.
 mod base64_lite {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
     pub fn encode(input: &str) -> String {
         let bytes = input.as_bytes();

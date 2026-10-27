@@ -104,23 +104,39 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::AccessibilityClosed(window) => app.accessibility.closed(window),
         Message::AccessibilitySelectProfile(id) => {
-            if app.manager.profile(id).is_some() { select_profile(app, id); }
+            if app.manager.profile(id).is_some() {
+                select_profile(app, id);
+            }
         }
         Message::AccessibilityActivateSession(id) => {
-            if app.manager.session_summary(id).is_some() { activate_session(app, id); }
+            if app.manager.session_summary(id).is_some() {
+                activate_session(app, id);
+            }
         }
-        Message::AccessibilityScroll { window, owner, offset } =>
-            accessibility::scroll(app, window, owner, offset),
-        Message::AccessibilityScrollLines { window, owner, lines } =>
-            accessibility::scroll_lines(app, window, owner, lines),
+        Message::AccessibilityScroll {
+            window,
+            owner,
+            offset,
+        } => accessibility::scroll(app, window, owner, offset),
+        Message::AccessibilityScrollLines {
+            window,
+            owner,
+            lines,
+        } => accessibility::scroll_lines(app, window, owner, lines),
         Message::AccessibilityFocus { window, id } => {
-            if app.accessibility.windows.contains(&window) && app.accessibility.primary == Some(window) {
+            if app.accessibility.windows.contains(&window)
+                && app.accessibility.primary == Some(window)
+            {
                 app.terminal_focused = false;
                 release_rdp_modifiers(app);
                 // Only an explicit UIA SetFocus requests native focus. Tick,
                 // tree publication and terminal output never do this.
-                return Task::batch([window::gain_focus(window),
-                    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(id))]);
+                return Task::batch([
+                    window::gain_focus(window),
+                    iced::advanced::widget::operate(
+                        iced::advanced::widget::operation::focusable::focus(id),
+                    ),
+                ]);
             }
         }
         Message::Vault(message) => return vault_ui::update(app, message),
@@ -150,7 +166,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     return Task::done(Message::SyncAuto);
                 }
             }
-            if app.native_window_id.is_none() { app.manager.poll_events(); }
+            if app.native_window_id.is_none() {
+                app.manager.poll_events();
+            }
             desktop_panes::refresh(app);
             if let Some(notice) = app.manager.take_desktop_notice() {
                 app.notice = notice;
@@ -180,7 +198,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.panes.len() != panes_before {
                 sync_terminal_size(app);
             }
-            if !app.native_auxiliary { persist_settings_if_changed(app); }
+            if !app.native_auxiliary {
+                persist_settings_if_changed(app);
+            }
 
             // Send any debounced resize whose viewport has settled. On the
             // periodic tick as well as the RDP frame tick, because the frame
@@ -202,110 +222,132 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
 
             if native_windows::owns_selected_session(app) {
-            if app.desktop_window_focused {
-            // RDP clipboard bridge: the helper is a windowless process, so only
-            // this one has a Windows clipboard. Remote copies land here...
-            if let Some(text) = app
-                .manager
-                .take_rdp_clipboard()
-                .filter(|_| app.rdp_clipboard)
-            {
-                // Record it as already-offered so the poll below doesn't bounce
-                // the remote's own text straight back at it.
-                app.rdp_clipboard_offered = Some(text.clone());
-                return clipboard::write(text);
-            }
-            // An image the remote copied. Written straight through as CF_DIB —
-            // iced's clipboard is text-only, so this is Win32 directly.
-            if let Some(image) = app.manager.take_rdp_clipboard_image() {
-                if app.rdp_clipboard && clipboard_files::set_clipboard_image(&image) {
-                    // Writing bumps the sequence number; claiming it here is what
-                    // stops the poll below offering the remote its own image back.
-                    let seq = clipboard_files::clipboard_sequence();
-                    app.rdp_clipboard_seq = seq;
-                    app.rdp_image_offered_seq = seq;
-                }
-            }
-            // ...and the local clipboard is sampled for the remote. Only while an
-            // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
-            // opens the system clipboard, and doing that ten times a second would
-            // fight every other app on the machine for it.
-            // Files the remote copied: publish them on the Windows clipboard.
-            // Delay-rendered, so this costs one data object and no wire traffic.
-            if let Some(offer) = app.manager.take_rdp_clipboard_files() {
-                app.rdp_chunk_bridge.close();
-                app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
-                app.rdp_file_scope = None;
-                if app.rdp_clipboard && app.manager.active_session() == Some(offer.session)
-                    && !offer.files.is_empty() && offer.is_current() {
-                    app.rdp_file_scope = Some((offer.session, offer.generation));
-                    clipboard_files::offer_remote_files(
-                        offer.files, app.rdp_chunk_bridge.clone(), offer.requester, RDP_FILE_CHUNK_BYTES,
-                    );
-                }
-            }
-            let drag_events = app.manager.take_rdp_file_drag_events();
-            if let Some((session, notice)) = app.rdp_file_drag.update(
-                drag_events, app.rdp_clipboard, |id| app.manager.rdp_file_drag_live(id),
-            ) {
-                if app.manager.active_session() == Some(session) { app.notice = notice; }
-            }
-            // Chunks answering a local paste. Handed straight to the COM stream
-            // blocked on them over on Explorer's thread.
-            for chunk in app.manager.take_rdp_file_chunks() {
-                if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
-                    app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
-                }
-            }
-            // With no live RDP session there is nothing that can answer a paste,
-            // so release any Explorer thread waiting on one instead of leaving it
-            // to time out — file by file, thirty seconds each.
-            if app.rdp_file_scope.is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session)) {
-                app.rdp_chunk_bridge.close();
-            }
-
-            // Byte ranges the remote is pasting. Answered before the polls below
-            // because a remote paste is *blocked* on each one, and every request
-            // gets a reply even when the read fails — `None` becomes the
-            // protocol's error response, where silence would hang Explorer over
-            // there indefinitely.
-            for read in app.manager.take_rdp_file_reads() {
-                let data = app
-                    .rdp_offered_files
-                    .get(read.index as usize)
-                    .and_then(|file| {
-                        clipboard_files::read_range(&file.path, read.offset, read.length)
-                    });
-                app.manager.answer_rdp_file_read(read.stream_id, data);
-            }
-
-            let clipboard_ready = !app.manager.active_is_vnc()
-                || app
-                    .manager
-                    .active_session_summary()
-                    .is_some_and(|s| s.status == SessionStatus::Connected);
-            if app.desktop_window_focused && app.rdp_clipboard && app.manager.active_is_desktop() && clipboard_ready {
-                app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
-                if app
-                    .rdp_clipboard_ticks
-                    .is_multiple_of(RDP_CLIPBOARD_POLL_TICKS)
-                {
-                    // Explorer also offers file names as text. RDP checks files
-                    // first; VNC supports text only and never requests local files.
-                    if !app.manager.active_is_vnc() {
-                        offer_local_files_if_changed(app);
-                        offer_local_image_if_changed(app);
+                if app.desktop_window_focused {
+                    // RDP clipboard bridge: the helper is a windowless process, so only
+                    // this one has a Windows clipboard. Remote copies land here...
+                    if let Some(text) = app
+                        .manager
+                        .take_rdp_clipboard()
+                        .filter(|_| app.rdp_clipboard)
+                    {
+                        // Record it as already-offered so the poll below doesn't bounce
+                        // the remote's own text straight back at it.
+                        app.rdp_clipboard_offered = Some(text.clone());
+                        return clipboard::write(text);
                     }
-                    if let Some(session) = app.manager.active_session() {
-                        let epoch = app.desktop_clipboard_epoch;
-                        return clipboard::read().map(move |contents| {
-                            Message::RdpClipboardPolled(session, epoch, contents)
-                        });
+                    // An image the remote copied. Written straight through as CF_DIB —
+                    // iced's clipboard is text-only, so this is Win32 directly.
+                    if let Some(image) = app.manager.take_rdp_clipboard_image() {
+                        if app.rdp_clipboard && clipboard_files::set_clipboard_image(&image) {
+                            // Writing bumps the sequence number; claiming it here is what
+                            // stops the poll below offering the remote its own image back.
+                            let seq = clipboard_files::clipboard_sequence();
+                            app.rdp_clipboard_seq = seq;
+                            app.rdp_image_offered_seq = seq;
+                        }
+                    }
+                    // ...and the local clipboard is sampled for the remote. Only while an
+                    // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
+                    // opens the system clipboard, and doing that ten times a second would
+                    // fight every other app on the machine for it.
+                    // Files the remote copied: publish them on the Windows clipboard.
+                    // Delay-rendered, so this costs one data object and no wire traffic.
+                    if let Some(offer) = app.manager.take_rdp_clipboard_files() {
+                        app.rdp_chunk_bridge.close();
+                        app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
+                        app.rdp_file_scope = None;
+                        if app.rdp_clipboard
+                            && app.manager.active_session() == Some(offer.session)
+                            && !offer.files.is_empty()
+                            && offer.is_current()
+                        {
+                            app.rdp_file_scope = Some((offer.session, offer.generation));
+                            clipboard_files::offer_remote_files(
+                                offer.files,
+                                app.rdp_chunk_bridge.clone(),
+                                offer.requester,
+                                RDP_FILE_CHUNK_BYTES,
+                            );
+                        }
+                    }
+                    let drag_events = app.manager.take_rdp_file_drag_events();
+                    if let Some((session, notice)) =
+                        app.rdp_file_drag
+                            .update(drag_events, app.rdp_clipboard, |id| {
+                                app.manager.rdp_file_drag_live(id)
+                            })
+                    {
+                        if app.manager.active_session() == Some(session) {
+                            app.notice = notice;
+                        }
+                    }
+                    // Chunks answering a local paste. Handed straight to the COM stream
+                    // blocked on them over on Explorer's thread.
+                    for chunk in app.manager.take_rdp_file_chunks() {
+                        if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
+                            app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+                        }
+                    }
+                    // With no live RDP session there is nothing that can answer a paste,
+                    // so release any Explorer thread waiting on one instead of leaving it
+                    // to time out — file by file, thirty seconds each.
+                    if app
+                        .rdp_file_scope
+                        .is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session))
+                    {
+                        app.rdp_chunk_bridge.close();
+                    }
+
+                    // Byte ranges the remote is pasting. Answered before the polls below
+                    // because a remote paste is *blocked* on each one, and every request
+                    // gets a reply even when the read fails — `None` becomes the
+                    // protocol's error response, where silence would hang Explorer over
+                    // there indefinitely.
+                    for read in app.manager.take_rdp_file_reads() {
+                        let data =
+                            app.rdp_offered_files
+                                .get(read.index as usize)
+                                .and_then(|file| {
+                                    clipboard_files::read_range(
+                                        &file.path,
+                                        read.offset,
+                                        read.length,
+                                    )
+                                });
+                        app.manager.answer_rdp_file_read(read.stream_id, data);
+                    }
+
+                    let clipboard_ready = !app.manager.active_is_vnc()
+                        || app
+                            .manager
+                            .active_session_summary()
+                            .is_some_and(|s| s.status == SessionStatus::Connected);
+                    if app.desktop_window_focused
+                        && app.rdp_clipboard
+                        && app.manager.active_is_desktop()
+                        && clipboard_ready
+                    {
+                        app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
+                        if app
+                            .rdp_clipboard_ticks
+                            .is_multiple_of(RDP_CLIPBOARD_POLL_TICKS)
+                        {
+                            // Explorer also offers file names as text. RDP checks files
+                            // first; VNC supports text only and never requests local files.
+                            if !app.manager.active_is_vnc() {
+                                offer_local_files_if_changed(app);
+                                offer_local_image_if_changed(app);
+                            }
+                            if let Some(session) = app.manager.active_session() {
+                                let epoch = app.desktop_clipboard_epoch;
+                                return clipboard::read().map(move |contents| {
+                                    Message::RdpClipboardPolled(session, epoch, contents)
+                                });
+                            }
+                        }
                     }
                 }
             }
-            }
-        }
         }
         Message::RdpClipboardPolled(session, epoch, contents) => {
             // A read can finish after a tab switch or after sharing was disabled.
@@ -335,36 +377,43 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // on the system input thread against a deadline, and sending on the
             // helper pipe is not work that belongs there.
             if app.desktop_window_focused {
-            if app.manager.active_is_vnc()
-                && app.vnc_grab_keys
-                && app.manager.active_rdp_live()
-                && !app.manager.active_vnc_read_only()
-            {
-                drain_vnc_system_keys(app);
-            } else if app.fullscreen
-                && app.manager.active_rdp_live()
-                && !app.manager.active_is_vnc()
-                && remote_workspace_accepts_input(app)
-            {
-                // A different native window or a modal may have retired the
-                // previous hook. Reacquire only the currently focused HWND.
-                if app.native_window_id.is_some() { keyboard_hook::arm(); }
-                for stroke in keyboard_hook::drain() {
-                    if stroke.pressed { app.rdp_pressed_keys.insert((stroke.scancode, stroke.extended)); }
-                    else { app.rdp_pressed_keys.remove(&(stroke.scancode, stroke.extended)); }
-                    app.manager.send_rdp_input_to_active(RdpInput::Key {
-                        scancode: stroke.scancode,
-                        extended: stroke.extended,
-                        pressed: stroke.pressed,
-                    });
+                if app.manager.active_is_vnc()
+                    && app.vnc_grab_keys
+                    && app.manager.active_rdp_live()
+                    && !app.manager.active_vnc_read_only()
+                {
+                    drain_vnc_system_keys(app);
+                } else if app.fullscreen
+                    && app.manager.active_rdp_live()
+                    && !app.manager.active_is_vnc()
+                    && remote_workspace_accepts_input(app)
+                {
+                    // A different native window or a modal may have retired the
+                    // previous hook. Reacquire only the currently focused HWND.
+                    if app.native_window_id.is_some() {
+                        keyboard_hook::arm();
+                    }
+                    for stroke in keyboard_hook::drain() {
+                        if stroke.pressed {
+                            app.rdp_pressed_keys
+                                .insert((stroke.scancode, stroke.extended));
+                        } else {
+                            app.rdp_pressed_keys
+                                .remove(&(stroke.scancode, stroke.extended));
+                        }
+                        app.manager.send_rdp_input_to_active(RdpInput::Key {
+                            scancode: stroke.scancode,
+                            extended: stroke.extended,
+                            pressed: stroke.pressed,
+                        });
+                    }
+                } else {
+                    // The session can end or the mode can change without passing
+                    // through ToggleFullscreen — a dropped connection, a closed
+                    // tab. Leaving a global hook armed after that would swallow
+                    // keys for a desktop that is no longer there.
+                    keyboard_hook::disarm();
                 }
-            } else {
-                // The session can end or the mode can change without passing
-                // through ToggleFullscreen — a dropped connection, a closed
-                // tab. Leaving a global hook armed after that would swallow
-                // keys for a desktop that is no longer there.
-                keyboard_hook::disarm();
-            }
             }
             // The cached frame belongs to one session; if the active session
             // changed (tab switch, or a close that auto-activated another tab),
@@ -592,8 +641,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // there and this arm finishes the job exactly once.
             if app.startup_maximize_pending {
                 app.startup_maximize_pending = false;
-                return if let Some(id) = app.native_window_id { window::maximize(id, true) }
-                    else { window::latest().and_then(|id| window::maximize(id, true)) };
+                return if let Some(id) = app.native_window_id {
+                    window::maximize(id, true)
+                } else {
+                    window::latest().and_then(|id| window::maximize(id, true))
+                };
             }
         }
         Message::ColorSchemeChanged(index) => {
@@ -656,8 +708,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::HostDetailsClosed => app.host_details_open = false,
         Message::OpenExistingProfile(profile_id) => {
-            if let Some(id) = app.manager.sessions().iter()
-                .find(|s| s.profile_id == profile_id).map(|s| s.id)
+            if let Some(id) = app
+                .manager
+                .sessions()
+                .iter()
+                .find(|s| s.profile_id == profile_id)
+                .map(|s| s.id)
             {
                 change_main_view(app, MainView::Terminal);
                 activate_session(app, id);
@@ -703,16 +759,24 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.known_hosts_open = false;
         }
         Message::RemoveKnownHost(host, fingerprint) => {
-            if app.known_hosts_busy { return Task::none(); }
+            if app.known_hosts_busy {
+                return Task::none();
+            }
             app.known_hosts_busy = true;
             let completed_host = host.clone();
-            return Task::perform(async move {
-                tokio::task::spawn_blocking(move || {
-                    let path = known_hosts_path();
-                    remove_known_host(&path, &host, &fingerprint).map_err(|error| error.to_string())?;
-                    Ok(list_known_hosts(&path))
-                }).await.map_err(|error| error.to_string())?
-            }, move |result| Message::KnownHostRemoved(completed_host.clone(), result));
+            return Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let path = known_hosts_path();
+                        remove_known_host(&path, &host, &fingerprint)
+                            .map_err(|error| error.to_string())?;
+                        Ok(list_known_hosts(&path))
+                    })
+                    .await
+                    .map_err(|error| error.to_string())?
+                },
+                move |result| Message::KnownHostRemoved(completed_host.clone(), result),
+            );
         }
         Message::KnownHostRemoved(host, result) => {
             app.known_hosts_busy = false;
@@ -734,8 +798,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::PickConfigDir => {
-            let mut dialog =
-                rfd::AsyncFileDialog::new().set_title(t("选择配置文件夹（可指向 Dropbox 等同步盘）"));
+            let mut dialog = rfd::AsyncFileDialog::new()
+                .set_title(t("选择配置文件夹（可指向 Dropbox 等同步盘）"));
             if let Some(parent) = app.config_dir.parent() {
                 if parent.exists() {
                     dialog = dialog.set_directory(parent);
@@ -858,12 +922,18 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if command == MenuCommand::KnownHosts {
                 app.known_hosts_open = true;
                 app.active_menu = None;
-                if app.known_hosts_busy { return Task::none(); }
+                if app.known_hosts_busy {
+                    return Task::none();
+                }
                 app.known_hosts_busy = true;
-                return Task::perform(async {
-                    tokio::task::spawn_blocking(|| list_known_hosts(&known_hosts_path()))
-                        .await.map_err(|error| error.to_string())
-                }, Message::KnownHostsLoaded);
+                return Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(|| list_known_hosts(&known_hosts_path()))
+                            .await
+                            .map_err(|error| error.to_string())
+                    },
+                    Message::KnownHostsLoaded,
+                );
             }
             run_menu_command(app, command);
             app.active_menu = None;
@@ -1295,12 +1365,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Profiles and groups now live in the main resource area. Window
             // coordinates keep the drag dead zone independent of its layout.
             if app.dragged_profile.is_some()
-                && app.profile_drag_origin.is_some_and(|origin| point.distance(origin) > 5.0)
+                && app
+                    .profile_drag_origin
+                    .is_some_and(|origin| point.distance(origin) > 5.0)
             {
                 app.profile_drag_active = true;
             }
             if app.dragged_group.is_some()
-                && app.group_drag_origin.is_some_and(|origin| point.distance(origin) > 5.0)
+                && app
+                    .group_drag_origin
+                    .is_some_and(|origin| point.distance(origin) > 5.0)
             {
                 app.group_drag_active = true;
             }
@@ -1493,15 +1567,31 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 });
             }
         }
-        Message::AuthPromptInput { challenge_id, index, value } => {
-            if app.auth_prompt.as_ref().is_some_and(|(_, p)| p.id == challenge_id && p.is_pending()) {
-                if let Some(slot) = app.auth_prompt_answers.get_mut(index) { *slot = value.0; }
+        Message::AuthPromptInput {
+            challenge_id,
+            index,
+            value,
+        } => {
+            if app
+                .auth_prompt
+                .as_ref()
+                .is_some_and(|(_, p)| p.id == challenge_id && p.is_pending())
+            {
+                if let Some(slot) = app.auth_prompt_answers.get_mut(index) {
+                    *slot = value.0;
+                }
             }
         }
-        Message::SubmitAuthPrompt { session_id, challenge_id } => {
+        Message::SubmitAuthPrompt {
+            session_id,
+            challenge_id,
+        } => {
             jump_auth_ui::respond(app, session_id, challenge_id, false);
         }
-        Message::CancelAuthPrompt { session_id, challenge_id } => {
+        Message::CancelAuthPrompt {
+            session_id,
+            challenge_id,
+        } => {
             jump_auth_ui::respond(app, session_id, challenge_id, true);
         }
         Message::OpenHyperlink(url) => {
@@ -1629,7 +1719,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.sftp_last_click = None;
                 match pane {
                     SftpPane::Remote => start_transfers(app, vec![PendingTransfer::Download(name)]),
-                    SftpPane::Local => start_transfers(app, vec![PendingTransfer::UploadLocal(name)]),
+                    SftpPane::Local => {
+                        start_transfers(app, vec![PendingTransfer::UploadLocal(name)])
+                    }
                 }
             } else {
                 // Single click toggles the file in the pane's selection.
@@ -1645,13 +1737,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::SftpTransferSelected(pane) => match pane {
             SftpPane::Remote => {
-                let transfers = std::mem::take(&mut app.sftp_remote_selected).into_iter()
-                    .map(PendingTransfer::Download).collect();
+                let transfers = std::mem::take(&mut app.sftp_remote_selected)
+                    .into_iter()
+                    .map(PendingTransfer::Download)
+                    .collect();
                 start_transfers(app, transfers);
             }
             SftpPane::Local => {
-                let transfers = std::mem::take(&mut app.sftp_local_selected).into_iter()
-                    .map(PendingTransfer::UploadLocal).collect();
+                let transfers = std::mem::take(&mut app.sftp_local_selected)
+                    .into_iter()
+                    .map(PendingTransfer::UploadLocal)
+                    .collect();
                 start_transfers(app, transfers);
             }
         },
@@ -1913,7 +2009,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             jump_auth_ui::edit_chain(app, value);
         }
         Message::ProfileHopAuthChanged { index, owner } => {
-            if let Some(hop) = app.profile_jump_auth.get_mut(index) { hop.auth_profile = owner; }
+            if let Some(hop) = app.profile_jump_auth.get_mut(index) {
+                hop.auth_profile = owner;
+            }
         }
         Message::ProfileEnvironmentChanged(environment) => {
             app.terminal_focused = false;
@@ -1977,7 +2075,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.open_session_filter = value;
             let visible: HashSet<_> = visible_open_sessions(app).iter().map(|s| s.id).collect();
             app.selected_tabs.retain(|id| visible.contains(id));
-            if app.tab_select_anchor.is_some_and(|id| !visible.contains(&id)) {
+            if app
+                .tab_select_anchor
+                .is_some_and(|id| !visible.contains(&id))
+            {
                 app.tab_select_anchor = None;
             }
         }
@@ -2283,7 +2384,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => {
                         app.sync_busy = false;
-                        app.sync_status = tf("读取本机密码库失败，已中止同步: {}", &[&runtime(&error)]);
+                        app.sync_status =
+                            tf("读取本机密码库失败，已中止同步: {}", &[&runtime(&error)]);
                         return Task::none();
                     }
                 }
@@ -2325,7 +2427,14 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                                     .map(|conflict| tf("冲突（已保留本机）: {}", &[&conflict.name]))
                                     .collect(),
                                 summary: if outcome.uploaded {
-                                    tf("同步完成：新增 {} 项，更新 {} 项，删除 {} 项", &[&outcome.stats.added_from_remote, &outcome.stats.updated_from_remote, &outcome.stats.deleted])
+                                    tf(
+                                        "同步完成：新增 {} 项，更新 {} 项，删除 {} 项",
+                                        &[
+                                            &outcome.stats.added_from_remote,
+                                            &outcome.stats.updated_from_remote,
+                                            &outcome.stats.deleted,
+                                        ],
+                                    )
                                 } else {
                                     String::from(t("已是最新，无需上传"))
                                 },
@@ -2424,8 +2533,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Ctrl+Shift+X) reach the remote instead of being eaten locally,
             // and it is global, so it is armed for exactly as long as the user
             // is plainly aiming keys at a remote desktop.
-            if app.fullscreen && app.manager.active_is_desktop() && !app.manager.active_is_vnc()
-                && remote_workspace_accepts_input(app) {
+            if app.fullscreen
+                && app.manager.active_is_desktop()
+                && !app.manager.active_is_vnc()
+                && remote_workspace_accepts_input(app)
+            {
                 keyboard_hook::arm();
             } else {
                 keyboard_hook::disarm();
@@ -2445,15 +2557,20 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // the new chrome and ship a wrong desktop size. Changing the mode
             // always produces a `WindowResized`, and that handler does it with
             // the real numbers.
-            return if let Some(id) = app.native_window_id { window::set_mode(id, mode) }
-                else { window::latest().and_then(move |id| window::set_mode(id, mode)) };
+            return if let Some(id) = app.native_window_id {
+                window::set_mode(id, mode)
+            } else {
+                window::latest().and_then(move |id| window::set_mode(id, mode))
+            };
         }
         Message::KeyboardInput(event) => {
             if is_escape_key(&event) && app.active_menu.take().is_some() {
                 return Task::none();
             }
             if mission_name_editing(app) {
-                if is_escape_key(&event) { finish_mission_name(app, false); }
+                if is_escape_key(&event) {
+                    finish_mission_name(app, false);
+                }
                 return Task::none();
             }
             // Stop at each pass-through modifier until its window event has
@@ -2587,10 +2704,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     }
                     return Task::none();
                 }
-                if app.native_preedit.is_some() { return Task::none(); }
+                if app.native_preedit.is_some() {
+                    return Task::none();
+                }
                 if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
-                    if pressed { app.rdp_pressed_keys.insert((scancode, extended)); }
-                    else { app.rdp_pressed_keys.remove(&(scancode, extended)); }
+                    if pressed {
+                        app.rdp_pressed_keys.insert((scancode, extended));
+                    } else {
+                        app.rdp_pressed_keys.remove(&(scancode, extended));
+                    }
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode,
                         extended,
@@ -2622,7 +2744,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // the terminal's copy/paste, and here there is no terminal to
             // conflict with. It is the pairing every file manager uses for the
             // same gesture on a list row.
-            if app.native_preedit.is_some() { return Task::none(); }
+            if app.native_preedit.is_some() {
+                return Task::none();
+            }
             if !remote_workspace_accepts_input(app) {
                 if app.main_view != MainView::Hosts || desktop_panes::local_input_blocked(app) {
                     return Task::none();
@@ -2693,18 +2817,28 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::OpenRdpFileDrag => {
             if app.rdp_clipboard && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
                 if let Some(session) = app.manager.active_session() {
-                    return window::latest().and_then(move |id| rdp_dragdrop::owner_task(id, session));
+                    return window::latest()
+                        .and_then(move |id| rdp_dragdrop::owner_task(id, session));
                 }
             }
             app.notice = String::from(t("文件拖出需要已连接的 RDP 会话及剪贴板文件通道"));
         }
         Message::RdpFileDragOwner { session, owner } => {
-            if app.manager.active_session() == Some(session) && app.rdp_clipboard
-                && app.manager.rdp_file_drag_live(session) {
-                let title = app.manager.active_session_summary().map(|s| s.title.clone()).unwrap_or_default();
-                let result = owner.ok_or("原窗口已失效，请重新打开文件拖出")
+            if app.manager.active_session() == Some(session)
+                && app.rdp_clipboard
+                && app.manager.rdp_file_drag_live(session)
+            {
+                let title = app
+                    .manager
+                    .active_session_summary()
+                    .map(|s| s.title.clone())
+                    .unwrap_or_default();
+                let result = owner
+                    .ok_or("原窗口已失效，请重新打开文件拖出")
                     .and_then(|owner| app.rdp_file_drag.open(session, owner, title));
-                if let Err(error) = result { app.notice = error.into(); }
+                if let Err(error) = result {
+                    app.notice = error.into();
+                }
             }
         }
         Message::WindowResized {
@@ -2734,7 +2868,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::DisplayScale(scale) => {
-            if scale.is_finite() && (scale - app.display_scale).abs() > f32::EPSILON && scale > 0.1 {
+            if scale.is_finite() && (scale - app.display_scale).abs() > f32::EPSILON && scale > 0.1
+            {
                 app.display_scale = scale;
                 // The physical-pixel viewport changed even though the logical
                 // window did not.
@@ -2768,7 +2903,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             commit_inline_rename(app);
             focus_pane(app, index);
             app.terminal_pointer = Some(terminal_point_from_cursor(
-                app, window_to_pane_local(app, app.cursor_pos),
+                app,
+                window_to_pane_local(app, app.cursor_pos),
             ));
             app.terminal_context_menu = false;
             if mouse_reporting_active(app) {
@@ -2794,14 +2930,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.terminal_selecting && index != app.focused_pane {
                 return Task::none();
             }
-            let terminal_point = terminal_point_for_session(app, app.panes.get(index).copied(), point);
+            let terminal_point =
+                terminal_point_for_session(app, app.panes.get(index).copied(), point);
             app.terminal_pointer = Some(terminal_point);
             // Anchor the floating context menu using this pane's screen origin,
             // not the single-pane offset.
             let origin = pane_layout(app).pane_body_origin(index);
             app.cursor_pos = Point::new(origin.x + point.x, origin.y + point.y);
 
-            if index != app.focused_pane { return Task::none(); }
+            if index != app.focused_pane {
+                return Task::none();
+            }
             if maybe_report_mouse_motion(app) {
                 return Task::none();
             }
@@ -2858,16 +2997,21 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Ctrl+wheel zooms the terminal font (wheel up = larger), like most
             // terminal emulators — this takes priority over scrolling/reporting.
             if app.modifiers.control() {
-                if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics) {
+                if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics)
+                {
                     zoom_terminal(app, if lines > 0 { 1 } else { -1 });
-                    app.notice = tf("终端字号 {}px", &[&(active_terminal_style(app).metrics.font_size as i32)]);
+                    app.notice = tf(
+                        "终端字号 {}px",
+                        &[&(active_terminal_style(app).metrics.font_size as i32)],
+                    );
                 }
                 return Task::none();
             }
             // Forward the wheel to a mouse-reporting app instead of scrolling
             // local history.
             if mouse_reporting_active(app) {
-                if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics) {
+                if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics)
+                {
                     let button = if lines > 0 { 64 } else { 65 };
                     for _ in 0..lines.unsigned_abs().min(5) {
                         send_mouse_report(app, button, true, false);
@@ -3036,8 +3180,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // Shift-click: range-select from the anchor to this tab.
                 let anchor = app.tab_select_anchor.or(app.manager.active_session());
                 if let Some(anchor_id) = anchor {
-                    let sessions: Vec<SessionId> =
-                        visible_open_sessions(app).into_iter().map(|s| s.id).collect();
+                    let sessions: Vec<SessionId> = visible_open_sessions(app)
+                        .into_iter()
+                        .map(|s| s.id)
+                        .collect();
                     let anchor_pos = sessions.iter().position(|id| *id == anchor_id);
                     let click_pos = sessions.iter().position(|id| *id == session_id);
                     if let (Some(a), Some(c)) = (anchor_pos, click_pos) {
@@ -3497,7 +3643,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RdpQualityChosen(quality) => {
             app.rdp_quality_menu_open = false;
             let profile_id = app.manager.active_session_summary().map(|s| s.profile_id);
-            let current = profile_id.map_or(app.rdp_quality, |id| app.manager.profile_rdp_quality(id));
+            let current =
+                profile_id.map_or(app.rdp_quality, |id| app.manager.profile_rdp_quality(id));
             if current == quality {
                 return Task::none();
             }
@@ -3509,7 +3656,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         RdpQuality::Balanced => adit_domain::DesktopQuality::Balanced,
                         RdpQuality::Speed => adit_domain::DesktopQuality::Speed,
                     });
-                    if let Err(error) = app.manager.set_profile_session_options(id, options.clone()) {
+                    if let Err(error) = app.manager.set_profile_session_options(id, options.clone())
+                    {
                         app.last_error = Some(runtime(&error));
                         return Task::none();
                     }
@@ -3555,12 +3703,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             Ok(path) => match launch_silent_update(&path).spawn() {
                 Ok(_) => {
                     app.update_state = UpdateState::Launched;
-                    app.notice = String::from(
-                        t("正在后台静默安装更新，完成后 Adit 会自动重启（可能需要确认一次 UAC）"),
-                    );
+                    app.notice = String::from(t(
+                        "正在后台静默安装更新，完成后 Adit 会自动重启（可能需要确认一次 UAC）",
+                    ));
                 }
                 Err(error) => {
-                    app.update_state = UpdateState::Error(tf("无法启动安装程序: {}", &[&runtime(&error)]));
+                    app.update_state =
+                        UpdateState::Error(tf("无法启动安装程序: {}", &[&runtime(&error)]));
                 }
             },
             Err(error) => {
@@ -3734,7 +3883,9 @@ fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
     app.rdp_clipboard_offered = None;
     // In-flight OS clipboard reads can complete after reconnect to the same tab.
     app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
-    if owned_hook { keyboard_hook::disarm(); }
+    if owned_hook {
+        keyboard_hook::disarm();
+    }
     true
 }
 

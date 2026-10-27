@@ -76,12 +76,10 @@ impl Permissions {
             if (old ^ bits) & 2 != 0 {
                 next = (next & !RECEIVE_EPOCH) | (old.wrapping_add(1 << 33) & RECEIVE_EPOCH);
             }
-            match self.0.compare_exchange_weak(
-                old,
-                next,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
+            match self
+                .0
+                .compare_exchange_weak(old, next, Ordering::AcqRel, Ordering::Acquire)
+            {
                 Ok(_) => return,
                 Err(current) => old = current,
             }

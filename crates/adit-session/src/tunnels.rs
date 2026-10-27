@@ -329,14 +329,30 @@ mod tests {
         let owner = manager.open_mock_session(profile_id).unwrap();
         manager.set_auto_reconnect(false);
         let (delays, enabled) = manager.tunnel_reconnect_policy(&manager.sessions[&owner]);
-        assert!(enabled, "explicit profile policy overrides the global switch");
+        assert!(
+            enabled,
+            "explicit profile policy overrides the global switch"
+        );
         assert_eq!(delays, [2, 4, 7].map(Duration::from_secs));
-        manager.set_profile_session_options(profile_id, SessionOptions::default()).unwrap();
+        manager
+            .set_profile_session_options(profile_id, SessionOptions::default())
+            .unwrap();
         let inherited = manager.open_mock_session(profile_id).unwrap();
-        assert!(!manager.tunnel_reconnect_policy(&manager.sessions[&inherited]).1);
+        assert!(
+            !manager
+                .tunnel_reconnect_policy(&manager.sessions[&inherited])
+                .1
+        );
         manager.set_auto_reconnect(true);
-        assert!(manager.tunnel_reconnect_policy(&manager.sessions[&inherited]).1);
-        assert_eq!(manager.tunnel_reconnect_policy(&manager.sessions[&owner]).0, delays);
+        assert!(
+            manager
+                .tunnel_reconnect_policy(&manager.sessions[&inherited])
+                .1
+        );
+        assert_eq!(
+            manager.tunnel_reconnect_policy(&manager.sessions[&owner]).0,
+            delays
+        );
     }
 
     fn manager() -> (SessionManager, SessionId) {

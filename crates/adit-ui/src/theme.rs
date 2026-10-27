@@ -17,7 +17,11 @@ pub(super) const FONT_PRESETS: &[(&str, Option<&'static str>)] = &[
 
 /// Resolve a named font without any process-wide terminal state.
 pub(super) fn font_for(name: &str) -> Font {
-    match FONT_PRESETS.iter().find(|(display, _)| *display == name).and_then(|(_, family)| *family) {
+    match FONT_PRESETS
+        .iter()
+        .find(|(display, _)| *display == name)
+        .and_then(|(_, family)| *family)
+    {
         Some(name) => Font::with_name(name),
         None => Font::MONOSPACE,
     }
@@ -226,7 +230,10 @@ pub(super) const COLOR_SCHEMES: &[ColorScheme] = &[
 ];
 
 pub(super) fn scheme_for(name: &str) -> &'static ColorScheme {
-    COLOR_SCHEMES.iter().find(|scheme| scheme.name == name).unwrap_or(&COLOR_SCHEMES[0])
+    COLOR_SCHEMES
+        .iter()
+        .find(|scheme| scheme.name == name)
+        .unwrap_or(&COLOR_SCHEMES[0])
 }
 
 /// Scheme index for a persisted scheme name (0 = default palette).

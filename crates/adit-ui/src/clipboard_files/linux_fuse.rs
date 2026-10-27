@@ -306,11 +306,22 @@ mod tests {
         let file = directory.join("fixture directory/binary.dat");
         if unsafe { libc::geteuid() } == 0 {
             let denied = std::process::Command::new("/usr/bin/setpriv")
-                .args(["--reuid=65534", "--regid=65534", "--clear-groups", "--no-new-privs",
-                    "/usr/bin/test", "-r"])
-                .arg(&file).output().unwrap();
+                .args([
+                    "--reuid=65534",
+                    "--regid=65534",
+                    "--clear-groups",
+                    "--no-new-privs",
+                    "/usr/bin/test",
+                    "-r",
+                ])
+                .arg(&file)
+                .output()
+                .unwrap();
             assert_eq!(denied.status.code(), Some(1));
-            assert!(denied.stderr.is_empty(), "permission test must execute without setup errors");
+            assert!(
+                denied.stderr.is_empty(),
+                "permission test must execute without setup errors"
+            );
         }
         assert_eq!(std::fs::read(&file).unwrap(), bytes);
         assert!(

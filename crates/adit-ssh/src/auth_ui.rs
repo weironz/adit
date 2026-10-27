@@ -263,7 +263,10 @@ mod tests {
                 auth_profile: Some(owner),
             };
             let actual = hop_credentials(&hop, &resolved, "target-user").unwrap();
-            assert_eq!((actual.username.as_str(), actual.password.as_str()), (user, password));
+            assert_eq!(
+                (actual.username.as_str(), actual.password.as_str()),
+                (user, password)
+            );
             assert_ne!(actual.auth.identity_file, target.identity_file);
             assert_ne!(actual.auth.passphrase, target.passphrase);
         }

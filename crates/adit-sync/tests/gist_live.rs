@@ -109,7 +109,10 @@ fn a_real_gist_round_trips_through_two_machines() {
         "groups from both sides must survive, got {:?}",
         outcome_b.catalog.groups
     );
-    assert!(outcome_b.conflicts.is_empty(), "additions are not conflicts");
+    assert!(
+        outcome_b.conflicts.is_empty(),
+        "additions are not conflicts"
+    );
 
     // ---- machine A again: it must now see B's session ----
     let outcome_a2 = sync(

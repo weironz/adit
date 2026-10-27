@@ -238,7 +238,9 @@ pub fn glyphs(text: &str) -> impl Iterator<Item = &str> {
         // Keep non-printing clusters in the preceding terminal cell even when
         // Unicode treats them as separate graphemes.
         while let Some((index, next)) = parts.peek().copied() {
-            if next.width() != 0 { break; }
+            if next.width() != 0 {
+                break;
+            }
             parts.next();
             end = index + next.len();
         }

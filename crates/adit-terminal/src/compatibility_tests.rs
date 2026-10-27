@@ -98,7 +98,10 @@ fn extended_graphemes_preserve_flags_and_indic_clusters_across_packets() {
         assert_eq!(crate::glyphs(input).collect::<Vec<_>>(), vec![input]);
     }
     let text = "x\u{200b}y";
-    assert_eq!(crate::glyphs(text).collect::<Vec<_>>(), vec!["x\u{200b}", "y"]);
+    assert_eq!(
+        crate::glyphs(text).collect::<Vec<_>>(),
+        vec!["x\u{200b}", "y"]
+    );
 }
 
 #[test]

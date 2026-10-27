@@ -33,7 +33,9 @@ pub fn decode_import_text(bytes: &[u8]) -> Result<String, String> {
             return Err("UTF-16 文件长度无效".into());
         }
         let units: Vec<u16> = rest
-            .as_chunks::<2>().0.iter()
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| {
                 if big_endian {
                     u16::from_be_bytes(*b)
@@ -99,14 +101,38 @@ const VNC_FIELDS: &[&str] = &[
 ];
 const JUMP_FIELDS: &[&str] = &["host", "port", "username", "auth_profile"];
 const SESSION_OPTION_FIELDS: &[&str] = &[
-    "environment", "encoding", "rdp_quality", "rdp_monitors", "rdp_selected_monitor",
-    "reconnect", "logging", "triggers", "terminal_appearance",
+    "environment",
+    "encoding",
+    "rdp_quality",
+    "rdp_monitors",
+    "rdp_selected_monitor",
+    "reconnect",
+    "logging",
+    "triggers",
+    "terminal_appearance",
 ];
-const APPEARANCE_FIELDS: &[&str] = &["font_family", "font_size", "color_scheme", "custom_palette", "background"];
+const APPEARANCE_FIELDS: &[&str] = &[
+    "font_family",
+    "font_size",
+    "color_scheme",
+    "custom_palette",
+    "background",
+];
 const PALETTE_FIELDS: &[&str] = &["background", "foreground", "selection", "ansi"];
 const MONITOR_FIELDS: &[&str] = &["left", "top", "width", "height", "primary", "scale_percent"];
-const RECONNECT_FIELDS: &[&str] = &["enabled", "max_attempts", "initial_delay_secs", "max_delay_secs"];
-const LOG_FIELDS: &[&str] = &["auto_start", "directory", "filename_pattern", "plaintext", "record_input"];
+const RECONNECT_FIELDS: &[&str] = &[
+    "enabled",
+    "max_attempts",
+    "initial_delay_secs",
+    "max_delay_secs",
+];
+const LOG_FIELDS: &[&str] = &[
+    "auto_start",
+    "directory",
+    "filename_pattern",
+    "plaintext",
+    "record_input",
+];
 const TUNNEL_FIELDS: &[&str] = &[
     "kind",
     "bind_address",
@@ -154,25 +180,38 @@ fn check_profile_fields(value: &serde_json::Value) -> Result<(), String> {
         if let Some(monitors) = options.get("rdp_monitors").filter(|v| !v.is_null()) {
             for monitor in monitors.as_array().ok_or("rdp_monitors 必须为列表")? {
                 let fields = monitor.as_object().ok_or("无效的显示器配置")?;
-                if fields.keys().any(|key| !MONITOR_FIELDS.contains(&key.as_str())) {
+                if fields
+                    .keys()
+                    .any(|key| !MONITOR_FIELDS.contains(&key.as_str()))
+                {
                     return Err("显示器配置包含未知字段".into());
                 }
             }
         }
-        for (field, allowed) in [("reconnect", RECONNECT_FIELDS), ("logging", LOG_FIELDS), ("terminal_appearance", APPEARANCE_FIELDS)] {
+        for (field, allowed) in [
+            ("reconnect", RECONNECT_FIELDS),
+            ("logging", LOG_FIELDS),
+            ("terminal_appearance", APPEARANCE_FIELDS),
+        ] {
             if let Some(value) = options.get(field).filter(|value| !value.is_null()) {
-                let fields = value.as_object().ok_or_else(|| format!("无效的 {field} 配置"))?;
+                let fields = value
+                    .as_object()
+                    .ok_or_else(|| format!("无效的 {field} 配置"))?;
                 if let Some(key) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
                     return Err(format!("尚未支持的会话字段: session_options.{field}.{key}"));
                 }
             }
         }
-        if let Some(palette) = options.get("terminal_appearance")
+        if let Some(palette) = options
+            .get("terminal_appearance")
             .and_then(|appearance| appearance.get("custom_palette"))
             .filter(|value| !value.is_null())
         {
             let fields = palette.as_object().ok_or("无效的自定义配色")?;
-            if fields.keys().any(|key| !PALETTE_FIELDS.contains(&key.as_str())) {
+            if fields
+                .keys()
+                .any(|key| !PALETTE_FIELDS.contains(&key.as_str()))
+            {
                 return Err("自定义配色包含未知字段".into());
             }
         }
@@ -190,7 +229,10 @@ pub fn export_catalog(catalog: &ProfileCatalog) -> Result<String, String> {
         check_profile_fields(&value)?;
         let object = value.as_object_mut().ok_or("无效的会话对象")?;
         object.retain(|name, _| PUBLIC_FIELDS.contains(&name.as_str()));
-        if let Some(options) = object.get_mut("session_options").and_then(|v| v.as_object_mut()) {
+        if let Some(options) = object
+            .get_mut("session_options")
+            .and_then(|v| v.as_object_mut())
+        {
             // Environment values are free-form and may contain passwords or tokens.
             options.insert("environment".into(), serde_json::json!({}));
             options.insert("triggers".into(), serde_json::json!([]));
@@ -251,12 +293,18 @@ pub fn import_catalog(text: &str) -> Result<ImportReport, String> {
             profile.session_options.environment.clear();
         }
         if !profile.session_options.triggers.is_empty() {
-            warnings.push(format!("{}：已移除自动触发器，请检查后自行配置", profile.name));
+            warnings.push(format!(
+                "{}：已移除自动触发器，请检查后自行配置",
+                profile.name
+            ));
             profile.session_options.triggers.clear();
         }
         if let Some(logging) = &mut profile.session_options.logging {
             if logging.auto_start || logging.record_input {
-                warnings.push(format!("{}：自动日志和输入日志已关闭，请检查后自行启用", profile.name));
+                warnings.push(format!(
+                    "{}：自动日志和输入日志已关闭，请检查后自行启用",
+                    profile.name
+                ));
                 logging.auto_start = false;
                 logging.record_input = false;
             }
@@ -285,13 +333,22 @@ pub fn import_catalog(text: &str) -> Result<ImportReport, String> {
 }
 
 fn validate_jump_owners(profiles: &[ConnectionProfile]) -> Result<(), String> {
-    let owners: std::collections::HashSet<_> = profiles.iter()
+    let owners: std::collections::HashSet<_> = profiles
+        .iter()
         .filter(|p| p.protocol.is_ssh_based())
         .map(|p| p.id)
         .collect();
     for profile in profiles {
-        if profile.jumps.iter().filter_map(|hop| hop.auth_profile).any(|id| !owners.contains(&id)) {
-            return Err(format!("{}：跳板认证配置未包含在目录中或不是 SSH/SFTP 配置", profile.name));
+        if profile
+            .jumps
+            .iter()
+            .filter_map(|hop| hop.auth_profile)
+            .any(|id| !owners.contains(&id))
+        {
+            return Err(format!(
+                "{}：跳板认证配置未包含在目录中或不是 SSH/SFTP 配置",
+                profile.name
+            ));
         }
     }
     Ok(())

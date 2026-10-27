@@ -87,7 +87,10 @@ impl ProfileOptionsForm {
                 .initial_delay
                 .parse()
                 .map_err(|_| t("重连间隔必须为整数"))?;
-            policy.max_delay_secs = self.max_delay.parse().map_err(|_| t("最大间隔必须为整数"))?;
+            policy.max_delay_secs = self
+                .max_delay
+                .parse()
+                .map_err(|_| t("最大间隔必须为整数"))?;
         }
         value.validate().map_err(|error| runtime(&error))?;
         Ok(value)

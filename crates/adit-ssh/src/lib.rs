@@ -1,15 +1,15 @@
-pub mod desktop_gateway;
-mod sftp_transfer;
 mod auth_ui;
 mod auxiliary;
+pub mod desktop_gateway;
 mod proxy_command;
+mod sftp_transfer;
 mod tunnel;
+pub use auth_ui::JumpCredential;
+use auth_ui::{hop_credentials, AuthEventSink};
 pub use tunnel::{
     spawn_tunnel_session, spawn_tunnel_session_on, TunnelCommand, TunnelEvent, TunnelHandle,
     TunnelKind, TunnelRequest,
 };
-use auth_ui::{AuthEventSink, hop_credentials};
-pub use auth_ui::JumpCredential;
 pub type JumpCredentials = std::collections::HashMap<adit_domain::ProfileId, JumpCredential>;
 pub use adit_domain::JumpHop;
 use bytes::Bytes;
@@ -24,6 +24,7 @@ use russh::{
     },
     ChannelMsg, Disconnect,
 };
+use russh_sftp::client::SftpSession;
 use std::{
     collections::HashSet,
     env, fs,
@@ -34,7 +35,6 @@ use std::{
     thread,
     time::Duration,
 };
-use russh_sftp::client::SftpSession;
 use thiserror::Error;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::mpsc as tokio_mpsc;
@@ -171,7 +171,10 @@ pub struct ShellProbeOutput {
 #[derive(Clone)]
 pub enum LiveShellCommand {
     Input(Vec<u8>),
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
     Disconnect,
     /// User's answer to a pending [`LiveShellEvent::HostKeyPrompt`].
     HostKeyDecision(HostKeyDecision),
@@ -589,7 +592,11 @@ fn run_local_shell(
     while let Some(command) = commands.blocking_recv() {
         match command {
             LiveShellCommand::Input(bytes) => {
-                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_err() {
+                if writer
+                    .write_all(&bytes)
+                    .and_then(|()| writer.flush())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -698,7 +705,11 @@ fn run_serial(
     while let Some(command) = commands.blocking_recv() {
         match command {
             LiveShellCommand::Input(bytes) => {
-                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_err() {
+                if writer
+                    .write_all(&bytes)
+                    .and_then(|()| writer.flush())
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -874,10 +885,8 @@ impl TelnetCodec {
                 // loop, so it is the one option we understand and still refuse.
                 // SGA is accepted because character-at-a-time is what a VT wants,
                 // and we never send GA regardless.
-                let supported = matches!(
-                    option,
-                    TELNET_OPT_SGA | TELNET_OPT_TTYPE | TELNET_OPT_NAWS
-                );
+                let supported =
+                    matches!(option, TELNET_OPT_SGA | TELNET_OPT_TTYPE | TELNET_OPT_NAWS);
                 if !supported {
                     // Refusing everything else is not politeness — an option we
                     // silently ignore leaves the server waiting for data we will
@@ -1123,7 +1132,11 @@ fn run_telnet(
                         let Ok(mut socket) = reader_writer.lock() else {
                             break;
                         };
-                        if socket.write_all(&reply).and_then(|()| socket.flush()).is_err() {
+                        if socket
+                            .write_all(&reply)
+                            .and_then(|()| socket.flush())
+                            .is_err()
+                        {
                             break;
                         }
                     }
@@ -1165,12 +1178,19 @@ fn run_telnet(
                 }
             }
             LiveShellCommand::Resize { cols, rows } => {
-                let report = codec.lock().ok().and_then(|mut codec| codec.resize(cols, rows));
+                let report = codec
+                    .lock()
+                    .ok()
+                    .and_then(|mut codec| codec.resize(cols, rows));
                 if let Some(report) = report {
                     let Ok(mut socket) = writer.lock() else {
                         break;
                     };
-                    if socket.write_all(&report).and_then(|()| socket.flush()).is_err() {
+                    if socket
+                        .write_all(&report)
+                        .and_then(|()| socket.flush())
+                        .is_err()
+                    {
                         break;
                     }
                 }
@@ -1306,9 +1326,15 @@ fn validate_live_request(request: &LiveShellRequest) -> Result<(), SshError> {
         return Err(SshError::InvalidPort);
     }
 
-    request.proxy_command.validate_route(
-        &request.host, request.port, &request.username, !request.jumps.is_empty(),
-    ).map_err(SshError::ProxyCommand)?;
+    request
+        .proxy_command
+        .validate_route(
+            &request.host,
+            request.port,
+            &request.username,
+            !request.jumps.is_empty(),
+        )
+        .map_err(SshError::ProxyCommand)?;
 
     Ok(())
 }
@@ -1360,7 +1386,8 @@ async fn run_live_password_shell(
         .with_auto_accept(request.auto_accept_host_keys)
         .with_forwards(forwards.clone());
 
-        let connect = proxy_command::connect_endpoint(&request, config.clone(), handler, &mut proxy_process);
+        let connect =
+            proxy_command::connect_endpoint(&request, config.clone(), handler, &mut proxy_process);
         tokio::pin!(connect);
         let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
         tokio::pin!(deadline);
@@ -1397,7 +1424,9 @@ async fn run_live_password_shell(
         // carries the events + decision channel, and we drive the user's
         // HostKeyDecision into it while the chain connects (a changed key on any
         // hop or the target still aborts).
-        let _ = events.send(LiveShellEvent::Status(String::from("connecting via jump host")));
+        let _ = events.send(LiveShellEvent::Status(String::from(
+            "connecting via jump host",
+        )));
         let (decision_tx, decision_rx) = oneshot::channel::<HostKeyDecision>();
         let final_handler = KnownHostsClient::new(
             request.host.clone(),
@@ -1924,7 +1953,11 @@ async fn authenticate_initial_methods(
             .await?;
         let supplied = answers.remove(0);
         if authenticate_password_or_keyboard_interactive(
-            session, username, &supplied, events, Some(kbd),
+            session,
+            username,
+            &supplied,
+            events,
+            Some(kbd),
         )
         .await?
         {
@@ -2069,8 +2102,12 @@ async fn authenticate_password_or_keyboard_interactive(
     mut interactive: Option<&mut InteractiveKbd<'_>>,
 ) -> Result<bool, SshError> {
     if !password.is_empty() {
-        let auth = session.authenticate_password(username.to_owned(), password.to_owned()).await?;
-        if auth.success() { return Ok(true); }
+        let auth = session
+            .authenticate_password(username.to_owned(), password.to_owned())
+            .await?;
+        if auth.success() {
+            return Ok(true);
+        }
     }
 
     send_status(
@@ -2210,8 +2247,17 @@ fn should_autofill_password(prompt: &str, echo: bool) -> bool {
 
     // Choosing / confirming a *new* password — don't reuse the old one.
     const NEW_PASSWORD: &[&str] = &[
-        "new ", "retype", "re-type", "again", "confirm", "change",
-        "新密码", "确认", "重新", "更改", "重复",
+        "new ",
+        "retype",
+        "re-type",
+        "again",
+        "confirm",
+        "change",
+        "新密码",
+        "确认",
+        "重新",
+        "更改",
+        "重复",
     ];
     if NEW_PASSWORD.iter().any(|needle| p.contains(needle)) {
         return false;
@@ -2298,7 +2344,10 @@ async fn authenticate_with_private_key_and_hash(
         Ok(key_pair) => key_pair,
         Err(error) => {
             let label = key_file_label(path);
-            send_status(events, format!("could not load private key {label}: {error}"));
+            send_status(
+                events,
+                format!("could not load private key {label}: {error}"),
+            );
             if require {
                 // Distinguish "needs a passphrase" from "wrong passphrase" by
                 // whether one was supplied; both messages are phrased to also
@@ -2475,7 +2524,9 @@ impl TransferCtx<'_> {
         let _ = self.events.send(SftpEvent::Status(message));
     }
     fn note(&self, note: String) {
-        let _ = self.events.send(SftpEvent::TransferNote { id: self.id, note });
+        let _ = self
+            .events
+            .send(SftpEvent::TransferNote { id: self.id, note });
     }
 }
 
@@ -2483,13 +2534,37 @@ impl TransferCtx<'_> {
 pub enum SftpCommand {
     ListDir(String),
     /// `id` identifies the transfer for progress correlation and cancellation.
-    Download { id: u64, remote: String, local: PathBuf },
-    Upload { id: u64, local: PathBuf, remote: String },
-    DownloadWith { id: u64, remote: String, local: PathBuf, mode: TransferMode },
-    UploadWith { id: u64, local: PathBuf, remote: String, mode: TransferMode },
+    Download {
+        id: u64,
+        remote: String,
+        local: PathBuf,
+    },
+    Upload {
+        id: u64,
+        local: PathBuf,
+        remote: String,
+    },
+    DownloadWith {
+        id: u64,
+        remote: String,
+        local: PathBuf,
+        mode: TransferMode,
+    },
+    UploadWith {
+        id: u64,
+        local: PathBuf,
+        remote: String,
+        mode: TransferMode,
+    },
     Mkdir(String),
-    Rename { from: String, to: String },
-    Remove { path: String, is_dir: bool },
+    Rename {
+        from: String,
+        to: String,
+    },
+    Remove {
+        path: String,
+        is_dir: bool,
+    },
     Disconnect,
 }
 
@@ -2505,14 +2580,38 @@ pub enum TransferMode {
 pub enum SftpEvent {
     AuthPrompt(AuthPromptRequest),
     Status(String),
-    Ready { home: String },
-    Listing { path: String, entries: Vec<SftpEntry> },
-    Progress { id: u64, label: String, done: u64, total: u64 },
-    Done { id: u64, label: String, bytes: u64 },
+    Ready {
+        home: String,
+    },
+    Listing {
+        path: String,
+        entries: Vec<SftpEntry>,
+    },
+    Progress {
+        id: u64,
+        label: String,
+        done: u64,
+        total: u64,
+    },
+    Done {
+        id: u64,
+        label: String,
+        bytes: u64,
+    },
     /// Stopped by the user; verified-prefix resume can reuse the retained partial.
-    Cancelled { id: u64, label: String },
-    TransferFailed { id: u64, label: String, error: String },
-    TransferNote { id: u64, note: String },
+    Cancelled {
+        id: u64,
+        label: String,
+    },
+    TransferFailed {
+        id: u64,
+        label: String,
+        error: String,
+    },
+    TransferNote {
+        id: u64,
+        note: String,
+    },
     Error(String),
     Closed,
 }
@@ -2728,7 +2827,10 @@ async fn run_sftp_commands(
         };
         match command {
             SftpCommand::ListDir(path) => list_dir(&sftp, &path, &events).await,
-            SftpCommand::Download { id, remote, local } | SftpCommand::DownloadWith { id, remote, local, .. } => {
+            SftpCommand::Download { id, remote, local }
+            | SftpCommand::DownloadWith {
+                id, remote, local, ..
+            } => {
                 let label = remote.rsplit('/').next().unwrap_or(&remote).to_string();
                 // Cancelled while still queued behind a running transfer: skip it.
                 if is_cancelled(&cancel, id) {
@@ -2736,11 +2838,18 @@ async fn run_sftp_commands(
                 } else if let Err(error) =
                     sftp_download(&sftp, id, &remote, &local, mode, &cancel, &events).await
                 {
-                    let _ = events.send(SftpEvent::TransferFailed { id, label, error: error.to_string() });
+                    let _ = events.send(SftpEvent::TransferFailed {
+                        id,
+                        label,
+                        error: error.to_string(),
+                    });
                 }
                 forget_transfer(&cancel, id);
             }
-            SftpCommand::Upload { id, local, remote } | SftpCommand::UploadWith { id, local, remote, .. } => {
+            SftpCommand::Upload { id, local, remote }
+            | SftpCommand::UploadWith {
+                id, local, remote, ..
+            } => {
                 let label = local
                     .file_name()
                     .map(|n| n.to_string_lossy().into_owned())
@@ -2750,7 +2859,11 @@ async fn run_sftp_commands(
                 } else if let Err(error) =
                     sftp_upload(&sftp, id, &local, &remote, mode, &cancel, &events).await
                 {
-                    let _ = events.send(SftpEvent::TransferFailed { id, label, error: error.to_string() });
+                    let _ = events.send(SftpEvent::TransferFailed {
+                        id,
+                        label,
+                        error: error.to_string(),
+                    });
                 }
                 forget_transfer(&cancel, id);
             }
@@ -2863,16 +2976,24 @@ async fn sftp_download(
 
     if is_dir {
         if mode == TransferMode::Resume {
-            return Err(SshError::Sftp("目录不支持整体断点续传，请对文件选择续传".into()));
+            return Err(SshError::Sftp(
+                "目录不支持整体断点续传，请对文件选择续传".into(),
+            ));
         }
         let (bytes, skipped, cancelled) = download_dir(sftp, remote, local, &ctx).await?;
         if cancelled {
             let _ = events.send(SftpEvent::Cancelled { id, label });
             return Ok(());
         }
-        let _ = events.send(SftpEvent::Done { id, label: label.clone(), bytes });
+        let _ = events.send(SftpEvent::Done {
+            id,
+            label: label.clone(),
+            bytes,
+        });
         if skipped > 0 {
-            ctx.status(format!("{label}: 下载完成，跳过 {skipped} 个无法访问的条目"));
+            ctx.status(format!(
+                "{label}: 下载完成，跳过 {skipped} 个无法访问的条目"
+            ));
         }
     } else {
         // A lone file shows a percentage, so pass its size as the grand total.
@@ -3018,7 +3139,9 @@ async fn sftp_upload(
 
     if is_dir {
         if mode == TransferMode::Resume {
-            return Err(SshError::Sftp("目录不支持整体断点续传，请对文件选择续传".into()));
+            return Err(SshError::Sftp(
+                "目录不支持整体断点续传，请对文件选择续传".into(),
+            ));
         }
         let (bytes, skipped, cancelled) = upload_dir(sftp, local, remote, &ctx).await?;
         if cancelled {
@@ -3031,11 +3154,16 @@ async fn sftp_upload(
             bytes,
         });
         if skipped > 0 {
-            ctx.status(format!("{label}: 上传完成，跳过 {skipped} 个无法访问的条目"));
+            ctx.status(format!(
+                "{label}: 上传完成，跳过 {skipped} 个无法访问的条目"
+            ));
         }
     } else {
         // A lone file shows a percentage, so pass its size as the grand total.
-        let size = tokio::fs::metadata(local).await.map(|m| m.len()).unwrap_or(0);
+        let size = tokio::fs::metadata(local)
+            .await
+            .map(|m| m.len())
+            .unwrap_or(0);
         let (bytes, cancelled) = upload_file(sftp, local, remote, &ctx, 0, size).await?;
         if cancelled {
             let _ = events.send(SftpEvent::Cancelled { id, label });
@@ -3251,9 +3379,9 @@ impl ForwardRegistry {
                 entry.insert(target);
                 Ok(())
             }
-            std::collections::hash_map::Entry::Occupied(_) => Err(SshError::Tunnel(
-                "remote bind is already registered".into(),
-            )),
+            std::collections::hash_map::Entry::Occupied(_) => {
+                Err(SshError::Tunnel("remote bind is already registered".into()))
+            }
         }
     }
 
@@ -3375,10 +3503,15 @@ impl client::Handler for KnownHostsClient {
         // single target the handler was built with, so a forward opened on a
         // shared connection — where the handler belongs to the shell — matched
         // nothing and the channel was silently dropped.
-        if let Some(ForwardTarget { host, port, events, mut cancelled }) = self
-            .forwards
-            .resolve(connected_address, u16::try_from(connected_port).unwrap_or_default())
-        {
+        if let Some(ForwardTarget {
+            host,
+            port,
+            events,
+            mut cancelled,
+        }) = self.forwards.resolve(
+            connected_address,
+            u16::try_from(connected_port).unwrap_or_default(),
+        ) {
             if cancelled.has_changed().is_err() {
                 return Ok(());
             }
@@ -3537,7 +3670,9 @@ fn host_key_status(
     known_hosts_path: &Path,
     server_public_key: &russh::keys::ssh_key::PublicKey,
 ) -> Result<HostKeyStatus, SshError> {
-    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = KNOWN_HOSTS_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let host_spec = known_host_spec(host, port);
     let actual = host_key_fingerprint(server_public_key);
 
@@ -3558,10 +3693,16 @@ fn host_key_status(
             continue;
         }
         let fingerprint = host_key_fingerprint(&public_key);
-        let marker = line.split_whitespace().next().filter(|token| token.starts_with('@'));
+        let marker = line
+            .split_whitespace()
+            .next()
+            .filter(|token| token.starts_with('@'));
         if marker == Some("@revoked") {
             if fingerprint == actual {
-                return Err(SshError::HostKeyRevoked { host: host_spec, fingerprint: actual });
+                return Err(SshError::HostKeyRevoked {
+                    host: host_spec,
+                    fingerprint: actual,
+                });
             }
             continue;
         }
@@ -3577,15 +3718,20 @@ fn host_key_status(
     }
 
     if trusted {
-        return Ok(HostKeyStatus::Trusted { fingerprint: actual });
+        return Ok(HostKeyStatus::Trusted {
+            fingerprint: actual,
+        });
     }
     if unsupported_marker {
         return Err(SshError::KnownHosts(
-            "matching known_hosts marker requires unsupported certificate/marker verification".into(),
+            "matching known_hosts marker requires unsupported certificate/marker verification"
+                .into(),
         ));
     }
     if previous.is_empty() {
-        Ok(HostKeyStatus::Unknown { fingerprint: actual })
+        Ok(HostKeyStatus::Unknown {
+            fingerprint: actual,
+        })
     } else {
         Ok(HostKeyStatus::Changed {
             fingerprint: actual,
@@ -3599,7 +3745,9 @@ fn append_known_host(
     host_spec: &str,
     public_key: &russh::keys::ssh_key::PublicKey,
 ) -> Result<(), SshError> {
-    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = KNOWN_HOSTS_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     if let Some(parent) = known_hosts_path.parent() {
         fs::create_dir_all(parent).map_err(|error| SshError::KnownHosts(error.to_string()))?;
     }
@@ -3625,7 +3773,9 @@ fn replace_known_host(
     host_spec: &str,
     public_key: &russh::keys::ssh_key::PublicKey,
 ) -> Result<(), SshError> {
-    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = KNOWN_HOSTS_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let content = match fs::read_to_string(known_hosts_path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -3634,8 +3784,9 @@ fn replace_known_host(
 
     let mut kept = String::new();
     for line in content.lines() {
-        let drop_line = !line.trim_start().starts_with('@') && parse_known_host_line(line)
-            .is_some_and(|(hosts, _)| known_host_matches(&hosts, host_spec));
+        let drop_line = !line.trim_start().starts_with('@')
+            && parse_known_host_line(line)
+                .is_some_and(|(hosts, _)| known_host_matches(&hosts, host_spec));
         if !drop_line {
             kept.push_str(line);
             kept.push('\n');
@@ -3789,7 +3940,9 @@ pub struct KnownHostEntry {
 /// (`@revoked`/`@cert-authority`), comment lines, and `[host]:port` specs.
 #[must_use]
 pub fn list_known_hosts(path: &Path) -> Vec<KnownHostEntry> {
-    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = KNOWN_HOSTS_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let Ok(content) = fs::read_to_string(path) else {
         return Vec::new();
     };
@@ -3834,7 +3987,9 @@ pub fn list_known_hosts(path: &Path) -> Vec<KnownHostEntry> {
 /// Remove the trusted key matching `host` + `fingerprint` from a `known_hosts`
 /// file (the "forget this host" action — the host reverts to first-connect).
 pub fn remove_known_host(path: &Path, host: &str, fingerprint: &str) -> Result<(), SshError> {
-    let _guard = KNOWN_HOSTS_IO.lock().unwrap_or_else(|error| error.into_inner());
+    let _guard = KNOWN_HOSTS_IO
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     let content = match fs::read_to_string(path) {
         Ok(content) => content,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
@@ -3848,7 +4003,8 @@ pub fn remove_known_host(path: &Path, host: &str, fingerprint: &str) -> Result<(
                 if hosts.split(',').any(|item| item == host) {
                     let remaining: Vec<_> = hosts.split(',').filter(|item| *item != host).collect();
                     if !remaining.is_empty() {
-                        let mut tokens: Vec<String> = line.split_whitespace().map(str::to_owned).collect();
+                        let mut tokens: Vec<String> =
+                            line.split_whitespace().map(str::to_owned).collect();
                         let host_index = usize::from(tokens[0].starts_with('@'));
                         tokens[host_index] = remaining.join(",");
                         kept.push_str(&tokens.join(" "));
@@ -3951,19 +4107,35 @@ mod tests {
             &[
                 // The server offers to echo and to suppress go-ahead: accept both,
                 // that pair is what puts the link in character-at-a-time mode.
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO,
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_ECHO,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_SGA,
                 // It asks us to perform SGA, TTYPE and NAWS: all three are ours.
-                TELNET_IAC, TELNET_DO, TELNET_OPT_SGA,
-                TELNET_IAC, TELNET_DO, TELNET_OPT_TTYPE,
-                TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS,
+                TELNET_IAC,
+                TELNET_DO,
+                TELNET_OPT_SGA,
+                TELNET_IAC,
+                TELNET_DO,
+                TELNET_OPT_TTYPE,
+                TELNET_IAC,
+                TELNET_DO,
+                TELNET_OPT_NAWS,
                 // Asking *us* to echo is the mirror-loop request, and NEW-ENVIRON
                 // (39) is an option we do not speak. Both must be refused, or the
                 // server sits waiting for data that never comes.
-                TELNET_IAC, TELNET_DO, TELNET_OPT_ECHO,
-                TELNET_IAC, TELNET_DO, 39,
+                TELNET_IAC,
+                TELNET_DO,
+                TELNET_OPT_ECHO,
+                TELNET_IAC,
+                TELNET_DO,
+                39,
                 // A server offering to report the window size is nonsense.
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_NAWS,
             ],
         );
 
@@ -3971,17 +4143,41 @@ mod tests {
         assert_eq!(
             reply,
             vec![
-                TELNET_IAC, TELNET_DO, TELNET_OPT_ECHO,
-                TELNET_IAC, TELNET_DO, TELNET_OPT_SGA,
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA,
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_TTYPE,
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
+                TELNET_IAC,
+                TELNET_DO,
+                TELNET_OPT_ECHO,
+                TELNET_IAC,
+                TELNET_DO,
+                TELNET_OPT_SGA,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_SGA,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_TTYPE,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_NAWS,
                 // Agreeing NAWS reports the size straight away — the server never
                 // asks a second time.
-                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 120, 0, 40, TELNET_IAC, TELNET_SE,
-                TELNET_IAC, TELNET_WONT, TELNET_OPT_ECHO,
-                TELNET_IAC, TELNET_WONT, 39,
-                TELNET_IAC, TELNET_DONT, TELNET_OPT_NAWS,
+                TELNET_IAC,
+                TELNET_SB,
+                TELNET_OPT_NAWS,
+                0,
+                120,
+                0,
+                40,
+                TELNET_IAC,
+                TELNET_SE,
+                TELNET_IAC,
+                TELNET_WONT,
+                TELNET_OPT_ECHO,
+                TELNET_IAC,
+                TELNET_WONT,
+                39,
+                TELNET_IAC,
+                TELNET_DONT,
+                TELNET_OPT_NAWS,
             ]
         );
         assert!(codec.server_echoes());
@@ -3996,7 +4192,10 @@ mod tests {
         assert_eq!(first, vec![TELNET_IAC, TELNET_WILL, TELNET_OPT_SGA]);
 
         let (_, again) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DO, TELNET_OPT_SGA]);
-        assert!(again.is_empty(), "already on: nothing changed, so say nothing");
+        assert!(
+            again.is_empty(),
+            "already on: nothing changed, so say nothing"
+        );
 
         // Turning it back off *is* a change, and is acknowledged.
         let (_, off) = telnet_feed(&mut codec, &[TELNET_IAC, TELNET_DONT, TELNET_OPT_SGA]);
@@ -4011,15 +4210,11 @@ mod tests {
         let (data, reply) = telnet_feed(
             &mut codec,
             &[
-                b'a',
-                // IAC IAC is a literal 0xFF, not a command.
-                TELNET_IAC, TELNET_IAC,
-                b'b',
+                b'a', // IAC IAC is a literal 0xFF, not a command.
+                TELNET_IAC, TELNET_IAC, b'b',
                 // IAC NOP / IAC GA: two-byte commands with nothing to answer, and
                 // nothing that may reach the VT.
-                TELNET_IAC, 241,
-                TELNET_IAC, 249,
-                b'c',
+                TELNET_IAC, 241, TELNET_IAC, 249, b'c',
             ],
         );
         assert_eq!(data, vec![b'a', 0xFF, b'b', b'c']);
@@ -4042,8 +4237,18 @@ mod tests {
         assert_eq!(
             reply,
             vec![
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
-                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 100, 0, 30, TELNET_IAC, TELNET_SE,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_NAWS,
+                TELNET_IAC,
+                TELNET_SB,
+                TELNET_OPT_NAWS,
+                0,
+                100,
+                0,
+                30,
+                TELNET_IAC,
+                TELNET_SE,
             ]
         );
 
@@ -4065,7 +4270,10 @@ mod tests {
         assert!(data.is_empty() && reply.is_empty());
 
         let (data, reply) = telnet_feed(&mut codec, &[TELNET_SE]);
-        assert!(data.is_empty(), "subnegotiation payload must not reach the VT");
+        assert!(
+            data.is_empty(),
+            "subnegotiation payload must not reach the VT"
+        );
         let mut expected = vec![TELNET_IAC, TELNET_SB, TELNET_OPT_TTYPE, TELNET_TTYPE_IS];
         expected.extend_from_slice(b"xterm-256color");
         expected.extend_from_slice(&[TELNET_IAC, TELNET_SE]);
@@ -4082,10 +4290,19 @@ mod tests {
         assert_eq!(
             reply,
             vec![
-                TELNET_IAC, TELNET_WILL, TELNET_OPT_NAWS,
-                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS,
-                0, TELNET_IAC, TELNET_IAC, 0, 24,
-                TELNET_IAC, TELNET_SE,
+                TELNET_IAC,
+                TELNET_WILL,
+                TELNET_OPT_NAWS,
+                TELNET_IAC,
+                TELNET_SB,
+                TELNET_OPT_NAWS,
+                0,
+                TELNET_IAC,
+                TELNET_IAC,
+                0,
+                24,
+                TELNET_IAC,
+                TELNET_SE,
             ]
         );
     }
@@ -4100,7 +4317,15 @@ mod tests {
         assert_eq!(
             codec.resize(132, 43),
             Some(vec![
-                TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 132, 0, 43, TELNET_IAC, TELNET_SE,
+                TELNET_IAC,
+                TELNET_SB,
+                TELNET_OPT_NAWS,
+                0,
+                132,
+                0,
+                43,
+                TELNET_IAC,
+                TELNET_SE,
             ])
         );
         // A resize to the size it already has is not news.
@@ -4125,7 +4350,9 @@ mod tests {
     }
 
     fn contains_sequence(haystack: &[u8], needle: &[u8]) -> bool {
-        haystack.windows(needle.len()).any(|window| window == needle)
+        haystack
+            .windows(needle.len())
+            .any(|window| window == needle)
     }
 
     /// The codec tests above prove the parser; this one proves the wiring around
@@ -4144,9 +4371,17 @@ mod tests {
             let _ = socket.set_read_timeout(Some(Duration::from_secs(10)));
             socket
                 .write_all(&[
-                    TELNET_IAC, TELNET_DO, TELNET_OPT_NAWS,
-                    TELNET_IAC, TELNET_WILL, TELNET_OPT_ECHO,
-                    b'r', b'e', b'a', b'd', b'y',
+                    TELNET_IAC,
+                    TELNET_DO,
+                    TELNET_OPT_NAWS,
+                    TELNET_IAC,
+                    TELNET_WILL,
+                    TELNET_OPT_ECHO,
+                    b'r',
+                    b'e',
+                    b'a',
+                    b'd',
+                    b'y',
                 ])
                 .expect("banner");
             let _ = socket.flush();
@@ -4196,7 +4431,17 @@ mod tests {
         assert!(
             contains_sequence(
                 &wire,
-                &[TELNET_IAC, TELNET_SB, TELNET_OPT_NAWS, 0, 100, 0, 30, TELNET_IAC, TELNET_SE]
+                &[
+                    TELNET_IAC,
+                    TELNET_SB,
+                    TELNET_OPT_NAWS,
+                    0,
+                    100,
+                    0,
+                    30,
+                    TELNET_IAC,
+                    TELNET_SE
+                ]
             ),
             "accepting NAWS should report the window straight away"
         );
@@ -4233,7 +4478,10 @@ mod tests {
             "[example.com]:2222"
         ));
         // A comma-separated list matches on any member.
-        assert!(known_host_matches("a.example.com,b.example.com", "b.example.com"));
+        assert!(known_host_matches(
+            "a.example.com,b.example.com",
+            "b.example.com"
+        ));
     }
 
     #[test]
@@ -4245,8 +4493,14 @@ mod tests {
         assert!(!known_host_matches("web?.example.com", "web12.example.com"));
         assert!(known_host_matches("10.0.0.*", "10.0.0.12"));
         // A matching negation vetoes the whole entry.
-        assert!(!known_host_matches("*.example.com,!secret.example.com", "secret.example.com"));
-        assert!(known_host_matches("*.example.com,!secret.example.com", "web.example.com"));
+        assert!(!known_host_matches(
+            "*.example.com,!secret.example.com",
+            "secret.example.com"
+        ));
+        assert!(known_host_matches(
+            "*.example.com,!secret.example.com",
+            "web.example.com"
+        ));
     }
 
     /// A hashed file must still match, or a CHANGED key would be misreported as
@@ -4333,9 +4587,15 @@ mod tests {
         assert!(!should_autofill_password("", false));
         // Second factors / one-time codes must NOT be auto-filled.
         assert!(!should_autofill_password("Verification code: ", false));
-        assert!(!should_autofill_password("One-time password (OTP): ", false));
+        assert!(!should_autofill_password(
+            "One-time password (OTP): ",
+            false
+        ));
         assert!(!should_autofill_password("OTP: ", false));
-        assert!(!should_autofill_password("Passcode or option (1-3): ", false));
+        assert!(!should_autofill_password(
+            "Passcode or option (1-3): ",
+            false
+        ));
         assert!(!should_autofill_password("Duo two-factor login", false));
         // Hardware tokens (RSA SecurID PIN, Yubikey) are second factors too.
         assert!(!should_autofill_password("Enter PIN: ", false));
@@ -4351,13 +4611,11 @@ mod tests {
 
     #[test]
     fn fill_answers_splices_user_input_into_empty_slots() {
-        let answers = vec![
-            Some("pw".to_string()),
-            None,
-            Some("x".to_string()),
-            None,
-        ];
-        let got = fill_answers(answers, ["code".to_string(), "more".to_string()].into_iter());
+        let answers = vec![Some("pw".to_string()), None, Some("x".to_string()), None];
+        let got = fill_answers(
+            answers,
+            ["code".to_string(), "more".to_string()].into_iter(),
+        );
         assert_eq!(got, vec!["pw", "code", "x", "more"]);
 
         // Fewer user answers than empty slots ⇒ the remainder become empty strings.
@@ -4473,7 +4731,10 @@ mod tests {
                 echo: false,
             }];
             let result = keyboard_interactive_round_answers("", "", &code, "pw", None, None).await;
-            assert!(matches!(result, Err(SshError::InteractiveAuthenticationRequired)));
+            assert!(matches!(
+                result,
+                Err(SshError::InteractiveAuthenticationRequired)
+            ));
         });
     }
 
@@ -4585,11 +4846,15 @@ mod tests {
 
         let entries = list_known_hosts(&path);
         assert_eq!(entries.len(), 2);
-        let a = entries.iter().find(|e| e.host == "host-a").expect("host-a listed");
+        let a = entries
+            .iter()
+            .find(|e| e.host == "host-a")
+            .expect("host-a listed");
         assert_eq!(a.key_type, "ssh-ed25519");
         assert!(a.fingerprint.starts_with("SHA256:"));
-        assert!(entries.iter().any(|e| e.host == "[host-b]:2222"
-            && e.key_type == "ecdsa-sha2-nistp256"));
+        assert!(entries
+            .iter()
+            .any(|e| e.host == "[host-b]:2222" && e.key_type == "ecdsa-sha2-nistp256"));
 
         // Removing by (host, fingerprint) drops only that entry.
         remove_known_host(&path, "host-a", &a.fingerprint).unwrap();
@@ -4630,7 +4895,11 @@ mod tests {
             HostKeyStatus::Trusted { .. }
         ));
         let content = fs::read_to_string(&path).expect("known_hosts");
-        assert_eq!(content.matches("node5").count(), 1, "old key should be gone");
+        assert_eq!(
+            content.matches("node5").count(),
+            1,
+            "old key should be gone"
+        );
 
         let _ = fs::remove_file(path);
     }
@@ -4649,7 +4918,9 @@ mod tests {
             Some(decision_rx),
         );
 
-        decision_tx.send(HostKeyDecision::TrustAndRecord).expect("send decision");
+        decision_tx
+            .send(HostKeyDecision::TrustAndRecord)
+            .expect("send decision");
         let trusted = current_thread_rt()
             .block_on(handler.check_server_key(&key))
             .expect("accept should yield Ok");
@@ -4788,7 +5059,9 @@ mod tests {
             Some(decision_rx),
         );
 
-        decision_tx.send(HostKeyDecision::Reject).expect("send decision");
+        decision_tx
+            .send(HostKeyDecision::Reject)
+            .expect("send decision");
         let error = current_thread_rt()
             .block_on(handler.check_server_key(&key))
             .expect_err("reject should abort");
@@ -4805,27 +5078,42 @@ mod tests {
         let (events_tx, _events_rx) = mpsc::channel();
         let (decision_tx, decision_rx) = oneshot::channel();
         let mut handler = KnownHostsClient::new(
-            "blocked.example.test".into(), 2222, path.clone(),
-            Some(events_tx), Some(decision_rx),
+            "blocked.example.test".into(),
+            2222,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
         );
         decision_tx.send(HostKeyDecision::RejectAndRecord).unwrap();
-        let error = current_thread_rt().block_on(handler.check_server_key(&key)).unwrap_err();
+        let error = current_thread_rt()
+            .block_on(handler.check_server_key(&key))
+            .unwrap_err();
         assert!(matches!(error, SshError::HostKeyRejected));
         let entries = list_known_hosts(&path);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].marker.as_deref(), Some("@revoked"));
         assert_eq!(entries[0].host, "[blocked.example.test]:2222");
         let mut retry = KnownHostsClient::new(
-            "blocked.example.test".into(), 2222, path.clone(), None, None,
+            "blocked.example.test".into(),
+            2222,
+            path.clone(),
+            None,
+            None,
         );
         retry.auto_accept = true;
-        let error = current_thread_rt().block_on(retry.check_server_key(&key)).unwrap_err();
+        let error = current_thread_rt()
+            .block_on(retry.check_server_key(&key))
+            .unwrap_err();
         assert!(matches!(error, SshError::HostKeyRevoked { .. }));
-        assert!(matches!(host_key_status("blocked.example.test", 22, &path, &key).unwrap(),
-            HostKeyStatus::Unknown { .. }));
+        assert!(matches!(
+            host_key_status("blocked.example.test", 22, &path, &key).unwrap(),
+            HostKeyStatus::Unknown { .. }
+        ));
         remove_known_host(&path, &entries[0].host, &entries[0].fingerprint).unwrap();
-        assert!(matches!(host_key_status("blocked.example.test", 2222, &path, &key).unwrap(),
-            HostKeyStatus::Unknown { .. }));
+        assert!(matches!(
+            host_key_status("blocked.example.test", 2222, &path, &key).unwrap(),
+            HostKeyStatus::Unknown { .. }
+        ));
         let _ = fs::remove_file(path);
     }
 
@@ -4833,10 +5121,16 @@ mod tests {
     fn host_key_rejections_are_terminal_security_failures_not_password_prompts() {
         for error in [
             SshError::HostKeyRejected,
-            SshError::HostKeyRevoked { host: "fixture.test".into(), fingerprint: "fixture".into() },
+            SshError::HostKeyRevoked {
+                host: "fixture.test".into(),
+                fingerprint: "fixture".into(),
+            },
             SshError::KnownHosts("fixture storage failure".into()),
         ] {
-            assert!(matches!(live_shell_failure(&error), LiveShellEvent::SecurityRejected(_)));
+            assert!(matches!(
+                live_shell_failure(&error),
+                LiveShellEvent::SecurityRejected(_)
+            ));
         }
     }
 
@@ -4852,7 +5146,10 @@ mod tests {
                 source: Box::new(SshError::AuthenticationRejected),
             },
         ] {
-            assert!(matches!(live_shell_failure(&error), LiveShellEvent::ConnectStopped(_)));
+            assert!(matches!(
+                live_shell_failure(&error),
+                LiveShellEvent::ConnectStopped(_)
+            ));
         }
     }
 
@@ -4863,13 +5160,19 @@ mod tests {
         let changed = public_key(ECDSA_KEY);
         append_known_host(&path, "node.example.test", &key).unwrap();
         append_known_host(&path, "@revoked node.example.test", &key).unwrap();
-        assert!(matches!(host_key_status("node.example.test", 22, &path, &key),
-            Err(SshError::HostKeyRevoked { .. })));
+        assert!(matches!(
+            host_key_status("node.example.test", 22, &path, &key),
+            Err(SshError::HostKeyRevoked { .. })
+        ));
         replace_known_host(&path, "node.example.test", &changed).unwrap();
-        assert!(matches!(host_key_status("node.example.test", 22, &path, &key),
-            Err(SshError::HostKeyRevoked { .. })));
-        assert!(matches!(host_key_status("node.example.test", 22, &path, &changed).unwrap(),
-            HostKeyStatus::Trusted { .. }));
+        assert!(matches!(
+            host_key_status("node.example.test", 22, &path, &key),
+            Err(SshError::HostKeyRevoked { .. })
+        ));
+        assert!(matches!(
+            host_key_status("node.example.test", 22, &path, &changed).unwrap(),
+            HostKeyStatus::Trusted { .. }
+        ));
         let _ = fs::remove_file(path);
     }
 
@@ -4880,11 +5183,17 @@ mod tests {
         let (events_tx, _events_rx) = mpsc::channel();
         let (decision_tx, decision_rx) = oneshot::channel();
         let mut handler = KnownHostsClient::new(
-            "cancel.example.test".into(), 22, path.clone(), Some(events_tx), Some(decision_rx),
+            "cancel.example.test".into(),
+            22,
+            path.clone(),
+            Some(events_tx),
+            Some(decision_rx),
         );
         drop(decision_tx);
-        assert!(matches!(current_thread_rt().block_on(handler.check_server_key(&key)),
-            Err(SshError::HostKeyRejected)));
+        assert!(matches!(
+            current_thread_rt().block_on(handler.check_server_key(&key)),
+            Err(SshError::HostKeyRejected)
+        ));
         assert!(!path.exists());
     }
 
@@ -4892,13 +5201,22 @@ mod tests {
     fn removing_one_marked_host_keeps_other_hosts_on_the_same_line() {
         let path = temp_known_hosts_path("remove-marked-row");
         let key = public_key(ED25519_KEY);
-        append_known_host(&path, "@revoked first.example.test,second.example.test", &key).unwrap();
+        append_known_host(
+            &path,
+            "@revoked first.example.test,second.example.test",
+            &key,
+        )
+        .unwrap();
         let fingerprint = host_key_fingerprint(&key);
         remove_known_host(&path, "first.example.test", &fingerprint).unwrap();
-        assert!(matches!(host_key_status("first.example.test", 22, &path, &key).unwrap(),
-            HostKeyStatus::Unknown { .. }));
-        assert!(matches!(host_key_status("second.example.test", 22, &path, &key),
-            Err(SshError::HostKeyRevoked { .. })));
+        assert!(matches!(
+            host_key_status("first.example.test", 22, &path, &key).unwrap(),
+            HostKeyStatus::Unknown { .. }
+        ));
+        assert!(matches!(
+            host_key_status("second.example.test", 22, &path, &key),
+            Err(SshError::HostKeyRevoked { .. })
+        ));
         let _ = fs::remove_file(path);
     }
 
@@ -4907,11 +5225,15 @@ mod tests {
         let path = temp_known_hosts_path("certificate-authority");
         let key = public_key(ED25519_KEY);
         append_known_host(&path, "@cert-authority node.example.test", &key).unwrap();
-        assert!(matches!(host_key_status("node.example.test", 22, &path, &key),
-            Err(SshError::KnownHosts(_))));
+        assert!(matches!(
+            host_key_status("node.example.test", 22, &path, &key),
+            Err(SshError::KnownHosts(_))
+        ));
         append_known_host(&path, "node.example.test", &key).unwrap();
-        assert!(matches!(host_key_status("node.example.test", 22, &path, &key).unwrap(),
-            HostKeyStatus::Trusted { .. }));
+        assert!(matches!(
+            host_key_status("node.example.test", 22, &path, &key).unwrap(),
+            HostKeyStatus::Trusted { .. }
+        ));
         let _ = fs::remove_file(path);
     }
 

@@ -40,27 +40,50 @@ pub(crate) fn remember_recent_host(app: &mut AditApp, profile_id: ProfileId) {
     app.recent_hosts.truncate(RECENT_HOSTS_MAX);
 }
 
-pub(crate) fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: String, retry: Option<SessionId>) {
+pub(crate) fn start_vnc(
+    app: &mut AditApp,
+    profile_id: ProfileId,
+    password: String,
+    retry: Option<SessionId>,
+) {
     release_rdp_modifiers(app);
-    let gateway_password = if let Some(id) = app.manager.profile(profile_id).and_then(|profile| profile.vnc.gateway_profile) {
-        match (app.credential_store.load_profile_password(id), app.credential_store.load_profile_passphrase(id)) {
+    let gateway_password = if let Some(id) = app
+        .manager
+        .profile(profile_id)
+        .and_then(|profile| profile.vnc.gateway_profile)
+    {
+        match (
+            app.credential_store.load_profile_password(id),
+            app.credential_store.load_profile_passphrase(id),
+        ) {
             (Ok(password), Ok(passphrase)) => Some(adit_session::VncGatewayCredentials {
-                password: password.unwrap_or_default(), passphrase: passphrase.unwrap_or_default(),
+                password: password.unwrap_or_default(),
+                passphrase: passphrase.unwrap_or_default(),
             }),
             (Err(error), _) | (_, Err(error)) => {
                 app.last_error = Some(tf("无法读取 SSH 网关凭据: {}", &[&runtime(&error)]));
                 return;
             }
         }
-    } else { None };
+    } else {
+        None
+    };
     let result = if let Some(id) = retry {
-        match app.manager.retry_vnc_with_password_via(id, password.clone(), gateway_password.clone()) {
+        match app.manager.retry_vnc_with_password_via(
+            id,
+            password.clone(),
+            gateway_password.clone(),
+        ) {
             Ok(true) => Ok(id),
-            Ok(false) => app.manager.open_live_vnc_session_via(profile_id, password, gateway_password),
+            Ok(false) => {
+                app.manager
+                    .open_live_vnc_session_via(profile_id, password, gateway_password)
+            }
             Err(error) => Err(error),
         }
     } else {
-        app.manager.open_live_vnc_session_via(profile_id, password, gateway_password)
+        app.manager
+            .open_live_vnc_session_via(profile_id, password, gateway_password)
     };
     match result {
         Ok(_) => {
@@ -97,7 +120,9 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
         app.last_error = Some(String::from(t("请选择要连接的会话配置")));
         return;
     };
-    if !jump_auth_ui::prepare(app, profile_id) { return; }
+    if !jump_auth_ui::prepare(app, profile_id) {
+        return;
+    }
     change_main_view(app, MainView::Terminal);
 
     if profile.protocol == Protocol::Vnc {
@@ -127,7 +152,10 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
             return;
         };
         let (rw, rh) = rdp_viewport_size(app);
-        match app.manager.open_live_rdp_session(profile_id, password, rw, rh) {
+        match app
+            .manager
+            .open_live_rdp_session(profile_id, password, rw, rh)
+        {
             Ok(_) => {
                 app.rdp_target_size = (rw > 0).then_some((rw, rh));
                 app.connection_dialog = None;
@@ -217,7 +245,10 @@ pub(crate) fn open_password_reprompt(
         return;
     };
     // Only the credential-based protocols have a password to re-ask for.
-    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp | Protocol::Vnc) {
+    if !matches!(
+        profile.protocol,
+        Protocol::Ssh | Protocol::Rdp | Protocol::Vnc
+    ) {
         return;
     }
 
@@ -265,7 +296,10 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
     // stored, `connect_profile` called back into `open_connection_dialog`, which
     // called `connect_profile` again — unbounded mutual recursion that froze the
     // UI ("Not Responding"), or overflowed the stack outright on smaller stacks.
-    if !matches!(profile.protocol, Protocol::Ssh | Protocol::Rdp | Protocol::Vnc) {
+    if !matches!(
+        profile.protocol,
+        Protocol::Ssh | Protocol::Rdp | Protocol::Vnc
+    ) {
         connect_profile(app);
         return;
     }
@@ -404,8 +438,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
     }
 
     // RDP opens a native graphical tab (helper process) instead of an SSH shell.
-    let is_rdp =
-        app.manager.profile(dialog.profile_id).map(|p| p.protocol) == Some(Protocol::Rdp);
+    let is_rdp = app.manager.profile(dialog.profile_id).map(|p| p.protocol) == Some(Protocol::Rdp);
     if is_rdp {
         let credential_warning = sync_connection_password(app, dialog.profile_id).err();
         let (rw, rh) = rdp_viewport_size(app);
@@ -431,7 +464,9 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
         return;
     }
 
-    if !jump_auth_ui::prepare(app, dialog.profile_id) { return; }
+    if !jump_auth_ui::prepare(app, dialog.profile_id) {
+        return;
+    }
     let credential_warning = sync_connection_password(app, dialog.profile_id).err();
     let passphrase = app
         .credential_store
@@ -484,7 +519,10 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
                 .as_ref()
                 .map(|error| tf("保存密码失败: {}", &[&runtime(&error)]));
             app.notice = if credential_warning.is_some() {
-                tf("SSH 会话已开始连接: {}；系统凭据未保存", &[&dialog.endpoint])
+                tf(
+                    "SSH 会话已开始连接: {}；系统凭据未保存",
+                    &[&dialog.endpoint],
+                )
             } else {
                 tf("SSH 会话已开始连接: {}", &[&dialog.endpoint])
             };
@@ -574,7 +612,9 @@ pub(crate) fn send_terminal_input(app: &mut AditApp) -> Task<Message> {
 
     match result {
         Ok(()) => {
-            if !line.trim().is_empty() && app.command_history.last().map(String::as_str) != Some(line.as_str()) {
+            if !line.trim().is_empty()
+                && app.command_history.last().map(String::as_str) != Some(line.as_str())
+            {
                 app.command_history.push(line);
             }
             app.command_history_pos = None;
@@ -647,7 +687,9 @@ pub(crate) fn command_history_step(app: &mut AditApp, delta: i32) {
         }
     };
     app.command_history_pos = next;
-    app.terminal_input = next.map(|i| app.command_history[i].clone()).unwrap_or_default();
+    app.terminal_input = next
+        .map(|i| app.command_history[i].clone())
+        .unwrap_or_default();
 }
 
 pub(crate) fn command_input_id() -> iced::advanced::widget::Id {
@@ -751,9 +793,15 @@ pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     app.rdp_resize_pending = None;
     app.rdp_resize_pending_since = None;
     for (scancode, extended) in app.rdp_pressed_keys.drain() {
-        app.manager.send_rdp_input_to_active(RdpInput::Key { scancode, extended, pressed: false });
+        app.manager.send_rdp_input_to_active(RdpInput::Key {
+            scancode,
+            extended,
+            pressed: false,
+        });
     }
-    if app.mouse_button_down { send_mouse_report(app, 0, false, false); }
+    if app.mouse_button_down {
+        send_mouse_report(app, 0, false, false);
+    }
     app.mouse_button_down = false;
     app.terminal_selecting = false;
     app.selection_autoscroll = 0;
@@ -766,8 +814,15 @@ pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     if !app.manager.active_is_desktop() {
         return;
     }
-    for button in [RdpMouseButton::Left, RdpMouseButton::Middle, RdpMouseButton::Right] {
-        app.manager.send_rdp_input_to_active(RdpInput::MouseButton { button, pressed: false });
+    for button in [
+        RdpMouseButton::Left,
+        RdpMouseButton::Middle,
+        RdpMouseButton::Right,
+    ] {
+        app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
+            button,
+            pressed: false,
+        });
     }
     // VNC tracks the exact logical symbols above, including AltGr. RDP's
     // unconditional PC modifier reset would inject key-ups this viewer never
@@ -862,8 +917,6 @@ pub(crate) fn focus_search_input() -> Task<Message> {
     ))
 }
 
-
-
 pub(crate) fn session_filter_id() -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::new("sidebar-filter")
 }
@@ -894,13 +947,20 @@ pub(crate) fn recompute_search(app: &mut AditApp) {
     app.search_matches.clear();
     app.search_index = None;
 
-    let needle: Vec<char> = app.search_query.chars().map(|c| c.to_ascii_lowercase()).collect();
+    let needle: Vec<char> = app
+        .search_query
+        .chars()
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
     if needle.is_empty() {
         return;
     }
 
     let rows_visible = terminal_view_rows(app);
-    let total = app.manager.active_snapshot(Viewport::tail(rows_visible)).total_rows;
+    let total = app
+        .manager
+        .active_snapshot(Viewport::tail(rows_visible))
+        .total_rows;
     if total == 0 {
         return;
     }
@@ -961,7 +1021,10 @@ pub(crate) fn scroll_to_current_match(app: &mut AditApp) {
         return;
     };
     let rows_visible = terminal_view_rows(app);
-    let total = app.manager.active_snapshot(Viewport::tail(rows_visible)).total_rows;
+    let total = app
+        .manager
+        .active_snapshot(Viewport::tail(rows_visible))
+        .total_rows;
     let first_visible = hit.row.saturating_sub(rows_visible / 3);
     let offset = total
         .saturating_sub(rows_visible)
@@ -971,11 +1034,17 @@ pub(crate) fn scroll_to_current_match(app: &mut AditApp) {
 
 /// Per-visible-line search highlight ranges `(start, end, is_current)` aligned to
 /// the snapshot's lines; empty when there is nothing to highlight.
-pub(crate) fn search_highlights_for(app: &AditApp, snapshot: &TerminalSnapshot) -> Vec<Vec<(usize, usize, bool)>> {
+pub(crate) fn search_highlights_for(
+    app: &AditApp,
+    snapshot: &TerminalSnapshot,
+) -> Vec<Vec<(usize, usize, bool)>> {
     if app.search_matches.is_empty() {
         return Vec::new();
     }
-    let current = app.search_index.and_then(|i| app.search_matches.get(i)).copied();
+    let current = app
+        .search_index
+        .and_then(|i| app.search_matches.get(i))
+        .copied();
     snapshot
         .lines
         .iter()
@@ -1126,7 +1195,9 @@ pub(crate) fn begin_terminal_click(app: &mut AditApp) {
 /// keyboard focus and the tab is a terminal (RDP draws the remote's own cursor).
 /// Gates both the blink timer and the painting, so they can't disagree.
 pub(crate) fn terminal_cursor_blinks(app: &AditApp) -> bool {
-    app.terminal_focused && !app.manager.active_is_desktop() && app.manager.active_session().is_some()
+    app.terminal_focused
+        && !app.manager.active_is_desktop()
+        && app.manager.active_session().is_some()
 }
 
 pub(crate) fn window_to_pane_local(app: &AditApp, position: Point) -> Point {
@@ -1305,13 +1376,22 @@ pub(crate) fn terminal_point_from_cursor(app: &AditApp, point: Point) -> Termina
     terminal_point_for_session(app, app.manager.active_session(), point)
 }
 
-pub(crate) fn terminal_point_for_session(app: &AditApp, session: Option<SessionId>, point: Point) -> TerminalPoint {
+pub(crate) fn terminal_point_for_session(
+    app: &AditApp,
+    session: Option<SessionId>,
+    point: Point,
+) -> TerminalPoint {
     let style = terminal_style_for(app, session);
-    let size = session.map(|id| session_terminal_size(app, id)).unwrap_or(app.terminal_size);
-    style.metrics.point(Point::new(
-        point.x - TERMINAL_PANEL_PADDING,
-        point.y - TERMINAL_PANEL_PADDING - TERMINAL_HEADER_AND_GAP,
-    ), size)
+    let size = session
+        .map(|id| session_terminal_size(app, id))
+        .unwrap_or(app.terminal_size);
+    style.metrics.point(
+        Point::new(
+            point.x - TERMINAL_PANEL_PADDING,
+            point.y - TERMINAL_PANEL_PADDING - TERMINAL_HEADER_AND_GAP,
+        ),
+        size,
+    )
 }
 
 /// Map an iced keyboard event to an RDP scancode press/release.
@@ -1508,7 +1588,10 @@ pub(crate) fn control_byte(key: &Key, physical_key: keyboard::key::Physical) -> 
     }
 }
 
-pub(crate) fn named_key_sequence(named: Named, modifiers: keyboard::Modifiers) -> Option<&'static str> {
+pub(crate) fn named_key_sequence(
+    named: Named,
+    modifiers: keyboard::Modifiers,
+) -> Option<&'static str> {
     match named {
         Named::Enter => Some("\r"),
         Named::Tab if modifiers.shift() => Some("\x1b[Z"),
@@ -1600,17 +1683,33 @@ pub(crate) fn effective_log_pattern(app: &AditApp) -> String {
     }
 }
 
-fn effective_session_log_policy(app: &AditApp, session: SessionId)
-    -> (std::path::PathBuf, String, bool, bool)
-{
-    let Some(policy) = app.manager.session_options(session).and_then(|o| o.logging.as_ref()) else {
-        return (effective_log_dir(app), effective_log_pattern(app), app.log_plaintext, app.auto_log_on_connect);
+fn effective_session_log_policy(
+    app: &AditApp,
+    session: SessionId,
+) -> (std::path::PathBuf, String, bool, bool) {
+    let Some(policy) = app
+        .manager
+        .session_options(session)
+        .and_then(|o| o.logging.as_ref())
+    else {
+        return (
+            effective_log_dir(app),
+            effective_log_pattern(app),
+            app.log_plaintext,
+            app.auto_log_on_connect,
+        );
     };
     (
-        if policy.directory.trim().is_empty() { effective_log_dir(app) }
-            else { std::path::PathBuf::from(policy.directory.trim()) },
-        if policy.filename_pattern.trim().is_empty() { effective_log_pattern(app) }
-            else { policy.filename_pattern.clone() },
+        if policy.directory.trim().is_empty() {
+            effective_log_dir(app)
+        } else {
+            std::path::PathBuf::from(policy.directory.trim())
+        },
+        if policy.filename_pattern.trim().is_empty() {
+            effective_log_pattern(app)
+        } else {
+            policy.filename_pattern.clone()
+        },
         policy.plaintext,
         policy.auto_start,
     )
@@ -1654,7 +1753,10 @@ pub(crate) fn render_log_name(pattern: &str, session_name: &str, endpoint: &str)
 /// Open a folder in the OS file manager (creating it first if missing).
 pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
     if let Err(error) = std::fs::create_dir_all(&dir) {
-        app.last_error = Some(tf("无法创建目录 {}: {}", &[&dir.display(), &runtime(&error)]));
+        app.last_error = Some(tf(
+            "无法创建目录 {}: {}",
+            &[&dir.display(), &runtime(&error)],
+        ));
         return;
     }
     let opener = if cfg!(target_os = "windows") {
@@ -1683,9 +1785,14 @@ pub(crate) fn auto_log_connected_sessions(app: &mut AditApp) {
 
     for (session_id, title, endpoint) in targets {
         let (dir, pattern, plaintext, auto_start) = effective_session_log_policy(app, session_id);
-        if !auto_start { continue; }
+        if !auto_start {
+            continue;
+        }
         let name = render_log_name(&pattern, &title, &endpoint);
-        if let Err(error) = app.manager.start_logging(session_id, &dir, &name, plaintext) {
+        if let Err(error) = app
+            .manager
+            .start_logging(session_id, &dir, &name, plaintext)
+        {
             app.last_error = Some(tf("自动日志开启失败: {}", &[&runtime(&error)]));
         }
     }
@@ -1715,12 +1822,21 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
 /// asked for and never used, split top and bottom by the centring.
 pub(crate) fn chrome_height(app: &AditApp) -> f32 {
     if app.native_auxiliary {
-        return native_windows::HEADER_HEIGHT + STATUS_BAR_HEIGHT
+        return native_windows::HEADER_HEIGHT
+            + STATUS_BAR_HEIGHT
             + if app.search_open { TOOLBAR_HEIGHT } else { 0.0 }
-            + if app.command_window_open { TOOLBAR_HEIGHT } else { 0.0 };
+            + if app.command_window_open {
+                TOOLBAR_HEIGHT
+            } else {
+                0.0
+            };
     }
     let tools = if app.search_open { TOOLBAR_HEIGHT } else { 0.0 }
-        + if app.command_window_open { TOOLBAR_HEIGHT } else { 0.0 };
+        + if app.command_window_open {
+            TOOLBAR_HEIGHT
+        } else {
+            0.0
+        };
     if !app.fullscreen {
         return MENU_BAR_HEIGHT + TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT + tools;
     }
@@ -1754,7 +1870,12 @@ pub(crate) fn terminal_region_area(
 /// back to the helper's default).
 pub(crate) fn rdp_viewport_size(app: &AditApp) -> (u16, u16) {
     let sidebar = sidebar_offset(app);
-    let (w, h) = terminal_region_area(app.window_width, app.window_height, sidebar, chrome_height(app));
+    let (w, h) = terminal_region_area(
+        app.window_width,
+        app.window_height,
+        sidebar,
+        chrome_height(app),
+    );
     // PHYSICAL pixels: the window lays out in logical points, but the remote
     // desktop is a pixel grid. Requesting logical sizes meant a 125%-DPI
     // display got a 1524x920 desktop stretched over ~1905x1150 device pixels —
@@ -1809,7 +1930,8 @@ const RDP_RESIZE_DEBOUNCE: std::time::Duration = std::time::Duration::from_milli
 /// form: either a debounced request is still waiting for the size to settle,
 /// or one was sent and the renegotiated surface has not landed yet.
 fn rdp_resize_transitioning(app: &AditApp, surface: (u16, u16)) -> bool {
-    app.rdp_resize_pending.is_some_and(|pending| pending != surface)
+    app.rdp_resize_pending
+        .is_some_and(|pending| pending != surface)
         || (app.rdp_target_size.is_some_and(|target| target != surface)
             && app
                 .rdp_resize_requested_at
@@ -1924,8 +2046,12 @@ pub(crate) fn rdp_fill_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32)
         return (1.0, 1.0);
     }
     let sidebar = sidebar_offset(app);
-    let (pane_w, pane_h) =
-        terminal_region_area(app.window_width, app.window_height, sidebar, chrome_height(app));
+    let (pane_w, pane_h) = terminal_region_area(
+        app.window_width,
+        app.window_height,
+        sidebar,
+        chrome_height(app),
+    );
     if pane_w <= 0.0 || pane_h <= 0.0 {
         return (1.0, 1.0);
     }
@@ -1960,7 +2086,8 @@ pub(crate) fn persist_rdp_monitor_preferences(app: &mut AditApp) {
     };
     if app.selected_profile == Some(profile_id) {
         if let Some(profile) = app.manager.profile(profile_id) {
-            app.profile_options.update_monitor_preferences(&profile.session_options);
+            app.profile_options
+                .update_monitor_preferences(&profile.session_options);
         }
     }
     persist_profiles(app);
@@ -2011,7 +2138,9 @@ fn resize_probe_enabled() -> bool {
 }
 
 pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
-    if !native_windows::owns_selected_session(app) { return; }
+    if !native_windows::owns_selected_session(app) {
+        return;
+    }
     if app.manager.active_is_vnc() && !app.manager.active_vnc_resize_remote() {
         return;
     }
@@ -2032,7 +2161,18 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // The three inputs, not just the result: if (w, h) comes out unchanged the
     // question is immediately which of them failed to move.
     if probe {
-        app.notice = tf("resize: 窗口 {}×{} 侧栏 {} 缩放 {} → {}×{}（上次 {}）", &[&format!("{:.0}", app.window_width), &format!("{:.0}", app.window_height), &format!("{:.0}", sidebar_offset(app)), &format!("{:.2}", app.display_scale), &w, &h, &format!("{:?}", app.rdp_target_size)]);
+        app.notice = tf(
+            "resize: 窗口 {}×{} 侧栏 {} 缩放 {} → {}×{}（上次 {}）",
+            &[
+                &format!("{:.0}", app.window_width),
+                &format!("{:.0}", app.window_height),
+                &format!("{:.0}", sidebar_offset(app)),
+                &format!("{:.2}", app.display_scale),
+                &w,
+                &h,
+                &format!("{:?}", app.rdp_target_size),
+            ],
+        );
     }
     if w == 0 || h == 0 || app.rdp_target_size == Some((w, h)) {
         // Back at the size already delivered (a drag that returned home):
@@ -2052,7 +2192,11 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
 
 /// Cols/rows that fit in a single pane's *inner* pixel area (after its own
 /// padding + header have already been removed by the caller).
-pub(crate) fn terminal_size_for_area(inner_width: f32, inner_height: f32, metrics: TerminalMetrics) -> TerminalSize {
+pub(crate) fn terminal_size_for_area(
+    inner_width: f32,
+    inner_height: f32,
+    metrics: TerminalMetrics,
+) -> TerminalSize {
     metrics.size_for_area(inner_width, inner_height)
 }
 
@@ -2134,7 +2278,11 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         chrome_height(app),
     );
 
-    let count = if app.fullscreen { 1 } else { app.panes.len().max(1) };
+    let count = if app.fullscreen {
+        1
+    } else {
+        app.panes.len().max(1)
+    };
     let (cols, rows) = pane_grid_dims(count, app.tile_mode);
     let header = if count > 1 { PANE_HEADER_HEIGHT } else { 0.0 };
 
@@ -2146,11 +2294,15 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         pane_w,
         pane_h,
         origin_x: effective_sidebar,
-        origin_y: if app.native_auxiliary { native_windows::HEADER_HEIGHT }
-            else if app.fullscreen && app.manager.active_is_desktop() { 0.0 }
-            else if app.fullscreen { TAB_BAR_HEIGHT }
-            else { MENU_BAR_HEIGHT + TAB_BAR_HEIGHT }
-            + if app.search_open { TOOLBAR_HEIGHT } else { 0.0 },
+        origin_y: if app.native_auxiliary {
+            native_windows::HEADER_HEIGHT
+        } else if app.fullscreen && app.manager.active_is_desktop() {
+            0.0
+        } else if app.fullscreen {
+            TAB_BAR_HEIGHT
+        } else {
+            MENU_BAR_HEIGHT + TAB_BAR_HEIGHT
+        } + if app.search_open { TOOLBAR_HEIGHT } else { 0.0 },
         header,
     }
 }
@@ -2209,15 +2361,22 @@ pub(crate) fn step_font_size(app: &mut AditApp, delta: i32) {
 /// Ctrl+wheel respects an explicit profile size; inherited panes keep the
 /// existing global zoom behavior. The appearance dialog always edits global size.
 pub(crate) fn zoom_terminal(app: &mut AditApp, delta: i32) {
-    let profile = app.manager.active_session_summary()
-        .and_then(|summary| app.manager.profile(summary.profile_id)).cloned();
-    if let Some(profile) = profile.filter(|p| p.session_options.terminal_appearance.font_size.is_some()) {
+    let profile = app
+        .manager
+        .active_session_summary()
+        .and_then(|summary| app.manager.profile(summary.profile_id))
+        .cloned();
+    if let Some(profile) =
+        profile.filter(|p| p.session_options.terminal_appearance.font_size.is_some())
+    {
         let mut options = profile.session_options;
         let size = i32::from(options.terminal_appearance.font_size.unwrap());
-        options.terminal_appearance.font_size = Some(
-            (size + delta).clamp(MIN_FONT_SIZE as i32, MAX_FONT_SIZE as i32) as u8
-        );
-        match app.manager.set_profile_session_options(profile.id, options.clone()) {
+        options.terminal_appearance.font_size =
+            Some((size + delta).clamp(MIN_FONT_SIZE as i32, MAX_FONT_SIZE as i32) as u8);
+        match app
+            .manager
+            .set_profile_session_options(profile.id, options.clone())
+        {
             Ok(()) => {
                 if app.selected_profile == Some(profile.id) {
                     app.profile_options.update_appearance_preferences(&options);
@@ -2233,13 +2392,16 @@ pub(crate) fn zoom_terminal(app: &mut AditApp, delta: i32) {
 }
 
 pub(crate) fn sync_terminal_size(app: &mut AditApp) {
-    if !native_windows::owns_selected_session(app) && app.native_window_id.is_some() { return; }
+    if !native_windows::owns_selected_session(app) && app.native_window_id.is_some() {
+        return;
+    }
     // Desktop pixels can change even when no terminal cell count changes.
     maybe_resize_active_rdp(app);
     let layout = pane_layout(app);
     let active = app.manager.active_session();
     let target = layout.pane_terminal_size(active_terminal_style(app).metrics);
-    app.manager.set_default_terminal_size(target.cols, target.rows);
+    app.manager
+        .set_default_terminal_size(target.cols, target.rows);
     let mut sessions = if app.fullscreen || app.panes.is_empty() {
         active.into_iter().collect::<Vec<_>>()
     } else {
@@ -2249,13 +2411,22 @@ pub(crate) fn sync_terminal_size(app: &mut AditApp) {
     sessions.dedup();
     // Compare each real grid, not the focused pane's previous size: a same-size
     // layout can contain different fonts or a swapped-in session.
-    let targets: Vec<_> = sessions.into_iter().filter_map(|id| {
-        if app.manager.session_is_desktop(id) || (!app.native_auxiliary && app.native_session_windows.contains_key(&id)) { return None; }
-        let target = layout.pane_terminal_size(terminal_style_for(app, Some(id)).metrics);
-        let old = app.manager.snapshot_for(id, Viewport::tail(1)).size;
-        (old != target).then_some((id, old, target))
-    }).collect();
-    let reflowing = targets.iter().any(|(id, old, new)| Some(*id) == active && old.cols != new.cols);
+    let targets: Vec<_> = sessions
+        .into_iter()
+        .filter_map(|id| {
+            if app.manager.session_is_desktop(id)
+                || (!app.native_auxiliary && app.native_session_windows.contains_key(&id))
+            {
+                return None;
+            }
+            let target = layout.pane_terminal_size(terminal_style_for(app, Some(id)).metrics);
+            let old = app.manager.snapshot_for(id, Viewport::tail(1)).size;
+            (old != target).then_some((id, old, target))
+        })
+        .collect();
+    let reflowing = targets
+        .iter()
+        .any(|(id, old, new)| Some(*id) == active && old.cols != new.cols);
     // Reflow renumbers absolute scrollback rows. Keep selection and the scrolled
     // top row attached to logical lines, then resolve after every resize lands.
     let anchors = reflowing.then(|| capture_reflow_anchors(app));
@@ -2265,8 +2436,12 @@ pub(crate) fn sync_terminal_size(app: &mut AditApp) {
             app.last_error = Some(runtime(&error));
         }
     }
-    if reflowing && !app.search_query.is_empty() { recompute_search(app); }
-    if let Some(anchors) = anchors { restore_reflow_anchors(app, &anchors); }
+    if reflowing && !app.search_query.is_empty() {
+        recompute_search(app);
+    }
+    if let Some(anchors) = anchors {
+        restore_reflow_anchors(app, &anchors);
+    }
     clamp_terminal_scroll(app);
 }
 
@@ -2370,7 +2545,6 @@ pub(crate) fn split_pane(app: &mut AditApp) {
     split_mission(app);
 }
 
-
 /// Close one tab and settle the workspace behind it.
 ///
 /// Every route that can take the session count to zero goes through here — the
@@ -2424,10 +2598,7 @@ pub(crate) fn close_pane(app: &mut AditApp, index: usize) {
         }
     } else {
         if index < app.focused_pane || app.focused_pane >= app.panes.len() {
-            app.focused_pane = app
-                .focused_pane
-                .saturating_sub(1)
-                .min(app.panes.len() - 1);
+            app.focused_pane = app.focused_pane.saturating_sub(1).min(app.panes.len() - 1);
         }
         if let Some(&session_id) = app.panes.get(app.focused_pane) {
             let _ = app.manager.activate(session_id);
@@ -2472,9 +2643,10 @@ pub(crate) fn focus_pane(app: &mut AditApp, index: usize) {
     let Some(&session_id) = app.panes.get(index) else {
         return;
     };
-    let changed =
-        app.focused_pane != index || app.manager.active_session() != Some(session_id);
-    if changed { release_rdp_modifiers(app); }
+    let changed = app.focused_pane != index || app.manager.active_session() != Some(session_id);
+    if changed {
+        release_rdp_modifiers(app);
+    }
     app.focused_pane = index;
     if app.manager.active_session() != Some(session_id) {
         let _ = app.manager.activate(session_id);

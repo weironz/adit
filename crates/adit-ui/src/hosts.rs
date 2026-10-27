@@ -18,7 +18,6 @@ pub(crate) const HOST_CARD_WIDTH: f32 = 260.0;
 /// Shared by the actual card and animated slots; hit regions cannot drift.
 pub(crate) const HOST_CARD_HEIGHT: f32 = 68.0;
 
-
 /// One preset a profile's tile can use.
 pub(crate) struct HostIcon {
     /// What a profile stores. The artwork behind it can change without
@@ -36,15 +35,60 @@ pub(crate) struct HostIcon {
 /// of the recognising anyway — an orange tile in a wall of grey ones reads as
 /// Ubuntu long before its shape does.
 pub(crate) const HOST_ICONS: &[HostIcon] = &[
-    HostIcon { key: "ubuntu", label: "Ubuntu", glyph: "\u{25c9}", rgb: (233, 84, 32) },
-    HostIcon { key: "debian", label: "Debian", glyph: "\u{25c8}", rgb: (215, 10, 83) },
-    HostIcon { key: "redhat", label: "RHEL", glyph: "\u{25b3}", rgb: (238, 0, 0) },
-    HostIcon { key: "alpine", label: "Alpine", glyph: "\u{25b2}", rgb: (13, 89, 126) },
-    HostIcon { key: "windows", label: "Windows", glyph: "\u{25a6}", rgb: (0, 120, 212) },
-    HostIcon { key: "server", label: "服务器", glyph: "\u{25a4}", rgb: (90, 100, 120) },
-    HostIcon { key: "network", label: "网络", glyph: "\u{21c4}", rgb: (16, 138, 122) },
-    HostIcon { key: "database", label: "数据库", glyph: "\u{25ab}", rgb: (52, 92, 168) },
-    HostIcon { key: "container", label: "容器", glyph: "\u{25a7}", rgb: (36, 150, 237) },
+    HostIcon {
+        key: "ubuntu",
+        label: "Ubuntu",
+        glyph: "\u{25c9}",
+        rgb: (233, 84, 32),
+    },
+    HostIcon {
+        key: "debian",
+        label: "Debian",
+        glyph: "\u{25c8}",
+        rgb: (215, 10, 83),
+    },
+    HostIcon {
+        key: "redhat",
+        label: "RHEL",
+        glyph: "\u{25b3}",
+        rgb: (238, 0, 0),
+    },
+    HostIcon {
+        key: "alpine",
+        label: "Alpine",
+        glyph: "\u{25b2}",
+        rgb: (13, 89, 126),
+    },
+    HostIcon {
+        key: "windows",
+        label: "Windows",
+        glyph: "\u{25a6}",
+        rgb: (0, 120, 212),
+    },
+    HostIcon {
+        key: "server",
+        label: "服务器",
+        glyph: "\u{25a4}",
+        rgb: (90, 100, 120),
+    },
+    HostIcon {
+        key: "network",
+        label: "网络",
+        glyph: "\u{21c4}",
+        rgb: (16, 138, 122),
+    },
+    HostIcon {
+        key: "database",
+        label: "数据库",
+        glyph: "\u{25ab}",
+        rgb: (52, 92, 168),
+    },
+    HostIcon {
+        key: "container",
+        label: "容器",
+        glyph: "\u{25a7}",
+        rgb: (36, 150, 237),
+    },
 ];
 
 /// Real logo art, for the icon keys that have some.
@@ -80,7 +124,10 @@ pub(crate) fn host_tile(
 ) -> Element<'static, Message> {
     let (glyph, tile_color) = host_icon(app, profile);
     let tile_color = if dim {
-        Color { a: 0.35, ..tile_color }
+        Color {
+            a: 0.35,
+            ..tile_color
+        }
     } else {
         tile_color
     };
@@ -96,10 +143,7 @@ pub(crate) fn host_tile(
                 None,
             ),
             None => (
-                text(glyph)
-                    .size(size * 0.44_f32)
-                    .color(Color::WHITE)
-                    .into(),
+                text(glyph).size(size * 0.44_f32).color(Color::WHITE).into(),
                 Some(tile_color),
             ),
         };
@@ -274,58 +318,63 @@ pub(crate) fn host_card(
     );
     let control: Element<'static, Message> = mouse_area(
         container(
-        row![
-            tile,
-            column![
-                {
-                    // Pill against the name, dot after it: the dot belongs to
-                    // the whole card ("this one is up"), the pill to the name
-                    // ("this name means RDP"), and putting the dot in between
-                    // would attach it to neither.
-                    let mut title = row![
-                        text(profile.name.clone()).size(TEXT_BODY).color(primary_text()),
-                        protocol_pill(profile.protocol),
-                    ]
-                    .spacing(6)
-                    .align_y(Alignment::Center);
-                    if online {
-                        title = title.push(online_dot());
-                    }
-                    title
-                },
-                text(subtitle).size(TEXT_META).font(Font::MONOSPACE).color(muted_text()),
+            row![
+                tile,
+                column![
+                    {
+                        // Pill against the name, dot after it: the dot belongs to
+                        // the whole card ("this one is up"), the pill to the name
+                        // ("this name means RDP"), and putting the dot in between
+                        // would attach it to neither.
+                        let mut title = row![
+                            text(profile.name.clone())
+                                .size(TEXT_BODY)
+                                .color(primary_text()),
+                            protocol_pill(profile.protocol),
+                        ]
+                        .spacing(6)
+                        .align_y(Alignment::Center);
+                        if online {
+                            title = title.push(online_dot());
+                        }
+                        title
+                    },
+                    text(subtitle)
+                        .size(TEXT_META)
+                        .font(Font::MONOSPACE)
+                        .color(muted_text()),
+                ]
+                .spacing(3),
             ]
-            .spacing(3),
-        ]
-        .spacing(SPACE_SM)
-        .align_y(Alignment::Center),
-    )
-    .width(Fill)
-    .padding(10)
-    .center_y(HOST_CARD_HEIGHT)
-    .style(move |_theme| container::Style {
-        background: Some(Background::Color(if dragging || selected {
-            panel_background_hover()
-        } else if hovered {
-            surface()
-        } else {
-            app_background()
-        })),
-        text_color: Some(primary_text()),
-        // A thicker accent edge on the target says where the card will land.
-        // Without it the drag read as inert even while it worked: the move
-        // happened, and nothing on screen had said it would.
-        border: Border {
-            color: if dragging || incoming {
-                accent()
+            .spacing(SPACE_SM)
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .padding(10)
+        .center_y(HOST_CARD_HEIGHT)
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(if dragging || selected {
+                panel_background_hover()
+            } else if hovered {
+                surface()
             } else {
-                border_color()
+                app_background()
+            })),
+            text_color: Some(primary_text()),
+            // A thicker accent edge on the target says where the card will land.
+            // Without it the drag read as inert even while it worked: the move
+            // happened, and nothing on screen had said it would.
+            border: Border {
+                color: if dragging || incoming {
+                    accent()
+                } else {
+                    border_color()
+                },
+                width: if incoming { 2.5 } else { 1.0 },
+                radius: RADIUS_SM.into(),
             },
-            width: if incoming { 2.5 } else { 1.0 },
-            radius: RADIUS_SM.into(),
-        },
-        ..container::Style::default()
-    }),
+            ..container::Style::default()
+        }),
     )
     // The same press/move/release the tree uses, so one drag implementation
     // serves both views. Press arms rather than acts, which is what makes a drag
@@ -350,10 +399,15 @@ pub(crate) fn host_card(
     })
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into();
-    accessibility::control(control, accessibility::Control::item(
-        format!("resource:host_card:{}", profile.id), profile.name.clone(),
-        Message::AccessibilitySelectProfile(profile.id),
-    ).read_value(profile.host.clone()))
+    accessibility::control(
+        control,
+        accessibility::Control::item(
+            format!("resource:host_card:{}", profile.id),
+            profile.name.clone(),
+            Message::AccessibilitySelectProfile(profile.id),
+        )
+        .read_value(profile.host.clone()),
+    )
 }
 
 /// A section heading with the count on the right, the way the reference client
@@ -383,7 +437,11 @@ pub(crate) fn host_section_header(
         }))
         .push(Space::new().width(Fill));
     if online > 0 {
-        header = header.push(text(tf("{} 个在线", &[&online])).size(10).color(muted_text()));
+        header = header.push(
+            text(tf("{} 个在线", &[&online]))
+                .size(10)
+                .color(muted_text()),
+        );
     }
     let header = header
         .push(text(tf("{} 台", &[&count])).size(10).color(muted_text()))
@@ -429,7 +487,8 @@ pub(crate) fn host_row(
                 column![
                     text(profile.name.clone()).size(12).color(primary_text()),
                     text(subtitle).size(10).color(muted_text()),
-                ].spacing(3),
+                ]
+                .spacing(3),
                 Space::new().width(Fill),
                 text(profile.host.clone()).size(11).color(muted_text()),
                 text(if online { "●" } else { "" }).size(6).color(success()),
@@ -465,13 +524,22 @@ pub(crate) fn host_row(
     })
     .on_exit(Message::ProfileHoverExited(profile_id))
     .into();
-    accessibility::control(control, accessibility::Control::item(
-        format!("resource:host_row:{}", profile.id), profile.name.clone(),
-        Message::AccessibilitySelectProfile(profile.id),
-    ).read_value(profile.host.clone()))
+    accessibility::control(
+        control,
+        accessibility::Control::item(
+            format!("resource:host_row:{}", profile.id),
+            profile.name.clone(),
+            Message::AccessibilitySelectProfile(profile.id),
+        )
+        .read_value(profile.host.clone()),
+    )
 }
 
-pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label: &'static str) -> Element<'static, Message> {
+pub(crate) fn host_layout_button(
+    current: HostLayout,
+    target: HostLayout,
+    label: &'static str,
+) -> Element<'static, Message> {
     let selected = current == target;
     let icon = match target {
         HostLayout::Grid => UiIcon::Grid,
@@ -479,14 +547,23 @@ pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label:
         HostLayout::Tree => UiIcon::Tree,
     };
     tooltip(
-        button(ui_icon(icon, 15.0, if selected { primary_text() } else { muted_text() }))
-            .padding(6).style(move |_, status| menu_button_style(selected, status))
-            .on_press(Message::HostLayoutChanged(target)),
+        button(ui_icon(
+            icon,
+            15.0,
+            if selected {
+                primary_text()
+            } else {
+                muted_text()
+            },
+        ))
+        .padding(6)
+        .style(move |_, status| menu_button_style(selected, status))
+        .on_press(Message::HostLayoutChanged(target)),
         text(t_in("layout", label)).size(11),
         tooltip::Position::Bottom,
-    ).into()
+    )
+    .into()
 }
-
 
 /// How many cards fit across, from the window width.
 ///
@@ -500,7 +577,11 @@ pub(crate) fn host_columns(app: &AditApp) -> usize {
 }
 
 fn host_content_width(app: &AditApp) -> f32 {
-    let details = if host_details_visible(app) { HOST_DETAILS_WIDTH } else { 0.0 };
+    let details = if host_details_visible(app) {
+        HOST_DETAILS_WIDTH
+    } else {
+        0.0
+    };
     (app.window_width - sidebar_offset(app) - details - 40.0 - 16.0).max(80.0)
 }
 
@@ -513,9 +594,13 @@ fn host_content_width(app: &AditApp) -> f32 {
 ///
 /// The same press/enter/release the sidebar's folder rows carry, so a host
 /// dragged onto it lands in the group.
-pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: bool) -> Element<'static, Message> {
-    let (press, enter, hover, release) =
-        (name.clone(), name.clone(), name.clone(), name.clone());
+pub(crate) fn group_card(
+    name: String,
+    count: usize,
+    expanded: bool,
+    targeted: bool,
+) -> Element<'static, Message> {
+    let (press, enter, hover, release) = (name.clone(), name.clone(), name.clone(), name.clone());
     let tile = container(ui_icon(UiIcon::Folder, 20.0, muted_text()))
         .width(Length::Fixed(34.0))
         .height(Length::Fixed(34.0))
@@ -536,10 +621,15 @@ pub(crate) fn group_card(name: String, count: usize, expanded: bool, targeted: b
                 tile,
                 column![
                     text(name).size(13).color(primary_text()),
-                    text(tf("{} 台主机", &[&count])).size(11).color(muted_text()),
+                    text(tf("{} 台主机", &[&count]))
+                        .size(11)
+                        .color(muted_text()),
                 ]
-                .spacing(3).width(Fill),
-                text(if expanded { "⌄" } else { "›" }).size(15).color(muted_text()),
+                .spacing(3)
+                .width(Fill),
+                text(if expanded { "⌄" } else { "›" })
+                    .size(15)
+                    .color(muted_text()),
             ]
             .spacing(10)
             .align_y(Alignment::Center),
@@ -644,8 +734,7 @@ pub(crate) fn retarget_card_slots(app: &mut AditApp) {
     }
     // Bands are laid out independently, so a card's index within its own band is
     // what its position is drawn from — not its index in the whole catalogue.
-    let mut per_group: std::collections::HashMap<String, f32> =
-        std::collections::HashMap::new();
+    let mut per_group: std::collections::HashMap<String, f32> = std::collections::HashMap::new();
     let hosts: Vec<(ProfileId, String)> = order
         .iter()
         .filter_map(|id| {
@@ -748,7 +837,8 @@ pub(crate) fn host_band(
             // The same arithmetic wrap_cards lays them out with, so the midpoint
             // a card tests against is the midpoint it actually has.
             let card_width = ((host_content_width(app) - 8.0 * columns.saturating_sub(1) as f32)
-                / columns as f32).max(80.0);
+                / columns as f32)
+                .max(80.0);
             if animated {
                 // Absolute positions in a stack, not flowing cells. A flowing
                 // layout cannot draw a card outside its own cell, so an animated
@@ -773,9 +863,9 @@ pub(crate) fn host_band(
                 // this spacer the first CARD becomes the base, every later layer
                 // is confined to one card's bounds, and the positioning spacers
                 // push them all out of sight (a band of 21 rendering one card).
-                let mut layers = iced::widget::stack![
-                    Space::new().width(Fill).height(Length::Fixed(band_height))
-                ];
+                let mut layers = iced::widget::stack![Space::new()
+                    .width(Fill)
+                    .height(Length::Fixed(band_height))];
                 for (index, profile) in slots.iter().enumerate() {
                     let drawn = app
                         .card_slots
@@ -791,8 +881,13 @@ pub(crate) fn host_band(
                     let (x0, y0) = place(base as usize);
                     let (x1, y1) = place(base as usize + 1);
                     let (x, y) = (x0 + (x1 - x0) * frac, y0 + (y1 - y0) * frac);
-                    let card =
-                        host_card(app, profile, online.contains(&profile.id), card_width, in_pinned);
+                    let card = host_card(
+                        app,
+                        profile,
+                        online.contains(&profile.id),
+                        card_width,
+                        in_pinned,
+                    );
                     layers = layers.push(
                         column![
                             Space::new().height(Length::Fixed(y)),
@@ -840,9 +935,12 @@ pub(crate) fn host_band(
             })
             .into(),
     };
-    column![host_section_header(icon, title, count, up, drop_group), entries]
-        .spacing(10)
-        .into()
+    column![
+        host_section_header(icon, title, count, up, drop_group),
+        entries
+    ]
+    .spacing(10)
+    .into()
 }
 
 /// The host manager: search at the top, then one band per group.
@@ -861,9 +959,12 @@ pub(crate) fn host_drag_ghost(
         row![
             Space::new().width(Length::Fixed((position.x + 16.0).max(0.0))),
             container(
-                row![tile, text(profile.name.clone()).size(12).color(primary_text())]
-                    .spacing(8)
-                    .align_y(Alignment::Center),
+                row![
+                    tile,
+                    text(profile.name.clone()).size(12).color(primary_text())
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
             )
             .padding([6, 12])
             .style(|_theme| drag_ghost_style()),
@@ -936,7 +1037,12 @@ pub(crate) fn reorder_pinned(
 
 /// Commit a grid-originated drop: `source` lands beside `target` in the grid's
 /// own order, and nothing else moves — the tree never hears about it.
-pub(crate) fn reorder_grid(app: &mut AditApp, source: ProfileId, target: ProfileId, position: ProfileDropPosition) {
+pub(crate) fn reorder_grid(
+    app: &mut AditApp,
+    source: ProfileId,
+    target: ProfileId,
+    position: ProfileDropPosition,
+) {
     let mut order: Vec<ProfileId> = grid_ordered_profiles(app)
         .iter()
         .map(|profile| profile.id)
@@ -972,10 +1078,8 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     };
     let online = connected_profiles(app);
     let searching = !filter.is_empty();
-    let matching: Vec<&ConnectionProfile> = profiles
-        .iter()
-        .filter(|profile| matches(profile))
-        .collect();
+    let matching: Vec<&ConnectionProfile> =
+        profiles.iter().filter(|profile| matches(profile)).collect();
 
     let mut body = column![].spacing(match layout {
         HostLayout::Grid => 18,
@@ -1092,9 +1196,7 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
                 continue;
             }
             let kind = BandKind::Group(group.clone());
-            body = body.push(host_band(
-                app, &style, None, kind, group, hosts, &online,
-            ));
+            body = body.push(host_band(app, &style, None, kind, group, hosts, &online));
         }
         // Named 主机 rather than "ungrouped": for anyone who never made a group
         // that band is simply the list. Omitted when everything is grouped.
@@ -1111,25 +1213,43 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
         }
     }
 
-    let toolbar = container(row![
-        button(row![
-            ui_icon(UiIcon::Plus, 14.0, primary_text()),
-            text(t("新建主机")).size(12),
-        ].spacing(6).align_y(Alignment::Center))
-            .padding([6, 10]).style(|_, status| secondary_button_style(status))
+    let toolbar = container(
+        row![
+            button(
+                row![
+                    ui_icon(UiIcon::Plus, 14.0, primary_text()),
+                    text(t("新建主机")).size(12),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+            )
+            .padding([6, 10])
+            .style(|_, status| secondary_button_style(status))
             .on_press(Message::NewProfileDraft),
-        button(row![
-            ui_icon(UiIcon::Folder, 14.0, muted_text()),
-            text(t("新建分组")).size(12),
-        ].spacing(6).align_y(Alignment::Center))
-            .padding([6, 8]).style(|_, status| toolbar_icon_button_style(status))
+            button(
+                row![
+                    ui_icon(UiIcon::Folder, 14.0, muted_text()),
+                    text(t("新建分组")).size(12),
+                ]
+                .spacing(6)
+                .align_y(Alignment::Center)
+            )
+            .padding([6, 8])
+            .style(|_, status| toolbar_icon_button_style(status))
             .on_press(Message::NewGroupDraft),
-        Space::new().width(Fill),
-        text(tf("{} 个配置", &[&profiles.len()])).size(TEXT_META).color(muted_text()),
-        switcher,
-    ].spacing(8).align_y(Alignment::Center))
-        .padding([0, 16]).center_y(46).width(Fill)
-        .style(|_| sidebar_style());
+            Space::new().width(Fill),
+            text(tf("{} 个配置", &[&profiles.len()]))
+                .size(TEXT_META)
+                .color(muted_text()),
+            switcher,
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    )
+    .padding([0, 16])
+    .center_y(46)
+    .width(Fill)
+    .style(|_| sidebar_style());
     let entries: Element<'_, Message> = if layout == HostLayout::Tree {
         session_tree(app)
     } else {
@@ -1138,17 +1258,22 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     let pane: Element<'_, Message> = container(column![
         toolbar,
         scrollable(container(entries).padding(20).width(Fill)).height(Fill),
-    ]).style(|_| app_background_style()).width(Fill).height(Fill).into();
+    ])
+    .style(|_| app_background_style())
+    .width(Fill)
+    .height(Fill)
+    .into();
 
     // Track the cursor for the drag ghost. Tracked always rather than only
     // mid-drag, so the ghost's first frame appears where the drag began instead
     // of wherever the ghost last was.
-    let pane: Element<'_, Message> =
-        mouse_area(pane).on_move(Message::HostsCursorMoved).into();
+    let pane: Element<'_, Message> = mouse_area(pane).on_move(Message::HostsCursorMoved).into();
     let pane: Element<'_, Message> = if host_details_visible(app) {
         row![pane, host_details(app, false)].height(Fill).into()
     } else if app.host_details_open && app.selected_profile.is_some() {
-        column![pane, container(host_details(app, true)).height(230)].height(Fill).into()
+        column![pane, container(host_details(app, true)).height(230)]
+            .height(Fill)
+            .into()
     } else {
         pane
     };
@@ -1174,12 +1299,15 @@ const HOST_DETAILS_WIDTH: f32 = 280.0;
 pub(crate) fn host_connect_target(app: &AditApp) -> Option<ProfileId> {
     let filter = app.session_filter.trim().to_ascii_lowercase();
     app.selected_profile.filter(|id| {
-        app.manager.profile(*id).is_some_and(|profile| profile_matches_filter(profile, &filter))
+        app.manager
+            .profile(*id)
+            .is_some_and(|profile| profile_matches_filter(profile, &filter))
     })
 }
 
 fn host_details_visible(app: &AditApp) -> bool {
-    app.host_details_open && app.selected_profile.is_some()
+    app.host_details_open
+        && app.selected_profile.is_some()
         && app.window_width - sidebar_offset(app) >= 820.0
 }
 
@@ -1192,73 +1320,149 @@ fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
     let field = |label: &'static str, value: String| -> Element<'static, Message> {
         column![
             text(t_in("field", label)).size(10).color(muted_text()),
-            container(text(if value.is_empty() { String::from(t("未设置")) } else { value })
-                .size(12).color(primary_text()))
-                .width(Fill).padding([8, 10])
-                .style(|_| container::Style {
-                    background: Some(field_background().into()),
-                    border: border(5.0, 1.0, border_color()),
-                    ..Default::default()
-                }),
-        ].spacing(5).into()
+            container(
+                text(if value.is_empty() {
+                    String::from(t("未设置"))
+                } else {
+                    value
+                })
+                .size(12)
+                .color(primary_text())
+            )
+            .width(Fill)
+            .padding([8, 10])
+            .style(|_| container::Style {
+                background: Some(field_background().into()),
+                border: border(5.0, 1.0, border_color()),
+                ..Default::default()
+            }),
+        ]
+        .spacing(5)
+        .into()
     };
-    let section = |label: &'static str, body: Element<'static, Message>| -> Element<'static, Message> {
-        container(column![
-            text(t(label)).size(11).font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
-            body,
-        ].spacing(12)).padding(SPACE_MD).width(Fill).style(|_| settings_card_style(false)).into()
-    };
-    let details = column![
-        section("地址", column![
-            row![
-                host_tile(app, profile, 36.0, false),
+    let section =
+        |label: &'static str, body: Element<'static, Message>| -> Element<'static, Message> {
+            container(
                 column![
-                    text(profile.name.clone()).size(13).color(primary_text()),
-                    protocol_pill(profile.protocol),
-                ].spacing(4).width(Fill),
-            ].spacing(10).align_y(Alignment::Center),
-            field("主机", profile.host.clone()),
-            field("端口", profile.port.to_string()),
-        ].spacing(12).into()),
-        section("常规", field("分组", if profile.group.is_empty() {
-            String::from(t("未分组"))
-        } else { profile.group.clone() })),
+                    text(t(label)).size(11).font(Font {
+                        weight: Weight::Semibold,
+                        ..Font::DEFAULT
+                    }),
+                    body,
+                ]
+                .spacing(12),
+            )
+            .padding(SPACE_MD)
+            .width(Fill)
+            .style(|_| settings_card_style(false))
+            .into()
+        };
+    let details = column![
+        section(
+            "地址",
+            column![
+                row![
+                    host_tile(app, profile, 36.0, false),
+                    column![
+                        text(profile.name.clone()).size(13).color(primary_text()),
+                        protocol_pill(profile.protocol),
+                    ]
+                    .spacing(4)
+                    .width(Fill),
+                ]
+                .spacing(10)
+                .align_y(Alignment::Center),
+                field("主机", profile.host.clone()),
+                field("端口", profile.port.to_string()),
+            ]
+            .spacing(12)
+            .into()
+        ),
+        section(
+            "常规",
+            field(
+                "分组",
+                if profile.group.is_empty() {
+                    String::from(t("未分组"))
+                } else {
+                    profile.group.clone()
+                }
+            )
+        ),
         section("连接信息", field("用户名", profile.username.clone())),
-    ].spacing(12);
-    let header = container(row![
-        text(t("主机详情")).size(12).width(Fill)
-            .font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
-        accessibility::button(&format!("resource:edit:{id}"), t("编辑"), Message::EditProfileFromContext(id), button(text(t("编辑")).size(11))
-            .padding([4, 8]).style(|_, status| toolbar_icon_button_style(status))
-            .on_press(Message::EditProfileFromContext(id))),
-        button("×").on_press(Message::HostDetailsClosed)
-            .style(|_, status| close_button_style(status)),
-    ].align_y(Alignment::Center))
-        .padding([0, 12]).center_y(46).width(Fill).style(|_| sidebar_style());
+    ]
+    .spacing(12);
+    let header = container(
+        row![
+            text(t("主机详情")).size(12).width(Fill).font(Font {
+                weight: Weight::Semibold,
+                ..Font::DEFAULT
+            }),
+            accessibility::button(
+                &format!("resource:edit:{id}"),
+                t("编辑"),
+                Message::EditProfileFromContext(id),
+                button(text(t("编辑")).size(11))
+                    .padding([4, 8])
+                    .style(|_, status| toolbar_icon_button_style(status))
+                    .on_press(Message::EditProfileFromContext(id))
+            ),
+            button("×")
+                .on_press(Message::HostDetailsClosed)
+                .style(|_, status| close_button_style(status)),
+        ]
+        .align_y(Alignment::Center),
+    )
+    .padding([0, 12])
+    .center_y(46)
+    .width(Fill)
+    .style(|_| sidebar_style());
     let mut actions = column![].spacing(8);
     if existing {
         actions = actions.push(
             button(container(text(t("切换到已打开会话")).size(12)).center_x(Fill))
-                .padding([9, 10]).width(Fill)
+                .padding([9, 10])
+                .width(Fill)
                 .style(|_, status| primary_button_style(status))
                 .on_press(Message::OpenExistingProfile(id)),
         );
     }
     actions = actions.push(
-        button(container(text(t(if existing { "新开一个会话" } else { "连接" })).size(12)).center_x(Fill))
-            .padding([9, 10]).width(Fill)
-            .style(move |_, status| if existing {
+        button(
+            container(
+                text(t(if existing {
+                    "新开一个会话"
+                } else {
+                    "连接"
+                }))
+                .size(12),
+            )
+            .center_x(Fill),
+        )
+        .padding([9, 10])
+        .width(Fill)
+        .style(move |_, status| {
+            if existing {
                 secondary_button_style(status)
-            } else { primary_button_style(status) })
-            .on_press(Message::ProfileDoubleClicked(id)),
+            } else {
+                primary_button_style(status)
+            }
+        })
+        .on_press(Message::ProfileDoubleClicked(id)),
     );
     container(column![
         header,
         scrollable(container(details).padding(12).width(Fill)).height(Fill),
         container(actions).padding(12).width(Fill),
     ])
-        .width(if compact { Fill } else { Length::Fixed(HOST_DETAILS_WIDTH) }).height(Fill)
-        .style(|_| inspector_style()).into()
+    .width(if compact {
+        Fill
+    } else {
+        Length::Fixed(HOST_DETAILS_WIDTH)
+    })
+    .height(Fill)
+    .style(|_| inspector_style())
+    .into()
 }
 
 #[cfg(test)]
@@ -1276,9 +1480,12 @@ mod tests {
     #[test]
     fn resource_search_disables_connect_for_a_hidden_selection() {
         let mut app = AditApp {
-            manager: SessionManager::with_profiles(vec![
-                ConnectionProfile::new("synthetic", "node.example.test", 22, "fixture"),
-            ]),
+            manager: SessionManager::with_profiles(vec![ConnectionProfile::new(
+                "synthetic",
+                "node.example.test",
+                22,
+                "fixture",
+            )]),
             ..AditApp::default()
         };
         let id = app.manager.profiles()[0].id;

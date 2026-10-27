@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use adit_rdp_proto::{ClientMsg, HostMsg, InputEvent, read_msg, write_msg};
+use adit_rdp_proto::{read_msg, write_msg, ClientMsg, HostMsg, InputEvent};
 
 fn main() -> io::Result<()> {
     let mode = std::env::var("ADIT_RDP_FAILURE_MODE").unwrap_or_else(|_| "closed".into());

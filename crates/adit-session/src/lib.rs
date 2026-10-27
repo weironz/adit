@@ -1,29 +1,28 @@
-mod sftp_shell;
 #[cfg(test)]
 mod clipboard_owner_tests;
+mod jump_auth;
+mod sftp_shell;
+mod sftp_transfers;
 mod terminal_encoding;
 mod triggers;
-mod sftp_transfers;
-mod jump_auth;
 mod tunnels;
-pub use tunnels::{TunnelRetry, TunnelState};
-pub use jump_auth::jump_credential;
 pub use adit_ssh::{JumpCredential, JumpCredentials};
+pub use jump_auth::jump_credential;
+pub use tunnels::{TunnelRetry, TunnelState};
 
-pub use sftp_shell::SftpShell;
 pub use adit_ssh::TransferMode;
+pub use sftp_shell::SftpShell;
 
-use adit_domain::{
-    AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
-    SessionStatus, TunnelDef, SessionOptions, DesktopQuality, ReconnectPolicy,
-};
 pub use adit_domain::Environment as ProfileEnvironment;
 pub use adit_domain::JumpHop as ProfileJumpHop;
+use adit_domain::{
+    AuthMethod, ConnectionProfile, DesktopQuality, Environment, JumpHop, ProfileId, Protocol,
+    ReconnectPolicy, SessionId, SessionOptions, SessionStatus, TunnelDef,
+};
 use adit_ssh::{
-    AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand,
-    LiveShellEvent, LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand,
-    SftpEvent, SftpHandle, SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent,
-    TunnelHandle, TunnelRequest,
+    AuthOptions, AuthPromptRequest, HostKeyPrompt, LiveShellCommand, LiveShellEvent,
+    LiveShellHandle, LiveShellRequest, PasswordShellProbe, SftpCommand, SftpEvent, SftpHandle,
+    SftpRequest, SharedSession, SshError, TunnelCommand, TunnelEvent, TunnelHandle, TunnelRequest,
 };
 
 pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
@@ -32,10 +31,10 @@ pub use adit_ssh::HostKeyPrompt as HostKeyPromptInfo;
 // conversation.
 pub use adit_ssh::HostKeyDecision;
 
-pub use adit_ssh::{AuthPromptField, AuthPromptRequest as AuthPromptInfo};
 pub use adit_ssh::{
     known_hosts_path, list_known_hosts, remove_known_host, KnownHostEntry, SftpEntry, TunnelKind,
 };
+pub use adit_ssh::{AuthPromptField, AuthPromptRequest as AuthPromptInfo};
 use adit_terminal::{
     LogicalAnchor, TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal,
 };
@@ -50,13 +49,13 @@ mod rdp_client;
 mod vnc_client;
 mod vnc_input;
 pub use adit_rdp_proto::{
-    validate_clipboard_file_list, validate_clipboard_relative_name,
-    ClipFile, InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
+    validate_clipboard_file_list, validate_clipboard_relative_name, ClipFile,
+    InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
 pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
-pub use vnc_input::unicode_keysym;
-pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
 use vnc_client::VncClientHandle;
+pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
+pub use vnc_input::unicode_keysym;
 
 pub fn validate_session_options(options: &SessionOptions) -> Result<(), String> {
     options.validate()?;
@@ -171,10 +170,7 @@ struct SessionRecord {
 ///
 /// Falls back to dialling when there is nothing to ride on: the shell has
 /// already exited, or this was never an SSH session.
-fn open_sftp_for(
-    record: &SessionRecord,
-    request: SftpRequest,
-) -> Result<SftpHandle, SessionError> {
+fn open_sftp_for(record: &SessionRecord, request: SftpRequest) -> Result<SftpHandle, SessionError> {
     match record
         .shared_session
         .clone()
@@ -211,12 +207,17 @@ impl SessionRecord {
 
     fn record_input(&mut self, bytes: &[u8]) {
         let Some(log) = &mut self.log else { return };
-        if !log.record_input { return; }
-        let escaped: String = bytes.iter()
-            .flat_map(|byte| std::ascii::escape_default(*byte).map(char::from)).collect();
+        if !log.record_input {
+            return;
+        }
+        let escaped: String = bytes
+            .iter()
+            .flat_map(|byte| std::ascii::escape_default(*byte).map(char::from))
+            .collect();
         if writeln!(log.writer, "\n# input: {escaped}").is_err() {
             self.log = None;
-            self.terminal.append_status("session log write failed; logging off");
+            self.terminal
+                .append_status("session log write failed; logging off");
         }
     }
 }
@@ -405,7 +406,9 @@ pub struct VncGatewayCredentials {
     pub passphrase: String,
 }
 impl std::fmt::Debug for VncGatewayCredentials {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("VncGatewayCredentials(redacted)") }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("VncGatewayCredentials(redacted)")
+    }
 }
 impl Drop for VncGatewayCredentials {
     fn drop(&mut self) {
@@ -495,9 +498,21 @@ pub struct RdpFileChunk {
 
 /// Session-tagged events for explicit OLE drags, independent of clipboard focus.
 pub enum RdpFileDragEvent {
-    Offered { session: SessionId, generation: u64, files: Vec<ClipFile>, requester: RdpFileRequester },
-    Chunk { session: SessionId, generation: u64, stream_id: u32, data: Option<Vec<u8>> },
-    Closed { session: SessionId },
+    Offered {
+        session: SessionId,
+        generation: u64,
+        files: Vec<ClipFile>,
+        requester: RdpFileRequester,
+    },
+    Chunk {
+        session: SessionId,
+        generation: u64,
+        stream_id: u32,
+        data: Option<Vec<u8>>,
+    },
+    Closed {
+        session: SessionId,
+    },
 }
 
 /// A byte range the remote wants from a file this side offered.
@@ -584,8 +599,12 @@ impl SessionManager {
     pub fn set_rdp_clipboard(&mut self, enabled: bool) {
         self.rdp_clipboard = enabled;
         for record in self.sessions.values() {
-            if let Some(vnc) = &record.vnc { vnc.set_clipboard_sharing(enabled); }
-            if let Some(rdp) = &record.rdp { rdp.set_file_offers_enabled(enabled); }
+            if let Some(vnc) = &record.vnc {
+                vnc.set_clipboard_sharing(enabled);
+            }
+            if let Some(rdp) = &record.rdp {
+                rdp.set_file_offers_enabled(enabled);
+            }
         }
         if !enabled {
             self.pending_rdp_clipboard = None;
@@ -643,7 +662,10 @@ impl SessionManager {
         options: SessionOptions,
     ) -> Result<(), SessionError> {
         validate_session_options(&options).map_err(SessionError::Unsupported)?;
-        let profile = self.profiles.iter_mut().find(|p| p.id == profile_id)
+        let profile = self
+            .profiles
+            .iter_mut()
+            .find(|p| p.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?;
         profile.session_options = options;
         self.update_tunnel_reconnect_enabled();
@@ -651,7 +673,10 @@ impl SessionManager {
     }
 
     pub fn profile_rdp_quality(&self, profile_id: ProfileId) -> RdpQuality {
-        match self.profile(profile_id).and_then(|p| p.session_options.rdp_quality) {
+        match self
+            .profile(profile_id)
+            .and_then(|p| p.session_options.rdp_quality)
+        {
             Some(DesktopQuality::High) => RdpQuality::High,
             Some(DesktopQuality::Balanced) => RdpQuality::Balanced,
             Some(DesktopQuality::Speed) => RdpQuality::Speed,
@@ -1102,7 +1127,8 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
-                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers)
+                    .unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -1129,7 +1155,9 @@ impl SessionManager {
         validate_session_options(&profile.session_options).map_err(SessionError::Unsupported)?;
 
         if profile.proxy_command.enabled && !profile.protocol.is_ssh_based() {
-            return Err(SessionError::Unsupported("ProxyCommand 仅支持 SSH 和 SFTP 配置".into()));
+            return Err(SessionError::Unsupported(
+                "ProxyCommand 仅支持 SSH 和 SFTP 配置".into(),
+            ));
         }
 
         // SFTP carries no byte stream to drive a PTY, so it is built on its own
@@ -1246,7 +1274,8 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
-                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers)
+                    .unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect,
             },
@@ -1395,7 +1424,10 @@ impl SessionManager {
     }
 
     pub fn open_live_vnc_session_via(
-        &mut self, profile_id: ProfileId, password: String, gateway_password: Option<VncGatewayCredentials>,
+        &mut self,
+        profile_id: ProfileId,
+        password: String,
+        gateway_password: Option<VncGatewayCredentials>,
     ) -> Result<SessionId, SessionError> {
         let profile = self
             .profile(profile_id)
@@ -1447,7 +1479,8 @@ impl SessionManager {
                 keep_connection_after_exit: false,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
-                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers)
+                    .unwrap_or_default(),
                 auto_log_consumed: false,
             },
         );
@@ -1457,29 +1490,65 @@ impl SessionManager {
         Ok(session_id)
     }
 
-    fn vnc_gateway_request(&self, profile: &ConnectionProfile, password: Option<VncGatewayCredentials>) -> Result<Option<LiveShellRequest>, SessionError> {
-        let Some(id) = profile.vnc.gateway_profile else { return Ok(None); };
+    fn vnc_gateway_request(
+        &self,
+        profile: &ConnectionProfile,
+        password: Option<VncGatewayCredentials>,
+    ) -> Result<Option<LiveShellRequest>, SessionError> {
+        let Some(id) = profile.vnc.gateway_profile else {
+            return Ok(None);
+        };
         let gateway = self.profile(id).ok_or(SessionError::ProfileNotFound)?;
-        if gateway.protocol != Protocol::Ssh || gateway.id == profile.id || !gateway.jumps.is_empty() {
-            return Err(SessionError::Unsupported("请选择独立的单跳 SSH 配置作为 VNC 网关".into()));
+        if gateway.protocol != Protocol::Ssh
+            || gateway.id == profile.id
+            || !gateway.jumps.is_empty()
+        {
+            return Err(SessionError::Unsupported(
+                "请选择独立的单跳 SSH 配置作为 VNC 网关".into(),
+            ));
         }
         let credentials = password.unwrap_or_default();
-        let mut request = LiveShellRequest::new(gateway.host.clone(), gateway.port, gateway.username.clone(), credentials.password.clone());
+        let mut request = LiveShellRequest::new(
+            gateway.host.clone(),
+            gateway.port,
+            gateway.username.clone(),
+            credentials.password.clone(),
+        );
         request.proxy_command = gateway.proxy_command.clone();
-        request.auth = auth_options_for_profile(gateway, &credentials.password, &credentials.passphrase);
+        request.auth =
+            auth_options_for_profile(gateway, &credentials.password, &credentials.passphrase);
         request.connect_timeout_secs = self.connect_timeout_secs.max(30);
         request.auto_accept_host_keys = false;
         Ok(Some(request))
     }
 
     fn active_vnc(&self) -> Option<&VncClientHandle> {
-        self.active_session.and_then(|id| self.sessions.get(&id)).and_then(|r|r.vnc.as_ref())
+        self.active_session
+            .and_then(|id| self.sessions.get(&id))
+            .and_then(|r| r.vnc.as_ref())
     }
-    pub fn active_vnc_read_only(&self) -> bool { self.active_vnc().is_some_and(VncClientHandle::read_only) }
-    pub fn set_active_vnc_read_only(&self, enabled: bool) { if let Some(vnc) = self.active_vnc() { vnc.set_read_only(enabled); } }
-    pub fn active_vnc_resize_remote(&self) -> bool { self.active_vnc().is_some_and(VncClientHandle::resize_remote) }
-    pub fn set_active_vnc_resize_remote(&self, enabled: bool) { if let Some(vnc) = self.active_vnc() { vnc.set_resize_remote(enabled); } }
-    pub fn set_active_vnc_quality(&self, quality: adit_domain::VncQuality) { if let Some(vnc) = self.active_vnc() { vnc.set_quality(quality); } }
+    pub fn active_vnc_read_only(&self) -> bool {
+        self.active_vnc().is_some_and(VncClientHandle::read_only)
+    }
+    pub fn set_active_vnc_read_only(&self, enabled: bool) {
+        if let Some(vnc) = self.active_vnc() {
+            vnc.set_read_only(enabled);
+        }
+    }
+    pub fn active_vnc_resize_remote(&self) -> bool {
+        self.active_vnc()
+            .is_some_and(VncClientHandle::resize_remote)
+    }
+    pub fn set_active_vnc_resize_remote(&self, enabled: bool) {
+        if let Some(vnc) = self.active_vnc() {
+            vnc.set_resize_remote(enabled);
+        }
+    }
+    pub fn set_active_vnc_quality(&self, quality: adit_domain::VncQuality) {
+        if let Some(vnc) = self.active_vnc() {
+            vnc.set_quality(quality);
+        }
+    }
     pub fn active_vnc_cursor(&self) -> Option<VncCursor> {
         // The handle outlives a disconnect so the tab can be retried. Its last
         // cursor belongs to that old transport, not the disconnected desktop.
@@ -1488,7 +1557,9 @@ impl SessionManager {
         }
         self.active_vnc().and_then(VncClientHandle::cursor)
     }
-    pub fn active_vnc_diagnostics(&self) -> Option<VncDiagnostics> { self.active_vnc().map(VncClientHandle::diagnostics) }
+    pub fn active_vnc_diagnostics(&self) -> Option<VncDiagnostics> {
+        self.active_vnc().map(VncClientHandle::diagnostics)
+    }
 
     /// VNC pixels and resize epoch sampled atomically, without changing the
     /// generic desktop frame or the separate RDP helper's IPC contract.
@@ -1538,7 +1609,10 @@ impl SessionManager {
     }
 
     pub fn retry_vnc_with_password_via(
-        &mut self, session_id: SessionId, password: String, gateway_password: Option<VncGatewayCredentials>,
+        &mut self,
+        session_id: SessionId,
+        password: String,
+        gateway_password: Option<VncGatewayCredentials>,
     ) -> Result<bool, SessionError> {
         let Some(record) = self
             .sessions
@@ -1551,7 +1625,9 @@ impl SessionManager {
             .profile(record.summary.profile_id)
             .ok_or(SessionError::ProfileNotFound)?;
         if profile.host.trim().is_empty() || profile.port == 0 {
-            return Err(SessionError::Unsupported("请填写有效的 VNC 主机和端口".into()));
+            return Err(SessionError::Unsupported(
+                "请填写有效的 VNC 主机和端口".into(),
+            ));
         }
         if !profile.jumps.is_empty() || profile.proxy_command.enabled {
             return Err(SessionError::Unsupported(
@@ -1601,7 +1677,9 @@ impl SessionManager {
             .clone();
 
         if profile.proxy_command.enabled {
-            return Err(SessionError::Unsupported("RDP 配置不支持 ProxyCommand".into()));
+            return Err(SessionError::Unsupported(
+                "RDP 配置不支持 ProxyCommand".into(),
+            ));
         }
 
         let host = profile.host.trim();
@@ -1619,7 +1697,11 @@ impl SessionManager {
         // Split an optional Windows domain out of the username (DOMAIN\user).
         let (domain, username) = split_domain(profile.username.trim());
         let width = if width == 0 { DEFAULT_RDP_WIDTH } else { width };
-        let height = if height == 0 { DEFAULT_RDP_HEIGHT } else { height };
+        let height = if height == 0 {
+            DEFAULT_RDP_HEIGHT
+        } else {
+            height
+        };
 
         let request = adit_rdp_proto::ConnectRequest {
             host: host.to_string(),
@@ -1639,14 +1721,23 @@ impl SessionManager {
             quality: self.profile_rdp_quality(profile_id),
         };
 
-        profile.session_options.validate().map_err(SessionError::Unsupported)?;
-        let monitors = profile.session_options.rdp_monitors.as_ref().map_or_else(Vec::new, |items| {
-            items.iter().map(rdp_client::to_wire_monitor).collect()
-        });
+        profile
+            .session_options
+            .validate()
+            .map_err(SessionError::Unsupported)?;
+        let monitors = profile
+            .session_options
+            .rdp_monitors
+            .as_ref()
+            .map_or_else(Vec::new, |items| {
+                items.iter().map(rdp_client::to_wire_monitor).collect()
+            });
         let handle = RdpClientHandle::spawn_with_monitors(
-            request, monitors, profile.session_options.rdp_selected_monitor,
+            request,
+            monitors,
+            profile.session_options.rdp_selected_monitor,
         )
-            .map_err(|error| SessionError::Unsupported(error.to_string()))?;
+        .map_err(|error| SessionError::Unsupported(error.to_string()))?;
 
         let session_id = SessionId::new();
         let summary = SessionSummary {
@@ -1678,7 +1769,8 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
-                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers)
+                    .unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -1721,10 +1813,17 @@ impl SessionManager {
 
     pub fn open_ssh_probe_session(&mut self, probe: SshProbeSession) -> SessionId {
         let session_id = SessionId::new();
-        let terminal =
-            probe_terminal(&probe.title, &probe.endpoint, &probe.transcript, self.default_size);
+        let terminal = probe_terminal(
+            &probe.title,
+            &probe.endpoint,
+            &probe.transcript,
+            self.default_size,
+        );
         let profile_id = probe.profile_id;
-        let options = self.profile(profile_id).map(|p| p.session_options.clone()).unwrap_or_default();
+        let options = self
+            .profile(profile_id)
+            .map(|p| p.session_options.clone())
+            .unwrap_or_default();
         let summary = SessionSummary {
             id: session_id,
             profile_id,
@@ -1779,7 +1878,9 @@ impl SessionManager {
     /// tab-switch side effects of `activate`. The application restores its main
     /// selector after dispatch; pending events keep their original session ID.
     pub fn select_session_context(&mut self, session_id: SessionId) -> Result<(), SessionError> {
-        if !self.sessions.contains_key(&session_id) { return Err(SessionError::SessionNotFound); }
+        if !self.sessions.contains_key(&session_id) {
+            return Err(SessionError::SessionNotFound);
+        }
         self.active_session = Some(session_id);
         Ok(())
     }
@@ -1787,10 +1888,18 @@ impl SessionManager {
     /// Retire unconsumed OS clipboard offers when their window loses its input
     /// lease. In-progress file contents and read requests must keep running.
     pub fn discard_clipboard_offers(&mut self, session_id: SessionId) {
-        if self.pending_rdp_clipboard.as_ref().is_some_and(|(id, _)| *id == session_id) {
+        if self
+            .pending_rdp_clipboard
+            .as_ref()
+            .is_some_and(|(id, _)| *id == session_id)
+        {
             self.pending_rdp_clipboard = None;
         }
-        if self.pending_rdp_clipboard_image.as_ref().is_some_and(|(id, _)| *id == session_id) {
+        if self
+            .pending_rdp_clipboard_image
+            .as_ref()
+            .is_some_and(|(id, _)| *id == session_id)
+        {
             self.pending_rdp_clipboard_image = None;
         }
         if self
@@ -1919,7 +2028,12 @@ impl SessionManager {
                 .as_ref()
                 .map(|rc| (rc.password.clone(), rc.passphrase.clone()))
                 .unwrap_or_default();
-            (record.summary.profile_id, password, passphrase, record.is_desktop())
+            (
+                record.summary.profile_id,
+                password,
+                passphrase,
+                record.is_desktop(),
+            )
         };
         // RDP doesn't retain the password (secrets stay in the vault), so it can't
         // be cloned from session state alone. The UI clones RDP by loading the
@@ -1962,7 +2076,10 @@ impl SessionManager {
             return Ok(());
         }
 
-        let bytes = record.codec.encode(input.as_bytes().to_vec()).map_err(SessionError::Unsupported)?;
+        let bytes = record
+            .codec
+            .encode(input.as_bytes().to_vec())
+            .map_err(SessionError::Unsupported)?;
         record.record_input(&bytes);
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::Input(bytes))?;
@@ -2004,7 +2121,10 @@ impl SessionManager {
             return Ok(());
         }
 
-        let bytes = record.codec.encode(input.clone()).map_err(SessionError::Unsupported)?;
+        let bytes = record
+            .codec
+            .encode(input.clone())
+            .map_err(SessionError::Unsupported)?;
         record.record_input(&bytes);
         if let Some(live) = &record.live {
             live.send(LiveShellCommand::Input(bytes))?;
@@ -2043,13 +2163,24 @@ impl SessionManager {
             return Ok(0);
         }
 
-        let encoded = self.sessions.iter().filter(|(_, record)| record.live.is_some())
-            .map(|(id, record)| record.codec.encode(input.clone())
-                .map(|bytes| (*id, bytes)).map_err(SessionError::Unsupported))
+        let encoded = self
+            .sessions
+            .iter()
+            .filter(|(_, record)| record.live.is_some())
+            .map(|(id, record)| {
+                record
+                    .codec
+                    .encode(input.clone())
+                    .map(|bytes| (*id, bytes))
+                    .map_err(SessionError::Unsupported)
+            })
             .collect::<Result<Vec<_>, _>>()?;
         let mut sent = 0usize;
         for (id, bytes) in encoded {
-            let record = self.sessions.get_mut(&id).ok_or(SessionError::SessionNotFound)?;
+            let record = self
+                .sessions
+                .get_mut(&id)
+                .ok_or(SessionError::SessionNotFound)?;
             record.record_input(&bytes);
             if let Some(live) = &record.live {
                 if live.send(LiveShellCommand::Input(bytes)).is_ok() {
@@ -2109,7 +2240,10 @@ impl SessionManager {
     /// Take a nonfatal notice for the active desktop, discarding stale-tab notices.
     #[must_use]
     pub fn take_desktop_notice(&mut self) -> Option<String> {
-        self.pending_desktop_notice.take().filter(|(id, _)| self.active_session == Some(*id)).map(|(_, message)| message)
+        self.pending_desktop_notice
+            .take()
+            .filter(|(id, _)| self.active_session == Some(*id))
+            .map(|(_, message)| message)
     }
 
     pub fn take_trigger_notice(&mut self) -> Option<String> {
@@ -2120,7 +2254,9 @@ impl SessionManager {
     /// Returns `None` when nothing new arrived.
     #[must_use]
     pub fn take_rdp_clipboard(&mut self) -> Option<String> {
-        if self.pending_rdp_clipboard.as_ref().map(|(id, _)| *id) != self.active_session { return None; }
+        if self.pending_rdp_clipboard.as_ref().map(|(id, _)| *id) != self.active_session {
+            return None;
+        }
         self.pending_rdp_clipboard
             .take()
             .filter(|(id, _)| self.active_session == Some(*id))
@@ -2133,13 +2269,20 @@ impl SessionManager {
     /// Byte ranges the remote is waiting on. Drained, so each is answered once.
     pub fn take_rdp_file_reads(&mut self) -> Vec<RdpFileRead> {
         let active = self.active_session;
-        self.pending_rdp_file_reads.extract_if(.., |(id, _)| Some(*id) == active).map(|(_, read)| read).collect()
+        self.pending_rdp_file_reads
+            .extract_if(.., |(id, _)| Some(*id) == active)
+            .map(|(_, read)| read)
+            .collect()
     }
 
     /// An image the remote copied, if one arrived since the last call.
     pub fn take_rdp_clipboard_image(&mut self) -> Option<Vec<u8>> {
-        if self.pending_rdp_clipboard_image.as_ref().map(|(id, _)| *id) != self.active_session { return None; }
-        self.pending_rdp_clipboard_image.take().map(|(_, image)| image)
+        if self.pending_rdp_clipboard_image.as_ref().map(|(id, _)| *id) != self.active_session {
+            return None;
+        }
+        self.pending_rdp_clipboard_image
+            .take()
+            .map(|(_, image)| image)
     }
 
     /// Offer a locally-copied image to the active RDP desktop.
@@ -2190,7 +2333,9 @@ impl SessionManager {
     /// A handle for the current offer. Historical metadata must retain the
     /// requester returned alongside it by `take_rdp_clipboard_files`.
     pub fn rdp_file_requester(&self) -> Option<RdpFileRequester> {
-        if !self.rdp_clipboard { return None; }
+        if !self.rdp_clipboard {
+            return None;
+        }
         let session_id = self.active_session?;
         let record = self.sessions.get(&session_id)?;
         record.rdp.as_ref().map(RdpClientHandle::file_requester)
@@ -2201,8 +2346,9 @@ impl SessionManager {
     }
 
     pub fn rdp_file_drag_live(&self, id: SessionId) -> bool {
-        self.sessions.get(&id).is_some_and(|record|
-            record.rdp.is_some() && record.summary.status == SessionStatus::Connected)
+        self.sessions.get(&id).is_some_and(|record| {
+            record.rdp.is_some() && record.summary.status == SessionStatus::Connected
+        })
     }
 
     /// Offer a local file selection to the active RDP desktop (metadata only).
@@ -2254,7 +2400,8 @@ impl SessionManager {
 
     /// Check before adopting a physical press; rejected characters own no up.
     pub fn active_vnc_accepts_keysym(&self, keysym: u32) -> bool {
-        self.active_vnc().is_some_and(|vnc| vnc.accepts_keysym(keysym))
+        self.active_vnc()
+            .is_some_and(|vnc| vnc.accepts_keysym(keysym))
     }
 
     /// Reject an unsupported composition as a whole, before emitting its prefix.
@@ -2265,8 +2412,12 @@ impl SessionManager {
         Ok(())
     }
 
-    pub fn vnc_bmp_only_notice() -> &'static str { vnc_client::BMP_ONLY_NOTICE }
-    pub fn vnc_text_too_long_notice() -> &'static str { vnc_client::TEXT_TOO_LONG_NOTICE }
+    pub fn vnc_bmp_only_notice() -> &'static str {
+        vnc_client::BMP_ONLY_NOTICE
+    }
+    pub fn vnc_text_too_long_notice() -> &'static str {
+        vnc_client::TEXT_TOO_LONG_NOTICE
+    }
 
     /// Whether the active session renders a graphical desktop.
     #[must_use]
@@ -2420,7 +2571,11 @@ impl SessionManager {
             path: path.clone(),
             writer,
             stripper: plaintext.then(AnsiStripper::default),
-            record_input: record.options.logging.as_ref().is_some_and(|policy| policy.record_input),
+            record_input: record
+                .options
+                .logging
+                .as_ref()
+                .is_some_and(|policy| policy.record_input),
         });
         record
             .terminal
@@ -2453,14 +2608,26 @@ impl SessionManager {
     }
 
     pub fn pending_auto_log_sessions(&mut self, default_enabled: bool) -> Vec<SessionSummary> {
-        self.sessions.values_mut().filter_map(|record| {
-            let enabled = record.options.logging.as_ref().map_or(default_enabled, |p| p.auto_start);
-            if record.is_desktop() || !enabled || record.auto_log_consumed
-                || record.log.is_some() || record.summary.status != SessionStatus::Connected
-            { return None; }
-            record.auto_log_consumed = true;
-            Some(record.summary.clone())
-        }).collect()
+        self.sessions
+            .values_mut()
+            .filter_map(|record| {
+                let enabled = record
+                    .options
+                    .logging
+                    .as_ref()
+                    .map_or(default_enabled, |p| p.auto_start);
+                if record.is_desktop()
+                    || !enabled
+                    || record.auto_log_consumed
+                    || record.log.is_some()
+                    || record.summary.status != SessionStatus::Connected
+                {
+                    return None;
+                }
+                record.auto_log_consumed = true;
+                Some(record.summary.clone())
+            })
+            .collect()
     }
 
     #[must_use]
@@ -2595,7 +2762,8 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
-                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers)
+                    .unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -2662,7 +2830,8 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
-                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers)
+                    .unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -2693,7 +2862,9 @@ impl SessionManager {
             sftp_shell,
             ..
         } = record;
-        let shell = sftp_shell.as_mut().ok_or(SessionError::NoActiveSshSession)?;
+        let shell = sftp_shell
+            .as_mut()
+            .ok_or(SessionError::NoActiveSshSession)?;
         shell.upload_dropped(terminal, local);
         Ok(())
     }
@@ -2880,9 +3051,12 @@ impl SessionManager {
     /// any that are still pending or active.
     pub fn sftp_clear_finished(&mut self) {
         if let Some(browser) = &mut self.sftp {
-            browser
-                .transfers
-                .retain(|item| matches!(item.status, TransferStatus::Pending | TransferStatus::Active));
+            browser.transfers.retain(|item| {
+                matches!(
+                    item.status,
+                    TransferStatus::Pending | TransferStatus::Active
+                )
+            });
         }
     }
 
@@ -2903,7 +3077,10 @@ impl SessionManager {
                 .transfers
                 .iter()
                 .filter(|item| {
-                    matches!(item.status, TransferStatus::Pending | TransferStatus::Active)
+                    matches!(
+                        item.status,
+                        TransferStatus::Pending | TransferStatus::Active
+                    )
                 })
                 .map(|item| item.id)
                 .collect();
@@ -2918,10 +3095,12 @@ impl SessionManager {
     #[must_use]
     pub fn sftp_has_active_transfers(&self) -> bool {
         self.sftp.as_ref().is_some_and(|browser| {
-            browser
-                .transfers
-                .iter()
-                .any(|item| matches!(item.status, TransferStatus::Pending | TransferStatus::Active))
+            browser.transfers.iter().any(|item| {
+                matches!(
+                    item.status,
+                    TransferStatus::Pending | TransferStatus::Active
+                )
+            })
         })
     }
 
@@ -3030,7 +3209,12 @@ impl SessionManager {
                         browser.busy = false;
                         browser.status = format!("{} item(s)", browser.entries.len());
                     }
-                    SftpEvent::Progress { id, label, done, total } => {
+                    SftpEvent::Progress {
+                        id,
+                        label,
+                        done,
+                        total,
+                    } => {
                         browser.busy = true;
                         browser.status = match done.saturating_mul(100).checked_div(total) {
                             Some(percent) => format!("{label}: {percent}%"),
@@ -3093,11 +3277,9 @@ impl SessionManager {
                     }
                     SftpEvent::Error(error) => {
                         browser.busy = false;
-                        if let Some(item) = browser
-                            .transfers
-                            .iter_mut()
-                            .find(|t| matches!(t.status, TransferStatus::Pending | TransferStatus::Active))
-                        {
+                        if let Some(item) = browser.transfers.iter_mut().find(|t| {
+                            matches!(t.status, TransferStatus::Pending | TransferStatus::Active)
+                        }) {
                             item.status = TransferStatus::Failed;
                             item.error = Some(error.clone());
                         }
@@ -3112,11 +3294,9 @@ impl SessionManager {
             // Bound queue growth over long sessions: drop the oldest finished
             // transfers once the history gets large (active ones are kept).
             while browser.transfers.len() > MAX_TRANSFER_HISTORY {
-                match browser
-                    .transfers
-                    .iter()
-                    .position(|item| matches!(item.status, TransferStatus::Done | TransferStatus::Failed))
-                {
+                match browser.transfers.iter().position(|item| {
+                    matches!(item.status, TransferStatus::Done | TransferStatus::Failed)
+                }) {
                     Some(index) => {
                         browser.transfers.remove(index);
                     }
@@ -3125,7 +3305,11 @@ impl SessionManager {
             }
         }
         if closed {
-            if let Some(browser) = self.sftp.as_mut().filter(|b| b.status.starts_with("error:")) {
+            if let Some(browser) = self
+                .sftp
+                .as_mut()
+                .filter(|b| b.status.starts_with("error:"))
+            {
                 browser.connected = false;
                 browser.busy = false;
                 browser.pending_auth_prompt = None;
@@ -3262,7 +3446,9 @@ impl SessionManager {
             }
             slot @ None => *slot = Some(ReconnectState::new(password, passphrase)),
         }
-        record.terminal.append_status("retrying with new credentials");
+        record
+            .terminal
+            .append_status("retrying with new credentials");
         self.attempt_reconnect(session_id);
         true
     }
@@ -3353,23 +3539,31 @@ impl SessionManager {
                             let title: String = record.summary.title.chars().take(128).collect();
                             for action in record.triggers.feed(&decoded, Instant::now()) {
                                 let message = match action {
-                                    adit_domain::TriggerAction::Notify =>
-                                        format!("{title}：输出触发器已匹配"),
+                                    adit_domain::TriggerAction::Notify => {
+                                        format!("{title}：输出触发器已匹配")
+                                    }
                                     adit_domain::TriggerAction::SendLine(line) => {
                                         let mut input = line.into_bytes();
                                         input.push(b'\r');
                                         let result = record.codec.encode(input).and_then(|bytes| {
-                                            record.live.as_ref().ok_or_else(|| "会话已断开".to_string())?
+                                            record
+                                                .live
+                                                .as_ref()
+                                                .ok_or_else(|| "会话已断开".to_string())?
                                                 .send(LiveShellCommand::Input(bytes))
                                                 .map_err(|error| error.to_string())
                                         });
                                         match result {
                                             Ok(()) => format!("{title}：触发器已发送文本"),
-                                            Err(error) => format!("{title}：触发器发送失败：{error}"),
+                                            Err(error) => {
+                                                format!("{title}：触发器发送失败：{error}")
+                                            }
                                         }
                                     }
                                 };
-                                if trigger_notices.len() == 64 { trigger_notices.pop_front(); }
+                                if trigger_notices.len() == 64 {
+                                    trigger_notices.pop_front();
+                                }
                                 trigger_notices.push_back(message);
                             }
                         }
@@ -3385,7 +3579,9 @@ impl SessionManager {
                         }
                         if log_failed {
                             record.log = None;
-                            record.terminal.append_status("session log write failed; logging off");
+                            record
+                                .terminal
+                                .append_status("session log write failed; logging off");
                         }
                     }
                     LiveShellEvent::SessionReady(shared) => {
@@ -3400,8 +3596,11 @@ impl SessionManager {
                         // An auth prompt can't be answered on a dead connection.
                         record.pending_auth_prompt = None;
                     }
-                    LiveShellEvent::SecurityRejected(error) | LiveShellEvent::ConnectStopped(error) => {
-                        record.terminal.append_status(format!("connection stopped: {error}"));
+                    LiveShellEvent::SecurityRejected(error)
+                    | LiveShellEvent::ConnectStopped(error) => {
+                        record
+                            .terminal
+                            .append_status(format!("connection stopped: {error}"));
                         record.summary.status = SessionStatus::Error;
                         record.pending_host_key = None;
                         record.pending_auth_prompt = None;
@@ -3461,9 +3660,11 @@ impl SessionManager {
                             record.shared_session = None;
                         }
                         record.pending_auth_prompt = None;
-                        let retry_policy = record.options.reconnect.clone().unwrap_or(ReconnectPolicy {
-                            enabled: auto_reconnect, ..Default::default()
-                        });
+                        let retry_policy =
+                            record.options.reconnect.clone().unwrap_or(ReconnectPolicy {
+                                enabled: auto_reconnect,
+                                ..Default::default()
+                            });
                         let can_retry = retry_policy.enabled
                             && record
                                 .reconnect
@@ -3494,11 +3695,13 @@ impl SessionManager {
                     }
                     LiveShellEvent::HostKeyPrompt(prompt) => {
                         record.summary.status = SessionStatus::Connecting;
-                        record.terminal.append_status(if prompt.previous_fingerprint.is_some() {
-                            "host key CHANGED — awaiting confirmation"
-                        } else {
-                            "unknown host key — awaiting confirmation"
-                        });
+                        record
+                            .terminal
+                            .append_status(if prompt.previous_fingerprint.is_some() {
+                                "host key CHANGED — awaiting confirmation"
+                            } else {
+                                "unknown host key — awaiting confirmation"
+                            });
                         record.pending_host_key = Some(prompt);
                     }
                     LiveShellEvent::AuthPrompt(prompt) => {
@@ -3514,7 +3717,10 @@ impl SessionManager {
             // Drain RDP helper events. Framebuffer tiles are applied to the
             // surface on the client thread; here we only track status. The tab's
             // pixels refresh from a per-frame redraw subscription in the UI.
-            while let Some(event) = record.rdp.as_ref().and_then(RdpClientHandle::try_recv)
+            while let Some(event) = record
+                .rdp
+                .as_ref()
+                .and_then(RdpClientHandle::try_recv)
                 .or_else(|| record.vnc.as_ref().and_then(VncClientHandle::try_recv))
             {
                 handled += 1;
@@ -3529,14 +3735,24 @@ impl SessionManager {
                         }
                     }
                     RdpClientEvent::Resized { .. } => {}
-                    RdpClientEvent::GatewayHostKey(prompt) => record.pending_host_key = Some(prompt),
-                    RdpClientEvent::GatewayAuthPrompt(prompt) => record.pending_auth_prompt = Some(prompt),
-                    RdpClientEvent::VncReconnecting { attempt, delay_secs } => {
+                    RdpClientEvent::GatewayHostKey(prompt) => {
+                        record.pending_host_key = Some(prompt)
+                    }
+                    RdpClientEvent::GatewayAuthPrompt(prompt) => {
+                        record.pending_auth_prompt = Some(prompt)
+                    }
+                    RdpClientEvent::VncReconnecting {
+                        attempt,
+                        delay_secs,
+                    } => {
                         record.summary.status = SessionStatus::Connecting;
                         record.pending_host_key = None;
                         record.pending_auth_prompt = None;
-                        record.desktop_error = Some(format!("连接中断，{delay_secs} 秒后重试（{attempt}/10）"));
-                        if self.active_session == Some(record.summary.id) { self.pending_rdp_clipboard = None; }
+                        record.desktop_error =
+                            Some(format!("连接中断，{delay_secs} 秒后重试（{attempt}/10）"));
+                        if self.active_session == Some(record.summary.id) {
+                            self.pending_rdp_clipboard = None;
+                        }
                     }
                     // The helper has no Windows clipboard of its own (it is a
                     // windowless process with no message pump), so remote copies
@@ -3562,29 +3778,57 @@ impl SessionManager {
                     }
                     RdpClientEvent::ClipboardFiles { generation, files } => {
                         if !self.rdp_clipboard {
-                            record.rdp.as_ref().expect("RDP event owner").invalidate_file_offer();
+                            record
+                                .rdp
+                                .as_ref()
+                                .expect("RDP event owner")
+                                .invalidate_file_offer();
                             continue;
                         }
-                        let requester = record.rdp.as_ref().expect("RDP event owner").file_requester_for_generation(generation);
+                        let requester = record
+                            .rdp
+                            .as_ref()
+                            .expect("RDP event owner")
+                            .file_requester_for_generation(generation);
                         self.pending_rdp_drag_events.retain(|event| !matches!(event,
                             RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
-                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Offered {
-                            session: record.summary.id, generation,
-                            files: files.clone(), requester: requester.clone(),
-                        });
+                        self.pending_rdp_drag_events
+                            .push(RdpFileDragEvent::Offered {
+                                session: record.summary.id,
+                                generation,
+                                files: files.clone(),
+                                requester: requester.clone(),
+                            });
                         if self.active_session == Some(record.summary.id) {
                             self.pending_rdp_clipboard_files = Some(RdpClipboardFileOffer {
-                                session: record.summary.id, generation, files, requester,
+                                session: record.summary.id,
+                                generation,
+                                files,
+                                requester,
                             });
                         }
                     }
-                    RdpClientEvent::FileContents { generation, stream_id, data } => {
+                    RdpClientEvent::FileContents {
+                        generation,
+                        stream_id,
+                        data,
+                    } => {
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Chunk {
-                            session: record.summary.id, generation, stream_id, data: data.clone(),
+                            session: record.summary.id,
+                            generation,
+                            stream_id,
+                            data: data.clone(),
                         });
                         self.pending_rdp_file_chunks.push(RdpFileChunk {
-                            session: record.summary.id, generation, stream_id, data,
-                            owner: record.rdp.as_ref().expect("RDP event owner").file_requester_for_generation(generation),
+                            session: record.summary.id,
+                            generation,
+                            stream_id,
+                            data,
+                            owner: record
+                                .rdp
+                                .as_ref()
+                                .expect("RDP event owner")
+                                .file_requester_for_generation(generation),
                         });
                     }
                     RdpClientEvent::FileContentsNeeded {
@@ -3593,12 +3837,15 @@ impl SessionManager {
                         offset,
                         length,
                     } => {
-                        self.pending_rdp_file_reads.push((record.summary.id, RdpFileRead {
-                            stream_id,
-                            index,
-                            offset,
-                            length,
-                        }));
+                        self.pending_rdp_file_reads.push((
+                            record.summary.id,
+                            RdpFileRead {
+                                stream_id,
+                                index,
+                                offset,
+                                length,
+                            },
+                        ));
                     }
                     RdpClientEvent::AuthRejected(message) => {
                         record.desktop_error = Some(message.clone());
@@ -3617,7 +3864,9 @@ impl SessionManager {
                         }
                     }
                     RdpClientEvent::Closed => {
-                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Closed { session: record.summary.id });
+                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Closed {
+                            session: record.summary.id,
+                        });
                         record.summary.status = status_after_closed(record.summary.status);
                     }
                 }
@@ -3657,8 +3906,13 @@ impl SessionManager {
             .sessions
             .iter()
             .filter(|(_, record)| record.live.is_none())
-            .filter(|(_, record)| record.options.reconnect.as_ref()
-                .map_or(self.auto_reconnect, |policy| policy.enabled))
+            .filter(|(_, record)| {
+                record
+                    .options
+                    .reconnect
+                    .as_ref()
+                    .map_or(self.auto_reconnect, |policy| policy.enabled)
+            })
             .filter(|(_, record)| {
                 record
                     .reconnect
@@ -3708,7 +3962,9 @@ impl SessionManager {
                 if let Some(record) = self.sessions.get_mut(&session_id) {
                     record.summary.status = SessionStatus::Error;
                     record.terminal.append_status(error.to_string());
-                    if let Some(reconnect) = &mut record.reconnect { reconnect.retry_at = None; }
+                    if let Some(reconnect) = &mut record.reconnect {
+                        reconnect.retry_at = None;
+                    }
                 }
                 return;
             }
@@ -3729,7 +3985,8 @@ impl SessionManager {
                         .append_status(format!("reconnecting (attempt {attempt_no})…"));
                     record.live = Some(live);
                     record.codec = terminal_encoding::TerminalCodec::new(record.options.encoding);
-                    record.triggers = triggers::TriggerEngine::new(&record.options.triggers).unwrap_or_default();
+                    record.triggers =
+                        triggers::TriggerEngine::new(&record.options.triggers).unwrap_or_default();
                     record.summary.status = SessionStatus::Connecting;
                     if let Some(reconnect) = &mut record.reconnect {
                         reconnect.attempts = attempt_no;
@@ -3749,7 +4006,9 @@ impl SessionManager {
                                 .terminal
                                 .append_status(format!("reconnect failed: {error}"));
                         } else {
-                            reconnect.retry_at = Some(Instant::now() + Duration::from_secs(policy.delay_secs(attempt_no)));
+                            reconnect.retry_at = Some(
+                                Instant::now() + Duration::from_secs(policy.delay_secs(attempt_no)),
+                            );
                         }
                     }
                 }
@@ -4189,7 +4448,10 @@ fn is_auto_session_title(title: &str, base: &str) -> bool {
     if title == base {
         return true;
     }
-    match title.strip_prefix(base).and_then(|rest| rest.strip_prefix(" (")) {
+    match title
+        .strip_prefix(base)
+        .and_then(|rest| rest.strip_prefix(" ("))
+    {
         Some(rest) => rest
             .strip_suffix(')')
             .is_some_and(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())),
@@ -4323,16 +4585,23 @@ mod tests {
         let profile = manager.profiles()[0].id;
         let first_options = SessionOptions {
             rdp_quality: Some(DesktopQuality::Speed),
-            reconnect: Some(ReconnectPolicy { max_attempts: 3, ..Default::default() }),
+            reconnect: Some(ReconnectPolicy {
+                max_attempts: 3,
+                ..Default::default()
+            }),
             ..Default::default()
         };
-        manager.set_profile_session_options(profile, first_options.clone()).unwrap();
+        manager
+            .set_profile_session_options(profile, first_options.clone())
+            .unwrap();
         let first = manager.open_mock_session(profile).unwrap();
         let second_options = SessionOptions {
             rdp_quality: Some(DesktopQuality::High),
             ..Default::default()
         };
-        manager.set_profile_session_options(profile, second_options.clone()).unwrap();
+        manager
+            .set_profile_session_options(profile, second_options.clone())
+            .unwrap();
         let second = manager.open_mock_session(profile).unwrap();
         assert_eq!(manager.session_options(first), Some(&first_options));
         assert_eq!(manager.session_options(second), Some(&second_options));
@@ -4351,19 +4620,39 @@ mod tests {
         let mut manager = SessionManager::with_demo_profiles();
         let profile = manager.profiles()[0].id;
         let first = manager.open_mock_session(profile).unwrap();
-        let first_path = manager.start_logging(first, &root, "output-only.log", false).unwrap();
-        manager.send_input_bytes_to_active(b"never-record-this".to_vec()).unwrap();
+        let first_path = manager
+            .start_logging(first, &root, "output-only.log", false)
+            .unwrap();
+        manager
+            .send_input_bytes_to_active(b"never-record-this".to_vec())
+            .unwrap();
         manager.stop_active_logging();
-        assert!(!fs::read_to_string(first_path).unwrap().contains("never-record-this"));
-        manager.set_profile_session_options(profile, SessionOptions {
-            logging: Some(adit_domain::LogPolicy { record_input: true, ..Default::default() }),
-            ..Default::default()
-        }).unwrap();
+        assert!(!fs::read_to_string(first_path)
+            .unwrap()
+            .contains("never-record-this"));
+        manager
+            .set_profile_session_options(
+                profile,
+                SessionOptions {
+                    logging: Some(adit_domain::LogPolicy {
+                        record_input: true,
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
         let second = manager.open_mock_session(profile).unwrap();
-        let second_path = manager.start_logging(second, &root, "input.log", false).unwrap();
-        manager.send_input_bytes_to_active(b"fixture-only\r".to_vec()).unwrap();
+        let second_path = manager
+            .start_logging(second, &root, "input.log", false)
+            .unwrap();
+        manager
+            .send_input_bytes_to_active(b"fixture-only\r".to_vec())
+            .unwrap();
         manager.stop_active_logging();
-        assert!(fs::read_to_string(second_path).unwrap().contains("# input: fixture-only\\r"));
+        assert!(fs::read_to_string(second_path)
+            .unwrap()
+            .contains("# input: fixture-only\\r"));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -4374,8 +4663,10 @@ mod tests {
         assert_eq!(manager.pending_auto_log_sessions(true).len(), 1);
         assert!(manager.pending_auto_log_sessions(true).is_empty());
         manager.sessions.get_mut(&id).unwrap().auto_log_consumed = false;
-        manager.sessions.get_mut(&id).unwrap().options.logging =
-            Some(adit_domain::LogPolicy { auto_start: false, ..Default::default() });
+        manager.sessions.get_mut(&id).unwrap().options.logging = Some(adit_domain::LogPolicy {
+            auto_start: false,
+            ..Default::default()
+        });
         assert!(manager.pending_auto_log_sessions(true).is_empty());
     }
 
@@ -4827,7 +5118,9 @@ mod tests {
             .id;
         manager.move_profile_to_group(alpha, "").expect("ungroup");
         assert_eq!(manager.profile(alpha).unwrap().group, "");
-        manager.move_profile_to_group(alpha, "Lab").expect("regroup");
+        manager
+            .move_profile_to_group(alpha, "Lab")
+            .expect("regroup");
         assert_eq!(manager.profile(alpha).unwrap().group, "Lab");
     }
 

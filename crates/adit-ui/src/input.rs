@@ -351,8 +351,12 @@ pub(super) fn send_vnc_keyboard(app: &mut AditApp, event: &keyboard::Event) {
             send_vnc_text(app, text);
             return;
         }
-        if !modifiers.control() && !modifiers.alt() && !modifiers.logo()
-            && text.chars().any(|ch| !vnc_character_allowed(app, adit_session::unicode_keysym(ch)))
+        if !modifiers.control()
+            && !modifiers.alt()
+            && !modifiers.logo()
+            && text
+                .chars()
+                .any(|ch| !vnc_character_allowed(app, adit_session::unicode_keysym(ch)))
         {
             return;
         }

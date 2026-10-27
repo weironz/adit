@@ -87,8 +87,22 @@ const DEFAULT_RULES: &[RuleSpec] = &[
     //
     // Off by default all the same: a Markdown heading is a false positive, and a
     // whole-line colour is a loud way to be wrong.
-    RuleSpec { id: "comment-hash", label: "# 注释整行", pattern: r"^\s*#", ansi: 2, scope: Scope::Line, enabled: true },
-    RuleSpec { id: "comment-slash", label: "// 注释整行", pattern: r"^\s*//", ansi: 2, scope: Scope::Line, enabled: true },
+    RuleSpec {
+        id: "comment-hash",
+        label: "# 注释整行",
+        pattern: r"^\s*#",
+        ansi: 2,
+        scope: Scope::Line,
+        enabled: true,
+    },
+    RuleSpec {
+        id: "comment-slash",
+        label: "// 注释整行",
+        pattern: r"^\s*//",
+        ansi: 2,
+        scope: Scope::Line,
+        enabled: true,
+    },
     // Before the keyword and number rules, and that ordering is the rule: first
     // match wins, so a string swallows whatever is quoted inside it. Otherwise
     // `print("if you see this")` comes back with `if` painted as a keyword.
@@ -96,12 +110,47 @@ const DEFAULT_RULES: &[RuleSpec] = &[
     // Double quotes only. A single-quote pattern would treat the apostrophe in
     // "don't" as an opening quote and paint the rest of the sentence, and log
     // output is full of English prose.
-    RuleSpec { id: "code-string", label: "字符串", pattern: "\"[^\"]*\"", ansi: 3, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "error", label: "错误关键字", pattern: r"\b(?:ERROR|FATAL|CRITICAL)\b", ansi: 1, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "warning", label: "警告关键字", pattern: r"\b(?:WARN|WARNING)\b", ansi: 3, scope: Scope::Match, enabled: true },
-    RuleSpec { id: "url", label: "网址", pattern: r"\bhttps?://\S+", ansi: 4, scope: Scope::Match, enabled: true },
+    RuleSpec {
+        id: "code-string",
+        label: "字符串",
+        pattern: "\"[^\"]*\"",
+        ansi: 3,
+        scope: Scope::Match,
+        enabled: true,
+    },
+    RuleSpec {
+        id: "error",
+        label: "错误关键字",
+        pattern: r"\b(?:ERROR|FATAL|CRITICAL)\b",
+        ansi: 1,
+        scope: Scope::Match,
+        enabled: true,
+    },
+    RuleSpec {
+        id: "warning",
+        label: "警告关键字",
+        pattern: r"\b(?:WARN|WARNING)\b",
+        ansi: 3,
+        scope: Scope::Match,
+        enabled: true,
+    },
+    RuleSpec {
+        id: "url",
+        label: "网址",
+        pattern: r"\bhttps?://\S+",
+        ansi: 4,
+        scope: Scope::Match,
+        enabled: true,
+    },
     // Before the number rule, so an address stays one thing instead of four.
-    RuleSpec { id: "ipv4", label: "IP 地址", pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b", ansi: 6, scope: Scope::Match, enabled: true },
+    RuleSpec {
+        id: "ipv4",
+        label: "IP 地址",
+        pattern: r"\b\d{1,3}(?:\.\d{1,3}){3}\b",
+        ansi: 6,
+        scope: Scope::Match,
+        enabled: true,
+    },
     // Language-agnostic on purpose: a terminal has a byte stream, not a file
     // type, so this is the union of what shows up across languages rather than
     // any one grammar. The cost is that `if`, `for` and `else` are also ordinary
@@ -115,7 +164,14 @@ const DEFAULT_RULES: &[RuleSpec] = &[
         scope: Scope::Match,
         enabled: true,
     },
-    RuleSpec { id: "code-number", label: "数字", pattern: r"\b\d+(?:\.\d+)?\b", ansi: 6, scope: Scope::Match, enabled: true },
+    RuleSpec {
+        id: "code-number",
+        label: "数字",
+        pattern: r"\b\d+(?:\.\d+)?\b",
+        ansi: 6,
+        scope: Scope::Match,
+        enabled: true,
+    },
 ];
 
 /// The compiled rule set. Built once and reused — compiling per frame would put
@@ -147,10 +203,7 @@ impl Highlighter {
                         .expect("built-in highlight pattern must compile"),
                     scope: spec.scope,
                     color: TermColor::Indexed(spec.ansi),
-                    enabled: overrides
-                        .get(spec.id)
-                        .copied()
-                        .unwrap_or(spec.enabled),
+                    enabled: overrides.get(spec.id).copied().unwrap_or(spec.enabled),
                 })
                 .collect(),
         }
@@ -163,8 +216,7 @@ impl Highlighter {
 /// free function with no path back to app state. Behind a lock rather than a
 /// `OnceLock` because settings can change it while sessions are open.
 fn active() -> &'static std::sync::RwLock<Highlighter> {
-    static ACTIVE: std::sync::OnceLock<std::sync::RwLock<Highlighter>> =
-        std::sync::OnceLock::new();
+    static ACTIVE: std::sync::OnceLock<std::sync::RwLock<Highlighter>> = std::sync::OnceLock::new();
     ACTIVE.get_or_init(|| std::sync::RwLock::new(Highlighter::default()))
 }
 
@@ -429,7 +481,11 @@ mod tests {
         // span. Ordered the other way this line comes back in three pieces.
         let line = TerminalLine::plain("print(\"if you see this\")");
         let spans = spans_of(&line);
-        assert_eq!(spans, vec![(6, 23)], "expected one string span, got {spans:?}");
+        assert_eq!(
+            spans,
+            vec![(6, 23)],
+            "expected one string span, got {spans:?}"
+        );
     }
 
     #[test]

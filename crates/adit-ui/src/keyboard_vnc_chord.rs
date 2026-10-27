@@ -87,8 +87,9 @@ impl Ownership {
     }
 
     fn local_win_down(&self) -> bool {
-        [(0x5b, 1), (0x5c, 2)].into_iter().any(|(scan, mask)|
-            (self.down[scan] || self.down[scan + 256]) && self.wins & mask == 0)
+        [(0x5b, 1), (0x5c, 2)]
+            .into_iter()
+            .any(|(scan, mask)| (self.down[scan] || self.down[scan + 256]) && self.wins & mask == 0)
     }
 
     pub fn event(&mut self, vk: u16, scan: u8, extended: bool, pressed: bool) -> Route {
@@ -116,8 +117,12 @@ impl Ownership {
             _ => 0,
         };
         if control != 0 {
-            if pressed && !was_down && !self.local_win_down() { self.controls |= control; }
-            if !pressed { self.controls &= !control; }
+            if pressed && !was_down && !self.local_win_down() {
+                self.controls |= control;
+            }
+            if !pressed {
+                self.controls &= !control;
+            }
             // Ctrl still takes the window modifier/fence path. Only its new
             // capture-lease presses can make a subsequent Esc a remote chord.
             return Route::Local;
@@ -470,12 +475,24 @@ mod tests {
         for (vk, extended) in [(0xa2, false), (0xa3, true)] {
             let mut keys = Ownership::new([false; 512], Some(false));
             assert_eq!(keys.event(vk, 0x1d, extended, true), Route::Local);
-            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
-            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: true });
+            assert_eq!(
+                keys.event(0x1b, 0x01, false, true),
+                Route::Member { repeat: false }
+            );
+            assert_eq!(
+                keys.event(0x1b, 0x01, false, true),
+                Route::Member { repeat: true }
+            );
             assert_eq!(keys.event(vk, 0x1d, extended, false), Route::Local);
             // Releasing Ctrl first must not strand an already captured Esc.
-            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: true });
-            assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Member { repeat: false });
+            assert_eq!(
+                keys.event(0x1b, 0x01, false, true),
+                Route::Member { repeat: true }
+            );
+            assert_eq!(
+                keys.event(0x1b, 0x01, false, false),
+                Route::Member { repeat: false }
+            );
             assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Local);
             assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
         }
@@ -486,16 +503,29 @@ mod tests {
         use super::super::vnc_order::{Entry, ModifierEdge, OrderedQueue};
         let mut keys = Ownership::new([false; 512], Some(false));
         let mut queue = OrderedQueue::default();
-        let ctrl = ModifierEdge { scan: 0x1d, extended: false, pressed: true };
+        let ctrl = ModifierEdge {
+            scan: 0x1d,
+            extended: false,
+            pressed: true,
+        };
         assert_eq!(keys.event(0xa2, 0x1d, false, true), Route::Local);
         queue.push(Entry::WindowModifier(ctrl));
-        assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+        assert_eq!(
+            keys.event(0x1b, 0x01, false, true),
+            Route::Member { repeat: false }
+        );
         queue.push(Entry::Key("Esc down"));
-        assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Member { repeat: false });
+        assert_eq!(
+            keys.event(0x1b, 0x01, false, false),
+            Route::Member { repeat: false }
+        );
         queue.push(Entry::Key("Esc up"));
         let now = std::time::Instant::now();
         assert_eq!(queue.drain(None, now), (vec![], false));
-        assert_eq!(queue.drain(Some(ctrl), now), (vec!["Esc down", "Esc up"], false));
+        assert_eq!(
+            queue.drain(Some(ctrl), now),
+            (vec!["Esc down", "Esc up"], false)
+        );
     }
 
     #[test]
@@ -510,7 +540,10 @@ mod tests {
             keys.event(0x1b, 0x01, false, false);
             keys.event(vk, 0x1d, extended, false);
             keys.event(vk, 0x1d, extended, true);
-            assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+            assert_eq!(
+                keys.event(0x1b, 0x01, false, true),
+                Route::Member { repeat: false }
+            );
             keys.clear();
             assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Local);
             assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Local);
@@ -540,10 +573,16 @@ mod tests {
         }
         let mut keys = Ownership::new([false; 512], Some(false));
         keys.event(0xa2, 0x1d, false, true);
-        assert_eq!(keys.event(0x1b, 0x01, false, true), Route::Member { repeat: false });
+        assert_eq!(
+            keys.event(0x1b, 0x01, false, true),
+            Route::Member { repeat: false }
+        );
         keys.event(0xa4, 0x38, false, true);
         assert_eq!(keys.event(0x0d, 0x1c, false, true), Route::Local);
         assert_eq!(keys.event(0x0d, 0x1c, false, false), Route::Local);
-        assert_eq!(keys.event(0x1b, 0x01, false, false), Route::Member { repeat: false });
+        assert_eq!(
+            keys.event(0x1b, 0x01, false, false),
+            Route::Member { repeat: false }
+        );
     }
 }

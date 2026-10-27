@@ -2,7 +2,8 @@ use super::*;
 
 mod catalog;
 pub(crate) use catalog::{
-    begin_catalog_transfer, begin_putty_registry_import, finish_catalog_import, run_catalog_transfer,
+    begin_catalog_transfer, begin_putty_registry_import, finish_catalog_import,
+    run_catalog_transfer,
 };
 
 pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
@@ -215,7 +216,10 @@ pub(crate) fn place_ungrouped_at(
 ) -> Result<(), SessionError> {
     let entries = top_level_entries(app, source_id);
     let prev = if index == 0 {
-        entries.first().map(|(k, _)| k - TOP_LEVEL_STEP).unwrap_or(0)
+        entries
+            .first()
+            .map(|(k, _)| k - TOP_LEVEL_STEP)
+            .unwrap_or(0)
     } else {
         entries[index - 1].0
     };
@@ -245,7 +249,9 @@ pub(crate) fn clone_profile_with_credentials(
 ) -> Option<ProfileId> {
     let new_id = app.manager.duplicate_profile(profile_id)?;
     if let Ok(Some(password)) = app.credential_store.load_profile_password(profile_id) {
-        let _ = app.credential_store.save_profile_password(new_id, &password);
+        let _ = app
+            .credential_store
+            .save_profile_password(new_id, &password);
     }
     if let Ok(Some(passphrase)) = app.credential_store.load_profile_passphrase(profile_id) {
         let _ = app
@@ -333,7 +339,9 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
         // `offset` keeps the batch in display order. Placing each at 0 would
         // land them reversed, which reads as a bug rather than a choice.
         Some(ProfileDrop::TopLevel) if !app.drag_from_grid => {
-            move_each(app, &ids, |app, offset, id| place_ungrouped_at(app, id, offset))
+            move_each(app, &ids, |app, offset, id| {
+                place_ungrouped_at(app, id, offset)
+            })
         }
         // Recomputed per row rather than hoisted: each move changes what the
         // end of the top level is.
@@ -392,9 +400,9 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
             if target_group.trim().is_empty() {
                 // Interleave at the top level, beside another ungrouped session.
                 let entries = top_level_entries(app, source_id);
-                let at = entries
-                    .iter()
-                    .position(|(_, kind)| matches!(kind, TopKind::Session(id) if *id == profile_id));
+                let at = entries.iter().position(
+                    |(_, kind)| matches!(kind, TopKind::Session(id) if *id == profile_id),
+                );
                 let index = match at {
                     Some(i) if position == ProfileDropPosition::After => i + 1,
                     Some(i) => i,
@@ -545,7 +553,10 @@ pub(crate) fn reordered_folders(mut order: Vec<String>, source: &str, target: &s
     };
     let after = si < ti;
     order.retain(|g| g != source);
-    let mut idx = order.iter().position(|g| g == target).unwrap_or(order.len());
+    let mut idx = order
+        .iter()
+        .position(|g| g == target)
+        .unwrap_or(order.len());
     if after {
         idx += 1;
     }
@@ -595,7 +606,8 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_startup_command = profile.startup_command;
         app.profile_proxy_enabled = profile.proxy_command.enabled;
         app.profile_proxy_program = profile.proxy_command.program;
-        app.profile_proxy_args = serde_json::to_string(&profile.proxy_command.args).unwrap_or_else(|_| "[]".into());
+        app.profile_proxy_args =
+            serde_json::to_string(&profile.proxy_command.args).unwrap_or_else(|_| "[]".into());
         app.profile_jumps = jumps_to_spec(&profile.jumps);
         app.profile_jump_auth = profile.jumps.clone();
         app.profile_terminal_type = profile.terminal_type;
@@ -724,7 +736,11 @@ pub(crate) fn commit_inline_rename(app: &mut AditApp) {
 /// Apply a session rename (manager + editor-field sync + persist). Returns false
 /// only if the manager rejects it. Does not touch `editing_profile`.
 pub(crate) fn apply_profile_rename(app: &mut AditApp, profile_id: ProfileId, name: &str) -> bool {
-    if app.manager.rename_profile(profile_id, name.to_string()).is_err() {
+    if app
+        .manager
+        .rename_profile(profile_id, name.to_string())
+        .is_err()
+    {
         return false;
     }
     // Keep the editor form's name field in sync if it is open on this row.
@@ -739,7 +755,11 @@ pub(crate) fn apply_profile_rename(app: &mut AditApp, profile_id: ProfileId, nam
 
 /// Apply a validated folder rename (manager + app bookkeeping + persist). Returns
 /// an error message if the manager rejects it. Does not touch `editing_group`.
-pub(crate) fn apply_group_rename(app: &mut AditApp, old_group: &str, new_group: &str) -> Result<(), String> {
+pub(crate) fn apply_group_rename(
+    app: &mut AditApp,
+    old_group: &str,
+    new_group: &str,
+) -> Result<(), String> {
     app.manager
         .rename_group(old_group, new_group.to_string())
         .map_err(|error| runtime(&error))?;
@@ -852,7 +872,10 @@ pub(crate) fn delete_group(app: &mut AditApp, group: String) {
     app.last_error = None;
     if persist_profiles(app) {
         app.notice = if count > 0 {
-            tf("已删除分组「{}」及其 {} 个会话配置（已打开标签不受影响）", &[&group, &count])
+            tf(
+                "已删除分组「{}」及其 {} 个会话配置（已打开标签不受影响）",
+                &[&group, &count],
+            )
         } else {
             tf("已删除空分组「{}」", &[&group])
         };
@@ -920,7 +943,10 @@ pub(crate) fn parse_jumps_checked(spec: &str) -> Result<Vec<JumpHop>, String> {
         match JumpHop::parse(token) {
             Some(hop) => hops.push(hop),
             None => {
-                return Err(tf("跳板机格式无效：“{}”（应为 user@host:port，端口 1-65535）", &[&token]))
+                return Err(tf(
+                    "跳板机格式无效：“{}”（应为 user@host:port，端口 1-65535）",
+                    &[&token],
+                ))
             }
         }
     }
@@ -973,7 +999,10 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
         return None;
     }
     if let Err(error) = proxy_command.validate_route(
-        &app.profile_host, port, &app.profile_username, !jumps.is_empty(),
+        &app.profile_host,
+        port,
+        &app.profile_username,
+        !jumps.is_empty(),
     ) {
         app.last_error = Some(error.into());
         return None;
@@ -1051,12 +1080,11 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
                     .set_profile_protocol(profile_id, app.profile_protocol);
                 app.manager
                     .set_profile_icon(profile_id, app.profile_icon.clone());
-                app.manager.set_profile_startup_command(
-                    profile_id,
-                    app.profile_startup_command.clone(),
-                );
+                app.manager
+                    .set_profile_startup_command(profile_id, app.profile_startup_command.clone());
                 app.manager.set_profile_jumps(profile_id, jumps.clone());
-                app.manager.set_profile_proxy_command(profile_id, proxy_command.clone());
+                app.manager
+                    .set_profile_proxy_command(profile_id, proxy_command.clone());
                 app.manager
                     .set_profile_terminal_type(profile_id, app.profile_terminal_type.clone());
                 let accent_color = (!app.profile_accent_color.trim().is_empty())
@@ -1073,7 +1101,8 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
                     .set_profile_keep_connection(profile_id, app.profile_keep_connection);
                 // Persist the password-auth password to the OS credential vault
                 // (never to profiles.json). An empty field clears any saved one.
-                if app.profile_auth_method == AuthMethod::Password || app.profile_protocol == Protocol::Vnc
+                if app.profile_auth_method == AuthMethod::Password
+                    || app.profile_protocol == Protocol::Vnc
                 {
                     let _ = if app.profile_password.is_empty() {
                         app.credential_store.delete_profile_password(profile_id)
@@ -1195,7 +1224,10 @@ fn delete_one_profile(app: &mut AditApp, profile_id: ProfileId) {
                 app.last_error = Some(tf("删除系统凭据失败: {}", &[&runtime(&error)]));
             }
             if persist_profiles(app) {
-                app.notice = tf("会话配置已删除；已打开标签不受影响。已写入 {}", &[&app.profile_store.path().display()]);
+                app.notice = tf(
+                    "会话配置已删除；已打开标签不受影响。已写入 {}",
+                    &[&app.profile_store.path().display()],
+                );
             }
             if app.selected_profile.is_some() {
                 load_selected_profile(app);
@@ -1225,8 +1257,9 @@ pub(crate) fn sort_profiles(app: &mut AditApp, key: ProfileSortKey) {
 pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
     let sessions = adit_storage::parse_securecrt_sessions(root);
     if sessions.is_empty() {
-        app.last_error =
-            Some(String::from(t("该文件夹下没有找到 SecureCRT 会话（.ini），请选择 Config/Sessions 文件夹")));
+        app.last_error = Some(String::from(t(
+            "该文件夹下没有找到 SecureCRT 会话（.ini），请选择 Config/Sessions 文件夹",
+        )));
         return;
     }
 
@@ -1290,9 +1323,15 @@ pub(crate) fn import_securecrt(app: &mut AditApp, root: &std::path::Path) {
         persist_profiles(app);
         app.last_error = None;
         app.notice = if skipped > 0 {
-            tf("已从 SecureCRT 导入 {} 个会话（跳过 {} 个已存在/无效）；密码未导入，请重新设置", &[&added, &skipped])
+            tf(
+                "已从 SecureCRT 导入 {} 个会话（跳过 {} 个已存在/无效）；密码未导入，请重新设置",
+                &[&added, &skipped],
+            )
         } else {
-            tf("已从 SecureCRT 导入 {} 个会话；密码未导入，请重新设置", &[&added])
+            tf(
+                "已从 SecureCRT 导入 {} 个会话；密码未导入，请重新设置",
+                &[&added],
+            )
         };
     } else {
         app.notice = String::from(t("没有新的 SecureCRT 会话需要导入（可能都已存在）"));
@@ -1338,7 +1377,10 @@ pub(crate) fn write_config_pointer(target: &std::path::Path) -> std::io::Result<
 /// Returns whether the switch succeeded.
 pub(crate) fn carry_config_to(app: &mut AditApp, target: std::path::PathBuf) -> bool {
     if let Err(error) = adit_storage::copy_config_files(&app.config_dir, &target) {
-        app.last_error = Some(tf("复制配置到 {} 失败: {}", &[&target.display(), &runtime(&error)]));
+        app.last_error = Some(tf(
+            "复制配置到 {} 失败: {}",
+            &[&target.display(), &runtime(&error)],
+        ));
         return false;
     }
     if let Err(error) = write_config_pointer(&target) {
@@ -1397,7 +1439,10 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
         app.config_dir_custom = true;
         app.pending_config_dir = Some(target.clone());
         app.last_error = None;
-        app.notice = tf("将在重启后加载 {} 中的现有配置（不会覆盖该文件夹）；请尽快重启，重启前的修改不会保留", &[&target.display()]);
+        app.notice = tf(
+            "将在重启后加载 {} 中的现有配置（不会覆盖该文件夹）；请尽快重启，重启前的修改不会保留",
+            &[&target.display()],
+        );
         return;
     }
 
@@ -1414,9 +1459,15 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
 
 /// The ordered folder list: the persisted order first (user-arrangeable), then
 /// any folder seen only on a profile, deduped, first occurrence wins.
-pub(crate) fn groups_from_catalog(groups: Vec<String>, profiles: &[ConnectionProfile]) -> Vec<String> {
+pub(crate) fn groups_from_catalog(
+    groups: Vec<String>,
+    profiles: &[ConnectionProfile],
+) -> Vec<String> {
     let mut result = Vec::new();
-    for group in groups.into_iter().chain(profiles.iter().map(|p| p.group.clone())) {
+    for group in groups
+        .into_iter()
+        .chain(profiles.iter().map(|p| p.group.clone()))
+    {
         let group = group.trim().to_string();
         if !group.is_empty() && !result.contains(&group) {
             result.push(group);

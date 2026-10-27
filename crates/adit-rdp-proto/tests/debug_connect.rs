@@ -99,24 +99,54 @@ fn debug_connect_real_host() {
         send(&mut stdin, InputEvent::MouseMove { x: 650, y: 360 });
         std::thread::sleep(Duration::from_millis(400));
         // Right-click → context menu.
-        send(&mut stdin, InputEvent::MouseButton { button: MouseButton::Right, pressed: true });
-        send(&mut stdin, InputEvent::MouseButton { button: MouseButton::Right, pressed: false });
+        send(
+            &mut stdin,
+            InputEvent::MouseButton {
+                button: MouseButton::Right,
+                pressed: true,
+            },
+        );
+        send(
+            &mut stdin,
+            InputEvent::MouseButton {
+                button: MouseButton::Right,
+                pressed: false,
+            },
+        );
         std::thread::sleep(Duration::from_millis(800));
         // Sweep the pointer down the menu items, then around the desktop, in a
         // loop, so redraws keep coming for the whole capture window.
         for round in 0..6 {
             for i in 0..12 {
                 let y = 360 + i * 30;
-                send(&mut stdin, InputEvent::MouseMove { x: 700, y: y.min(880) });
+                send(
+                    &mut stdin,
+                    InputEvent::MouseMove {
+                        x: 700,
+                        y: y.min(880),
+                    },
+                );
                 std::thread::sleep(Duration::from_millis(120));
             }
             // Halfway through, resize the desktop — this is the path that used to
             // kill the session (DeactivateAll → reactivation error). Verifies the
             // session survives and re-renders at the new size.
             if round == 2 {
-                send(&mut stdin, InputEvent::Resize { width: 1920, height: 1080 });
+                send(
+                    &mut stdin,
+                    InputEvent::Resize {
+                        width: 1920,
+                        height: 1080,
+                    },
+                );
             }
-            send(&mut stdin, InputEvent::MouseMove { x: 200 + round * 60, y: 200 });
+            send(
+                &mut stdin,
+                InputEvent::MouseMove {
+                    x: 200 + round * 60,
+                    y: 200,
+                },
+            );
             std::thread::sleep(Duration::from_millis(200));
         }
     });
@@ -129,7 +159,13 @@ fn debug_connect_real_host() {
         let mut frames = 0u64;
         loop {
             match read_msg::<_, HostMsg>(&mut stdout) {
-                Ok(Some(HostMsg::Tile { x, y, width, height, rgba })) => {
+                Ok(Some(HostMsg::Tile {
+                    x,
+                    y,
+                    width,
+                    height,
+                    rgba,
+                })) => {
                     frames += 1;
                     let ratio = nonblack_ratio(&rgba);
                     let is_black = ratio < BLACK_RATIO;
@@ -171,7 +207,10 @@ fn debug_connect_real_host() {
                     }
                 }
                 Ok(Some(other)) => {
-                    let _ = tx.send(format!("[{:>6.2}s] {other:?}", start.elapsed().as_secs_f32()));
+                    let _ = tx.send(format!(
+                        "[{:>6.2}s] {other:?}",
+                        start.elapsed().as_secs_f32()
+                    ));
                     if matches!(other, HostMsg::Closed) {
                         break;
                     }

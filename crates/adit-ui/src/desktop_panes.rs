@@ -70,7 +70,10 @@ impl DesktopPanes {
             pane.size = None;
             pane.tiles.clear();
             pane.pointer = None;
-            pane.error = Some(tf("远程桌面帧数据无效：{} × {}，收到 {} 字节", &[&frame.width, &frame.height, &frame.rgba.len()]));
+            pane.error = Some(tf(
+                "远程桌面帧数据无效：{} × {}，收到 {} 字节",
+                &[&frame.width, &frame.height, &frame.rgba.len()],
+            ));
             return;
         }
         if pane.size != Some(size) {
@@ -415,12 +418,17 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
         mouse_area(
             container(iced::widget::stack![
                 tile_grid(&pane.tiles, fit),
-                rdp_cursor_layer(app, id, f32::from(fit.remote.0) / fit.width,
-                    f32::from(fit.remote.1) / fit.height, iced::Size::new(fit.width, fit.height))
+                rdp_cursor_layer(
+                    app,
+                    id,
+                    f32::from(fit.remote.0) / fit.width,
+                    f32::from(fit.remote.1) / fit.height,
+                    iced::Size::new(fit.width, fit.height)
+                )
             ])
-                .center_x(Fill)
-                .center_y(Fill)
-                .style(|_| desktop_background()),
+            .center_x(Fill)
+            .center_y(Fill)
+            .style(|_| desktop_background()),
         )
         .on_move(move |point| Message::DesktopPaneMoved(id, point))
         .on_exit(Message::DesktopPaneMoved(
@@ -1092,9 +1100,20 @@ pub(crate) fn cursor_visual(app: &AditApp, id: SessionId) -> Option<RdpCursorVis
     app.desktop_panes.cursors.get(&id).cloned()
 }
 
-pub(crate) fn cursor_visual_layer(visual: Option<RdpCursorVisual>, id: SessionId,
-    scale_x: f32, scale_y: f32, size: iced::Size) -> Element<'static, Message> {
-    Element::new(RdpCursorLayer { visual, id, scale_x, scale_y, size })
+pub(crate) fn cursor_visual_layer(
+    visual: Option<RdpCursorVisual>,
+    id: SessionId,
+    scale_x: f32,
+    scale_y: f32,
+    size: iced::Size,
+) -> Element<'static, Message> {
+    Element::new(RdpCursorLayer {
+        visual,
+        id,
+        scale_x,
+        scale_y,
+        size,
+    })
 }
 
 struct RdpCursorLayer {

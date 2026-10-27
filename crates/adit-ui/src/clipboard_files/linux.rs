@@ -329,7 +329,10 @@ mod tests {
         let worker = thread::spawn(move || run(worker_shared, events));
         let deadline = Instant::now() + Duration::from_secs(5);
         while shared.sequence.load(Ordering::Acquire) == 0 {
-            assert!(Instant::now() < deadline, "worker did not initialize its private clipboard");
+            assert!(
+                Instant::now() < deadline,
+                "worker did not initialize its private clipboard"
+            );
             thread::sleep(Duration::from_millis(10));
         }
         let initial_sequence = shared.sequence.load(Ordering::Acquire);
@@ -338,7 +341,11 @@ mod tests {
         shared.generation.store(1, Ordering::Release);
         *shared.latest.lock().unwrap() = Some(Offer {
             generation: 1,
-            files: vec![ClipFile { name: "worker-fixture.bin".into(), size: 3, is_dir: false }],
+            files: vec![ClipFile {
+                name: "worker-fixture.bin".into(),
+                size: 3,
+                is_dir: false,
+            }],
             bridge,
             request: Arc::new(move |id, _, offset, length| {
                 let bytes = [1, 0, 255];
@@ -353,26 +360,41 @@ mod tests {
         let deadline = Instant::now() + Duration::from_secs(5);
         let uri = loop {
             if let Ok(files) = clipboard.get_files() {
-                if let Some(uri) = files.into_iter().find(|uri| uri.ends_with("worker-fixture.bin")) {
+                if let Some(uri) = files
+                    .into_iter()
+                    .find(|uri| uri.ends_with("worker-fixture.bin"))
+                {
                     break uri;
                 }
             }
-            assert!(Instant::now() < deadline, "worker did not publish its private URI");
+            assert!(
+                Instant::now() < deadline,
+                "worker did not publish its private URI"
+            );
             thread::sleep(Duration::from_millis(10));
         };
         let path = url::Url::parse(&uri).unwrap().to_file_path().unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), [1, 0, 255]);
         let deadline = Instant::now() + Duration::from_secs(5);
         while shared.sequence.load(Ordering::Acquire) == initial_sequence {
-            assert!(Instant::now() < deadline, "clipboard ownership change was not observed");
+            assert!(
+                Instant::now() < deadline,
+                "clipboard ownership change was not observed"
+            );
             thread::sleep(Duration::from_millis(10));
         }
-        assert!(shared.paths.lock().unwrap().is_none(), "an owned remote URI must not echo back");
+        assert!(
+            shared.paths.lock().unwrap().is_none(),
+            "an owned remote URI must not echo back"
+        );
         shared.stop.store(true, Ordering::Release);
         let _ = wake.try_send(());
         let deadline = Instant::now() + Duration::from_secs(5);
         while !worker.is_finished() {
-            assert!(Instant::now() < deadline, "worker/mount cleanup did not finish");
+            assert!(
+                Instant::now() < deadline,
+                "worker/mount cleanup did not finish"
+            );
             thread::sleep(Duration::from_millis(10));
         }
         worker.join().unwrap().unwrap();

@@ -466,7 +466,9 @@ fn wait_sftp_done(handle: &adit_ssh::SftpHandle, timeout: Duration) {
         || handle.try_recv(),
         |event| match event {
             SftpEvent::Done { .. } => ControlFlow::Break(true),
-            SftpEvent::Error(error) | SftpEvent::TransferFailed { error, .. } => panic!("sftp error: {error}"),
+            SftpEvent::Error(error) | SftpEvent::TransferFailed { error, .. } => {
+                panic!("sftp error: {error}")
+            }
             _ => ControlFlow::Continue(()),
         },
     );
@@ -961,11 +963,14 @@ fn assert_jump_shell_reaches_target(bastion_port: u16, auth: AuthOptions, passwo
     // would print "JUMP-bastion") — the transcript alone attests to the jump.
     request.startup_command = String::from("echo JUMP-$(hostname)");
     let owner = adit_domain::ProfileId::new();
-    request.jump_credentials.insert(owner, adit_ssh::JumpCredential {
-        username: USER.to_owned(),
-        password: password.to_owned(),
-        auth: auth.clone(),
-    });
+    request.jump_credentials.insert(
+        owner,
+        adit_ssh::JumpCredential {
+            username: USER.to_owned(),
+            password: password.to_owned(),
+            auth: auth.clone(),
+        },
+    );
     request.auth = auth;
     request.jumps = vec![JumpHop {
         host: String::from("127.0.0.1"),

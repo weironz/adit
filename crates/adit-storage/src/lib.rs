@@ -245,7 +245,10 @@ impl ProfileStore {
     /// happens after it has already returned `Ok`. Without this the failure would be
     /// invisible and the user would believe their profiles were saved.
     pub fn take_write_error(&self) -> Option<String> {
-        self.write_error.lock().ok().and_then(|mut slot| slot.take())
+        self.write_error
+            .lock()
+            .ok()
+            .and_then(|mut slot| slot.take())
     }
 
     /// Persist the catalog WITHOUT blocking the caller. Serialization runs on the
@@ -914,9 +917,7 @@ const CONFIG_FILE_NAMES: [&str; 3] = [
 /// relocation target.
 #[must_use]
 pub fn config_dir_has_config(dir: &Path) -> bool {
-    CONFIG_FILE_NAMES
-        .iter()
-        .any(|name| dir.join(name).exists())
+    CONFIG_FILE_NAMES.iter().any(|name| dir.join(name).exists())
 }
 
 /// Copy the config files from `from` into `to` (creating `to`), overwriting any
@@ -1138,7 +1139,9 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let root = env::temp_dir().join(format!("adit-scrt-{unique}")).join("Sessions");
+        let root = env::temp_dir()
+            .join(format!("adit-scrt-{unique}"))
+            .join("Sessions");
         fs::create_dir_all(root.join("cloud")).unwrap();
 
         // A top-level SSH session.
@@ -1280,9 +1283,15 @@ Host db
         fs::write(to.join("profiles.json"), "STALE").unwrap();
         copy_config_files(&from, &to).unwrap();
         assert_eq!(fs::read_to_string(to.join("profiles.json")).unwrap(), "NEW");
-        assert_eq!(fs::read_to_string(to.join("settings.json")).unwrap(), "NEWCFG");
+        assert_eq!(
+            fs::read_to_string(to.join("settings.json")).unwrap(),
+            "NEWCFG"
+        );
         // Source untouched (must not delete a synced folder's originals).
-        assert_eq!(fs::read_to_string(from.join("profiles.json")).unwrap(), "NEW");
+        assert_eq!(
+            fs::read_to_string(from.join("profiles.json")).unwrap(),
+            "NEW"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }
@@ -1304,11 +1313,7 @@ Host db
     fn a_newer_profiles_format_is_refused_rather_than_downgraded() {
         let path = temp_config_path("newer-profiles", "profiles.json");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            r#"{"version":999,"groups":[],"profiles":[]}"#,
-        )
-        .unwrap();
+        fs::write(&path, r#"{"version":999,"groups":[],"profiles":[]}"#).unwrap();
 
         match ProfileStore::new(&path).load_catalog() {
             Err(StorageError::NewerFormat { file, found, .. }) => {
@@ -1343,7 +1348,11 @@ Host db
 
         store
             .save_profiles(&[ConnectionProfile::with_group(
-                "Local", "a", "127.0.0.1", 22, "root",
+                "Local",
+                "a",
+                "127.0.0.1",
+                22,
+                "root",
             )])
             .expect("first save");
         // Overwrite: the rename path has to cope with an existing destination,
@@ -1503,7 +1512,9 @@ Host db
         })
         .expect("serialise");
         let object = document.as_object_mut().expect("an object");
-        object.remove("rdp_quality").expect("the key was there to remove");
+        object
+            .remove("rdp_quality")
+            .expect("the key was there to remove");
 
         let settings: AppSettings =
             serde_json::from_value(document).expect("an older file must load");
@@ -1580,48 +1591,67 @@ Host db
 
     #[test]
     fn vnc_policies_roundtrip_and_legacy_profiles_require_explicit_none_permission() {
-        use adit_domain::{Protocol,VncSecurity,VncQuality};
-        let mut vnc=ConnectionProfile::new("desktop","127.0.0.1",5901,"");
-        vnc.protocol=Protocol::Vnc;
-        let mut legacy=serde_json::to_value(&vnc).unwrap();
+        use adit_domain::{Protocol, VncQuality, VncSecurity};
+        let mut vnc = ConnectionProfile::new("desktop", "127.0.0.1", 5901, "");
+        vnc.protocol = Protocol::Vnc;
+        let mut legacy = serde_json::to_value(&vnc).unwrap();
         legacy.as_object_mut().unwrap().remove("vnc");
-        let migrated:ConnectionProfile=serde_json::from_value(legacy).unwrap();
-        assert_eq!(migrated.vnc.security,VncSecurity::RequireVncAuth);
+        let migrated: ConnectionProfile = serde_json::from_value(legacy).unwrap();
+        assert_eq!(migrated.vnc.security, VncSecurity::RequireVncAuth);
         assert!(!migrated.vnc.resize_remote);
         assert!(!migrated.vnc.clipboard_legacy);
         assert!(!migrated.vnc.unicode_bmp_only);
-        let mut partial=serde_json::to_value(&vnc).unwrap();
-        partial["vnc"]=serde_json::json!({"read_only":true});
-        let partial:ConnectionProfile=serde_json::from_value(partial).unwrap();
+        let mut partial = serde_json::to_value(&vnc).unwrap();
+        partial["vnc"] = serde_json::json!({"read_only":true});
+        let partial: ConnectionProfile = serde_json::from_value(partial).unwrap();
         assert!(partial.vnc.read_only);
         assert!(partial.vnc.clipboard_receive);
         assert!(!partial.vnc.unicode_bmp_only);
-        assert_eq!(partial.vnc.security,VncSecurity::RequireVncAuth);
-        let mut gateway=ConnectionProfile::new("gateway","127.0.0.1",2222,"fixture-user");
-        gateway.protocol=Protocol::Ssh;
-        vnc.vnc.security=VncSecurity::RequireTls;
-        vnc.vnc.tls_ca_file="fixture-ca.pem".into();
-        vnc.vnc.quality=VncQuality::Wan;
-        vnc.vnc.read_only=true;
-        vnc.vnc.clipboard_send=false;
-        vnc.vnc.clipboard_receive=false;
-        vnc.vnc.clipboard_legacy=true;
-        vnc.vnc.unicode_bmp_only=true;
-        vnc.vnc.auto_reconnect=false;
-        vnc.vnc.resize_remote=true;
-        vnc.vnc.gateway_profile=Some(gateway.id);
-        let path=env::temp_dir().join(format!("adit-vnc-policy-{}.json",SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos()));
-        let store=ProfileStore::new(&path);
-        store.save_profiles(&[vnc.clone(),gateway.clone()]).unwrap();
-        let loaded=store.load_profiles().unwrap();
-        assert_eq!(serde_json::to_value(&loaded[0]).unwrap(),serde_json::to_value(&vnc).unwrap());
-        assert_eq!(serde_json::to_value(&loaded[1]).unwrap(),serde_json::to_value(&gateway).unwrap());
+        assert_eq!(partial.vnc.security, VncSecurity::RequireVncAuth);
+        let mut gateway = ConnectionProfile::new("gateway", "127.0.0.1", 2222, "fixture-user");
+        gateway.protocol = Protocol::Ssh;
+        vnc.vnc.security = VncSecurity::RequireTls;
+        vnc.vnc.tls_ca_file = "fixture-ca.pem".into();
+        vnc.vnc.quality = VncQuality::Wan;
+        vnc.vnc.read_only = true;
+        vnc.vnc.clipboard_send = false;
+        vnc.vnc.clipboard_receive = false;
+        vnc.vnc.clipboard_legacy = true;
+        vnc.vnc.unicode_bmp_only = true;
+        vnc.vnc.auto_reconnect = false;
+        vnc.vnc.resize_remote = true;
+        vnc.vnc.gateway_profile = Some(gateway.id);
+        let path = env::temp_dir().join(format!(
+            "adit-vnc-policy-{}.json",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let store = ProfileStore::new(&path);
+        store
+            .save_profiles(&[vnc.clone(), gateway.clone()])
+            .unwrap();
+        let loaded = store.load_profiles().unwrap();
+        assert_eq!(
+            serde_json::to_value(&loaded[0]).unwrap(),
+            serde_json::to_value(&vnc).unwrap()
+        );
+        assert_eq!(
+            serde_json::to_value(&loaded[1]).unwrap(),
+            serde_json::to_value(&gateway).unwrap()
+        );
         for quality in [VncQuality::Lossless, VncQuality::Zrle] {
             vnc.vnc.quality = quality;
-            store.save_profiles(&[vnc.clone(), gateway.clone()]).unwrap();
+            store
+                .save_profiles(&[vnc.clone(), gateway.clone()])
+                .unwrap();
             let loaded = store.load_profiles().unwrap();
             assert_eq!(loaded[0].vnc.quality, quality);
-            assert_eq!(serde_json::to_value(&loaded[1]).unwrap(), serde_json::to_value(&gateway).unwrap());
+            assert_eq!(
+                serde_json::to_value(&loaded[1]).unwrap(),
+                serde_json::to_value(&gateway).unwrap()
+            );
         }
         fs::remove_file(path).unwrap();
     }

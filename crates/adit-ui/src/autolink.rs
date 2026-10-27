@@ -224,7 +224,8 @@ mod tests {
     /// once links grew an underline.
     #[test]
     fn only_the_url_part_of_a_run_becomes_a_link() {
-        let mut line = TerminalLine::from_cells(vec![plain(" * Documentation:  https://docs.ubuntu.com")]);
+        let mut line =
+            TerminalLine::from_cells(vec![plain(" * Documentation:  https://docs.ubuntu.com")]);
         link_bare_urls(&mut line);
 
         let linked: String = line
@@ -240,27 +241,33 @@ mod tests {
         assert_eq!(rebuilt, " * Documentation:  https://docs.ubuntu.com");
         // …and the prefix must not have become clickable.
         let prefix = line.cells.first().expect("a leading run");
-        assert!(prefix.hyperlink.is_none(), "the label is not part of the link");
+        assert!(
+            prefix.hyperlink.is_none(),
+            "the label is not part of the link"
+        );
     }
 
     /// Styling survives the split, or a link would drop the run's bold/italic.
     #[test]
     fn split_pieces_keep_the_runs_styling() {
         let mut line = TerminalLine::from_cells(vec![TerminalCell {
-                bold: true,
-                ..TerminalCell::plain("see https://example.com ok")
-            }]);
+            bold: true,
+            ..TerminalCell::plain("see https://example.com ok")
+        }]);
         link_bare_urls(&mut line);
         assert!(line.cells.len() >= 2, "the run must actually split");
-        assert!(line.cells.iter().all(|cell| cell.bold), "bold is the run's, not the link's");
+        assert!(
+            line.cells.iter().all(|cell| cell.bold),
+            "bold is the run's, not the link's"
+        );
     }
 
     #[test]
     fn a_server_declared_link_is_never_overwritten() {
         let mut line = TerminalLine::from_cells(vec![TerminalCell {
-                hyperlink: Some(String::from("https://declared.example")),
-                ..TerminalCell::plain("https://shown.example")
-            }]);
+            hyperlink: Some(String::from("https://declared.example")),
+            ..TerminalCell::plain("https://shown.example")
+        }]);
         link_bare_urls(&mut line);
         assert_eq!(line.cells.len(), 1, "an already-linked run is left whole");
         assert_eq!(
@@ -279,7 +286,10 @@ mod tests {
             urls("见 https://en.wikipedia.org/wiki/Foo_(bar)。"),
             ["https://en.wikipedia.org/wiki/Foo_(bar)"]
         );
-        assert_eq!(urls("链接：https://example.com，然后"), ["https://example.com"]);
+        assert_eq!(
+            urls("链接：https://example.com，然后"),
+            ["https://example.com"]
+        );
     }
 
     #[test]
@@ -287,6 +297,9 @@ mod tests {
         assert!(urls("no links here").is_empty());
         assert!(urls("xhttps://example.com").is_empty(), "must start a word");
         assert!(urls("https://").is_empty(), "scheme alone is not a link");
-        assert!(urls("ftp://example.com").is_empty(), "only http(s) can open");
+        assert!(
+            urls("ftp://example.com").is_empty(),
+            "only http(s) can open"
+        );
     }
 }

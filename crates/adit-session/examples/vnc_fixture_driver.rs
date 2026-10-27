@@ -15,14 +15,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let positional_len = args.len() - usize::from(bmp_only);
     if !(3..=4).contains(&positional_len) {
         return Err(
-            "usage: vnc_fixture_driver private-ip port [seconds] [--bmp-only]; password on stdin".into(),
+            "usage: vnc_fixture_driver private-ip port [seconds] [--bmp-only]; password on stdin"
+                .into(),
         );
     }
     let host: std::net::Ipv4Addr = args[1].parse()?;
     if !host.is_private() && !host.is_loopback() {
         return Err("input is restricted to an authorized private/loopback fixture".into());
     }
-    let timeout = if positional_len == 4 { args[3].parse()? } else { 120 };
+    let timeout = if positional_len == 4 {
+        args[3].parse()?
+    } else {
+        120
+    };
     let mut password = zeroize::Zeroizing::new(String::new());
     io::stdin().lock().read_line(&mut password)?;
     let mut profile = ConnectionProfile::new("manual VNC fixture", &args[1], args[2].parse()?, "");
@@ -83,10 +88,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Some(ms) = command.strip_prefix("WAIT ") {
                         next = Instant::now() + Duration::from_millis(ms.parse()?);
                     } else if let Some(token) = command.strip_prefix("ACK ") {
-                        if token.is_empty() || token.len() > 64
-                            || !token.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+                        if token.is_empty()
+                            || token.len() > 64
+                            || !token.bytes().all(|byte| {
+                                byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')
+                            })
                         {
-                            return Err("ACK requires 1-64 ASCII letters, digits, hyphens or underscores".into());
+                            return Err(
+                                "ACK requires 1-64 ASCII letters, digits, hyphens or underscores"
+                                    .into(),
+                            );
                         }
                         println!("ack={token}");
                         io::stdout().flush()?;

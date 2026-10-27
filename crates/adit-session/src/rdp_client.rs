@@ -8,9 +8,9 @@
 
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 use adit_rdp_proto::{monitor_bounds, DisplayControlState, Monitor, PointerUpdate};
@@ -20,15 +20,23 @@ use adit_rdp_proto::{
 
 pub(crate) fn to_wire_monitor(m: &adit_domain::DesktopMonitor) -> Monitor {
     Monitor {
-        left: m.left, top: m.top, width: m.width, height: m.height,
-        primary: m.primary, scale_percent: m.scale_percent,
+        left: m.left,
+        top: m.top,
+        width: m.width,
+        height: m.height,
+        primary: m.primary,
+        scale_percent: m.scale_percent,
     }
 }
 
 fn to_profile_monitor(m: &Monitor) -> adit_domain::DesktopMonitor {
     adit_domain::DesktopMonitor {
-        left: m.left, top: m.top, width: m.width, height: m.height,
-        primary: m.primary, scale_percent: m.scale_percent,
+        left: m.left,
+        top: m.top,
+        width: m.width,
+        height: m.height,
+        primary: m.primary,
+        scale_percent: m.scale_percent,
     }
 }
 
@@ -56,7 +64,10 @@ pub enum RdpClientEvent {
     VncClipboardText(vnc::ClipboardText),
     /// The remote copied files. The app should offer them on the Windows
     /// clipboard; nothing crosses the wire until something here pastes.
-    ClipboardFiles { generation: u64, files: Vec<ClipFile> },
+    ClipboardFiles {
+        generation: u64,
+        files: Vec<ClipFile>,
+    },
     /// The remote copied an image; raw `CF_DIB` bytes for the app to put on the
     /// Windows clipboard.
     ClipboardImage(Vec<u8>),
@@ -250,18 +261,30 @@ struct FileEpoch {
 }
 impl Default for FileEpoch {
     fn default() -> Self {
-        Self { generation: AtomicU64::new(0), closed: AtomicBool::new(false), enabled: AtomicBool::new(true) }
+        Self {
+            generation: AtomicU64::new(0),
+            closed: AtomicBool::new(false),
+            enabled: AtomicBool::new(true),
+        }
     }
 }
 impl FileEpoch {
     fn observe_offer(&self, generation: u64, has_files: bool) {
         self.generation.store(
-            if has_files && !self.closed.load(Ordering::Acquire) && self.enabled.load(Ordering::Acquire) { generation } else { 0 },
+            if has_files
+                && !self.closed.load(Ordering::Acquire)
+                && self.enabled.load(Ordering::Acquire)
+            {
+                generation
+            } else {
+                0
+            },
             Ordering::Release,
         );
     }
     fn accepts(&self, generation: u64) -> bool {
-        generation != 0 && !self.closed.load(Ordering::Acquire)
+        generation != 0
+            && !self.closed.load(Ordering::Acquire)
             && self.enabled.load(Ordering::Acquire)
             && self.generation.load(Ordering::Acquire) == generation
     }
@@ -281,19 +304,30 @@ pub struct RdpFileRequester {
 }
 
 impl RdpFileRequester {
-    pub fn generation(&self) -> u64 { self.generation }
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
     pub fn is_current(&self) -> bool {
         self.current.accepts(self.generation)
     }
 
     pub fn request(&self, stream_id: u32, index: u32, offset: u64, length: u32) {
-        let sent = self.is_current() && self.tx.lock().ok().is_some_and(|tx|
-            tx.send(ClientMsg::RequestFileContents {
-                generation: self.generation, stream_id, index, offset, length,
-            }).is_ok());
+        let sent = self.is_current()
+            && self.tx.lock().ok().is_some_and(|tx| {
+                tx.send(ClientMsg::RequestFileContents {
+                    generation: self.generation,
+                    stream_id,
+                    index,
+                    offset,
+                    length,
+                })
+                .is_ok()
+            });
         if !sent {
             let _ = self.replies.send(RdpClientEvent::FileContents {
-                generation: self.generation, stream_id, data: None,
+                generation: self.generation,
+                stream_id,
+                data: None,
             });
         }
     }
@@ -405,8 +439,10 @@ impl RdpClientHandle {
 
     pub(crate) fn file_requester_for_generation(&self, generation: u64) -> RdpFileRequester {
         RdpFileRequester {
-            tx: Arc::new(Mutex::new(self.cmd_tx.clone())), generation,
-            current: self.remote_offer.clone(), replies: self.event_tx.clone(),
+            tx: Arc::new(Mutex::new(self.cmd_tx.clone())),
+            generation,
+            current: self.remote_offer.clone(),
+            replies: self.event_tx.clone(),
         }
     }
 
@@ -665,7 +701,8 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
     Ok(RdpClientHandle {
-        remote_offer, event_tx: handle_event_tx,
+        remote_offer,
+        event_tx: handle_event_tx,
         cmd_tx,
         event_rx,
         surface,
@@ -748,7 +785,11 @@ fn wire_up(
                     }
                     Ok(Some(HostMsg::ClipboardFiles { generation, files })) => {
                         remote_offer.observe_offer(generation, !files.is_empty());
-                        let files = if remote_offer.accepts(generation) { files } else { Vec::new() };
+                        let files = if remote_offer.accepts(generation) {
+                            files
+                        } else {
+                            Vec::new()
+                        };
                         let _ = event_tx.send(RdpClientEvent::ClipboardFiles { generation, files });
                     }
                     Ok(Some(HostMsg::FileContentsNeeded {
@@ -775,9 +816,17 @@ fn wire_up(
                             });
                         }
                     }
-                    Ok(Some(HostMsg::FileContents { generation, stream_id, data })) => {
+                    Ok(Some(HostMsg::FileContents {
+                        generation,
+                        stream_id,
+                        data,
+                    })) => {
                         let data = data.filter(|_| remote_offer.accepts(generation));
-                        let _ = event_tx.send(RdpClientEvent::FileContents { generation, stream_id, data });
+                        let _ = event_tx.send(RdpClientEvent::FileContents {
+                            generation,
+                            stream_id,
+                            data,
+                        });
                     }
                     Ok(Some(HostMsg::Pointer(pointer))) => {
                         if let Ok(mut s) = reader_surface.lock() {
@@ -878,7 +927,11 @@ impl super::SessionManager {
             }
             surface.display.sent_layout.clone()
         };
-        let mut options = self.profile(profile_id).ok_or("找不到会话配置")?.session_options.clone();
+        let mut options = self
+            .profile(profile_id)
+            .ok_or("找不到会话配置")?
+            .session_options
+            .clone();
         options.rdp_monitors = Some(monitors.iter().map(to_profile_monitor).collect());
         options.rdp_selected_monitor = selected;
         options.validate()?;
@@ -890,7 +943,8 @@ impl super::SessionManager {
             surface.selected_monitor = selected;
             surface.generation = surface.generation.wrapping_add(1);
         }
-        self.set_profile_session_options(profile_id, options.clone()).map_err(|e| e.to_string())?;
+        self.set_profile_session_options(profile_id, options.clone())
+            .map_err(|e| e.to_string())?;
         if let Some(record) = self.sessions.get_mut(&id) {
             record.options.rdp_monitors = options.rdp_monitors;
             record.options.rdp_selected_monitor = options.rdp_selected_monitor;
@@ -921,7 +975,11 @@ impl super::SessionManager {
                 // Grow the virtual desktop when adding a monitor. Splitting the
                 // old bounding box would appear to succeed even if the server
                 // ignored the request, because its size would already match.
-                (w.clamp(800, 4096) & !1, h.clamp(600, 8192), s.display.max_area)
+                (
+                    w.clamp(800, 4096) & !1,
+                    h.clamp(600, 8192),
+                    s.display.max_area,
+                )
             }
             Err(_) => return Err("无法读取显示器布局".into()),
         };
@@ -936,14 +994,24 @@ impl super::SessionManager {
             })
             .collect();
         monitor_bounds(&monitors).map_err(str::to_owned)?;
-        let area: u64 = monitors.iter().map(|m| u64::from(m.width) * u64::from(m.height)).sum();
-        if area > max_area { return Err("布局超过服务端支持的总面积".into()); }
-        let mut options = self.profile(profile_id).ok_or("找不到会话配置")?.session_options.clone();
+        let area: u64 = monitors
+            .iter()
+            .map(|m| u64::from(m.width) * u64::from(m.height))
+            .sum();
+        if area > max_area {
+            return Err("布局超过服务端支持的总面积".into());
+        }
+        let mut options = self
+            .profile(profile_id)
+            .ok_or("找不到会话配置")?
+            .session_options
+            .clone();
         options.rdp_monitors = Some(monitors.iter().map(to_profile_monitor).collect());
         options.rdp_selected_monitor = None;
         options.validate()?;
         rdp.configure_monitors(monitors, None)?;
-        self.set_profile_session_options(profile_id, options.clone()).map_err(|e| e.to_string())?;
+        self.set_profile_session_options(profile_id, options.clone())
+            .map_err(|e| e.to_string())?;
         if let Some(record) = self.sessions.get_mut(&id) {
             record.options.rdp_monitors = options.rdp_monitors;
             record.options.rdp_selected_monitor = None;
@@ -980,7 +1048,8 @@ mod rdp_presentation_tests {
         let (event_tx, event_rx) = std_mpsc::channel();
         (
             RdpClientHandle {
-                remote_offer: Arc::new(FileEpoch::default()), event_tx,
+                remote_offer: Arc::new(FileEpoch::default()),
+                event_tx,
                 cmd_tx,
                 event_rx,
                 surface: Arc::new(Mutex::new(surface)),
@@ -1001,14 +1070,26 @@ mod rdp_presentation_tests {
         let delayed_a = handle.file_requester_for_generation(10);
         delayed_a.request(42, 0, 0, 3);
         assert!(commands.try_recv().is_err());
-        assert!(matches!(handle.try_recv(), Some(RdpClientEvent::FileContents {
-            generation: 10, stream_id: 42, data: None,
-        })));
+        assert!(matches!(
+            handle.try_recv(),
+            Some(RdpClientEvent::FileContents {
+                generation: 10,
+                stream_id: 42,
+                data: None,
+            })
+        ));
         let current = handle.file_requester_for_generation(11);
         current.request(42, 1, 4, 3);
-        assert!(matches!(commands.try_recv(), Ok(ClientMsg::RequestFileContents {
-            generation: 11, stream_id: 42, index: 1, offset: 4, length: 3,
-        })));
+        assert!(matches!(
+            commands.try_recv(),
+            Ok(ClientMsg::RequestFileContents {
+                generation: 11,
+                stream_id: 42,
+                index: 1,
+                offset: 4,
+                length: 3,
+            })
+        ));
         assert_eq!(old.generation(), 10);
         assert!(!old.is_current());
     }
@@ -1064,9 +1145,17 @@ mod rdp_presentation_tests {
     fn monitor_choices_are_sent_and_persisted_without_replacing_other_session_options() {
         let mut manager = super::super::SessionManager::with_demo_profiles();
         let profile_id = manager.profiles()[0].id;
-        let old = adit_domain::ReconnectPolicy { max_attempts: 3, ..Default::default() };
-        let mut options = adit_domain::SessionOptions { reconnect: Some(old.clone()), ..Default::default() };
-        manager.set_profile_session_options(profile_id, options.clone()).unwrap();
+        let old = adit_domain::ReconnectPolicy {
+            max_attempts: 3,
+            ..Default::default()
+        };
+        let mut options = adit_domain::SessionOptions {
+            reconnect: Some(old.clone()),
+            ..Default::default()
+        };
+        manager
+            .set_profile_session_options(profile_id, options.clone())
+            .unwrap();
         let session = manager.open_mock_session(profile_id).unwrap();
         let mut surface = Surface::new(800, 600);
         surface.display.max_monitors = 2;
@@ -1079,13 +1168,28 @@ mod rdp_presentation_tests {
             panic!("expected an actual monitor layout command");
         };
         assert_eq!(layout.len(), 2);
-        assert_eq!(manager.profile(profile_id).unwrap().session_options.rdp_monitors.as_ref().unwrap().len(), 2);
+        assert_eq!(
+            manager
+                .profile(profile_id)
+                .unwrap()
+                .session_options
+                .rdp_monitors
+                .as_ref()
+                .unwrap()
+                .len(),
+            2
+        );
 
         // A profile edit made after connection must not overwrite that session's
         // unrelated reconnect snapshot when choosing a monitor.
         options = manager.profile(profile_id).unwrap().session_options.clone();
-        options.reconnect = Some(adit_domain::ReconnectPolicy { max_attempts: 7, ..Default::default() });
-        manager.set_profile_session_options(profile_id, options).unwrap();
+        options.reconnect = Some(adit_domain::ReconnectPolicy {
+            max_attempts: 7,
+            ..Default::default()
+        });
+        manager
+            .set_profile_session_options(profile_id, options)
+            .unwrap();
         {
             let record = manager.sessions.get_mut(&session).unwrap();
             let mut surface = record.rdp.as_ref().unwrap().surface.lock().unwrap();
@@ -1093,8 +1197,18 @@ mod rdp_presentation_tests {
             surface.resize(1600, 600);
         }
         manager.select_active_rdp_monitor(Some(1)).unwrap();
-        assert_eq!(manager.profile(profile_id).unwrap().session_options.rdp_selected_monitor, Some(1));
-        assert_eq!(manager.session_options(session).unwrap().reconnect, Some(old));
+        assert_eq!(
+            manager
+                .profile(profile_id)
+                .unwrap()
+                .session_options
+                .rdp_selected_monitor,
+            Some(1)
+        );
+        assert_eq!(
+            manager.session_options(session).unwrap().reconnect,
+            Some(old)
+        );
         let saved = serde_json::to_string(manager.profile(profile_id).unwrap()).unwrap();
         let restored: adit_domain::ConnectionProfile = serde_json::from_str(&saved).unwrap();
         assert_eq!(restored.session_options.rdp_selected_monitor, Some(1));

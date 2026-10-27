@@ -141,7 +141,9 @@ fn start_ole_thread() -> Option<OleThread> {
 /// Hand one data object to the clipboard. Runs on the OLE thread only.
 fn publish(offer: Offer) {
     let object: IDataObject =
-        FileDataObject::new(offer.files, offer.bridge, offer.request, offer.chunk).with_liveness(offer.current).into();
+        FileDataObject::new(offer.files, offer.bridge, offer.request, offer.chunk)
+            .with_liveness(offer.current)
+            .into();
 
     // SAFETY: on the OLE-initialised thread, with a live data object. Ownership
     // passes to OLE, which releases it when the clipboard next changes hands.

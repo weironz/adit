@@ -1,8 +1,8 @@
 use super::*;
 use iced::widget::column;
 mod transfers;
-pub(crate) use transfers::{begin_save_as, resume_transfer, run_transfers, start_transfers};
 pub use transfers::PreparedTransfer;
+pub(crate) use transfers::{begin_save_as, resume_transfer, run_transfers, start_transfers};
 
 pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     let Some(browser) = app.manager.sftp_browser() else {
@@ -52,9 +52,12 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(6)
     .align_y(Alignment::Center);
 
-    let panes = row![sftp_local_pane(app, browser), sftp_remote_pane(app, browser)]
-        .spacing(10)
-        .height(Fill);
+    let panes = row![
+        sftp_local_pane(app, browser),
+        sftp_remote_pane(app, browser)
+    ]
+    .spacing(10)
+    .height(Fill);
 
     let mut panel_body = column![header].spacing(10);
     if let Some((_, from)) = &app.sftp_rename {
@@ -111,7 +114,10 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
-pub(crate) fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
+pub(crate) fn sftp_local_pane<'a>(
+    app: &'a AditApp,
+    browser: &'a SftpBrowser,
+) -> Element<'a, Message> {
     let header = row![
         text(t("本地")).size(13).color(primary_text()),
         button(text("↑").size(12))
@@ -178,7 +184,10 @@ pub(crate) fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) ->
     sftp_drag_layer(app, SftpPane::Local, pane.into())
 }
 
-pub(crate) fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
+pub(crate) fn sftp_remote_pane<'a>(
+    app: &'a AditApp,
+    browser: &'a SftpBrowser,
+) -> Element<'a, Message> {
     let header = row![
         text(t("远程")).size(13).color(primary_text()),
         button(text("↑").size(12))
@@ -217,8 +226,11 @@ pub(crate) fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -
         })
     });
 
-    let mut content = column![header, sftp_sort_header(SftpPane::Remote, app.sftp_remote_sort)]
-        .spacing(6);
+    let mut content = column![
+        header,
+        sftp_sort_header(SftpPane::Remote, app.sftp_remote_sort)
+    ]
+    .spacing(6);
 
     let mut list = column![sftp_nav_row("../", Message::SftpUp)].spacing(1);
     for entry in items {
@@ -384,9 +396,12 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
 
     let title = row![
         text(t("传输队列")).size(11).color(primary_text()),
-        text(tf("完成 {} · 失败 {} · 停止 {} · 进行 {}", &[&done, &failed, &cancelled, &active]))
-            .size(10)
-            .color(muted_text()),
+        text(tf(
+            "完成 {} · 失败 {} · 停止 {} · 进行 {}",
+            &[&done, &failed, &cancelled, &active]
+        ))
+        .size(10)
+        .color(muted_text()),
         Space::new().width(Fill),
         controls,
     ]
@@ -394,12 +409,30 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
     .align_y(Alignment::Center);
 
     let column_header = row![
-        text(t_in("transfer", "文件")).size(10).color(muted_text()).width(Length::FillPortion(2)),
-        text(t("目标路径")).size(10).color(muted_text()).width(Length::FillPortion(3)),
-        text(t("大小")).size(10).color(muted_text()).width(Length::Fixed(72.0)),
-        text(t("进度")).size(10).color(muted_text()).width(Length::Fixed(112.0)),
-        text(t("速度")).size(10).color(muted_text()).width(Length::Fixed(78.0)),
-        text(t("状态")).size(10).color(muted_text()).width(Length::Fixed(48.0)),
+        text(t_in("transfer", "文件"))
+            .size(10)
+            .color(muted_text())
+            .width(Length::FillPortion(2)),
+        text(t("目标路径"))
+            .size(10)
+            .color(muted_text())
+            .width(Length::FillPortion(3)),
+        text(t("大小"))
+            .size(10)
+            .color(muted_text())
+            .width(Length::Fixed(72.0)),
+        text(t("进度"))
+            .size(10)
+            .color(muted_text())
+            .width(Length::Fixed(112.0)),
+        text(t("速度"))
+            .size(10)
+            .color(muted_text())
+            .width(Length::Fixed(78.0)),
+        text(t("状态"))
+            .size(10)
+            .color(muted_text())
+            .width(Length::Fixed(48.0)),
         Space::new().width(Length::Fixed(44.0)),
     ]
     .spacing(8);
@@ -433,7 +466,10 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
         TransferStatus::Failed => ("失败", danger()),
         TransferStatus::Cancelled => ("已停止", muted_text()),
     };
-    let stoppable = matches!(item.status, TransferStatus::Pending | TransferStatus::Active);
+    let stoppable = matches!(
+        item.status,
+        TransferStatus::Pending | TransferStatus::Active
+    );
     // A completed transfer is always 100% — including 0-byte files, where
     // dividing by total would otherwise leave it at 0%.
     let (fraction, pct) = if matches!(item.status, TransferStatus::Done) {
@@ -441,7 +477,10 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
     } else if item.total > 0 {
         (
             (item.done as f32 / item.total as f32).clamp(0.0, 1.0),
-            item.done.saturating_mul(100).checked_div(item.total).unwrap_or(0),
+            item.done
+                .saturating_mul(100)
+                .checked_div(item.total)
+                .unwrap_or(0),
         )
     } else {
         (0.0, 0)
@@ -453,10 +492,20 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
     };
     // On failure, show the reason in place of the destination so it's visible.
     let (detail, detail_color) = match (&item.status, &item.error) {
-        (TransferStatus::Failed, Some(reason)) => (item.note.as_ref().map_or_else(
-            || runtime(reason), |note| format!("{} — {}", runtime(reason), runtime(note))), danger()),
-        _ => (item.note.as_ref().map_or_else(|| item.dest.clone(),
-            |note| format!("{} — {}", item.dest, runtime(note))), muted_text()),
+        (TransferStatus::Failed, Some(reason)) => (
+            item.note.as_ref().map_or_else(
+                || runtime(reason),
+                |note| format!("{} — {}", runtime(reason), runtime(note)),
+            ),
+            danger(),
+        ),
+        _ => (
+            item.note.as_ref().map_or_else(
+                || item.dest.clone(),
+                |note| format!("{} — {}", item.dest, runtime(note)),
+            ),
+            muted_text(),
+        ),
     };
 
     let progress = row![
@@ -499,8 +548,14 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
             .color(muted_text())
             .width(Length::Fixed(72.0)),
         container(progress).width(Length::Fixed(112.0)),
-        text(speed).size(10).color(muted_text()).width(Length::Fixed(78.0)),
-        text(t(label)).size(10).color(color).width(Length::Fixed(48.0)),
+        text(speed)
+            .size(10)
+            .color(muted_text())
+            .width(Length::Fixed(78.0)),
+        text(t(label))
+            .size(10)
+            .color(color)
+            .width(Length::Fixed(48.0)),
         container(action).width(Length::Fixed(44.0)),
     ]
     .spacing(8)
@@ -517,7 +572,10 @@ pub(crate) fn sftp_nav_row(label: &'static str, message: Message) -> Element<'st
         .into()
 }
 
-pub(crate) fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Element<'static, Message> {
+pub(crate) fn sftp_local_entry_row(
+    entry: &LocalEntry,
+    selected: bool,
+) -> Element<'static, Message> {
     let owned = entry.name.clone();
     let is_dir = entry.is_dir;
     // Right-click anywhere on the row opens the actions menu (SecureFX-style).
@@ -531,7 +589,10 @@ pub(crate) fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Elemen
                         .size(12)
                         .color(accent())
                         .width(Fill),
-                    text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
+                    text("DIR")
+                        .size(10)
+                        .color(muted_text())
+                        .width(Length::Fixed(64.0)),
                     text(sftp_date(entry.mtime))
                         .size(10)
                         .color(muted_text())
@@ -579,7 +640,10 @@ pub(crate) fn sftp_local_entry_row(entry: &LocalEntry, selected: bool) -> Elemen
     .into()
 }
 
-pub(crate) fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Element<'static, Message> {
+pub(crate) fn sftp_remote_entry_row(
+    entry: &SftpEntry,
+    selected: bool,
+) -> Element<'static, Message> {
     let owned = entry.name.clone();
     let is_dir = entry.is_dir;
     let context = Message::ShowSftpContextMenu(SftpPane::Remote, owned.clone(), is_dir);
@@ -592,7 +656,10 @@ pub(crate) fn sftp_remote_entry_row(entry: &SftpEntry, selected: bool) -> Elemen
                         .size(12)
                         .color(accent())
                         .width(Fill),
-                    text("DIR").size(10).color(muted_text()).width(Length::Fixed(64.0)),
+                    text("DIR")
+                        .size(10)
+                        .color(muted_text())
+                        .width(Length::Fixed(64.0)),
                     text(sftp_date(entry.mtime.map(u64::from)))
                         .size(10)
                         .color(muted_text())
@@ -671,14 +738,19 @@ pub(crate) fn sftp_context_menu_card(
         SftpPane::Remote => ("下载 ↓", Message::SftpDownload(name.clone())),
         SftpPane::Local => ("上传 ↑", Message::SftpUploadLocal(name.clone())),
     };
-    items = items
-        .push(profile_menu_item(transfer_label, transfer_msg, false));
+    items = items.push(profile_menu_item(transfer_label, transfer_msg, false));
     if !is_dir {
         if pane == SftpPane::Remote {
-            items = items.push(profile_menu_item("下载另存为…", Message::SftpSaveAs(name.clone()), false));
+            items = items.push(profile_menu_item(
+                "下载另存为…",
+                Message::SftpSaveAs(name.clone()),
+                false,
+            ));
         }
         items = items.push(profile_menu_item(
-            "校验并断点续传", Message::SftpResume(pane, name.clone()), false,
+            "校验并断点续传",
+            Message::SftpResume(pane, name.clone()),
+            false,
         ));
     }
     items = items
@@ -716,7 +788,11 @@ pub(crate) fn sftp_context_overlay(
 
 /// A batch-action button that shows the selection count and is disabled (no
 /// `on_press`) when nothing is selected.
-pub(crate) fn sftp_batch_button(label: &'static str, count: usize, message: Message) -> Element<'static, Message> {
+pub(crate) fn sftp_batch_button(
+    label: &'static str,
+    count: usize,
+    message: Message,
+) -> Element<'static, Message> {
     let label = t(label);
     let caption = if count > 0 {
         format!("{label} ({count})")
@@ -916,11 +992,20 @@ pub(crate) fn sftp_sort_cell(
 
 /// The sortable column header row shared by both panes; the trailing space keeps
 /// the columns roughly aligned with the per-row action buttons on the right.
-pub(crate) fn sftp_sort_header(pane: SftpPane, active: (SftpSortKey, bool)) -> Element<'static, Message> {
+pub(crate) fn sftp_sort_header(
+    pane: SftpPane,
+    active: (SftpSortKey, bool),
+) -> Element<'static, Message> {
     row![
         sftp_sort_cell("名称", pane, SftpSortKey::Name, active, Length::Fill),
         sftp_sort_cell("大小", pane, SftpSortKey::Size, active, Length::Fixed(64.0)),
-        sftp_sort_cell("修改时间", pane, SftpSortKey::Modified, active, Length::Fixed(118.0)),
+        sftp_sort_cell(
+            "修改时间",
+            pane,
+            SftpSortKey::Modified,
+            active,
+            Length::Fixed(118.0)
+        ),
         Space::new().width(Length::Fixed(132.0)),
     ]
     .spacing(6)
@@ -980,7 +1065,6 @@ pub(crate) fn human_size(bytes: u64) -> String {
         format!("{value:.1} {}", UNITS[unit])
     }
 }
-
 
 pub(crate) fn form_matches_selected_profile(app: &AditApp) -> bool {
     let Some(profile_id) = app.selected_profile else {

@@ -244,7 +244,9 @@ fn desktop_metadata_on_every_full_request_advances_to_incremental_pixels() {
     });
     // None is explicitly allowed only for this synthetic loopback peer.
     let (mut manager, profile) = manager(port);
-    let session = manager.open_live_vnc_session(profile, String::new()).unwrap();
+    let session = manager
+        .open_live_vnc_session(profile, String::new())
+        .unwrap();
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut covered = false;
     let mut incremental_after_pixels = false;
@@ -268,7 +270,12 @@ fn desktop_metadata_on_every_full_request_advances_to_incremental_pixels() {
     let diagnostics = manager.active_vnc_diagnostics();
     let complete_frame = manager.active_rdp_frame_if_newer(0).is_some_and(|frame| {
         (frame.width, frame.height) == (64, 64)
-            && frame.rgba.as_chunks::<4>().0.iter().all(|p| *p == [20, 40, 60, 255])
+            && frame
+                .rgba
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|p| *p == [20, 40, 60, 255])
     });
     manager.disconnect(session).unwrap();
     wait(&mut manager, |m| {
@@ -277,7 +284,10 @@ fn desktop_metadata_on_every_full_request_advances_to_incremental_pixels() {
     server.join().unwrap();
     let requests = requests.lock().unwrap();
     eprintln!("desktop metadata recovery requests={requests:?}; diagnostics={diagnostics:?}");
-    assert!(covered && complete_frame, "metadata loop prevented full coverage: {requests:?}");
+    assert!(
+        covered && complete_frame,
+        "metadata loop prevented full coverage: {requests:?}"
+    );
     assert!(incremental_after_pixels);
     assert!(max_pending <= 1);
     assert_eq!(requests.first().map(|r| r.0), Some(0));
@@ -400,7 +410,10 @@ fn rfb_desktop_paints_copies_and_exchanges_input_and_clipboard() {
         .unwrap();
     assert!(manager.active_is_vnc());
     assert!(manager.active_is_desktop());
-    wait(&mut manager, |m| m.active_rdp_frame_if_newer(0).is_some_and(|f| f.generation >= 3));
+    wait(&mut manager, |m| {
+        m.active_rdp_frame_if_newer(0)
+            .is_some_and(|f| f.generation >= 3)
+    });
     let frame = manager.active_rdp_frame_if_newer(0).unwrap();
     assert_eq!((frame.width, frame.height), (4, 2));
     assert_eq!(&frame.rgba[..4], &[1, 20, 30, 255]);
@@ -522,7 +535,9 @@ fn an_oversized_remote_framebuffer_fails_without_allocating_it() {
     });
     let (mut manager, id) = manager(port);
     manager.open_live_vnc_session(id, String::new()).unwrap();
-    wait(&mut manager, |m| m.active_session_summary().unwrap().status == SessionStatus::Error);
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Error
+    });
     assert!(manager.active_desktop_error().is_some());
     assert!(manager.active_rdp_frame_if_newer(0).is_none());
     server.join().unwrap();
@@ -585,21 +600,33 @@ fn real_vnc_server_authenticates_and_paints() {
         .iter()
         .any(|p| p[0] > 100 && p[1] < 100));
     manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 30, y: 40 });
-    manager.send_rdp_input_to_active(RdpInput::MouseButton { button: RdpMouseButton::Left, pressed: true });
-    manager.send_rdp_input_to_active(RdpInput::MouseButton { button: RdpMouseButton::Left, pressed: false });
+    manager.send_rdp_input_to_active(RdpInput::MouseButton {
+        button: RdpMouseButton::Left,
+        pressed: true,
+    });
+    manager.send_rdp_input_to_active(RdpInput::MouseButton {
+        button: RdpMouseButton::Left,
+        pressed: false,
+    });
     manager.send_vnc_key_to_active(0x61, true);
     manager.send_vnc_key_to_active(0x61, false);
     if let Ok(path) = std::env::var("ADIT_VNC_TEST_EVENTS") {
         eprintln!("real VNC: awaiting target keyboard, button release and pointer events");
         wait(&mut manager, |_| {
             let events = std::fs::read_to_string(&path).unwrap_or_default();
-            events.contains("keysym 0x61, a") && events.contains("ButtonRelease")
+            events.contains("keysym 0x61, a")
+                && events.contains("ButtonRelease")
                 && events.contains("MotionNotify")
         });
         let position = std::process::Command::new("xdotool")
-            .args(["getmouselocation", "--shell"]).output().unwrap();
+            .args(["getmouselocation", "--shell"])
+            .output()
+            .unwrap();
         let position = String::from_utf8(position.stdout).unwrap();
-        assert!(position.contains("X=30\n") && position.contains("Y=40\n"), "{position}");
+        assert!(
+            position.contains("X=30\n") && position.contains("Y=40\n"),
+            "{position}"
+        );
     }
     manager.disconnect(session).unwrap();
     wait(&mut manager, |m| {
@@ -615,7 +642,13 @@ fn a_burst_of_small_rectangles_is_not_throttled_by_ui_ticks() {
         init(&mut stream);
         while let Some((tag, data)) = message(&mut stream) {
             if tag == 2 {
-                assert!(data.as_chunks::<4>().0.iter().any(|e| i32::from_be_bytes(*e) == -239), "local cursor must be negotiated");
+                assert!(
+                    data.as_chunks::<4>()
+                        .0
+                        .iter()
+                        .any(|e| i32::from_be_bytes(*e) == -239),
+                    "local cursor must be negotiated"
+                );
             }
             if tag == 3 {
                 break;
@@ -642,19 +675,31 @@ fn a_burst_of_small_rectangles_is_not_throttled_by_ui_ticks() {
         stream.write_all(&update).unwrap();
         sent.send(Instant::now()).unwrap();
         while let Some((tag, data)) = message(&mut stream) {
-            if tag == 4 { key_sent.send(data).unwrap(); }
+            if tag == 4 {
+                key_sent.send(data).unwrap();
+            }
         }
     });
     let (mut manager, id) = manager(port);
     let session = manager.open_live_vnc_session(id, String::new()).unwrap();
     let start = received.recv_timeout(Duration::from_secs(5)).unwrap();
-    wait(&mut manager, |m| m.active_rdp_frame_if_newer(0).is_some_and(|f| f.generation >= 1025));
-    assert!(start.elapsed() < Duration::from_secs(2), "decoder output stalled for {:?}", start.elapsed());
+    wait(&mut manager, |m| {
+        m.active_rdp_frame_if_newer(0)
+            .is_some_and(|f| f.generation >= 1025)
+    });
+    assert!(
+        start.elapsed() < Duration::from_secs(2),
+        "decoder output stalled for {:?}",
+        start.elapsed()
+    );
     let frame = manager.active_rdp_frame_if_newer(0).unwrap();
     assert_eq!(&frame.rgba[..4], &[10, 20, 30, 255]);
     // Input must still run while recv_event is waiting on an idle server.
     manager.send_vnc_key_to_active(0x61, false);
-    assert_eq!(key_received.recv_timeout(Duration::from_secs(2)).unwrap(), vec![0, 0, 0, 0, 0, 0, 0x61]);
+    assert_eq!(
+        key_received.recv_timeout(Duration::from_secs(2)).unwrap(),
+        vec![0, 0, 0, 0, 0, 0, 0x61]
+    );
     manager.close(session);
     server.join().unwrap();
 }
@@ -677,13 +722,31 @@ fn a_mouse_burst_during_handshake_keeps_the_latest_position_and_click_order() {
     for x in 0..10_000 {
         manager.send_rdp_input_to_active(RdpInput::MouseMove { x: x % 4, y: 1 });
     }
-    manager.send_rdp_input_to_active(RdpInput::MouseButton { button: RdpMouseButton::Left, pressed: true });
+    manager.send_rdp_input_to_active(RdpInput::MouseButton {
+        button: RdpMouseButton::Left,
+        pressed: true,
+    });
     manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 2, y: 0 });
-    manager.send_rdp_input_to_active(RdpInput::MouseButton { button: RdpMouseButton::Left, pressed: false });
+    manager.send_rdp_input_to_active(RdpInput::MouseButton {
+        button: RdpMouseButton::Left,
+        pressed: false,
+    });
     start.send(()).unwrap();
-    let received: Vec<_> = (0..4).map(|_| wire_rx.recv_timeout(Duration::from_secs(5)).unwrap()).collect();
-    assert_eq!(received, vec![vec![0, 0, 3, 0, 1], vec![1, 0, 3, 0, 1], vec![1, 0, 2, 0, 0], vec![0, 0, 2, 0, 0]]);
-    wait(&mut manager, |m| m.active_session_summary().unwrap().status == SessionStatus::Connected);
+    let received: Vec<_> = (0..4)
+        .map(|_| wire_rx.recv_timeout(Duration::from_secs(5)).unwrap())
+        .collect();
+    assert_eq!(
+        received,
+        vec![
+            vec![0, 0, 3, 0, 1],
+            vec![1, 0, 3, 0, 1],
+            vec![1, 0, 2, 0, 0],
+            vec![0, 0, 2, 0, 0]
+        ]
+    );
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
     manager.close(session);
     server.join().unwrap();
 }
@@ -694,67 +757,98 @@ fn readonly_releases_held_input_then_blocks_keyboard_mouse_and_clipboard_push() 
     let (port, server) = peer(move |mut stream| {
         init(&mut stream);
         while let Some((tag, data)) = message(&mut stream) {
-            if matches!(tag,4..=6) { let _ = wire_tx.send((tag,data)); }
+            if matches!(tag, 4..=6) {
+                let _ = wire_tx.send((tag, data));
+            }
         }
     });
-    let (mut manager,id)=manager(port);
-    let session=manager.open_live_vnc_session(id,String::new()).unwrap();
-    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connected);
-    manager.send_vnc_key_to_active(0xffe1,true);
-    manager.send_rdp_input_to_active(RdpInput::MouseButton{button:RdpMouseButton::Left,pressed:true});
-    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().0,4);
-    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().0,5);
+    let (mut manager, id) = manager(port);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
+    manager.send_vnc_key_to_active(0xffe1, true);
+    manager.send_rdp_input_to_active(RdpInput::MouseButton {
+        button: RdpMouseButton::Left,
+        pressed: true,
+    });
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().0, 4);
+    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().0, 5);
     manager.set_active_vnc_read_only(true);
-    let key_up=wire_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert_eq!(key_up,(4,vec![0,0,0,0,0,0xff,0xe1]));
-    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().1[0],0);
-    manager.send_vnc_key_to_active(0x61,true);
-    manager.send_rdp_input_to_active(RdpInput::MouseMove{x:2,y:1});
-    manager.send_rdp_input_to_active(RdpInput::Wheel{vertical:true,delta:120});
+    let key_up = wire_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert_eq!(key_up, (4, vec![0, 0, 0, 0, 0, 0xff, 0xe1]));
+    assert_eq!(
+        wire_rx.recv_timeout(Duration::from_secs(2)).unwrap().1[0],
+        0
+    );
+    manager.send_vnc_key_to_active(0x61, true);
+    manager.send_rdp_input_to_active(RdpInput::MouseMove { x: 2, y: 1 });
+    manager.send_rdp_input_to_active(RdpInput::Wheel {
+        vertical: true,
+        delta: 120,
+    });
     manager.offer_clipboard_to_active_rdp("blocked local".into());
     assert!(wire_rx.recv_timeout(Duration::from_millis(200)).is_err());
     manager.set_active_vnc_read_only(false);
-    manager.send_vnc_key_to_active(0x62,true);
-    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(),(4,vec![1,0,0,0,0,0,0x62]));
+    manager.send_vnc_key_to_active(0x62, true);
+    assert_eq!(
+        wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        (4, vec![1, 0, 0, 0, 0, 0, 0x62])
+    );
     manager.close(session);
-    assert_eq!(wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(), (4,vec![0,0,0,0,0,0,0x62]));
+    assert_eq!(
+        wire_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+        (4, vec![0, 0, 0, 0, 0, 0, 0x62])
+    );
     server.join().unwrap();
 }
 
 #[test]
 fn dropped_transport_reconnects_the_same_tab_and_manual_close_stops_retry() {
-    let listener=TcpListener::bind("127.0.0.1:0").unwrap();
-    let port=listener.local_addr().unwrap().port();
-    let (drop_tx,drop_rx)=mpsc::channel();
-    let (second_tx,second_rx)=mpsc::channel();
-    let server=thread::spawn(move||{
-        let (mut stream,_)=listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (drop_tx, drop_rx) = mpsc::channel();
+    let (second_tx, second_rx) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         init(&mut stream);
-        while message(&mut stream).is_some_and(|m|m.0!=3) {}
+        while message(&mut stream).is_some_and(|m| m.0 != 3) {}
         drop_rx.recv_timeout(Duration::from_secs(5)).unwrap();
         drop(stream);
-        let (mut stream,_)=listener.accept().unwrap();
-        stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         init(&mut stream);
-        while message(&mut stream).is_some_and(|m|m.0!=3) {}
+        while message(&mut stream).is_some_and(|m| m.0 != 3) {}
         second_tx.send(()).unwrap();
         while message(&mut stream).is_some() {}
     });
-    let (mut manager,id)=manager(port);
-    let mut profile=manager.profile(id).unwrap().clone();
-    profile.vnc.auto_reconnect=true; profile.vnc.read_only=true;
+    let (mut manager, id) = manager(port);
+    let mut profile = manager.profile(id).unwrap().clone();
+    profile.vnc.auto_reconnect = true;
+    profile.vnc.read_only = true;
     manager.save_vnc_profile(profile).unwrap();
-    let session=manager.open_live_vnc_session(id,String::new()).unwrap();
-    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connected);
+    let session = manager.open_live_vnc_session(id, String::new()).unwrap();
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
     drop_tx.send(()).unwrap();
-    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connecting);
-    wait(&mut manager,|m|m.active_session_summary().unwrap().status==SessionStatus::Connected);
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connecting
+    });
+    wait(&mut manager, |m| {
+        m.active_session_summary().unwrap().status == SessionStatus::Connected
+    });
     second_rx.recv_timeout(Duration::from_secs(2)).unwrap();
-    assert_eq!(manager.sessions().len(),1);
-    assert_eq!(manager.active_session_summary().unwrap().id,session);
+    assert_eq!(manager.sessions().len(), 1);
+    assert_eq!(manager.active_session_summary().unwrap().id, session);
     assert!(manager.active_vnc_read_only());
-    manager.close(session); server.join().unwrap();
+    manager.close(session);
+    server.join().unwrap();
 }
 
 #[test]
@@ -890,7 +984,11 @@ fn a_quiet_no_fence_desktop_survives_the_windows_retransmission_limit() {
                 frame.extend(value.to_be_bytes());
             }
             frame.extend(0_i32.to_be_bytes());
-            let rgb = if requests == 1 { [1, 2, 3, 0] } else { [4, 5, 6, 0] };
+            let rgb = if requests == 1 {
+                [1, 2, 3, 0]
+            } else {
+                [4, 5, 6, 0]
+            };
             for _ in 0..8 {
                 frame.extend(rgb);
             }
@@ -904,13 +1002,23 @@ fn a_quiet_no_fence_desktop_survives_the_windows_retransmission_limit() {
     let start = Instant::now();
     while start.elapsed() < Duration::from_secs(35) {
         manager.poll_events();
-        assert_eq!(manager.active_session_summary().unwrap().status, SessionStatus::Connected);
+        assert_eq!(
+            manager.active_session_summary().unwrap().status,
+            SessionStatus::Connected
+        );
         assert_eq!(manager.active_session_summary().unwrap().id, session);
-        assert!(manager.active_vnc_diagnostics().unwrap().fence_rtt_ms.is_none());
+        assert!(manager
+            .active_vnc_diagnostics()
+            .unwrap()
+            .fence_rtt_ms
+            .is_none());
         thread::sleep(Duration::from_millis(20));
     }
     resume_tx.send(()).unwrap();
-    wait(&mut manager, |m| m.active_rdp_frame_if_newer(0).is_some_and(|frame| frame.rgba[..4] == [4, 5, 6, 255]));
+    wait(&mut manager, |m| {
+        m.active_rdp_frame_if_newer(0)
+            .is_some_and(|frame| frame.rgba[..4] == [4, 5, 6, 255])
+    });
     assert_eq!(manager.sessions().len(), 1);
     manager.close(session);
     server.join().unwrap();
@@ -989,7 +1097,7 @@ fn zrle_compatibility_omits_tight_and_jpeg_and_paints_lossless_pixels() {
             packet.extend(value.to_be_bytes());
         }
         packet.extend(16_i32.to_be_bytes()); // ZRLE solid-color tile.
-        // Sync-flushed persistent zlib stream: subencoding 1 and one RGB pixel.
+                                             // Sync-flushed persistent zlib stream: subencoding 1 and one RGB pixel.
         let compressed = [120, 156, 98, 228, 22, 83, 4, 0, 0, 0, 255, 255];
         packet.extend((compressed.len() as u32).to_be_bytes());
         packet.extend(compressed);

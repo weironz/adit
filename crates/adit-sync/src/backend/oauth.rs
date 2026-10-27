@@ -124,10 +124,12 @@ pub fn begin(config: OAuthConfig) -> Result<PendingAuth, SyncError> {
         // A pinned port can be taken by something else, and the failure needs
         // to name the port — "connection refused" in a browser, twenty minutes
         // later, is not a diagnosis anyone can act on.
-        Some(port) => TcpListener::bind(("127.0.0.1", port)).map_err(|error| SyncError::Remote {
-            provider: config.provider.to_owned(),
-            message: format!("本机端口 {port} 已被占用，无法接收授权回调：{error}"),
-        })?,
+        Some(port) => {
+            TcpListener::bind(("127.0.0.1", port)).map_err(|error| SyncError::Remote {
+                provider: config.provider.to_owned(),
+                message: format!("本机端口 {port} 已被占用，无法接收授权回调：{error}"),
+            })?
+        }
         None => TcpListener::bind("127.0.0.1:0")?,
     };
     let port = listener.local_addr()?.port();
@@ -387,8 +389,7 @@ impl OAuthSession {
 
 /// Base64url without padding, as PKCE requires (RFC 7636 §4.2).
 fn base64url(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] =
-        b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
     for chunk in bytes.chunks(3) {
         let b = [

@@ -149,11 +149,17 @@ pub struct LogPolicy {
 impl SessionOptions {
     pub fn validate(&self) -> Result<(), String> {
         let appearance = &self.terminal_appearance;
-        if appearance.font_size.is_some_and(|size| !(9..=28).contains(&size))
+        if appearance
+            .font_size
+            .is_some_and(|size| !(9..=28).contains(&size))
             || [&appearance.font_family, &appearance.color_scheme]
                 .into_iter()
                 .flatten()
-                .any(|value| value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control))
+                .any(|value| {
+                    value.trim().is_empty()
+                        || value.len() > 128
+                        || value.chars().any(char::is_control)
+                })
         {
             return Err("终端外观配置无效".into());
         }
@@ -308,7 +314,10 @@ mod tests {
         options.terminal_appearance.font_size = Some(20);
         assert!(options.validate().is_ok());
         let encoded = serde_json::to_string(&options).unwrap();
-        assert_eq!(serde_json::from_str::<SessionOptions>(&encoded).unwrap(), options);
+        assert_eq!(
+            serde_json::from_str::<SessionOptions>(&encoded).unwrap(),
+            options
+        );
     }
 
     #[test]

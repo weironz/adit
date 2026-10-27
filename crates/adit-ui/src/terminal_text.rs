@@ -10,7 +10,10 @@ pub(super) fn max_scroll_offset_for(snapshot: &TerminalSnapshot, rows: usize) ->
     snapshot.total_rows.saturating_sub(rows.max(1))
 }
 
-pub(super) fn scroll_delta_to_rows(delta: mouse::ScrollDelta, metrics: TerminalMetrics) -> Option<i32> {
+pub(super) fn scroll_delta_to_rows(
+    delta: mouse::ScrollDelta,
+    metrics: TerminalMetrics,
+) -> Option<i32> {
     let raw = match delta {
         mouse::ScrollDelta::Lines { y, .. } => y * 3.0,
         mouse::ScrollDelta::Pixels { y, .. } => y / metrics.cell_height,
@@ -78,7 +81,10 @@ pub(super) fn raw_line_text(line: &TerminalLine) -> String {
         .collect::<String>()
 }
 
-pub(super) fn selection_to_text(snapshot: &TerminalSnapshot, selection: TerminalSelection) -> String {
+pub(super) fn selection_to_text(
+    snapshot: &TerminalSnapshot,
+    selection: TerminalSelection,
+) -> String {
     let Some((start, end)) = normalized_selection(selection) else {
         return String::new();
     };
@@ -124,7 +130,9 @@ fn slice_columns(text: &str, start: usize, end: usize) -> String {
         .collect()
 }
 
-pub(super) fn normalized_selection(selection: TerminalSelection) -> Option<(TerminalPoint, TerminalPoint)> {
+pub(super) fn normalized_selection(
+    selection: TerminalSelection,
+) -> Option<(TerminalPoint, TerminalPoint)> {
     let (start, end) =
         if (selection.start.row, selection.start.col) <= (selection.end.row, selection.end.col) {
             (selection.start, selection.end)
@@ -182,7 +190,10 @@ pub(super) fn word_bounds(line: &str, col: usize) -> Option<(usize, usize)> {
     Some((offsets[start], offsets[end]))
 }
 
-pub(super) fn selection_range_for_row(selection: TerminalSelection, row: usize) -> Option<(usize, usize)> {
+pub(super) fn selection_range_for_row(
+    selection: TerminalSelection,
+    row: usize,
+) -> Option<(usize, usize)> {
     let (start, end) = normalized_selection(selection)?;
     if row < start.row || row > end.row {
         return None;

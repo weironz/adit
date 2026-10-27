@@ -87,7 +87,10 @@ const COMMANDS: &[&str] = &[
 
 impl SftpShell {
     pub(crate) fn pending_auth_prompt(&self) -> Option<adit_ssh::AuthPromptRequest> {
-        self.pending_auth_prompt.as_ref().filter(|p| p.is_pending()).cloned()
+        self.pending_auth_prompt
+            .as_ref()
+            .filter(|p| p.is_pending())
+            .cloned()
     }
 
     pub(crate) fn new(handle: SftpHandle, local_cwd: PathBuf) -> Self {
@@ -140,7 +143,10 @@ impl SftpShell {
                         "[C" | "OC" => self.editor.right(),
                         "[H" | "OH" | "[1~" | "[7~" => self.editor.home(),
                         "[F" | "OF" | "[4~" | "[8~" => self.editor.end(),
-                        "[3~" => { self.editor.accept_search(); self.editor.delete(); }
+                        "[3~" => {
+                            self.editor.accept_search();
+                            self.editor.delete();
+                        }
                         _ => {}
                     }
                     self.redraw(terminal);
@@ -155,8 +161,11 @@ impl SftpShell {
                 }
                 '\t' => self.complete(terminal),
                 '\r' | '\n' => {
-                    if self.editor.accept_search() { self.redraw(terminal); }
-                    else if self.pending.is_none() && self.active_transfer.is_none() { self.submit(terminal); }
+                    if self.editor.accept_search() {
+                        self.redraw(terminal);
+                    } else if self.pending.is_none() && self.active_transfer.is_none() {
+                        self.submit(terminal);
+                    }
                 }
                 // Backspace / DEL.
                 '\u{8}' | '\u{7f}' => {
@@ -166,23 +175,56 @@ impl SftpShell {
                 // Ctrl+C: abandon the line, like a shell.
                 '\u{3}' => {
                     self.editor.clear();
-                    if let Some(id) = self.active_transfer { self.handle.cancel(id); }
+                    if let Some(id) = self.active_transfer {
+                        self.handle.cancel(id);
+                    }
                     terminal.feed_str("^C\r\n");
-                    if self.active_transfer.is_none() { self.prompt(terminal); }
+                    if self.active_transfer.is_none() {
+                        self.prompt(terminal);
+                    }
                 }
                 // Ctrl+U: kill the line.
                 '\u{15}' => {
-                    self.editor.kill_before(); self.redraw(terminal);
+                    self.editor.kill_before();
+                    self.redraw(terminal);
                 }
-                '\u{1}' => { self.editor.home(); self.redraw(terminal); }
-                '\u{5}' => { self.editor.end(); self.redraw(terminal); }
-                '\u{2}' => { self.editor.left(); self.redraw(terminal); }
-                '\u{6}' => { self.editor.right(); self.redraw(terminal); }
-                '\u{4}' => { self.editor.accept_search(); self.editor.delete(); self.redraw(terminal); }
-                '\u{b}' => { self.editor.kill_after(); self.redraw(terminal); }
-                '\u{17}' => { self.editor.kill_word(); self.redraw(terminal); }
-                '\u{12}' => { self.editor.reverse_search(); self.redraw(terminal); }
-                '\u{7}' => { self.editor.cancel_search(); self.redraw(terminal); }
+                '\u{1}' => {
+                    self.editor.home();
+                    self.redraw(terminal);
+                }
+                '\u{5}' => {
+                    self.editor.end();
+                    self.redraw(terminal);
+                }
+                '\u{2}' => {
+                    self.editor.left();
+                    self.redraw(terminal);
+                }
+                '\u{6}' => {
+                    self.editor.right();
+                    self.redraw(terminal);
+                }
+                '\u{4}' => {
+                    self.editor.accept_search();
+                    self.editor.delete();
+                    self.redraw(terminal);
+                }
+                '\u{b}' => {
+                    self.editor.kill_after();
+                    self.redraw(terminal);
+                }
+                '\u{17}' => {
+                    self.editor.kill_word();
+                    self.redraw(terminal);
+                }
+                '\u{12}' => {
+                    self.editor.reverse_search();
+                    self.redraw(terminal);
+                }
+                '\u{7}' => {
+                    self.editor.cancel_search();
+                    self.redraw(terminal);
+                }
                 // Ignore the remaining control characters.
                 ch if (ch as u32) < 0x20 => {}
                 ch => {
@@ -215,11 +257,14 @@ impl SftpShell {
         self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
         self.pending = Some(Pending::Transfer);
         let id = self.begin_transfer();
-        self.send(terminal, SftpCommand::Upload {
-            id,
-            local: local.to_path_buf(),
-            remote,
-        });
+        self.send(
+            terminal,
+            SftpCommand::Upload {
+                id,
+                local: local.to_path_buf(),
+                remote,
+            },
+        );
     }
 
     /// Fold an SFTP event into the transcript. Returns true when the connection closed.
@@ -269,7 +314,9 @@ impl SftpShell {
             // Per-chunk progress would fight the prompt for the line; `Done` reports.
             SftpEvent::Progress { .. } => {}
             SftpEvent::Done { id, label, bytes } => {
-                if self.active_transfer != Some(id) { return false; }
+                if self.active_transfer != Some(id) {
+                    return false;
+                }
                 self.active_transfer = None;
                 self.pending = None;
                 terminal.feed_str("\r\n");
@@ -277,7 +324,9 @@ impl SftpShell {
                 self.prompt(terminal);
             }
             SftpEvent::Cancelled { id, label } => {
-                if self.active_transfer != Some(id) { return false; }
+                if self.active_transfer != Some(id) {
+                    return false;
+                }
                 self.active_transfer = None;
                 self.pending = None;
                 terminal.feed_str("\r\n");
@@ -290,7 +339,9 @@ impl SftpShell {
                 self.prompt(terminal);
             }
             SftpEvent::TransferFailed { id, error, .. } => {
-                if self.active_transfer != Some(id) { return false; }
+                if self.active_transfer != Some(id) {
+                    return false;
+                }
                 self.active_transfer = None;
                 self.pending = None;
                 terminal.feed_str("\r\n");
@@ -335,37 +386,54 @@ impl SftpShell {
         // backspaces, and correct when the new line is shorter than the old.
         terminal.feed_str("\r\u{1b}[K");
         let cols = usize::from(terminal.snapshot(Viewport::tail(1)).size.cols).max(8);
-        let caption = self.editor.search_caption().unwrap_or_else(|| PROMPT.into());
-        let caption: String = caption.chars().scan(0usize, |width, ch| {
-            *width += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            (*width < cols / 2).then_some(ch)
-        }).collect();
-        let budget = cols.saturating_sub(UnicodeWidthStr::width(caption.as_str()) + 1).max(1);
+        let caption = self
+            .editor
+            .search_caption()
+            .unwrap_or_else(|| PROMPT.into());
+        let caption: String = caption
+            .chars()
+            .scan(0usize, |width, ch| {
+                *width += unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
+                (*width < cols / 2).then_some(ch)
+            })
+            .collect();
+        let budget = cols
+            .saturating_sub(UnicodeWidthStr::width(caption.as_str()) + 1)
+            .max(1);
         let mut start = self.editor.cursor;
         let mut before = 0;
         for (index, ch) in self.editor.line[..self.editor.cursor].char_indices().rev() {
             let width = unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0);
-            if before + width > budget / 2 { break; }
+            if before + width > budget / 2 {
+                break;
+            }
             before += width;
             start = index;
         }
         let mut width = 0;
-        let visible: String = self.editor.line[start..].chars().take_while(|ch| {
-            width += unicode_width::UnicodeWidthChar::width(*ch).unwrap_or(0);
-            width <= budget
-        }).collect();
+        let visible: String = self.editor.line[start..]
+            .chars()
+            .take_while(|ch| {
+                width += unicode_width::UnicodeWidthChar::width(*ch).unwrap_or(0);
+                width <= budget
+            })
+            .collect();
         terminal.feed_str(&caption);
         terminal.feed_str(&visible);
         terminal.feed_str("\r");
         let column = UnicodeWidthStr::width(caption.as_str()) + before;
-        if column > 0 { terminal.feed_str(&format!("\u{1b}[{column}C")); }
+        if column > 0 {
+            terminal.feed_str(&format!("\u{1b}[{column}C"));
+        }
     }
 
     /// Complete the word under the cursor: a command name in first position, a
     /// path after that — local or remote depending on which argument of which
     /// command it is.
     fn complete(&mut self, terminal: &mut VtTerminal) {
-        if self.editor.search_caption().is_some() || self.active_transfer.is_some() { return; }
+        if self.editor.search_caption().is_some() || self.active_transfer.is_some() {
+            return;
+        }
         let start = word_start(&self.editor.line[..self.editor.cursor]);
         let word = self.editor.line[start..self.editor.cursor].to_owned();
 
@@ -411,10 +479,7 @@ impl SftpShell {
                 continue;
             }
             let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
-            candidates.push(format!(
-                "{dir_part}{name}{}",
-                if is_dir { "/" } else { "" }
-            ));
+            candidates.push(format!("{dir_part}{name}{}", if is_dir { "/" } else { "" }));
         }
         candidates.sort();
         self.apply_completion(terminal, start, word, &candidates);
@@ -429,7 +494,12 @@ impl SftpShell {
         }
         let (dir_part, _) = split_path(word, |ch| ch == '/');
         let target = resolve_remote(&self.cwd, &self.home, dir_part);
-        self.completing = Some((start, word.to_owned(), self.editor.line.clone(), self.editor.cursor));
+        self.completing = Some((
+            start,
+            word.to_owned(),
+            self.editor.line.clone(),
+            self.editor.cursor,
+        ));
         self.pending = Some(Pending::Complete);
         self.send(terminal, SftpCommand::ListDir(target));
     }
@@ -475,11 +545,15 @@ impl SftpShell {
         }
         let common = longest_common_prefix(candidates);
         if common.len() > word.len() {
-            self.editor.line.replace_range(start..self.editor.cursor, &common);
+            self.editor
+                .line
+                .replace_range(start..self.editor.cursor, &common);
             self.editor.cursor = start + common.len();
             // A single match is settled; save the space bar.
-            if candidates.len() == 1 && !common.ends_with('/')
-                && !self.editor.line[self.editor.cursor..].starts_with(' ') {
+            if candidates.len() == 1
+                && !common.ends_with('/')
+                && !self.editor.line[self.editor.cursor..].starts_with(' ')
+            {
                 self.editor.line.insert(self.editor.cursor, ' ');
                 self.editor.cursor += 1;
             }
@@ -503,7 +577,18 @@ impl SftpShell {
         // Remote work needs a live connection; fail fast rather than hang.
         let remote_command = matches!(
             command.as_str(),
-            "ls" | "dir" | "cd" | "get" | "put" | "reget" | "reput" | "mkdir" | "rmdir" | "rm" | "del" | "rename" | "mv"
+            "ls" | "dir"
+                | "cd"
+                | "get"
+                | "put"
+                | "reget"
+                | "reput"
+                | "mkdir"
+                | "rmdir"
+                | "rm"
+                | "del"
+                | "rename"
+                | "mv"
         );
         if remote_command && !self.connected {
             self.writeln(terminal, "尚未连接");
@@ -543,16 +628,18 @@ impl SftpShell {
                 self.writeln(terminal, "正在断开…");
             }
             "ls" | "dir" => {
-                let path = rest
-                    .first()
-                    .map_or_else(|| self.cwd.clone(), |p| resolve_remote(&self.cwd, &self.home, p));
+                let path = rest.first().map_or_else(
+                    || self.cwd.clone(),
+                    |p| resolve_remote(&self.cwd, &self.home, p),
+                );
                 self.pending = Some(Pending::List);
                 self.send(terminal, SftpCommand::ListDir(path));
             }
             "cd" => {
-                let target = rest
-                    .first()
-                    .map_or_else(|| self.home.clone(), |p| resolve_remote(&self.cwd, &self.home, p));
+                let target = rest.first().map_or_else(
+                    || self.home.clone(),
+                    |p| resolve_remote(&self.cwd, &self.home, p),
+                );
                 // There is no SFTP "chdir": a successful listing is what proves the
                 // directory exists, so `cd` is a listing whose reply commits the cwd.
                 self.pending = Some(Pending::Cd);
@@ -580,8 +667,20 @@ impl SftpShell {
                 self.writeln(terminal, &format!("下载 {remote} -> {}", local.display()));
                 self.pending = Some(Pending::Transfer);
                 let id = self.begin_transfer();
-                let mode = if command == "reget" { TransferMode::Resume } else { TransferMode::CreateNew };
-                self.send(terminal, SftpCommand::DownloadWith { id, remote, local, mode });
+                let mode = if command == "reget" {
+                    TransferMode::Resume
+                } else {
+                    TransferMode::CreateNew
+                };
+                self.send(
+                    terminal,
+                    SftpCommand::DownloadWith {
+                        id,
+                        remote,
+                        local,
+                        mode,
+                    },
+                );
             }
             "put" | "reput" => {
                 let Some(local_arg) = rest.first() else {
@@ -594,19 +693,31 @@ impl SftpShell {
                     self.prompt(terminal);
                     return;
                 }
-                let name = local
-                    .file_name()
-                    .map_or_else(|| String::from("upload"), |n| n.to_string_lossy().into_owned());
-                let remote = rest
-                    .get(1)
-                    .map_or_else(|| resolve_remote(&self.cwd, &self.home, &name), |p| {
-                        resolve_remote(&self.cwd, &self.home, p)
-                    });
+                let name = local.file_name().map_or_else(
+                    || String::from("upload"),
+                    |n| n.to_string_lossy().into_owned(),
+                );
+                let remote = rest.get(1).map_or_else(
+                    || resolve_remote(&self.cwd, &self.home, &name),
+                    |p| resolve_remote(&self.cwd, &self.home, p),
+                );
                 self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
                 self.pending = Some(Pending::Transfer);
                 let id = self.begin_transfer();
-                let mode = if command == "reput" { TransferMode::Resume } else { TransferMode::CreateNew };
-                self.send(terminal, SftpCommand::UploadWith { id, local, remote, mode });
+                let mode = if command == "reput" {
+                    TransferMode::Resume
+                } else {
+                    TransferMode::CreateNew
+                };
+                self.send(
+                    terminal,
+                    SftpCommand::UploadWith {
+                        id,
+                        local,
+                        remote,
+                        mode,
+                    },
+                );
             }
             "mkdir" => {
                 let Some(arg) = rest.first() else {
@@ -696,7 +807,11 @@ impl SftpShell {
             .map(|entry| {
                 let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
                 let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                (is_dir, entry.file_name().to_string_lossy().into_owned(), size)
+                (
+                    is_dir,
+                    entry.file_name().to_string_lossy().into_owned(),
+                    size,
+                )
             })
             .collect();
         if rows.is_empty() {

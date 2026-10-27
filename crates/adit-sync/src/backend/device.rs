@@ -162,7 +162,9 @@ pub fn begin(config: DeviceFlowConfig) -> Result<DeviceAuth, SyncError> {
             .map_or(DEFAULT_INTERVAL, Duration::from_secs)
             .max(DEFAULT_INTERVAL),
         expires_at: SystemTime::now()
-            + parsed.expires_in.map_or(DEFAULT_EXPIRY, Duration::from_secs),
+            + parsed
+                .expires_in
+                .map_or(DEFAULT_EXPIRY, Duration::from_secs),
         device_code: parsed.device_code,
         user_code: parsed.user_code,
         verification_uri: if parsed.verification_uri.is_empty() {
@@ -421,7 +423,10 @@ mod tests {
         );
         match step {
             PollStep::Failed(message) => {
-                assert!(message.contains("Device Flow has not been enabled"), "{message}");
+                assert!(
+                    message.contains("Device Flow has not been enabled"),
+                    "{message}"
+                );
                 assert!(message.contains("device_flow_disabled"), "{message}");
             }
             other => panic!("expected Failed, got {other:?}"),

@@ -1,15 +1,16 @@
 pub(crate) use adit_domain::{
     AuthMethod, ConnectionProfile, Environment, JumpHop, ProfileId, Protocol, SessionId,
-    SessionStatus, TunnelDef, VncOptions, VncSecurity, VncQuality,
+    SessionStatus, TunnelDef, VncOptions, VncQuality, VncSecurity,
 };
 pub(crate) use adit_session::{
     known_hosts_path, list_known_hosts, remove_known_host, AuthPromptInfo, HostKeyPromptInfo,
-    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileSortKey, RdpInput,
-    RdpMouseButton, RdpQuality, SessionError, SessionManager, SessionSummary, SftpBrowser, SftpEntry,
+    KnownHostEntry, LocalEntry, ProfileDropPosition, ProfileSortKey, RdpInput, RdpMouseButton,
+    RdpQuality, SessionError, SessionManager, SessionSummary, SftpBrowser, SftpEntry,
     TransferDirection, TransferItem, TransferStatus, TunnelKind, TunnelState,
 };
 pub(crate) use adit_storage::{
-    AppSettings, CredentialStore, HostLayout, ProfileCatalog, ProfileStore, SettingsStore, Snippet, ThemeMode,
+    AppSettings, CredentialStore, HostLayout, ProfileCatalog, ProfileStore, SettingsStore, Snippet,
+    ThemeMode,
 };
 pub(crate) use adit_terminal::{
     Color as TermColor, LogicalAnchor, MouseMode, TerminalLine, TerminalSize, TerminalSnapshot,
@@ -18,8 +19,8 @@ pub(crate) use adit_terminal::{
 pub(crate) use iced::font::Weight;
 pub(crate) use iced::keyboard::{self, key::Named, Key};
 pub(crate) use iced::widget::{
-    button, checkbox, container, mouse_area, opaque, progress_bar, row, scrollable, stack,
-    text, text_input, tooltip, Space,
+    button, checkbox, container, mouse_area, opaque, progress_bar, row, scrollable, stack, text,
+    text_input, tooltip, Space,
 };
 pub(crate) use iced::{
     clipboard, event, mouse, window, Alignment, Background, Border, Color, Element, Fill, Font,
@@ -43,6 +44,7 @@ pub enum SftpSortKey {
     Modified,
 }
 
+mod accessibility;
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
 /// `.style` closure having to thread the theme through.
@@ -51,7 +53,6 @@ pub enum SftpSortKey {
 mod autolink;
 mod i18n;
 mod tunnel_feedback;
-mod accessibility;
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub fn run_accessibility_acceptance() -> Result<(), Box<dyn std::error::Error>> {
     accessibility::run_acceptance()
@@ -59,25 +60,25 @@ pub fn run_accessibility_acceptance() -> Result<(), Box<dyn std::error::Error>> 
 pub(crate) use i18n::{runtime, set_language, t, t_in, tf};
 mod style;
 use style::*;
-mod display_accessibility;
 /// The local half of RDP clipboard file transfer. Separate from the text
 /// clipboard, which iced provides — files need Win32 directly, and the three
 /// platforms do not share a mechanism. See the module docs.
 mod clipboard_files;
-mod rdp_dragdrop;
+mod display_accessibility;
 /// Passing global hotkeys through to a fullscreen remote desktop. A Win32
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
 mod keyboard_hook;
+mod rdp_dragdrop;
 mod vnc_cursor;
 #[cfg(feature = "native-vnc-acceptance")]
 mod vnc_native_acceptance;
 #[cfg(feature = "native-workbench-acceptance")]
 mod workbench_acceptance;
-#[cfg(feature = "native-workbench-acceptance")]
-pub use workbench_acceptance::run as run_workbench_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
+#[cfg(feature = "native-workbench-acceptance")]
+pub use workbench_acceptance::run as run_workbench_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 #[doc(hidden)]
 pub mod native_hook_probe;
@@ -85,17 +86,24 @@ pub mod native_hook_probe;
 #[doc(hidden)]
 pub fn run_native_keyboard_hook_probe() {
     let installed = keyboard_hook::arm_vnc();
-    println!("root_library_installed={installed} pid={}", std::process::id());
+    println!(
+        "root_library_installed={installed} pid={}",
+        std::process::id()
+    );
     for second in 0..15 {
-        println!("second={second} diagnostics={:?} worker={:?} health={:?}",
-            keyboard_hook::diagnostics(), keyboard_hook::worker_thread_id(), keyboard_hook::worker_health());
+        println!(
+            "second={second} diagnostics={:?} worker={:?} health={:?}",
+            keyboard_hook::diagnostics(),
+            keyboard_hook::worker_thread_id(),
+            keyboard_hook::worker_health()
+        );
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
     keyboard_hook::disarm();
 }
+mod vault_ui;
 #[cfg(test)]
 mod vnc_input_wire_tests;
-mod vault_ui;
 mod workspace;
 use workspace::*;
 mod sidebar;
@@ -109,17 +117,17 @@ use missions::*;
 mod desktop_panes;
 mod editor;
 use editor::*;
-mod profile_options;
 mod appearance_editor;
+mod profile_options;
 pub use appearance_editor::AppearanceEdit;
 pub use profile_options::ProfileOptionEdit;
-use profile_options::{ProfileOptionsForm, profile_options_editor};
+use profile_options::{profile_options_editor, ProfileOptionsForm};
 mod update_loop;
 use update_loop::*;
 mod updater;
 use updater::*;
-mod profiles;
 mod jump_auth_ui;
+mod profiles;
 use profiles::*;
 mod session_ops;
 use session_ops::*;
@@ -134,18 +142,15 @@ mod input;
 mod native_windows;
 #[cfg(feature = "native-workbench-acceptance")]
 pub use native_windows::run_acceptance as run_native_windows_acceptance;
-mod window_presentation;
 mod native_ime;
 mod terminal_appearance;
+mod window_presentation;
 use terminal_appearance::*;
 mod terminal_text;
 mod theme;
 use input::*;
 use terminal_text::*;
-use theme::{
-    color_scheme_index, font_preset_index,
-    COLOR_SCHEMES, FONT_PRESETS,
-};
+use theme::{color_scheme_index, font_preset_index, COLOR_SCHEMES, FONT_PRESETS};
 
 static DARK_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -951,9 +956,19 @@ pub enum Message {
         session_id: SessionId,
         decision: adit_session::HostKeyDecision,
     },
-    AuthPromptInput { challenge_id: u64, index: usize, value: jump_auth_ui::SecretAnswer },
-    SubmitAuthPrompt { session_id: SessionId, challenge_id: u64 },
-    CancelAuthPrompt { session_id: SessionId, challenge_id: u64 },
+    AuthPromptInput {
+        challenge_id: u64,
+        index: usize,
+        value: jump_auth_ui::SecretAnswer,
+    },
+    SubmitAuthPrompt {
+        session_id: SessionId,
+        challenge_id: u64,
+    },
+    CancelAuthPrompt {
+        session_id: SessionId,
+        challenge_id: u64,
+    },
     OpenHyperlink(String),
     ConfirmOpenHyperlink,
     CancelOpenHyperlink,
@@ -1047,7 +1062,10 @@ pub enum Message {
     ProfileProxyEnabled(bool),
     ProfileProxyProgram(jump_auth_ui::SecretAnswer),
     ProfileProxyArgs(jump_auth_ui::SecretAnswer),
-    ProfileHopAuthChanged { index: usize, owner: Option<ProfileId> },
+    ProfileHopAuthChanged {
+        index: usize,
+        owner: Option<ProfileId>,
+    },
     ProfileEnvironmentChanged(Environment),
     ProfileAccentColorChanged(String),
     ProfileLabelChanged(String),
@@ -1067,15 +1085,36 @@ pub enum Message {
     /// The window gained focus. Carries the deferred startup maximize on Windows.
     WindowFocused,
     OpenRdpFileDrag,
-    RdpFileDragOwner { session: SessionId, owner: Option<isize> },
-    WindowResized { width: f32, height: f32, window: window::Id },
-    AccessibilityReady { window: window::Id, attached: bool },
+    RdpFileDragOwner {
+        session: SessionId,
+        owner: Option<isize>,
+    },
+    WindowResized {
+        width: f32,
+        height: f32,
+        window: window::Id,
+    },
+    AccessibilityReady {
+        window: window::Id,
+        attached: bool,
+    },
     AccessibilityClosed(window::Id),
     AccessibilitySelectProfile(ProfileId),
     AccessibilityActivateSession(SessionId),
-    AccessibilityScroll { window: window::Id, owner: SessionId, offset: usize },
-    AccessibilityScrollLines { window: window::Id, owner: SessionId, lines: i32 },
-    AccessibilityFocus { window: window::Id, id: iced::advanced::widget::Id },
+    AccessibilityScroll {
+        window: window::Id,
+        owner: SessionId,
+        offset: usize,
+    },
+    AccessibilityScrollLines {
+        window: window::Id,
+        owner: SessionId,
+        lines: i32,
+    },
+    AccessibilityFocus {
+        window: window::Id,
+        id: iced::advanced::widget::Id,
+    },
     ToggleFullscreen,
     CloseSyncPanel,
     SyncProviderChanged(adit_storage::SyncProvider),
@@ -1391,7 +1430,10 @@ impl Default for AditApp {
                 (
                     SessionManager::with_profiles(catalog.profiles),
                     groups,
-                    tf("已加载 {} 个会话配置和分组: {}", &[&count, &profile_store.path().display()]),
+                    tf(
+                        "已加载 {} 个会话配置和分组: {}",
+                        &[&count, &profile_store.path().display()],
+                    ),
                     None,
                 )
             }
@@ -1407,7 +1449,10 @@ impl Default for AditApp {
                 (
                     manager,
                     groups,
-                    tf("使用演示会话配置，保存后写入 {}", &[&profile_store.path().display()]),
+                    tf(
+                        "使用演示会话配置，保存后写入 {}",
+                        &[&profile_store.path().display()],
+                    ),
                     None,
                 )
             }
@@ -1417,7 +1462,10 @@ impl Default for AditApp {
                 (
                     manager,
                     groups,
-                    tf("使用演示会话配置，保存后写入 {}", &[&profile_store.path().display()]),
+                    tf(
+                        "使用演示会话配置，保存后写入 {}",
+                        &[&profile_store.path().display()],
+                    ),
                     Some(tf("读取会话配置失败: {}", &[&runtime(&error)])),
                 )
             }
@@ -1488,7 +1536,9 @@ impl AditApp {
             .clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
         let sidebar_visible = settings.sidebar_visible;
         let font_family = settings.font_family;
-        let font_size = settings.font_size.clamp(MIN_FONT_SIZE as f32, MAX_FONT_SIZE as f32);
+        let font_size = settings
+            .font_size
+            .clamp(MIN_FONT_SIZE as f32, MAX_FONT_SIZE as f32);
         let color_scheme = settings.color_scheme;
         let highlight_rules = settings.highlight_rules;
         // Into the renderer's global before the first frame. Only a toggle
@@ -1845,10 +1895,7 @@ impl AditApp {
 /// Manager syscall per profile), so this happens in `spawn_blocking` rather than
 /// on the UI thread; the caller persists `keyring_migrated` once it completes so
 /// it never runs again. Returns 0 on any error or if there is nothing to do.
-async fn migrate_keyring_credentials(
-    store: CredentialStore,
-    profile_ids: Vec<ProfileId>,
-) -> usize {
+async fn migrate_keyring_credentials(store: CredentialStore, profile_ids: Vec<ProfileId>) -> usize {
     if profile_ids.is_empty() {
         return 0;
     }
@@ -1863,7 +1910,10 @@ const MIN_WINDOW_DIM: f32 = 320.0;
 const DEFAULT_WINDOW_SIZE: (f32, f32) = (1360.0, 860.0);
 
 fn sane_window_size(width: f32, height: f32) -> (f32, f32) {
-    if width.is_finite() && height.is_finite() && width >= MIN_WINDOW_DIM && height >= MIN_WINDOW_DIM
+    if width.is_finite()
+        && height.is_finite()
+        && width >= MIN_WINDOW_DIM
+        && height >= MIN_WINDOW_DIM
     {
         (width, height)
     } else {
@@ -1887,12 +1937,14 @@ pub fn run() -> iced::Result {
         let app = AditApp::default();
         let mut tasks: Vec<Task<Message>> = Vec::new();
         if app.auto_check_updates {
-            tasks.push(Task::perform(check_for_update(), Message::AutoUpdateChecked));
+            tasks.push(Task::perform(
+                check_for_update(),
+                Message::AutoUpdateChecked,
+            ));
         }
         if !app.keyring_migrated {
             let store = app.credential_store.clone();
-            let profile_ids: Vec<ProfileId> =
-                app.manager.profiles().iter().map(|p| p.id).collect();
+            let profile_ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
             tasks.push(Task::perform(
                 migrate_keyring_credentials(store, profile_ids),
                 Message::KeyringMigrated,
@@ -1900,7 +1952,9 @@ pub fn run() -> iced::Result {
         }
         (app, Task::batch(tasks))
     };
-    let result = native_windows::run(boot, window::Settings {
+    let result = native_windows::run(
+        boot,
+        window::Settings {
             icon: app_icon(),
             size: iced::Size::new(width, height),
             // NOT `maximized: true` on Windows — that flag at creation time IS
@@ -1922,7 +1976,8 @@ pub fn run() -> iced::Result {
             // works as written.
             maximized: !cfg!(windows),
             ..window::Settings::default()
-        });
+        },
+    );
     clipboard_files::shutdown_file_clipboard();
     result
 }
@@ -2068,7 +2123,10 @@ fn sidebar_drag_event(
     }
 }
 
-#[cfg(any(feature = "native-vnc-acceptance", feature = "native-workbench-acceptance"))]
+#[cfg(any(
+    feature = "native-vnc-acceptance",
+    feature = "native-workbench-acceptance"
+))]
 fn runtime_subscription(app: &AditApp) -> Subscription<Message> {
     if mission_name_editing(app) {
         event::listen_with(mission_name_runtime_event)
@@ -2085,9 +2143,14 @@ fn mission_name_runtime_event(
     match &event {
         // text_input consumes Escape to blur itself. Retain the local lease
         // through key-up, then cancel, so neither half reaches the desktop.
-        event::Event::Keyboard(keyboard::Event::KeyPressed { key: Key::Named(Named::Escape), .. }) => None,
-        event::Event::Keyboard(keyboard::Event::KeyReleased { key: Key::Named(Named::Escape), .. }) =>
-            Some(Message::FinishMissionName(false)),
+        event::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            ..
+        }) => None,
+        event::Event::Keyboard(keyboard::Event::KeyReleased {
+            key: Key::Named(Named::Escape),
+            ..
+        }) => Some(Message::FinishMissionName(false)),
         _ => runtime_event(event, status, window),
     }
 }
@@ -2124,8 +2187,9 @@ fn runtime_event(
         event::Event::Mouse(mouse::Event::CursorMoved { position }) => {
             Some(Message::GlobalCursorMoved(position))
         }
-        event::Event::Mouse(mouse::Event::ButtonReleased(button)) =>
-            Some(Message::GlobalPointerReleased(button, status == event::Status::Ignored)),
+        event::Event::Mouse(mouse::Event::ButtonReleased(button)) => Some(
+            Message::GlobalPointerReleased(button, status == event::Status::Ignored),
+        ),
         // Files dragged from the OS file manager onto the window.
         event::Event::Window(window::Event::FileDropped(path)) => {
             Some(Message::SftpFileDropped(path))
@@ -2151,7 +2215,8 @@ mod tests {
                 event::Event::Window(window::Event::Rescaled(scale)),
                 event::Status::Captured,
                 window,
-            ).expect("DPI events belong to the window even if input is captured");
+            )
+            .expect("DPI events belong to the window even if input is captured");
             let _ = update(&mut app, message);
             assert_eq!(app.display_scale, scale);
             assert_eq!((app.window_width, app.window_height), before);
@@ -2166,12 +2231,19 @@ mod tests {
     fn proxy_form_saves_explicit_argv_and_rejects_conflicting_routes() {
         let mut app = drag_test_app();
         app.credential_store = CredentialStore::with_path(
-            "adit-proxy-test", app.profile_store.path().with_file_name("credentials.json"));
+            "adit-proxy-test",
+            app.profile_store.path().with_file_name("credentials.json"),
+        );
         app.selected_profile = Some(app.manager.profiles()[0].id);
         load_selected_profile(&mut app);
         assert!(!app.profile_proxy_enabled);
         app.profile_proxy_enabled = true;
-        app.profile_proxy_program = if cfg!(windows) { "C:\\test proxy\\proxy.exe" } else { "/test proxy/proxy" }.into();
+        app.profile_proxy_program = if cfg!(windows) {
+            "C:\\test proxy\\proxy.exe"
+        } else {
+            "/test proxy/proxy"
+        }
+        .into();
         app.profile_proxy_args = r#"["--host=%h", "%p", "%r", "%%"]"#.into();
         let id = save_profile_from_form(&mut app, false).unwrap();
         let command = app.manager.profile(id).unwrap().proxy_command.clone();
@@ -2183,23 +2255,39 @@ mod tests {
         app.profile_jumps = "bastion.invalid".into();
         assert!(save_profile_from_form(&mut app, false).is_none());
         assert_eq!(app.manager.profile(id).unwrap().proxy_command, command);
-        assert!(app.manager.sessions().is_empty(), "saving a command must never execute it");
+        assert!(
+            app.manager.sessions().is_empty(),
+            "saving a command must never execute it"
+        );
     }
 
     #[test]
     fn proxy_form_rejects_bad_json_tokens_and_unsupported_protocols_without_exposing_arguments() {
         let mut app = drag_test_app();
         app.profile_proxy_enabled = true;
-        app.profile_proxy_program = if cfg!(windows) { "C:\\proxy.exe" } else { "/proxy" }.into();
-        for args in [r#"{"password": "synthetic-sensitive"}"#, r#"["synthetic-sensitive", "%x"]"#] {
+        app.profile_proxy_program = if cfg!(windows) {
+            "C:\\proxy.exe"
+        } else {
+            "/proxy"
+        }
+        .into();
+        for args in [
+            r#"{"password": "synthetic-sensitive"}"#,
+            r#"["synthetic-sensitive", "%x"]"#,
+        ] {
             app.profile_proxy_args = args.into();
             assert!(save_profile_from_form(&mut app, false).is_none());
-            assert!(!app.last_error.as_deref().unwrap().contains("synthetic-sensitive"));
+            assert!(!app
+                .last_error
+                .as_deref()
+                .unwrap()
+                .contains("synthetic-sensitive"));
         }
         app.profile_proxy_args = "[]".into();
         app.profile_protocol = Protocol::Rdp;
         assert!(save_profile_from_form(&mut app, false).is_none());
-        let message = Message::ProfileProxyArgs(jump_auth_ui::SecretAnswer("synthetic-sensitive".into()));
+        let message =
+            Message::ProfileProxyArgs(jump_auth_ui::SecretAnswer("synthetic-sensitive".into()));
         assert!(!format!("{message:?}").contains("synthetic-sensitive"));
         assert!(app.manager.sessions().is_empty());
     }
@@ -2209,10 +2297,29 @@ mod tests {
         let mut app = drag_test_app();
         let window = window::Id::unique();
         // The runner's 1000x700 physical window at 200% has this logical client.
-        let _ = update(&mut app, Message::WindowResized { width: 487.0, height: 314.5, window });
+        let _ = update(
+            &mut app,
+            Message::WindowResized {
+                width: 487.0,
+                height: 314.5,
+                window,
+            },
+        );
         assert_eq!((app.window_width, app.window_height), (487.0, 314.5));
-        for (width, height) in [(0.0, 0.0), (487.0, 0.0), (f32::NAN, 314.5), (487.0, f32::INFINITY)] {
-            let _ = update(&mut app, Message::WindowResized { width, height, window });
+        for (width, height) in [
+            (0.0, 0.0),
+            (487.0, 0.0),
+            (f32::NAN, 314.5),
+            (487.0, f32::INFINITY),
+        ] {
+            let _ = update(
+                &mut app,
+                Message::WindowResized {
+                    width,
+                    height,
+                    window,
+                },
+            );
             assert_eq!((app.window_width, app.window_height), (487.0, 314.5));
         }
         assert_eq!(sane_window_size(487.0, 314.5), DEFAULT_WINDOW_SIZE);
@@ -2241,8 +2348,14 @@ mod tests {
         assert_eq!(rdp_scancode_for_code(Code::NumpadEnter), Some((0x1C, true)));
         assert_eq!(rdp_scancode_for_code(Code::ArrowUp), Some((0x48, true)));
         assert_eq!(rdp_scancode_for_code(Code::ArrowLeft), Some((0x4B, true)));
-        assert_eq!(rdp_scancode_for_code(Code::ControlRight), Some((0x1D, true)));
-        assert_eq!(rdp_scancode_for_code(Code::NumpadDivide), Some((0x35, true)));
+        assert_eq!(
+            rdp_scancode_for_code(Code::ControlRight),
+            Some((0x1D, true))
+        );
+        assert_eq!(
+            rdp_scancode_for_code(Code::NumpadDivide),
+            Some((0x35, true))
+        );
         // Unmapped keys yield None (e.g. PrintScreen's multi-byte sequence).
         assert_eq!(rdp_scancode_for_code(Code::PrintScreen), None);
     }
@@ -2294,7 +2407,8 @@ mod tests {
         );
 
         // Nothing installable at all is None, not a blank URL that would 404.
-        let none = serde_json::json!([{"name": "notes.txt", "browser_download_url": "https://x/t"}]);
+        let none =
+            serde_json::json!([{"name": "notes.txt", "browser_download_url": "https://x/t"}]);
         assert!(pick_installer_asset(none.as_array().unwrap(), "x86_64").is_none());
     }
 
@@ -2430,7 +2544,10 @@ mod tests {
 
         // The RDP case is asserted through the same function the layout uses,
         // so the two cannot drift: with an RDP session active it must be zero.
-        assert!(!app.manager.active_is_desktop(), "harness has no RDP session");
+        assert!(
+            !app.manager.active_is_desktop(),
+            "harness has no RDP session"
+        );
     }
 
     /// Fullscreen over a desktop leaves the toolbar's ⌄ tab and nothing else:
@@ -2742,7 +2859,11 @@ mod tests {
 
         let _ = update(&mut app, Message::RunMenu(MenuCommand::DeleteProfile));
 
-        assert_eq!(app.manager.profiles().len(), 1, "both selected rows deleted");
+        assert_eq!(
+            app.manager.profiles().len(),
+            1,
+            "both selected rows deleted"
+        );
         // And nothing stale is left pointing at a profile that is gone.
         let live: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
         assert!(app.selected_profiles.iter().all(|id| live.contains(id)));
@@ -2952,8 +3073,10 @@ mod tests {
     fn new_vnc_profile_saves_without_an_ssh_username_and_reopens_the_password_dialog() {
         let mut app = drag_test_app();
         // The scratch stores also isolate credentials; never touch the real vault.
-        app.credential_store =
-            CredentialStore::with_path("adit-vnc-test", app.profile_store.path().with_file_name("credentials.json"));
+        app.credential_store = CredentialStore::with_path(
+            "adit-vnc-test",
+            app.profile_store.path().with_file_name("credentials.json"),
+        );
         app.selected_profile = None;
         app.profile_name = "Linux desktop".into();
         app.profile_host = "127.0.0.1".into();
@@ -2977,7 +3100,13 @@ mod tests {
         app.connection_dialog = None;
         app.profile_password = "vnc-test-only".into();
         assert_eq!(save_profile_from_form(&mut app, false), Some(id));
-        assert_eq!(app.credential_store.load_profile_password(id).unwrap().as_deref(), Some("vnc-test-only"));
+        assert_eq!(
+            app.credential_store
+                .load_profile_password(id)
+                .unwrap()
+                .as_deref(),
+            Some("vnc-test-only")
+        );
         let profile = app.manager.profile(id).unwrap();
         let wire = serde_json::to_string(profile).unwrap();
         assert!(!wire.contains("vnc-test-only"));
@@ -2988,28 +3117,48 @@ mod tests {
 
     #[test]
     fn a_vnc_reconnect_clears_same_tab_pixels_cursor_and_held_key_cache() {
-        let mut app=drag_test_app();
-        let listener=std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let mut profile=ConnectionProfile::new("reconnect cache","127.0.0.1",listener.local_addr().unwrap().port(),"");
-        profile.protocol=Protocol::Vnc;
-        let id=profile.id;
-        app.manager=SessionManager::with_profiles(vec![profile]);
-        let session=app.manager.open_live_vnc_session(id,String::new()).unwrap();
-        app.rdp_frame_session=Some(session);
-        let frame=adit_session::RdpFrame{width:2,height:2,rgba:vec![255;16],generation:9};
-        app.rdp_tiles=split_into_tiles(&frame);
-        app.rdp_tiles_prev=split_into_tiles(&frame);
-        app.rdp_surface_size=Some((2,2));
-        app.rdp_frame_generation=9;
-        let _=app.vnc_frame_coverage.observe(7, || true);
+        let mut app = drag_test_app();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut profile = ConnectionProfile::new(
+            "reconnect cache",
+            "127.0.0.1",
+            listener.local_addr().unwrap().port(),
+            "",
+        );
+        profile.protocol = Protocol::Vnc;
+        let id = profile.id;
+        app.manager = SessionManager::with_profiles(vec![profile]);
+        let session = app
+            .manager
+            .open_live_vnc_session(id, String::new())
+            .unwrap();
+        app.rdp_frame_session = Some(session);
+        let frame = adit_session::RdpFrame {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+            generation: 9,
+        };
+        app.rdp_tiles = split_into_tiles(&frame);
+        app.rdp_tiles_prev = split_into_tiles(&frame);
+        app.rdp_surface_size = Some((2, 2));
+        app.rdp_frame_generation = 9;
+        let _ = app.vnc_frame_coverage.observe(7, || true);
         assert!(app.vnc_frame_coverage.may_retire());
-        app.vnc_cursor=Some(adit_session::VncCursor{width:1,height:1,rgba:vec![255;4],generation:1,..Default::default()});
-        app.vnc_cursor_handle=Some(iced::widget::image::Handle::from_rgba(1,1,vec![255;4]));
-        app.vnc_pressed_keys.push((Physical::Code(Code::KeyA),0x61));
-        app.rdp_clipboard_offered=Some("old clipboard sample".into());
-        let old_epoch=app.desktop_clipboard_epoch;
+        app.vnc_cursor = Some(adit_session::VncCursor {
+            width: 1,
+            height: 1,
+            rgba: vec![255; 4],
+            generation: 1,
+            ..Default::default()
+        });
+        app.vnc_cursor_handle = Some(iced::widget::image::Handle::from_rgba(1, 1, vec![255; 4]));
+        app.vnc_pressed_keys
+            .push((Physical::Code(Code::KeyA), 0x61));
+        app.rdp_clipboard_offered = Some("old clipboard sample".into());
+        let old_epoch = app.desktop_clipboard_epoch;
         app.manager.disconnect(session).unwrap();
-        let _=update(&mut app,Message::Tick);
+        let _ = update(&mut app, Message::Tick);
         assert!(app.desktop_clipboard_epoch != old_epoch);
         assert!(app.rdp_clipboard_offered.is_none());
         assert!(app.rdp_tiles.is_empty());
@@ -3025,15 +3174,26 @@ mod tests {
     #[test]
     fn switching_tabs_clears_the_previous_vnc_resize_coverage_owner() {
         let mut app = drag_test_app();
-        let old = app.manager.open_mock_session(app.manager.profiles()[0].id).unwrap();
+        let old = app
+            .manager
+            .open_mock_session(app.manager.profiles()[0].id)
+            .unwrap();
         app.rdp_frame_session = Some(old);
-        let frame = adit_session::RdpFrame { width: 2, height: 2, rgba: vec![255; 16], generation: 1 };
+        let frame = adit_session::RdpFrame {
+            width: 2,
+            height: 2,
+            rgba: vec![255; 16],
+            generation: 1,
+        };
         app.rdp_tiles = split_into_tiles(&frame);
         app.rdp_tiles_prev = split_into_tiles(&frame);
         app.rdp_surface_size = Some((2, 2));
         app.rdp_surface_size_prev = Some((2, 2));
         let _ = app.vnc_frame_coverage.observe(99, || true);
-        let next = app.manager.open_mock_session(app.manager.profiles()[1].id).unwrap();
+        let next = app
+            .manager
+            .open_mock_session(app.manager.profiles()[1].id)
+            .unwrap();
         let _ = update(&mut app, Message::RdpTick);
         assert_eq!(app.rdp_frame_session, Some(next));
         assert!(app.rdp_tiles.is_empty());
@@ -3045,14 +3205,21 @@ mod tests {
     fn vnc_without_live_transport_does_not_adopt_keyboard_ownership() {
         let mut app = drag_test_app();
         let physical = Physical::Code(Code::KeyA);
-        let press = key_press(Key::Character("a".into()), Key::Character("A".into()),
-            physical, keyboard::Modifiers::SHIFT, Some("A"));
+        let press = key_press(
+            Key::Character("a".into()),
+            Key::Character("A".into()),
+            physical,
+            keyboard::Modifiers::SHIFT,
+            Some("A"),
+        );
         send_vnc_keyboard(&mut app, &press);
         assert!(!app.manager.active_is_vnc());
         assert!(app.vnc_pressed_keys.is_empty());
         let release = keyboard::Event::KeyReleased {
-            key: Key::Character("a".into()), modified_key: Key::Character("a".into()),
-            physical_key: physical, location: keyboard::Location::Standard,
+            key: Key::Character("a".into()),
+            modified_key: Key::Character("a".into()),
+            physical_key: physical,
+            location: keyboard::Location::Standard,
             modifiers: keyboard::Modifiers::empty(),
         };
         send_vnc_keyboard(&mut app, &release);
@@ -3066,17 +3233,26 @@ mod tests {
     fn stale_desktop_clipboard_reads_do_not_cross_tab_or_sharing_boundaries() {
         let mut app = drag_test_app();
         app.rdp_clipboard_offered = None;
-        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), 0, Some("stale".into())));
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(SessionId::new(), 0, Some("stale".into())),
+        );
         assert!(app.rdp_clipboard_offered.is_none());
         let profile = app.manager.profiles()[0].id;
         let session = app.manager.open_mock_session(profile).unwrap();
         let epoch = app.desktop_clipboard_epoch;
         let _ = update(&mut app, Message::ToggleRdpClipboard(false));
         let _ = update(&mut app, Message::ToggleRdpClipboard(true));
-        let _ = update(&mut app, Message::RdpClipboardPolled(session, epoch, Some("captured before off/on".into())));
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, epoch, Some("captured before off/on".into())),
+        );
         assert!(app.rdp_clipboard_offered.is_none());
         app.rdp_clipboard = false;
-        let _ = update(&mut app, Message::RdpClipboardPolled(SessionId::new(), 0, Some("disabled".into())));
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(SessionId::new(), 0, Some("disabled".into())),
+        );
         assert!(app.rdp_clipboard_offered.is_none());
     }
 
@@ -3084,19 +3260,31 @@ mod tests {
     fn the_vnc_tab_reconnect_menu_reopens_its_own_password_dialog() {
         let mut app = drag_test_app();
         app.credential_store = CredentialStore::with_path(
-            "adit-vnc-reconnect-test", app.profile_store.path().with_file_name("credentials.json"),
+            "adit-vnc-reconnect-test",
+            app.profile_store.path().with_file_name("credentials.json"),
         );
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let mut profile = ConnectionProfile::new(
-            "VNC reconnect", "127.0.0.1", listener.local_addr().unwrap().port(), "",
+            "VNC reconnect",
+            "127.0.0.1",
+            listener.local_addr().unwrap().port(),
+            "",
         );
         profile.protocol = Protocol::Vnc;
         let id = profile.id;
         app.manager = SessionManager::with_profiles(vec![profile]);
-        let session = app.manager.open_live_vnc_session(id, String::new()).unwrap();
+        let session = app
+            .manager
+            .open_live_vnc_session(id, String::new())
+            .unwrap();
         app.manager.disconnect(session).unwrap();
         let _ = update(&mut app, Message::ReconnectSession(session));
-        assert_eq!(app.connection_dialog.as_ref().map(|dialog| dialog.profile_id), Some(id));
+        assert_eq!(
+            app.connection_dialog
+                .as_ref()
+                .map(|dialog| dialog.profile_id),
+            Some(id)
+        );
         assert!(app.manager.sessions().is_empty());
     }
 
@@ -3213,7 +3401,11 @@ mod tests {
         let ids: Vec<ProfileId> = app.manager.profiles().iter().map(|p| p.id).collect();
         let _ = update(&mut app, Message::ProfilePressed(ids[0]));
         let _ = update(&mut app, Message::ProfileHovered(ids[2]));
-        assert_eq!(slot_shape(&app), "abc", "a tree drag must not reshuffle the grid");
+        assert_eq!(
+            slot_shape(&app),
+            "abc",
+            "a tree drag must not reshuffle the grid"
+        );
         let _ = update(&mut app, Message::CancelProfileDrag);
     }
 
@@ -3367,7 +3559,11 @@ mod tests {
             "a grid drag must never commit through the tree's own drop zones"
         );
         assert_eq!(
-            app.manager.profiles().iter().filter(|p| p.group == "g").count(),
+            app.manager
+                .profiles()
+                .iter()
+                .filter(|p| p.group == "g")
+                .count(),
             3,
             "and it must not ungroup anything"
         );
@@ -3393,7 +3589,9 @@ mod tests {
         assert!(is_openable_http_url("http://10.0.0.1:8080/path"));
         assert!(is_openable_http_url("HTTPS://Example.COM"));
         // Non-http(s) schemes a hostile server might emit are refused.
-        assert!(!is_openable_http_url("file:///C:/Windows/System32/calc.exe"));
+        assert!(!is_openable_http_url(
+            "file:///C:/Windows/System32/calc.exe"
+        ));
         assert!(!is_openable_http_url("javascript:alert(1)"));
         assert!(!is_openable_http_url("ftp://x/y"));
         assert!(!is_openable_http_url(""));
@@ -3414,7 +3612,10 @@ mod tests {
         assert!(parse_hex_color("#zzzzzz").is_none());
         assert!(parse_hex_color("#12").is_none());
         assert!(parse_hex_color("１２３４５６").is_none()); // full-width digits
-        assert_eq!(parse_hex_color("#1a2b3c"), Some(Color::from_rgb8(26, 43, 60)));
+        assert_eq!(
+            parse_hex_color("#1a2b3c"),
+            Some(Color::from_rgb8(26, 43, 60))
+        );
     }
 
     #[test]
@@ -3436,12 +3637,24 @@ mod tests {
     #[test]
     fn mouse_events_encode_sgr_and_x10() {
         // SGR (1006): ESC[<cb;col;row(M|m), 1-based coords.
-        assert_eq!(encode_mouse_event(true, 0, 0, 0, true, false), b"\x1b[<0;1;1M");
-        assert_eq!(encode_mouse_event(true, 0, 4, 2, false, false), b"\x1b[<0;5;3m");
+        assert_eq!(
+            encode_mouse_event(true, 0, 0, 0, true, false),
+            b"\x1b[<0;1;1M"
+        );
+        assert_eq!(
+            encode_mouse_event(true, 0, 4, 2, false, false),
+            b"\x1b[<0;5;3m"
+        );
         // Drag adds 32 to the button code.
-        assert_eq!(encode_mouse_event(true, 0, 9, 1, true, true), b"\x1b[<32;10;2M");
+        assert_eq!(
+            encode_mouse_event(true, 0, 9, 1, true, true),
+            b"\x1b[<32;10;2M"
+        );
         // Wheel up / down.
-        assert_eq!(encode_mouse_event(true, 64, 0, 0, true, false), b"\x1b[<64;1;1M");
+        assert_eq!(
+            encode_mouse_event(true, 64, 0, 0, true, false),
+            b"\x1b[<64;1;1M"
+        );
         // Legacy X10: ESC [ M (cb+32) (col+1+32) (row+1+32).
         assert_eq!(
             encode_mouse_event(false, 0, 0, 0, true, false),
@@ -3479,7 +3692,10 @@ mod tests {
         assert_eq!(command_input_delta("ls", "ls -"), Some(b" -".to_vec()));
         assert_eq!(command_input_delta("", "a"), Some(b"a".to_vec()));
         // Erased text -> one DEL per removed char.
-        assert_eq!(command_input_delta("ls -l", "ls"), Some(vec![0x7f, 0x7f, 0x7f]));
+        assert_eq!(
+            command_input_delta("ls -l", "ls"),
+            Some(vec![0x7f, 0x7f, 0x7f])
+        );
         // No change -> nothing to send.
         assert_eq!(command_input_delta("ls", "ls"), Some(Vec::new()));
         // A mid-string edit can't be a simple keystroke -> None (don't send).
@@ -3488,15 +3704,34 @@ mod tests {
 
     #[test]
     fn folder_reorder_is_direction_aware() {
-        let base = || vec!["A".to_string(), "B".to_string(), "C".to_string(), "D".to_string()];
+        let base = || {
+            vec![
+                "A".to_string(),
+                "B".to_string(),
+                "C".to_string(),
+                "D".to_string(),
+            ]
+        };
         // Drag B (up) onto A -> lands before A.
-        assert_eq!(reordered_folders(base(), "B", "A"), vec!["B", "A", "C", "D"]);
+        assert_eq!(
+            reordered_folders(base(), "B", "A"),
+            vec!["B", "A", "C", "D"]
+        );
         // Drag A (down) onto C -> lands after C.
-        assert_eq!(reordered_folders(base(), "A", "C"), vec!["B", "C", "A", "D"]);
+        assert_eq!(
+            reordered_folders(base(), "A", "C"),
+            vec!["B", "C", "A", "D"]
+        );
         // Drag D (up) onto B -> lands before B.
-        assert_eq!(reordered_folders(base(), "D", "B"), vec!["A", "D", "B", "C"]);
+        assert_eq!(
+            reordered_folders(base(), "D", "B"),
+            vec!["A", "D", "B", "C"]
+        );
         // Drag A (down) onto the last -> lands at the very end.
-        assert_eq!(reordered_folders(base(), "A", "D"), vec!["B", "C", "D", "A"]);
+        assert_eq!(
+            reordered_folders(base(), "A", "D"),
+            vec!["B", "C", "D", "A"]
+        );
         // Onto itself, or an unknown name, is a no-op.
         assert_eq!(reordered_folders(base(), "B", "B"), base());
         assert_eq!(reordered_folders(base(), "B", "Z"), base());
@@ -3623,8 +3858,11 @@ mod tests {
     #[test]
     fn sftp_history_search_ctrl_r_reaches_the_terminal_byte_path() {
         let event = key_press(
-            Key::Character("r".into()), Key::Character("r".into()),
-            Physical::Code(Code::KeyR), keyboard::Modifiers::CTRL, None,
+            Key::Character("r".into()),
+            Key::Character("r".into()),
+            Physical::Code(Code::KeyR),
+            keyboard::Modifiers::CTRL,
+            None,
         );
         assert!(!is_terminal_copy_shortcut(&event));
         assert_eq!(encode_keyboard_event(event), Some(vec![0x12]));
@@ -3871,14 +4109,20 @@ mod tests {
     #[test]
     fn scroll_delta_converts_to_terminal_rows() {
         assert_eq!(
-            scroll_delta_to_rows(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }, TerminalMetrics::new("", 13.0)),
+            scroll_delta_to_rows(
+                mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 },
+                TerminalMetrics::new("", 13.0)
+            ),
             Some(3)
         );
         assert_eq!(
-            scroll_delta_to_rows(mouse::ScrollDelta::Pixels {
-                x: 0.0,
-                y: -TerminalMetrics::new("", 13.0).cell_height
-            }, TerminalMetrics::new("", 13.0)),
+            scroll_delta_to_rows(
+                mouse::ScrollDelta::Pixels {
+                    x: 0.0,
+                    y: -TerminalMetrics::new("", 13.0).cell_height
+                },
+                TerminalMetrics::new("", 13.0)
+            ),
             Some(-1)
         );
     }

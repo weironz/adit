@@ -100,7 +100,9 @@ struct VaultState {
 
 impl std::fmt::Debug for VaultState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("VaultState").field("unlocked", &self.key.is_some()).finish_non_exhaustive()
+        f.debug_struct("VaultState")
+            .field("unlocked", &self.key.is_some())
+            .finish_non_exhaustive()
     }
 }
 
@@ -232,7 +234,10 @@ impl CredentialStore {
         let mut imported = 0;
         for &profile_id in profile_ids {
             for (account, legacy) in [
-                (password_account(profile_id), format!("profile:{profile_id}:password")),
+                (
+                    password_account(profile_id),
+                    format!("profile:{profile_id}:password"),
+                ),
                 (
                     passphrase_account(profile_id),
                     format!("profile:{profile_id}:passphrase"),
@@ -299,7 +304,11 @@ impl CredentialStore {
         self.rekey(None, Some(master))
     }
 
-    pub fn change_master_password(&self, current: &str, new: &str) -> Result<PathBuf, CredentialError> {
+    pub fn change_master_password(
+        &self,
+        current: &str,
+        new: &str,
+    ) -> Result<PathBuf, CredentialError> {
         validate_master(new)?;
         self.rekey(Some(current), Some(new))
     }
@@ -312,13 +321,20 @@ impl CredentialStore {
     pub fn export_encrypted(&self, destination: &Path) -> Result<(), CredentialError> {
         let mut state = self.state()?;
         self.reload(&mut state)?;
-        let bytes = state.bytes.as_ref().ok_or(CredentialError::ProtectionMode)?;
+        let bytes = state
+            .bytes
+            .as_ref()
+            .ok_or(CredentialError::ProtectionMode)?;
         write_new_synced(destination, bytes)
     }
 
     /// Explicit transfer/recovery. Password and every account are verified
     /// before backup/replacement. Import leaves a master vault locked.
-    pub fn import_encrypted(&self, source: &Path, master: Option<&str>) -> Result<PathBuf, CredentialError> {
+    pub fn import_encrypted(
+        &self,
+        source: &Path,
+        master: Option<&str>,
+    ) -> Result<PathBuf, CredentialError> {
         let bytes = std::fs::read(source)?;
         let candidate = decode_file(&bytes)?;
         let key = if candidate.version == 2 {
@@ -378,7 +394,10 @@ impl CredentialStore {
         self.reload(&mut state)?;
         let key = state_key(&state)?;
         let file = state.file.as_ref().unwrap();
-        file.entries.get(account).map(|s| open_entry(&key, s, file.version, account)).transpose()
+        file.entries
+            .get(account)
+            .map(|s| open_entry(&key, s, file.version, account))
+            .transpose()
     }
 
     fn set(&self, account: &str, secret: &str) -> Result<(), CredentialError> {
@@ -386,7 +405,10 @@ impl CredentialStore {
         self.reload(&mut state)?;
         let key = state_key(&state)?;
         let mut candidate = state.file.as_ref().unwrap().clone();
-        candidate.entries.insert(account.to_owned(), seal_entry(&key, secret, candidate.version, account)?);
+        candidate.entries.insert(
+            account.to_owned(),
+            seal_entry(&key, secret, candidate.version, account)?,
+        );
         self.commit(&mut state, candidate)
     }
 
@@ -395,12 +417,16 @@ impl CredentialStore {
         self.reload(&mut state)?;
         let _key = state_key(&state)?;
         let mut candidate = state.file.as_ref().unwrap().clone();
-        if candidate.entries.remove(account).is_none() { return Ok(()); }
+        if candidate.entries.remove(account).is_none() {
+            return Ok(());
+        }
         self.commit(&mut state, candidate)
     }
 
     fn state(&self) -> Result<std::sync::MutexGuard<'_, VaultState>, CredentialError> {
-        self.cache.lock().map_err(|_| CredentialError::Corrupt("credential store lock poisoned".into()))
+        self.cache
+            .lock()
+            .map_err(|_| CredentialError::Corrupt("credential store lock poisoned".into()))
     }
 
     fn reload(&self, state: &mut VaultState) -> Result<(), CredentialError> {
@@ -420,17 +446,30 @@ impl CredentialStore {
         Ok(())
     }
 
-    fn commit(&self, state: &mut VaultState, candidate: CredentialFile) -> Result<(), CredentialError> {
+    fn commit(
+        &self,
+        state: &mut VaultState,
+        candidate: CredentialFile,
+    ) -> Result<(), CredentialError> {
         let bytes = serde_json::to_vec_pretty(&candidate)?;
         // Serialize cooperating Adit processes around compare-and-replace. A
         // byte comparison without a cross-process lock still has a TOCTOU race.
         let lock_path = self.path.with_extension("json.lock");
-        if let Some(parent) = lock_path.parent() { std::fs::create_dir_all(parent)?; }
-        let lock = std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(lock_path)?;
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let lock = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(lock_path)?;
         lock.lock()?;
         // Detect an external replacement before committing; never silently
         // write cached entries over a different vault or a sync conflict.
-        if read_optional(&self.path)? != state.bytes { return Err(CredentialError::Conflict); }
+        if read_optional(&self.path)? != state.bytes {
+            return Err(CredentialError::Conflict);
+        }
         atomic_write(&self.path, &bytes)?;
         state.file = Some(candidate);
         state.bytes = Some(bytes);
@@ -467,33 +506,54 @@ fn read_optional(path: &Path) -> Result<Option<Vec<u8>>, CredentialError> {
 fn decode_file(bytes: &[u8]) -> Result<CredentialFile, CredentialError> {
     let file: CredentialFile = serde_json::from_slice(bytes)?;
     if !(1..=FORMAT_VERSION).contains(&file.version) {
-        return Err(CredentialError::Corrupt(format!("unsupported credential format {}", file.version)));
+        return Err(CredentialError::Corrupt(format!(
+            "unsupported credential format {}",
+            file.version
+        )));
     }
     if hex::decode(&file.salt).map_or(true, |s| s.len() != SALT_LEN) {
         return Err(CredentialError::Corrupt("invalid salt".into()));
     }
-    if file.version == 2 && (file.protection.as_deref() != Some("argon2id-64m-t3-p1") || file.verifier.is_none()) {
-        return Err(CredentialError::Corrupt("invalid master-password protection metadata".into()));
+    if file.version == 2
+        && (file.protection.as_deref() != Some("argon2id-64m-t3-p1") || file.verifier.is_none())
+    {
+        return Err(CredentialError::Corrupt(
+            "invalid master-password protection metadata".into(),
+        ));
     }
     if file.version == 1 && (file.protection.is_some() || file.verifier.is_some()) {
-        return Err(CredentialError::Corrupt("inconsistent credential protection version".into()));
+        return Err(CredentialError::Corrupt(
+            "inconsistent credential protection version".into(),
+        ));
     }
     Ok(file)
 }
 
 fn state_key(state: &VaultState) -> Result<Zeroizing<[u8; 32]>, CredentialError> {
     let file = state.file.as_ref().unwrap();
-    if file.version == 1 { derive_key(&file.salt) }
-    else { state.key.as_ref().map(|key| Zeroizing::new(**key)).ok_or(CredentialError::Locked) }
+    if file.version == 1 {
+        derive_key(&file.salt)
+    } else {
+        state
+            .key
+            .as_ref()
+            .map(|key| Zeroizing::new(**key))
+            .ok_or(CredentialError::Locked)
+    }
 }
 
 fn validate_master(master: &str) -> Result<(), CredentialError> {
-    if master.chars().count() < 12 { Err(CredentialError::WeakMasterPassword) } else { Ok(()) }
+    if master.chars().count() < 12 {
+        Err(CredentialError::WeakMasterPassword)
+    } else {
+        Ok(())
+    }
 }
 
 fn derive_master_key(salt: &str, master: &str) -> Result<Zeroizing<[u8; 32]>, CredentialError> {
     let salt = hex::decode(salt).map_err(|_| CredentialError::Decrypt)?;
-    let params = Params::new(65536, 3, 1, Some(32)).map_err(|e| CredentialError::Kdf(e.to_string()))?;
+    let params =
+        Params::new(65536, 3, 1, Some(32)).map_err(|e| CredentialError::Kdf(e.to_string()))?;
     let mut key = Zeroizing::new([0u8; 32]);
     Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
         .hash_password_into(master.as_bytes(), &salt, key.as_mut())
@@ -503,9 +563,15 @@ fn derive_master_key(salt: &str, master: &str) -> Result<Zeroizing<[u8; 32]>, Cr
 
 fn master_key(file: &CredentialFile, master: &str) -> Result<Zeroizing<[u8; 32]>, CredentialError> {
     let key = derive_master_key(&file.salt, master)?;
-    let check = file.verifier.as_ref().ok_or(CredentialError::WrongMasterPassword)?;
-    let plaintext = Zeroizing::new(open(&key, check).map_err(|_| CredentialError::WrongMasterPassword)?);
-    if plaintext.as_str() != MASTER_VERIFIER { return Err(CredentialError::WrongMasterPassword); }
+    let check = file
+        .verifier
+        .as_ref()
+        .ok_or(CredentialError::WrongMasterPassword)?;
+    let plaintext =
+        Zeroizing::new(open(&key, check).map_err(|_| CredentialError::WrongMasterPassword)?);
+    if plaintext.as_str() != MASTER_VERIFIER {
+        return Err(CredentialError::WrongMasterPassword);
+    }
     Ok(key)
 }
 
@@ -520,18 +586,30 @@ fn backup_verified(path: &Path, previous: Option<&[u8]>) -> Result<PathBuf, Cred
     let backup = unique_sibling(path, "backup");
     if let Some(bytes) = previous {
         write_new_synced(&backup, bytes)?;
-        if std::fs::read(&backup)? != bytes { return Err(CredentialError::Corrupt("backup verification failed".into())); }
+        if std::fs::read(&backup)? != bytes {
+            return Err(CredentialError::Corrupt(
+                "backup verification failed".into(),
+            ));
+        }
     } else {
         // Empty initial stores still receive a valid, reversible v1 backup.
-        write_new_synced(&backup, &serde_json::to_vec_pretty(&CredentialFile::create())?)?;
+        write_new_synced(
+            &backup,
+            &serde_json::to_vec_pretty(&CredentialFile::create())?,
+        )?;
     }
     Ok(backup)
 }
 
 fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
     use std::io::Write;
-    if let Some(parent) = path.parent() { std::fs::create_dir_all(parent)?; }
-    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(path)?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
     restrict_permissions(path);
     file.write_all(bytes)?;
     file.sync_all()?;
@@ -546,7 +624,9 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), CredentialError> {
         return Err(e.into());
     }
     #[cfg(unix)]
-    if let Some(parent) = path.parent() { std::fs::File::open(parent)?.sync_all()?; }
+    if let Some(parent) = path.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
     Ok(())
 }
 
@@ -563,11 +643,17 @@ fn replace_file(tmp: &Path, destination: &Path) -> std::io::Result<()> {
         fn MoveFileExW(existing: *const u16, new: *const u16, flags: u32) -> i32;
     }
     let source: Vec<u16> = tmp.as_os_str().encode_wide().chain(Some(0)).collect();
-    let target: Vec<u16> = destination.as_os_str().encode_wide().chain(Some(0)).collect();
+    let target: Vec<u16> = destination
+        .as_os_str()
+        .encode_wide()
+        .chain(Some(0))
+        .collect();
     // REPLACE_EXISTING | WRITE_THROUGH: never delete the old vault first.
     if unsafe { MoveFileExW(source.as_ptr(), target.as_ptr(), 0x1 | 0x8) } == 0 {
         Err(std::io::Error::last_os_error())
-    } else { Ok(()) }
+    } else {
+        Ok(())
+    }
 }
 
 /// Derive the file key. `salt` is the file's hex salt.
@@ -588,26 +674,69 @@ fn seal(key: &[u8; 32], secret: &str) -> Result<Sealed, CredentialError> {
     seal_entry(key, secret, 1, "")
 }
 
-fn seal_entry(key: &[u8; 32], secret: &str, version: u32, account: &str) -> Result<Sealed, CredentialError> {
+fn seal_entry(
+    key: &[u8; 32],
+    secret: &str,
+    version: u32,
+    account: &str,
+) -> Result<Sealed, CredentialError> {
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
-    let aad = if version == 2 { account.as_bytes() } else { &[] };
-    let ciphertext = cipher.encrypt(&nonce, Payload { msg: secret.as_bytes(), aad }).map_err(|_| CredentialError::Encrypt)?;
-    Ok(Sealed { nonce: hex::encode(nonce), ciphertext: hex::encode(ciphertext) })
+    let aad = if version == 2 {
+        account.as_bytes()
+    } else {
+        &[]
+    };
+    let ciphertext = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: secret.as_bytes(),
+                aad,
+            },
+        )
+        .map_err(|_| CredentialError::Encrypt)?;
+    Ok(Sealed {
+        nonce: hex::encode(nonce),
+        ciphertext: hex::encode(ciphertext),
+    })
 }
 
 fn open(key: &[u8; 32], sealed: &Sealed) -> Result<String, CredentialError> {
     open_entry(key, sealed, 1, "")
 }
 
-fn open_entry(key: &[u8; 32], sealed: &Sealed, version: u32, account: &str) -> Result<String, CredentialError> {
+fn open_entry(
+    key: &[u8; 32],
+    sealed: &Sealed,
+    version: u32,
+    account: &str,
+) -> Result<String, CredentialError> {
     let nonce = hex::decode(&sealed.nonce).map_err(|_| CredentialError::Decrypt)?;
-    if nonce.len() != 24 { return Err(CredentialError::Decrypt); }
+    if nonce.len() != 24 {
+        return Err(CredentialError::Decrypt);
+    }
     let ciphertext = hex::decode(&sealed.ciphertext).map_err(|_| CredentialError::Decrypt)?;
     let cipher = XChaCha20Poly1305::new(Key::from_slice(key));
-    let aad = if version == 2 { account.as_bytes() } else { &[] };
-    let mut plaintext = Zeroizing::new(cipher.decrypt(XNonce::from_slice(&nonce), Payload { msg: &ciphertext, aad }).map_err(|_| CredentialError::Decrypt)?);
-    let value = std::str::from_utf8(&plaintext).map_err(|_| CredentialError::Decrypt)?.to_owned();
+    let aad = if version == 2 {
+        account.as_bytes()
+    } else {
+        &[]
+    };
+    let mut plaintext = Zeroizing::new(
+        cipher
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: &ciphertext,
+                    aad,
+                },
+            )
+            .map_err(|_| CredentialError::Decrypt)?,
+    );
+    let value = std::str::from_utf8(&plaintext)
+        .map_err(|_| CredentialError::Decrypt)?
+        .to_owned();
     use zeroize::Zeroize;
     plaintext.zeroize();
     Ok(value)
@@ -692,7 +821,9 @@ mod tests {
     fn secrets_are_not_stored_in_plaintext() {
         let (store, path) = temp_store("plaintext");
         let id = ProfileId::new();
-        store.save_profile_password(id, "super-secret-value").unwrap();
+        store
+            .save_profile_password(id, "super-secret-value")
+            .unwrap();
 
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(
@@ -723,10 +854,7 @@ mod tests {
         let mut raw = hex::decode(&sealed.ciphertext).unwrap();
         raw[0] ^= 0xff;
         sealed.ciphertext = hex::encode(raw);
-        assert!(matches!(
-            open(&key, &sealed),
-            Err(CredentialError::Decrypt)
-        ));
+        assert!(matches!(open(&key, &sealed), Err(CredentialError::Decrypt)));
     }
 
     #[test]
@@ -744,30 +872,58 @@ mod tests {
     fn master_migration_verifies_backup_and_rejects_builtin_key() {
         let (store, path) = temp_store("master_migrate");
         let ids = [ProfileId::new(), ProfileId::new(), ProfileId::new()];
-        for (id, secret) in ids.iter().zip(["ssh-synthetic", "rdp-synthetic", "vnc-synthetic"]) {
+        for (id, secret) in ids
+            .iter()
+            .zip(["ssh-synthetic", "rdp-synthetic", "vnc-synthetic"])
+        {
             store.save_profile_password(*id, secret).unwrap();
         }
         let before = std::fs::read(&path).unwrap();
         let backup = store.enable_master_password(MASTER).unwrap();
         assert_eq!(std::fs::read(&backup).unwrap(), before);
-        assert_eq!(store.protection_status().unwrap(), CredentialProtection::Unlocked);
+        assert_eq!(
+            store.protection_status().unwrap(),
+            CredentialProtection::Unlocked
+        );
         let file = decode_file(&std::fs::read(&path).unwrap()).unwrap();
         let old_key = derive_key(&file.salt).unwrap();
-        for entry in file.entries.values() { assert!(open(&old_key, entry).is_err()); }
+        for entry in file.entries.values() {
+            assert!(open(&old_key, entry).is_err());
+        }
         store.clone().lock_vault().unwrap();
-        assert!(matches!(store.load_profile_password(ids[0]), Err(CredentialError::Locked)));
+        assert!(matches!(
+            store.load_profile_password(ids[0]),
+            Err(CredentialError::Locked)
+        ));
         let after = std::fs::read(&path).unwrap();
-        assert!(matches!(store.unlock("wrong secret"), Err(CredentialError::WrongMasterPassword)));
+        assert!(matches!(
+            store.unlock("wrong secret"),
+            Err(CredentialError::WrongMasterPassword)
+        ));
         assert_eq!(std::fs::read(&path).unwrap(), after);
         store.unlock(MASTER).unwrap();
-        for (id, secret) in ids.iter().zip(["ssh-synthetic", "rdp-synthetic", "vnc-synthetic"]) {
-            assert_eq!(store.load_profile_password(*id).unwrap().as_deref(), Some(secret));
+        for (id, secret) in ids
+            .iter()
+            .zip(["ssh-synthetic", "rdp-synthetic", "vnc-synthetic"])
+        {
+            assert_eq!(
+                store.load_profile_password(*id).unwrap().as_deref(),
+                Some(secret)
+            );
         }
         let reopened = CredentialStore::with_path("test", &path);
-        assert_eq!(reopened.protection_status().unwrap(), CredentialProtection::Locked);
+        assert_eq!(
+            reopened.protection_status().unwrap(),
+            CredentialProtection::Locked
+        );
         reopened.unlock(MASTER).unwrap();
-        assert_eq!(reopened.load_profile_password(ids[2]).unwrap().as_deref(), Some("vnc-synthetic"));
-        for file in [backup, path] { std::fs::remove_file(file).unwrap(); }
+        assert_eq!(
+            reopened.load_profile_password(ids[2]).unwrap().as_deref(),
+            Some("vnc-synthetic")
+        );
+        for file in [backup, path] {
+            std::fs::remove_file(file).unwrap();
+        }
     }
 
     #[test]
@@ -776,17 +932,31 @@ mod tests {
         store.save_secret("token", "synthetic token").unwrap();
         let first = store.enable_master_password(MASTER).unwrap();
         let before = std::fs::read(&path).unwrap();
-        assert!(store.change_master_password("incorrect", "another synthetic passphrase").is_err());
+        assert!(store
+            .change_master_password("incorrect", "another synthetic passphrase")
+            .is_err());
         assert!(store.disable_master_password("incorrect").is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
-        let second = store.change_master_password(MASTER, "another synthetic passphrase").unwrap();
+        let second = store
+            .change_master_password(MASTER, "another synthetic passphrase")
+            .unwrap();
         store.lock_vault().unwrap();
         assert!(store.unlock(MASTER).is_err());
         store.unlock("another synthetic passphrase").unwrap();
-        let third = store.disable_master_password("another synthetic passphrase").unwrap();
-        assert_eq!(store.protection_status().unwrap(), CredentialProtection::Legacy);
-        assert_eq!(store.load_secret("token").unwrap().as_deref(), Some("synthetic token"));
-        for file in [first, second, third, path] { std::fs::remove_file(file).unwrap(); }
+        let third = store
+            .disable_master_password("another synthetic passphrase")
+            .unwrap();
+        assert_eq!(
+            store.protection_status().unwrap(),
+            CredentialProtection::Legacy
+        );
+        assert_eq!(
+            store.load_secret("token").unwrap().as_deref(),
+            Some("synthetic token")
+        );
+        for file in [first, second, third, path] {
+            std::fs::remove_file(file).unwrap();
+        }
     }
 
     #[test]
@@ -794,13 +964,19 @@ mod tests {
         let (store, path) = temp_store("master_cancel");
         store.save_secret("token", "synthetic token").unwrap();
         let before = std::fs::read(&path).unwrap();
-        assert!(matches!(store.enable_master_password("short"), Err(CredentialError::WeakMasterPassword)));
+        assert!(matches!(
+            store.enable_master_password("short"),
+            Err(CredentialError::WeakMasterPassword)
+        ));
         assert_eq!(std::fs::read(&path).unwrap(), before);
         let blocked = unique_sibling(&path, "blocked");
         std::fs::create_dir(&blocked).unwrap();
         assert!(atomic_write(&blocked, b"replacement").is_err());
         assert!(blocked.is_dir());
-        assert_eq!(store.load_secret("token").unwrap().as_deref(), Some("synthetic token"));
+        assert_eq!(
+            store.load_secret("token").unwrap().as_deref(),
+            Some("synthetic token")
+        );
         std::fs::remove_dir(blocked).unwrap();
         std::fs::remove_file(path).unwrap();
     }
@@ -810,21 +986,36 @@ mod tests {
     fn a_locked_windows_destination_cannot_destroy_a_legacy_vault_during_migration() {
         use std::os::windows::fs::OpenOptionsExt;
         let (store, path) = temp_store("master_windows_locked");
-        store.save_secret("token", "synthetic retained token").unwrap();
+        store
+            .save_secret("token", "synthetic retained token")
+            .unwrap();
         let before = std::fs::read(&path).unwrap();
         // Permit reads, but not replacement/deletion, like an external Windows
         // reader that has not opted in to FILE_SHARE_DELETE.
-        let held = std::fs::OpenOptions::new().read(true).share_mode(1).open(&path).unwrap();
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .unwrap();
         assert!(store.enable_master_password(MASTER).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), before);
-        assert_eq!(store.load_secret("token").unwrap().as_deref(), Some("synthetic retained token"));
+        assert_eq!(
+            store.load_secret("token").unwrap().as_deref(),
+            Some("synthetic retained token")
+        );
         drop(held);
         let backup = store.enable_master_password(MASTER).unwrap();
         assert_eq!(std::fs::read(&backup).unwrap(), before);
         let cold = CredentialStore::with_path("adit-test", &path);
-        assert!(matches!(cold.load_secret("token"), Err(CredentialError::Locked)));
+        assert!(matches!(
+            cold.load_secret("token"),
+            Err(CredentialError::Locked)
+        ));
         cold.unlock(MASTER).unwrap();
-        assert_eq!(cold.load_secret("token").unwrap().as_deref(), Some("synthetic retained token"));
+        assert_eq!(
+            cold.load_secret("token").unwrap().as_deref(),
+            Some("synthetic retained token")
+        );
         std::fs::remove_file(path).unwrap();
         std::fs::remove_file(backup).unwrap();
     }
@@ -837,12 +1028,24 @@ mod tests {
         let other = CredentialStore::with_path("test", &path);
         other.unlock(MASTER).unwrap();
         other.save_secret("token", "after").unwrap();
-        assert_eq!(store.protection_status().unwrap(), CredentialProtection::Locked);
-        assert!(matches!(store.save_secret("token", "stale"), Err(CredentialError::Locked)));
+        assert_eq!(
+            store.protection_status().unwrap(),
+            CredentialProtection::Locked
+        );
+        assert!(matches!(
+            store.save_secret("token", "stale"),
+            Err(CredentialError::Locked)
+        ));
         store.unlock(MASTER).unwrap();
-        assert_eq!(store.load_secret("token").unwrap().as_deref(), Some("after"));
+        assert_eq!(
+            store.load_secret("token").unwrap().as_deref(),
+            Some("after")
+        );
         std::fs::remove_file(&path).unwrap();
-        assert!(matches!(store.save_secret("token", "recreate"), Err(CredentialError::Conflict)));
+        assert!(matches!(
+            store.save_secret("token", "recreate"),
+            Err(CredentialError::Conflict)
+        ));
         assert!(!path.exists());
         std::fs::remove_file(backup).unwrap();
     }
@@ -850,27 +1053,38 @@ mod tests {
     #[test]
     fn encrypted_transfer_validates_before_replace_and_rejects_account_swap() {
         let (store, path) = temp_store("master_transfer_src");
-        store.save_secret("token", "transferred synthetic secret").unwrap();
+        store
+            .save_secret("token", "transferred synthetic secret")
+            .unwrap();
         let backup = store.enable_master_password(MASTER).unwrap();
         store.lock_vault().unwrap();
         let export = unique_sibling(&path, "export");
         store.export_encrypted(&export).unwrap();
         assert!(store.export_encrypted(&export).is_err());
         let (dest, dest_path) = temp_store("master_transfer_dest");
-        dest.save_secret("local", "must survive wrong password").unwrap();
+        dest.save_secret("local", "must survive wrong password")
+            .unwrap();
         let before = std::fs::read(&dest_path).unwrap();
         assert!(dest.import_encrypted(&export, Some("wrong")).is_err());
         assert_eq!(std::fs::read(&dest_path).unwrap(), before);
         let dest_backup = dest.import_encrypted(&export, Some(MASTER)).unwrap();
         assert_eq!(std::fs::read(&dest_backup).unwrap(), before);
-        assert_eq!(dest.protection_status().unwrap(), CredentialProtection::Locked);
+        assert_eq!(
+            dest.protection_status().unwrap(),
+            CredentialProtection::Locked
+        );
         dest.unlock(MASTER).unwrap();
-        assert_eq!(dest.load_secret("token").unwrap().as_deref(), Some("transferred synthetic secret"));
+        assert_eq!(
+            dest.load_secret("token").unwrap().as_deref(),
+            Some("transferred synthetic secret")
+        );
         let mut file = decode_file(&std::fs::read(&dest_path).unwrap()).unwrap();
         let entry = file.entries.remove("secret:token").unwrap();
         file.entries.insert("secret:other".to_owned(), entry);
         atomic_write(&dest_path, &serde_json::to_vec(&file).unwrap()).unwrap();
         assert!(dest.unlock(MASTER).is_err());
-        for file in [backup, export, dest_backup, path, dest_path] { std::fs::remove_file(file).unwrap(); }
+        for file in [backup, export, dest_backup, path, dest_path] {
+            std::fs::remove_file(file).unwrap();
+        }
     }
 }

@@ -20,11 +20,17 @@ pub(crate) fn pick(light: Color, dark: Color) -> Color {
 // Palette inspired by Termius: deep navy-charcoal dark chrome, a clean light
 // theme, and a blue accent. Terminal colours remain an independent preference.
 pub(crate) fn muted_text() -> Color {
-    pick(Color::from_rgb8(95, 111, 125), Color::from_rgb8(153, 167, 185))
+    pick(
+        Color::from_rgb8(95, 111, 125),
+        Color::from_rgb8(153, 167, 185),
+    )
 }
 
 pub(crate) fn primary_text() -> Color {
-    pick(Color::from_rgb8(31, 43, 58), Color::from_rgb8(226, 232, 240))
+    pick(
+        Color::from_rgb8(31, 43, 58),
+        Color::from_rgb8(226, 232, 240),
+    )
 }
 
 pub(crate) fn app_background() -> Color {
@@ -33,38 +39,62 @@ pub(crate) fn app_background() -> Color {
 
 /// Raised surface: sidebar, cards, dialogs, floating menus.
 pub(crate) fn surface() -> Color {
-    pick(Color::from_rgb8(248, 250, 251), Color::from_rgb8(35, 41, 54))
+    pick(
+        Color::from_rgb8(248, 250, 251),
+        Color::from_rgb8(35, 41, 54),
+    )
 }
 
 /// Secondary chrome: toolbar, status bar, tab strip.
 pub(crate) fn surface_alt() -> Color {
-    pick(Color::from_rgb8(245, 248, 249), Color::from_rgb8(29, 34, 46))
+    pick(
+        Color::from_rgb8(245, 248, 249),
+        Color::from_rgb8(29, 34, 46),
+    )
 }
 
 /// Recessed area the terminal panel floats on.
 pub(crate) fn surface_sunken() -> Color {
-    pick(Color::from_rgb8(236, 241, 243), Color::from_rgb8(22, 26, 35))
+    pick(
+        Color::from_rgb8(236, 241, 243),
+        Color::from_rgb8(22, 26, 35),
+    )
 }
 
 pub(crate) fn panel_background_hover() -> Color {
-    pick(Color::from_rgb8(229, 235, 238), Color::from_rgb8(43, 51, 66))
+    pick(
+        Color::from_rgb8(229, 235, 238),
+        Color::from_rgb8(43, 51, 66),
+    )
 }
 
 pub(crate) fn field_background() -> Color {
-    pick(Color::from_rgb8(247, 249, 250), Color::from_rgb8(29, 35, 47))
+    pick(
+        Color::from_rgb8(247, 249, 250),
+        Color::from_rgb8(29, 35, 47),
+    )
 }
 
 pub(crate) fn border_color() -> Color {
-    pick(Color::from_rgb8(225, 232, 236), Color::from_rgb8(49, 58, 73))
+    pick(
+        Color::from_rgb8(225, 232, 236),
+        Color::from_rgb8(49, 58, 73),
+    )
 }
 
 pub(crate) fn border_strong() -> Color {
-    pick(Color::from_rgb8(157, 177, 194), Color::from_rgb8(94, 116, 144))
+    pick(
+        Color::from_rgb8(157, 177, 194),
+        Color::from_rgb8(94, 116, 144),
+    )
 }
 
 pub(crate) fn accent() -> Color {
     // Deep enough that white button text stays legible.
-    pick(Color::from_rgb8(27, 126, 220), Color::from_rgb8(75, 150, 235))
+    pick(
+        Color::from_rgb8(27, 126, 220),
+        Color::from_rgb8(75, 150, 235),
+    )
 }
 
 /// Colour for OSC 8 hyperlink runs — a readable link blue on both light and dark
@@ -101,10 +131,16 @@ pub(crate) fn profile_accent(app: &AditApp, profile_id: ProfileId) -> Option<Col
 /// A profile's short tab badge (e.g. `生产`), or `None`.
 pub(crate) fn profile_badge(app: &AditApp, profile_id: ProfileId) -> Option<String> {
     let profile = app.manager.profile(profile_id)?;
-    if profile.label.as_ref().is_some_and(|label| !label.trim().is_empty()) {
+    if profile
+        .label
+        .as_ref()
+        .is_some_and(|label| !label.trim().is_empty())
+    {
         return profile.badge_label();
     }
-    profile.badge_label().map(|_| t_in("environment", profile.environment.label()).to_owned())
+    profile
+        .badge_label()
+        .map(|_| t_in("environment", profile.environment.label()).to_owned())
 }
 
 pub(crate) fn accent_hover() -> Color {
@@ -117,7 +153,10 @@ pub(crate) fn accent_pressed() -> Color {
 
 /// Soft accent tint for selected/active backgrounds.
 pub(crate) fn accent_soft() -> Color {
-    pick(Color::from_rgb8(220, 232, 252), Color::from_rgb8(42, 60, 90))
+    pick(
+        Color::from_rgb8(220, 232, 252),
+        Color::from_rgb8(42, 60, 90),
+    )
 }
 
 pub(crate) fn danger() -> Color {
@@ -127,7 +166,10 @@ pub(crate) fn danger() -> Color {
 /// "This is up." Distinct from `accent()`, which marks the selected thing —
 /// a host can be both, and one colour could not say so.
 pub(crate) fn success() -> Color {
-    pick(Color::from_rgb8(22, 143, 92), Color::from_rgb8(63, 185, 122))
+    pick(
+        Color::from_rgb8(22, 143, 92),
+        Color::from_rgb8(63, 185, 122),
+    )
 }
 
 /// The one hue the rest of this palette leaves free.
@@ -136,7 +178,10 @@ pub(crate) fn success() -> Color {
 /// a mark that must mean none of those — and must not be misread as any of them
 /// — has nowhere else to go. Blue is that nowhere.
 pub(crate) fn info() -> Color {
-    pick(Color::from_rgb8(37, 99, 190), Color::from_rgb8(96, 160, 240))
+    pick(
+        Color::from_rgb8(37, 99, 190),
+        Color::from_rgb8(96, 160, 240),
+    )
 }
 
 /// The ink a protocol pill is drawn in.
@@ -161,7 +206,10 @@ pub(crate) fn protocol_tint(protocol: Protocol) -> Color {
 }
 
 pub(crate) fn danger_background() -> Color {
-    pick(Color::from_rgb8(253, 237, 237), Color::from_rgb8(58, 36, 38))
+    pick(
+        Color::from_rgb8(253, 237, 237),
+        Color::from_rgb8(58, 36, 38),
+    )
 }
 
 pub(crate) fn transparent() -> Color {
@@ -266,7 +314,10 @@ pub(crate) fn terminal_panel_style(focused: bool, style: TerminalStyle) -> conta
             0.0,
             1.0,
             if focused {
-                pick(Color::from_rgb8(112, 145, 180), Color::from_rgb8(76, 105, 140))
+                pick(
+                    Color::from_rgb8(112, 145, 180),
+                    Color::from_rgb8(76, 105, 140),
+                )
             } else {
                 Color::from_rgb8(38, 43, 54)
             },
@@ -287,7 +338,11 @@ pub(crate) fn pane_header_style(focused: bool) -> container::Style {
         border: border(
             0.0,
             1.0,
-            if focused { border_strong() } else { border_color() },
+            if focused {
+                border_strong()
+            } else {
+                border_color()
+            },
         ),
         ..container::Style::default()
     }
@@ -342,7 +397,15 @@ pub(crate) fn text_input_style(_theme: &Theme, status: text_input::Status) -> te
 
     text_input::Style {
         background: Background::Color(field_background()),
-        border: border(RADIUS_SM, if matches!(status, text_input::Status::Focused { .. }) { 2.0 } else { 1.0 }, border_color),
+        border: border(
+            RADIUS_SM,
+            if matches!(status, text_input::Status::Focused { .. }) {
+                2.0
+            } else {
+                1.0
+            },
+            border_color,
+        ),
         icon: muted_text(),
         placeholder: muted_text(),
         value: primary_text(),
@@ -350,7 +413,10 @@ pub(crate) fn text_input_style(_theme: &Theme, status: text_input::Status) -> te
     }
 }
 
-pub(crate) fn pick_list_style(_theme: &Theme, status: iced::widget::pick_list::Status) -> iced::widget::pick_list::Style {
+pub(crate) fn pick_list_style(
+    _theme: &Theme,
+    status: iced::widget::pick_list::Status,
+) -> iced::widget::pick_list::Style {
     let edge = match status {
         iced::widget::pick_list::Status::Active => border_color(),
         iced::widget::pick_list::Status::Hovered => border_strong(),
@@ -365,7 +431,11 @@ pub(crate) fn pick_list_style(_theme: &Theme, status: iced::widget::pick_list::S
     }
 }
 
-pub(crate) fn base_button_style(background: Color, text_color: Color, border_color: Color) -> button::Style {
+pub(crate) fn base_button_style(
+    background: Color,
+    text_color: Color,
+    border_color: Color,
+) -> button::Style {
     button::Style {
         background: Some(Background::Color(background)),
         text_color,
@@ -418,7 +488,11 @@ pub(crate) fn method_button_style(selected: bool, status: button::Status) -> but
     let border_color = if selected { accent() } else { border_color() };
     base_button_style(
         background,
-        if selected { Color::WHITE } else { primary_text() },
+        if selected {
+            Color::WHITE
+        } else {
+            primary_text()
+        },
         border_color,
     )
 }
@@ -461,11 +535,7 @@ pub(crate) fn tab_container_style_dnd(active: bool, dragging: bool) -> container
     } else {
         transparent()
     };
-    let border_color = if dragging {
-        accent()
-    } else {
-        transparent()
-    };
+    let border_color = if dragging { accent() } else { transparent() };
     container::Style {
         background: Some(Background::Color(background)),
         text_color: Some(primary_text()),
@@ -590,7 +660,6 @@ pub(crate) fn toolbar_icon_button_style(status: button::Status) -> button::Style
     base_button_style(background, primary_text(), transparent())
 }
 
-
 pub(crate) fn toolbar_input_style(_theme: &Theme, status: text_input::Status) -> text_input::Style {
     let border_color = match status {
         text_input::Status::Focused { .. } => accent(),
@@ -668,7 +737,11 @@ pub(crate) fn group_row_style(drop_target: bool) -> container::Style {
     }
 }
 
-pub(crate) fn tree_item_container_style(selected: bool, hovered: bool, dragging: bool) -> container::Style {
+pub(crate) fn tree_item_container_style(
+    selected: bool,
+    hovered: bool,
+    dragging: bool,
+) -> container::Style {
     // The dragged row gets a clear "lifted" accent (soft fill + thicker accent
     // border) so, together with its live slide under the cursor, the drag is
     // obvious.
@@ -721,7 +794,11 @@ pub(crate) fn profile_menu_item_style(status: button::Status, destructive: bool)
         button::Status::Hovered | button::Status::Pressed => hover_bg,
         _ => transparent(),
     };
-    let text_color = if destructive { danger() } else { primary_text() };
+    let text_color = if destructive {
+        danger()
+    } else {
+        primary_text()
+    };
     let mut style = base_button_style(background, text_color, transparent());
     style.border = border(RADIUS_SM - 2.0, 0.0, transparent());
     style

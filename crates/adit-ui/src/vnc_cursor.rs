@@ -88,7 +88,11 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
                 preedit: self.preedit.clone(),
             });
             if let iced::Event::InputMethod(event) = event {
-                shell.publish(Message::VncImeEvent(self.session_id, self.input_epoch, event.clone()));
+                shell.publish(Message::VncImeEvent(
+                    self.session_id,
+                    self.input_epoch,
+                    event.clone(),
+                ));
                 shell.capture_event();
             }
         }

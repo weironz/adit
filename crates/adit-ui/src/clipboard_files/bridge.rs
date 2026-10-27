@@ -27,8 +27,8 @@
 //! may be called from `update`.
 
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, Mutex};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long one chunk may take before the read is failed.
@@ -48,8 +48,10 @@ const MAX_IN_FLIGHT: usize = 256;
 static NEXT_STREAM_ID: AtomicU64 = AtomicU64::new(1);
 
 fn reserve_stream_id(counter: &AtomicU64) -> Result<u32, ChunkError> {
-    counter.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id|
-        id.checked_add(1).filter(|_| id <= u64::from(u32::MAX)))
+    counter
+        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| {
+            id.checked_add(1).filter(|_| id <= u64::from(u32::MAX))
+        })
         .map(|id| id as u32)
         .map_err(|_| ChunkError::TooManyRequests)
 }
@@ -120,7 +122,11 @@ impl ChunkBridge {
         self.wait_live(stream_id, || true)
     }
 
-    pub(crate) fn wait_live(&self, stream_id: u32, current: impl Fn() -> bool) -> Result<Vec<u8>, ChunkError> {
+    pub(crate) fn wait_live(
+        &self,
+        stream_id: u32,
+        current: impl Fn() -> bool,
+    ) -> Result<Vec<u8>, ChunkError> {
         let (lock, condvar) = &*self.inner;
         let mut inner = lock.lock().unwrap_or_else(|e| e.into_inner());
         let deadline = Instant::now() + CHUNK_TIMEOUT;
@@ -202,8 +208,14 @@ mod tests {
     fn exhausting_the_wire_id_space_never_wraps_to_an_old_request() {
         let counter = AtomicU64::new(u64::from(u32::MAX));
         assert_eq!(reserve_stream_id(&counter), Ok(u32::MAX));
-        assert_eq!(reserve_stream_id(&counter), Err(ChunkError::TooManyRequests));
-        assert_eq!(reserve_stream_id(&counter), Err(ChunkError::TooManyRequests));
+        assert_eq!(
+            reserve_stream_id(&counter),
+            Err(ChunkError::TooManyRequests)
+        );
+        assert_eq!(
+            reserve_stream_id(&counter),
+            Err(ChunkError::TooManyRequests)
+        );
     }
 
     /// The ordinary path: a reader blocks, the pump answers, the bytes come out
