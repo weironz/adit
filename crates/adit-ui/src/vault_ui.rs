@@ -79,10 +79,10 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, super::Message> {
         Some(CredentialProtection::Locked | CredentialProtection::Unlocked)
     );
     let secret = |hint: &str, value: &str, on_input: fn(String) -> Message| {
-        text_input(t(hint), value)
+        accessibility::protected(hint, !value.is_empty(), text_input(t(hint), value)
             .secure(true)
             .size(12)
-            .on_input(move |s| super::Message::Vault(on_input(s)))
+            .on_input(move |s| super::Message::Vault(on_input(s))))
     };
     let body = iced::widget::column![
         text(t("凭据库主密码")).size(13),

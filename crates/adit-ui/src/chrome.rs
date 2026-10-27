@@ -2,6 +2,14 @@ use super::*;
 use iced::widget::column;
 
 pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
+    view_for(app, app.accessibility.primary)
+}
+
+/// Detached-window callers supply their own ID; no HWND or semantic action is
+/// inferred from the foreground window or whichever session happens to be active.
+pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_, Message> {
+    let a11y_namespace = accessibility::namespace(app);
+    let _building = accessibility::building(window, &a11y_namespace);
     DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
 
     // The rail is outside the switch on purpose: it is what stays put when a
@@ -130,11 +138,16 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
         layers.push(opaque(container(text("请在另一窗口完成验证或文件操作"))
             .padding(12).center_x(Fill).center_y(Fill).style(|_| dialog_scrim_style())));
     }
-    if layers.len() == 1 {
+    if layers.len() > 1 {
+        let top = layers.pop().unwrap();
+        layers.push(accessibility::modal(top));
+    }
+    let content = if layers.len() == 1 {
         layers.pop().unwrap()
     } else {
         stack(layers).into()
-    }
+    };
+    accessibility::scope(window, a11y_namespace, content)
 }
 
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
@@ -165,14 +178,17 @@ pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static 
         MainView::Terminal => UiIcon::Terminal,
         MainView::Missions => UiIcon::Tasks,
     };
-    button(row![
+    let control: Element<'static, Message> = button(row![
         ui_icon(icon, 14.0, Color::from_rgb8(202, 214, 229)),
         text(t_in("navigation", label)).size(12),
     ].spacing(7).align_y(Alignment::Center))
         .padding([5, 10])
         .style(move |_, status| global_navigation_style(active, status))
         .on_press(Message::ShowMainView(view))
-        .into()
+        .into();
+    accessibility::control(control, accessibility::Control::button(
+        format!("navigation:{view:?}"), t_in("navigation", label), Message::ShowMainView(view),
+    ))
 }
 
 pub(crate) fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a, Message> {

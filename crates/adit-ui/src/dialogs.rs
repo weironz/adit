@@ -59,12 +59,12 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let panel = container(
         column![
             details,
-            text_input("Password / passphrase", &app.password)
+            accessibility::protected("Password / passphrase", !app.password.is_empty(), text_input("Password / passphrase", &app.password)
                 .secure(true)
                 .on_input(Message::ConnectionPasswordChanged)
                 .on_submit(Message::ConfirmConnection)
                 .padding([6, 8])
-                .style(text_input_style),
+                .style(text_input_style)),
             checkbox(app.remember_connection_password)
                 .label(t("保存密码"))
                 .on_toggle(Message::RememberConnectionPasswordChanged)
@@ -279,7 +279,9 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
         if !field.echo {
             input = input.secure(true);
         }
-        body = body.push(column![text(label).size(11).color(muted_text()), input].spacing(4));
+        body = body.push(column![text(label).size(11).color(muted_text()),
+            accessibility::protected(&tf("验证字段 {}", &[&(index + 1)]), !value.is_empty(), input)
+        ].spacing(4));
     }
 
     let panel = container(

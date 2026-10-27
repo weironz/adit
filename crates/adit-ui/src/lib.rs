@@ -51,6 +51,11 @@ pub enum SftpSortKey {
 mod autolink;
 mod i18n;
 mod tunnel_feedback;
+mod accessibility;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub fn run_accessibility_acceptance() -> Result<(), Box<dyn std::error::Error>> {
+    accessibility::run_acceptance()
+}
 pub(crate) use i18n::{runtime, set_language, t, t_in, tf};
 mod style;
 use style::*;
@@ -172,6 +177,7 @@ pub(crate) enum PendingTransfer {
 }
 
 pub struct AditApp {
+    accessibility: accessibility::State,
     manager: SessionManager,
     native_window_id: Option<window::Id>,
     native_main_window: Option<window::Id>,
@@ -1063,6 +1069,13 @@ pub enum Message {
     OpenRdpFileDrag,
     RdpFileDragOwner { session: SessionId, owner: Option<isize> },
     WindowResized { width: f32, height: f32, window: window::Id },
+    AccessibilityReady { window: window::Id, attached: bool },
+    AccessibilityClosed(window::Id),
+    AccessibilitySelectProfile(ProfileId),
+    AccessibilityActivateSession(SessionId),
+    AccessibilityScroll { window: window::Id, owner: SessionId, offset: usize },
+    AccessibilityScrollLines { window: window::Id, owner: SessionId, lines: i32 },
+    AccessibilityFocus { window: window::Id, id: iced::advanced::widget::Id },
     ToggleFullscreen,
     CloseSyncPanel,
     SyncProviderChanged(adit_storage::SyncProvider),
@@ -1560,6 +1573,7 @@ impl AditApp {
         };
 
         let mut app = Self {
+            accessibility: accessibility::State::default(),
             native_window_id: None,
             native_main_window: None,
             native_auxiliary: false,
@@ -2102,6 +2116,7 @@ fn runtime_event(
         }),
         // Moving between monitors can change DPI without a logical resize.
         event::Event::Window(window::Event::Rescaled(scale)) => Some(Message::DisplayScale(scale)),
+        event::Event::Window(window::Event::Closed) => Some(Message::AccessibilityClosed(window)),
         // Window-absolute cursor for context-menu anchoring (the tab strip has no
         // local move tracker of its own).
         event::Event::Mouse(mouse::Event::CursorMoved { position }) => {

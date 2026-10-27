@@ -8,6 +8,11 @@ license.workspace = true
 [features]
 native-vnc-acceptance = []
 native-workbench-acceptance = ["dep:image"]
+native-accessibility-acceptance = []
+
+[[example]]
+name = "accessibility_acceptance"
+required-features = ["native-accessibility-acceptance"]
 
 [[example]]
 name = "workbench_acceptance"
@@ -75,6 +80,8 @@ tokio.workspace = true
 # real paths, which is why FreeRDP mounts FUSE for this). Abstracting over three
 # designs that different would be guessing; see `clipboard_files`.
 [target.'cfg(windows)'.dependencies]
+accesskit = "=0.25.2"
+accesskit_windows = "=0.35.2"
 # `windows::core::implement` generates the COM vtables for IDataObject /
 # IEnumFORMATETC / IStream. Hand-writing those is the bulk of what makes this job
 # large in C, and it is the reason doing it in Rust is worth it at all. As of
@@ -102,6 +109,7 @@ windows = { version = "0.62", features = [
     "Win32_System_StationsAndDesktops",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_HiDpi",
+    "Win32_UI_Accessibility",
     # SetWindowsHookExW / WH_KEYBOARD_LL, for passing global hotkeys through to
     # a fullscreen remote desktop instead of letting the local owner eat them.
     "Win32_UI_Input_KeyboardAndMouse",

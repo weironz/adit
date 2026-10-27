@@ -29,6 +29,7 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         let highlights = search_highlights_for(app, &snapshot);
         let links_clickable = link_open_modifier(app);
         let terminal: Element<'_, Message> = mouse_area(terminal_view(
+            app.manager.active_session(),
             active_terminal_style(app),
             snapshot,
             app.terminal_focused,
@@ -878,11 +879,12 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
         Vec::new()
     };
     let body = mouse_area(terminal_view(
+        Some(session_id),
         terminal_style_for(app, Some(session_id)),
         snapshot,
         is_focused,
         selection,
-        app.terminal_scroll_offset,
+        if is_focused { app.terminal_scroll_offset } else { accessibility::scroll_offset(app, session_id) },
         highlights,
         link_open_modifier(app),
         // Only the focused pane shows a cursor — that's what marks it as the one
@@ -909,18 +911,18 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
         .into()
 }
 
-/// Snapshot for a pane; only the focused pane honors the scroll-back offset.
+/// Each accessible document's offset belongs to its session. Scrolling another
+/// pane never changes the active session or sends remote input.
 pub(crate) fn pane_snapshot(app: &AditApp, session_id: SessionId, is_focused: bool) -> TerminalSnapshot {
     let rows = usize::from(session_terminal_size(app, session_id).rows);
     let tail = app.manager.snapshot_for(session_id, Viewport::tail(rows));
 
-    if !is_focused || app.terminal_scroll_offset == 0 {
+    let requested = if is_focused { app.terminal_scroll_offset } else { accessibility::scroll_offset(app, session_id) };
+    if requested == 0 {
         return tail;
     }
 
-    let offset = app
-        .terminal_scroll_offset
-        .min(max_scroll_offset_for(&tail, rows));
+    let offset = requested.min(max_scroll_offset_for(&tail, rows));
     let first_row = tail.total_rows.saturating_sub(rows).saturating_sub(offset);
     app.manager.snapshot_for(
         session_id,
@@ -986,6 +988,7 @@ pub(crate) fn tab_button(
     tile: Option<Element<'static, Message>>,
 ) -> Element<'static, Message> {
     let id = session.id;
+    let accessible_name = session.title.clone();
     let active = Some(id) == active_session;
     // The tab currently being dragged gets a "lifted" accent so its live
     // reordering is easy to follow.
@@ -1028,7 +1031,7 @@ pub(crate) fn tab_button(
                 .on_press(Message::CloseSession(id)),
         );
 
-    mouse_area(
+    let control: Element<'static, Message> = mouse_area(
         container(inner)
             .padding([0, 6])
             // The same height as the 主机 tab and the +, so the strip holds one.
@@ -1049,11 +1052,15 @@ pub(crate) fn tab_button(
     .on_enter(Message::TabDragOver(id))
     .on_right_press(Message::ShowTabContextMenu(id))
     .interaction(mouse::Interaction::Pointer)
-    .into()
+    .into();
+    accessibility::control(control, accessibility::Control::item(
+        format!("session:{id}"), accessible_name, Message::AccessibilityActivateSession(id),
+    ).read_value(if active { t("当前会话") } else { t(session.status.label()) }.into()))
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn terminal_view(
+    owner: Option<SessionId>,
     style: TerminalStyle,
     snapshot: TerminalSnapshot,
     focused: bool,
@@ -1064,6 +1071,7 @@ pub(crate) fn terminal_view(
     show_cursor: bool,
     scrollbar_interactive: bool,
 ) -> Element<'static, Message> {
+    let document = owner.map(|owner| accessibility::Control::document(owner, &snapshot));
     // Capture the counts the scrollbar needs before `snapshot.lines` is consumed.
     let total_rows = snapshot.total_rows;
     let viewport = snapshot.lines.len();
@@ -1119,9 +1127,24 @@ pub(crate) fn terminal_view(
     // The context menu now floats (see the layers stack in `view`), so the
     // terminal body no longer reserves a strip for it. A scrollbar rides the right
     // edge, inside the panel padding, showing (and driving) the scrollback position.
+    let scrollbar = terminal_scrollbar(style, total_rows, viewport, scroll_offset, scrollbar_interactive);
+    let scrollbar = match owner {
+        Some(owner) => {
+            let max = total_rows.saturating_sub(viewport);
+            let scrollbar = accessibility::scroll_controls(owner, scroll_offset, max, scrollbar);
+            accessibility::control(scrollbar, accessibility::Control::scroll(owner, scroll_offset, max))
+        }
+        None => scrollbar,
+    };
+    let text: Element<'static, Message> = container(lines).height(Fill).width(Fill).into();
+    let text = match document {
+        Some(document) => accessibility::control(text, document),
+        None => text,
+    };
+    // The text document and its physical scrolling controls are siblings.
     let body = row![
-        container(lines).height(Fill).width(Fill),
-        terminal_scrollbar(style, total_rows, viewport, scroll_offset, scrollbar_interactive),
+        text,
+        scrollbar,
     ];
     container(body)
         .padding(TERMINAL_PANEL_PADDING as u16)
@@ -1132,7 +1155,7 @@ pub(crate) fn terminal_view(
 }
 
 /// Width of the terminal scrollbar gutter, in pixels.
-pub(crate) const SCROLLBAR_WIDTH: f32 = 12.0;
+pub(crate) const SCROLLBAR_WIDTH: f32 = 24.0;
 
 /// The vertical scrollback scrollbar for the terminal body.
 ///

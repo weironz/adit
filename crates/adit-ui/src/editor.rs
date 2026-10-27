@@ -41,12 +41,12 @@ fn text_field<'a>(
 ) -> Element<'a, Message> {
     dialog_field(
         label,
-        text_input(t(placeholder), value)
+        accessibility::input(label, value, on_input, text_input(t(placeholder), value)
             .on_input(on_input)
             .padding([5, 8])
             .style(text_input_style)
             .width(Fill)
-            .into(),
+        ),
     )
 }
 
@@ -60,13 +60,13 @@ fn dial_field<'a>(
 ) -> Element<'a, Message> {
     dialog_field(
         label,
-        text_input(t(placeholder), value)
+        accessibility::input(label, value, on_input, text_input(t(placeholder), value)
             .on_input(on_input)
             .on_submit(Message::ConnectSelectedProfile)
             .padding([5, 8])
             .style(text_input_style)
             .width(Fill)
-            .into(),
+        ),
     )
 }
 
@@ -172,24 +172,24 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
             let secret: Element<'_, Message> = match app.profile_auth_method {
                 AuthMethod::Password => dialog_field(
                     "密码（加密保存，可随配置目录同步）",
-                    text_input(t("连接密码"), &app.profile_password)
+                    accessibility::protected("连接密码", !app.profile_password.is_empty(), text_input(t("连接密码"), &app.profile_password)
                         .secure(true)
                         .on_input(Message::ProfilePasswordChanged)
                         .on_submit(Message::ConnectSelectedProfile)
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Fill)
-                        .into(),
+                    ),
                 ),
                 AuthMethod::Key | AuthMethod::Auto => dialog_field(
                     "密钥 passphrase（可选，加密保存；私钥加密时填写）",
-                    text_input(t("私钥 passphrase"), &app.profile_passphrase)
+                    accessibility::protected("私钥 passphrase", !app.profile_passphrase.is_empty(), text_input(t("私钥 passphrase"), &app.profile_passphrase)
                         .secure(true)
                         .on_input(Message::ProfilePassphraseChanged)
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Fill)
-                        .into(),
+                    ),
                 ),
                 // ssh-agent holds the secret; there is nothing to ask for.
                 AuthMethod::Agent => Space::new().into(),
@@ -314,13 +314,13 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
                 )
                 .push(dialog_field(
                     "VNC 密码（加密保存）",
-                    text_input(t("VNC 密码（前 8 字节）；无认证可留空"), &app.profile_password)
+                    accessibility::protected("VNC 密码", !app.profile_password.is_empty(), text_input(t("VNC 密码（前 8 字节）；无认证可留空"), &app.profile_password)
                         .secure(true)
                         .on_input(Message::ProfilePasswordChanged)
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Fill)
-                        .into(),
+                    ),
                 ))
                 .push(vnc_options_editor(app));
         }
@@ -364,18 +364,18 @@ pub(crate) fn profile_editor_overlay(app: &AditApp) -> Element<'_, Message> {
     form = form.push(profile_options_editor(app));
     let actions = row![
         Space::new().width(Fill),
-        button(text(t("取消")).size(12))
+        accessibility::button("editor:cancel", t("取消"), Message::CloseProfileEditor, button(text(t("取消")).size(12))
             .padding([6, 16])
             .style(|_theme, status| secondary_button_style(status))
-            .on_press(Message::CloseProfileEditor),
-        button(text(t("连接")).size(12))
+            .on_press(Message::CloseProfileEditor)),
+        accessibility::button("editor:connect", t("连接"), Message::ConnectSelectedProfile, button(text(t("连接")).size(12))
             .padding([6, 16])
             .style(|_theme, status| secondary_button_style(status))
-            .on_press(Message::ConnectSelectedProfile),
-        button(text(t("保存")).size(12))
+            .on_press(Message::ConnectSelectedProfile)),
+        accessibility::button("editor:save", t("保存"), Message::SaveProfile, button(text(t("保存")).size(12))
             .padding([6, 18])
             .style(|_theme, status| primary_button_style(status))
-            .on_press(Message::SaveProfile),
+            .on_press(Message::SaveProfile)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -522,12 +522,12 @@ fn group_picker(app: &AditApp) -> Element<'_, Message> {
         shown += 1;
     }
 
-    let mut picker = column![text_input(t("筛选分组，或直接输入新分组名"), &app.profile_group)
+    let mut picker = column![accessibility::input("分组", &app.profile_group, Message::ProfileGroupChanged, text_input(t("筛选分组，或直接输入新分组名"), &app.profile_group)
         .on_input(Message::ProfileGroupChanged)
         .on_submit(Message::SaveProfile)
         .padding([5, 8])
         .style(text_input_style)
-        .width(Fill)]
+        .width(Fill))]
     .spacing(6);
 
     if shown > 0 {

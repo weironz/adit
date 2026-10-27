@@ -236,6 +236,7 @@ pub(crate) fn surface_view(
 ) -> Element<'static, Message> {
     if !scene.desktop {
         let grid = terminal_view(
+            Some(session),
             scene.style,
             scene.snapshot.clone(),
             state.terminal_focused,

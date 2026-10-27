@@ -61,7 +61,14 @@ fn vnc_frame_covered(frame: &adit_session::RdpFrame) -> bool {
 }
 
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
-    let task = update_message(app, message);
+    let mut tasks = vec![update_message(app, message)];
+    for (window, scope, message) in accessibility::drain(app) {
+        // The legacy application has one view state. Keep the window identity
+        // here so the detached-window router can route instead of guessing.
+        if accessibility::action_current(app, window, &scope) {
+            tasks.push(update_message(app, message));
+        }
+    }
     // Focus can move locally without a WindowUnfocused event (settings, menus,
     // sidebar fields). Release keys before returning even from early Task paths.
     if app.manager.active_is_vnc() && !vnc_accepts_text_input(app) {
@@ -73,7 +80,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             app.vnc_input_epoch = app.vnc_input_epoch.wrapping_add(1);
         }
     }
-    task
+    Task::batch(tasks)
 }
 
 fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
@@ -89,6 +96,32 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::NativeImeEvent(id, epoch, event) => {
             native_ime::update(app, id, epoch, event);
+        }
+        Message::AccessibilityReady { window, attached } => {
+            if !attached {
+                app.accessibility.closed(window);
+            }
+        }
+        Message::AccessibilityClosed(window) => app.accessibility.closed(window),
+        Message::AccessibilitySelectProfile(id) => {
+            if app.manager.profile(id).is_some() { select_profile(app, id); }
+        }
+        Message::AccessibilityActivateSession(id) => {
+            if app.manager.session_summary(id).is_some() { activate_session(app, id); }
+        }
+        Message::AccessibilityScroll { window, owner, offset } =>
+            accessibility::scroll(app, window, owner, offset),
+        Message::AccessibilityScrollLines { window, owner, lines } =>
+            accessibility::scroll_lines(app, window, owner, lines),
+        Message::AccessibilityFocus { window, id } => {
+            if app.accessibility.windows.contains(&window) && app.accessibility.primary == Some(window) {
+                app.terminal_focused = false;
+                release_rdp_modifiers(app);
+                // Only an explicit UIA SetFocus requests native focus. Tick,
+                // tree publication and terminal output never do this.
+                return Task::batch([window::gain_focus(window),
+                    iced::advanced::widget::operate(iced::advanced::widget::operation::focusable::focus(id))]);
+            }
         }
         Message::Vault(message) => return vault_ui::update(app, message),
         Message::Tick => {
@@ -2690,7 +2723,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // Re-probe the display scale: the window may have moved to a
                 // monitor with a different DPI, and the RDP viewport request
                 // is in physical pixels.
-                return window::scale_factor(window).map(Message::DisplayScale);
+                let scale = window::scale_factor(window).map(Message::DisplayScale);
+                if app.accessibility.opening(window) {
+                    return Task::batch([scale, accessibility::register(window)]);
+                }
+                return scale;
             }
         }
         Message::DisplayScale(scale) => {

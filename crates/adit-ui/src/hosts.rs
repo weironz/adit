@@ -272,7 +272,7 @@ pub(crate) fn host_card(
         &app.profile_drop,
         Some(ProfileDrop::Beside { profile_id: target, .. }) if *target == profile_id
     );
-    mouse_area(
+    let control: Element<'static, Message> = mouse_area(
         container(
         row![
             tile,
@@ -349,7 +349,11 @@ pub(crate) fn host_card(
         Message::GridProfileDragOver(profile_id, position, in_pinned)
     })
     .on_exit(Message::ProfileHoverExited(profile_id))
-    .into()
+    .into();
+    accessibility::control(control, accessibility::Control::item(
+        format!("resource:host_card:{}", profile.id), profile.name.clone(),
+        Message::AccessibilitySelectProfile(profile.id),
+    ).read_value(profile.host.clone()))
 }
 
 /// A section heading with the count on the right, the way the reference client
@@ -417,7 +421,7 @@ pub(crate) fn host_row(
     let dragging = app.dragged_profile == Some(profile_id);
     let selected = app.selected_profile == Some(profile_id);
     let hovered = app.hovered_profile == Some(profile_id);
-    mouse_area(
+    let control: Element<'static, Message> = mouse_area(
         container(
             row![
                 Space::new().width(Length::Fixed(indent)),
@@ -460,7 +464,11 @@ pub(crate) fn host_row(
         Message::GridProfileDragOver(profile_id, profile_drop_position(point), in_pinned)
     })
     .on_exit(Message::ProfileHoverExited(profile_id))
-    .into()
+    .into();
+    accessibility::control(control, accessibility::Control::item(
+        format!("resource:host_row:{}", profile.id), profile.name.clone(),
+        Message::AccessibilitySelectProfile(profile.id),
+    ).read_value(profile.host.clone()))
 }
 
 pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label: &'static str) -> Element<'static, Message> {
@@ -1220,9 +1228,9 @@ fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
     let header = container(row![
         text(t("主机详情")).size(12).width(Fill)
             .font(Font { weight: Weight::Semibold, ..Font::DEFAULT }),
-        button(text(t("编辑")).size(11))
+        accessibility::button(&format!("resource:edit:{id}"), t("编辑"), Message::EditProfileFromContext(id), button(text(t("编辑")).size(11))
             .padding([4, 8]).style(|_, status| toolbar_icon_button_style(status))
-            .on_press(Message::EditProfileFromContext(id)),
+            .on_press(Message::EditProfileFromContext(id))),
         button("×").on_press(Message::HostDetailsClosed)
             .style(|_, status| close_button_style(status)),
     ].align_y(Alignment::Center))

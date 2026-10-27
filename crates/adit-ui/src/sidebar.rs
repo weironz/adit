@@ -707,7 +707,7 @@ pub(crate) fn tree_profile_row(
         mouse::Interaction::Idle
     };
 
-    mouse_area(
+    let control: Element<'static, Message> = mouse_area(
         container(
             row![
                 Space::new().width(Length::Fixed(4.0)),
@@ -736,7 +736,11 @@ pub(crate) fn tree_profile_row(
     .on_move(move |point| Message::ProfileDragOver(profile_id, profile_drop_position(point)))
     .on_exit(Message::ProfileHoverExited(profile_id))
     .interaction(interaction)
-    .into()
+    .into();
+    accessibility::control(control, accessibility::Control::item(
+        format!("resource:tree_profile_row:{}", profile.id), profile.name.clone(),
+        Message::AccessibilitySelectProfile(profile.id),
+    ).read_value(profile.host.clone()))
 }
 
 pub(crate) fn profile_drop_position(point: Point) -> ProfileDropPosition {
