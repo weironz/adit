@@ -298,10 +298,21 @@ mod tests {
         net::{TcpListener, TcpStream},
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc,
+            Arc, Mutex, MutexGuard,
         },
         thread,
     };
+    static PROBE_SERIAL: Mutex<()> = Mutex::new(());
+
+    fn serial_probe() -> MutexGuard<'static, ()> {
+        // Each test owns a real TCP peer and run loop. Running all four at once
+        // lets scheduler pressure delay the deliberate 250 ms failure past the
+        // probe's one-second observation window, which looks like a product bug.
+        PROBE_SERIAL
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+    }
+
     enum End {
         Hold,
         Close,
@@ -447,6 +458,7 @@ mod tests {
     }
     #[test]
     fn actual_first_frame_followed_by_transport_or_protocol_failure_cannot_pass() {
+        let _serial = serial_probe();
         for end in [End::Close, End::Malformed] {
             let (port, painted, server) = serve(end, false);
             assert!(
@@ -459,6 +471,7 @@ mod tests {
     }
     #[test]
     fn actual_complete_frame_and_connected_full_steady_window_pass() {
+        let _serial = serial_probe();
         let (port, painted, server) = serve(End::Hold, false);
         let start = Instant::now();
         assert!(probe(port));
@@ -468,6 +481,7 @@ mod tests {
     }
     #[test]
     fn actual_partial_frame_never_starts_or_satisfies_the_steady_window() {
+        let _serial = serial_probe();
         let (port, painted, server) = serve(End::Hold, true);
         assert!(!probe(port));
         assert!(painted.load(Ordering::Acquire));
@@ -475,6 +489,7 @@ mod tests {
     }
     #[test]
     fn actual_drag_releases_on_wire_during_steady_window_without_another_down() {
+        let _serial = serial_probe();
         let (port, painted, server) = serve(End::ObserveDrag, false);
         assert!(run_probe(
             vec![
