@@ -1,4 +1,6 @@
 mod sftp_shell;
+#[cfg(test)]
+mod clipboard_owner_tests;
 mod terminal_encoding;
 mod triggers;
 mod sftp_transfers;
@@ -451,17 +453,17 @@ pub struct SessionManager {
     /// disk. A `Vec` rather than the single slot the clipboard text uses: a
     /// paste of several files has several streams open at once, and dropping
     /// any of them hangs that file's transfer.
-    pending_rdp_file_reads: Vec<RdpFileRead>,
+    pending_rdp_file_reads: Vec<(SessionId, RdpFileRead)>,
     /// An image the remote copied, waiting for the UI to put it on the Windows
     /// clipboard. One slot, like the text beside it: the system clipboard is
     /// itself a single slot, so the newest remote copy wins.
-    pending_rdp_clipboard_image: Option<Vec<u8>>,
+    pending_rdp_clipboard_image: Option<(SessionId, Vec<u8>)>,
     /// A file list the remote copied, waiting for the UI to publish it. One slot,
     /// like the clipboard text beside it: the clipboard holds one thing.
-    pending_rdp_clipboard_files: Option<Vec<ClipFile>>,
+    pending_rdp_clipboard_files: Option<(SessionId, Vec<ClipFile>)>,
     /// Chunks answering local pastes, waiting to be handed to the waiting COM
     /// streams. A `Vec` because a folder paste has several streams open at once.
-    pending_rdp_file_chunks: Vec<(u32, Option<Vec<u8>>)>,
+    pending_rdp_file_chunks: Vec<(SessionId, u32, Option<Vec<u8>>)>,
 }
 
 /// A byte range the remote wants from a file this side offered.
@@ -1733,6 +1735,29 @@ impl SessionManager {
         }
     }
 
+    /// Select an existing connection for one serialized UI dispatch, without the
+    /// tab-switch side effects of `activate`. The application restores its main
+    /// selector after dispatch; pending events keep their original session ID.
+    pub fn select_session_context(&mut self, session_id: SessionId) -> Result<(), SessionError> {
+        if !self.sessions.contains_key(&session_id) { return Err(SessionError::SessionNotFound); }
+        self.active_session = Some(session_id);
+        Ok(())
+    }
+
+    /// Retire unconsumed OS clipboard offers when their window loses its input
+    /// lease. In-progress file contents and read requests must keep running.
+    pub fn discard_clipboard_offers(&mut self, session_id: SessionId) {
+        if self.pending_rdp_clipboard.as_ref().is_some_and(|(id, _)| *id == session_id) {
+            self.pending_rdp_clipboard = None;
+        }
+        if self.pending_rdp_clipboard_image.as_ref().is_some_and(|(id, _)| *id == session_id) {
+            self.pending_rdp_clipboard_image = None;
+        }
+        if self.pending_rdp_clipboard_files.as_ref().is_some_and(|(id, _)| *id == session_id) {
+            self.pending_rdp_clipboard_files = None;
+        }
+    }
+
     pub fn close(&mut self, session_id: SessionId) {
         self.cancel_tunnels_for_owner(session_id);
         let closed_profile = self.sessions.get(&session_id).map(|record| {
@@ -2051,6 +2076,7 @@ impl SessionManager {
     /// Returns `None` when nothing new arrived.
     #[must_use]
     pub fn take_rdp_clipboard(&mut self) -> Option<String> {
+        if self.pending_rdp_clipboard.as_ref().map(|(id, _)| *id) != self.active_session { return None; }
         self.pending_rdp_clipboard
             .take()
             .filter(|(id, _)| self.active_session == Some(*id))
@@ -2062,12 +2088,14 @@ impl SessionManager {
 
     /// Byte ranges the remote is waiting on. Drained, so each is answered once.
     pub fn take_rdp_file_reads(&mut self) -> Vec<RdpFileRead> {
-        std::mem::take(&mut self.pending_rdp_file_reads)
+        let active = self.active_session;
+        self.pending_rdp_file_reads.extract_if(.., |(id, _)| Some(*id) == active).map(|(_, read)| read).collect()
     }
 
     /// An image the remote copied, if one arrived since the last call.
     pub fn take_rdp_clipboard_image(&mut self) -> Option<Vec<u8>> {
-        self.pending_rdp_clipboard_image.take()
+        if self.pending_rdp_clipboard_image.as_ref().map(|(id, _)| *id) != self.active_session { return None; }
+        self.pending_rdp_clipboard_image.take().map(|(_, image)| image)
     }
 
     /// Offer a locally-copied image to the active RDP desktop.
@@ -2083,12 +2111,14 @@ impl SessionManager {
 
     /// A file list the remote copied, if one arrived since the last call.
     pub fn take_rdp_clipboard_files(&mut self) -> Option<Vec<ClipFile>> {
-        self.pending_rdp_clipboard_files.take()
+        if self.pending_rdp_clipboard_files.as_ref().map(|(id, _)| *id) != self.active_session { return None; }
+        self.pending_rdp_clipboard_files.take().map(|(_, files)| files)
     }
 
     /// Chunks that arrived for local pastes. Drained.
     pub fn take_rdp_file_chunks(&mut self) -> Vec<(u32, Option<Vec<u8>>)> {
-        std::mem::take(&mut self.pending_rdp_file_chunks)
+        let active = self.active_session;
+        self.pending_rdp_file_chunks.extract_if(.., |(id, _, _)| Some(*id) == active).map(|(_, stream, data)| (stream, data)).collect()
     }
 
     /// A `Send + Sync` handle for the COM streams to pull bytes with.
@@ -3451,13 +3481,13 @@ impl SessionManager {
                     // answer on its next tick — never dropped, because the
                     // remote paste is blocked on the stream it asked for.
                     RdpClientEvent::ClipboardImage(image) => {
-                        self.pending_rdp_clipboard_image = Some(image);
+                        self.pending_rdp_clipboard_image = Some((record.summary.id, image));
                     }
                     RdpClientEvent::ClipboardFiles(files) => {
-                        self.pending_rdp_clipboard_files = Some(files);
+                        self.pending_rdp_clipboard_files = Some((record.summary.id, files));
                     }
                     RdpClientEvent::FileContents { stream_id, data } => {
-                        self.pending_rdp_file_chunks.push((stream_id, data));
+                        self.pending_rdp_file_chunks.push((record.summary.id, stream_id, data));
                     }
                     RdpClientEvent::FileContentsNeeded {
                         stream_id,
@@ -3465,12 +3495,12 @@ impl SessionManager {
                         offset,
                         length,
                     } => {
-                        self.pending_rdp_file_reads.push(RdpFileRead {
+                        self.pending_rdp_file_reads.push((record.summary.id, RdpFileRead {
                             stream_id,
                             index,
                             offset,
                             length,
-                        });
+                        }));
                     }
                     RdpClientEvent::AuthRejected(message) => {
                         record.desktop_error = Some(message.clone());

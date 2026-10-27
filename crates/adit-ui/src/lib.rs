@@ -125,6 +125,11 @@ mod sftp;
 use sftp::*;
 mod highlight;
 mod input;
+mod native_windows;
+#[cfg(feature = "native-workbench-acceptance")]
+pub use native_windows::run_acceptance as run_native_windows_acceptance;
+mod window_presentation;
+mod native_ime;
 mod terminal_appearance;
 use terminal_appearance::*;
 mod terminal_text;
@@ -167,6 +172,14 @@ pub(crate) enum PendingTransfer {
 
 pub struct AditApp {
     manager: SessionManager,
+    native_window_id: Option<window::Id>,
+    native_main_window: Option<window::Id>,
+    native_auxiliary: bool,
+    native_session_windows: std::collections::HashMap<SessionId, window::Id>,
+    native_sftp_window: Option<window::Id>,
+    native_dialog_window: Option<window::Id>,
+    native_preedit: Option<iced::advanced::input_method::Preedit>,
+    rdp_pressed_keys: HashSet<(u8, bool)>,
     profile_store: ProfileStore,
     credential_store: CredentialStore,
     vault_ui: vault_ui::State,
@@ -760,6 +773,10 @@ pub enum MenuCommand {
 pub enum Message {
     Vault(vault_ui::Message),
     Tick,
+    DetachSession(SessionId),
+    MergeNativeWindow,
+    NativeOpenSearch,
+    NativeImeEvent(SessionId, u64, iced::advanced::input_method::Event),
     // RDP: per-frame surface sampling + input over the graphical surface.
     RdpTick,
     RdpPointerMoved(Point),
@@ -1538,6 +1555,14 @@ impl AditApp {
         };
 
         let mut app = Self {
+            native_window_id: None,
+            native_main_window: None,
+            native_auxiliary: false,
+            native_session_windows: Default::default(),
+            native_sftp_window: None,
+            native_dialog_window: None,
+            native_preedit: None,
+            rdp_pressed_keys: Default::default(),
             group_icons,
             manager,
             profile_store,
@@ -1854,11 +1879,7 @@ pub fn run() -> iced::Result {
         }
         (app, Task::batch(tasks))
     };
-    iced::application(boot, update, view)
-        .title(app_title)
-        .theme(app_theme)
-        .subscription(subscription)
-        .window(window::Settings {
+    native_windows::run(boot, window::Settings {
             icon: app_icon(),
             size: iced::Size::new(width, height),
             // NOT `maximized: true` on Windows — that flag at creation time IS
@@ -1881,7 +1902,6 @@ pub fn run() -> iced::Result {
             maximized: !cfg!(windows),
             ..window::Settings::default()
         })
-        .run()
 }
 
 /// The window/taskbar icon, decoded from a raw 256x256 RGBA blob embedded in
@@ -1915,6 +1935,7 @@ fn app_theme(app: &AditApp) -> Theme {
     display_accessibility::base_theme(app.dark_mode)
 }
 
+#[cfg(feature = "native-vnc-acceptance")]
 fn subscription(app: &AditApp) -> Subscription<Message> {
     let mut subs = vec![
         iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
@@ -2024,6 +2045,7 @@ fn sidebar_drag_event(
     }
 }
 
+#[cfg(any(feature = "native-vnc-acceptance", feature = "native-workbench-acceptance"))]
 fn runtime_subscription(app: &AditApp) -> Subscription<Message> {
     if mission_name_editing(app) {
         event::listen_with(mission_name_runtime_event)

@@ -78,6 +78,18 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
 
 fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
     match message {
+        Message::DetachSession(_) | Message::MergeNativeWindow => {
+            app.notice = "请通过原生主窗口拆出或合回会话".into();
+        }
+        Message::NativeOpenSearch => {
+            app.search_open = true;
+            app.terminal_focused = false;
+            sync_terminal_size(app);
+            return focus_search_input();
+        }
+        Message::NativeImeEvent(id, epoch, event) => {
+            native_ime::update(app, id, epoch, event);
+        }
         Message::Vault(message) => return vault_ui::update(app, message),
         Message::Tick => {
             // Auto-sync, when it is on and something is due. Two clocks, because
@@ -105,7 +117,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     return Task::done(Message::SyncAuto);
                 }
             }
-            app.manager.poll_events();
+            if app.native_window_id.is_none() { app.manager.poll_events(); }
             desktop_panes::refresh(app);
             if let Some(notice) = app.manager.take_desktop_notice() {
                 app.notice = notice;
@@ -135,7 +147,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.panes.len() != panes_before {
                 sync_terminal_size(app);
             }
-            persist_settings_if_changed(app);
+            if !app.native_auxiliary { persist_settings_if_changed(app); }
 
             // Send any debounced resize whose viewport has settled. On the
             // periodic tick as well as the RDP frame tick, because the frame
@@ -156,6 +168,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_surface_size_prev = None;
             }
 
+            if native_windows::owns_selected_session(app) {
+            if app.desktop_window_focused {
             // RDP clipboard bridge: the helper is a windowless process, so only
             // this one has a Windows clipboard. Remote copies land here...
             if let Some(text) = app
@@ -205,6 +219,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     }
                 }
             }
+            }
             // Chunks answering a local paste. Handed straight to the COM stream
             // blocked on them over on Explorer's thread.
             for (stream_id, data) in app.manager.take_rdp_file_chunks() {
@@ -237,7 +252,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     .manager
                     .active_session_summary()
                     .is_some_and(|s| s.status == SessionStatus::Connected);
-            if app.rdp_clipboard && app.manager.active_is_desktop() && clipboard_ready {
+            if app.desktop_window_focused && app.rdp_clipboard && app.manager.active_is_desktop() && clipboard_ready {
                 app.rdp_clipboard_ticks = app.rdp_clipboard_ticks.wrapping_add(1);
                 if app
                     .rdp_clipboard_ticks
@@ -256,6 +271,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         });
                     }
                 }
+            }
             }
         }
         Message::RdpClipboardPolled(session, epoch, contents) => {
@@ -282,6 +298,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Drained here rather than in the callback because the callback runs
             // on the system input thread against a deadline, and sending on the
             // helper pipe is not work that belongs there.
+            if app.desktop_window_focused {
             if app.manager.active_is_vnc()
                 && app.vnc_grab_keys
                 && app.manager.active_rdp_live()
@@ -293,7 +310,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 && !app.manager.active_is_vnc()
                 && remote_workspace_accepts_input(app)
             {
+                // A different native window or a modal may have retired the
+                // previous hook. Reacquire only the currently focused HWND.
+                if app.native_window_id.is_some() { keyboard_hook::arm(); }
                 for stroke in keyboard_hook::drain() {
+                    if stroke.pressed { app.rdp_pressed_keys.insert((stroke.scancode, stroke.extended)); }
+                    else { app.rdp_pressed_keys.remove(&(stroke.scancode, stroke.extended)); }
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode: stroke.scancode,
                         extended: stroke.extended,
@@ -306,6 +328,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // tab. Leaving a global hook armed after that would swallow
                 // keys for a desktop that is no longer there.
                 keyboard_hook::disarm();
+            }
             }
             // The cached frame belongs to one session; if the active session
             // changed (tab switch, or a close that auto-activated another tab),
@@ -533,7 +556,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // there and this arm finishes the job exactly once.
             if app.startup_maximize_pending {
                 app.startup_maximize_pending = false;
-                return window::latest().and_then(|id| window::maximize(id, true));
+                return if let Some(id) = app.native_window_id { window::maximize(id, true) }
+                    else { window::latest().and_then(|id| window::maximize(id, true)) };
             }
         }
         Message::ColorSchemeChanged(index) => {
@@ -2384,7 +2408,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // the new chrome and ship a wrong desktop size. Changing the mode
             // always produces a `WindowResized`, and that handler does it with
             // the real numbers.
-            return window::latest().and_then(move |id| window::set_mode(id, mode));
+            return if let Some(id) = app.native_window_id { window::set_mode(id, mode) }
+                else { window::latest().and_then(move |id| window::set_mode(id, mode)) };
         }
         Message::KeyboardInput(event) => {
             if is_escape_key(&event) && app.active_menu.take().is_some() {
@@ -2525,7 +2550,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     }
                     return Task::none();
                 }
+                if app.native_preedit.is_some() { return Task::none(); }
                 if let Some((scancode, extended, pressed)) = encode_rdp_scancode(&event) {
+                    if pressed { app.rdp_pressed_keys.insert((scancode, extended)); }
+                    else { app.rdp_pressed_keys.remove(&(scancode, extended)); }
                     app.manager.send_rdp_input_to_active(RdpInput::Key {
                         scancode,
                         extended,
@@ -2557,6 +2585,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // the terminal's copy/paste, and here there is no terminal to
             // conflict with. It is the pairing every file manager uses for the
             // same gesture on a list row.
+            if app.native_preedit.is_some() { return Task::none(); }
             if !remote_workspace_accepts_input(app) {
                 if app.main_view != MainView::Hosts || desktop_panes::local_input_blocked(app) {
                     return Task::none();
@@ -3344,6 +3373,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             maybe_resize_active_rdp(app);
         }
         Message::ToggleVncGrab => {
+            if app.manager.active_vnc_read_only() {
+                release_rdp_modifiers(app);
+                return Task::none();
+            }
             let grab = !app.vnc_grab_keys;
             release_rdp_modifiers(app);
             app.vnc_grab_keys = grab;
@@ -3623,6 +3656,7 @@ fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
     {
         return false;
     }
+    let owned_hook = app.desktop_window_focused || app.vnc_grab_keys;
     app.rdp_tiles.clear();
     app.rdp_tiles_prev.clear();
     app.rdp_surface_size = None;
@@ -3639,7 +3673,7 @@ fn retire_vnc_connection_cache(app: &mut AditApp) -> bool {
     app.rdp_clipboard_offered = None;
     // In-flight OS clipboard reads can complete after reconnect to the same tab.
     app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
-    keyboard_hook::disarm();
+    if owned_hook { keyboard_hook::disarm(); }
     true
 }
 

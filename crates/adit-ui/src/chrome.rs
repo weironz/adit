@@ -73,13 +73,13 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     if app.profile_editor.is_some() {
         layers.push(opaque(profile_editor_overlay(app)));
     }
-    if app.connection_dialog.is_some() {
+    if app.connection_dialog.is_some() && native_windows::dialog_visible(app) {
         layers.push(opaque(connection_dialog_overlay(app)));
     }
-    if let Some((session_id, prompt)) = app.manager.pending_host_key() {
+    if let Some((session_id, prompt)) = app.manager.pending_host_key().filter(|(sid, _)| native_windows::prompt_visible(app, *sid)) {
         layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
     }
-    if let Some((session_id, prompt)) = &app.auth_prompt {
+    if let Some((session_id, prompt)) = app.auth_prompt.as_ref().filter(|(sid, _)| native_windows::prompt_visible(app, *sid)) {
         layers.push(opaque(auth_prompt_dialog_overlay(
             *session_id,
             prompt,
@@ -89,7 +89,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     if let Some(url) = &app.pending_hyperlink {
         layers.push(opaque(hyperlink_confirm_overlay(url)));
     }
-    if app.manager.sftp_is_open() {
+    if app.manager.sftp_is_open() && native_windows::sftp_visible(app) {
         layers.push(opaque(sftp_panel_overlay(app)));
         if let Some((pane, name, is_dir)) = app.sftp_context_menu.clone() {
             layers.push(opaque(sftp_context_overlay(app, pane, name, is_dir)));
@@ -120,6 +120,16 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
         layers.push(opaque(known_hosts_overlay(app)));
     }
 
+    let another_window_modal = app.native_window_id.is_some() && (
+        app.manager.pending_host_key().is_some_and(|(sid, _)| !native_windows::prompt_visible(app, sid))
+        || app.auth_prompt.as_ref().is_some_and(|(sid, _)| !native_windows::prompt_visible(app, *sid))
+        || (app.connection_dialog.is_some() && !native_windows::dialog_visible(app))
+        || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app))
+    );
+    if another_window_modal {
+        layers.push(opaque(container(text("请在另一窗口完成验证或文件操作"))
+            .padding(12).center_x(Fill).center_y(Fill).style(|_| dialog_scrim_style())));
+    }
     if layers.len() == 1 {
         layers.pop().unwrap()
     } else {

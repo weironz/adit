@@ -341,7 +341,7 @@ pub(crate) fn sidebar_reveal_strip() -> Element<'static, Message> {
 /// that is a few points off does not misdraw anything, it silently selects the
 /// wrong cells.
 pub(crate) fn sidebar_offset(app: &AditApp) -> f32 {
-    if app.fullscreen {
+    if app.native_auxiliary || app.fullscreen {
         // Fullscreen drops the panel and the reveal strip with it — the remote
         // desktop owns the glass.
         0.0
@@ -966,16 +966,13 @@ pub(crate) fn floating_context_menu<'a>(
     card: Element<'a, Message>,
     hide: Message,
 ) -> Element<'a, Message> {
-    let x = app
-        .context_menu_pos
-        .x
-        .min((app.window_width - PROFILE_MENU_WIDTH - 6.0).max(0.0))
-        .max(0.0);
-    let y = app
-        .context_menu_pos
-        .y
-        .min((app.window_height - PROFILE_MENU_HEIGHT - 6.0).max(0.0))
-        .max(0.0);
+    floating_context_menu_at(app.window_width, app.window_height, app.context_menu_pos, card, hide)
+}
+
+pub(crate) fn floating_context_menu_at<'a>(width: f32, height: f32, point: Point,
+    card: Element<'a, Message>, hide: Message) -> Element<'a, Message> {
+    let x = point.x.min((width - PROFILE_MENU_WIDTH - 6.0).max(0.0)).max(0.0);
+    let y = point.y.min((height - PROFILE_MENU_HEIGHT - 6.0).max(0.0)).max(0.0);
 
     let positioned = column![
         Space::new().height(Length::Fixed(y)),

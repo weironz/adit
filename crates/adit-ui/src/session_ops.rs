@@ -742,10 +742,23 @@ pub(crate) fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
 /// with the remote is the bug being fixed here.
 pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     desktop_panes::release_owned(app);
-    if app.vnc_grab_keys { keyboard_hook::disarm(); }
+    if app.vnc_grab_keys || (app.native_window_id.is_some() && app.desktop_window_focused) {
+        keyboard_hook::disarm();
+    }
     app.vnc_grab_keys = false;
     app.vnc_preedit = None;
+    app.native_preedit = None;
+    app.rdp_resize_pending = None;
+    app.rdp_resize_pending_since = None;
+    for (scancode, extended) in app.rdp_pressed_keys.drain() {
+        app.manager.send_rdp_input_to_active(RdpInput::Key { scancode, extended, pressed: false });
+    }
+    if app.mouse_button_down { send_mouse_report(app, 0, false, false); }
+    app.mouse_button_down = false;
+    app.terminal_selecting = false;
+    app.selection_autoscroll = 0;
     app.vnc_input_epoch = app.vnc_input_epoch.wrapping_add(1);
+    app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
     for (_, keysym) in app.vnc_pressed_keys.drain(..) {
         app.manager.send_vnc_key_to_active(keysym, false);
     }
@@ -1701,6 +1714,11 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
 /// and the status bar without this following — 62 points of desktop that was
 /// asked for and never used, split top and bottom by the centring.
 pub(crate) fn chrome_height(app: &AditApp) -> f32 {
+    if app.native_auxiliary {
+        return native_windows::HEADER_HEIGHT + STATUS_BAR_HEIGHT
+            + if app.search_open { TOOLBAR_HEIGHT } else { 0.0 }
+            + if app.command_window_open { TOOLBAR_HEIGHT } else { 0.0 };
+    }
     let tools = if app.search_open { TOOLBAR_HEIGHT } else { 0.0 }
         + if app.command_window_open { TOOLBAR_HEIGHT } else { 0.0 };
     if !app.fullscreen {
@@ -1802,6 +1820,11 @@ fn rdp_resize_transitioning(app: &AditApp, surface: (u16, u16)) -> bool {
 /// Called from the periodic tick and the per-frame RDP tick; cheap when there
 /// is nothing pending.
 pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
+    if !native_windows::owns_selected_session(app) {
+        app.rdp_resize_pending = None;
+        app.rdp_resize_pending_since = None;
+        return;
+    }
     if app.manager.active_is_vnc() && !app.manager.active_vnc_resize_remote() {
         app.rdp_resize_pending = None;
         return;
@@ -1988,6 +2011,7 @@ fn resize_probe_enabled() -> bool {
 }
 
 pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
+    if !native_windows::owns_selected_session(app) { return; }
     if app.manager.active_is_vnc() && !app.manager.active_vnc_resize_remote() {
         return;
     }
@@ -2122,7 +2146,8 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
         pane_w,
         pane_h,
         origin_x: effective_sidebar,
-        origin_y: if app.fullscreen && app.manager.active_is_desktop() { 0.0 }
+        origin_y: if app.native_auxiliary { native_windows::HEADER_HEIGHT }
+            else if app.fullscreen && app.manager.active_is_desktop() { 0.0 }
             else if app.fullscreen { TAB_BAR_HEIGHT }
             else { MENU_BAR_HEIGHT + TAB_BAR_HEIGHT }
             + if app.search_open { TOOLBAR_HEIGHT } else { 0.0 },
@@ -2208,6 +2233,7 @@ pub(crate) fn zoom_terminal(app: &mut AditApp, delta: i32) {
 }
 
 pub(crate) fn sync_terminal_size(app: &mut AditApp) {
+    if !native_windows::owns_selected_session(app) && app.native_window_id.is_some() { return; }
     // Desktop pixels can change even when no terminal cell count changes.
     maybe_resize_active_rdp(app);
     let layout = pane_layout(app);
@@ -2224,7 +2250,7 @@ pub(crate) fn sync_terminal_size(app: &mut AditApp) {
     // Compare each real grid, not the focused pane's previous size: a same-size
     // layout can contain different fonts or a swapped-in session.
     let targets: Vec<_> = sessions.into_iter().filter_map(|id| {
-        if app.manager.session_is_desktop(id) { return None; }
+        if app.manager.session_is_desktop(id) || (!app.native_auxiliary && app.native_session_windows.contains_key(&id)) { return None; }
         let target = layout.pane_terminal_size(terminal_style_for(app, Some(id)).metrics);
         let old = app.manager.snapshot_for(id, Viewport::tail(1)).size;
         (old != target).then_some((id, old, target))

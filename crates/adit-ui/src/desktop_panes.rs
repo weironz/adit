@@ -18,7 +18,7 @@ pub(crate) struct DesktopPanes {
 }
 
 #[derive(Clone)]
-struct RdpCursorVisual {
+pub(crate) struct RdpCursorVisual {
     shape: Option<adit_session::VncCursor>,
     handle: Option<iced::widget::image::Handle>,
     position: Option<(u16, u16)>,
@@ -372,6 +372,7 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
     let header = mouse_area(
         container(
             labels
+                .push(button(text(t("拆出")).size(11)).on_press(Message::DetachSession(id)))
                 .push(
                     button(text(t("聚焦")).size(11))
                         .padding([0, 6])
@@ -1085,6 +1086,15 @@ pub(crate) fn rdp_cursor_layer(
         scale_y,
         size,
     })
+}
+
+pub(crate) fn cursor_visual(app: &AditApp, id: SessionId) -> Option<RdpCursorVisual> {
+    app.desktop_panes.cursors.get(&id).cloned()
+}
+
+pub(crate) fn cursor_visual_layer(visual: Option<RdpCursorVisual>, id: SessionId,
+    scale_x: f32, scale_y: f32, size: iced::Size) -> Element<'static, Message> {
+    Element::new(RdpCursorLayer { visual, id, scale_x, scale_y, size })
 }
 
 struct RdpCursorLayer {

@@ -195,6 +195,7 @@ pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
 
 pub(crate) fn remote_workspace_accepts_input(app: &AditApp) -> bool {
     app.desktop_window_focused
+        && native_windows::owns_selected_session(app)
         && app.terminal_focused
         && app.main_view != MainView::Hosts
         && (app.main_view != MainView::Missions || mission_has_active_member(app))

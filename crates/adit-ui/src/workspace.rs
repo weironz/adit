@@ -6,6 +6,12 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
     // byte-for-byte as before (it is the well-tested selection/hit-test path).
     let body: Element<'_, Message> = if app.main_view == MainView::Hosts {
         hosts_view(app)
+    } else if !native_windows::owns_selected_session(app) && app.native_window_id.is_some() {
+        let mut note = column![text("会话已在独立窗口打开").size(14)].spacing(12);
+        if let Some(id) = app.manager.active_session() {
+            note = note.push(button("切换到会话窗口").on_press(Message::DetachSession(id)));
+        }
+        container(note).center_x(Fill).center_y(Fill).into()
     } else if app.main_view == MainView::Missions && mission_is_empty(app) {
         container(column![
             text(t("添加已打开会话开始任务")).size(TEXT_TITLE),
@@ -22,7 +28,7 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         let snapshot = active_terminal_snapshot(app);
         let highlights = search_highlights_for(app, &snapshot);
         let links_clickable = link_open_modifier(app);
-        mouse_area(terminal_view(
+        let terminal: Element<'_, Message> = mouse_area(terminal_view(
             active_terminal_style(app),
             snapshot,
             app.terminal_focused,
@@ -40,7 +46,12 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         .on_move(Message::TerminalPointerMoved)
         .on_scroll(Message::TerminalScrolled)
         .interaction(mouse::Interaction::Text)
-        .into()
+        .into();
+        if let Some(session) = app.manager.active_session().filter(|_| app.native_window_id.is_some()) {
+            stack![terminal, native_ime::layer(session, app.vnc_input_epoch,
+                remote_workspace_accepts_input(app), app.native_preedit.clone())].into()
+        } else { terminal }
+
     };
 
     // With no sessions open the strip holds one 主机 tab and the word 空闲,
@@ -100,6 +111,11 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
                         .on_press(Message::ShowMainView(MainView::Missions))
                         .style(|_, status| toolbar_icon_button_style(status))
                 },
+                if let Some(id) = app.manager.active_session() {
+                    button(text(t("拆出窗口")).size(TEXT_META))
+                        .on_press(Message::DetachSession(id))
+                        .style(|_, status| secondary_button_style(status))
+                } else { button(text("").size(TEXT_META)).style(|_, status| toolbar_icon_button_style(status)) },
                 active_session_action(app),
                 button(text(t("打开的连接")).size(TEXT_META))
                     .on_press(Message::FindOpenSession)
@@ -218,7 +234,11 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     } else {
         stack(vec![content, desktop_panes::rdp_cursor_layer(app,
             app.manager.active_session().expect("live desktop has a session"), scale_x, scale_y,
-            iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y))]).into()
+            iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y)),
+            native_ime::surface_layer(app.manager.active_session().expect("desktop session"), app.vnc_input_epoch,
+                app.native_window_id.is_some() && remote_workspace_accepts_input(app), app.native_preedit.clone(),
+                iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y)),
+        ]).into()
     };
     let surface = mouse_area(content)
         .on_move(move |p| {
@@ -292,7 +312,7 @@ mod error_tests;
 /// every boundary. Rounding each cumulative edge once and taking differences
 /// means neighbours agree on their shared edge by construction, so the seams
 /// close exactly and the sizes still sum to the full surface.
-fn rdp_tile_grid(tiles: &[RdpTile], scale_x: f32, scale_y: f32) -> Element<'static, Message> {
+pub(crate) fn rdp_tile_grid(tiles: &[RdpTile], scale_x: f32, scale_y: f32) -> Element<'static, Message> {
     let edge_x = |device: u32| (device as f32 / scale_x).round();
     let edge_y = |device: u32| (device as f32 / scale_y).round();
     let mut rows: Vec<Element<'_, Message>> = Vec::new();
@@ -821,6 +841,8 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
             row![
                 text("●").size(9).color(status_color(status)),
                 text(title).size(11).color(primary_text()).width(Fill),
+                button(text(t("拆出")).size(11)).on_press(Message::DetachSession(session_id))
+                    .style(|_, status| secondary_button_style(status)),
                   button(text(t("聚焦")).size(11))
                       .padding([0, 6]).on_press(Message::FocusMissionPane(index))
                       .style(|_, status| secondary_button_style(status)),
@@ -872,6 +894,10 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
     .on_scroll(move |delta| Message::PaneScrolled(index, delta))
     .interaction(mouse::Interaction::Text);
 
+    let body: Element<'static, Message> = if is_focused && app.native_window_id.is_some() {
+        stack![body, native_ime::layer(session_id, app.vnc_input_epoch,
+            remote_workspace_accepts_input(app), app.native_preedit.clone())].into()
+    } else { body.into() };
     column![header, body]
         .spacing(0)
         .width(Fill)
