@@ -1,5 +1,6 @@
 mod sftp_shell;
 mod terminal_encoding;
+mod triggers;
 
 pub use sftp_shell::SftpShell;
 
@@ -29,7 +30,7 @@ pub use adit_ssh::{
 use adit_terminal::{
     LogicalAnchor, TerminalCore, TerminalSize, TerminalSnapshot, Viewport, VtTerminal,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
@@ -46,6 +47,12 @@ pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame
 pub use vnc_input::unicode_keysym;
 pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
 use vnc_client::VncClientHandle;
+
+pub fn validate_session_options(options: &SessionOptions) -> Result<(), String> {
+    options.validate()?;
+    triggers::TriggerEngine::new(&options.triggers)?;
+    Ok(())
+}
 
 /// Default RDP desktop size when the caller doesn't specify one.
 const DEFAULT_RDP_WIDTH: u16 = 1280;
@@ -107,6 +114,7 @@ struct SessionRecord {
     options: SessionOptions,
     codec: terminal_encoding::TerminalCodec,
     auto_log_consumed: bool,
+    triggers: triggers::TriggerEngine,
     summary: SessionSummary,
     terminal: VtTerminal,
     live: Option<LiveShellHandle>,
@@ -422,6 +430,7 @@ pub struct SessionManager {
     /// most recent remote copy wins, exactly as it would between two local apps.
     pending_rdp_clipboard: Option<(SessionId, PendingDesktopClipboard)>,
     pending_desktop_notice: Option<(SessionId, String)>,
+    pending_trigger_notices: VecDeque<String>,
     /// Byte ranges the remote asked for, waiting for the UI to read them off
     /// disk. A `Vec` rather than the single slot the clipboard text uses: a
     /// paste of several files has several streams open at once, and dropping
@@ -513,6 +522,7 @@ impl SessionManager {
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
             pending_desktop_notice: None,
+            pending_trigger_notices: VecDeque::new(),
             pending_rdp_file_reads: Vec::new(),
             pending_rdp_clipboard_image: None,
             pending_rdp_clipboard_files: None,
@@ -585,7 +595,7 @@ impl SessionManager {
         profile_id: ProfileId,
         options: SessionOptions,
     ) -> Result<(), SessionError> {
-        options.validate().map_err(SessionError::Unsupported)?;
+        validate_session_options(&options).map_err(SessionError::Unsupported)?;
         let profile = self.profiles.iter_mut().find(|p| p.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?;
         profile.session_options = options;
@@ -1043,6 +1053,7 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -1066,6 +1077,7 @@ impl SessionManager {
             .find(|profile| profile.id == profile_id)
             .ok_or(SessionError::ProfileNotFound)?
             .clone();
+        validate_session_options(&profile.session_options).map_err(SessionError::Unsupported)?;
 
         // SFTP carries no byte stream to drive a PTY, so it is built on its own
         // rather than bent into the live-shell shape below.
@@ -1180,6 +1192,7 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect,
             },
@@ -1374,6 +1387,7 @@ impl SessionManager {
                 keep_connection_after_exit: false,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
                 auto_log_consumed: false,
             },
         );
@@ -1599,6 +1613,7 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -1670,6 +1685,7 @@ impl SessionManager {
                 shared_session: None,
                 keep_connection_after_exit: false,
                 codec: terminal_encoding::TerminalCodec::new(options.encoding),
+                triggers: triggers::TriggerEngine::new(&options.triggers).unwrap_or_default(),
                 options,
                 auto_log_consumed: false,
                 reconnect: None,
@@ -2000,6 +2016,10 @@ impl SessionManager {
     #[must_use]
     pub fn take_desktop_notice(&mut self) -> Option<String> {
         self.pending_desktop_notice.take().filter(|(id, _)| self.active_session == Some(*id)).map(|(_, message)| message)
+    }
+
+    pub fn take_trigger_notice(&mut self) -> Option<String> {
+        self.pending_trigger_notices.pop_front()
     }
 
     /// Take text a remote desktop copied, for the UI to put on the system clipboard.
@@ -2599,6 +2619,7 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -2664,6 +2685,7 @@ impl SessionManager {
                 keep_connection_after_exit: profile.keep_connection_after_exit,
                 options: profile.session_options.clone(),
                 codec: terminal_encoding::TerminalCodec::new(profile.session_options.encoding),
+                triggers: triggers::TriggerEngine::new(&profile.session_options.triggers).unwrap_or_default(),
                 auto_log_consumed: false,
                 reconnect: None,
             },
@@ -3279,6 +3301,7 @@ impl SessionManager {
     pub fn poll_events(&mut self) -> usize {
         let mut handled = 0;
         let auto_reconnect = self.auto_reconnect;
+        let trigger_notices = &mut self.pending_trigger_notices;
 
         for record in self.sessions.values_mut() {
             let mut closed = false;
@@ -3340,6 +3363,30 @@ impl SessionManager {
                         let decoded = record.codec.decode(&bytes);
                         record.terminal.feed(&decoded);
                         record.summary.status = SessionStatus::Connected;
+                        if !record.reconnect.as_ref().is_some_and(|r| r.manual) {
+                            let title: String = record.summary.title.chars().take(128).collect();
+                            for action in record.triggers.feed(&decoded, Instant::now()) {
+                                let message = match action {
+                                    adit_domain::TriggerAction::Notify =>
+                                        format!("{title}：输出触发器已匹配"),
+                                    adit_domain::TriggerAction::SendLine(line) => {
+                                        let mut input = line.into_bytes();
+                                        input.push(b'\r');
+                                        let result = record.codec.encode(input).and_then(|bytes| {
+                                            record.live.as_ref().ok_or_else(|| "会话已断开".to_string())?
+                                                .send(LiveShellCommand::Input(bytes))
+                                                .map_err(|error| error.to_string())
+                                        });
+                                        match result {
+                                            Ok(()) => format!("{title}：触发器已发送文本"),
+                                            Err(error) => format!("{title}：触发器发送失败：{error}"),
+                                        }
+                                    }
+                                };
+                                if trigger_notices.len() == 64 { trigger_notices.pop_front(); }
+                                trigger_notices.push_back(message);
+                            }
+                        }
                         let mut log_failed = false;
                         if let Some(log) = &mut record.log {
                             log_failed = if let Some(stripper) = &mut log.stripper {
@@ -3650,6 +3697,7 @@ impl SessionManager {
                         .append_status(format!("reconnecting (attempt {attempt_no})…"));
                     record.live = Some(live);
                     record.codec = terminal_encoding::TerminalCodec::new(record.options.encoding);
+                    record.triggers = triggers::TriggerEngine::new(&record.options.triggers).unwrap_or_default();
                     record.summary.status = SessionStatus::Connecting;
                     if let Some(reconnect) = &mut record.reconnect {
                         reconnect.attempts = attempt_no;
@@ -3918,7 +3966,7 @@ fn spawn_live_shell(
     request.auto_accept_host_keys = auto_accept_host_keys;
     request.startup_command = profile.startup_command.clone();
     request.term = profile.terminal_type.clone();
-    profile.session_options.validate().map_err(SessionError::Unsupported)?;
+    validate_session_options(&profile.session_options).map_err(SessionError::Unsupported)?;
     request.environment = profile.session_options.environment.clone();
     request.connect_timeout_secs = connect_timeout_secs;
     request.jumps = profile.jumps.clone();
@@ -3994,6 +4042,8 @@ enum StripState {
     Osc,
     /// Saw ESC inside an OSC, expecting the `\` of ST.
     OscEsc,
+    ControlString,
+    ControlStringEsc,
     /// Drop exactly one more byte (e.g. a charset designator final).
     Skip1,
 }
@@ -4018,6 +4068,7 @@ impl AnsiStripper {
                 StripState::Escape => match b {
                     b'[' => StripState::Csi,
                     b']' => StripState::Osc,
+                    b'P' | b'X' | b'^' | b'_' => StripState::ControlString,
                     // nF intermediates (charset designators etc.): drop the final.
                     b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' | b'#' | b'%' | b' ' => {
                         StripState::Skip1
@@ -4033,11 +4084,25 @@ impl AnsiStripper {
                     }
                 }
                 StripState::Osc => match b {
-                    0x07 => StripState::Text,
+                    0x07 | 0x18 | 0x1a => StripState::Text,
                     0x1b => StripState::OscEsc,
                     _ => StripState::Osc,
                 },
-                StripState::OscEsc => StripState::Text,
+                StripState::OscEsc => match b {
+                    b'\\' | 0x18 | 0x1a => StripState::Text,
+                    0x1b => StripState::OscEsc,
+                    _ => StripState::Osc,
+                },
+                StripState::ControlString => match b {
+                    0x1b => StripState::ControlStringEsc,
+                    0x18 | 0x1a => StripState::Text,
+                    _ => StripState::ControlString,
+                },
+                StripState::ControlStringEsc => match b {
+                    b'\\' | 0x18 | 0x1a => StripState::Text,
+                    0x1b => StripState::ControlStringEsc,
+                    _ => StripState::ControlString,
+                },
                 StripState::Skip1 => StripState::Text,
             };
         }

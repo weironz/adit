@@ -110,6 +110,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some(notice) = app.manager.take_desktop_notice() {
                 app.notice = notice;
             }
+            if let Some(notice) = app.manager.take_trigger_notice() {
+                app.notice = notice;
+            }
             // Fatal errors stop frame subscriptions too; retire cache/hook on
             // the regular tick rather than relying on one more video frame.
             retire_vnc_connection_cache(app);

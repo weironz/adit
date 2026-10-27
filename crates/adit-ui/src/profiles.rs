@@ -927,7 +927,10 @@ pub(crate) fn parse_jumps_checked(spec: &str) -> Result<Vec<JumpHop>, String> {
 }
 
 pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Option<ProfileId> {
-    let options = match app.profile_options.value() {
+    let options = match app.profile_options.value().and_then(|options| {
+        adit_session::validate_session_options(&options)?;
+        Ok(options)
+    }) {
         Ok(options) => options,
         Err(error) => {
             app.last_error = Some(error);

@@ -28,10 +28,10 @@ pub(crate) fn begin_catalog_transfer(command: MenuCommand) -> Task<Message> {
             .set_title("选择 PuTTY Sessions 注册表导出文件（.reg）")
             .add_filter("PuTTY 注册表导出", &["reg"]),
         MenuCommand::ImportCatalog => dialog
-            .set_title("导入会话目录；启动命令和环境变量将移除，自动日志需重新启用")
+            .set_title("导入会话目录；启动命令、环境变量和触发器将移除，自动日志需重新启用")
             .add_filter("Adit 会话目录", &["json"]),
         MenuCommand::ExportCatalog => dialog
-            .set_title("导出会话目录到新文件（不含凭据、启动命令和环境变量值）")
+            .set_title("导出会话目录到新文件（不含凭据、启动命令、环境变量值和触发器）")
             .set_file_name("adit-profiles.json")
             .add_filter("Adit 会话目录", &["json"]),
         _ => return Task::none(),

@@ -15,11 +15,18 @@ fn catalog_transfer_preserves_public_policy_and_never_exports_environment_values
     profile.session_options.logging = Some(adit_domain::LogPolicy {
         auto_start: true, record_input: true, ..Default::default()
     });
+    profile.session_options.triggers = vec![adit_domain::OutputTrigger {
+        enabled: true,
+        pattern: "fixture-only".into(),
+        action: adit_domain::TriggerAction::SendLine("fixture-command-secret".into()),
+    }];
     let exported = export_catalog(&ProfileCatalog::from_profiles(vec![profile])).unwrap();
     assert!(!exported.contains("fixture-secret-value"));
+    assert!(!exported.contains("fixture-command-secret"));
     let imported = import_catalog(&exported).unwrap();
     let options = &imported.catalog.profiles[0].session_options;
     assert!(options.environment.is_empty());
+    assert!(options.triggers.is_empty());
     assert_eq!(options.encoding, adit_domain::TerminalEncoding::Gbk);
     assert_eq!(options.reconnect.as_ref().unwrap().max_attempts, 4);
     assert!(!options.logging.as_ref().unwrap().auto_start);

@@ -100,7 +100,7 @@ const VNC_FIELDS: &[&str] = &[
 const JUMP_FIELDS: &[&str] = &["host", "port", "username"];
 const SESSION_OPTION_FIELDS: &[&str] = &[
     "environment", "encoding", "rdp_quality", "rdp_monitors", "rdp_selected_monitor",
-    "reconnect", "logging",
+    "reconnect", "logging", "triggers",
 ];
 const MONITOR_FIELDS: &[&str] = &["left", "top", "width", "height", "primary", "scale_percent"];
 const RECONNECT_FIELDS: &[&str] = &["enabled", "max_attempts", "initial_delay_secs", "max_delay_secs"];
@@ -181,6 +181,7 @@ pub fn export_catalog(catalog: &ProfileCatalog) -> Result<String, String> {
         if let Some(options) = object.get_mut("session_options").and_then(|v| v.as_object_mut()) {
             // Environment values are free-form and may contain passwords or tokens.
             options.insert("environment".into(), serde_json::json!({}));
+            options.insert("triggers".into(), serde_json::json!([]));
         }
         profiles.push(value);
     }
@@ -236,6 +237,10 @@ pub fn import_catalog(text: &str) -> Result<ImportReport, String> {
         if !profile.session_options.environment.is_empty() {
             warnings.push(format!("{}：已移除环境变量值", profile.name));
             profile.session_options.environment.clear();
+        }
+        if !profile.session_options.triggers.is_empty() {
+            warnings.push(format!("{}：已移除自动触发器，请检查后自行配置", profile.name));
+            profile.session_options.triggers.clear();
         }
         if let Some(logging) = &mut profile.session_options.logging {
             if logging.auto_start || logging.record_input {

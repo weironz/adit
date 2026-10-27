@@ -55,6 +55,7 @@ dependencies = [
  "adit-terminal",
  "encoding_rs",
  "image",
+ "regex",
  "rustls-pemfile",
  "serde_json",
  "socket2",

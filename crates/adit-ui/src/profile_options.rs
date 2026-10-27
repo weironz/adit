@@ -1,5 +1,8 @@
 use super::*;
-use adit_domain::{DesktopQuality, LogPolicy, ReconnectPolicy, SessionOptions, TerminalEncoding};
+use adit_domain::{
+    DesktopQuality, LogPolicy, OutputTrigger, ReconnectPolicy, SessionOptions, TerminalEncoding,
+    TriggerAction,
+};
 use iced::widget::column;
 
 #[derive(Debug, Clone)]
@@ -21,6 +24,12 @@ pub enum ProfileOptionEdit {
     LogInput(bool),
     LogDirectory(String),
     LogPattern(String),
+    TriggerAdd,
+    TriggerRemove(usize),
+    TriggerEnabled(usize, bool),
+    TriggerPattern(usize, String),
+    TriggerSendMode(usize, bool),
+    TriggerText(usize, String),
 }
 
 pub(crate) struct ProfileOptionsForm {
@@ -144,6 +153,40 @@ impl ProfileOptionsForm {
             ProfileOptionEdit::LogPattern(v) => {
                 if let Some(policy) = &mut self.options.logging {
                     policy.filename_pattern = v;
+                }
+            }
+            ProfileOptionEdit::TriggerAdd => {
+                if self.options.triggers.len() < 16 {
+                    self.options.triggers.push(OutputTrigger::default());
+                }
+            }
+            ProfileOptionEdit::TriggerRemove(index) => {
+                if index < self.options.triggers.len() {
+                    self.options.triggers.remove(index);
+                }
+            }
+            ProfileOptionEdit::TriggerEnabled(index, enabled) => {
+                if let Some(rule) = self.options.triggers.get_mut(index) {
+                    rule.enabled = enabled;
+                }
+            }
+            ProfileOptionEdit::TriggerPattern(index, pattern) => {
+                if let Some(rule) = self.options.triggers.get_mut(index) {
+                    rule.pattern = pattern;
+                }
+            }
+            ProfileOptionEdit::TriggerSendMode(index, send) => {
+                if let Some(rule) = self.options.triggers.get_mut(index) {
+                    rule.action = if send {
+                        TriggerAction::SendLine(String::new())
+                    } else {
+                        TriggerAction::Notify
+                    };
+                }
+            }
+            ProfileOptionEdit::TriggerText(index, text) => {
+                if let Some(rule) = self.options.triggers.get_mut(index) {
+                    rule.action = TriggerAction::SendLine(text);
                 }
             }
         }
@@ -305,6 +348,63 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
                     .label("记录键盘输入（可能包含敏感信息）")
                     .on_toggle(|v| edit(ProfileOptionEdit::LogInput(v))),
             );
+    }
+    body = body.push(
+        row![
+            text("输出触发器").size(11),
+            Space::new().width(Fill),
+            button(text("添加触发器").size(11)).on_press(edit(ProfileOptionEdit::TriggerAdd)),
+        ]
+        .align_y(Alignment::Center),
+    );
+    for (index, rule) in form.options.triggers.iter().enumerate() {
+        let send = matches!(rule.action, TriggerAction::SendLine(_));
+        let mut entry = column![
+            row![
+                checkbox(rule.enabled)
+                    .label(format!("启用规则 {}", index + 1))
+                    .on_toggle(move |v| edit(ProfileOptionEdit::TriggerEnabled(index, v))),
+                Space::new().width(Fill),
+                button("移除").on_press(edit(ProfileOptionEdit::TriggerRemove(index))),
+            ]
+            .align_y(Alignment::Center),
+            text_input("匹配表达式（正则）", &rule.pattern)
+                .padding([5, 8])
+                .style(text_input_style)
+                .on_input(move |v| edit(ProfileOptionEdit::TriggerPattern(index, v))),
+            row![
+                button("仅提示")
+                    .style(move |_, status| method_button_style(!send, status))
+                    .on_press(edit(ProfileOptionEdit::TriggerSendMode(index, false))),
+                button("发送一行文本")
+                    .style(move |_, status| method_button_style(send, status))
+                    .on_press(edit(ProfileOptionEdit::TriggerSendMode(index, true))),
+            ]
+            .spacing(6),
+        ]
+        .spacing(6);
+        if let TriggerAction::SendLine(text_value) = &rule.action {
+            entry = entry
+                .push(
+                    text_input("发送后自动回车", text_value)
+                        .padding([5, 8])
+                        .style(text_input_style)
+                        .on_input(move |v| edit(ProfileOptionEdit::TriggerText(index, v))),
+                )
+                .push(
+                    text("发送文本会明文保存；请勿填写密码或令牌。")
+                        .size(10)
+                        .color(muted_text()),
+                );
+        }
+        body = body.push(container(entry).padding(8).width(Fill));
+    }
+    if !form.options.triggers.is_empty() {
+        body = body.push(
+            text("匹配可见输出；每条规则每秒最多执行一次。")
+                .size(10)
+                .color(muted_text()),
+        );
     }
     body.into()
 }

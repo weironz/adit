@@ -12,6 +12,23 @@ pub struct SessionOptions {
     pub rdp_selected_monitor: Option<usize>,
     pub reconnect: Option<ReconnectPolicy>,
     pub logging: Option<LogPolicy>,
+    pub triggers: Vec<OutputTrigger>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OutputTrigger {
+    pub enabled: bool,
+    pub pattern: String,
+    pub action: TriggerAction,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TriggerAction {
+    #[default]
+    Notify,
+    SendLine(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,11 +128,29 @@ pub struct LogPolicy {
 
 impl SessionOptions {
     pub fn validate(&self) -> Result<(), String> {
+        if self.triggers.len() > 16 {
+            return Err("触发器最多为 16 项".into());
+        }
+        for trigger in &self.triggers {
+            if trigger.pattern.len() > 512
+                || trigger.pattern.contains('\0')
+                || (trigger.enabled && trigger.pattern.is_empty())
+            {
+                return Err("启用的触发器必须填写不超过 512 字节的匹配表达式".into());
+            }
+            if let TriggerAction::SendLine(text) = &trigger.action {
+                if text.len() > 4096 || text.contains(['\0', '\r', '\n']) {
+                    return Err("触发器发送的文本不能超过 4096 字节或包含换行".into());
+                }
+            }
+        }
         if let Some(monitors) = &self.rdp_monitors {
             if monitors.is_empty()
                 || monitors.len() > 16
                 || monitors.iter().filter(|m| m.primary).count() != 1
-                || self.rdp_selected_monitor.is_some_and(|i| i >= monitors.len())
+                || self
+                    .rdp_selected_monitor
+                    .is_some_and(|i| i >= monitors.len())
                 || monitors.iter().any(|m| {
                     !(200..=8192).contains(&m.width)
                         || m.width & 1 != 0
@@ -141,18 +176,31 @@ impl SessionOptions {
             }
             let left = monitors.iter().map(|m| m.left).min().unwrap_or(0);
             let top = monitors.iter().map(|m| m.top).min().unwrap_or(0);
-            let right = monitors.iter().map(|m| m.left + i32::from(m.width)).max().unwrap_or(0);
-            let bottom = monitors.iter().map(|m| m.top + i32::from(m.height)).max().unwrap_or(0);
+            let right = monitors
+                .iter()
+                .map(|m| m.left + i32::from(m.width))
+                .max()
+                .unwrap_or(0);
+            let bottom = monitors
+                .iter()
+                .map(|m| m.top + i32::from(m.height))
+                .max()
+                .unwrap_or(0);
             if right - left > 8192 || bottom - top > 8192 {
                 return Err("远程桌面宽高不能超过 8192 像素".into());
             }
             let mut connected = vec![false; monitors.len()];
-            let primary = monitors.iter().position(|m| m.primary).ok_or("缺少主显示器")?;
+            let primary = monitors
+                .iter()
+                .position(|m| m.primary)
+                .ok_or("缺少主显示器")?;
             connected[primary] = true;
             loop {
                 let mut changed = false;
                 for (index, a) in monitors.iter().enumerate() {
-                    if connected[index] { continue; }
+                    if connected[index] {
+                        continue;
+                    }
                     if monitors.iter().enumerate().any(|(other_index, b)| {
                         connected[other_index]
                             && (((a.left + i32::from(a.width) == b.left
@@ -168,7 +216,9 @@ impl SessionOptions {
                         changed = true;
                     }
                 }
-                if !changed { break; }
+                if !changed {
+                    break;
+                }
             }
             if connected.contains(&false) {
                 return Err("远程显示器之间必须相邻".into());
@@ -268,7 +318,12 @@ mod tests {
     #[test]
     fn monitor_preferences_reject_bad_selection_overlap_and_disconnected_layouts() {
         let screen = DesktopMonitor {
-            left: 0, top: 0, width: 800, height: 600, primary: true, scale_percent: 100,
+            left: 0,
+            top: 0,
+            width: 800,
+            height: 600,
+            primary: true,
+            scale_percent: 100,
         };
         let mut options = SessionOptions {
             rdp_monitors: Some(vec![screen.clone()]),
@@ -278,7 +333,9 @@ mod tests {
         assert!(options.validate().is_err());
         options.rdp_selected_monitor = None;
         options.rdp_monitors.as_mut().unwrap().push(DesktopMonitor {
-            left: 800, primary: false, ..screen.clone()
+            left: 800,
+            primary: false,
+            ..screen.clone()
         });
         assert!(options.validate().is_ok());
         options.rdp_monitors.as_mut().unwrap()[1].left = 799;
