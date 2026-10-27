@@ -109,8 +109,8 @@ fn walk(
                 if !matches!(p.len(), 2 | 4) {
                     return None;
                 }
-                if p[1] > 0 {
-                    aspect = (p[0] / p[1] + usize::from(p[0] % p[1] >= p[1].div_ceil(2))).max(1);
+                if let Some(ratio) = p[0].checked_div(p[1]) {
+                    aspect = (ratio + usize::from(p[0] % p[1] >= p[1].div_ceil(2))).max(1);
                     if aspect > MAX_SIDE / 6 {
                         return None;
                     }
