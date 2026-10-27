@@ -89,7 +89,14 @@ fn a_captured_stream_decodes() {
                 );
                 for tile in &decoded.tiles {
                     assert_eq!(tile.pixels.len(), 64 * 64 * 4, "tile has the wrong size");
-                    blit(&mut surface_rgba, w, h, tile.x_idx, tile.y_idx, &tile.pixels);
+                    blit(
+                        &mut surface_rgba,
+                        w,
+                        h,
+                        tile.x_idx,
+                        tile.y_idx,
+                        &tile.pixels,
+                    );
                 }
             }
             Err(error) => println!("{}: ctx {context_id} FAILED: {error}", path.display()),

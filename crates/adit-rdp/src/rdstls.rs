@@ -59,7 +59,9 @@ where
     }
     let result = u32::from_le_bytes([rsp[6], rsp[7], rsp[8], rsp[9]]);
     if result != RDSTLS_RESULT_SUCCESS {
-        return Err(err(&format!("RDSTLS auth rejected (result 0x{result:08x})")));
+        return Err(err(&format!(
+            "RDSTLS auth rejected (result 0x{result:08x})"
+        )));
     }
     Ok(())
 }

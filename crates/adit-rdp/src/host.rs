@@ -48,7 +48,11 @@ pub fn run_host() -> Result<(), RdpError> {
     if std::fs::metadata(&log_path).is_ok_and(|meta| meta.len() > LOG_ROLL_BYTES) {
         let _ = std::fs::remove_file(&log_path);
     }
-    if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
         use std::io::Write;
         let _ = writeln!(
             file,
@@ -64,7 +68,11 @@ pub fn run_host() -> Result<(), RdpError> {
     let _ = tracing_subscriber::fmt()
         .with_ansi(false)
         .with_writer(move || -> Box<dyn std::io::Write + Send> {
-            match std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+            match std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&log_path)
+            {
                 Ok(file) => Box::new(file),
                 Err(_) => Box::new(std::io::sink()),
             }
@@ -116,9 +124,21 @@ pub fn run_host() -> Result<(), RdpError> {
                             break;
                         }
                     }
-                    Ok(Some(ClientMsg::RequestFileContents { generation, stream_id, index, offset, length })) => {
+                    Ok(Some(ClientMsg::RequestFileContents {
+                        generation,
+                        stream_id,
+                        index,
+                        offset,
+                        length,
+                    })) => {
                         if input_tx
-                            .send(SessionCmd::RequestFileContents { generation, stream_id, index, offset, length })
+                            .send(SessionCmd::RequestFileContents {
+                                generation,
+                                stream_id,
+                                index,
+                                offset,
+                                length,
+                            })
                             .is_err()
                         {
                             break;
@@ -153,9 +173,7 @@ pub fn run_host() -> Result<(), RdpError> {
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
     // Wait for the app's Connect before spinning up the RDP runtime.
-    let request = req_rx
-        .recv()
-        .map_err(|_| RdpError::ControlChannelClosed)?;
+    let request = req_rx.recv().map_err(|_| RdpError::ControlChannelClosed)?;
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

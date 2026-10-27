@@ -89,7 +89,8 @@ pub(crate) fn detect(payload: &[u8], io_channel_id: u16) -> Option<Redirection> 
     // SEC_REDIRECTION_PKT. The pad width varies by encoder, so locate the marker
     // in the next few bytes rather than hard-coding it.
     let start = (6..=10).find(|&off| {
-        data.len() >= off + 2 && u16::from_le_bytes([data[off], data[off + 1]]) == SEC_REDIRECTION_PKT
+        data.len() >= off + 2
+            && u16::from_le_bytes([data[off], data[off + 1]]) == SEC_REDIRECTION_PKT
     })?;
 
     parse_packet(&data[start..])

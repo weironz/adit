@@ -15,15 +15,15 @@
 use ironrdp_connector::{Config as ConnectorConfig, Credentials, DesktopSize};
 use thiserror::Error;
 
-mod clipboard;
 mod avc444;
+mod clipboard;
+mod display;
 mod egfx;
 mod host;
 mod input;
 mod rdstls;
 mod redirect;
 mod session;
-mod display;
 
 pub use host::run_host;
 
@@ -44,7 +44,9 @@ pub enum RdpError {
 pub(crate) fn routing_token_value(load_balance_info: &[u8]) -> String {
     let text = String::from_utf8_lossy(load_balance_info);
     let text = text.trim_end_matches(['\r', '\n']);
-    text.strip_prefix("Cookie: msts=").unwrap_or(text).to_owned()
+    text.strip_prefix("Cookie: msts=")
+        .unwrap_or(text)
+        .to_owned()
 }
 
 /// RDP performance flags for a quality preset, mirroring what mstsc's

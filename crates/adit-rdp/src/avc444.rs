@@ -122,20 +122,56 @@ impl Avc444State {
 
         match lc {
             0 => {
-                Self::apply(&mut self.main, &mut self.annex_b, yuv, &stream.stream1, Pass::Luma, &mut touched)?;
+                Self::apply(
+                    &mut self.main,
+                    &mut self.annex_b,
+                    yuv,
+                    &stream.stream1,
+                    Pass::Luma,
+                    &mut touched,
+                )?;
                 let aux = stream
                     .stream2
                     .as_ref()
                     .ok_or_else(|| "LC=0 without an auxiliary stream".to_owned())?;
-                let pass = if codec == Codec1Type::Avc444v2 { Pass::ChromaV2 } else { Pass::ChromaV1 };
-                Self::apply(&mut self.aux, &mut self.annex_b, yuv, aux, pass, &mut touched)?;
+                let pass = if codec == Codec1Type::Avc444v2 {
+                    Pass::ChromaV2
+                } else {
+                    Pass::ChromaV1
+                };
+                Self::apply(
+                    &mut self.aux,
+                    &mut self.annex_b,
+                    yuv,
+                    aux,
+                    pass,
+                    &mut touched,
+                )?;
             }
             1 => {
-                Self::apply(&mut self.main, &mut self.annex_b, yuv, &stream.stream1, Pass::Luma, &mut touched)?;
+                Self::apply(
+                    &mut self.main,
+                    &mut self.annex_b,
+                    yuv,
+                    &stream.stream1,
+                    Pass::Luma,
+                    &mut touched,
+                )?;
             }
             2 => {
-                let pass = if codec == Codec1Type::Avc444v2 { Pass::ChromaV2 } else { Pass::ChromaV1 };
-                Self::apply(&mut self.aux, &mut self.annex_b, yuv, &stream.stream1, pass, &mut touched)?;
+                let pass = if codec == Codec1Type::Avc444v2 {
+                    Pass::ChromaV2
+                } else {
+                    Pass::ChromaV1
+                };
+                Self::apply(
+                    &mut self.aux,
+                    &mut self.annex_b,
+                    yuv,
+                    &stream.stream1,
+                    pass,
+                    &mut touched,
+                )?;
             }
             other => return Err(format!("reserved LC encoding {other}")),
         }
@@ -224,8 +260,12 @@ impl Avc444State {
             }
             match pass {
                 Pass::Luma => luma_to_yuv444(&planes, &steps, yuv, left, top, right, bottom),
-                Pass::ChromaV1 => chroma_v1_to_yuv444(&planes, &steps, fh, yuv, left, top, right, bottom),
-                Pass::ChromaV2 => chroma_v2_to_yuv444(&planes, &steps, fw, yuv, left, top, right, bottom),
+                Pass::ChromaV1 => {
+                    chroma_v1_to_yuv444(&planes, &steps, fh, yuv, left, top, right, bottom)
+                }
+                Pass::ChromaV2 => {
+                    chroma_v2_to_yuv444(&planes, &steps, fw, yuv, left, top, right, bottom)
+                }
             }
             touched.push((left, top, right - left, bottom - top));
         }

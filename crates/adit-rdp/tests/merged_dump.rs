@@ -41,13 +41,32 @@ enum LogOp {
     /// Decode `progressive-<index>.bin` and blit its tiles.
     Progressive { index: u32 },
     /// Decode the next ok ClearCodec dump at the logged rectangle.
-    Clear { x: usize, y: usize, w: usize, h: usize },
+    Clear {
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+    },
     /// Copy a canvas rectangle into a cache slot.
-    Fill { slot: u16, x: usize, y: usize, w: usize, h: usize },
+    Fill {
+        slot: u16,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+    },
     /// Blit a cache slot back onto the canvas.
     Restore { slot: u16, x: usize, y: usize },
     /// A solid colour fill, colour carried in the log line.
-    Solid { r: u8, g: u8, b: u8, x: usize, y: usize, w: usize, h: usize },
+    Solid {
+        r: u8,
+        g: u8,
+        b: u8,
+        x: usize,
+        y: usize,
+        w: usize,
+        h: usize,
+    },
     /// A paint whose pixels the capture does not carry (colourless old logs).
     Unknown,
 }
@@ -193,12 +212,18 @@ fn a_captured_session_replays() {
                 };
                 orphan_upgrades += decoded.upgrades_without_base;
                 for tile in &decoded.tiles {
-                    let (tx, ty) = (usize::from(tile.x_idx) * TILE, usize::from(tile.y_idx) * TILE);
-                    if probes
-                        .iter()
-                        .any(|&(px, py)| (tx..tx + TILE).contains(&px) && (ty..ty + TILE).contains(&py))
-                    {
-                        let stem = capture.path.file_stem().unwrap_or_default().to_string_lossy();
+                    let (tx, ty) = (
+                        usize::from(tile.x_idx) * TILE,
+                        usize::from(tile.y_idx) * TILE,
+                    );
+                    if probes.iter().any(|&(px, py)| {
+                        (tx..tx + TILE).contains(&px) && (ty..ty + TILE).contains(&py)
+                    }) {
+                        let stem = capture
+                            .path
+                            .file_stem()
+                            .unwrap_or_default()
+                            .to_string_lossy();
                         let out = format!("{dir}/probe-{stem}-t{}x{}.png", tile.x_idx, tile.y_idx);
                         image::save_buffer(&out, &tile.pixels, 64, 64, image::ColorType::Rgba8)
                             .expect("probe png");
@@ -206,7 +231,10 @@ fn a_captured_session_replays() {
                     }
                 }
                 for tile in &decoded.tiles {
-                    let (tx, ty) = (usize::from(tile.x_idx) * TILE, usize::from(tile.y_idx) * TILE);
+                    let (tx, ty) = (
+                        usize::from(tile.x_idx) * TILE,
+                        usize::from(tile.y_idx) * TILE,
+                    );
                     let mut hits = 0usize;
                     if clip {
                         for rect in &decoded.rects {
@@ -299,9 +327,18 @@ fn a_captured_session_replays() {
         }
     }
 
-    let out = format!("{dir}/merged-{}.png", if clip { "clipped" } else { "whole" });
-    image::save_buffer(&out, &rgba, u32::from(w), u32::from(h), image::ColorType::Rgba8)
-        .expect("write png");
+    let out = format!(
+        "{dir}/merged-{}.png",
+        if clip { "clipped" } else { "whole" }
+    );
+    image::save_buffer(
+        &out,
+        &rgba,
+        u32::from(w),
+        u32::from(h),
+        image::ColorType::Rgba8,
+    )
+    .expect("write png");
     println!("composited -> {out}");
     println!(
         "{failures} decode failures, {uncovered_tiles} tiles no rect covered, \
@@ -336,7 +373,9 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
     let mut clear_bins: Vec<ClearBin> = Vec::new();
     for index in 0..10_000u32 {
         let path = format!("{dir}/clear-{index:03}.bin");
-        let Ok(data) = std::fs::read(&path) else { break };
+        let Ok(data) = std::fs::read(&path) else {
+            break;
+        };
         let meta = std::fs::read_to_string(format!("{dir}/clear-{index:03}.txt")).expect("sidecar");
         let mut rect = None;
         let mut ok = false;
@@ -386,7 +425,9 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                 .and_then(|s| s.split_whitespace().next())
                 .and_then(|s| s.parse::<usize>().ok())
         };
-        let (Some(x), Some(y), Some(gw), Some(gh)) = (grab("x="), grab("y="), grab("w="), grab("h=")) else {
+        let (Some(x), Some(y), Some(gw), Some(gh)) =
+            (grab("x="), grab("y="), grab("w="), grab("h="))
+        else {
             continue;
         };
         let slot = grab("slot=").map(|v| u16::try_from(v).expect("slot"));
@@ -404,8 +445,18 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                 _ => LogOp::Unknown,
             },
             "clear" => LogOp::Clear { x, y, w: gw, h: gh },
-            "surface-to-cache" => LogOp::Fill { slot: slot.expect("fill slot"), x, y, w: gw, h: gh },
-            "cache-to-surface" => LogOp::Restore { slot: slot.expect("restore slot"), x, y },
+            "surface-to-cache" => LogOp::Fill {
+                slot: slot.expect("fill slot"),
+                x,
+                y,
+                w: gw,
+                h: gh,
+            },
+            "cache-to-surface" => LogOp::Restore {
+                slot: slot.expect("restore slot"),
+                x,
+                y,
+            },
             // The decode is driven by the WARN lines; these are the clip-era
             // blit records and carry no pixels of their own.
             "progressive" | "progressive-whole" => continue,
@@ -413,7 +464,11 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
         };
         ops.push((ts, op));
     }
-    println!("{} ops from the log, {} ok clear dumps", ops.len(), clear_bins.len());
+    println!(
+        "{} ops from the log, {} ok clear dumps",
+        ops.len(),
+        clear_bins.len()
+    );
 
     let snapshot_at = std::env::var("ADIT_MERGE_SIM_SNAPSHOT").ok();
     let mut snapshot_done = false;
@@ -456,7 +511,18 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                             let tx = usize::from(tile.x_idx) * TILE;
                             let ty = usize::from(tile.y_idx) * TILE;
                             if tile.fresh {
-                                blit_tile(&mut canvas, fw, fh, tx, ty, 0, 0, TILE, TILE, &tile.pixels);
+                                blit_tile(
+                                    &mut canvas,
+                                    fw,
+                                    fh,
+                                    tx,
+                                    ty,
+                                    0,
+                                    0,
+                                    TILE,
+                                    TILE,
+                                    &tile.pixels,
+                                );
                                 continue;
                             }
                             for rect in &decoded.rects {
@@ -527,7 +593,13 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                     }
                 }
             }
-            LogOp::Fill { slot, x, y, w: sw, h: sh } => {
+            LogOp::Fill {
+                slot,
+                x,
+                y,
+                w: sw,
+                h: sh,
+            } => {
                 // Mirror the live read_rect: an out-of-bounds source stores
                 // nothing at all.
                 if x + sw <= fw && y + sh <= fh && sw > 0 && sh > 0 {
@@ -543,7 +615,15 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
                 Some(&(sw, sh, ref pixels)) => blit_rect(&mut canvas, fw, fh, x, y, sw, sh, pixels),
                 None => println!("restore at {ts}: slot {slot} never filled"),
             },
-            LogOp::Solid { r, g, b, x, y, w: sw, h: sh } => {
+            LogOp::Solid {
+                r,
+                g,
+                b,
+                x,
+                y,
+                w: sw,
+                h: sh,
+            } => {
                 let mut row = Vec::with_capacity(sw * 4);
                 for _ in 0..sw {
                     row.extend_from_slice(&[r, g, b, 0xFF]);
@@ -590,7 +670,16 @@ fn replay_from_log(dir: &str, log_path: &str, w: u16, h: u16, probes: &[(usize, 
 
 /// Opaque rectangle blit, clamped to the canvas.
 #[allow(clippy::too_many_arguments)]
-fn blit_rect(canvas: &mut [u8], fw: usize, fh: usize, x: usize, y: usize, w: usize, h: usize, pixels: &[u8]) {
+fn blit_rect(
+    canvas: &mut [u8],
+    fw: usize,
+    fh: usize,
+    x: usize,
+    y: usize,
+    w: usize,
+    h: usize,
+    pixels: &[u8],
+) {
     if x >= fw || y >= fh {
         return;
     }

@@ -33,7 +33,7 @@
 //! clipboard now" from Windows across an async IPC hop.
 
 mod remote_files;
-use remote_files::{RemoteFiles, BoundRead, Reply};
+use remote_files::{BoundRead, RemoteFiles, Reply};
 
 use std::collections::VecDeque;
 use std::sync::mpsc as std_mpsc;
@@ -42,9 +42,9 @@ use std::sync::{Arc, Mutex};
 use adit_rdp_proto::{ClipFile, HostMsg};
 use ironrdp_cliprdr::backend::CliprdrBackend;
 use ironrdp_cliprdr::pdu::{
-    ClipboardFileAttributes, ClipboardFormat, ClipboardFormatId,
-    ClipboardGeneralCapabilityFlags, FileContentsFlags, FileContentsRequest, FileContentsResponse,
-    FileDescriptor, FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
+    ClipboardFileAttributes, ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags,
+    FileContentsFlags, FileContentsRequest, FileContentsResponse, FileDescriptor,
+    FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
 };
 use ironrdp_cliprdr::CliprdrClient;
 use ironrdp_session::ActiveStage;
@@ -138,7 +138,10 @@ pub(crate) enum ClipboardAction {
     /// Pull a byte range of a remote file (`request_file_contents`).
     RequestFileContents(BoundRead),
     /// The remote copied files; hand the list to the app to offer locally.
-    InboundFiles { generation: u64, files: Vec<ClipFile> },
+    InboundFiles {
+        generation: u64,
+        files: Vec<ClipFile>,
+    },
     /// The remote is pasting and needs bytes from a local file; ask the app.
     NeedFileContents {
         stream_id: u32,
@@ -199,8 +202,13 @@ fn from_descriptor(descriptor: &FileDescriptor) -> ClipFile {
 /// Validate before flattening attributes, so a reparse/device descriptor cannot
 /// lose its unsafe type and masquerade as a regular file in the GUI.
 fn validated_remote_files(files: &[FileDescriptor]) -> Result<Vec<ClipFile>, &'static str> {
-    if files.len() > MAX_CLIPBOARD_FILES { return Err("too many remote file descriptors"); }
-    if files.iter().any(|file| file.attributes.is_some_and(|a| a.bits() & (0x400 | 0x40) != 0)) {
+    if files.len() > MAX_CLIPBOARD_FILES {
+        return Err("too many remote file descriptors");
+    }
+    if files.iter().any(|file| {
+        file.attributes
+            .is_some_and(|a| a.bits() & (0x400 | 0x40) != 0)
+    }) {
         return Err("remote reparse points and devices are unsupported");
     }
     let listed: Vec<_> = files.iter().map(from_descriptor).collect();
@@ -252,10 +260,15 @@ pub(crate) struct ClipboardState {
 impl ClipboardState {
     fn revoke_remote_files(&mut self, expects_files: bool) {
         let (had_offer, replies) = self.remote_files.revoke(expects_files);
-        self.actions.extend(replies.into_iter().map(ClipboardAction::InboundFileContents));
+        self.actions.extend(
+            replies
+                .into_iter()
+                .map(ClipboardAction::InboundFileContents),
+        );
         if had_offer {
             self.actions.push_back(ClipboardAction::InboundFiles {
-                generation: self.remote_files.generation(), files: Vec::new(),
+                generation: self.remote_files.generation(),
+                files: Vec::new(),
             });
         }
     }
@@ -328,7 +341,11 @@ impl ClipboardState {
     /// metadata crosses. Bytes are pulled one range at a time when — and only
     /// when — something on the remote actually pastes.
     pub(crate) fn offer_local_files(&mut self, files: Vec<ClipFile>) {
-        let files = if adit_rdp_proto::validate_clipboard_file_list(&files).is_ok() { files } else { Vec::new() };
+        let files = if adit_rdp_proto::validate_clipboard_file_list(&files).is_ok() {
+            files
+        } else {
+            Vec::new()
+        };
         if self.local_files == files {
             return;
         }
@@ -402,11 +419,7 @@ pub(crate) fn offer_local_files(state: &SharedClipboard, files: Vec<ClipFile>) {
 }
 
 /// Queue the app's answer to a [`HostMsg::FileContentsNeeded`].
-pub(crate) fn submit_file_contents(
-    state: &SharedClipboard,
-    stream_id: u32,
-    data: Option<Vec<u8>>,
-) {
+pub(crate) fn submit_file_contents(state: &SharedClipboard, stream_id: u32, data: Option<Vec<u8>>) {
     if let Ok(mut guard) = state.lock() {
         guard
             .actions
@@ -421,10 +434,18 @@ pub(crate) fn submit_file_contents(
 /// waiting local paste is told "no" instead of hanging on a stream that will
 /// never be answered.
 pub(crate) fn request_file_contents(
-    state: &SharedClipboard, generation: u64, stream_id: u32, index: u32, offset: u64, length: u32,
+    state: &SharedClipboard,
+    generation: u64,
+    stream_id: u32,
+    index: u32,
+    offset: u64,
+    length: u32,
 ) {
     if let Ok(mut guard) = state.lock() {
-        let action = match guard.remote_files.request(generation, stream_id, index, offset, length) {
+        let action = match guard
+            .remote_files
+            .request(generation, stream_id, index, offset, length)
+        {
             Ok(read) => ClipboardAction::RequestFileContents(read),
             Err(reply) => ClipboardAction::InboundFileContents(reply),
         };
@@ -435,18 +456,26 @@ pub(crate) fn request_file_contents(
 fn fail_remote_read(state: &SharedClipboard, wire_id: u32) {
     if let Ok(mut guard) = state.lock() {
         if let Some(reply) = guard.remote_files.fail(wire_id) {
-            guard.actions.push_back(ClipboardAction::InboundFileContents(reply));
+            guard
+                .actions
+                .push_back(ClipboardAction::InboundFileContents(reply));
         }
     }
 }
 
 fn prepare_remote_read(state: &SharedClipboard, read: &BoundRead) -> Option<FileContentsRequest> {
     let current = state.lock().ok()?.remote_files.current(read);
-    if !current { fail_remote_read(state, read.wire_id); return None; }
+    if !current {
+        fail_remote_read(state, read.wire_id);
+        return None;
+    }
     Some(FileContentsRequest {
-        stream_id: read.wire_id, index: i32::try_from(read.index).ok()?,
-        flags: FileContentsFlags::RANGE, position: read.offset,
-        requested_size: read.length, data_id: Some(read.data_id),
+        stream_id: read.wire_id,
+        index: i32::try_from(read.index).ok()?,
+        flags: FileContentsFlags::RANGE,
+        position: read.offset,
+        requested_size: read.length,
+        data_id: Some(read.data_id),
     })
 }
 
@@ -473,10 +502,12 @@ impl AditCliprdrBackend {
     /// would otherwise hang waiting for a stream that never comes.
     fn refuse(&self, stream_id: u32) {
         self.with_state(|state| {
-            state.actions.push_back(ClipboardAction::SubmitFileContents {
-                stream_id,
-                data: None,
-            });
+            state
+                .actions
+                .push_back(ClipboardAction::SubmitFileContents {
+                    stream_id,
+                    data: None,
+                });
         });
     }
 }
@@ -524,11 +555,16 @@ impl CliprdrBackend for AditCliprdrBackend {
         self.with_state(ClipboardState::queue_advertise);
     }
 
-    fn on_process_negotiated_capabilities(&mut self, capabilities: ClipboardGeneralCapabilityFlags) {
+    fn on_process_negotiated_capabilities(
+        &mut self,
+        capabilities: ClipboardGeneralCapabilityFlags,
+    ) {
         let files = capabilities.contains(ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED);
         self.with_state(|state| {
             state.files_negotiated = files;
-            if !files { state.revoke_remote_files(false); }
+            if !files {
+                state.revoke_remote_files(false);
+            }
             // Files copied before the handshake finished missed their chance to
             // be advertised; this is the first moment we know they can be.
             if files && state.ready && state.advertised_files != state.local_files {
@@ -574,7 +610,9 @@ impl CliprdrBackend for AditCliprdrBackend {
             {
                 self.with_state(|state| {
                     state.pending_remote_format = Some(format);
-                    state.actions.push_back(ClipboardAction::RequestText(format));
+                    state
+                        .actions
+                        .push_back(ClipboardAction::RequestText(format));
                 });
                 return;
             }
@@ -587,7 +625,9 @@ impl CliprdrBackend for AditCliprdrBackend {
             Some(format) => {
                 self.with_state(|state| {
                     state.pending_remote_format = Some(format);
-                    state.actions.push_back(ClipboardAction::RequestText(format));
+                    state
+                        .actions
+                        .push_back(ClipboardAction::RequestText(format));
                 });
             }
             None => {
@@ -645,12 +685,17 @@ impl CliprdrBackend for AditCliprdrBackend {
         if is_image_format(format) {
             let bytes = response.data();
             if bytes.is_empty() || bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
-                tracing::warn!(len = bytes.len(), "remote clipboard image out of range; dropping");
+                tracing::warn!(
+                    len = bytes.len(),
+                    "remote clipboard image out of range; dropping"
+                );
                 return;
             }
             let image = bytes.to_vec();
             self.with_state(|state| {
-                state.actions.push_back(ClipboardAction::InboundImage(image));
+                state
+                    .actions
+                    .push_back(ClipboardAction::InboundImage(image));
             });
             return;
         }
@@ -680,7 +725,11 @@ impl CliprdrBackend for AditCliprdrBackend {
         // `lindex` is signed on the wire and negative is invalid. Upstream
         // rejects it during decode, but the conversion has to be total anyway.
         let Ok(index) = u32::try_from(request.index) else {
-            tracing::warn!(stream_id, index = request.index, "negative file index; refusing");
+            tracing::warn!(
+                stream_id,
+                index = request.index,
+                "negative file index; refusing"
+            );
             self.refuse(stream_id);
             return;
         };
@@ -688,10 +737,12 @@ impl CliprdrBackend for AditCliprdrBackend {
         self.with_state(|state| {
             let Some(file) = state.local_file(index).cloned() else {
                 tracing::warn!(stream_id, index, "request for a file we never offered");
-                state.actions.push_back(ClipboardAction::SubmitFileContents {
-                    stream_id,
-                    data: None,
-                });
+                state
+                    .actions
+                    .push_back(ClipboardAction::SubmitFileContents {
+                        stream_id,
+                        data: None,
+                    });
                 return;
             };
 
@@ -699,19 +750,23 @@ impl CliprdrBackend for AditCliprdrBackend {
             // trip to the app and no disk read. Explorer issues one per file
             // before reading a single byte, so this is most of the traffic.
             if request.flags.contains(FileContentsFlags::SIZE) {
-                state.actions.push_back(ClipboardAction::SubmitFileContents {
-                    stream_id,
-                    data: Some(file.size.to_le_bytes().to_vec()),
-                });
+                state
+                    .actions
+                    .push_back(ClipboardAction::SubmitFileContents {
+                        stream_id,
+                        data: Some(file.size.to_le_bytes().to_vec()),
+                    });
                 return;
             }
 
             if file.is_dir {
                 tracing::warn!(stream_id, index, "byte range requested from a directory");
-                state.actions.push_back(ClipboardAction::SubmitFileContents {
-                    stream_id,
-                    data: None,
-                });
+                state
+                    .actions
+                    .push_back(ClipboardAction::SubmitFileContents {
+                        stream_id,
+                        data: None,
+                    });
                 return;
             }
 
@@ -731,11 +786,14 @@ impl CliprdrBackend for AditCliprdrBackend {
     /// Bytes (or a size) arriving for a local paste we started.
     fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
         let wire_id = response.stream_id();
-        let data = (!response.is_error() && response.data().len() <= adit_rdp_proto::FILE_CHUNK_BYTES as usize)
+        let data = (!response.is_error()
+            && response.data().len() <= adit_rdp_proto::FILE_CHUNK_BYTES as usize)
             .then(|| response.data().to_vec());
         self.with_state(|state| {
             if let Some(reply) = state.remote_files.respond(wire_id, data) {
-                state.actions.push_back(ClipboardAction::InboundFileContents(reply));
+                state
+                    .actions
+                    .push_back(ClipboardAction::InboundFileContents(reply));
             }
         });
     }
@@ -746,12 +804,14 @@ impl CliprdrBackend for AditCliprdrBackend {
             tracing::warn!("remote file clipboard has no stable lock; refusing file offer");
         }
         let listed = validated_remote_files(files).unwrap_or_else(|reason| {
-            tracing::warn!(reason, "remote file descriptors refused"); Vec::new()
+            tracing::warn!(reason, "remote file descriptors refused");
+            Vec::new()
         });
         self.with_state(|state| {
             let expects_files = state.remote_files.expects_files();
             state.revoke_remote_files(expects_files);
-            let accepted = state.files_negotiated && state.remote_files.install(listed.clone(), clip_data_id);
+            let accepted =
+                state.files_negotiated && state.remote_files.install(listed.clone(), clip_data_id);
             state.actions.push_back(ClipboardAction::InboundFiles {
                 generation: state.remote_files.generation(),
                 files: if accepted { listed } else { Vec::new() },
@@ -792,7 +852,9 @@ fn for_app(action: ClipboardAction) -> Result<HostMsg, ClipboardAction> {
     match action {
         ClipboardAction::Inbound(text) => Ok(HostMsg::ClipboardText(text)),
         ClipboardAction::InboundImage(image) => Ok(HostMsg::ClipboardImage(image)),
-        ClipboardAction::InboundFiles { generation, files } => Ok(HostMsg::ClipboardFiles { generation, files }),
+        ClipboardAction::InboundFiles { generation, files } => {
+            Ok(HostMsg::ClipboardFiles { generation, files })
+        }
         ClipboardAction::NeedFileContents {
             stream_id,
             index,
@@ -804,9 +866,15 @@ fn for_app(action: ClipboardAction) -> Result<HostMsg, ClipboardAction> {
             offset,
             length,
         }),
-        ClipboardAction::InboundFileContents(Reply { generation, stream_id, data }) => {
-            Ok(HostMsg::FileContents { generation, stream_id, data })
-        }
+        ClipboardAction::InboundFileContents(Reply {
+            generation,
+            stream_id,
+            data,
+        }) => Ok(HostMsg::FileContents {
+            generation,
+            stream_id,
+            data,
+        }),
         other => Err(other),
     }
 }
@@ -848,7 +916,9 @@ pub(crate) fn pump(
 
         let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() else {
             tracing::warn!("CLIPRDR channel is not open; dropping clipboard action");
-            if let ClipboardAction::RequestFileContents(read) = &action { fail_remote_read(state, read.wire_id); }
+            if let ClipboardAction::RequestFileContents(read) = &action {
+                fail_remote_read(state, read.wire_id);
+            }
             continue;
         };
         let messages = match &action {
@@ -872,14 +942,17 @@ pub(crate) fn pump(
             ClipboardAction::AdvertiseFiles(files) => {
                 cliprdr.initiate_file_copy(files.iter().map(to_descriptor).collect())
             }
-            ClipboardAction::SubmitFileContents { stream_id, data } => {
-                cliprdr.submit_file_contents(match data {
-                    Some(bytes) => FileContentsResponse::new_data_response(*stream_id, bytes.clone()),
+            ClipboardAction::SubmitFileContents { stream_id, data } => cliprdr
+                .submit_file_contents(match data {
+                    Some(bytes) => {
+                        FileContentsResponse::new_data_response(*stream_id, bytes.clone())
+                    }
                     None => FileContentsResponse::new_error(*stream_id),
-                })
-            }
+                }),
             ClipboardAction::RequestFileContents(read) => {
-                let Some(request) = prepare_remote_read(state, read) else { continue; };
+                let Some(request) = prepare_remote_read(state, read) else {
+                    continue;
+                };
                 cliprdr.request_file_contents(request)
             }
             // Handled above; the borrow of `cliprdr` is what forces this shape.
@@ -895,7 +968,9 @@ pub(crate) fn pump(
             Ok(messages) => messages,
             Err(error) => {
                 tracing::warn!(?action, "could not build clipboard PDU: {error}");
-                if let ClipboardAction::RequestFileContents(read) = &action { fail_remote_read(state, read.wire_id); }
+                if let ClipboardAction::RequestFileContents(read) = &action {
+                    fail_remote_read(state, read.wire_id);
+                }
                 continue;
             }
         };
@@ -903,8 +978,10 @@ pub(crate) fn pump(
             Ok(frame) => frames.push(frame),
             Err(error) => {
                 tracing::warn!(?action, "could not encode clipboard PDU: {error}");
-                if let ClipboardAction::RequestFileContents(read) = &action { fail_remote_read(state, read.wire_id); }
-            },
+                if let ClipboardAction::RequestFileContents(read) = &action {
+                    fail_remote_read(state, read.wire_id);
+                }
+            }
         }
     }
     Some(frames)
@@ -930,9 +1007,13 @@ mod tests {
         let a = state.lock().unwrap().remote_files.generation();
         request_file_contents(&state, a, 42, 0, 0, 3);
         let queued = actions(&state);
-        let old = queued.iter().find_map(|a| match a {
-            ClipboardAction::RequestFileContents(read) => Some(*read), _ => None,
-        }).unwrap();
+        let old = queued
+            .iter()
+            .find_map(|a| match a {
+                ClipboardAction::RequestFileContents(read) => Some(*read),
+                _ => None,
+            })
+            .unwrap();
         assert_eq!(prepare_remote_read(&state, &old).unwrap().data_id, Some(10));
         descriptor.name = "B.bin".into();
         backend.on_remote_file_list(&[descriptor], Some(20));
@@ -941,18 +1022,30 @@ mod tests {
         request_file_contents(&state, a, 43, 0, 0, 3);
         assert!(prepare_remote_read(&state, &old).is_none());
         let queued = actions(&state);
-        assert!(queued.iter().any(|action| matches!(action, ClipboardAction::InboundFileContents(
-            Reply { generation, stream_id: 43, data: None }) if *generation == a)));
+        assert!(queued.iter().any(
+            |action| matches!(action, ClipboardAction::InboundFileContents(
+            Reply { generation, stream_id: 43, data: None }) if *generation == a)
+        ));
         // Verify directly rather than relying on the caller to choose fresh ids.
         request_file_contents(&state, b, 42, 0, 0, 3);
-        let new = actions(&state).into_iter().find_map(|a| match a {
-            ClipboardAction::RequestFileContents(read) => Some(read), _ => None,
-        }).unwrap();
+        let new = actions(&state)
+            .into_iter()
+            .find_map(|a| match a {
+                ClipboardAction::RequestFileContents(read) => Some(read),
+                _ => None,
+            })
+            .unwrap();
         assert_ne!(old.wire_id, new.wire_id);
         assert_eq!(prepare_remote_read(&state, &new).unwrap().data_id, Some(20));
-        backend.on_file_contents_response(FileContentsResponse::new_data_response(old.wire_id, vec![99]));
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            old.wire_id,
+            vec![99],
+        ));
         assert!(actions(&state).is_empty());
-        backend.on_file_contents_response(FileContentsResponse::new_data_response(new.wire_id, vec![1, 2, 3]));
+        backend.on_file_contents_response(FileContentsResponse::new_data_response(
+            new.wire_id,
+            vec![1, 2, 3],
+        ));
         assert!(actions(&state).iter().any(|a| matches!(a, ClipboardAction::InboundFileContents(
             Reply { generation, stream_id: 42, data: Some(bytes) }) if *generation == b && bytes == &[1, 2, 3])));
     }
@@ -973,12 +1066,16 @@ mod tests {
         backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
         request_file_contents(&state, generation, 1, 0, 0, 3);
         let queued = actions(&state);
-        assert!(queued.iter().any(|a| matches!(a, ClipboardAction::InboundFiles { files, .. } if files.is_empty())));
+        assert!(queued
+            .iter()
+            .any(|a| matches!(a, ClipboardAction::InboundFiles { files, .. } if files.is_empty())));
         assert!(queued.iter().any(|a| matches!(a, ClipboardAction::InboundFileContents(Reply { generation: got, data: None, .. }) if *got == generation)));
         assert!(!state.lock().unwrap().remote_files.active());
         state.lock().unwrap().reset_for_new_channel();
         request_file_contents(&state, generation, 2, 0, 0, 3);
-        assert!(actions(&state).iter().all(|a| !matches!(a, ClipboardAction::RequestFileContents(_))));
+        assert!(actions(&state)
+            .iter()
+            .all(|a| !matches!(a, ClipboardAction::RequestFileContents(_))));
     }
 
     #[test]
@@ -988,7 +1085,9 @@ mod tests {
             let descriptor = FileDescriptor::new(name);
             assert!(validated_remote_files(std::slice::from_ref(&descriptor)).is_err());
             backend.on_remote_file_list(&[descriptor], Some(7));
-            assert!(actions(&state).iter().any(|a| matches!(a, ClipboardAction::InboundFiles { files, .. } if files.is_empty())));
+            assert!(actions(&state).iter().any(
+                |a| matches!(a, ClipboardAction::InboundFiles { files, .. } if files.is_empty())
+            ));
             assert!(!state.lock().unwrap().remote_files.active());
         }
         let mut reparse = FileDescriptor::new("link.txt");
@@ -1108,7 +1207,10 @@ mod tests {
         // to be sent whether or not we have anything to offer.
         let (mut backend, state) = backend();
         backend.on_request_format_list();
-        assert_eq!(actions(&state), vec![ClipboardAction::Advertise(Vec::new())]);
+        assert_eq!(
+            actions(&state),
+            vec![ClipboardAction::Advertise(Vec::new())]
+        );
     }
 
     #[test]
@@ -1241,7 +1343,10 @@ mod tests {
         let response: FormatDataResponse<'_> = decode(&wire).expect("decode response");
         backend.on_format_data_response(response);
 
-        assert_eq!(actions(&state), vec![ClipboardAction::Inbound("plain".into())]);
+        assert_eq!(
+            actions(&state),
+            vec![ClipboardAction::Inbound("plain".into())]
+        );
     }
 
     #[test]
