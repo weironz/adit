@@ -44,7 +44,7 @@ impl Client {
 
     fn find(&self, name: &str, id_fragment: &str) -> Option<IUIAutomationElement> {
         self.elements().into_iter().find(|element| unsafe {
-            element.CurrentName().is_ok_and(|n| n.to_string() == name)
+            element.CurrentName().is_ok_and(|n| n == name)
                 && element
                     .CurrentAutomationId()
                     .is_ok_and(|id| id.to_string().contains(id_fragment))
@@ -168,8 +168,7 @@ pub(super) fn run(hwnd: isize, owners: &[SessionId]) -> Result<Value, String> {
     client.invoke(&resource)?;
     let edit = client.wait("selected resource's edit operation", || {
         let element = client.find("编辑", "resource:edit")?;
-        (unsafe { element.CurrentAutomationId() }.ok()?.to_string() != before_edit)
-            .then_some(element)
+        (unsafe { element.CurrentAutomationId() }.ok()? != before_edit).then_some(element)
     })?;
     client.invoke(&edit)?;
     let name = client.named("名称", "field:名称")?;
