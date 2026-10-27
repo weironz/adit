@@ -15,13 +15,17 @@ mod native;
 type Request = Arc<dyn Fn(u32, u32, u64, u32) + Send + Sync>;
 
 struct Offer {
+    generation: u64,
     files: Vec<ClipFile>,
     request: Request,
+    current: Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 #[derive(Clone)]
 pub(super) struct Lease {
     session: SessionId,
+    generation: u64,
+    current: Arc<dyn Fn() -> bool + Send + Sync>,
     bridge: ChunkBridge,
     cancelled: Arc<AtomicBool>,
 }
@@ -88,15 +92,23 @@ impl State {
             match event {
                 RdpFileDragEvent::Offered {
                     session,
+                    generation,
                     files,
                     requester,
                 } => {
+                    if requester.generation() != generation {
+                        self.offers.remove(&session);
+                        continue;
+                    }
                     if self.active.as_ref().is_some_and(|a| a.session == session) {
                         self.cancel();
                     }
+                    let current = requester.clone();
                     self.offers.insert(
                         session,
                         Offer {
+                            generation,
+                            current: Arc::new(move || current.is_current()),
                             files,
                             request: Arc::new(move |s, i, o, n| requester.request(s, i, o, n)),
                         },
@@ -104,10 +116,15 @@ impl State {
                 }
                 RdpFileDragEvent::Chunk {
                     session,
+                    generation,
                     stream_id,
                     data,
                 } => {
-                    if let Some(active) = self.active.as_ref().filter(|a| a.session == session) {
+                    if let Some(active) = self
+                        .active
+                        .as_ref()
+                        .filter(|a| a.session == session && a.generation == generation)
+                    {
                         active.bridge.deliver(stream_id, data);
                     }
                 }
@@ -120,7 +137,12 @@ impl State {
             }
         }
         self.offers.retain(|id, _| enabled && live(*id));
-        if !enabled || self.active.as_ref().is_some_and(|a| !live(a.session)) {
+        if !enabled
+            || self
+                .active
+                .as_ref()
+                .is_some_and(|a| !live(a.session) || !(a.current)())
+        {
             self.cancel();
         }
         self.notices.try_iter().last()
@@ -139,12 +161,19 @@ impl State {
             .get(&session)
             .ok_or("请先在该远端会话中选择并复制普通文件，再打开文件拖出窗口")?;
         validate_files(&offer.files)?;
+        if !(offer.current)() {
+            return Err("该远端文件选择已失效，请重新复制后拖出");
+        }
+        let generation = offer.generation;
+        let current = offer.current.clone();
         let files = offer.files.clone();
         let request = offer.request.clone();
         self.cancel();
         #[cfg(windows)]
         let lease = Lease {
             session,
+            generation,
+            current,
             bridge: ChunkBridge::new(),
             cancelled: Arc::new(AtomicBool::new(false)),
         };
@@ -159,7 +188,7 @@ impl State {
         )?;
         #[cfg(not(windows))]
         {
-            let _ = (owner, title, files, request);
+            let _ = (owner, title, files, request, generation, current);
             return Err("OLE 文件拖放仅支持 Windows");
         }
         #[cfg(windows)]

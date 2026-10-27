@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::thread;
 
 use adit_rdp_proto::{monitor_bounds, DisplayControlState, Monitor, PointerUpdate};
@@ -52,12 +53,13 @@ pub enum RdpClientEvent {
     VncClipboardText(vnc::ClipboardText),
     /// The remote copied files. The app should offer them on the Windows
     /// clipboard; nothing crosses the wire until something here pastes.
-    ClipboardFiles(Vec<ClipFile>),
+    ClipboardFiles { generation: u64, files: Vec<ClipFile> },
     /// The remote copied an image; raw `CF_DIB` bytes for the app to put on the
     /// Windows clipboard.
     ClipboardImage(Vec<u8>),
     /// Bytes answering a [`RdpClientHandle::file_requester`] request.
     FileContents {
+        generation: u64,
         stream_id: u32,
         data: Option<Vec<u8>>,
     },
@@ -238,6 +240,30 @@ impl Surface {
     }
 }
 
+struct FileEpoch {
+    generation: AtomicU64,
+    closed: AtomicBool,
+    enabled: AtomicBool,
+}
+impl Default for FileEpoch {
+    fn default() -> Self {
+        Self { generation: AtomicU64::new(0), closed: AtomicBool::new(false), enabled: AtomicBool::new(true) }
+    }
+}
+impl FileEpoch {
+    fn observe_offer(&self, generation: u64, has_files: bool) {
+        self.generation.store(
+            if has_files && !self.closed.load(Ordering::Acquire) && self.enabled.load(Ordering::Acquire) { generation } else { 0 },
+            Ordering::Release,
+        );
+    }
+    fn accepts(&self, generation: u64) -> bool {
+        generation != 0 && !self.closed.load(Ordering::Acquire)
+            && self.enabled.load(Ordering::Acquire)
+            && self.generation.load(Ordering::Acquire) == generation
+    }
+}
+
 /// Asks the remote for a byte range of a file it offered.
 ///
 /// `std::sync::mpsc::Sender` is `Send` but not `Sync`, and the COM streams that
@@ -246,16 +272,25 @@ impl Surface {
 #[derive(Clone)]
 pub struct RdpFileRequester {
     tx: Arc<Mutex<std_mpsc::Sender<ClientMsg>>>,
+    generation: u64,
+    current: Arc<FileEpoch>,
+    replies: std_mpsc::Sender<RdpClientEvent>,
 }
 
 impl RdpFileRequester {
+    pub fn generation(&self) -> u64 { self.generation }
+    pub fn is_current(&self) -> bool {
+        self.current.accepts(self.generation)
+    }
+
     pub fn request(&self, stream_id: u32, index: u32, offset: u64, length: u32) {
-        if let Ok(tx) = self.tx.lock() {
-            let _ = tx.send(ClientMsg::RequestFileContents {
-                stream_id,
-                index,
-                offset,
-                length,
+        let sent = self.is_current() && self.tx.lock().ok().is_some_and(|tx|
+            tx.send(ClientMsg::RequestFileContents {
+                generation: self.generation, stream_id, index, offset, length,
+            }).is_ok());
+        if !sent {
+            let _ = self.replies.send(RdpClientEvent::FileContents {
+                generation: self.generation, stream_id, data: None,
             });
         }
     }
@@ -278,6 +313,8 @@ pub struct RdpCursorSnapshot {
 
 /// Handle to a live RDP session running in the helper process.
 pub struct RdpClientHandle {
+    remote_offer: Arc<FileEpoch>,
+    event_tx: std_mpsc::Sender<RdpClientEvent>,
     cmd_tx: std_mpsc::Sender<ClientMsg>,
     event_rx: std_mpsc::Receiver<RdpClientEvent>,
     surface: Arc<Mutex<Surface>>,
@@ -288,6 +325,20 @@ pub struct RdpClientHandle {
 }
 
 impl RdpClientHandle {
+    #[cfg(test)]
+    pub(crate) fn test_fixture() -> Self {
+        let (cmd_tx, _cmd_rx) = std_mpsc::channel();
+        let (event_tx, event_rx) = std_mpsc::channel();
+        Self {
+            remote_offer: Arc::new(FileEpoch::default()),
+            event_tx,
+            cmd_tx,
+            event_rx,
+            surface: Arc::new(Mutex::new(Surface::new(1, 1))),
+            child: Arc::new(Mutex::new(None)),
+        }
+    }
+
     /// Send an input event to the session.
     pub fn send_input(&self, mut event: InputEvent) {
         if let Ok(surface) = self.surface.lock() {
@@ -335,13 +386,35 @@ impl RdpClientHandle {
     /// Explorer's threads: it has to be `Send + Sync` and outlive any borrow of
     /// the session.
     pub fn file_requester(&self) -> RdpFileRequester {
-        RdpFileRequester {
-            tx: Arc::new(Mutex::new(self.cmd_tx.clone())),
+        self.file_requester_for_generation(self.remote_offer.generation.load(Ordering::Acquire))
+    }
+
+    pub(crate) fn invalidate_file_offer(&self) {
+        self.remote_offer.enabled.store(false, Ordering::Release);
+        self.remote_offer.generation.store(0, Ordering::Release);
+    }
+
+    pub(crate) fn set_file_offers_enabled(&self, enabled: bool) {
+        if self.remote_offer.enabled.swap(enabled, Ordering::AcqRel) != enabled {
+            self.remote_offer.generation.store(0, Ordering::Release);
         }
+    }
+
+    pub(crate) fn file_requester_for_generation(&self, generation: u64) -> RdpFileRequester {
+        RdpFileRequester {
+            tx: Arc::new(Mutex::new(self.cmd_tx.clone())), generation,
+            current: self.remote_offer.clone(), replies: self.event_tx.clone(),
+        }
+    }
+
+    pub(crate) fn owns_file_requester(&self, requester: &RdpFileRequester) -> bool {
+        Arc::ptr_eq(&self.remote_offer, &requester.current)
     }
 
     /// Ask the session to disconnect gracefully.
     pub fn close(&self) {
+        self.remote_offer.closed.store(true, Ordering::Release);
+        self.remote_offer.generation.store(0, Ordering::Release);
         let _ = self.cmd_tx.send(ClientMsg::Close);
     }
 
@@ -422,6 +495,8 @@ impl RdpClientHandle {
 
 impl Drop for RdpClientHandle {
     fn drop(&mut self) {
+        self.remote_offer.closed.store(true, Ordering::Release);
+        self.remote_offer.generation.store(0, Ordering::Release);
         // Ask for a graceful close, then let the helper actually run its RDP
         // shutdown sequence before we force-kill. A synchronous `kill()` here would
         // race ahead of the `Close` even reaching the helper's stdin, so we reap on
@@ -531,6 +606,9 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
     // a remote paste blocks on the stream it asked for.
     let cmd_tx_reader = cmd_tx.clone();
     let (event_tx, event_rx) = std_mpsc::channel::<RdpClientEvent>();
+    let remote_offer = Arc::new(FileEpoch::default());
+    let remote_offer_bg = remote_offer.clone();
+    let handle_event_tx = event_tx.clone();
     let child_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
 
     let surface_bg = Arc::clone(&surface);
@@ -569,6 +647,7 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
                 cmd_tx_reader,
                 event_tx.clone(),
                 &surface_bg,
+                remote_offer_bg.clone(),
             ) {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -583,6 +662,7 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
     Ok(RdpClientHandle {
+        remote_offer, event_tx: handle_event_tx,
         cmd_tx,
         event_rx,
         surface,
@@ -603,6 +683,7 @@ fn wire_up(
     refuse_tx: std_mpsc::Sender<ClientMsg>,
     event_tx: std_mpsc::Sender<RdpClientEvent>,
     surface: &Arc<Mutex<Surface>>,
+    remote_offer: Arc<FileEpoch>,
 ) -> Result<(), RdpClientError> {
     let mut stdin = child
         .stdin
@@ -662,8 +743,10 @@ fn wire_up(
                     Ok(Some(HostMsg::ClipboardImage(image))) => {
                         let _ = event_tx.send(RdpClientEvent::ClipboardImage(image));
                     }
-                    Ok(Some(HostMsg::ClipboardFiles(files))) => {
-                        let _ = event_tx.send(RdpClientEvent::ClipboardFiles(files));
+                    Ok(Some(HostMsg::ClipboardFiles { generation, files })) => {
+                        remote_offer.observe_offer(generation, !files.is_empty());
+                        let files = if remote_offer.accepts(generation) { files } else { Vec::new() };
+                        let _ = event_tx.send(RdpClientEvent::ClipboardFiles { generation, files });
                     }
                     Ok(Some(HostMsg::FileContentsNeeded {
                         stream_id,
@@ -689,8 +772,9 @@ fn wire_up(
                             });
                         }
                     }
-                    Ok(Some(HostMsg::FileContents { stream_id, data })) => {
-                        let _ = event_tx.send(RdpClientEvent::FileContents { stream_id, data });
+                    Ok(Some(HostMsg::FileContents { generation, stream_id, data })) => {
+                        let data = data.filter(|_| remote_offer.accepts(generation));
+                        let _ = event_tx.send(RdpClientEvent::FileContents { generation, stream_id, data });
                     }
                     Ok(Some(HostMsg::Pointer(pointer))) => {
                         if let Ok(mut s) = reader_surface.lock() {
@@ -724,13 +808,19 @@ fn wire_up(
                         let _ = event_tx.send(RdpClientEvent::ClipboardText(text));
                     }
                     Ok(Some(HostMsg::Error(message))) => {
+                        remote_offer.closed.store(true, Ordering::Release);
+                        remote_offer.generation.store(0, Ordering::Release);
                         let _ = event_tx.send(RdpClientEvent::Error(message));
                     }
                     Ok(Some(HostMsg::Closed)) | Ok(None) => {
+                        remote_offer.closed.store(true, Ordering::Release);
+                        remote_offer.generation.store(0, Ordering::Release);
                         let _ = event_tx.send(RdpClientEvent::Closed);
                         break;
                     }
                     Err(_) => {
+                        remote_offer.closed.store(true, Ordering::Release);
+                        remote_offer.generation.store(0, Ordering::Release);
                         let _ = event_tx.send(RdpClientEvent::Closed);
                         break;
                     }
@@ -884,9 +974,10 @@ mod rdp_presentation_tests {
     }
     fn handle(surface: Surface) -> (RdpClientHandle, std_mpsc::Receiver<ClientMsg>) {
         let (cmd_tx, rx) = std_mpsc::channel();
-        let (_, event_rx) = std_mpsc::channel();
+        let (event_tx, event_rx) = std_mpsc::channel();
         (
             RdpClientHandle {
+                remote_offer: Arc::new(FileEpoch::default()), event_tx,
                 cmd_tx,
                 event_rx,
                 surface: Arc::new(Mutex::new(surface)),
@@ -894,6 +985,76 @@ mod rdp_presentation_tests {
             },
             rx,
         )
+    }
+
+    #[test]
+    fn file_epoch_requester_never_binds_historical_metadata_to_the_latest_offer() {
+        let (handle, commands) = handle(Surface::new(1, 1));
+        handle.remote_offer.observe_offer(10, true);
+        let old = handle.file_requester_for_generation(10);
+        assert!(old.is_current());
+        // The IPC reader sees B; SessionManager/GUI has not consumed A yet.
+        handle.remote_offer.observe_offer(11, true);
+        let delayed_a = handle.file_requester_for_generation(10);
+        delayed_a.request(42, 0, 0, 3);
+        assert!(commands.try_recv().is_err());
+        assert!(matches!(handle.try_recv(), Some(RdpClientEvent::FileContents {
+            generation: 10, stream_id: 42, data: None,
+        })));
+        let current = handle.file_requester_for_generation(11);
+        current.request(42, 1, 4, 3);
+        assert!(matches!(commands.try_recv(), Ok(ClientMsg::RequestFileContents {
+            generation: 11, stream_id: 42, index: 1, offset: 4, length: 3,
+        })));
+        assert_eq!(old.generation(), 10);
+        assert!(!old.is_current());
+    }
+
+    #[test]
+    fn file_epoch_text_and_close_revoke_callers_before_gui_poll() {
+        let (handle, commands) = handle(Surface::new(1, 1));
+        handle.remote_offer.observe_offer(7, true);
+        let requester = handle.file_requester();
+        handle.remote_offer.observe_offer(8, false); // text-only FormatList
+        assert!(!requester.is_current());
+        requester.request(1, 0, 0, 1);
+        assert!(commands.try_recv().is_err());
+        handle.close();
+        assert!(matches!(commands.try_recv(), Ok(ClientMsg::Close)));
+        handle.remote_offer.observe_offer(7, true); // a queued stale IPC frame
+        assert!(!requester.is_current());
+        requester.request(2, 0, 0, 1);
+        assert!(commands.try_recv().is_err());
+    }
+
+    #[test]
+    fn file_epoch_disabling_file_sharing_cannot_be_undone_by_a_queued_offer() {
+        let (handle, commands) = handle(Surface::new(1, 1));
+        handle.remote_offer.observe_offer(7, true);
+        let requester = handle.file_requester();
+        handle.set_file_offers_enabled(false);
+        handle.remote_offer.observe_offer(8, true);
+        requester.request(1, 0, 0, 1);
+        assert!(commands.try_recv().is_err());
+        assert!(!requester.is_current());
+        handle.set_file_offers_enabled(true);
+        assert!(!requester.is_current());
+        handle.remote_offer.observe_offer(9, true);
+        assert!(handle.file_requester().is_current());
+    }
+
+    #[test]
+    fn file_epoch_equal_numbers_in_a_reconnected_helper_do_not_share_identity() {
+        let (a, _) = handle(Surface::new(1, 1));
+        let (b, _) = handle(Surface::new(1, 1));
+        a.remote_offer.observe_offer(7, true);
+        b.remote_offer.observe_offer(7, true);
+        let old = a.file_requester();
+        assert!(a.owns_file_requester(&old));
+        assert!(!b.owns_file_requester(&old));
+        a.close();
+        assert!(!old.is_current());
+        assert!(b.file_requester().is_current());
     }
 
     #[test]

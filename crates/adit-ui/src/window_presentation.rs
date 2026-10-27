@@ -148,8 +148,8 @@ clipboard_state! {
 
 impl ClipboardLease {
     pub fn service_streams(&mut self, manager: &mut SessionManager) {
-        for (stream, data) in manager.take_rdp_file_chunks() {
-            self.rdp_chunk_bridge.deliver(stream, data);
+        for chunk in manager.take_rdp_file_chunks() {
+            self.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
         }
         for read in manager.take_rdp_file_reads() {
             let data = self

@@ -44,6 +44,7 @@ pub(crate) struct Offer {
     pub(crate) bridge: ChunkBridge,
     pub(crate) request: ChunkRequester,
     pub(crate) chunk: u32,
+    pub(crate) current: std::sync::Arc<dyn Fn() -> bool + Send + Sync>,
 }
 
 struct OleThread {
@@ -140,7 +141,7 @@ fn start_ole_thread() -> Option<OleThread> {
 /// Hand one data object to the clipboard. Runs on the OLE thread only.
 fn publish(offer: Offer) {
     let object: IDataObject =
-        FileDataObject::new(offer.files, offer.bridge, offer.request, offer.chunk).into();
+        FileDataObject::new(offer.files, offer.bridge, offer.request, offer.chunk).with_liveness(offer.current).into();
 
     // SAFETY: on the OLE-initialised thread, with a live data object. Ownership
     // passes to OLE, which releases it when the clipboard next changes hands.

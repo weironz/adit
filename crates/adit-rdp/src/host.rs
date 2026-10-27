@@ -116,9 +116,9 @@ pub fn run_host() -> Result<(), RdpError> {
                             break;
                         }
                     }
-                    Ok(Some(ClientMsg::RequestFileContents { stream_id, index, offset, length })) => {
+                    Ok(Some(ClientMsg::RequestFileContents { generation, stream_id, index, offset, length })) => {
                         if input_tx
-                            .send(SessionCmd::RequestFileContents { stream_id, index, offset, length })
+                            .send(SessionCmd::RequestFileContents { generation, stream_id, index, offset, length })
                             .is_err()
                         {
                             break;

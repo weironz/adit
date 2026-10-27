@@ -89,11 +89,13 @@ struct Source {
     chunk: u32,
     cancelled: Option<Arc<AtomicBool>>,
     valid_names: bool,
+    current: Option<Arc<dyn Fn() -> bool + Send + Sync>>,
 }
 
 impl Source {
     fn cancelled(&self) -> bool {
         self.cancelled.as_ref().is_some_and(|c| c.load(Ordering::Acquire))
+            || self.current.as_ref().is_some_and(|current| !current())
     }
 }
 
@@ -119,8 +121,14 @@ impl FileDataObject {
                 chunk,
                 cancelled: None,
                 valid_names,
+                current: None,
             }),
         }
+    }
+
+    pub(crate) fn with_liveness(mut self, current: Arc<dyn Fn() -> bool + Send + Sync>) -> Self {
+        Arc::get_mut(&mut self.source).expect("unpublished data object").current = Some(current);
+        self
     }
 
     pub(crate) fn for_drag(
@@ -130,7 +138,7 @@ impl FileDataObject {
         crate::rdp_dragdrop::validate_files(&files)
             .map_err(|_| windows::core::Error::from(E_INVALIDARG))?;
         Ok(Self { source: Arc::new(Source {
-            files, bridge, request, chunk: chunk.clamp(1, 64 * 1024), cancelled: Some(cancelled), valid_names: true,
+            files, bridge, request, chunk: chunk.clamp(1, 64 * 1024), cancelled: Some(cancelled), valid_names: true, current: None,
         }) })
     }
 }
@@ -450,7 +458,7 @@ impl ISequentialStream_Impl for FileStream_Impl {
         (self.source.request)(stream_id, self.index, *position, want);
 
         // Blocks on *Explorer's* thread, never Adit's UI thread.
-        match self.source.bridge.wait(stream_id) {
+        match self.source.bridge.wait_live(stream_id, || !self.source.cancelled()) {
             Ok(bytes) => {
                 if self.source.cancelled() { return windows::Win32::Foundation::E_ABORT; }
                 if self.source.cancelled.is_some() && (bytes.is_empty() || bytes.len() > want as usize) {

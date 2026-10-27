@@ -138,7 +138,8 @@ struct CopySource {
 }
 impl IDropSource_Impl for CopySource_Impl {
     fn QueryContinueDrag(&self, escape: BOOL, keys: MODIFIERKEYS_FLAGS) -> HRESULT {
-        if escape.as_bool()
+        if !(self.lease.current)()
+            || escape.as_bool()
             || keys.0 & MK_SHIFT.0 != 0
             || self
                 .lease
@@ -471,7 +472,7 @@ fn start_drag(context: &Context) {
         context.announce("文件描述无效，已拒绝拖放");
         return;
     };
-    let object: IDataObject = object.into();
+    let object: IDataObject = object.with_liveness(context.lease.current.clone()).into();
     let source: IDropSource = CopySource {
         lease: context.lease.clone(),
     }

@@ -50,7 +50,9 @@ pub(crate) fn offer_remote_files(
     requester: adit_session::RdpFileRequester,
     chunk: u32,
 ) {
+    let current = requester.clone();
     ole::offer_to_clipboard(ole::Offer {
+        current: std::sync::Arc::new(move || current.is_current()),
         files,
         bridge,
         request: std::sync::Arc::new(move |stream_id, index, offset, length| {

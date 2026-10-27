@@ -292,6 +292,8 @@ pub enum ClientMsg {
     /// Ask the remote for a byte range of a file it offered. Drives a local
     /// paste: Explorer pulls from our data object, which pulls through here.
     RequestFileContents {
+        /// The exact remote offer, not the current clipboard at read time.
+        generation: u64,
         stream_id: u32,
         index: u32,
         offset: u64,
@@ -330,7 +332,9 @@ pub enum HostMsg {
     ClipboardImage(Vec<u8>),
     /// The remote copied files. The app should offer them on the Windows
     /// clipboard; nothing crosses the wire until something over here pastes.
-    ClipboardFiles(Vec<ClipFile>),
+    /// An empty list revokes previous file offers without replacing text/image
+    /// data on the OS clipboard. Generations are scoped to one helper session.
+    ClipboardFiles { generation: u64, files: Vec<ClipFile> },
     /// The remote is pasting and wants a byte range of a file the app offered.
     /// Answer with [`ClientMsg::FileContents`] carrying the same `stream_id`.
     FileContentsNeeded {
@@ -342,6 +346,7 @@ pub enum HostMsg {
     /// Bytes from the remote, answering [`ClientMsg::RequestFileContents`].
     /// `None` means the remote refused or failed the read.
     FileContents {
+        generation: u64,
         stream_id: u32,
         data: Option<Vec<u8>>,
     },
@@ -456,15 +461,34 @@ mod tests {
         ];
 
         let mut pipe = Vec::new();
-        write_msg(&mut pipe, &HostMsg::ClipboardFiles(files.clone())).expect("write");
+        write_msg(&mut pipe, &HostMsg::ClipboardFiles { generation: 7, files: files.clone() }).expect("write");
         let msg: HostMsg = read_msg(&mut io::Cursor::new(pipe))
             .expect("read")
             .expect("a message");
 
         match msg {
-            HostMsg::ClipboardFiles(got) => assert_eq!(got, files),
+            HostMsg::ClipboardFiles { generation, files: got } => { assert_eq!(generation, 7); assert_eq!(got, files); },
             other => panic!("unexpected message: {other:?}"),
         }
+    }
+
+    #[test]
+    fn file_epoch_requests_and_replies_preserve_the_full_generation() {
+        let generation = u64::MAX - 1;
+        let mut pipe = Vec::new();
+        write_msg(&mut pipe, &ClientMsg::RequestFileContents {
+            generation, stream_id: 42, index: 3, offset: 0x1_0000_0001, length: 123,
+        }).unwrap();
+        write_msg(&mut pipe, &HostMsg::FileContents {
+            generation, stream_id: 42, data: None,
+        }).unwrap();
+        let mut cursor = io::Cursor::new(pipe);
+        assert!(matches!(read_msg::<_, ClientMsg>(&mut cursor).unwrap().unwrap(),
+            ClientMsg::RequestFileContents {
+                generation: got, stream_id: 42, index: 3, offset: 0x1_0000_0001, length: 123,
+            } if got == generation));
+        assert!(matches!(read_msg::<_, HostMsg>(&mut cursor).unwrap().unwrap(),
+            HostMsg::FileContents { generation: got, stream_id: 42, data: None } if got == generation));
     }
 
     /// A failed read has to survive the pipe as a failure. Collapsing `None` into

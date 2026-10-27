@@ -16,6 +16,8 @@ use windows::Win32::{
 
 fn lease() -> Lease {
     Lease {
+        generation: 7,
+        current: Arc::new(|| true),
         session: adit_domain::SessionId::new(),
         bridge: ChunkBridge::new(),
         cancelled: Arc::new(AtomicBool::new(false)),
@@ -436,5 +438,75 @@ fn destroying_the_owner_window_revokes_the_native_transfer_window_and_lease() {
         thread.join().unwrap();
         assert!(observed.cancelled.load(Ordering::Acquire));
         assert!(observed.bridge.begin().is_err());
+    });
+}
+
+#[test]
+fn file_epoch_old_clipboard_stream_aborts_without_gui_poll_or_bridge_close() {
+    sta(|| {
+        let bridge = ChunkBridge::new();
+        let generation = Arc::new(std::sync::atomic::AtomicU64::new(7));
+        let current = generation.clone();
+        let (tx, rx) = mpsc::channel();
+        let observer = std::thread::spawn(move || {
+            rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap();
+            generation.store(8, Ordering::Release); // IPC reader observes a replacement/text offer.
+        });
+        let object: IDataObject = FileDataObject::new(
+            vec![ClipFile {
+                name: "synthetic.bin".into(),
+                size: 3,
+                is_dir: false,
+            }],
+            bridge.clone(),
+            Arc::new(move |_, _, _, _| {
+                tx.send(()).unwrap();
+            }),
+            64 * 1024,
+        )
+        .with_liveness(Arc::new(move || current.load(Ordering::Acquire) == 7))
+        .into();
+        unsafe {
+            let mut medium = object.GetData(&contents_format()).unwrap();
+            let stream = medium.u.pstm.as_ref().unwrap().clone();
+            let mut bytes = [0u8; 3];
+            let mut count = 9;
+            let started = std::time::Instant::now();
+            assert_eq!(
+                stream.Read(bytes.as_mut_ptr().cast(), 3, Some(&mut count)),
+                E_ABORT
+            );
+            assert!(started.elapsed() < std::time::Duration::from_secs(1));
+            assert_eq!(count, 0);
+            assert!(object.GetData(&contents_format()).is_err());
+            ReleaseStgMedium(&mut medium);
+        }
+        observer.join().unwrap();
+        assert!(
+            bridge.begin().is_ok(),
+            "GUI did not close this bridge; the epoch guard aborted the read"
+        );
+    });
+}
+
+#[test]
+fn file_epoch_copy_source_cancels_before_gui_releases_its_lease() {
+    sta(|| {
+        let current = Arc::new(AtomicBool::new(true));
+        let observed = current.clone();
+        let mut lease = lease();
+        lease.current = Arc::new(move || observed.load(Ordering::Acquire));
+        let source: IDropSource = CopySource {
+            lease: lease.clone(),
+        }
+        .into();
+        current.store(false, Ordering::Release);
+        assert!(!lease.cancelled.load(Ordering::Acquire));
+        unsafe {
+            assert_eq!(
+                source.QueryContinueDrag(false, MK_LBUTTON),
+                DRAGDROP_S_CANCEL
+            );
+        }
     });
 }

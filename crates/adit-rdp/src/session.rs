@@ -50,6 +50,7 @@ pub(crate) enum SessionCmd {
     },
     /// The app wants a byte range of a file the remote offered.
     RequestFileContents {
+        generation: u64,
         stream_id: u32,
         index: u32,
         offset: u64,
@@ -595,8 +596,8 @@ async fn active_session(
                         clipboard::submit_file_contents(clip, stream_id, data);
                         Vec::new()
                     }
-                    Some(SessionCmd::RequestFileContents { stream_id, index, offset, length }) => {
-                        clipboard::request_file_contents(clip, stream_id, index, offset, length);
+                    Some(SessionCmd::RequestFileContents { generation, stream_id, index, offset, length }) => {
+                        clipboard::request_file_contents(clip, generation, stream_id, index, offset, length);
                         Vec::new()
                     }
                     // Mouse / key / unicode all fold into fast-path events.

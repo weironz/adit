@@ -9,6 +9,8 @@ fn file(name: &str) -> ClipFile {
 }
 fn lease(id: SessionId) -> Lease {
     Lease {
+        generation: 7,
+        current: Arc::new(|| true),
         session: id,
         bridge: ChunkBridge::new(),
         cancelled: Arc::new(AtomicBool::new(false)),
@@ -70,6 +72,8 @@ fn metadata_and_background_session_events_do_not_read_or_cancel_other_session() 
     state.offers.insert(
         a,
         Offer {
+            generation: 7,
+            current: Arc::new(|| true),
             files: vec![file("a")],
             request: Arc::new(|_, _, _, _| panic!("metadata must not request contents")),
         },
@@ -98,6 +102,7 @@ fn chunks_from_another_session_never_satisfy_a_drag_stream() {
     let mut state = state_for(active);
     state.update(
         vec![RdpFileDragEvent::Chunk {
+            generation: 7,
             session: SessionId::new(),
             stream_id: id,
             data: Some(vec![99]),
@@ -110,6 +115,7 @@ fn chunks_from_another_session_never_satisfy_a_drag_stream() {
         .is_err());
     state.update(
         vec![RdpFileDragEvent::Chunk {
+            generation: 7,
             session: a,
             stream_id: id,
             data: Some(vec![1, 0, 255]),
@@ -161,6 +167,7 @@ fn revocation_in_a_batch_precedes_even_an_earlier_queued_chunk() {
     state.update(
         vec![
             RdpFileDragEvent::Chunk {
+                generation: 7,
                 session: id,
                 stream_id,
                 data: Some(vec![99]),
@@ -172,4 +179,45 @@ fn revocation_in_a_batch_precedes_even_an_earlier_queued_chunk() {
     );
     assert!(active.bridge.wait(stream_id).is_err());
     assert!(active.cancelled.load(Ordering::Acquire));
+}
+
+#[test]
+fn file_epoch_old_reply_in_the_same_session_cannot_fill_a_new_bridge() {
+    let session = SessionId::new();
+    let active = lease(session);
+    let stream_id = active.bridge.begin().unwrap();
+    let reader = active.bridge.clone();
+    let (tx, rx) = mpsc::channel();
+    let thread = std::thread::spawn(move || tx.send(reader.wait(stream_id)).unwrap());
+    let mut state = state_for(active);
+    state.update(
+        vec![RdpFileDragEvent::Chunk {
+            session,
+            generation: 6,
+            stream_id,
+            data: Some(vec![99]),
+        }],
+        true,
+        |_| true,
+    );
+    assert!(rx
+        .recv_timeout(std::time::Duration::from_millis(50))
+        .is_err());
+    state.update(
+        vec![RdpFileDragEvent::Chunk {
+            session,
+            generation: 7,
+            stream_id,
+            data: Some(vec![42]),
+        }],
+        true,
+        |_| true,
+    );
+    assert_eq!(
+        rx.recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap(),
+        [42]
+    );
+    thread.join().unwrap();
 }

@@ -456,6 +456,21 @@ selection or disabling the channel cancel the lease and wake blocked streams.
 Responses carry their session ID and wire stream IDs are never reused across
 offers, preventing a late reply from filling another file's stream.
 
+Remote offers also carry a generation through helper IPC, the session requester
+and every range response. The helper binds each accepted request to that offer's
+lock and file index before queueing; it checks the generation again before sending
+the PDU and never looks up the current clipboard lock at read time. Caller stream
+IDs are mapped to separate, non-reused wire IDs, so even a caller reusing an ID in
+a newer offer cannot collect an old wire reply.
+
+A replacement file list, a text/image-only FormatList, channel redirection and
+disconnect revoke the old offer. The IPC reader marks requesters stale before the
+GUI polls events; COM reads observe that guard even while blocked, and fail with
+an error instead of zero-byte success. Metadata and its requester travel as one
+offer, rather than pairing old filenames with a newly fetched requester. File
+offers without a server clipboard lock are refused; the desktop remains usable.
+An empty revocation message does not overwrite OS clipboard text or images.
+
 **Dragging into the remote desktop remains unsupported.** CLIPRDR has no remote
 shell drop-location operation. The native target returns NONE without reading
 the incoming object; it does not advertise success and then send Ctrl+V.

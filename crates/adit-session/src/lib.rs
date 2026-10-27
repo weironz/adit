@@ -461,17 +461,42 @@ pub struct SessionManager {
     pending_rdp_clipboard_image: Option<(SessionId, Vec<u8>)>,
     /// A file list the remote copied, waiting for the UI to publish it. One slot,
     /// like the clipboard text beside it: the clipboard holds one thing.
-    pending_rdp_clipboard_files: Option<(SessionId, Vec<ClipFile>)>,
+    pending_rdp_clipboard_files: Option<RdpClipboardFileOffer>,
     /// Chunks answering local pastes, waiting to be handed to the waiting COM
     /// streams. A `Vec` because a folder paste has several streams open at once.
-    pending_rdp_file_chunks: Vec<(SessionId, u32, Option<Vec<u8>>)>,
+    pending_rdp_file_chunks: Vec<RdpFileChunk>,
     pending_rdp_drag_events: Vec<RdpFileDragEvent>,
+}
+
+/// Metadata and requester are one immutable offer; never pair historical files
+/// with a requester fetched from whichever clipboard happens to be current.
+#[derive(Clone)]
+pub struct RdpClipboardFileOffer {
+    pub session: SessionId,
+    pub generation: u64,
+    pub files: Vec<ClipFile>,
+    pub requester: RdpFileRequester,
+}
+impl RdpClipboardFileOffer {
+    pub fn is_current(&self) -> bool {
+        self.generation == self.requester.generation() && self.requester.is_current()
+    }
+}
+
+pub struct RdpFileChunk {
+    pub session: SessionId,
+    pub generation: u64,
+    pub stream_id: u32,
+    pub data: Option<Vec<u8>>,
+    // Preserve helper identity while queued. A reconnect may reuse SessionId
+    // and numeric generations, but it must not collect the old pipe's replies.
+    owner: RdpFileRequester,
 }
 
 /// Session-tagged events for explicit OLE drags, independent of clipboard focus.
 pub enum RdpFileDragEvent {
-    Offered { session: SessionId, files: Vec<ClipFile>, requester: RdpFileRequester },
-    Chunk { session: SessionId, stream_id: u32, data: Option<Vec<u8>> },
+    Offered { session: SessionId, generation: u64, files: Vec<ClipFile>, requester: RdpFileRequester },
+    Chunk { session: SessionId, generation: u64, stream_id: u32, data: Option<Vec<u8>> },
     Closed { session: SessionId },
 }
 
@@ -560,8 +585,13 @@ impl SessionManager {
         self.rdp_clipboard = enabled;
         for record in self.sessions.values() {
             if let Some(vnc) = &record.vnc { vnc.set_clipboard_sharing(enabled); }
+            if let Some(rdp) = &record.rdp { rdp.set_file_offers_enabled(enabled); }
         }
-        if !enabled { self.pending_rdp_clipboard = None; }
+        if !enabled {
+            self.pending_rdp_clipboard = None;
+            self.pending_rdp_clipboard_files = None;
+            self.pending_rdp_file_chunks.clear();
+        }
     }
 
     /// Set the visual-fidelity preset for RDP sessions. Like the clipboard flag
@@ -1763,7 +1793,11 @@ impl SessionManager {
         if self.pending_rdp_clipboard_image.as_ref().is_some_and(|(id, _)| *id == session_id) {
             self.pending_rdp_clipboard_image = None;
         }
-        if self.pending_rdp_clipboard_files.as_ref().is_some_and(|(id, _)| *id == session_id) {
+        if self
+            .pending_rdp_clipboard_files
+            .as_ref()
+            .is_some_and(|offer| offer.session == session_id)
+        {
             self.pending_rdp_clipboard_files = None;
         }
     }
@@ -2120,19 +2154,25 @@ impl SessionManager {
     }
 
     /// A file list the remote copied, if one arrived since the last call.
-    pub fn take_rdp_clipboard_files(&mut self) -> Option<Vec<ClipFile>> {
-        if self.pending_rdp_clipboard_files.as_ref().map(|(id, _)| *id) != self.active_session { return None; }
-        self.pending_rdp_clipboard_files.take().map(|(_, files)| files)
+    pub fn take_rdp_clipboard_files(&mut self) -> Option<RdpClipboardFileOffer> {
+        self.pending_rdp_clipboard_files.take().filter(|offer|
+            Some(offer.session) == self.active_session &&
+            self.sessions.get(&offer.session).and_then(|r| r.rdp.as_ref())
+                .is_some_and(|rdp| rdp.owns_file_requester(&offer.requester)))
     }
 
     /// Chunks that arrived for local pastes. Drained.
-    pub fn take_rdp_file_chunks(&mut self) -> Vec<(u32, Option<Vec<u8>>)> {
-        let active = self.active_session;
-        self.pending_rdp_file_chunks.extract_if(.., |(id, _, _)| Some(*id) == active).map(|(_, stream, data)| (stream, data)).collect()
+    pub fn take_rdp_file_chunks(&mut self) -> Vec<RdpFileChunk> {
+        std::mem::take(&mut self.pending_rdp_file_chunks).into_iter().filter(|chunk|
+            Some(chunk.session) == self.active_session &&
+            self.sessions.get(&chunk.session).and_then(|r| r.rdp.as_ref())
+                .is_some_and(|rdp| rdp.owns_file_requester(&chunk.owner))).collect()
     }
 
-    /// A `Send + Sync` handle for the COM streams to pull bytes with.
+    /// A handle for the current offer. Historical metadata must retain the
+    /// requester returned alongside it by `take_rdp_clipboard_files`.
     pub fn rdp_file_requester(&self) -> Option<RdpFileRequester> {
+        if !self.rdp_clipboard { return None; }
         let session_id = self.active_session?;
         let record = self.sessions.get(&session_id)?;
         record.rdp.as_ref().map(RdpClientHandle::file_requester)
@@ -3502,21 +3542,32 @@ impl SessionManager {
                     RdpClientEvent::ClipboardImage(image) => {
                         self.pending_rdp_clipboard_image = Some((record.summary.id, image));
                     }
-                    RdpClientEvent::ClipboardFiles(files) => {
+                    RdpClientEvent::ClipboardFiles { generation, files } => {
+                        if !self.rdp_clipboard {
+                            record.rdp.as_ref().expect("RDP event owner").invalidate_file_offer();
+                            continue;
+                        }
+                        let requester = record.rdp.as_ref().expect("RDP event owner").file_requester_for_generation(generation);
                         self.pending_rdp_drag_events.retain(|event| !matches!(event,
                             RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Offered {
-                            session: record.summary.id,
-                            files: files.clone(),
-                            requester: record.rdp.as_ref().expect("RDP event owner").file_requester(),
+                            session: record.summary.id, generation,
+                            files: files.clone(), requester: requester.clone(),
                         });
-                        self.pending_rdp_clipboard_files = Some((record.summary.id, files));
+                        if self.active_session == Some(record.summary.id) {
+                            self.pending_rdp_clipboard_files = Some(RdpClipboardFileOffer {
+                                session: record.summary.id, generation, files, requester,
+                            });
+                        }
                     }
-                    RdpClientEvent::FileContents { stream_id, data } => {
+                    RdpClientEvent::FileContents { generation, stream_id, data } => {
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Chunk {
-                            session: record.summary.id, stream_id, data: data.clone(),
+                            session: record.summary.id, generation, stream_id, data: data.clone(),
                         });
-                        self.pending_rdp_file_chunks.push((record.summary.id, stream_id, data));
+                        self.pending_rdp_file_chunks.push(RdpFileChunk {
+                            session: record.summary.id, generation, stream_id, data,
+                            owner: record.rdp.as_ref().expect("RDP event owner").file_requester_for_generation(generation),
+                        });
                     }
                     RdpClientEvent::FileContentsNeeded {
                         stream_id,

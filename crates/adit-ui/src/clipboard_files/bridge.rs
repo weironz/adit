@@ -115,12 +115,21 @@ impl ChunkBridge {
     ///
     /// **Never call this from the UI thread.** It is meant for the COM stream's
     /// `Read`, which runs on Explorer's thread.
+    #[cfg(test)]
     pub(crate) fn wait(&self, stream_id: u32) -> Result<Vec<u8>, ChunkError> {
+        self.wait_live(stream_id, || true)
+    }
+
+    pub(crate) fn wait_live(&self, stream_id: u32, current: impl Fn() -> bool) -> Result<Vec<u8>, ChunkError> {
         let (lock, condvar) = &*self.inner;
         let mut inner = lock.lock().unwrap_or_else(|e| e.into_inner());
         let deadline = Instant::now() + CHUNK_TIMEOUT;
 
         loop {
+            if inner.closed || !current() {
+                inner.slots.remove(&stream_id);
+                return Err(ChunkError::Disconnected);
+            }
             match inner.slots.get(&stream_id) {
                 // Answered: take the slot away with the result.
                 Some(Some(_)) => {
@@ -145,7 +154,7 @@ impl ChunkBridge {
                 return Err(ChunkError::TimedOut);
             };
             let (guard, _) = condvar
-                .wait_timeout(inner, remaining)
+                .wait_timeout(inner, remaining.min(Duration::from_millis(50)))
                 .unwrap_or_else(|e| e.into_inner());
             inner = guard;
         }

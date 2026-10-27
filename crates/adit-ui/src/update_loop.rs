@@ -199,24 +199,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // fight every other app on the machine for it.
             // Files the remote copied: publish them on the Windows clipboard.
             // Delay-rendered, so this costs one data object and no wire traffic.
-            if let Some(files) = app.manager.take_rdp_clipboard_files() {
-                if app.rdp_clipboard {
-                    if let Some(requester) = app.manager.rdp_file_requester() {
-                        // A bridge per offer, not per app. `close` is permanent
-                        // by design — it is what tells a waiter the answer is
-                        // never coming — so reusing one across offers would make
-                        // every paste after the first disconnect fail forever.
-                        // Closing the outgoing one releases anything still
-                        // waiting on the superseded clipboard contents.
-                        app.rdp_chunk_bridge.close();
-                        app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
-                        clipboard_files::offer_remote_files(
-                            files,
-                            app.rdp_chunk_bridge.clone(),
-                            requester,
-                            RDP_FILE_CHUNK_BYTES,
-                        );
-                    }
+            if let Some(offer) = app.manager.take_rdp_clipboard_files() {
+                app.rdp_chunk_bridge.close();
+                app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
+                app.rdp_file_scope = None;
+                if app.rdp_clipboard && app.manager.active_session() == Some(offer.session)
+                    && !offer.files.is_empty() && offer.is_current() {
+                    app.rdp_file_scope = Some((offer.session, offer.generation));
+                    clipboard_files::offer_remote_files(
+                        offer.files, app.rdp_chunk_bridge.clone(), offer.requester, RDP_FILE_CHUNK_BYTES,
+                    );
                 }
             }
             let drag_events = app.manager.take_rdp_file_drag_events();
@@ -227,13 +219,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
             // Chunks answering a local paste. Handed straight to the COM stream
             // blocked on them over on Explorer's thread.
-            for (stream_id, data) in app.manager.take_rdp_file_chunks() {
-                app.rdp_chunk_bridge.deliver(stream_id, data);
+            for chunk in app.manager.take_rdp_file_chunks() {
+                if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
+                    app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+                }
             }
             // With no live RDP session there is nothing that can answer a paste,
             // so release any Explorer thread waiting on one instead of leaving it
             // to time out — file by file, thirty seconds each.
-            if !app.manager.active_rdp_live() {
+            if app.rdp_file_scope.is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session)) {
                 app.rdp_chunk_bridge.close();
             }
 
@@ -3427,6 +3421,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // that asks — the setting would read as off while still leaking.
             if !enabled {
                 app.rdp_file_drag.cancel();
+                app.rdp_chunk_bridge.close();
+                app.rdp_file_scope = None;
                 app.rdp_clipboard_offered = None;
             }
             app.notice = if app.manager.active_is_vnc() {
