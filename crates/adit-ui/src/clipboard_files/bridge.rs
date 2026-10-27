@@ -117,7 +117,6 @@ impl ChunkBridge {
     ///
     /// **Never call this from the UI thread.** It is meant for the COM stream's
     /// `Read`, which runs on Explorer's thread.
-    #[cfg(test)]
     pub(crate) fn wait(&self, stream_id: u32) -> Result<Vec<u8>, ChunkError> {
         self.wait_live(stream_id, || true)
     }
