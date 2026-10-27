@@ -1703,7 +1703,7 @@ impl VtTerminal {
 
     /// Feed UTF-8 text (convenience over [`TerminalCore::feed`]).
     pub fn feed_str(&mut self, text: &str) {
-        self.parser.advance(&mut self.state, text.as_bytes());
+        let _ = self.feed(text.as_bytes());
     }
 
     /// Append an Adit status annotation on its own line without disturbing a
