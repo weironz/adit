@@ -350,6 +350,21 @@ pub(crate) fn text_input_style(_theme: &Theme, status: text_input::Status) -> te
     }
 }
 
+pub(crate) fn pick_list_style(_theme: &Theme, status: iced::widget::pick_list::Status) -> iced::widget::pick_list::Style {
+    let edge = match status {
+        iced::widget::pick_list::Status::Active => border_color(),
+        iced::widget::pick_list::Status::Hovered => border_strong(),
+        iced::widget::pick_list::Status::Opened { .. } => accent(),
+    };
+    iced::widget::pick_list::Style {
+        text_color: primary_text(),
+        placeholder_color: muted_text(),
+        handle_color: muted_text(),
+        background: field_background().into(),
+        border: border(RADIUS_SM, 1.0, edge),
+    }
+}
+
 pub(crate) fn base_button_style(background: Color, text_color: Color, border_color: Color) -> button::Style {
     button::Style {
         background: Some(Background::Color(background)),

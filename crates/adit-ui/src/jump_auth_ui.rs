@@ -79,6 +79,8 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
                     }
                 })
                 .text_size(11)
+                .padding([5, 8])
+                .style(pick_list_style)
                 .width(Length::Fixed(260.0)),
             ]
             .spacing(8)

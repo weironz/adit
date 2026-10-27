@@ -1910,13 +1910,8 @@ fn resolve_dark(mode: ThemeMode) -> bool {
 }
 
 fn app_theme(app: &AditApp) -> Theme {
-    // The chrome is fully custom-styled; the base theme only drives default
-    // widgets (scrollbars, checkboxes), which must match the active mode.
-    if app.dark_mode {
-        Theme::Dark
-    } else {
-        Theme::Light
-    }
+    // Default widgets and popup selections share the chrome's blue accent.
+    display_accessibility::base_theme(app.dark_mode)
 }
 
 fn subscription(app: &AditApp) -> Subscription<Message> {

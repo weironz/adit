@@ -178,7 +178,10 @@ pub(crate) fn appearance_editor<'a>(
     let mut body = column![
         row![
             text(t("此配置的终端外观")).size(12).width(Fill),
-            button(text(t("全部继承全局")).size(11)).on_press(message(AppearanceEdit::Reset)),
+            button(text(t("全部继承全局")).size(11))
+                .style(|_theme, status| secondary_button_style(status))
+                .padding([4, 8])
+                .on_press(message(AppearanceEdit::Reset)),
         ]
         .align_y(Alignment::Center),
         row![
@@ -187,13 +190,16 @@ pub(crate) fn appearance_editor<'a>(
                 iced::widget::pick_list(fonts, Some(inherited_font), |v| {
                     message(AppearanceEdit::Font(v.value.unwrap_or_default()))
                 })
-                .text_size(12)
+                .text_size(13)
+                .padding([5, 8])
+                .style(pick_list_style)
                 .width(Fill)
                 .into()
             ),
             dialog_field(
                 "字号（留空继承）",
                 text_input("9–28", &form.size)
+                    .size(13)
                     .on_input(|v| message(AppearanceEdit::Size(v)))
                     .padding([5, 8])
                     .style(text_input_style)
@@ -206,7 +212,9 @@ pub(crate) fn appearance_editor<'a>(
             iced::widget::pick_list(schemes, Some(inherited_scheme), |v| {
                 message(AppearanceEdit::Scheme(v.value.unwrap_or_default()))
             })
-            .text_size(12)
+            .text_size(13)
+            .padding([5, 8])
+            .style(pick_list_style)
             .width(Fill)
             .into()
         ),
