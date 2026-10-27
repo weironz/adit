@@ -228,6 +228,8 @@ struct Expected {
     pane_count: usize,
     focused_pane: usize,
     mission: u64,
+    editor_open: bool,
+    settings: Option<SettingsCategory>,
 }
 
 struct Step {
@@ -246,6 +248,8 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
         pane_count: 0,
         focused_pane: 0,
         mission: 1,
+        editor_open: false,
+        settings: None,
     };
     // Missions::default starts its counter at zero. These two IDs are produced
     // by the real creation messages below; later picks verify their distinct
@@ -404,6 +408,7 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
         ],
         expected,
     });
+    expected.settings = Some(SettingsCategory::Terminal);
     steps.push(Step {
         name: "settings-terminal",
         messages: vec![
@@ -412,6 +417,7 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
         ],
         expected,
     });
+    expected.settings = Some(SettingsCategory::Appearance);
     steps.push(Step {
         name: "settings-appearance",
         messages: vec![Message::SettingsCategoryPicked(SettingsCategory::Appearance)],
@@ -419,19 +425,22 @@ fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
     });
     expected.view = MainView::Missions;
     expected.pane_count = 4;
+    expected.settings = None;
     steps.push(Step {
         name: "f-after-settings",
         messages: vec![Message::CloseSettings, Message::ShowMainView(MainView::Missions)],
         expected,
     });
+    expected.editor_open = true;
     steps.push(Step {
         name: "session-editor-options",
         messages: vec![Message::EditProfileFromContext(profile)],
         expected,
     });
+    expected.editor_open = false;
     steps.push(Step {
         name: "f-after-editor",
-        messages: vec![Message::CloseProfileEditor],
+        messages: vec![Message::CloseProfileEditor, Message::ShowMainView(MainView::Missions)],
         expected,
     });
     steps
@@ -495,7 +504,9 @@ fn dispatch(state: &mut State, mut message: Message) -> Task<NativeMessage> {
         | Message::RunMenu(MenuCommand::Options)
         | Message::SettingsCategoryPicked(_)
         | Message::CloseSettings
+        | Message::CloseProfileEditor
         | Message::WindowResized { .. } => true,
+        Message::EditProfileFromContext(id) => state.app.manager.profile(*id).is_some(),
         Message::TabClicked(id) => state.ids.contains(id),
         Message::AddMissionSession(id) => state.ids.contains(id),
         Message::PickMission(id) => state.phase == Phase::Held || matches!(*id, 1 | 2),
@@ -601,7 +612,10 @@ fn verify(state: &State) -> Result<(), String> {
         || state.app.sidebar_visible != expected.sidebar
         || state.app.panes.len() != expected.pane_count
         || state.app.focused_pane != expected.focused_pane
-        || state.app.terminal_focused != (expected.view != MainView::Hosts)
+        || state.app.terminal_focused != (expected.view != MainView::Hosts && !expected.editor_open)
+        || state.app.profile_editor.is_some() != expected.editor_open
+        || state.app.settings_open != expected.settings.is_some()
+        || expected.settings.is_some_and(|category| category != state.app.settings_category)
     {
         return Err(format!(
             "unexpected navigation/focus state at {}",
@@ -661,6 +675,9 @@ fn snapshot(state: &State) -> Value {
         "panes": state.app.panes.iter().map(ToString::to_string).collect::<Vec<_>>(),
         "focused_pane": state.app.focused_pane,
         "terminal_focused": state.app.terminal_focused,
+        "profile_editor_open": state.app.profile_editor.is_some(),
+        "settings_open": state.app.settings_open,
+        "settings_category": format!("{:?}", state.app.settings_category),
         "sidebar_visible": state.app.sidebar_visible,
         "logical_size": [state.app.window_width, state.app.window_height],
         "os_scale": state.os_scale,
@@ -845,10 +862,16 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
             }
             let messages = state.steps[state.index].messages.clone();
             state.executed_messages.clear();
-            let tasks: Vec<_> = messages
-                .into_iter()
-                .map(|message| dispatch(state, message))
-                .collect();
+            let mut tasks = Vec::with_capacity(messages.len());
+            for message in messages {
+                let before = state.executed_messages.len();
+                let description = format!("{message:?}");
+                let task = dispatch(state, message);
+                if state.executed_messages.len() != before + 1 {
+                    return finish(state, Err(format!("planned action was rejected: {description}")));
+                }
+                tasks.push(task);
+            }
             repaint_mock_terminals(state);
             state.phase = Phase::Settling;
             state.changed = Instant::now();
