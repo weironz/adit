@@ -163,7 +163,7 @@ pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static 
     };
     button(row![
         ui_icon(icon, 14.0, Color::from_rgb8(202, 214, 229)),
-        text(t(label)).size(12),
+        text(t_in("navigation", label)).size(12),
     ].spacing(7).align_y(Alignment::Center))
         .padding([5, 10])
         .style(move |_, status| global_navigation_style(active, status))
@@ -174,7 +174,7 @@ pub(crate) fn global_view_button(app: &AditApp, view: MainView, label: &'static 
 pub(crate) fn menu_button<'a>(app: &AditApp, kind: MenuKind, label: &'a str) -> Element<'a, Message> {
     let active = app.active_menu == Some(kind);
 
-    button(text(label).size(12))
+    button(text(t_in("navigation", label)).size(12))
         .padding([5, 10])
         .style(move |_theme, status| global_navigation_style(active, status))
         .on_press(Message::ToggleMenu(kind))
@@ -294,7 +294,7 @@ pub(crate) fn menu_commands(menu: MenuKind) -> &'static [(&'static str, MenuComm
 }
 
 pub(crate) fn menu_dropdown_button(label: &'static str, command: MenuCommand) -> Element<'static, Message> {
-    button(text(label).size(12))
+    button(text(t_in("navigation", label)).size(12))
         .width(Fill)
         .padding([6, 12])
         .style(|_theme, status| menu_command_button_style(status))

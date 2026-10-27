@@ -29,10 +29,10 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
                 SftpPane::Local => "松开到右侧远程栏上传",
                 SftpPane::Remote => "松开到左侧本地栏下载",
             };
-            (tf("⠿ 拖拽 {} — {}", &[&subject, &target]), accent())
+            (tf("⠿ 拖拽 {} — {}", &[&subject, &t(target)]), accent())
         }
-        None if browser.status.starts_with("error") => (browser.status.clone(), danger()),
-        None => (browser.status.clone(), muted_text()),
+        None if browser.status.starts_with("error") => (runtime(&browser.status), danger()),
+        None => (runtime(&browser.status), muted_text()),
     };
 
     let header = row![
@@ -69,17 +69,17 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
 
     // Extra upload via picker / typed path → remote current directory.
     let upload_extra = row![
-        button(text("选择文件上传…").size(12))
+        button(text(t("选择文件上传…")).size(12))
             .padding([5, 12])
             .style(|_theme, status| primary_button_style(status))
             .on_press(Message::SftpPickUpload),
-        text_input("或输入本地路径上传到远程当前目录", &app.sftp_upload_path)
+        text_input(t("或输入本地路径上传到远程当前目录"), &app.sftp_upload_path)
             .on_input(Message::SftpUploadPathChanged)
             .on_submit(Message::SftpUpload)
             .padding([5, 8])
             .style(text_input_style)
             .width(Fill),
-        button(text("上传").size(12))
+        button(text(t("上传")).size(12))
             .padding([5, 12])
             .style(|_theme, status| secondary_button_style(status))
             .on_press(Message::SftpUpload),
@@ -113,7 +113,7 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
 
 pub(crate) fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
     let header = row![
-        text("本地").size(13).color(primary_text()),
+        text(t("本地")).size(13).color(primary_text()),
         button(text("↑").size(12))
             .padding([3, 9])
             .style(|_theme, status| secondary_button_style(status))
@@ -122,7 +122,7 @@ pub(crate) fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) ->
             .padding([3, 9])
             .style(|_theme, status| secondary_button_style(status))
             .on_press(Message::SftpLocalRefresh),
-        text_input("本地路径（回车跳转）", &app.sftp_local_path_edit)
+        text_input(t("本地路径（回车跳转）"), &app.sftp_local_path_edit)
             .on_input(Message::SftpLocalPathChanged)
             .on_submit(Message::SftpLocalGo)
             .padding([3, 6])
@@ -180,7 +180,7 @@ pub(crate) fn sftp_local_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) ->
 
 pub(crate) fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -> Element<'a, Message> {
     let header = row![
-        text("远程").size(13).color(primary_text()),
+        text(t("远程")).size(13).color(primary_text()),
         button(text("↑").size(12))
             .padding([3, 9])
             .style(|_theme, status| secondary_button_style(status))
@@ -189,7 +189,7 @@ pub(crate) fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -
             .padding([3, 9])
             .style(|_theme, status| secondary_button_style(status))
             .on_press(Message::SftpRefresh),
-        text_input("远程路径（回车跳转）", &app.sftp_remote_path_edit)
+        text_input(t("远程路径（回车跳转）"), &app.sftp_remote_path_edit)
             .on_input(Message::SftpRemotePathChanged)
             .on_submit(Message::SftpRemoteGo)
             .padding([3, 6])
@@ -234,13 +234,13 @@ pub(crate) fn sftp_remote_pane<'a>(app: &'a AditApp, browser: &'a SftpBrowser) -
 
     content = content.push(
         row![
-            text_input("新文件夹名", &app.sftp_new_folder)
+            text_input(t("新文件夹名"), &app.sftp_new_folder)
                 .on_input(Message::SftpNewFolderChanged)
                 .on_submit(Message::SftpMkdir)
                 .padding([4, 8])
                 .style(text_input_style)
                 .width(Fill),
-            button(text("新建").size(11))
+            button(text(t("新建")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::SftpMkdir),
@@ -268,17 +268,17 @@ pub(crate) fn sftp_rename_bar<'a>(from: &str, rename_to: &'a str) -> Element<'a,
             text(tf("重命名 {} →", &[&from]))
                 .size(12)
                 .color(primary_text()),
-            text_input("新名称", rename_to)
+            text_input(t("新名称"), rename_to)
                 .on_input(Message::SftpRenameToChanged)
                 .on_submit(Message::SftpConfirmRename)
                 .padding([4, 8])
                 .style(text_input_style)
                 .width(Fill),
-            button(text("确定").size(11))
+            button(text(t("确定")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::SftpConfirmRename),
-            button(text("取消").size(11))
+            button(text(t("取消")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::SftpCancelRename),
@@ -299,11 +299,11 @@ pub(crate) fn sftp_delete_bar(name: &str) -> Element<'static, Message> {
                 .size(12)
                 .color(danger())
                 .width(Fill),
-            button(text("删除").size(11))
+            button(text(t("删除")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::SftpConfirmDelete),
-            button(text("取消").size(11))
+            button(text(t("取消")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::SftpCancelDelete),
@@ -332,11 +332,11 @@ pub(crate) fn sftp_overwrite_bar(clashing: &[String]) -> Element<'static, Messag
     container(
         row![
             text(question).size(12).color(danger()).width(Fill),
-            button(text("覆盖").size(11))
+            button(text(t("覆盖")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| primary_button_style(status))
                 .on_press(Message::SftpConfirmOverwrite),
-            button(text("取消").size(11))
+            button(text(t("取消")).size(11))
                 .padding([4, 10])
                 .style(|_theme, status| secondary_button_style(status))
                 .on_press(Message::SftpCancelOverwrite),
@@ -363,7 +363,7 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
         }
     }
 
-    let mut clear = button(text("清空已完成").size(11))
+    let mut clear = button(text(t("清空已完成")).size(11))
         .padding([3, 10])
         .style(|_theme, status| secondary_button_style(status));
     if done + failed + cancelled > 0 {
@@ -374,7 +374,7 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
     let mut controls = row![].spacing(6).align_y(Alignment::Center);
     if active > 0 {
         controls = controls.push(
-            button(text("全部停止").size(11))
+            button(text(t("全部停止")).size(11))
                 .padding([3, 10])
                 .style(|_theme, status| danger_button_style(status))
                 .on_press(Message::SftpCancelAll),
@@ -383,7 +383,7 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
     controls = controls.push(clear);
 
     let title = row![
-        text("传输队列").size(11).color(primary_text()),
+        text(t("传输队列")).size(11).color(primary_text()),
         text(tf("完成 {} · 失败 {} · 停止 {} · 进行 {}", &[&done, &failed, &cancelled, &active]))
             .size(10)
             .color(muted_text()),
@@ -394,18 +394,18 @@ pub(crate) fn sftp_transfer_queue(browser: &SftpBrowser) -> Element<'static, Mes
     .align_y(Alignment::Center);
 
     let column_header = row![
-        text("文件").size(10).color(muted_text()).width(Length::FillPortion(2)),
-        text("目标路径").size(10).color(muted_text()).width(Length::FillPortion(3)),
-        text("大小").size(10).color(muted_text()).width(Length::Fixed(72.0)),
-        text("进度").size(10).color(muted_text()).width(Length::Fixed(112.0)),
-        text("速度").size(10).color(muted_text()).width(Length::Fixed(78.0)),
-        text("状态").size(10).color(muted_text()).width(Length::Fixed(48.0)),
+        text(t_in("transfer", "文件")).size(10).color(muted_text()).width(Length::FillPortion(2)),
+        text(t("目标路径")).size(10).color(muted_text()).width(Length::FillPortion(3)),
+        text(t("大小")).size(10).color(muted_text()).width(Length::Fixed(72.0)),
+        text(t("进度")).size(10).color(muted_text()).width(Length::Fixed(112.0)),
+        text(t("速度")).size(10).color(muted_text()).width(Length::Fixed(78.0)),
+        text(t("状态")).size(10).color(muted_text()).width(Length::Fixed(48.0)),
         Space::new().width(Length::Fixed(44.0)),
     ]
     .spacing(8);
 
     let body: Element<'static, Message> = if browser.transfers.is_empty() {
-        text("（暂无传输）").size(11).color(muted_text()).into()
+        text(t("（暂无传输）")).size(11).color(muted_text()).into()
     } else {
         let mut list = column![].spacing(1);
         for item in browser.transfers.iter().rev() {
@@ -454,9 +454,9 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
     // On failure, show the reason in place of the destination so it's visible.
     let (detail, detail_color) = match (&item.status, &item.error) {
         (TransferStatus::Failed, Some(reason)) => (item.note.as_ref().map_or_else(
-            || reason.clone(), |note| format!("{reason} — {note}")), danger()),
+            || runtime(reason), |note| format!("{} — {}", runtime(reason), runtime(note))), danger()),
         _ => (item.note.as_ref().map_or_else(|| item.dest.clone(),
-            |note| format!("{} — {note}", item.dest)), muted_text()),
+            |note| format!("{} — {}", item.dest, runtime(note))), muted_text()),
     };
 
     let progress = row![
@@ -474,7 +474,7 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
     // Only a running/queued transfer can be stopped; a finished row shows a
     // blank of the same width so every row's columns stay aligned.
     let action: Element<'static, Message> = if stoppable {
-        button(text("停止").size(9))
+        button(text(t("停止")).size(9))
             .padding([1, 6])
             .style(|_theme, status| danger_button_style(status))
             .on_press(Message::SftpCancelTransfer(item.id))
@@ -500,7 +500,7 @@ pub(crate) fn sftp_transfer_row(item: &TransferItem) -> Element<'static, Message
             .width(Length::Fixed(72.0)),
         container(progress).width(Length::Fixed(112.0)),
         text(speed).size(10).color(muted_text()).width(Length::Fixed(78.0)),
-        text(label).size(10).color(color).width(Length::Fixed(48.0)),
+        text(t(label)).size(10).color(color).width(Length::Fixed(48.0)),
         container(action).width(Length::Fixed(44.0)),
     ]
     .spacing(8)
@@ -717,6 +717,7 @@ pub(crate) fn sftp_context_overlay(
 /// A batch-action button that shows the selection count and is disabled (no
 /// `on_press`) when nothing is selected.
 pub(crate) fn sftp_batch_button(label: &'static str, count: usize, message: Message) -> Element<'static, Message> {
+    let label = t(label);
     let caption = if count > 0 {
         format!("{label} ({count})")
     } else {
@@ -905,7 +906,7 @@ pub(crate) fn sftp_sort_cell(
         ""
     };
     let color = if is_active { accent() } else { muted_text() };
-    button(text(format!("{label}{arrow}")).size(10).color(color))
+    button(text(format!("{}{arrow}", t(label))).size(10).color(color))
         .width(width)
         .padding([2, 4])
         .style(|_theme, status| sort_header_button_style(status))

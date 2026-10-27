@@ -116,7 +116,7 @@ pub(crate) fn check_for_update_blocking() -> Result<Option<UpdateInfo>, String> 
 
     let tag = json["tag_name"]
         .as_str()
-        .ok_or("发布信息缺少 tag_name")?
+        .ok_or(t("发布信息缺少 tag_name"))?
         .to_string();
     let notes_url = json["html_url"].as_str().unwrap_or_default().to_string();
 

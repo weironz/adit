@@ -6,7 +6,7 @@ pub(crate) fn begin_putty_registry_import() -> Task<Message> {
         async {
             tokio::task::spawn_blocking(adit_storage::read_putty_sessions)
                 .await
-                .unwrap_or_else(|e| Err(e.to_string()))
+                .unwrap_or_else(|e| Err(runtime(&e)))
         },
         Message::CatalogImported,
     )
@@ -16,7 +16,7 @@ pub(crate) fn begin_catalog_transfer(command: MenuCommand) -> Task<Message> {
     let dialog = rfd::AsyncFileDialog::new();
     let dialog = match command {
         MenuCommand::ImportSshConfig => {
-            let mut dialog = dialog.set_title("选择 SSH config（不执行其中的命令）");
+            let mut dialog = dialog.set_title(t("选择 SSH config（不执行其中的命令）"));
             if let Some(path) = adit_storage::ssh_config_path() {
                 if let Some(parent) = path.parent() {
                     dialog = dialog.set_directory(parent);
@@ -25,15 +25,15 @@ pub(crate) fn begin_catalog_transfer(command: MenuCommand) -> Task<Message> {
             dialog
         }
         MenuCommand::ImportPutty => dialog
-            .set_title("选择 PuTTY Sessions 注册表导出文件（.reg）")
-            .add_filter("PuTTY 注册表导出", &["reg"]),
+            .set_title(t("选择 PuTTY Sessions 注册表导出文件（.reg）"))
+            .add_filter(t("PuTTY 注册表导出"), &["reg"]),
         MenuCommand::ImportCatalog => dialog
-            .set_title("导入会话目录；启动命令、环境变量和触发器将移除，自动日志需重新启用")
-            .add_filter("Adit 会话目录", &["json"]),
+            .set_title(t("导入会话目录；启动命令、环境变量和触发器将移除，自动日志需重新启用"))
+            .add_filter(t("Adit 会话目录"), &["json"]),
         MenuCommand::ExportCatalog => dialog
-            .set_title("导出会话目录到新文件（不含凭据、启动命令、环境变量值和触发器）")
+            .set_title(t("导出会话目录到新文件（不含凭据、启动命令、环境变量值和触发器）"))
             .set_file_name("adit-profiles.json")
-            .add_filter("Adit 会话目录", &["json"]),
+            .add_filter(t("Adit 会话目录"), &["json"]),
         _ => return Task::none(),
     };
     Task::perform(
@@ -70,21 +70,18 @@ pub(crate) fn run_catalog_transfer(
                         .write(true)
                         .create_new(true)
                         .open(&path)
-                        .map_err(|e| format!("请选择不存在的新文件：{e}"))?;
+                        .map_err(|e| tf("请选择不存在的新文件：{}", &[&e]))?;
                     let result = file
                         .write_all(text.as_bytes())
                         .and_then(|()| file.sync_all());
                     drop(file);
                     if let Err(error) = result {
-                        return Err(format!(
-                            "导出未完成：{error}。已创建的文件可能不完整，请检查 {}",
-                            path.display()
-                        ));
+                        return Err(tf("导出未完成：{}。已创建的文件可能不完整，请检查 {}", &[&runtime(&error), &path.display()]));
                     }
                     Ok(())
                 })
                 .await
-                .unwrap_or_else(|e| Err(e.to_string()))
+                .unwrap_or_else(|e| Err(runtime(&e)))
             },
             Message::CatalogExported,
         );
@@ -97,11 +94,11 @@ pub(crate) fn run_catalog_transfer(
                     MenuCommand::ImportSshConfig => adit_storage::parse_ssh_config_report(&text),
                     MenuCommand::ImportPutty => adit_storage::parse_putty_reg(&text),
                     MenuCommand::ImportCatalog => adit_storage::import_catalog(&text),
-                    _ => Err("无效的导入类型".into()),
+                    _ => Err(t("无效的导入类型").into()),
                 }
             })
             .await
-            .unwrap_or_else(|e| Err(e.to_string()))
+            .unwrap_or_else(|e| Err(runtime(&e)))
         },
         Message::CatalogImported,
     )
@@ -114,7 +111,7 @@ pub(crate) fn finish_catalog_import(
     let report = match result {
         Ok(report) => report,
         Err(error) => {
-            app.last_error = Some(format!("导入失败：{error}"));
+            app.last_error = Some(tf("导入失败：{}", &[&runtime(&error)]));
             return;
         }
     };
@@ -132,7 +129,7 @@ pub(crate) fn finish_catalog_import(
     if changed && !persist_profiles(app) {
         return;
     }
-    app.notice = format!("已导入 {added} 个会话，跳过 {skipped} 个同分组同名会话；凭据未导入");
+    app.notice = tf("已导入 {} 个会话，跳过 {} 个同分组同名会话；凭据未导入", &[&added, &skipped]);
     app.last_error = if report.warnings.is_empty() {
         None
     } else {
@@ -140,13 +137,10 @@ pub(crate) fn finish_catalog_import(
             .warnings
             .iter()
             .take(8)
-            .cloned()
+            .map(runtime)
             .collect::<Vec<_>>()
             .join("\n");
-        Some(format!(
-            "导入提示（共 {} 项）：\n{details}",
-            report.warnings.len()
-        ))
+        Some(tf("导入提示（共 {} 项）：\n{}", &[&report.warnings.len(), &details]))
     };
 }
 

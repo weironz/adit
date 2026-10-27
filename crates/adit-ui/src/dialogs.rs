@@ -32,7 +32,7 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let mut details = column![
         row![
-            text(dialog_title).size(16).color(primary_text()),
+            text(t(dialog_title)).size(16).color(primary_text()),
             Space::new().width(Fill),
             button("×")
                 .width(Length::Fixed(26.0))
@@ -44,7 +44,7 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .align_y(Alignment::Center),
         text(dialog.title.clone()).size(13).color(primary_text()),
         text(dialog.endpoint.clone()).size(12).color(muted_text()),
-        text(auth_hint).size(11).color(muted_text()),
+        text(t(auth_hint)).size(11).color(muted_text()),
     ]
     .spacing(6);
 
@@ -75,12 +75,12 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .size(10)
                 .color(muted_text()),
             row![
-                button("取消")
+                button(t("取消"))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::CancelConnection),
-                button("连接")
+                button(t("连接"))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| primary_button_style(status))
@@ -115,7 +115,7 @@ pub(crate) fn host_key_dialog_overlay(
     let title_color = if changed { danger() } else { primary_text() };
 
     let mut details = column![
-        text(title).size(16).color(title_color),
+        text(t(title)).size(16).color(title_color),
         text(format!("{}:{}", prompt.host, prompt.port))
             .size(13)
             .color(primary_text()),
@@ -162,7 +162,7 @@ pub(crate) fn host_key_dialog_overlay(
         column![
             details,
             row![
-                button("拒绝")
+                button(t("拒绝"))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| secondary_button_style(status))
@@ -190,7 +190,7 @@ pub(crate) fn host_key_dialog_overlay(
                         session_id,
                         decision: adit_session::HostKeyDecision::TrustOnce,
                     }),
-                button(text(accept_label))
+                button(text(t(accept_label)))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| primary_button_style(status))
@@ -286,12 +286,12 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
         column![
             body,
             row![
-                button("取消")
+                button(t("取消"))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::CancelAuthPrompt { session_id, challenge_id }),
-                button("确定")
+                button(t("确定"))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| primary_button_style(status))
@@ -332,7 +332,7 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> 
             .width(Fill)
             .style(|_theme| connection_dialog_style()),
             row![
-                button("取消")
+                button(t("取消"))
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| secondary_button_style(status))
@@ -425,7 +425,7 @@ pub(crate) fn add_tunnel(app: &mut AditApp) {
             app.tunnel_target_host.clear();
             app.tunnel_target_port.clear();
         }
-        Err(error) => app.last_error = Some(tf("端口转发失败: {}", &[&error])),
+        Err(error) => app.last_error = Some(tf("端口转发失败: {}", &[&runtime(&error)])),
     }
 }
 
@@ -481,7 +481,7 @@ pub(crate) fn appearance_font_button(index: usize, current: u8) -> Element<'stat
         Some(name) => Font::with_name(name),
         None => Font::MONOSPACE,
     };
-    button(text(label).size(12).font(font))
+    button(text(t(label)).size(12).font(font))
         .padding([5, 10])
         .width(Length::Fixed(134.0))
         .style(move |_theme, status| {
@@ -514,7 +514,7 @@ pub(crate) fn appearance_scheme_button(index: usize, current: u8) -> Element<'st
             ..container::Style::default()
         });
     button(
-        row![swatch, text(scheme.name).size(12)]
+        row![swatch, text(t(scheme.name)).size(12)]
             .spacing(8)
             .align_y(Alignment::Center),
     )
@@ -553,7 +553,7 @@ pub(crate) fn appearance_highlight_button(
         row![
             text(if on { "✓" } else { " " }).size(12).width(Length::Fixed(12.0)),
             swatch,
-            text(spec.label).size(12),
+            text(t(spec.label)).size(12),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -777,7 +777,7 @@ pub(crate) fn update_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
         .into(),
         UpdateState::Error(error) => column![
             text(t("检查/更新失败")).size(13).color(danger()),
-            text(error.clone()).size(11).color(muted_text()),
+            text(runtime(error)).size(11).color(muted_text()),
             button(text(t("重试")).size(12))
                 .padding([5, 16])
                 .style(|_theme, status| secondary_button_style(status))
@@ -829,7 +829,7 @@ pub(crate) fn session_rename_overlay(app: &AditApp) -> Element<'_, Message> {
     let card = container(
         column![
             text(t("重命名标签")).size(16).color(primary_text()),
-            text_input("标签名称", &app.session_rename_draft)
+            text_input(t("标签名称"), &app.session_rename_draft)
                 .on_input(Message::SessionRenameChanged)
                 .on_submit(Message::ConfirmRenameSession)
                 .padding([5, 8])
@@ -914,13 +914,13 @@ pub(crate) fn snippets_panel_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let form = column![
         text(t("新增片段")).size(12).color(muted_text()),
-        text_input("名称（可选）", &app.snippet_name_draft)
+        text_input(t("名称（可选）"), &app.snippet_name_draft)
             .on_input(Message::SnippetNameChanged)
             .padding([5, 8])
             .style(text_input_style)
             .width(Fill),
         row![
-            text_input("命令，如 tail -f /var/log/syslog", &app.snippet_command_draft)
+            text_input(t("命令，如 tail -f /var/log/syslog"), &app.snippet_command_draft)
                 .on_input(Message::SnippetCommandChanged)
                 .on_submit(Message::AddSnippet)
                 .padding([5, 8])
@@ -1019,7 +1019,7 @@ pub(crate) fn options_path_row<'a>(
     open: Option<Message>,
 ) -> Element<'a, Message> {
     let mut row = row![
-        text(label)
+        text(t_in("field", label))
             .size(11)
             .color(muted_text())
             .width(Length::Fixed(96.0)),
@@ -1427,14 +1427,14 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     };
 
     let bind_row = row![
-        text(bind_label).size(12).color(muted_text()).width(Length::Fixed(52.0)),
-        text_input(bind_placeholder, &app.tunnel_bind_addr)
+        text(t(bind_label)).size(12).color(muted_text()).width(Length::Fixed(52.0)),
+        text_input(t(bind_placeholder), &app.tunnel_bind_addr)
             .on_input(Message::TunnelBindAddrChanged)
             .padding([4, 8])
             .style(text_input_style)
             .width(Length::Fixed(150.0)),
         text(":").size(12).color(muted_text()),
-        text_input("端口", &app.tunnel_bind_port)
+        text_input(t("端口"), &app.tunnel_bind_port)
             .on_input(Message::TunnelBindPortChanged)
             .on_submit(Message::AddTunnel)
             .padding([4, 8])
@@ -1444,7 +1444,7 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    let mut form = column![kind_row, text(hint).size(10).color(muted_text()), bind_row].spacing(8);
+    let mut form = column![kind_row, text(t(hint)).size(10).color(muted_text()), bind_row].spacing(8);
 
     if app.tunnel_kind != TunnelKind::Dynamic {
         let target_label = if app.tunnel_kind == TunnelKind::Remote {
@@ -1454,14 +1454,14 @@ pub(crate) fn tunnels_panel_overlay(app: &AditApp) -> Element<'_, Message> {
         };
         form = form.push(
             row![
-                text(target_label).size(12).color(muted_text()).width(Length::Fixed(52.0)),
-                text_input("目标主机（如 10.0.0.5）", &app.tunnel_target_host)
+                text(t(target_label)).size(12).color(muted_text()).width(Length::Fixed(52.0)),
+                text_input(t("目标主机（如 10.0.0.5）"), &app.tunnel_target_host)
                     .on_input(Message::TunnelTargetHostChanged)
                     .padding([4, 8])
                     .style(text_input_style)
                     .width(Fill),
                 text(":").size(12).color(muted_text()),
-                text_input("端口", &app.tunnel_target_port)
+                text_input(t("端口"), &app.tunnel_target_port)
                     .on_input(Message::TunnelTargetPortChanged)
                     .on_submit(Message::AddTunnel)
                     .padding([4, 8])
@@ -1558,7 +1558,7 @@ pub(crate) fn tunnel_kind_button(
     current: TunnelKind,
 ) -> Element<'static, Message> {
     let selected = kind == current;
-    button(text(label).size(12))
+    button(text(t_in("field", label)).size(12))
         .padding([5, 14])
         .style(move |_theme, status| {
             if selected {
@@ -1598,7 +1598,7 @@ pub(crate) fn tunnel_row(tunnel: &TunnelState) -> Element<'static, Message> {
                 .size(10)
                 .color(muted_text())
                 .width(Length::Fixed(60.0)),
-            text(tunnel.status.clone())
+            text(runtime(&tunnel.status))
                 .size(10)
                 .color(status_color)
                 .width(Length::Fixed(190.0)),
@@ -1621,10 +1621,7 @@ pub(crate) fn saved_tunnel_row(index: usize, def: &TunnelDef) -> Element<'static
             def.bind_address, def.bind_port, def.target_host, def.target_port
         ),
         TunnelKind::Dynamic => format!("D  {}:{}  (SOCKS5)", def.bind_address, def.bind_port),
-        TunnelKind::Remote => format!(
-            "R  远端 {}:{} → 本地 {}:{}",
-            def.bind_address, def.bind_port, def.target_host, def.target_port
-        ),
+        TunnelKind::Remote => tf("R  远端 {}:{} → 本地 {}:{}", &[&def.bind_address, &def.bind_port, &def.target_host, &def.target_port]),
     };
     row![
         text(label).size(11).color(primary_text()).width(Fill),
@@ -1713,11 +1710,11 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
 
     let field = |label: &'static str, value: &str, placeholder: &'static str, which: SyncField| {
         row![
-            text(label)
+            text(t_in("field", label))
                 .size(11)
                 .color(muted_text())
                 .width(Length::Fixed(96.0)),
-            text_input(placeholder, value)
+            text_input(t(placeholder), value)
                 .on_input(move |text| Message::SyncFieldChanged(which, text))
                 .padding([5, 8])
                 .size(12)
@@ -1737,11 +1734,11 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
             "必填"
         };
         row![
-            text(label)
+            text(t_in("field", label))
                 .size(11)
                 .color(muted_text())
                 .width(Length::Fixed(96.0)),
-            text_input(placeholder, &app.sync_secret_draft)
+            text_input(t(placeholder), &app.sync_secret_draft)
                 .secure(true)
                 .on_input(Message::SyncSecretChanged)
                 .padding([5, 8])
@@ -2027,7 +2024,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
                         .size(11)
                         .color(danger())
                         .width(Fill),
-                    button(text(t("应用")).size(11))
+                    button(text(t_in("action", "应用")).size(11))
                         .padding([4, 10])
                         .style(|_theme, status| primary_button_style(status))
                         .on_press(Message::SyncApplyHeld),
@@ -2047,7 +2044,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     // Status: what the last attempt did, then any sessions it could not settle.
     if !app.sync_status.is_empty() {
         status_tab = status_tab.push(setting_card(
-            text(app.sync_status.clone())
+            text(runtime(&app.sync_status))
                 .size(11)
                 .color(primary_text()),
         ));
@@ -2123,7 +2120,7 @@ fn setting_card<'a>(inner: impl Into<Element<'a, Message>>) -> Element<'a, Messa
 /// One row of the shortcuts reference: the keys, then what they do.
 fn shortcut_row(keys: &'static str, what: &'static str) -> Element<'static, Message> {
     row![
-        container(text(keys).size(11).color(primary_text()))
+        container(text(t(keys)).size(11).color(primary_text()))
             .width(Length::Fixed(160.0))
             .padding([2, 0]),
         text(t(what)).size(11).color(muted_text()).width(Fill),

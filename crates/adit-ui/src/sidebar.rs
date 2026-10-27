@@ -193,7 +193,7 @@ pub(crate) fn sidebar(app: &AditApp) -> Element<'_, Message> {
         .map(|message| {
             container(
                 row![
-                    text(message).size(12).color(danger()),
+                    text(runtime(message)).size(12).color(danger()),
                     Space::new().width(Fill),
                     button("x")
                         .on_press(Message::ClearError)
@@ -505,7 +505,7 @@ pub(crate) fn group_context_menu_card(
             profile_menu_item("新会话", Message::NewProfileInGroup(group.clone()), false),
             profile_menu_item(toggle_label, Message::ToggleProfileGroup(group.clone()), false),
             profile_menu_divider(),
-            container(text("分组图标").size(10).color(muted_text())).padding([2, 6]),
+            container(text(t("分组图标")).size(10).color(muted_text())).padding([2, 6]),
             container(swatches).padding([0, 6]),
             profile_menu_item("清除图标", Message::GroupIconPicked(group.clone(), ""), false),
             profile_menu_divider(),
@@ -538,7 +538,7 @@ pub(crate) fn tree_group_edit_row(draft: String, collapsed: bool) -> Element<'st
     container(
         row![
             text(arrow).size(11).color(muted_text()),
-            text_input("分组名称", &draft)
+            text_input(t("分组名称"), &draft)
                 .id(rename_input_id())
                 .on_input(Message::GroupNameDraftChanged)
                 .on_submit(Message::SaveGroupRename)
@@ -563,7 +563,7 @@ pub(crate) fn tree_profile_edit_row(profile: ConnectionProfile, draft: String) -
         row![
             Space::new().width(Length::Fixed(4.0)),
             avatar(&profile.name),
-            text_input("会话名称", &draft)
+            text_input(t("会话名称"), &draft)
                 .id(rename_input_id())
                 .on_input(Message::ProfileNameDraftChanged)
                 .on_submit(Message::SaveProfileRename)
@@ -672,7 +672,7 @@ pub(crate) fn edge_drop_zone(
     let label = if targeted { accent() } else { muted_text() };
     mouse_area(
         container(
-            column![indicator, text(label_text).size(10).color(label)].spacing(2),
+            column![indicator, text(t(label_text)).size(10).color(label)].spacing(2),
         )
         .width(Fill)
         .padding([2, 8])
@@ -994,7 +994,7 @@ pub(crate) fn floating_context_menu<'a>(
 }
 
 pub(crate) fn profile_menu_item(label: &'static str, message: Message, danger: bool) -> Element<'static, Message> {
-    button(text(label).size(12))
+    button(text(t(label)).size(12))
         .width(Fill)
         .padding([6, 10])
         .style(move |_theme, status| profile_menu_item_style(status, danger))

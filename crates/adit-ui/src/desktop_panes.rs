@@ -70,12 +70,7 @@ impl DesktopPanes {
             pane.size = None;
             pane.tiles.clear();
             pane.pointer = None;
-            pane.error = Some(format!(
-                "远程桌面帧数据无效：{} × {}，收到 {} 字节",
-                frame.width,
-                frame.height,
-                frame.rgba.len()
-            ));
+            pane.error = Some(tf("远程桌面帧数据无效：{} × {}，收到 {} 字节", &[&frame.width, &frame.height, &frame.rgba.len()]));
             return;
         }
         if pane.size != Some(size) {
@@ -331,7 +326,7 @@ fn tile_grid(tiles: &[RdpTile], fit: Contain) -> Element<'static, Message> {
 
 fn pane_notice(app: &AditApp, id: SessionId) -> Option<String> {
     if let Some(error) = app.manager.session_desktop_error(id) {
-        return Some(error.to_owned());
+        return Some(runtime(error));
     }
     let Some(summary) = app.manager.session_summary(id) else {
         return Some(t("会话已关闭").to_owned());
@@ -349,7 +344,7 @@ fn pane_notice(app: &AditApp, id: SessionId) -> Option<String> {
         return Some(t("等待远程桌面画面…").to_owned());
     };
     if let Some(error) = &pane.error {
-        return Some(error.clone());
+        return Some(runtime(error));
     }
     (pane.tiles.is_empty() || transform(app, id).is_none())
         .then(|| t("等待远程桌面画面…").to_owned())
@@ -362,7 +357,7 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
     let summary = app.manager.session_summary(id);
     let title = summary
         .as_ref()
-        .map_or_else(|| t("会话").to_owned(), |s| s.title.clone());
+        .map_or_else(|| t_in("field", "会话").to_owned(), |s| s.title.clone());
     let status = summary.map_or(SessionStatus::Disconnected, |s| s.status);
     let read_only = app.manager.session_desktop_read_only(id);
     let mut labels = row![

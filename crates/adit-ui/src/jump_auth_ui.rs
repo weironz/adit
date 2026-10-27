@@ -25,7 +25,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     }
     let legacy = Choice {
         owner: None,
-        label: "独立认证：使用 agent、默认密钥或交互输入".to_owned(),
+        label: t("独立认证：使用 agent、默认密钥或交互输入").to_owned(),
     };
     let choices: Vec<_> = std::iter::once(legacy.clone())
         .chain(
@@ -39,21 +39,21 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
                         "{} · {} · {}",
                         p.name,
                         p.username,
-                        match p.auth_method {
+                        t(match p.auth_method {
                             AuthMethod::Auto => "自动",
                             AuthMethod::Password => "密码",
                             AuthMethod::Key => "密钥",
                             AuthMethod::Agent => "agent",
-                        }
+                        })
                     ),
                 }),
         )
         .collect();
     let mut fields = iced::widget::column![
-        text("每跳可选择独立 SSH/SFTP 认证配置（密码、密钥或 agent）；秘密仍保存在凭据库中。")
+        text(t("每跳可选择独立 SSH/SFTP 认证配置（密码、密钥或 agent）；秘密仍保存在凭据库中。"))
             .size(11)
             .color(muted_text()),
-        text("需要独立凭据时先新建配置，再在这里选择；只引用认证参数，不递归其跳板链；user@host 中的用户名优先。")
+        text(t("需要独立凭据时先新建配置，再在这里选择；只引用认证参数，不递归其跳板链；user@host 中的用户名优先。"))
             .size(11)
             .color(muted_text()),
     ]
@@ -65,11 +65,11 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
             .cloned()
             .unwrap_or_else(|| Choice {
                 owner: hop.auth_profile,
-                label: "认证配置已删除，请重新选择".to_owned(),
+                label: t("认证配置已删除，请重新选择").to_owned(),
             });
         fields = fields.push(
             iced::widget::row![
-                text(format!("第 {} 跳：{}", index + 1, hop.to_spec()))
+                text(tf("第 {} 跳：{}", &[&(index + 1), &hop.to_spec()]))
                     .size(11)
                     .width(Fill),
                 iced::widget::pick_list(choices.clone(), Some(selected), move |choice| {
@@ -110,7 +110,7 @@ pub(crate) fn edit_chain(app: &mut AditApp, text: String) {
 
 pub(crate) fn prepare(app: &mut AditApp, profile_id: ProfileId) -> bool {
     let result = (|| {
-        let profile = app.manager.profile(profile_id).ok_or("会话配置已删除")?;
+        let profile = app.manager.profile(profile_id).ok_or(t("会话配置已删除"))?;
         let owners: Vec<_> = profile
             .jumps
             .iter()
@@ -122,7 +122,7 @@ pub(crate) fn prepare(app: &mut AditApp, profile_id: ProfileId) -> bool {
                 .manager
                 .profile(owner)
                 .filter(|p| p.protocol.is_ssh_based())
-                .ok_or_else(|| format!("跳板机认证配置 {owner} 不存在或不是 SSH/SFTP 配置"))?;
+                .ok_or_else(|| tf("跳板机认证配置 {} 不存在或不是 SSH/SFTP 配置", &[&owner]))?;
             let password = if matches!(
                 p.auth_method,
                 AuthMethod::Password | AuthMethod::Auto | AuthMethod::Key
@@ -157,7 +157,7 @@ pub(crate) fn prepare(app: &mut AditApp, profile_id: ProfileId) -> bool {
             true
         }
         Err(error) => {
-            app.last_error = Some(error);
+            app.last_error = Some(runtime(&error));
             false
         }
     }
@@ -176,7 +176,7 @@ pub(crate) fn respond(app: &mut AditApp, session: SessionId, challenge_id: u64, 
     };
     let answers = std::mem::take(&mut app.auth_prompt_answers);
     if !prompt.respond(if cancel { Vec::new() } else { answers }) {
-        app.notice = "该认证请求已结束，请等待新的验证请求".to_owned();
+        app.notice = t("该认证请求已结束，请等待新的验证请求").to_owned();
     }
 }
 

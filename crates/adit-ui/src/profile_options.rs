@@ -74,18 +74,18 @@ impl ProfileOptionsForm {
                 .insert(key.trim().to_string(), item.clone())
                 .is_some()
             {
-                return Err(format!("环境变量重复：{}", key.trim()));
+                return Err(tf("环境变量重复：{}", &[&key.trim()]));
             }
         }
         if let Some(policy) = &mut value.reconnect {
-            policy.max_attempts = self.attempts.parse().map_err(|_| "重连次数必须为整数")?;
+            policy.max_attempts = self.attempts.parse().map_err(|_| t("重连次数必须为整数"))?;
             policy.initial_delay_secs = self
                 .initial_delay
                 .parse()
-                .map_err(|_| "重连间隔必须为整数")?;
-            policy.max_delay_secs = self.max_delay.parse().map_err(|_| "最大间隔必须为整数")?;
+                .map_err(|_| t("重连间隔必须为整数"))?;
+            policy.max_delay_secs = self.max_delay.parse().map_err(|_| t("最大间隔必须为整数"))?;
         }
-        value.validate()?;
+        value.validate().map_err(|error| runtime(&error))?;
         Ok(value)
     }
 
@@ -225,7 +225,7 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
         ] {
             let selected = form.options.rdp_quality == choice;
             quality = quality.push(
-                button(text(label).size(11))
+                button(text(t(label)).size(11))
                     .style(move |_, status| method_button_style(selected, status))
                     .on_press(edit(ProfileOptionEdit::Quality(choice))),
             );
@@ -250,37 +250,37 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
     if app.profile_protocol == Protocol::Ssh {
         body = body.push(
             row![
-                text("环境变量").size(11),
+                text(t("环境变量")).size(11),
                 Space::new().width(Fill),
-                button(text("添加变量").size(11)).on_press(edit(ProfileOptionEdit::EnvAdd))
+                button(text(t("添加变量")).size(11)).on_press(edit(ProfileOptionEdit::EnvAdd))
             ]
             .align_y(Alignment::Center),
         );
         for (index, (key, value)) in form.environment.iter().enumerate() {
             body = body.push(
                 row![
-                    text_input("变量名", key)
+                    text_input(t("变量名"), key)
                         .on_input(move |v| edit(ProfileOptionEdit::EnvName(index, v)))
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Length::FillPortion(2)),
-                    text_input("值", value)
+                    text_input(t("值"), value)
                         .on_input(move |v| edit(ProfileOptionEdit::EnvValue(index, v)))
                         .padding([5, 8])
                         .style(text_input_style)
                         .width(Length::FillPortion(3)),
-                    button("移除").on_press(edit(ProfileOptionEdit::EnvRemove(index))),
+                    button(t("移除")).on_press(edit(ProfileOptionEdit::EnvRemove(index))),
                 ]
                 .spacing(6),
             );
         }
         body = body.push(
-            text("SSH 环境变量由服务端 AcceptEnv 策略决定是否接收。")
+            text(t("SSH 环境变量由服务端 AcceptEnv 策略决定是否接收。"))
                 .size(10)
                 .color(muted_text()),
         );
         body = body.push(
-            text("变量值会明文保存在会话配置中，请勿填写密码或令牌。")
+            text(t("变量值会明文保存在会话配置中，请勿填写密码或令牌。"))
                 .size(10)
                 .color(muted_text()),
         );
@@ -288,14 +288,14 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
     if app.profile_protocol == Protocol::Ssh {
         body = body.push(
             checkbox(form.options.reconnect.is_some())
-                .label("为此会话单独配置重连")
+                .label(t("为此会话单独配置重连"))
                 .on_toggle(|v| edit(ProfileOptionEdit::ReconnectOverride(v))),
         );
         if let Some(policy) = &form.options.reconnect {
             body = body
                 .push(
                     checkbox(policy.enabled)
-                        .label("意外断开后自动重连")
+                        .label(t("意外断开后自动重连"))
                         .on_toggle(|v| edit(ProfileOptionEdit::ReconnectEnabled(v))),
                 )
                 .push(
@@ -318,14 +318,14 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
     }
     body = body.push(
         checkbox(form.options.logging.is_some())
-            .label("为此会话单独配置日志")
+            .label(t("为此会话单独配置日志"))
             .on_toggle(|v| edit(ProfileOptionEdit::LogOverride(v))),
     );
     if let Some(policy) = &form.options.logging {
         body = body
             .push(
                 checkbox(policy.auto_start)
-                    .label("连接后自动记录输出")
+                    .label(t("连接后自动记录输出"))
                     .on_toggle(|v| edit(ProfileOptionEdit::LogAuto(v))),
             )
             .push(field(
@@ -340,20 +340,20 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
             ))
             .push(
                 checkbox(policy.plaintext)
-                    .label("日志去除终端控制序列")
+                    .label(t("日志去除终端控制序列"))
                     .on_toggle(|v| edit(ProfileOptionEdit::LogPlain(v))),
             )
             .push(
                 checkbox(policy.record_input)
-                    .label("记录键盘输入（可能包含敏感信息）")
+                    .label(t("记录键盘输入（可能包含敏感信息）"))
                     .on_toggle(|v| edit(ProfileOptionEdit::LogInput(v))),
             );
     }
     body = body.push(
         row![
-            text("输出触发器").size(11),
+            text(t("输出触发器")).size(11),
             Space::new().width(Fill),
-            button(text("添加触发器").size(11)).on_press(edit(ProfileOptionEdit::TriggerAdd)),
+            button(text(t("添加触发器")).size(11)).on_press(edit(ProfileOptionEdit::TriggerAdd)),
         ]
         .align_y(Alignment::Center),
     );
@@ -362,21 +362,21 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
         let mut entry = column![
             row![
                 checkbox(rule.enabled)
-                    .label(format!("启用规则 {}", index + 1))
+                    .label(tf("启用规则 {}", &[&(index + 1)]))
                     .on_toggle(move |v| edit(ProfileOptionEdit::TriggerEnabled(index, v))),
                 Space::new().width(Fill),
-                button("移除").on_press(edit(ProfileOptionEdit::TriggerRemove(index))),
+                button(t("移除")).on_press(edit(ProfileOptionEdit::TriggerRemove(index))),
             ]
             .align_y(Alignment::Center),
-            text_input("匹配表达式（正则）", &rule.pattern)
+            text_input(t("匹配表达式（正则）"), &rule.pattern)
                 .padding([5, 8])
                 .style(text_input_style)
                 .on_input(move |v| edit(ProfileOptionEdit::TriggerPattern(index, v))),
             row![
-                button("仅提示")
+                button(t("仅提示"))
                     .style(move |_, status| method_button_style(!send, status))
                     .on_press(edit(ProfileOptionEdit::TriggerSendMode(index, false))),
-                button("发送一行文本")
+                button(t("发送一行文本"))
                     .style(move |_, status| method_button_style(send, status))
                     .on_press(edit(ProfileOptionEdit::TriggerSendMode(index, true))),
             ]
@@ -386,13 +386,13 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
         if let TriggerAction::SendLine(text_value) = &rule.action {
             entry = entry
                 .push(
-                    text_input("发送后自动回车", text_value)
+                    text_input(t("发送后自动回车"), text_value)
                         .padding([5, 8])
                         .style(text_input_style)
                         .on_input(move |v| edit(ProfileOptionEdit::TriggerText(index, v))),
                 )
                 .push(
-                    text("发送文本会明文保存；请勿填写密码或令牌。")
+                    text(t("发送文本会明文保存；请勿填写密码或令牌。"))
                         .size(10)
                         .color(muted_text()),
                 );
@@ -401,7 +401,7 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
     }
     if !form.options.triggers.is_empty() {
         body = body.push(
-            text("匹配可见输出；每条规则每秒最多执行一次。")
+            text(t("匹配可见输出；每条规则每秒最多执行一次。"))
                 .size(10)
                 .color(muted_text()),
         );

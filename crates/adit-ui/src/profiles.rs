@@ -29,7 +29,7 @@ pub(crate) fn run_menu_command(app: &mut AditApp, command: MenuCommand) {
         MenuCommand::ResizeWide => resize_active(app, 120, 36),
         MenuCommand::Sftp => {
             if let Err(error) = app.manager.open_sftp_for_active() {
-                app.last_error = Some(tf("打开 SFTP 失败: {}", &[&error]));
+                app.last_error = Some(tf("打开 SFTP 失败: {}", &[&runtime(&error)]));
             }
         }
         MenuCommand::Tunnels => {
@@ -436,7 +436,7 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
                 app.notice = String::from(t("会话已移动"));
             }
         }
-        Err(error) => app.last_error = Some(error.to_string()),
+        Err(error) => app.last_error = Some(runtime(&error)),
     }
 }
 
@@ -464,7 +464,7 @@ pub(crate) fn drop_profile_on_group(app: &mut AditApp, group: String) {
             }
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
     }
 }
@@ -656,7 +656,7 @@ pub(crate) fn new_profile_draft(app: &mut AditApp) {
             }
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
     }
 }
@@ -739,7 +739,7 @@ pub(crate) fn apply_profile_rename(app: &mut AditApp, profile_id: ProfileId, nam
 pub(crate) fn apply_group_rename(app: &mut AditApp, old_group: &str, new_group: &str) -> Result<(), String> {
     app.manager
         .rename_group(old_group, new_group.to_string())
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| runtime(&error))?;
     // Replace in place so the folder keeps its position.
     if let Some(pos) = app.groups.iter().position(|group| group == old_group) {
         app.groups[pos] = new_group.to_string();
@@ -810,7 +810,7 @@ pub(crate) fn save_group_rename(app: &mut AditApp) {
             app.last_error = None;
         }
         Err(error) => {
-            app.last_error = Some(error);
+            app.last_error = Some(runtime(&error));
         }
     }
 }
@@ -917,9 +917,7 @@ pub(crate) fn parse_jumps_checked(spec: &str) -> Result<Vec<JumpHop>, String> {
         match JumpHop::parse(token) {
             Some(hop) => hops.push(hop),
             None => {
-                return Err(format!(
-                    "跳板机格式无效：“{token}”（应为 user@host:port，端口 1-65535）"
-                ))
+                return Err(tf("跳板机格式无效：“{}”（应为 user@host:port，端口 1-65535）", &[&token]))
             }
         }
     }
@@ -933,7 +931,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
     }) {
         Ok(options) => options,
         Err(error) => {
-            app.last_error = Some(error);
+            app.last_error = Some(runtime(&error));
             return None;
         }
     };
@@ -946,7 +944,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
     let mut jumps = match parse_jumps_checked(&app.profile_jumps) {
         Ok(jumps) => jumps,
         Err(error) => {
-            app.last_error = Some(error);
+            app.last_error = Some(runtime(&error));
             return None;
         }
     };
@@ -1016,7 +1014,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
             // before persisting.
             if let Some(profile_id) = app.selected_profile {
                 if let Err(error) = app.manager.set_profile_session_options(profile_id, options) {
-                    app.last_error = Some(error.to_string());
+                    app.last_error = Some(runtime(&error));
                     return None;
                 }
                 app.manager
@@ -1079,7 +1077,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
             }
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
             None
         }
     }
@@ -1162,13 +1160,10 @@ fn delete_one_profile(app: &mut AditApp, profile_id: ProfileId) {
                 .err();
             let _ = app.credential_store.delete_profile_passphrase(profile_id);
             if let Some(error) = credential_cleanup {
-                app.last_error = Some(tf("删除系统凭据失败: {}", &[&error]));
+                app.last_error = Some(tf("删除系统凭据失败: {}", &[&runtime(&error)]));
             }
             if persist_profiles(app) {
-                app.notice = format!(
-                    "会话配置已删除；已打开标签不受影响。已写入 {}",
-                    app.profile_store.path().display()
-                );
+                app.notice = tf("会话配置已删除；已打开标签不受影响。已写入 {}", &[&app.profile_store.path().display()]);
             }
             if app.selected_profile.is_some() {
                 load_selected_profile(app);
@@ -1177,7 +1172,7 @@ fn delete_one_profile(app: &mut AditApp, profile_id: ProfileId) {
             }
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
     }
 }
@@ -1290,7 +1285,7 @@ pub(crate) fn persist_profiles(app: &mut AditApp) -> bool {
     match app.profile_store.save_catalog_async(&catalog) {
         Ok(()) => true,
         Err(error) => {
-            app.last_error = Some(tf("保存会话配置失败: {}", &[&error]));
+            app.last_error = Some(tf("保存会话配置失败: {}", &[&runtime(&error)]));
             false
         }
     }
@@ -1311,11 +1306,11 @@ pub(crate) fn write_config_pointer(target: &std::path::Path) -> std::io::Result<
 /// Returns whether the switch succeeded.
 pub(crate) fn carry_config_to(app: &mut AditApp, target: std::path::PathBuf) -> bool {
     if let Err(error) = adit_storage::copy_config_files(&app.config_dir, &target) {
-        app.last_error = Some(tf("复制配置到 {} 失败: {}", &[&target.display(), &error]));
+        app.last_error = Some(tf("复制配置到 {} 失败: {}", &[&target.display(), &runtime(&error)]));
         return false;
     }
     if let Err(error) = write_config_pointer(&target) {
-        app.last_error = Some(tf("设置配置文件夹失败: {}", &[&error]));
+        app.last_error = Some(tf("设置配置文件夹失败: {}", &[&runtime(&error)]));
         return false;
     }
     app.profile_store = ProfileStore::new(target.join("profiles.json"));
@@ -1347,7 +1342,7 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
         // No move — just make sure the on-disk pointer matches the live folder
         // (repairs state if a prior reset cleared it).
         if let Err(error) = write_config_pointer(&target) {
-            app.last_error = Some(tf("设置配置文件夹失败: {}", &[&error]));
+            app.last_error = Some(tf("设置配置文件夹失败: {}", &[&runtime(&error)]));
             return;
         }
         app.config_dir_custom = target != default;
@@ -1364,16 +1359,13 @@ pub(crate) fn relocate_config_dir(app: &mut AditApp, target: std::path::PathBuf)
     if target != default && adit_storage::config_dir_has_config(&target) {
         // Adopt it on the next launch rather than overwriting it.
         if let Err(error) = write_config_pointer(&target) {
-            app.last_error = Some(tf("设置配置文件夹失败: {}", &[&error]));
+            app.last_error = Some(tf("设置配置文件夹失败: {}", &[&runtime(&error)]));
             return;
         }
         app.config_dir_custom = true;
         app.pending_config_dir = Some(target.clone());
         app.last_error = None;
-        app.notice = format!(
-            "将在重启后加载 {} 中的现有配置（不会覆盖该文件夹）；请尽快重启，重启前的修改不会保留",
-            target.display()
-        );
+        app.notice = tf("将在重启后加载 {} 中的现有配置（不会覆盖该文件夹）；请尽快重启，重启前的修改不会保留", &[&target.display()]);
         return;
     }
 

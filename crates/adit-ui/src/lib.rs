@@ -50,7 +50,7 @@ pub enum SftpSortKey {
 /// work; almost nothing emits them.
 mod autolink;
 mod i18n;
-pub(crate) use i18n::{set_language, t, tf};
+pub(crate) use i18n::{runtime, set_language, t, t_in, tf};
 mod style;
 use style::*;
 /// The local half of RDP clipboard file transfer. Separate from the text
@@ -1367,10 +1367,7 @@ impl Default for AditApp {
                 (
                     SessionManager::with_profiles(catalog.profiles),
                     groups,
-                    format!(
-                        "已加载 {count} 个会话配置和分组: {}",
-                        profile_store.path().display()
-                    ),
+                    tf("已加载 {} 个会话配置和分组: {}", &[&count, &profile_store.path().display()]),
                     None,
                 )
             }
@@ -1386,10 +1383,7 @@ impl Default for AditApp {
                 (
                     manager,
                     groups,
-                    format!(
-                        "使用演示会话配置，保存后写入 {}",
-                        profile_store.path().display()
-                    ),
+                    tf("使用演示会话配置，保存后写入 {}", &[&profile_store.path().display()]),
                     None,
                 )
             }
@@ -1399,11 +1393,8 @@ impl Default for AditApp {
                 (
                     manager,
                     groups,
-                    format!(
-                        "使用演示会话配置，保存后写入 {}",
-                        profile_store.path().display()
-                    ),
-                    Some(tf("读取会话配置失败: {}", &[&error])),
+                    tf("使用演示会话配置，保存后写入 {}", &[&profile_store.path().display()]),
+                    Some(tf("读取会话配置失败: {}", &[&runtime(&error)])),
                 )
             }
         };

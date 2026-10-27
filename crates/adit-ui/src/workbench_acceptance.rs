@@ -69,6 +69,7 @@ struct Config {
     output_dir: PathBuf,
     view: CaptureView,
     dark: bool,
+    language: adit_storage::Language,
     size: iced::Size,
     scale: f32,
     settle: Duration,
@@ -115,6 +116,11 @@ impl Config {
             "light" => false,
             _ => return Err(invalid("ADIT_WORKBENCH_THEME must be dark/light").into()),
         };
+        let language = match env_or("ADIT_WORKBENCH_LANGUAGE", "zh")?.as_str() {
+            "zh" => adit_storage::Language::Zh,
+            "en" => adit_storage::Language::En,
+            _ => return Err(invalid("ADIT_WORKBENCH_LANGUAGE must be zh/en").into()),
+        };
         let size = env_or("ADIT_WORKBENCH_SIZE", "1360x860")?;
         let (width, height) = size
             .split_once('x')
@@ -140,6 +146,7 @@ impl Config {
             output_dir,
             view,
             dark,
+            language,
             size,
             scale,
             settle: Duration::from_millis(settle),
@@ -229,7 +236,7 @@ struct Step {
     expected: Expected,
 }
 
-fn plan(view: CaptureView, ids: &[SessionId]) -> Vec<Step> {
+fn plan(view: CaptureView, ids: &[SessionId], profile: ProfileId) -> Vec<Step> {
     let mut steps = Vec::new();
     let mut expected = Expected {
         view: view.main_view(),
@@ -415,6 +422,16 @@ fn plan(view: CaptureView, ids: &[SessionId]) -> Vec<Step> {
     steps.push(Step {
         name: "f-after-settings",
         messages: vec![Message::CloseSettings, Message::ShowMainView(MainView::Missions)],
+        expected,
+    });
+    steps.push(Step {
+        name: "session-editor-options",
+        messages: vec![Message::EditProfileFromContext(profile)],
+        expected,
+    });
+    steps.push(Step {
+        name: "f-after-editor",
+        messages: vec![Message::CloseProfileEditor],
         expected,
     });
     steps
@@ -677,6 +694,7 @@ fn finish(state: &mut State, result: Result<(), String>) -> Task<NativeMessage> 
         "current_step": state.steps.get(state.index).map(|step| step.name),
         "requested_view": state.config.view.name(),
         "theme": if state.config.dark { "dark" } else { "light" },
+        "language": state.config.language,
         "requested_logical_size": [state.config.size.width, state.config.size.height],
         "application_scale": state.config.scale,
         "scale_note": "application scale multiplies OS DPI; this does not change the OS DPI setting",
@@ -928,6 +946,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let profiles = fixture_profiles();
     ProfileStore::default().save_catalog(&ProfileCatalog::from_profiles(profiles.clone()))?;
     SettingsStore::default().save(&AppSettings {
+        language: config.language,
         dark_mode: config.dark,
         theme_mode: Some(if config.dark {
             ThemeMode::Dark
@@ -984,7 +1003,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 id
             })
             .collect();
-        let steps = plan(boot_config.view, &ids);
+        let steps = plan(boot_config.view, &ids, profiles[0].id);
         (
             State {
                 app,

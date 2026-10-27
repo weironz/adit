@@ -64,7 +64,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, super::Message> {
         Some(CredentialProtection::Unlocked) => "主密码保护：已解锁",
     };
     let action = |label: &'static str, op: Action, enabled: bool| {
-        let b = button(text(label).size(11))
+        let b = button(text(t(label)).size(11))
             .padding([5, 8])
             .style(|_, s| secondary_button_style(s));
         if enabled && !state.busy {
@@ -79,16 +79,16 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, super::Message> {
         Some(CredentialProtection::Locked | CredentialProtection::Unlocked)
     );
     let secret = |hint: &str, value: &str, on_input: fn(String) -> Message| {
-        text_input(hint, value)
+        text_input(t(hint), value)
             .secure(true)
             .size(12)
             .on_input(move |s| super::Message::Vault(on_input(s)))
     };
     let body = iced::widget::column![
-        text("凭据库主密码").size(13),
-        text(status).size(11),
-        text("启用后需解锁才能读取保存的连接密码。忘记主密码无法恢复；现有连接继续运行。").size(11),
-        text("迁移会保留旧模式的加密备份；旧兼容模式备份仍可用程序内置密钥解密，请妥善保管。")
+        text(t("凭据库主密码")).size(13),
+        text(t(status)).size(11),
+        text(t("启用后需解锁才能读取保存的连接密码。忘记主密码无法恢复；现有连接继续运行。")).size(11),
+        text(t("迁移会保留旧模式的加密备份；旧兼容模式备份仍可用程序内置密钥解密，请妥善保管。"))
             .size(10),
         secret(
             "当前库主密码（解锁/修改/关闭保护）",
@@ -106,7 +106,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, super::Message> {
             Message::Confirm
         ),
         checkbox(state.acknowledged)
-            .label("我理解备份保护级别及忘记主密码无法恢复的后果")
+            .label(t("我理解备份保护级别及忘记主密码无法恢复的后果"))
             .on_toggle(|v| super::Message::Vault(Message::Acknowledge(v))),
         row![
             action("读取状态", Action::Refresh, true),
@@ -127,9 +127,9 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, super::Message> {
         ]
         .spacing(5),
         text(if state.busy {
-            "正在处理，请稍候…"
+            t("正在处理，请稍候…").to_owned()
         } else {
-            &state.detail
+            runtime(&state.detail)
         })
         .size(10),
     ]
@@ -154,7 +154,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<super::Message
                 }
                 Err(error) => {
                     app.vault_ui.detail = error.clone();
-                    app.last_error = Some(error);
+                    app.last_error = Some(runtime(&error));
                 }
             }
         }
@@ -186,7 +186,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<super::Message
                 async move {
                     tokio::task::spawn_blocking(move || execute(store, action, &current, &next))
                         .await
-                        .unwrap_or_else(|_| Err("凭据操作线程结束，请重新读取状态".into()))
+                        .unwrap_or_else(|_| Err(t("凭据操作线程结束，请重新读取状态").into()))
                 },
                 |r| super::Message::Vault(Message::Finished(r)),
             );
@@ -204,10 +204,7 @@ fn execute(
         let status = store.protection_status()?;
         Ok(match action {
             Action::Refresh => "状态已读取".into(),
-            Action::Enable => format!(
-                "已启用。旧模式备份：{}",
-                store.enable_master_password(next)?.display()
-            ),
+            Action::Enable => tf("已启用。旧模式备份：{}", &[&store.enable_master_password(next)?.display()]),
             Action::Unlock => {
                 store.unlock(current)?;
                 "已解锁".into()
@@ -216,30 +213,24 @@ fn execute(
                 store.lock_vault()?;
                 "已锁定；已有会话仍可继续使用".into()
             }
-            Action::Change => format!(
-                "主密码已修改。旧保护备份：{}",
-                store.change_master_password(current, next)?.display()
-            ),
-            Action::Disable => format!(
-                "已恢复兼容模式。原保护备份：{}",
-                store.disable_master_password(current)?.display()
-            ),
+            Action::Change => tf("主密码已修改。旧保护备份：{}", &[&store.change_master_password(current, next)?.display()]),
+            Action::Disable => tf("已恢复兼容模式。原保护备份：{}", &[&store.disable_master_password(current)?.display()]),
             Action::Export => {
                 let path = rfd::FileDialog::new()
-                    .set_title("导出加密凭据（不含主密码）")
+                    .set_title(t("导出加密凭据（不含主密码）"))
                     .set_file_name("adit-credentials-backup.json")
                     .save_file();
                 if let Some(path) = path {
                     store.export_encrypted(&path)?;
-                    format!("加密备份已导出：{}", path.display())
+                    tf("加密备份已导出：{}", &[&path.display()])
                 } else {
                     "已取消，凭据未修改".into()
                 }
             }
             Action::Import => {
                 let path = rfd::FileDialog::new()
-                    .set_title("导入加密凭据（将备份并替换当前库）")
-                    .add_filter("加密凭据", &["json"])
+                    .set_title(t("导入加密凭据（将备份并替换当前库）"))
+                    .add_filter(t("加密凭据"), &["json"])
                     .pick_file();
                 if let Some(path) = path {
                     if status == CredentialProtection::Locked {
@@ -247,19 +238,16 @@ fn execute(
                     }
                     let backup =
                         store.import_encrypted(&path, (!next.is_empty()).then_some(next))?;
-                    format!(
-                        "已导入，原库备份：{}；请用导入文件的主密码解锁",
-                        backup.display()
-                    )
+                    tf("已导入，原库备份：{}；请用导入文件的主密码解锁", &[&backup.display()])
                 } else {
                     "已取消，凭据未修改".into()
                 }
             }
         })
     })()
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| runtime(&e))?;
     Ok((
-        store.protection_status().map_err(|e| e.to_string())?,
+        store.protection_status().map_err(|e| runtime(&e))?,
         result,
     ))
 }

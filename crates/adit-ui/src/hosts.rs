@@ -474,7 +474,7 @@ pub(crate) fn host_layout_button(current: HostLayout, target: HostLayout, label:
         button(ui_icon(icon, 15.0, if selected { primary_text() } else { muted_text() }))
             .padding(6).style(move |_, status| menu_button_style(selected, status))
             .on_press(Message::HostLayoutChanged(target)),
-        text(t(label)).size(11),
+        text(t_in("layout", label)).size(11),
         tooltip::Position::Bottom,
     ).into()
 }
@@ -980,11 +980,11 @@ pub(crate) fn hosts_view(app: &AditApp) -> Element<'_, Message> {
     // have a grid at all is seeing hosts without drilling.
     if matching.is_empty() {
         body = body.push(
-            text(if searching {
+            text(t(if searching {
                 "没有匹配的主机"
             } else {
                 "还没有会话配置"
-            })
+            }))
             .size(13)
             .color(muted_text()),
         );
@@ -1183,7 +1183,7 @@ fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
     let existing = app.manager.sessions().iter().any(|s| s.profile_id == id);
     let field = |label: &'static str, value: String| -> Element<'static, Message> {
         column![
-            text(t(label)).size(10).color(muted_text()),
+            text(t_in("field", label)).size(10).color(muted_text()),
             container(text(if value.is_empty() { String::from(t("未设置")) } else { value })
                 .size(12).color(primary_text()))
                 .width(Fill).padding([8, 10])

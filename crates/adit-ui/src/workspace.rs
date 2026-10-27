@@ -155,7 +155,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         return with_rdp_toolbar(
             app,
             container(
-                text(app.manager.active_desktop_error().unwrap_or_else(|| {
+                text(runtime(app.manager.active_desktop_error().unwrap_or_else(|| {
                     if app.manager.active_session_summary().is_some_and(|s| {
                         matches!(s.status, SessionStatus::Disconnected | SessionStatus::Error)
                     }) {
@@ -165,7 +165,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
                     } else {
                         t("正在连接 RDP…")
                     }
-                }))
+                })))
                 .size(14)
                 .color(muted_text()),
             )
@@ -529,11 +529,8 @@ fn vnc_connection_info(app: &AditApp) -> Element<'_, Message> {
         Some(_) => "光标：远端形状在本地跟随鼠标绘制；桌面内隐藏系统箭头以避免重叠",
     };
     let coverage = if d.framebuffer_pixels == 0 { 0.0 } else { d.covered_pixels as f64 * 100.0 / d.framebuffer_pixels as f64 };
-    let details = format!("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {:?} ms；完整更新 {:?} ms；覆盖完成 {:?} ms\n首屏覆盖 {:.1}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {:?} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}\n{}",
-        d.security, d.tcp_ms, d.handshake_ms, d.first_pixel_ms, d.first_complete_ms, d.first_covered_ms,
-        coverage, d.covered_pixels, d.framebuffer_pixels, d.complete_updates, d.wire_bytes, d.pending_updates,
-        d.fence_rtt_ms, d.queue_high_water, d.encoding, d.clipboard_utf8, cursor_status, d.status);
-    let label = if d.security.is_empty() { "连接信息".to_owned() } else { d.security };
+    let details = tf("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {} ms；完整更新 {} ms；覆盖完成 {} ms\n首屏覆盖 {}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}\n{}", &[&d.security, &d.tcp_ms, &d.handshake_ms, &format!("{:?}", d.first_pixel_ms), &format!("{:?}", d.first_complete_ms), &format!("{:?}", d.first_covered_ms), &format!("{:.1}", coverage), &d.covered_pixels, &d.framebuffer_pixels, &d.complete_updates, &d.wire_bytes, &d.pending_updates, &format!("{:?}", d.fence_rtt_ms), &d.queue_high_water, &d.encoding, &d.clipboard_utf8, &t(cursor_status), &runtime(&d.status)]);
+    let label = if d.security.is_empty() { t("连接信息").to_owned() } else { d.security };
     tooltip(container(text(label).size(10)).padding([4,6]),
         container(text(details).size(11)).padding(8).style(|_| tooltip_style()),
         tooltip::Position::Bottom).into()
@@ -609,7 +606,7 @@ fn rdp_toolbar_button(
 ) -> Element<'static, Message> {
     let enabled = on_press.is_some();
     let control = button(
-        container(text(glyph).size(15))
+        container(text(t(glyph)).size(15))
             .center_x(Length::Fixed(30.0))
             .center_y(Length::Fixed(26.0)),
     )
@@ -623,7 +620,7 @@ fn rdp_toolbar_button(
     // tooltip is the only place it fits without making the bar three times wider.
     tooltip(
         control,
-        container(text(tip).size(11))
+        container(text(t(tip)).size(11))
             .padding([3, 7])
             .style(|_theme| tooltip_style()),
         tooltip::Position::Bottom,
@@ -667,7 +664,7 @@ pub(crate) fn terminal_search_bar(app: &AditApp) -> Element<'_, Message> {
     container(
         row![
             text(t("查找")).size(12).color(muted_text()),
-            text_input("搜索终端历史…", &app.search_query)
+            text_input(t("搜索终端历史…"), &app.search_query)
                 .id(search_input_id())
                 .on_input(Message::SearchQueryChanged)
                 .on_submit(Message::SearchNext)
@@ -709,7 +706,7 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
     let target_label = if broadcasting {
         tf("→ 所有会话 ({})", &[&app.manager.live_session_count()])
     } else {
-        format!("→ {}", target.label())
+        format!("→ {}", t_in("command-target", target.label()))
     };
 
     let placeholder = if app.command_send_immediately {
@@ -732,7 +729,7 @@ pub(crate) fn command_window_bar(app: &AditApp) -> Element<'_, Message> {
                     secondary_button_style(status)
                 })
                 .on_press(Message::CommandTargetToggled),
-            text_input(placeholder, &app.terminal_input)
+            text_input(t(placeholder), &app.terminal_input)
                 .id(command_input_id())
                 .on_input(Message::TerminalInputChanged)
                 .on_submit(Message::SendTerminalInput)
@@ -813,7 +810,7 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
     let title = summary
         .as_ref()
         .map(|summary| summary.title.clone())
-        .unwrap_or_else(|| String::from(t("会话")));
+        .unwrap_or_else(|| String::from(t_in("field", "会话")));
     let status = summary
         .map(|summary| summary.status)
         .unwrap_or(SessionStatus::Disconnected);
@@ -1530,9 +1527,9 @@ pub(crate) fn palette_color(index: u8) -> Color {
 
 pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
     let status = if let Some(error) = &app.last_error {
-        tf("错误：{}", &[&error])
+        tf("错误：{}", &[&runtime(&error)])
     } else {
-        app.notice.clone()
+        runtime(&app.notice)
     };
 
     // Left cluster: a red REC badge while the active session is logging,
@@ -1556,7 +1553,7 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
         row![
             left,
             Space::new().width(Fill),
-            text(app.manager.status_line()).size(11).color(muted_text()),
+            text(runtime(&app.manager.status_line())).size(11).color(muted_text()),
             Space::new().width(Length::Fixed(18.0)),
             text(tf("{} 个配置", &[&app.manager.profiles().len()]))
                 .size(11)
@@ -1586,7 +1583,7 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         return row![];
     };
     if state.max_monitors == 0 {
-        return row![text("显示器：等待服务端能力").size(10).color(muted_text())];
+        return row![text(t("显示器：等待服务端能力")).size(10).color(muted_text())];
     }
     let mut controls = row![
         rdp_toolbar_button(
@@ -1612,7 +1609,7 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         ));
         for i in 0..state.sent_layout.len() {
             controls = controls.push(
-                button(text(format!("屏 {}", i + 1)).size(11))
+                button(text(tf("屏 {}", &[&(i + 1)])).size(11))
                     .padding([2, 5])
                     .style(move |_, status| {
                         rdp_toolbar_button_style(selected == Some(i), true, status)
@@ -1622,14 +1619,14 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         }
     } else if !state.sent_layout.is_empty() && !state.applied {
         controls = controls.push(
-            text("布局已发送，等待桌面尺寸")
+            text(t("布局已发送，等待桌面尺寸"))
                 .size(10)
                 .color(muted_text()),
         );
     }
     if let Some(error) = state.error {
         controls = controls.push(
-            text(format!("显示器布局失败：{error}"))
+            text(tf("显示器布局失败：{}", &[&runtime(&error)]))
                 .size(10)
                 .color(muted_text()),
         );

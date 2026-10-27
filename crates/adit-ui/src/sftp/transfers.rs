@@ -103,7 +103,7 @@ fn queue(app: &mut AditApp, plan: &PreparedTransfer, mode: TransferMode) {
     if !app.manager.sftp_browser().is_some_and(|browser| {
         browser.profile_id == plan.profile && browser.endpoint == plan.endpoint
     }) {
-        app.last_error = Some("SFTP 连接已改变，请重新选择传输目标".into());
+        app.last_error = Some(t("SFTP 连接已改变，请重新选择传输目标").into());
         return;
     }
     match plan.direction {
@@ -114,7 +114,7 @@ fn queue(app: &mut AditApp, plan: &PreparedTransfer, mode: TransferMode) {
         TransferDirection::Upload => {
             match app.manager.sftp_upload_to(&plan.local, &plan.remote, mode) {
                 Ok(()) => app.sftp_upload_path.clear(),
-                Err(error) => app.last_error = Some(error.to_string()),
+                Err(error) => app.last_error = Some(runtime(&error)),
             }
         }
     }
@@ -135,7 +135,7 @@ pub(crate) fn begin_save_as(app: &AditApp, name: String) -> Task<Message> {
         return Task::none();
     };
     let dialog = rfd::AsyncFileDialog::new()
-        .set_title("下载另存为")
+        .set_title(t("下载另存为"))
         .set_file_name(name)
         .set_directory(plan.local.parent().unwrap_or(std::path::Path::new(".")));
     Task::perform(

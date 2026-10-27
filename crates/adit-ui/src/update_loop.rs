@@ -127,7 +127,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // long after the call returned Ok. Surface it instead of letting the
             // user believe their sessions were saved.
             if let Some(error) = app.profile_store.take_write_error() {
-                app.last_error = Some(tf("保存会话配置失败: {}", &[&error]));
+                app.last_error = Some(tf("保存会话配置失败: {}", &[&runtime(&error)]));
             }
             reconcile_missions(app);
             let panes_before = app.panes.len();
@@ -565,14 +565,14 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             release_rdp_modifiers(app);
             match app.manager.set_active_rdp_monitor_count(count) {
                 Ok(()) => persist_rdp_monitor_preferences(app),
-                Err(error) => app.last_error = Some(error),
+                Err(error) => app.last_error = Some(runtime(&error)),
             }
         }
         Message::RdpMonitorSelected(selected) => {
             release_rdp_modifiers(app);
             match app.manager.select_active_rdp_monitor(selected) {
                 Ok(()) => persist_rdp_monitor_preferences(app),
-                Err(error) => app.last_error = Some(error),
+                Err(error) => app.last_error = Some(runtime(&error)),
             }
         }
         Message::DesktopPaneMoved(id, point) => desktop_panes::moved(app, id, point),
@@ -662,7 +662,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.notice = tf("已删除主机密钥记录: {}", &[&host]);
                 }
                 Err(error) => {
-                    app.last_error = Some(tf("删除主机密钥失败: {}", &[&error]));
+                    app.last_error = Some(tf("删除主机密钥失败: {}", &[&runtime(&error)]));
                 }
             }
         }
@@ -675,7 +675,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::PickConfigDir => {
             let mut dialog =
-                rfd::AsyncFileDialog::new().set_title("选择配置文件夹（可指向 Dropbox 等同步盘）");
+                rfd::AsyncFileDialog::new().set_title(t("选择配置文件夹（可指向 Dropbox 等同步盘）"));
             if let Some(parent) = app.config_dir.parent() {
                 if parent.exists() {
                     dialog = dialog.set_directory(parent);
@@ -702,7 +702,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.log_name_pattern = value;
         }
         Message::PickLogDir => {
-            let mut dialog = rfd::AsyncFileDialog::new().set_title("选择日志文件夹");
+            let mut dialog = rfd::AsyncFileDialog::new().set_title(t("选择日志文件夹"));
             let start = effective_log_dir(app);
             let start = if start.exists() {
                 start
@@ -787,7 +787,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if matches!(command, MenuCommand::ImportSecureCrt) {
                 app.active_menu = None;
                 let mut dialog =
-                    rfd::AsyncFileDialog::new().set_title("选择 SecureCRT 的 Sessions 文件夹");
+                    rfd::AsyncFileDialog::new().set_title(t("选择 SecureCRT 的 Sessions 文件夹"));
                 if let Some(dir) = adit_storage::default_securecrt_sessions_dir() {
                     dialog = dialog.set_directory(dir);
                 }
@@ -825,7 +825,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.last_error = None;
                 app.notice = "会话目录已导出；不含密码、口令、密钥内容或启动命令".into();
             }
-            Err(error) => app.last_error = Some(format!("导出失败：{error}")),
+            Err(error) => app.last_error = Some(tf("导出失败：{}", &[&runtime(&error)])),
         },
         Message::HostsCursorMoved(point) => {
             app.hosts_cursor = Some(point);
@@ -1420,7 +1420,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             decision,
         } => {
             if let Err(error) = app.manager.respond_host_key(session_id, decision) {
-                app.last_error = Some(error.to_string());
+                app.last_error = Some(runtime(&error));
             } else {
                 app.notice = String::from(match decision {
                     adit_session::HostKeyDecision::TrustAndRecord => t("已信任主机密钥，继续连接"),
@@ -1533,7 +1533,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SftpPrepared(result) => match result {
             Ok(Some(plan)) => start_transfers(app, vec![PendingTransfer::Prepared(plan)]),
             Ok(None) => {}
-            Err(error) => app.last_error = Some(format!("准备另存为失败：{error}")),
+            Err(error) => app.last_error = Some(tf("准备另存为失败：{}", &[&runtime(&error)])),
         },
         Message::SftpResume(pane, name) => {
             app.sftp_context_menu = None;
@@ -1601,7 +1601,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             } else if app.manager.active_is_sftp_shell() {
                 // Dropped onto a command-line SFTP tab: upload into its cwd.
                 if let Err(error) = app.manager.sftp_shell_upload_dropped(&path) {
-                    app.last_error = Some(error.to_string());
+                    app.last_error = Some(runtime(&error));
                 }
             } else if !app.manager.sftp_is_open() {
                 app.notice = String::from(t(
@@ -1629,7 +1629,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SftpPickUpload => {
             return Task::perform(
                 rfd::AsyncFileDialog::new()
-                    .set_title("选择要上传的文件")
+                    .set_title(t("选择要上传的文件"))
                     .pick_file(),
                 |handle| Message::SftpUploadPicked(handle.map(|h| h.path().to_path_buf())),
             );
@@ -1819,7 +1819,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::PickIdentityFile => {
             let start = adit_storage::home_dir().map(|home| home.join(".ssh"));
-            let mut dialog = rfd::AsyncFileDialog::new().set_title("选择 SSH 私钥文件");
+            let mut dialog = rfd::AsyncFileDialog::new().set_title(t("选择 SSH 私钥文件"));
             if let Some(dir) = start.filter(|dir| dir.exists()) {
                 dialog = dialog.set_directory(dir);
             }
@@ -2010,10 +2010,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                                 adit_sync::backend::gist::device_flow_config(id),
                             )
                             .map(Box::new)
-                            .map_err(|error| error.to_string())
+                            .map_err(|error| runtime(&error))
                         })
                         .await
-                        .unwrap_or_else(|error| Err(error.to_string()))
+                        .unwrap_or_else(|error| Err(runtime(&error)))
                     },
                     Message::SyncDeviceCodeReady,
                 );
@@ -2038,15 +2038,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                                 pending
                                     .complete()
                                     .map(|tokens| tokens.refresh_token.unwrap_or_default())
-                                    .map_err(|error| error.to_string())
+                                    .map_err(|error| runtime(&error))
                             })
                             .await
-                            .unwrap_or_else(|error| Err(error.to_string()))
+                            .unwrap_or_else(|error| Err(runtime(&error)))
                         },
                         Message::SyncAuthFinished,
                     );
                 }
-                Err(error) => app.sync_status = tf("无法开始授权: {}", &[&error]),
+                Err(error) => app.sync_status = tf("无法开始授权: {}", &[&runtime(&error)]),
             }
         }
         Message::SyncDeviceCodeReady(result) => {
@@ -2073,17 +2073,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                             tokio::task::spawn_blocking(move || {
                                 (*auth)
                                     .poll_until_authorized()
-                                    .map_err(|error| error.to_string())
+                                    .map_err(|error| runtime(&error))
                             })
                             .await
-                            .unwrap_or_else(|error| Err(error.to_string()))
+                            .unwrap_or_else(|error| Err(runtime(&error)))
                         },
                         Message::SyncAuthFinished,
                     );
                 }
                 Err(error) => {
                     app.sync_connecting = false;
-                    app.sync_status = tf("无法开始授权: {}", &[&error]);
+                    app.sync_status = tf("无法开始授权: {}", &[&runtime(&error)]);
                 }
             }
         }
@@ -2109,7 +2109,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                             app.sync_secret_saved = true;
                             app.sync_status = String::from(t("账号已连接，可以同步了"));
                         }
-                        Err(error) => app.sync_status = tf("保存令牌失败: {}", &[&error]),
+                        Err(error) => app.sync_status = tf("保存令牌失败: {}", &[&runtime(&error)]),
                     }
                 }
                 // Authorised, but with nothing that survives a restart. Worth
@@ -2120,7 +2120,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.sync_status =
                         String::from(t("授权成功但未返回长期令牌，请在授权页确认已允许离线访问"));
                 }
-                Err(error) => app.sync_status = tf("授权失败: {}", &[&error]),
+                Err(error) => app.sync_status = tf("授权失败: {}", &[&runtime(&error)]),
             }
         }
         Message::SyncAuto => {
@@ -2180,7 +2180,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         .credential_store
                         .save_secret(name, &app.sync_secret_draft)
                     {
-                        app.sync_status = tf("保存密钥失败: {}", &[&error]);
+                        app.sync_status = tf("保存密钥失败: {}", &[&runtime(&error)]);
                         return Task::none();
                     }
                     app.sync_secret_saved = true;
@@ -2211,7 +2211,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
                     Err(error) => {
                         app.sync_busy = false;
-                        app.sync_status = tf("读取本机密码库失败，已中止同步: {}", &[&error]);
+                        app.sync_status = tf("读取本机密码库失败，已中止同步: {}", &[&runtime(&error)]);
                         return Task::none();
                     }
                 }
@@ -2253,22 +2253,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                                     .map(|conflict| tf("冲突（已保留本机）: {}", &[&conflict.name]))
                                     .collect(),
                                 summary: if outcome.uploaded {
-                                    format!(
-                                        "同步完成：新增 {} 项，更新 {} 项，删除 {} 项",
-                                        outcome.stats.added_from_remote,
-                                        outcome.stats.updated_from_remote,
-                                        outcome.stats.deleted
-                                    )
+                                    tf("同步完成：新增 {} 项，更新 {} 项，删除 {} 项", &[&outcome.stats.added_from_remote, &outcome.stats.updated_from_remote, &outcome.stats.deleted])
                                 } else {
                                     String::from(t("已是最新，无需上传"))
                                 },
                                 catalog: outcome.catalog,
                                 assigned_id,
                             })
-                            .map_err(|error| error.to_string())
+                            .map_err(|error| runtime(&error))
                     })
                     .await
-                    .unwrap_or_else(|error| Err(error.to_string()))
+                    .unwrap_or_else(|error| Err(runtime(&error)))
                 },
                 Message::SyncFinished,
             );
@@ -2335,7 +2330,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     // the next one, forever, each finding nothing to upload.
                     app.sync_dirty_at = None;
                 }
-                Err(error) => app.sync_status = tf("同步失败: {}", &[&error]),
+                Err(error) => app.sync_status = tf("同步失败: {}", &[&runtime(&error)]),
             }
         }
         Message::ToggleFullscreen => {
@@ -2448,7 +2443,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         sync_terminal_size(app);
                     }
                     Err(error) => {
-                        app.last_error = Some(tf("打开 SFTP 失败: {}", &[&error]));
+                        app.last_error = Some(tf("打开 SFTP 失败: {}", &[&runtime(&error)]));
                     }
                 }
                 return Task::none();
@@ -3024,7 +3019,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::DisconnectSession(session_id) => {
             app.tab_context_menu = None;
             if let Err(error) = app.manager.disconnect(session_id) {
-                app.last_error = Some(error.to_string());
+                app.last_error = Some(runtime(&error));
             } else {
                 app.notice = String::from(t("已断开连接"));
             }
@@ -3044,7 +3039,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
             if let Err(error) = app.manager.reconnect(session_id) {
-                app.last_error = Some(error.to_string());
+                app.last_error = Some(runtime(&error));
             } else {
                 sync_terminal_size(app);
                 app.notice = String::from(t("正在重新连接…"));
@@ -3093,7 +3088,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                                     app.last_error = None;
                                     app.notice = String::from(t("已克隆 RDP 会话"));
                                 }
-                                Err(error) => app.last_error = Some(error.to_string()),
+                                Err(error) => app.last_error = Some(runtime(&error)),
                             }
                         }
                         None => {
@@ -3114,7 +3109,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     sync_terminal_size(app);
                     app.notice = String::from(t("已克隆会话"));
                 }
-                Err(error) => app.last_error = Some(error.to_string()),
+                Err(error) => app.last_error = Some(runtime(&error)),
             }
         }
         Message::SessionRenameChanged(value) => {
@@ -3401,7 +3396,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         RdpQuality::Speed => adit_domain::DesktopQuality::Speed,
                     });
                     if let Err(error) = app.manager.set_profile_session_options(id, options.clone()) {
-                        app.last_error = Some(error.to_string());
+                        app.last_error = Some(runtime(&error));
                         return Task::none();
                     }
                     if app.selected_profile == Some(id) {
@@ -3447,11 +3442,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 Ok(_) => {
                     app.update_state = UpdateState::Launched;
                     app.notice = String::from(
-                        "正在后台静默安装更新，完成后 Adit 会自动重启（可能需要确认一次 UAC）",
+                        t("正在后台静默安装更新，完成后 Adit 会自动重启（可能需要确认一次 UAC）"),
                     );
                 }
                 Err(error) => {
-                    app.update_state = UpdateState::Error(tf("无法启动安装程序: {}", &[&error]));
+                    app.update_state = UpdateState::Error(tf("无法启动安装程序: {}", &[&runtime(&error)]));
                 }
             },
             Err(error) => {

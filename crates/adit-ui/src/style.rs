@@ -110,7 +110,11 @@ pub(crate) fn profile_accent(app: &AditApp, profile_id: ProfileId) -> Option<Col
 
 /// A profile's short tab badge (e.g. `生产`), or `None`.
 pub(crate) fn profile_badge(app: &AditApp, profile_id: ProfileId) -> Option<String> {
-    app.manager.profile(profile_id)?.badge_label()
+    let profile = app.manager.profile(profile_id)?;
+    if profile.label.as_ref().is_some_and(|label| !label.trim().is_empty()) {
+        return profile.badge_label();
+    }
+    profile.badge_label().map(|_| t_in("environment", profile.environment.label()).to_owned())
 }
 
 pub(crate) fn accent_hover() -> Color {

@@ -14,7 +14,7 @@ pub(crate) fn open_selected_mock_tab(app: &mut AditApp) {
                 app.last_error = None;
                 app.notice = String::from(t("已打开演示标签"));
             }
-            Err(error) => app.last_error = Some(error.to_string()),
+            Err(error) => app.last_error = Some(runtime(&error)),
         }
     }
 }
@@ -48,7 +48,7 @@ pub(crate) fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: Stri
                 password: password.unwrap_or_default(), passphrase: passphrase.unwrap_or_default(),
             }),
             (Err(error), _) | (_, Err(error)) => {
-                app.last_error = Some(format!("无法读取 SSH 网关凭据: {error}"));
+                app.last_error = Some(tf("无法读取 SSH 网关凭据: {}", &[&runtime(&error)]));
                 return;
             }
         }
@@ -84,7 +84,7 @@ pub(crate) fn start_vnc(app: &mut AditApp, profile_id: ProfileId, password: Stri
             app.last_error = None;
             app.notice = String::from(t("VNC 会话已开始连接"));
         }
-        Err(error) => app.last_error = Some(error.to_string()),
+        Err(error) => app.last_error = Some(runtime(&error)),
     }
 }
 
@@ -138,7 +138,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
                 app.last_error = None;
                 app.notice = tf("RDP 会话已开始连接: {}", &[&profile.endpoint()]);
             }
-            Err(error) => app.last_error = Some(error.to_string()),
+            Err(error) => app.last_error = Some(runtime(&error)),
         }
         return;
     }
@@ -197,7 +197,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
             };
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
     }
 }
@@ -298,7 +298,7 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
         Err(error) => {
             app.password.clear();
             app.remember_connection_password = true;
-            app.last_error = Some(tf("读取已保存的密码失败: {}", &[&error]));
+            app.last_error = Some(tf("读取已保存的密码失败: {}", &[&runtime(&error)]));
             app.notice = String::from(t("请输入本次连接的密码或 passphrase"));
         }
     }
@@ -398,7 +398,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
             dialog.retry_session,
         );
         if let Some(warning) = warning {
-            app.last_error = Some(tf("保存密码失败: {}", &[&warning]));
+            app.last_error = Some(tf("保存密码失败: {}", &[&runtime(&warning)]));
         }
         return;
     }
@@ -423,10 +423,10 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
                 app.rdp_frame_generation = 0;
                 app.last_error = credential_warning
                     .as_ref()
-                    .map(|error| tf("保存密码失败: {}", &[&error]));
+                    .map(|error| tf("保存密码失败: {}", &[&runtime(&error)]));
                 app.notice = tf("RDP 会话已开始连接: {}", &[&dialog.endpoint]);
             }
-            Err(error) => app.last_error = Some(error.to_string()),
+            Err(error) => app.last_error = Some(runtime(&error)),
         }
         return;
     }
@@ -459,7 +459,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
             app.terminal_focused = true;
             app.last_error = credential_warning
                 .as_ref()
-                .map(|error| tf("保存密码失败: {}", &[&error]));
+                .map(|error| tf("保存密码失败: {}", &[&runtime(&error)]));
             app.notice = tf("正在用新密码重连: {}", &[&dialog.endpoint]);
             return;
         }
@@ -482,7 +482,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
             app.manager.start_profile_tunnels(dialog.profile_id);
             app.last_error = credential_warning
                 .as_ref()
-                .map(|error| tf("保存密码失败: {}", &[&error]));
+                .map(|error| tf("保存密码失败: {}", &[&runtime(&error)]));
             app.notice = if credential_warning.is_some() {
                 tf("SSH 会话已开始连接: {}；系统凭据未保存", &[&dialog.endpoint])
             } else {
@@ -490,7 +490,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
             };
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
     }
 }
@@ -542,7 +542,7 @@ pub(crate) fn disconnect_active(app: &mut AditApp) {
                 app.last_error = None;
                 app.notice = String::from(t("已请求断开当前会话"));
             }
-            Err(error) => app.last_error = Some(error.to_string()),
+            Err(error) => app.last_error = Some(runtime(&error)),
         }
     } else {
         app.last_error = Some(String::from(t("没有活动会话")));
@@ -588,7 +588,7 @@ pub(crate) fn send_terminal_input(app: &mut AditApp) -> Task<Message> {
             }
         }
         Err(error) => {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
     }
     Task::none()
@@ -621,7 +621,7 @@ pub(crate) fn send_command_bytes(app: &mut AditApp, bytes: Vec<u8>) {
         CommandTarget::ActiveSession => app.manager.send_input_bytes_to_active(bytes),
     };
     if let Err(error) = result {
-        app.last_error = Some(error.to_string());
+        app.last_error = Some(runtime(&error));
     }
 }
 
@@ -671,7 +671,7 @@ pub(crate) fn send_terminal_bytes(app: &mut AditApp, bytes: Vec<u8>) {
         app.terminal_scroll_offset = 0;
         app.terminal_selection = None;
         if let Err(error) = app.manager.send_input_bytes_broadcast(bytes) {
-            app.last_error = Some(error.to_string());
+            app.last_error = Some(runtime(&error));
         }
         return;
     }
@@ -684,7 +684,7 @@ pub(crate) fn send_terminal_bytes(app: &mut AditApp, bytes: Vec<u8>) {
     app.terminal_selection = None;
 
     if let Err(error) = app.manager.send_input_bytes_to_active(bytes) {
-        app.last_error = Some(error.to_string());
+        app.last_error = Some(runtime(&error));
     }
 }
 
@@ -808,7 +808,7 @@ pub(crate) fn reconnect_active_session(app: &mut AditApp) {
                 app.last_error = None;
                 app.notice = tf("正在重连: {}", &[&summary.endpoint]);
             }
-            Err(error) => app.last_error = Some(error.to_string()),
+            Err(error) => app.last_error = Some(runtime(&error)),
         }
     } else {
         // No in-place reconnect (RDP / SFTP shell): reopen the connection dialog.
@@ -1541,7 +1541,7 @@ pub(crate) fn clear_active_terminal(app: &mut AditApp) {
             app.last_error = None;
             app.notice = String::from(t("当前终端已清屏"));
         }
-        Err(error) => app.last_error = Some(error.to_string()),
+        Err(error) => app.last_error = Some(runtime(&error)),
     }
 }
 
@@ -1563,7 +1563,7 @@ pub(crate) fn toggle_active_logging(app: &mut AditApp) {
                 app.last_error = None;
                 app.notice = tf("正在记录会话输出到: {}", &[&path.display()]);
             }
-            Err(error) => app.last_error = Some(tf("开启会话日志失败: {}", &[&error])),
+            Err(error) => app.last_error = Some(tf("开启会话日志失败: {}", &[&runtime(&error)])),
         }
     }
 }
@@ -1645,7 +1645,7 @@ pub(crate) fn render_log_name(pattern: &str, session_name: &str, endpoint: &str)
 /// Open a folder in the OS file manager (creating it first if missing).
 pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
     if let Err(error) = std::fs::create_dir_all(&dir) {
-        app.last_error = Some(tf("无法创建目录 {}: {}", &[&dir.display(), &error]));
+        app.last_error = Some(tf("无法创建目录 {}: {}", &[&dir.display(), &runtime(&error)]));
         return;
     }
     let opener = if cfg!(target_os = "windows") {
@@ -1659,7 +1659,7 @@ pub(crate) fn open_folder(app: &mut AditApp, dir: std::path::PathBuf) {
     // status and only surface a spawn failure.
     match std::process::Command::new(opener).arg(&dir).spawn() {
         Ok(_) => app.notice = tf("已在文件管理器中打开: {}", &[&dir.display()]),
-        Err(error) => app.last_error = Some(tf("打开目录失败: {}", &[&error])),
+        Err(error) => app.last_error = Some(tf("打开目录失败: {}", &[&runtime(&error)])),
     }
 }
 
@@ -1677,7 +1677,7 @@ pub(crate) fn auto_log_connected_sessions(app: &mut AditApp) {
         if !auto_start { continue; }
         let name = render_log_name(&pattern, &title, &endpoint);
         if let Err(error) = app.manager.start_logging(session_id, &dir, &name, plaintext) {
-            app.last_error = Some(tf("自动日志开启失败: {}", &[&error]));
+            app.last_error = Some(tf("自动日志开启失败: {}", &[&runtime(&error)]));
         }
     }
 }
@@ -1689,7 +1689,7 @@ pub(crate) fn resize_active(app: &mut AditApp, cols: u16, rows: u16) {
             app.last_error = None;
             app.notice = tf("当前终端尺寸已设置为 {}x{}", &[&cols, &rows]);
         }
-        Err(error) => app.last_error = Some(error.to_string()),
+        Err(error) => app.last_error = Some(runtime(&error)),
     }
 }
 
@@ -1839,7 +1839,7 @@ pub(crate) fn flush_pending_rdp_resize(app: &mut AditApp) {
     // Surfaced, not logged: the GUI discards its own stderr, so the status bar
     // is the only place this decision is visible.
     if resize_probe_enabled() {
-        app.notice = format!("resize: 已发送 {w}×{h}");
+        app.notice = tf("resize: 已发送 {}×{}", &[&w, &h]);
     } else {
         app.notice = tf("已请求远程分辨率 {}×{}", &[&w, &h]);
     }
@@ -1999,7 +1999,7 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     let probe = resize_probe_enabled();
     if !app.manager.active_rdp_live() {
         if probe {
-            app.notice = String::from("resize: 跳过（会话未就绪）");
+            app.notice = String::from(t("resize: 跳过（会话未就绪）"));
         }
         return;
     }
@@ -2012,16 +2012,7 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
     // The three inputs, not just the result: if (w, h) comes out unchanged the
     // question is immediately which of them failed to move.
     if probe {
-        app.notice = format!(
-            "resize: 窗口 {:.0}×{:.0} 侧栏 {:.0} 缩放 {:.2} → {}×{}（上次 {:?}）",
-            app.window_width,
-            app.window_height,
-            sidebar_offset(app),
-            app.display_scale,
-            w,
-            h,
-            app.rdp_target_size,
-        );
+        app.notice = tf("resize: 窗口 {}×{} 侧栏 {} 缩放 {} → {}×{}（上次 {}）", &[&format!("{:.0}", app.window_width), &format!("{:.0}", app.window_height), &format!("{:.0}", sidebar_offset(app)), &format!("{:.2}", app.display_scale), &w, &h, &format!("{:?}", app.rdp_target_size)]);
     }
     if w == 0 || h == 0 || app.rdp_target_size == Some((w, h)) {
         // Back at the size already delivered (a drag that returned home):
@@ -2230,13 +2221,13 @@ pub(crate) fn sync_terminal_size(app: &mut AditApp) {
     if app.panes.is_empty() {
         if app.manager.active_session().is_some() {
             if let Err(error) = app.manager.resize_active(target.cols, target.rows) {
-                app.last_error = Some(error.to_string());
+                app.last_error = Some(runtime(&error));
             }
         }
     } else {
         for &session_id in &app.panes {
             if let Err(error) = app.manager.resize_session(session_id, target.cols, target.rows) {
-                app.last_error = Some(error.to_string());
+                app.last_error = Some(runtime(&error));
             }
         }
     }
@@ -2438,7 +2429,7 @@ pub(crate) fn activate_session(app: &mut AditApp, session_id: SessionId) {
         }
     }
     if let Err(error) = app.manager.activate(session_id) {
-        app.last_error = Some(error.to_string());
+        app.last_error = Some(runtime(&error));
     } else {
         app.terminal_focused = true;
         app.terminal_scroll_offset = 0;
@@ -2761,7 +2752,7 @@ pub(crate) fn persist_settings_if_changed(app: &mut AditApp) {
             // message.
             if !app.settings_save_failed {
                 app.settings_save_failed = true;
-                app.last_error = Some(tf("保存设置失败: {}", &[&error]));
+                app.last_error = Some(tf("保存设置失败: {}", &[&runtime(&error)]));
             }
         }
     }
