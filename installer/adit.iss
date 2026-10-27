@@ -102,6 +102,7 @@ Source: "..\target\{#BuildDir}\adit-app.exe"; DestDir: "{app}"; DestName: "{#App
 ; a Cargo.lock with the main app's russh), built from its own workspace. Adit
 ; locates it next to adit.exe.
 Source: "..\crates\adit-rdp\target\{#BuildDir}\adit-rdp-host.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\crates\adit-ui\assets\logos\LICENSE.debian.txt"; DestDir: "{app}"; DestName: "LICENSE.debian.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"

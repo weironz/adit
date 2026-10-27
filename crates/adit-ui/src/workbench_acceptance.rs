@@ -189,7 +189,7 @@ fn claim_empty_dir(path: &Path) -> io::Result<()> {
 
 fn fixture_profiles() -> Vec<ConnectionProfile> {
     let groups = ["SYNTHETIC Dev", "SYNTHETIC Ops", "SYNTHETIC Data"];
-    let icons = ["ubuntu", "windows", "container", "database"];
+    let icons = ["ubuntu", "windows", "debian", "container", "database"];
     (0..FIXTURE_COUNT)
         .map(|index| {
             let mut profile = ConnectionProfile::with_group(

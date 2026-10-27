@@ -52,14 +52,10 @@ pub(crate) const HOST_ICONS: &[HostIcon] = &[
 /// Compiled in rather than read from disk: a host tile that renders on some
 /// installs and not others is worse than one that never had a logo, and there
 /// is no install step that could place these.
-/// `debian` is deliberately absent: the swirl is a *tapered* open curl, and the
-/// only version of it these hands can compute exactly — a constant-width arc
-/// spiral — is a different mark that happens to be red. A wrong swirl is worse
-/// than the diamond it would replace, because the diamond never claimed to be
-/// anything.
-fn logo_bytes(key: &str) -> Option<&'static [u8]> {
+pub(crate) fn logo_bytes(key: &str) -> Option<&'static [u8]> {
     match key {
         "ubuntu" => Some(include_bytes!("../assets/logos/ubuntu.svg")),
+        "debian" => Some(include_bytes!("../assets/logos/debian.svg")),
         "windows" => Some(include_bytes!("../assets/logos/windows.svg")),
         "redhat" => Some(include_bytes!("../assets/logos/redhat.svg")),
         "alpine" => Some(include_bytes!("../assets/logos/alpine.svg")),
@@ -851,20 +847,7 @@ pub(crate) fn host_drag_ghost(
     profile: &ConnectionProfile,
     position: Point,
 ) -> Element<'static, Message> {
-    let (glyph, tile_color) = host_icon(app, profile);
-    let tile = container(text(glyph).size(13).color(Color::WHITE))
-        .width(Length::Fixed(26.0))
-        .height(Length::Fixed(26.0))
-        .center_x(Length::Fixed(26.0))
-        .center_y(Length::Fixed(26.0))
-        .style(move |_theme| container::Style {
-            background: Some(Background::Color(tile_color)),
-            border: Border {
-                radius: RADIUS_SM.into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        });
+    let tile = host_tile(app, profile, 26.0, false);
     column![
         Space::new().height(Length::Fixed((position.y + 14.0).max(0.0))),
         row![
@@ -1273,6 +1256,14 @@ fn host_details(app: &AditApp, compact: bool) -> Element<'_, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn debian_uses_the_embedded_official_vector() {
+        let svg = std::str::from_utf8(logo_bytes("debian").unwrap()).unwrap();
+        assert!(svg.contains("Debian Open Use Logo"));
+        assert_eq!(svg.matches("<path ").count(), 12);
+        assert!(svg.contains("CC BY-SA 3.0"));
+    }
 
     #[test]
     fn resource_search_disables_connect_for_a_hidden_selection() {

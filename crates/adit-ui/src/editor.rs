@@ -444,8 +444,15 @@ pub(crate) fn icon_button(
     color: Color,
 ) -> Element<'static, Message> {
     let selected = app.profile_icon == key;
+    let icon: Element<'static, Message> = if key == "debian" {
+        iced::widget::svg(iced::widget::svg::Handle::from_memory(
+            logo_bytes(key).expect("Debian artwork is embedded"),
+        )).width(14).height(14).into()
+    } else {
+        text(glyph).size(12).color(color).into()
+    };
     button(
-        row![text(glyph).size(12).color(color), text(label).size(11)]
+        row![icon, text(label).size(11)]
             .spacing(5)
             .align_y(Alignment::Center),
     )
