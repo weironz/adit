@@ -9,3 +9,4 @@ license.workspace = true
 serde.workspace = true
 vte = "0.15"
 unicode-width = "0.2"
+unicode-segmentation = "1.13"

@@ -87,6 +87,21 @@ fn emoji_joiners_modifiers_and_variation_selectors_share_cells() {
 }
 
 #[test]
+fn extended_graphemes_preserve_flags_and_indic_clusters_across_packets() {
+    for input in ["🇺🇸", "🇬🇧", "क्ष"] {
+        let mut terminal = term(12, 2);
+        for byte in input.as_bytes() {
+            terminal.feed(&[*byte]);
+        }
+        assert_eq!(terminal.state.grid[0][0].text(), input);
+        assert_eq!(terminal.state.cursor_col, crate::glyph_width(input));
+        assert_eq!(crate::glyphs(input).collect::<Vec<_>>(), vec![input]);
+    }
+    let text = "x\u{200b}y";
+    assert_eq!(crate::glyphs(text).collect::<Vec<_>>(), vec!["x\u{200b}", "y"]);
+}
+
+#[test]
 fn combining_clusters_survive_reflow_and_wide_half_replacement() {
     let mut t = term(8, 3);
     t.feed_str("a\u{301}\u{754c}\u{308}bcde");

@@ -227,30 +227,22 @@ pub struct TerminalImage {
 pub const SIXEL_CELL_WIDTH: usize = 8;
 pub const SIXEL_CELL_HEIGHT: usize = 16;
 
-/// Split a coalesced run into the glyphs used by the terminal grid. Zero-width
-/// suffixes, emoji modifiers and ZWJ continuations stay with their base so a
-/// renderer or copy operation never gives a combining mark its own column.
+/// Split a coalesced run into the glyphs used by the terminal grid.
 pub fn glyphs(text: &str) -> impl Iterator<Item = &str> {
-    let mut rest = text;
+    use unicode_segmentation::UnicodeSegmentation;
+    use unicode_width::UnicodeWidthStr;
+    let mut parts = text.grapheme_indices(true).peekable();
     std::iter::from_fn(move || {
-        if rest.is_empty() {
-            return None;
+        let (start, first) = parts.next()?;
+        let mut end = start + first.len();
+        // Keep non-printing clusters in the preceding terminal cell even when
+        // Unicode treats them as separate graphemes.
+        while let Some((index, next)) = parts.peek().copied() {
+            if next.width() != 0 { break; }
+            parts.next();
+            end = index + next.len();
         }
-        let mut end = rest.len();
-        let mut previous = '\0';
-        for (i, c) in rest.char_indices() {
-            let continuation = unicode_width::UnicodeWidthChar::width(c) == Some(0)
-                || matches!(c, '\u{1f3fb}'..='\u{1f3ff}')
-                || previous == '\u{200d}';
-            if i > 0 && !continuation {
-                end = i;
-                break;
-            }
-            previous = c;
-        }
-        let (glyph, remaining) = rest.split_at(end);
-        rest = remaining;
-        Some(glyph)
+        Some(&text[start..end])
     })
 }
 

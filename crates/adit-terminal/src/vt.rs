@@ -320,13 +320,16 @@ impl TermState {
         let charset = self.single_shift.take().unwrap_or(self.active_charset);
         let c = self.charsets[charset].map(c);
         let width = c.width().unwrap_or(0);
-        let continuation = self.last_printed.is_some_and(|(row, col)| {
-            self.grid[row][col]
-                .glyph
-                .as_deref()
-                .is_some_and(|s| s.ends_with('\u{200d}'))
+        let continuation = !c.is_ascii() && self.last_printed.is_some_and(|(row, col)| {
+            use unicode_segmentation::UnicodeSegmentation;
+            let mut previous = self.grid[row][col].text();
+            if previous.len() + c.len_utf8() > MAX_GLYPH_BYTES {
+                return false;
+            }
+            previous.push(c);
+            previous.graphemes(true).count() == 1
         });
-        if width == 0 || continuation || matches!(c, '\u{1f3fb}'..='\u{1f3ff}') {
+        if width == 0 || continuation {
             self.extend_glyph(c);
             return;
         }

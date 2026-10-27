@@ -119,6 +119,7 @@ name = "adit-terminal"
 version = "0.1.77"
 dependencies = [
  "serde",
+ "unicode-segmentation",
  "unicode-width",
  "vte",
 ]
