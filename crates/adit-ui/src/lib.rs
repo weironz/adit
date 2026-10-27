@@ -25,7 +25,7 @@ pub(crate) use iced::{
     clipboard, event, mouse, window, Alignment, Background, Border, Color, Element, Fill, Font,
     Length, Point, Shadow, Subscription, Task, Theme, Vector,
 };
-pub(crate) use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, Ordering};
+pub(crate) use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) use std::time::Instant;
 
 /// Which SFTP pane a row belongs to.
@@ -102,6 +102,8 @@ mod desktop_panes;
 mod editor;
 use editor::*;
 mod profile_options;
+mod appearance_editor;
+pub use appearance_editor::AppearanceEdit;
 pub use profile_options::ProfileOptionEdit;
 use profile_options::{ProfileOptionsForm, profile_options_editor};
 mod update_loop;
@@ -121,23 +123,18 @@ mod sftp;
 use sftp::*;
 mod highlight;
 mod input;
+mod terminal_appearance;
+use terminal_appearance::*;
 mod terminal_text;
 mod theme;
 use input::*;
 use terminal_text::*;
 use theme::{
-    active_scheme, color_scheme_index, font_preset_index, term_font,
+    color_scheme_index, font_preset_index,
     COLOR_SCHEMES, FONT_PRESETS,
 };
 
 static DARK_MODE: AtomicBool = AtomicBool::new(false);
-
-/// Terminal appearance, set once per frame at the top of `view` (like
-/// [`DARK_MODE`]) so the deep terminal render/hit-test/color fns can read the
-/// active font + palette without threading them through every call.
-static TERM_FONT: AtomicU8 = AtomicU8::new(0);
-static TERM_FONT_SIZE: AtomicU32 = AtomicU32::new(13);
-static TERM_SCHEME: AtomicU8 = AtomicU8::new(0);
 
 fn is_dark() -> bool {
     DARK_MODE.load(Ordering::Relaxed)
@@ -1088,6 +1085,7 @@ pub enum Message {
     /// Tick while drag-selecting past the pane edge: scroll and extend.
     SelectionAutoScroll,
     TerminalScrolled(mouse::ScrollDelta),
+    PaneScrolled(usize, mouse::ScrollDelta),
     BeginTerminalSelection,
     EndTerminalSelection,
     ShowTerminalContextMenu,
@@ -1234,29 +1232,12 @@ enum TerminalScrollAction {
     Bottom,
 }
 
-// Monospace cell metrics derive from the active font size so changing the size
-// rescales the whole grid consistently (render, hit-testing, and size
-// estimation all read the same two fns). Ratios chosen so size 13 reproduces
-// the previous fixed 7.8 x 17.0 cell.
+// Default grid ratios preserve the existing 7.8 x 17.0 cell at size 13.
+// TerminalMetrics carries the resolved per-pane values through render and input.
 const CELL_WIDTH_RATIO: f32 = 0.6;
 const CELL_HEIGHT_RATIO: f32 = 1.308;
 const MIN_FONT_SIZE: u32 = 9;
 const MAX_FONT_SIZE: u32 = 28;
-
-/// Active terminal font size in px (the value set on [`TERM_FONT_SIZE`]).
-fn term_font_size() -> f32 {
-    TERM_FONT_SIZE.load(Ordering::Relaxed) as f32
-}
-
-/// Width of one monospace cell at the active font size.
-fn cell_width() -> f32 {
-    term_font_size() * CELL_WIDTH_RATIO
-}
-
-/// Height of one terminal row at the active font size.
-fn cell_height() -> f32 {
-    term_font_size() * CELL_HEIGHT_RATIO
-}
 
 const SIDEBAR_MIN_WIDTH: f32 = 220.0;
 const SIDEBAR_MAX_WIDTH: f32 = 640.0;
@@ -1656,6 +1637,7 @@ impl AditApp {
                 window_height,
                 effective_sidebar,
                 false,
+                TerminalMetrics::new(&font_family, font_size),
             ),
             terminal_pointer: None,
             terminal_selection: None,
@@ -3420,11 +3402,11 @@ mod tests {
     #[test]
     fn terminal_size_for_area_clamps_to_sane_bounds() {
         // A tiny area still yields the minimum grid, not zero.
-        let tiny = terminal_size_for_area(1.0, 1.0);
+        let tiny = terminal_size_for_area(1.0, 1.0, TerminalMetrics::new("", 13.0));
         assert_eq!(tiny.cols, 20);
         assert_eq!(tiny.rows, 6);
         // A generous area scales up but stays under the ceiling.
-        let big = terminal_size_for_area(100_000.0, 100_000.0);
+        let big = terminal_size_for_area(100_000.0, 100_000.0, TerminalMetrics::new("", 13.0));
         assert_eq!(big.cols, 220);
         assert_eq!(big.rows, 80);
     }
@@ -3772,14 +3754,14 @@ mod tests {
     #[test]
     fn scroll_delta_converts_to_terminal_rows() {
         assert_eq!(
-            scroll_delta_to_rows(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+            scroll_delta_to_rows(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }, TerminalMetrics::new("", 13.0)),
             Some(3)
         );
         assert_eq!(
             scroll_delta_to_rows(mouse::ScrollDelta::Pixels {
                 x: 0.0,
-                y: -cell_height()
-            }),
+                y: -TerminalMetrics::new("", 13.0).cell_height
+            }, TerminalMetrics::new("", 13.0)),
             Some(-1)
         );
     }

@@ -20,6 +20,19 @@ fn catalog_transfer_preserves_public_policy_and_never_exports_environment_values
         pattern: "fixture-only".into(),
         action: adit_domain::TriggerAction::SendLine("fixture-command-secret".into()),
     }];
+    profile.session_options.terminal_appearance = adit_domain::TerminalAppearance {
+        font_family: Some("Consolas".into()),
+        font_size: Some(20),
+        color_scheme: None,
+        custom_palette: Some(adit_domain::TerminalPalette {
+            background: [1, 2, 3],
+            foreground: [4, 5, 6],
+            selection: [7, 8, 9],
+            ansi: [[10, 11, 12]; 16],
+        }),
+        background: Some([30, 10, 10]),
+    };
+    let expected_appearance = profile.session_options.terminal_appearance.clone();
     let exported = export_catalog(&ProfileCatalog::from_profiles(vec![profile])).unwrap();
     assert!(!exported.contains("fixture-secret-value"));
     assert!(!exported.contains("fixture-command-secret"));
@@ -27,6 +40,7 @@ fn catalog_transfer_preserves_public_policy_and_never_exports_environment_values
     let options = &imported.catalog.profiles[0].session_options;
     assert!(options.environment.is_empty());
     assert!(options.triggers.is_empty());
+    assert_eq!(options.terminal_appearance, expected_appearance);
     assert_eq!(options.encoding, adit_domain::TerminalEncoding::Gbk);
     assert_eq!(options.reconnect.as_ref().unwrap().max_attempts, 4);
     assert!(!options.logging.as_ref().unwrap().auto_start);
@@ -35,6 +49,25 @@ fn catalog_transfer_preserves_public_policy_and_never_exports_environment_values
 }
 
 const PUTTY: &str = include_str!("fixtures/putty-sessions.reg");
+
+#[test]
+fn appearance_import_rejects_unknown_palette_fields_and_out_of_range_size() {
+    let profile = ConnectionProfile::new("fixture", "example.test", 22, "fixture");
+    let source = export_catalog(&ProfileCatalog::from_profiles(vec![profile])).unwrap();
+    let mut document: serde_json::Value = serde_json::from_str(&source).unwrap();
+    document["profiles"][0]["session_options"]["terminal_appearance"]["font_size"] =
+        serde_json::json!(29);
+    assert!(import_catalog(&document.to_string()).is_err());
+    document["profiles"][0]["session_options"]["terminal_appearance"]["font_size"] =
+        serde_json::json!(20);
+    let ansi = [[0u8; 3]; 16];
+    document["profiles"][0]["session_options"]["terminal_appearance"]["custom_palette"] =
+        serde_json::json!({
+            "background": [1, 2, 3], "foreground": [4, 5, 6], "selection": [7, 8, 9],
+            "ansi": ansi, "startup_command": "must-not-run"
+        });
+    assert!(import_catalog(&document.to_string()).is_err());
+}
 
 #[test]
 fn putty_export_is_data_only_and_preserves_encoded_names_ports_and_key_paths() {

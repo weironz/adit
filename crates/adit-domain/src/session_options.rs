@@ -13,6 +13,26 @@ pub struct SessionOptions {
     pub reconnect: Option<ReconnectPolicy>,
     pub logging: Option<LogPolicy>,
     pub triggers: Vec<OutputTrigger>,
+    pub terminal_appearance: TerminalAppearance,
+}
+
+/// Each absent field follows the current application setting.
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TerminalAppearance {
+    pub font_family: Option<String>,
+    pub font_size: Option<u8>,
+    pub color_scheme: Option<String>,
+    pub custom_palette: Option<TerminalPalette>,
+    pub background: Option<[u8; 3]>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalPalette {
+    pub background: [u8; 3],
+    pub foreground: [u8; 3],
+    pub selection: [u8; 3],
+    pub ansi: [[u8; 3]; 16],
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,6 +148,15 @@ pub struct LogPolicy {
 
 impl SessionOptions {
     pub fn validate(&self) -> Result<(), String> {
+        let appearance = &self.terminal_appearance;
+        if appearance.font_size.is_some_and(|size| !(9..=28).contains(&size))
+            || [&appearance.font_family, &appearance.color_scheme]
+                .into_iter()
+                .flatten()
+                .any(|value| value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control))
+        {
+            return Err("终端外观配置无效".into());
+        }
         if self.triggers.len() > 16 {
             return Err("触发器最多为 16 项".into());
         }
@@ -268,6 +297,19 @@ impl SessionOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn appearance_defaults_and_validation_preserve_legacy_inheritance() {
+        let options: SessionOptions = serde_json::from_str("{}").unwrap();
+        assert_eq!(options.terminal_appearance, TerminalAppearance::default());
+        let mut options = options;
+        options.terminal_appearance.font_size = Some(8);
+        assert!(options.validate().is_err());
+        options.terminal_appearance.font_size = Some(20);
+        assert!(options.validate().is_ok());
+        let encoded = serde_json::to_string(&options).unwrap();
+        assert_eq!(serde_json::from_str::<SessionOptions>(&encoded).unwrap(), options);
+    }
 
     #[test]
     fn invalid_environment_and_unbounded_retry_are_rejected() {

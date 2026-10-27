@@ -23,6 +23,7 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
         let highlights = search_highlights_for(app, &snapshot);
         let links_clickable = link_open_modifier(app);
         mouse_area(terminal_view(
+            active_terminal_style(app),
             snapshot,
             app.terminal_focused,
             app.terminal_selection,
@@ -851,6 +852,7 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
         Vec::new()
     };
     let body = mouse_area(terminal_view(
+        terminal_style_for(app, Some(session_id)),
         snapshot,
         is_focused,
         selection,
@@ -867,7 +869,7 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
     .on_release(Message::EndTerminalSelection)
     .on_right_press(Message::PaneRightPressed(index))
     .on_move(move |point| Message::PanePointerMoved(index, point))
-    .on_scroll(Message::TerminalScrolled)
+    .on_scroll(move |delta| Message::PaneScrolled(index, delta))
     .interaction(mouse::Interaction::Text);
 
     column![header, body]
@@ -879,7 +881,7 @@ pub(crate) fn terminal_pane(app: &AditApp, session_id: SessionId, index: usize) 
 
 /// Snapshot for a pane; only the focused pane honors the scroll-back offset.
 pub(crate) fn pane_snapshot(app: &AditApp, session_id: SessionId, is_focused: bool) -> TerminalSnapshot {
-    let rows = terminal_view_rows(app);
+    let rows = usize::from(session_terminal_size(app, session_id).rows);
     let tail = app.manager.snapshot_for(session_id, Viewport::tail(rows));
 
     if !is_focused || app.terminal_scroll_offset == 0 {
@@ -1022,6 +1024,7 @@ pub(crate) fn tab_button(
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn terminal_view(
+    style: TerminalStyle,
     snapshot: TerminalSnapshot,
     focused: bool,
     selection: Option<TerminalSelection>,
@@ -1043,7 +1046,7 @@ pub(crate) fn terminal_view(
         column![text("not connected")
             .size(13)
             .font(Font::MONOSPACE)
-            .color(default_foreground())]
+            .color(style.foreground())]
     } else {
         snapshot
             .lines
@@ -1071,6 +1074,7 @@ pub(crate) fn terminal_view(
                 let mut line = line;
                 autolink::link_bare_urls(&mut line);
                 column.push(terminal_line(
+                    style,
                     line,
                     row_index,
                     selection,
@@ -1087,13 +1091,13 @@ pub(crate) fn terminal_view(
     // edge, inside the panel padding, showing (and driving) the scrollback position.
     let body = row![
         container(lines).height(Fill).width(Fill),
-        terminal_scrollbar(total_rows, viewport, scroll_offset, scrollbar_interactive),
+        terminal_scrollbar(style, total_rows, viewport, scroll_offset, scrollbar_interactive),
     ];
     container(body)
         .padding(TERMINAL_PANEL_PADDING as u16)
         .height(Fill)
         .width(Fill)
-        .style(move |_theme| terminal_panel_style(focused))
+        .style(move |_theme| terminal_panel_style(focused, style))
         .into()
 }
 
@@ -1108,6 +1112,7 @@ pub(crate) const SCROLLBAR_WIDTH: f32 = 12.0;
 /// newest (offset 0) to top = oldest (max offset). Interactive only on the pane
 /// that owns the scroll — dragging is wired through `scrollbar_drag_to`.
 pub(crate) fn terminal_scrollbar(
+    style: TerminalStyle,
     total: usize,
     viewport: usize,
     offset: usize,
@@ -1134,8 +1139,8 @@ pub(crate) fn terminal_scrollbar(
     let thumb_bar = container(Space::new())
         .width(Fill)
         .height(Length::FillPortion(thumb.max(1)))
-        .style(|_theme| container::Style {
-            background: Some(Background::Color(scrollbar_thumb_color())),
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(Color { a: 0.35, ..style.foreground() })),
             border: iced::border::rounded(SCROLLBAR_WIDTH / 2.0 - 2.0),
             ..container::Style::default()
         });
@@ -1151,8 +1156,8 @@ pub(crate) fn terminal_scrollbar(
         .width(Length::Fixed(SCROLLBAR_WIDTH))
         .height(Fill)
         .align_x(Alignment::Center)
-        .style(|_theme| container::Style {
-            background: Some(Background::Color(scrollbar_track_color())),
+        .style(move |_theme| container::Style {
+            background: Some(Background::Color(Color { a: 0.08, ..style.foreground() })),
             border: iced::border::rounded(SCROLLBAR_WIDTH / 2.0),
             ..container::Style::default()
         });
@@ -1184,7 +1189,9 @@ pub(crate) fn terminal_context_menu() -> Element<'static, Message> {
     .into()
 }
 
+#[allow(clippy::too_many_arguments)] // Per-pane style plus existing row/interaction state.
 pub(crate) fn terminal_line(
+    style: TerminalStyle,
     line: TerminalLine,
     row_index: usize,
     selection: Option<TerminalSelection>,
@@ -1196,10 +1203,10 @@ pub(crate) fn terminal_line(
     links_clickable: bool,
     show_cursor: bool,
 ) -> Element<'static, Message> {
-    let font_size = term_font_size();
-    let base_font = term_font();
-    let cell_w = cell_width();
-    let cell_h = cell_height();
+    let font_size = style.metrics.font_size;
+    let base_font = style.font;
+    let cell_w = style.metrics.cell_width;
+    let cell_h = style.metrics.cell_height;
 
     if line.cells.is_empty() && line.images.is_empty() {
         // Preserve the exact row height of a visually blank terminal line.
@@ -1210,14 +1217,14 @@ pub(crate) fn terminal_line(
 
     let selected_range =
         selection.and_then(|selection| selection_range_for_row(selection, row_index));
-    let selected_fg = selection_foreground();
+    let selected_fg = style.selection_foreground();
     let mut col = 0_usize;
     let mut scalar_col = 0_usize;
     let mut legacy_col = 0_usize;
     let mut row_widget = row![].spacing(0);
 
     for cell in line.cells {
-        let mut fg = term_color(cell.fg, default_foreground());
+        let mut fg = style.color(cell.fg, style.foreground());
         if cell.dim {
             fg = dim_color(fg);
         }
@@ -1276,7 +1283,7 @@ pub(crate) fn terminal_line(
             let glyph_color = if cursor_here {
                 // Under the block, the glyph takes the cell's background — which
                 // for a default cell is the terminal's own background colour.
-                term_color(cell.bg, terminal_background())
+                style.color(cell.bg, style.background())
             } else if selected {
                 selected_fg
             } else if let Some(current) = search_hit {
@@ -1295,12 +1302,14 @@ pub(crate) fn terminal_line(
                 // Resolved through the scheme like every other colour on screen,
                 // rather than being a fixed RGB — that is what keeps a highlight
                 // looking like part of the terminal instead of shouting over it.
-                term_color(color, fg)
+                style.color(color, fg)
             } else {
                 fg
             };
             let label = text(glyph_text.to_owned())
                 .size(font_size)
+                .line_height(iced::widget::text::LineHeight::Absolute(iced::Pixels(cell_h)))
+                .wrapping(iced::widget::text::Wrapping::None)
                 .font(font)
                 .shaping(iced::widget::text::Shaping::Advanced)
                 .color(glyph_color);
@@ -1308,7 +1317,7 @@ pub(crate) fn terminal_line(
             let background = if cursor_here {
                 Some(fg)
             } else if selected {
-                Some(selection_background())
+                Some(style.selection())
             } else if let Some(current) = search_hit {
                 Some(if current {
                     Color::from_rgb8(240, 180, 60)
@@ -1318,7 +1327,7 @@ pub(crate) fn terminal_line(
             } else {
                 match cell.bg {
                     TermColor::Default => None,
-                    other => Some(term_color(other, default_foreground())),
+                    other => Some(style.color(other, style.foreground())),
                 }
             };
 
@@ -1408,11 +1417,12 @@ pub(crate) fn terminal_line(
             continue;
         }
         let handle = terminal_image_handle(tile.rgba);
+        let bounds = style.metrics.cell_bounds(0, tile.col, 1);
         layers = layers.push(row![
-            Space::new().width(Length::Fixed(tile.col as f32 * cell_w)),
+            Space::new().width(Length::Fixed(bounds.x)),
             iced::widget::image(handle)
-                .width(Length::Fixed(cell_w))
-                .height(Length::Fixed(cell_h))
+                .width(Length::Fixed(bounds.width))
+                .height(Length::Fixed(bounds.height))
                 .content_fit(iced::ContentFit::Fill)
                 .filter_method(iced::widget::image::FilterMethod::Nearest),
         ]);
@@ -1456,72 +1466,6 @@ pub(crate) fn dim_color(color: Color) -> Color {
         g: color.g * 0.6,
         b: color.b * 0.6,
         a: color.a,
-    }
-}
-
-/// Text color for selected cells: dark on a light selection highlight, light on
-/// a dark one, so selected glyphs stay legible across every scheme.
-pub(crate) fn selection_foreground() -> Color {
-    let (r, g, b) = active_scheme().selection;
-    let luminance = 0.299 * r as f32 + 0.587 * g as f32 + 0.114 * b as f32;
-    if luminance > 140.0 {
-        Color::from_rgb8(20, 22, 28)
-    } else {
-        Color::from_rgb8(245, 249, 255)
-    }
-}
-
-pub(crate) fn default_foreground() -> Color {
-    let (r, g, b) = active_scheme().foreground;
-    Color::from_rgb8(r, g, b)
-}
-
-/// Scrollbar thumb colour: the scheme's foreground, softened so it reads as chrome
-/// rather than text (light-on-dark or dark-on-light both work out).
-pub(crate) fn scrollbar_thumb_color() -> Color {
-    let fg = default_foreground();
-    Color { a: 0.35, ..fg }
-}
-
-/// Scrollbar track colour: a barely-there tint over the terminal background.
-pub(crate) fn scrollbar_track_color() -> Color {
-    let fg = default_foreground();
-    Color { a: 0.08, ..fg }
-}
-
-/// Resolve an Adit terminal color into a concrete iced color, using `fallback`
-/// for the theme default and the xterm 256-color palette for indexed colors.
-pub(crate) fn term_color(color: TermColor, fallback: Color) -> Color {
-    match color {
-        TermColor::Default => fallback,
-        TermColor::Rgb(r, g, b) => Color::from_rgb8(r, g, b),
-        TermColor::Indexed(index) => palette_color(index),
-    }
-}
-
-/// The standard xterm 256-color palette: 16 named colors, a 6x6x6 RGB cube, and
-/// a 24-step grayscale ramp.
-pub(crate) fn palette_color(index: u8) -> Color {
-    match index {
-        0..=15 => {
-            let (r, g, b) = active_scheme().ansi[index as usize];
-            Color::from_rgb8(r, g, b)
-        }
-        16..=231 => {
-            let c = index - 16;
-            let level = |v: u8| -> u8 {
-                if v == 0 {
-                    0
-                } else {
-                    55 + v * 40
-                }
-            };
-            Color::from_rgb8(level(c / 36), level((c / 6) % 6), level(c % 6))
-        }
-        232..=255 => {
-            let value = 8 + (index - 232) * 10;
-            Color::from_rgb8(value, value, value)
-        }
     }
 }
 

@@ -59,8 +59,8 @@ pub fn read_putty_sessions() -> Result<ImportReport, String> {
                 }
                 let units: Vec<u16> = raw
                     .bytes
-                    .chunks_exact(2)
-                    .map(|b| u16::from_le_bytes([b[0], b[1]]))
+                    .as_chunks::<2>().0.iter()
+                    .map(|b| u16::from_le_bytes(*b))
                     .collect();
                 let text = String::from_utf16(&units).map_err(|_| "注册表字符串编码无效")?;
                 let text = text.trim_end_matches('\0');

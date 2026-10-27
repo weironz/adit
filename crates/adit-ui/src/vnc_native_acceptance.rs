@@ -2,6 +2,7 @@
 //! but has isolated storage, synthetic localhost input and no clipboard access.
 use super::*;
 use std::io::Write;
+use std::sync::atomic::AtomicU32;
 
 struct State {
     app: AditApp,

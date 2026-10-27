@@ -1,13 +1,7 @@
 //! Terminal appearance: the font presets and colour schemes the settings UI
 //! offers, and the lookups that turn a persisted name back into an index.
 //!
-//! The active choices live in `super`'s atomics rather than here: they are set
-//! once per frame at the top of `view`, so the deep render and hit-test paths
-//! can read them without threading a palette through every call.
-
-use super::{TERM_FONT, TERM_SCHEME};
 use iced::Font;
-use std::sync::atomic::Ordering;
 
 /// Selectable terminal fonts. The first is the system monospace default; the
 /// rest are common Windows monospace families resolved by name (a missing
@@ -21,10 +15,9 @@ pub(super) const FONT_PRESETS: &[(&str, Option<&'static str>)] = &[
     ("Lucida Console", Some("Lucida Console")),
 ];
 
-/// The base terminal font (family only; per-cell weight is layered on top).
-pub(super) fn term_font() -> Font {
-    let idx = TERM_FONT.load(Ordering::Relaxed) as usize;
-    match FONT_PRESETS.get(idx).and_then(|(_, family)| *family) {
+/// Resolve a named font without any process-wide terminal state.
+pub(super) fn font_for(name: &str) -> Font {
+    match FONT_PRESETS.iter().find(|(display, _)| *display == name).and_then(|(_, family)| *family) {
         Some(name) => Font::with_name(name),
         None => Font::MONOSPACE,
     }
@@ -232,10 +225,8 @@ pub(super) const COLOR_SCHEMES: &[ColorScheme] = &[
     },
 ];
 
-/// The active color scheme (defaults to the first if the index is stale).
-pub(super) fn active_scheme() -> &'static ColorScheme {
-    let idx = TERM_SCHEME.load(Ordering::Relaxed) as usize;
-    &COLOR_SCHEMES[idx.min(COLOR_SCHEMES.len() - 1)]
+pub(super) fn scheme_for(name: &str) -> &'static ColorScheme {
+    COLOR_SCHEMES.iter().find(|scheme| scheme.name == name).unwrap_or(&COLOR_SCHEMES[0])
 }
 
 /// Scheme index for a persisted scheme name (0 = default palette).

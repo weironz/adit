@@ -154,6 +154,9 @@ export function audit(sourceRoot = root) {
     for (let i = 0; i < tokens.length; i++) {
       const token = tokens[i];
       if (token.kind !== "string" || !han.test(token.value)) continue;
+      // This is intentional bilingual font-preview content, not a UI label.
+      if (relative === "appearance_editor.rs"
+        && token.value === "adit@host:~$  AaBbCc 0123 中文") continue;
       const line = source.slice(0, token.start).split("\n").length;
       const location = `${relative}:${line}`;
       const before = tokens.slice(Math.max(0, i - 8), i).map(t => t.value).join(" ");

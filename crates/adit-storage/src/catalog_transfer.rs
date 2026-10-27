@@ -33,12 +33,12 @@ pub fn decode_import_text(bytes: &[u8]) -> Result<String, String> {
             return Err("UTF-16 文件长度无效".into());
         }
         let units: Vec<u16> = rest
-            .chunks_exact(2)
+            .as_chunks::<2>().0.iter()
             .map(|b| {
                 if big_endian {
-                    u16::from_be_bytes([b[0], b[1]])
+                    u16::from_be_bytes(*b)
                 } else {
-                    u16::from_le_bytes([b[0], b[1]])
+                    u16::from_le_bytes(*b)
                 }
             })
             .collect();
@@ -100,8 +100,10 @@ const VNC_FIELDS: &[&str] = &[
 const JUMP_FIELDS: &[&str] = &["host", "port", "username"];
 const SESSION_OPTION_FIELDS: &[&str] = &[
     "environment", "encoding", "rdp_quality", "rdp_monitors", "rdp_selected_monitor",
-    "reconnect", "logging", "triggers",
+    "reconnect", "logging", "triggers", "terminal_appearance",
 ];
+const APPEARANCE_FIELDS: &[&str] = &["font_family", "font_size", "color_scheme", "custom_palette", "background"];
+const PALETTE_FIELDS: &[&str] = &["background", "foreground", "selection", "ansi"];
 const MONITOR_FIELDS: &[&str] = &["left", "top", "width", "height", "primary", "scale_percent"];
 const RECONNECT_FIELDS: &[&str] = &["enabled", "max_attempts", "initial_delay_secs", "max_delay_secs"];
 const LOG_FIELDS: &[&str] = &["auto_start", "directory", "filename_pattern", "plaintext", "record_input"];
@@ -157,12 +159,21 @@ fn check_profile_fields(value: &serde_json::Value) -> Result<(), String> {
                 }
             }
         }
-        for (field, allowed) in [("reconnect", RECONNECT_FIELDS), ("logging", LOG_FIELDS)] {
+        for (field, allowed) in [("reconnect", RECONNECT_FIELDS), ("logging", LOG_FIELDS), ("terminal_appearance", APPEARANCE_FIELDS)] {
             if let Some(value) = options.get(field).filter(|value| !value.is_null()) {
                 let fields = value.as_object().ok_or_else(|| format!("无效的 {field} 配置"))?;
                 if let Some(key) = fields.keys().find(|key| !allowed.contains(&key.as_str())) {
                     return Err(format!("尚未支持的会话字段: session_options.{field}.{key}"));
                 }
+            }
+        }
+        if let Some(palette) = options.get("terminal_appearance")
+            .and_then(|appearance| appearance.get("custom_palette"))
+            .filter(|value| !value.is_null())
+        {
+            let fields = palette.as_object().ok_or("无效的自定义配色")?;
+            if fields.keys().any(|key| !PALETTE_FIELDS.contains(&key.as_str())) {
+                return Err("自定义配色包含未知字段".into());
             }
         }
     }

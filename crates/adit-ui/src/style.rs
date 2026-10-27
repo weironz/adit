@@ -54,16 +54,6 @@ pub(crate) fn field_background() -> Color {
     pick(Color::from_rgb8(247, 249, 250), Color::from_rgb8(29, 35, 47))
 }
 
-pub(crate) fn terminal_background() -> Color {
-    let (r, g, b) = active_scheme().background;
-    Color::from_rgb8(r, g, b)
-}
-
-pub(crate) fn selection_background() -> Color {
-    let (r, g, b) = active_scheme().selection;
-    Color::from_rgb8(r, g, b)
-}
-
 pub(crate) fn border_color() -> Color {
     pick(Color::from_rgb8(225, 232, 236), Color::from_rgb8(49, 58, 73))
 }
@@ -268,10 +258,10 @@ pub(crate) fn workspace_style() -> container::Style {
     }
 }
 
-pub(crate) fn terminal_panel_style(focused: bool) -> container::Style {
+pub(crate) fn terminal_panel_style(focused: bool, style: TerminalStyle) -> container::Style {
     container::Style {
-        background: Some(Background::Color(terminal_background())),
-        text_color: Some(default_foreground()),
+        background: Some(Background::Color(style.background())),
+        text_color: Some(style.foreground()),
         border: border(
             0.0,
             1.0,

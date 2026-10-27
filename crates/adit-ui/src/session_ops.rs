@@ -1272,7 +1272,7 @@ pub(crate) fn terminal_selection_point(app: &AditApp, point: Point) -> TerminalP
 /// positive below the bottom, 0 inside. Drives selection auto-scroll.
 pub(crate) fn terminal_row_overshoot(app: &AditApp, point: Point) -> i32 {
     let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP;
-    let raw = ((point.y - origin_y) / cell_height()).floor();
+    let raw = ((point.y - origin_y) / active_terminal_style(app).metrics.cell_height).floor();
     let last = f32::from(app.terminal_size.rows.saturating_sub(1));
     let overshoot = if raw < 0.0 {
         raw
@@ -1289,20 +1289,16 @@ pub(crate) fn terminal_row_overshoot(app: &AditApp, point: Point) -> i32 {
 /// clipped off the top starts at column 0; one clipped off the bottom runs to EOL
 /// (`usize::MAX`), matching `selection_range_for_row`'s convention.
 pub(crate) fn terminal_point_from_cursor(app: &AditApp, point: Point) -> TerminalPoint {
-    // `point` comes from the terminal panel's own `mouse_area` (`on_move` uses
-    // `cursor.position_in(bounds)`), so it is already relative to the panel's
-    // top-left. Only the panel's internal padding offsets the text grid; the
-    // window chrome does not, and the context menu now floats (no shift).
-    let origin_x = TERMINAL_PANEL_PADDING;
-    let origin_y = TERMINAL_PANEL_PADDING + TERMINAL_HEADER_AND_GAP;
+    terminal_point_for_session(app, app.manager.active_session(), point)
+}
 
-    let col = ((point.x - origin_x) / cell_width()).floor().max(0.0) as usize;
-    let row = ((point.y - origin_y) / cell_height()).floor().max(0.0) as usize;
-
-    TerminalPoint {
-        row: row.min(usize::from(app.terminal_size.rows.saturating_sub(1))),
-        col: col.min(usize::from(app.terminal_size.cols)),
-    }
+pub(crate) fn terminal_point_for_session(app: &AditApp, session: Option<SessionId>, point: Point) -> TerminalPoint {
+    let style = terminal_style_for(app, session);
+    let size = session.map(|id| session_terminal_size(app, id)).unwrap_or(app.terminal_size);
+    style.metrics.point(Point::new(
+        point.x - TERMINAL_PANEL_PADDING,
+        point.y - TERMINAL_PANEL_PADDING - TERMINAL_HEADER_AND_GAP,
+    ), size)
 }
 
 /// Map an iced keyboard event to an RDP scancode press/release.
@@ -2032,10 +2028,8 @@ pub(crate) fn maybe_resize_active_rdp(app: &mut AditApp) {
 
 /// Cols/rows that fit in a single pane's *inner* pixel area (after its own
 /// padding + header have already been removed by the caller).
-pub(crate) fn terminal_size_for_area(inner_width: f32, inner_height: f32) -> TerminalSize {
-    let cols = (inner_width / cell_width()).floor().clamp(20.0, 220.0) as u16;
-    let rows = (inner_height / cell_height()).floor().clamp(6.0, 80.0) as u16;
-    TerminalSize::new(cols, rows)
+pub(crate) fn terminal_size_for_area(inner_width: f32, inner_height: f32, metrics: TerminalMetrics) -> TerminalSize {
+    metrics.size_for_area(inner_width, inner_height)
 }
 
 /// How many columns × rows of panes a given pane count tiles into.
@@ -2138,13 +2132,13 @@ pub(crate) fn pane_layout(app: &AditApp) -> PaneLayout {
 
 impl PaneLayout {
     /// Cols/rows that fit one pane in this layout.
-    pub(crate) fn pane_terminal_size(&self) -> TerminalSize {
+    pub(crate) fn pane_terminal_size(&self, metrics: TerminalMetrics) -> TerminalSize {
         // The scrollbar gutter eats into the text width, so the grid must fit the
         // remaining space — otherwise the remote wraps a column or two past the
         // visible edge.
         let inner_w = self.pane_w - TERMINAL_PANEL_PADDING * 2.0 - SCROLLBAR_WIDTH;
         let inner_h = self.pane_h - self.header - TERMINAL_PANEL_PADDING * 2.0;
-        terminal_size_for_area(inner_w, inner_h)
+        terminal_size_for_area(inner_w, inner_h, metrics)
     }
 
     /// Screen-space top-left of a pane's terminal *body* (below its header).
@@ -2164,6 +2158,7 @@ pub(crate) fn estimated_terminal_size(
     height: f32,
     sidebar_width: f32,
     fullscreen: bool,
+    metrics: TerminalMetrics,
 ) -> TerminalSize {
     let chrome = if fullscreen {
         TAB_BAR_HEIGHT + STATUS_BAR_HEIGHT
@@ -2174,6 +2169,7 @@ pub(crate) fn estimated_terminal_size(
     terminal_size_for_area(
         region_w - TERMINAL_PANEL_PADDING * 2.0 - SCROLLBAR_WIDTH,
         region_h - TERMINAL_PANEL_PADDING * 2.0,
+        metrics,
     )
 }
 
@@ -2185,56 +2181,67 @@ pub(crate) fn step_font_size(app: &mut AditApp, delta: i32) {
     sync_terminal_size(app);
 }
 
-pub(crate) fn sync_terminal_size(app: &mut AditApp) {
-    // An RDP desktop tracks the viewport in pixels, which can change even when the
-    // terminal's cols/rows (below) don't — so do this before the grid early-return.
-    maybe_resize_active_rdp(app);
-
-    let layout = pane_layout(app);
-    let target = layout.pane_terminal_size();
-
-    // Keep the manager's "new session" size current even when nothing needs
-    // resizing, so a freshly-connected shell's PTY matches the visible width
-    // (otherwise its ls/output would wrap for the old default width).
-    app.manager
-        .set_default_terminal_size(target.cols, target.rows);
-
-    // Skip the common no-change case so a window drag does not spam resizes.
-    // Pane add/close changes the pane count → the per-pane target changes, so
-    // this still fits panes on split/unsplit; a same-count session *swap* fits
-    // the swapped-in session explicitly in the ActivateSession handler.
-    if target == app.terminal_size {
-        return;
-    }
-
-    // A width change reflows the grid, which renumbers every absolute scrollback
-    // row. The selection is anchored in that numbering and the scroll offset is
-    // counted against the old row total, so both would point at different text
-    // afterwards. Anchor them to logical lines — the pre-wrap unit, which a
-    // re-wrap preserves — and resolve them back once the resize has landed. A
-    // height change re-wraps nothing and leaves the numbering intact.
-    let reflowing = target.cols != app.terminal_size.cols;
-    let anchors = reflowing.then(|| capture_reflow_anchors(app));
-
-    app.terminal_size = target;
-
-    if app.panes.is_empty() {
-        if app.manager.active_session().is_some() {
-            if let Err(error) = app.manager.resize_active(target.cols, target.rows) {
-                app.last_error = Some(runtime(&error));
+/// Ctrl+wheel respects an explicit profile size; inherited panes keep the
+/// existing global zoom behavior. The appearance dialog always edits global size.
+pub(crate) fn zoom_terminal(app: &mut AditApp, delta: i32) {
+    let profile = app.manager.active_session_summary()
+        .and_then(|summary| app.manager.profile(summary.profile_id)).cloned();
+    if let Some(profile) = profile.filter(|p| p.session_options.terminal_appearance.font_size.is_some()) {
+        let mut options = profile.session_options;
+        let size = i32::from(options.terminal_appearance.font_size.unwrap());
+        options.terminal_appearance.font_size = Some(
+            (size + delta).clamp(MIN_FONT_SIZE as i32, MAX_FONT_SIZE as i32) as u8
+        );
+        match app.manager.set_profile_session_options(profile.id, options.clone()) {
+            Ok(()) => {
+                if app.selected_profile == Some(profile.id) {
+                    app.profile_options.update_appearance_preferences(&options);
+                }
+                sync_terminal_size(app);
+                persist_profiles(app);
             }
+            Err(error) => app.last_error = Some(runtime(&error)),
         }
     } else {
-        for &session_id in &app.panes {
-            if let Err(error) = app.manager.resize_session(session_id, target.cols, target.rows) {
-                app.last_error = Some(runtime(&error));
-            }
+        step_font_size(app, delta);
+    }
+}
+
+pub(crate) fn sync_terminal_size(app: &mut AditApp) {
+    // Desktop pixels can change even when no terminal cell count changes.
+    maybe_resize_active_rdp(app);
+    let layout = pane_layout(app);
+    let active = app.manager.active_session();
+    let target = layout.pane_terminal_size(active_terminal_style(app).metrics);
+    app.manager.set_default_terminal_size(target.cols, target.rows);
+    let mut sessions = if app.fullscreen || app.panes.is_empty() {
+        active.into_iter().collect::<Vec<_>>()
+    } else {
+        app.panes.clone()
+    };
+    sessions.sort_by_key(|id| id.to_string());
+    sessions.dedup();
+    // Compare each real grid, not the focused pane's previous size: a same-size
+    // layout can contain different fonts or a swapped-in session.
+    let targets: Vec<_> = sessions.into_iter().filter_map(|id| {
+        if app.manager.session_is_desktop(id) { return None; }
+        let target = layout.pane_terminal_size(terminal_style_for(app, Some(id)).metrics);
+        let old = app.manager.snapshot_for(id, Viewport::tail(1)).size;
+        (old != target).then_some((id, old, target))
+    }).collect();
+    let reflowing = targets.iter().any(|(id, old, new)| Some(*id) == active && old.cols != new.cols);
+    // Reflow renumbers absolute scrollback rows. Keep selection and the scrolled
+    // top row attached to logical lines, then resolve after every resize lands.
+    let anchors = reflowing.then(|| capture_reflow_anchors(app));
+    app.terminal_size = target;
+    for (id, _, size) in targets {
+        if let Err(error) = app.manager.resize_session(id, size.cols, size.rows) {
+            app.last_error = Some(runtime(&error));
         }
     }
-
-    if let Some(anchors) = anchors {
-        restore_reflow_anchors(app, &anchors);
-    }
+    if reflowing && !app.search_query.is_empty() { recompute_search(app); }
+    if let Some(anchors) = anchors { restore_reflow_anchors(app, &anchors); }
+    clamp_terminal_scroll(app);
 }
 
 /// The selection ends and the scrolled-to top row, anchored to logical lines so
@@ -2421,11 +2428,6 @@ pub(crate) fn activate_session(app: &mut AditApp, session_id: SessionId) {
             app.focused_pane = pos;
         } else if app.focused_pane < app.panes.len() {
             app.panes[app.focused_pane] = session_id;
-            let _ = app.manager.resize_session(
-                session_id,
-                app.terminal_size.cols,
-                app.terminal_size.rows,
-            );
         }
     }
     if let Err(error) = app.manager.activate(session_id) {
@@ -2457,6 +2459,7 @@ pub(crate) fn focus_pane(app: &mut AditApp, index: usize) {
         app.terminal_scroll_offset = 0;
         app.terminal_selection = None;
     }
+    sync_terminal_size(app);
     if app.main_view == MainView::Missions {
         // Remember focus independently of the visible pane vector.
         missions::activate_mission_session(app, session_id);

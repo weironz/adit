@@ -3,7 +3,7 @@ use std::fmt;
 use uuid::Uuid;
 
 mod session_options;
-pub use session_options::{DesktopMonitor, DesktopQuality, LogPolicy, OutputTrigger, ReconnectPolicy, SessionOptions, TerminalEncoding, TriggerAction};
+pub use session_options::{DesktopMonitor, DesktopQuality, LogPolicy, OutputTrigger, ReconnectPolicy, SessionOptions, TerminalAppearance, TerminalEncoding, TerminalPalette, TriggerAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProfileId(Uuid);

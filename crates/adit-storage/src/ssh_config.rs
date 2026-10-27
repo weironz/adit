@@ -198,12 +198,11 @@ fn effective(blocks: &[Block], alias: &str) -> Result<Effective, String> {
                     result.proxy = Some((key.clone(), values.join(" ")));
                 }
                 // Metadata import never evaluates local/remote commands.
-                "localcommand" | "remotecommand" | "permitlocalcommand" => {
-                    if key != "permitlocalcommand" || !single()?.eq_ignore_ascii_case("no") {
-                        return Err(format!(
-                            "第 {line} 行：配置含 {key} 命令，导入不会执行命令，请移除后重试"
-                        ));
-                    }
+                "localcommand" | "remotecommand" | "permitlocalcommand"
+                    if key != "permitlocalcommand" || !single()?.eq_ignore_ascii_case("no") => {
+                    return Err(format!(
+                        "第 {line} 行：配置含 {key} 命令，导入不会执行命令，请移除后重试"
+                    ));
                 }
                 _ => {}
             }

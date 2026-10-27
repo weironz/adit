@@ -534,6 +534,7 @@ pub(crate) fn appearance_scheme_button(index: usize, current: u8) -> Element<'st
 pub(crate) fn appearance_highlight_button(
     spec: &'static highlight::RuleSpec,
     on: bool,
+    style: TerminalStyle,
 ) -> Element<'static, Message> {
     // The swatch is the rule's own colour resolved through the active scheme, so
     // the dialog shows what the rule will actually look like rather than a
@@ -542,7 +543,7 @@ pub(crate) fn appearance_highlight_button(
         .width(Length::Fixed(14.0))
         .height(Length::Fixed(14.0))
         .style(move |_theme| container::Style {
-            background: Some(Background::Color(palette_color(spec.ansi))),
+            background: Some(Background::Color(style.indexed(spec.ansi))),
             border: Border {
                 radius: 3.0.into(),
                 ..Border::default()
@@ -608,6 +609,7 @@ pub(crate) fn wrap_rows(mut buttons: Vec<Element<'static, Message>>, per_row: us
 }
 
 pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
+    let style = global_terminal_style(app);
     let current_font = font_preset_index(&app.font_family);
     let current_scheme = color_scheme_index(&app.color_scheme);
     let size = app.font_size as i32;
@@ -626,7 +628,7 @@ pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
                 .get(spec.id)
                 .copied()
                 .unwrap_or(spec.enabled);
-            appearance_highlight_button(spec, on)
+            appearance_highlight_button(spec, on, style)
         })
         .collect();
 
@@ -652,15 +654,14 @@ pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
     .spacing(8)
     .align_y(Alignment::Center);
 
-    // Live preview — the static appearance is already set for this frame, so the
-    // sample renders in exactly the chosen font + palette.
+    // The global preview carries its own style even with differently styled panes behind it.
     let swatches = (0..16).fold(row![].spacing(2), |r, i| {
         r.push(
             container(Space::new())
                 .width(Length::Fixed(13.0))
                 .height(Length::Fixed(13.0))
                 .style(move |_theme| container::Style {
-                    background: Some(Background::Color(palette_color(i))),
+                    background: Some(Background::Color(style.indexed(i))),
                     border: Border {
                         radius: 2.0.into(),
                         ..Border::default()
@@ -672,17 +673,17 @@ pub(crate) fn appearance_section(app: &AditApp) -> Element<'_, Message> {
     let preview = container(
         column![
             text("adit@host:~/project$  ls -la  AaBbCc 0123")
-                .size(term_font_size())
-                .font(term_font())
-                .color(default_foreground()),
+                .size(style.metrics.font_size)
+                .font(style.font)
+                .color(style.foreground()),
             swatches,
         ]
         .spacing(8),
     )
     .width(Fill)
     .padding(12)
-    .style(|_theme| container::Style {
-        background: Some(Background::Color(terminal_background())),
+    .style(move |_theme| container::Style {
+        background: Some(Background::Color(style.background())),
         border: Border {
             color: border_color(),
             width: 1.0,
@@ -980,7 +981,7 @@ pub(crate) fn paste_confirm_overlay(app: &AditApp) -> Element<'_, Message> {
             .width(Fill)
             .padding(10)
             .style(|_theme| container::Style {
-                background: Some(Background::Color(terminal_background())),
+                background: Some(Background::Color(surface_sunken())),
                 border: border(RADIUS_SM, 1.0, border_color()),
                 ..container::Style::default()
             }),

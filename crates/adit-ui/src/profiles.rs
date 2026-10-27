@@ -1065,6 +1065,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
                 };
             }
             load_selected_profile(app);
+            sync_terminal_size(app);
             app.collapsed_groups.remove(app.profile_group.trim());
             if persist_profiles(app) {
                 app.last_error = None;

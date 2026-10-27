@@ -3,12 +3,6 @@ use iced::widget::column;
 
 pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
     DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
-    TERM_FONT.store(font_preset_index(&app.font_family), Ordering::Relaxed);
-    TERM_FONT_SIZE.store(
-        (app.font_size as u32).clamp(MIN_FONT_SIZE, MAX_FONT_SIZE),
-        Ordering::Relaxed,
-    );
-    TERM_SCHEME.store(color_scheme_index(&app.color_scheme), Ordering::Relaxed);
 
     // The rail is outside the switch on purpose: it is what stays put when a
     // host is opened, so getting back to the list never means closing a session.

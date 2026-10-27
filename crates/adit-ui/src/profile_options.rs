@@ -7,6 +7,7 @@ use iced::widget::column;
 
 #[derive(Debug, Clone)]
 pub enum ProfileOptionEdit {
+    Appearance(AppearanceEdit),
     Encoding(TerminalEncoding),
     Quality(Option<DesktopQuality>),
     EnvAdd,
@@ -33,6 +34,7 @@ pub enum ProfileOptionEdit {
 }
 
 pub(crate) struct ProfileOptionsForm {
+    appearance: appearance_editor::AppearanceForm,
     options: SessionOptions,
     environment: Vec<(String, String)>,
     attempts: String,
@@ -50,6 +52,7 @@ impl ProfileOptionsForm {
     pub(crate) fn from_options(options: SessionOptions) -> Self {
         let policy = options.reconnect.clone().unwrap_or_default();
         Self {
+            appearance: appearance_editor::AppearanceForm::new(&options.terminal_appearance),
             environment: options
                 .environment
                 .iter()
@@ -64,6 +67,7 @@ impl ProfileOptionsForm {
 
     pub(crate) fn value(&self) -> Result<SessionOptions, String> {
         let mut value = self.options.clone();
+        value.terminal_appearance = self.appearance.value()?;
         value.environment.clear();
         for (key, item) in &self.environment {
             if key.trim().is_empty() && item.is_empty() {
@@ -94,8 +98,14 @@ impl ProfileOptionsForm {
         self.options.rdp_selected_monitor = options.rdp_selected_monitor;
     }
 
+    pub(crate) fn update_appearance_preferences(&mut self, options: &SessionOptions) {
+        self.options.terminal_appearance = options.terminal_appearance.clone();
+        self.appearance = appearance_editor::AppearanceForm::new(&options.terminal_appearance);
+    }
+
     pub(crate) fn update(&mut self, edit: ProfileOptionEdit) {
         match edit {
+            ProfileOptionEdit::Appearance(edit) => self.appearance.update(edit),
             ProfileOptionEdit::Encoding(v) => self.options.encoding = v,
             ProfileOptionEdit::Quality(v) => self.options.rdp_quality = v,
             ProfileOptionEdit::EnvAdd => {
@@ -234,10 +244,11 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
     }
     if !matches!(
         app.profile_protocol,
-        Protocol::Ssh | Protocol::LocalShell | Protocol::Serial | Protocol::Telnet
+        Protocol::Ssh | Protocol::Sftp | Protocol::LocalShell | Protocol::Serial | Protocol::Telnet
     ) {
         return body.into();
     }
+    body = body.push(appearance_editor::appearance_editor(&form.appearance, app));
     if app.profile_protocol != Protocol::Sftp {
         body = body.push(dialog_field(
             "字符编码",

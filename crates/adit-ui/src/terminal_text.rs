@@ -10,10 +10,10 @@ pub(super) fn max_scroll_offset_for(snapshot: &TerminalSnapshot, rows: usize) ->
     snapshot.total_rows.saturating_sub(rows.max(1))
 }
 
-pub(super) fn scroll_delta_to_rows(delta: mouse::ScrollDelta) -> Option<i32> {
+pub(super) fn scroll_delta_to_rows(delta: mouse::ScrollDelta, metrics: TerminalMetrics) -> Option<i32> {
     let raw = match delta {
         mouse::ScrollDelta::Lines { y, .. } => y * 3.0,
-        mouse::ScrollDelta::Pixels { y, .. } => y / cell_height(),
+        mouse::ScrollDelta::Pixels { y, .. } => y / metrics.cell_height,
     };
 
     if raw.abs() < f32::EPSILON {

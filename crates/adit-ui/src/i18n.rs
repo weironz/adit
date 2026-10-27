@@ -103,6 +103,18 @@ fn fill(template: &str, args: &[&dyn std::fmt::Display]) -> String {
 }
 
 const COMMON: &[(&str, &str)] = &[
+    ("字号必须为 9–28 的整数；留空继承全局", "Font size must be an integer from 9 to 28; leave blank to inherit"),
+    ("颜色请填写 #RRGGBB，例如 #201818", "Enter a color as #RRGGBB, for example #201818"),
+    ("继承全局", "Inherit global"),
+    ("此配置的终端外观", "Terminal appearance for this profile"),
+    ("全部继承全局", "Reset all to global"),
+    ("字号（留空继承）", "Font size (blank to inherit)"),
+    ("窗格背景（留空使用配色；PROD 自动提示）", "Pane background (blank for theme; PROD adds a warning tint)"),
+    ("自定义配色（随此配置保存，可通过配置目录导入导出）", "Custom palette (saved with this profile; included in catalog import/export)"),
+    ("背景", "Background"),
+    ("文字", "Text"),
+    ("选择", "Selection"),
+    ("ANSI 标准色 / 亮色", "ANSI normal / bright colors"),
     ("跳板机认证配置 {} 不存在或不是 SSH/SFTP 配置", "Jump authentication profile {} is missing or is not an SSH/SFTP profile"),
     ("准备另存为失败：{}", "Could not prepare download: {}"),
     ("拒绝并记住", "Reject and remember"),
@@ -947,6 +959,9 @@ const CONTEXTUAL: &[(&str, &str, &str)] = &[
 // Source templates from domain/session/storage are kept here, so the engine
 // stays language-neutral and every translation still has a Chinese source.
 const RUNTIME: &[(&str, &str)] = &[
+    ("终端外观配置无效", "Invalid terminal appearance settings"),
+    ("无效的自定义配色", "Invalid custom palette"),
+    ("自定义配色包含未知字段", "Custom palette contains unknown fields"),
     ("仅支持普通文件，拒绝设备、目录及链接", "Only regular files are supported; devices, directories and links are refused"),
     ("当前平台无法验证文件身份，已拒绝不安全的传输", "File identity cannot be verified on this platform; the unsafe transfer was refused"),
     ("拒绝重解析点目标", "Reparse point destinations are refused"),

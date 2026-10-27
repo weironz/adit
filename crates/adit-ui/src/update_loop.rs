@@ -2668,6 +2668,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::PaneMousePressed(index) => {
             commit_inline_rename(app);
             focus_pane(app, index);
+            app.terminal_pointer = Some(terminal_point_from_cursor(
+                app, window_to_pane_local(app, app.cursor_pos),
+            ));
             app.terminal_context_menu = false;
             if mouse_reporting_active(app) {
                 app.mouse_button_down = true;
@@ -2692,13 +2695,14 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if app.terminal_selecting && index != app.focused_pane {
                 return Task::none();
             }
-            let terminal_point = terminal_point_from_cursor(app, point);
+            let terminal_point = terminal_point_for_session(app, app.panes.get(index).copied(), point);
             app.terminal_pointer = Some(terminal_point);
             // Anchor the floating context menu using this pane's screen origin,
             // not the single-pane offset.
             let origin = pane_layout(app).pane_body_origin(index);
             app.cursor_pos = Point::new(origin.x + point.x, origin.y + point.y);
 
+            if index != app.focused_pane { return Task::none(); }
             if maybe_report_mouse_motion(app) {
                 return Task::none();
             }
@@ -2746,21 +2750,25 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::SelectionAutoScroll => {
             selection_autoscroll_tick(app);
         }
+        Message::PaneScrolled(index, delta) => {
+            focus_pane(app, index);
+            return update_message(app, Message::TerminalScrolled(delta));
+        }
         Message::TerminalScrolled(delta) => {
             app.terminal_focused = true;
             // Ctrl+wheel zooms the terminal font (wheel up = larger), like most
             // terminal emulators — this takes priority over scrolling/reporting.
             if app.modifiers.control() {
-                if let Some(lines) = scroll_delta_to_rows(delta) {
-                    step_font_size(app, if lines > 0 { 1 } else { -1 });
-                    app.notice = tf("终端字号 {}px", &[&(app.font_size as i32)]);
+                if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics) {
+                    zoom_terminal(app, if lines > 0 { 1 } else { -1 });
+                    app.notice = tf("终端字号 {}px", &[&(active_terminal_style(app).metrics.font_size as i32)]);
                 }
                 return Task::none();
             }
             // Forward the wheel to a mouse-reporting app instead of scrolling
             // local history.
             if mouse_reporting_active(app) {
-                if let Some(lines) = scroll_delta_to_rows(delta) {
+                if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics) {
                     let button = if lines > 0 { 64 } else { 65 };
                     for _ in 0..lines.unsigned_abs().min(5) {
                         send_mouse_report(app, button, true, false);
@@ -2768,7 +2776,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
                 return Task::none();
             }
-            if let Some(lines) = scroll_delta_to_rows(delta) {
+            if let Some(lines) = scroll_delta_to_rows(delta, active_terminal_style(app).metrics) {
                 apply_terminal_scroll(app, TerminalScrollAction::Lines(lines));
             }
         }
