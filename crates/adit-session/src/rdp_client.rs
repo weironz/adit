@@ -35,7 +35,10 @@ fn to_profile_monitor(m: &Monitor) -> adit_domain::DesktopMonitor {
 /// Environment override for the helper path (mainly for development/tests).
 const HELPER_ENV: &str = "ADIT_RDP_HOST";
 /// Helper executable file name.
+#[cfg(windows)]
 const HELPER_EXE: &str = "adit-rdp-host.exe";
+#[cfg(not(windows))]
+const HELPER_EXE: &str = "adit-rdp-host";
 
 /// A discrete event from the RDP session (framebuffer updates are applied to the
 /// surface directly and don't appear here).
@@ -563,10 +566,10 @@ fn locate_helper() -> Option<PathBuf> {
     }
     // Development fallbacks: the helper builds into its own workspace target dir.
     for rel in [
-        "crates/adit-rdp/target/release/adit-rdp-host.exe",
-        "crates/adit-rdp/target/debug/adit-rdp-host.exe",
+        "crates/adit-rdp/target/release",
+        "crates/adit-rdp/target/debug",
     ] {
-        let candidate = PathBuf::from(rel);
+        let candidate = PathBuf::from(rel).join(HELPER_EXE);
         if candidate.is_file() {
             return Some(candidate);
         }

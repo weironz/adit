@@ -119,3 +119,9 @@ windows = { version = "0.62", features = [
 
 [target.'cfg(windows)'.dev-dependencies]
 winit = "=0.30.13"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+clipboard-rs = { version = "=0.3.5", default-features = false }
+fuser = { version = "=0.18.0", default-features = false, features = ["libfuse3"] }
+libc = "0.2"
+url = "2"

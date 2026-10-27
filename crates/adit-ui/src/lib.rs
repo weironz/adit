@@ -1900,7 +1900,7 @@ pub fn run() -> iced::Result {
         }
         (app, Task::batch(tasks))
     };
-    native_windows::run(boot, window::Settings {
+    let result = native_windows::run(boot, window::Settings {
             icon: app_icon(),
             size: iced::Size::new(width, height),
             // NOT `maximized: true` on Windows — that flag at creation time IS
@@ -1922,7 +1922,9 @@ pub fn run() -> iced::Result {
             // works as written.
             maximized: !cfg!(windows),
             ..window::Settings::default()
-        })
+        });
+    clipboard_files::shutdown_file_clipboard();
+    result
 }
 
 /// The window/taskbar icon, decoded from a raw 256x256 RGBA blob embedded in

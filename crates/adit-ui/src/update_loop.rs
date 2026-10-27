@@ -325,6 +325,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::RdpTick => {
+            if let Some(error) = clipboard_files::take_clipboard_error() {
+                app.last_error = Some(runtime(&error));
+            }
             desktop_panes::refresh(app);
             flush_pending_rdp_resize(app);
             // Keys the hook swallowed, replayed to the remote as scancodes.

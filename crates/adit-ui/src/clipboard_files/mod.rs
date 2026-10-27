@@ -17,12 +17,16 @@
 //!   downloading them first.
 //!
 //! A trait over those three would be inventing a fourth model. So the shared
-//! part here is the part that genuinely is shared — turning a set of selected
+//! part here is the part that genuinely is shared — validating a read-only
+//! remote tree with bounded reads, turning a set of selected
 //! paths into the flat, relative-path list MS-RDPECLIP wants, and reading a byte
 //! range out of one — and the OS-specific clipboard access sits behind `cfg`.
 //!
 //! Nothing is ever copied or staged: a selection becomes metadata, and bytes are
-//! read from the original path only when the remote actually pastes.
+//! read from the original path only when the remote actually pastes. Linux
+//! publishes private read-only FUSE paths over X11's file-URI clipboard; reads
+//! stay on the filesystem worker and retain the originating session requester.
+//! Missing DISPLAY/FUSE support reports a clipboard error without closing RDP.
 
 // The bridge's *users* — `data_object` and `ole` — are Windows-only, but the
 // type itself cannot be, because it appears in `offer_remote_files`'s
@@ -30,8 +34,14 @@
 // non-Windows every item in here is unreachable by construction, which
 // `-D warnings` reports as six dead-code errors. Saying so is honest; gating
 // the module would mean two different signatures for one function.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 mod bridge;
+#[cfg(any(target_os = "linux", test))]
+mod remote_tree;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+mod linux_fuse;
 #[cfg(windows)]
 pub(crate) mod data_object;
 #[cfg(windows)]
@@ -62,14 +72,33 @@ pub(crate) fn offer_remote_files(
     });
 }
 
-/// Non-Windows builds ship no RDP at all, so there is nothing to publish.
-#[cfg(not(windows))]
+/// Linux exposes URI metadata backed by a private read-only FUSE mount.
+#[cfg(target_os = "linux")]
+pub(crate) fn offer_remote_files(
+    files: Vec<ClipFile>, bridge: ChunkBridge, requester: adit_session::RdpFileRequester, chunk: u32,
+) {
+    linux::offer(files, bridge, requester, chunk);
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn offer_remote_files(
     _files: Vec<ClipFile>,
     _bridge: ChunkBridge,
     _requester: adit_session::RdpFileRequester,
     _chunk: u32,
 ) {
+}
+
+pub(crate) fn take_clipboard_error() -> Option<String> {
+    #[cfg(target_os = "linux")]
+    return linux::take_error();
+    #[cfg(not(target_os = "linux"))]
+    None
+}
+
+pub(crate) fn shutdown_file_clipboard() {
+    #[cfg(target_os = "linux")]
+    linux::shutdown();
 }
 
 use std::path::{Path, PathBuf};
@@ -242,7 +271,12 @@ pub(crate) fn clipboard_sequence() -> u32 {
     unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+pub(crate) fn clipboard_sequence() -> u32 {
+    linux::sequence()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn clipboard_sequence() -> u32 {
     0
 }
@@ -403,9 +437,13 @@ pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
     }
 }
 
-/// Non-Windows builds do not ship RDP at all (the helper is
-/// `adit-rdp-host.exe`, located by name), so there is nothing to offer here.
-#[cfg(not(windows))]
+/// Linux reads file-URI selections on the clipboard worker.
+#[cfg(target_os = "linux")]
+pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
+    linux::paths()
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
     None
 }
