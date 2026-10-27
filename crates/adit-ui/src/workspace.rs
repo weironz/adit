@@ -205,7 +205,7 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         .into()
     };
 
-    let content = if app.manager.active_is_vnc() {
+    let content: Element<'_, Message> = if app.manager.active_is_vnc() {
         stack(vec![content, Element::new(vnc_cursor::CursorLayer {
             cursor: app.vnc_cursor.clone(), handle: app.vnc_cursor_handle.clone(), scale_x, scale_y,
             logical_size: iced::Size::new(f32::from(sw)/scale_x, f32::from(sh)/scale_y),
@@ -214,7 +214,11 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
             ime_enabled: vnc_accepts_text_input(app),
             preedit: app.vnc_preedit.clone(),
         })]).into()
-    } else { content };
+    } else {
+        stack(vec![content, desktop_panes::rdp_cursor_layer(app,
+            app.manager.active_session().expect("live desktop has a session"), scale_x, scale_y,
+            iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y))]).into()
+    };
     let surface = mouse_area(content)
         .on_move(move |p| {
             let x = (p.x * scale_x).clamp(0.0, f32::from(sw) - 1.0);
@@ -457,7 +461,7 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
                 rdp_toolbar_button("↔", "请求远端单屏适应窗口（影响共享桌面）", app.manager.active_vnc_resize_remote(), Some(Message::ToggleVncResize)),
                 rdp_toolbar_button("⌘", "抓取系统键（Windows）；Ctrl+Alt+Enter 释放", app.vnc_grab_keys, (live && !app.manager.active_vnc_read_only()).then_some(Message::ToggleVncGrab)),
             ].spacing(2)
-        } else { row![] },
+        } else { rdp_monitor_controls(app) },
         // Ctrl+Alt+Del and the clipboard are meaningless without a live desktop
         // to receive them, so they grey out rather than firing into a dead pipe.
         rdp_toolbar_button(
@@ -1575,4 +1579,60 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .style(|_theme| status_bar_style())
     .into()
+}
+
+fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
+    let Some((state, selected)) = app.manager.active_rdp_display_control() else {
+        return row![];
+    };
+    if state.max_monitors == 0 {
+        return row![text("显示器：等待服务端能力").size(10).color(muted_text())];
+    }
+    let mut controls = row![
+        rdp_toolbar_button(
+            "1屏",
+            "协商单显示器布局",
+            state.sent_layout.len() == 1,
+            Some(Message::RdpMonitorCount(1))
+        ),
+        rdp_toolbar_button(
+            "2屏",
+            "协商双显示器布局",
+            state.sent_layout.len() == 2,
+            (state.max_monitors >= 2).then_some(Message::RdpMonitorCount(2))
+        ),
+    ]
+    .spacing(2);
+    if state.sent_layout.len() > 1 && state.applied {
+        controls = controls.push(rdp_toolbar_button(
+            "全部",
+            "查看整个远程桌面",
+            selected.is_none(),
+            Some(Message::RdpMonitorSelected(None)),
+        ));
+        for i in 0..state.sent_layout.len() {
+            controls = controls.push(
+                button(text(format!("屏 {}", i + 1)).size(11))
+                    .padding([2, 5])
+                    .style(move |_, status| {
+                        rdp_toolbar_button_style(selected == Some(i), true, status)
+                    })
+                    .on_press(Message::RdpMonitorSelected(Some(i))),
+            );
+        }
+    } else if !state.sent_layout.is_empty() && !state.applied {
+        controls = controls.push(
+            text("布局已发送，等待桌面尺寸")
+                .size(10)
+                .color(muted_text()),
+        );
+    }
+    if let Some(error) = state.error {
+        controls = controls.push(
+            text(format!("显示器布局失败：{error}"))
+                .size(10)
+                .color(muted_text()),
+        );
+    }
+    controls
 }

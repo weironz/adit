@@ -1560,7 +1560,13 @@ impl SessionManager {
             quality: self.profile_rdp_quality(profile_id),
         };
 
-        let handle = rdp_client::spawn_rdp_session(request)
+        profile.session_options.validate().map_err(SessionError::Unsupported)?;
+        let monitors = profile.session_options.rdp_monitors.as_ref().map_or_else(Vec::new, |items| {
+            items.iter().map(rdp_client::to_wire_monitor).collect()
+        });
+        let handle = RdpClientHandle::spawn_with_monitors(
+            request, monitors, profile.session_options.rdp_selected_monitor,
+        )
             .map_err(|error| SessionError::Unsupported(error.to_string()))?;
 
         let session_id = SessionId::new();

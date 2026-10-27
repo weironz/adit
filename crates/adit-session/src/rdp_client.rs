@@ -12,7 +12,24 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ClipFile, ConnectRequest, HostMsg, InputEvent};
+use adit_rdp_proto::{monitor_bounds, DisplayControlState, Monitor, PointerUpdate};
+use adit_rdp_proto::{
+    read_msg, write_msg, ClientMsg, ClipFile, ConnectRequest, HostMsg, InputEvent,
+};
+
+pub(crate) fn to_wire_monitor(m: &adit_domain::DesktopMonitor) -> Monitor {
+    Monitor {
+        left: m.left, top: m.top, width: m.width, height: m.height,
+        primary: m.primary, scale_percent: m.scale_percent,
+    }
+}
+
+fn to_profile_monitor(m: &Monitor) -> adit_domain::DesktopMonitor {
+    adit_domain::DesktopMonitor {
+        left: m.left, top: m.top, width: m.width, height: m.height,
+        primary: m.primary, scale_percent: m.scale_percent,
+    }
+}
 
 /// Environment override for the helper path (mainly for development/tests).
 const HELPER_ENV: &str = "ADIT_RDP_HOST";
@@ -23,8 +40,14 @@ const HELPER_EXE: &str = "adit-rdp-host.exe";
 /// surface directly and don't appear here).
 #[derive(Debug, Clone)]
 pub enum RdpClientEvent {
-    Connected { width: u16, height: u16 },
-    Resized { width: u16, height: u16 },
+    Connected {
+        width: u16,
+        height: u16,
+    },
+    Resized {
+        width: u16,
+        height: u16,
+    },
     ClipboardText(String),
     VncClipboardText(vnc::ClipboardText),
     /// The remote copied files. The app should offer them on the Windows
@@ -52,7 +75,10 @@ pub enum RdpClientEvent {
     Notice(String),
     GatewayHostKey(adit_ssh::HostKeyPrompt),
     GatewayAuthPrompt(adit_ssh::AuthPromptRequest),
-    VncReconnecting { attempt: u32, delay_secs: u64 },
+    VncReconnecting {
+        attempt: u32,
+        delay_secs: u64,
+    },
     Closed,
 }
 
@@ -63,6 +89,13 @@ pub(super) struct Surface {
     pub(super) width: u16,
     pub(super) height: u16,
     pub(super) generation: u64,
+    pointer: Option<super::VncCursor>,
+    pointer_position: Option<(u16, u16)>,
+    pointer_generation: u64,
+    pointer_position_generation: u64,
+    display: DisplayControlState,
+    selected_monitor: Option<usize>,
+    layout_pending: bool,
 }
 
 /// Ceiling per side for a framebuffer allocation. Mirrors the request-side clamp
@@ -82,14 +115,117 @@ impl Surface {
             width,
             height,
             generation: 0,
+            pointer: None,
+            pointer_position: None,
+            pointer_generation: 0,
+            pointer_position_generation: 0,
+            display: DisplayControlState::default(),
+            selected_monitor: None,
+            layout_pending: false,
         }
+    }
+
+    fn viewport(&self) -> (u16, u16, u16, u16) {
+        if self.display.applied {
+            if let Some(m) = self
+                .selected_monitor
+                .and_then(|i| self.display.sent_layout.get(i))
+            {
+                if let Ok((left, top, w, h)) = monitor_bounds(&self.display.sent_layout) {
+                    if (w, h) == (self.width, self.height) {
+                        return (
+                            (m.left - left) as u16,
+                            (m.top - top) as u16,
+                            m.width,
+                            m.height,
+                        );
+                    }
+                }
+            }
+        }
+        (0, 0, self.width, self.height)
+    }
+
+    fn update_pointer(&mut self, update: PointerUpdate) {
+        let position_only = matches!(&update, PointerUpdate::Position { .. });
+        match update {
+            PointerUpdate::Position { x, y } => {
+                self.pointer_position = Some((x, y));
+                self.pointer_position_generation = self.pointer_position_generation.wrapping_add(1);
+            }
+            PointerUpdate::Default => self.pointer = None,
+            PointerUpdate::Hidden => self.pointer = Some(super::VncCursor::default()),
+            PointerUpdate::Bitmap {
+                width,
+                height,
+                hotspot_x,
+                hotspot_y,
+                rgba,
+            } => {
+                if width == 0 && height == 0 && rgba.is_empty() {
+                    self.pointer = Some(super::VncCursor::default());
+                } else if width <= 384
+                    && height <= 384
+                    && hotspot_x < width
+                    && hotspot_y < height
+                    && rgba.len() == usize::from(width) * usize::from(height) * 4
+                {
+                    self.pointer = Some(super::VncCursor {
+                        width,
+                        height,
+                        hotspot_x,
+                        hotspot_y,
+                        rgba,
+                        generation: 0,
+                    });
+                } else {
+                    return;
+                }
+            }
+        }
+        if !position_only {
+            self.pointer_generation = self.pointer_generation.wrapping_add(1);
+            if let Some(shape) = &mut self.pointer {
+                shape.generation = self.pointer_generation;
+            }
+        }
+    }
+
+    fn resize(&mut self, width: u16, height: u16) {
+        let mut next = Surface::new(width, height);
+        let copy_w = usize::from(self.width.min(next.width)) * 4;
+        for row in 0..usize::from(self.height.min(next.height)) {
+            let src = row * usize::from(self.width) * 4;
+            let dst = row * usize::from(next.width) * 4;
+            next.rgba[dst..dst + copy_w].copy_from_slice(&self.rgba[src..src + copy_w]);
+        }
+        next.pointer = self.pointer.take();
+        next.pointer_position = self.pointer_position;
+        next.pointer_generation = self.pointer_generation;
+        next.pointer_position_generation = self.pointer_position_generation;
+        next.display = std::mem::take(&mut self.display);
+        next.selected_monitor = self.selected_monitor;
+        next.layout_pending = self.layout_pending;
+        next.generation = self.generation.wrapping_add(1);
+        next.match_layout_size();
+        *self = next;
+    }
+
+    fn match_layout_size(&mut self) {
+        self.display.applied = monitor_bounds(&self.display.sent_layout)
+            .is_ok_and(|(_, _, w, h)| (w, h) == (self.width, self.height));
     }
 
     /// Blit a tile into the surface, ignoring anything out of bounds (defensive
     /// against a malformed message).
     pub(super) fn blit(&mut self, x: u16, y: u16, tw: u16, th: u16, rgba: &[u8]) {
         let (sw, sh) = (usize::from(self.width), usize::from(self.height));
-        let (x, y, tw, th) = (usize::from(x), usize::from(y), usize::from(tw), usize::from(th));
+        let (x, y, tw, th) = (
+            usize::from(x),
+            usize::from(y),
+            usize::from(tw),
+            usize::from(th),
+        );
         if x + tw > sw || y + th > sh || rgba.len() < tw * th * 4 {
             return;
         }
@@ -134,6 +270,12 @@ pub struct RdpFrame {
     pub generation: u64,
 }
 
+pub struct RdpCursorSnapshot {
+    pub shape: Option<super::VncCursor>,
+    pub position: Option<(u16, u16)>,
+    pub position_generation: u64,
+}
+
 /// Handle to a live RDP session running in the helper process.
 pub struct RdpClientHandle {
     cmd_tx: std_mpsc::Sender<ClientMsg>,
@@ -147,7 +289,24 @@ pub struct RdpClientHandle {
 
 impl RdpClientHandle {
     /// Send an input event to the session.
-    pub fn send_input(&self, event: InputEvent) {
+    pub fn send_input(&self, mut event: InputEvent) {
+        if let Ok(surface) = self.surface.lock() {
+            match &mut event {
+                InputEvent::MouseMove { x, y } => {
+                    let (left, top, width, height) = surface.viewport();
+                    *x = (*x).min(width - 1).saturating_add(left);
+                    *y = (*y).min(height - 1).saturating_add(top);
+                }
+                // Window resize must not replace a multi-monitor layout with
+                // ActiveStage's single-primary resize message.
+                InputEvent::Resize { .. }
+                    if surface.layout_pending || surface.display.sent_layout.len() > 1 =>
+                {
+                    return
+                }
+                _ => {}
+            }
+        }
         let _ = self.cmd_tx.send(ClientMsg::Input(event));
     }
 
@@ -165,7 +324,9 @@ impl RdpClientHandle {
     /// Answer a [`RdpClientEvent::FileContentsNeeded`]. `None` reports a failed
     /// read, which becomes the protocol's error response.
     pub fn answer_file_contents(&self, stream_id: u32, data: Option<Vec<u8>>) {
-        let _ = self.cmd_tx.send(ClientMsg::FileContents { stream_id, data });
+        let _ = self
+            .cmd_tx
+            .send(ClientMsg::FileContents { stream_id, data });
     }
 
     /// A handle for asking the remote for file bytes.
@@ -203,12 +364,59 @@ impl RdpClientHandle {
         if surface.generation == last_generation {
             return None;
         }
+        let (x, y, width, height) = surface.viewport();
+        let mut rgba = Vec::with_capacity(usize::from(width) * usize::from(height) * 4);
+        for row in y..y + height {
+            let start = (usize::from(row) * usize::from(surface.width) + usize::from(x)) * 4;
+            rgba.extend_from_slice(&surface.rgba[start..start + usize::from(width) * 4]);
+        }
         Some(RdpFrame {
-            rgba: surface.rgba.clone(),
-            width: surface.width,
-            height: surface.height,
+            rgba,
+            width,
+            height,
             generation: surface.generation,
         })
+    }
+
+    /// Session creation adapter for persisted monitor preferences.
+    pub fn spawn_with_monitors(
+        request: ConnectRequest,
+        monitors: Vec<Monitor>,
+        selected_monitor: Option<usize>,
+    ) -> Result<Self, RdpClientError> {
+        if !monitors.is_empty() {
+            monitor_bounds(&monitors).map_err(|e| RdpClientError::Io(e.to_owned()))?;
+        }
+        if selected_monitor.is_some_and(|i| i >= monitors.len()) {
+            return Err(RdpClientError::Io(
+                "selected monitor index is outside the layout".to_owned(),
+            ));
+        }
+        let handle = spawn_rdp_session(request)?;
+        if !monitors.is_empty() {
+            handle
+                .configure_monitors(monitors, selected_monitor)
+                .map_err(RdpClientError::Io)?;
+        }
+        Ok(handle)
+    }
+
+    pub fn configure_monitors(
+        &self,
+        monitors: Vec<Monitor>,
+        selected: Option<usize>,
+    ) -> Result<(), String> {
+        monitor_bounds(&monitors).map_err(str::to_owned)?;
+        if selected.is_some_and(|i| i >= monitors.len()) {
+            return Err("selected monitor index is outside the layout".to_owned());
+        }
+        if let Ok(mut surface) = self.surface.lock() {
+            surface.layout_pending = true;
+            surface.selected_monitor = selected;
+        }
+        self.cmd_tx
+            .send(ClientMsg::Input(InputEvent::MonitorLayout(monitors)))
+            .map_err(|_| "RDP helper command channel is closed".to_owned())
     }
 }
 
@@ -354,7 +562,14 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
             // real session with the password the user can't see or control). The
             // writer takes `cmd_rx` by value; the reader takes a clone of `event_tx`
             // so this thread keeps the original for error reporting.
-            if let Err(error) = wire_up(&mut child, request, cmd_rx, cmd_tx_reader, event_tx.clone(), &surface_bg) {
+            if let Err(error) = wire_up(
+                &mut child,
+                request,
+                cmd_rx,
+                cmd_tx_reader,
+                event_tx.clone(),
+                &surface_bg,
+            ) {
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = event_tx.send(RdpClientEvent::Error(error.to_string()));
@@ -423,26 +638,13 @@ fn wire_up(
                 match read_msg::<_, HostMsg>(&mut stdout) {
                     Ok(Some(HostMsg::Connected { width, height })) => {
                         if let Ok(mut s) = reader_surface.lock() {
-                            *s = Surface::new(width, height);
+                            s.resize(width, height);
                         }
                         let _ = event_tx.send(RdpClientEvent::Connected { width, height });
                     }
                     Ok(Some(HostMsg::Resized { width, height })) => {
                         if let Ok(mut s) = reader_surface.lock() {
-                            // Carry the old pixels into the new surface (top-left
-                            // intersection): a zeroed buffer here painted the
-                            // whole pane black for the frames between the resize
-                            // and the first full frame at the new size.
-                            let old = std::mem::replace(&mut *s, Surface::new(width, height));
-                            let copy_w = usize::from(old.width.min(width)) * 4;
-                            let copy_h = usize::from(old.height.min(height));
-                            for row in 0..copy_h {
-                                let src = row * usize::from(old.width) * 4;
-                                let dst = row * usize::from(width) * 4;
-                                s.rgba[dst..dst + copy_w]
-                                    .copy_from_slice(&old.rgba[src..src + copy_w]);
-                            }
-                            s.generation = old.generation.wrapping_add(1);
+                            s.resize(width, height);
                         }
                         let _ = event_tx.send(RdpClientEvent::Resized { width, height });
                     }
@@ -490,6 +692,23 @@ fn wire_up(
                     Ok(Some(HostMsg::FileContents { stream_id, data })) => {
                         let _ = event_tx.send(RdpClientEvent::FileContents { stream_id, data });
                     }
+                    Ok(Some(HostMsg::Pointer(pointer))) => {
+                        if let Ok(mut s) = reader_surface.lock() {
+                            s.update_pointer(pointer);
+                        }
+                    }
+                    Ok(Some(HostMsg::DisplayControl(state))) => {
+                        if let Ok(mut s) = reader_surface.lock() {
+                            s.display = state;
+                            // A capability announcement is not the answer to an
+                            // initial request still waiting inside the helper.
+                            if !s.display.sent_layout.is_empty() || s.display.error.is_some() {
+                                s.layout_pending = false;
+                            }
+                            s.match_layout_size();
+                            s.generation = s.generation.wrapping_add(1);
+                        }
+                    }
                     Ok(Some(HostMsg::Tile {
                         x,
                         y,
@@ -521,4 +740,298 @@ fn wire_up(
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
     Ok(())
+}
+
+// These adapters live with the RDP client to keep the generic session lifecycle
+// and ConnectionProfile untouched while exposing metadata to both desktop views.
+impl super::SessionManager {
+    pub fn session_rdp_cursor(&self, id: super::SessionId) -> Option<RdpCursorSnapshot> {
+        let record = self.sessions.get(&id)?;
+        if record.summary.status != super::SessionStatus::Connected
+            || record.desktop_error.is_some()
+        {
+            return None;
+        }
+        let surface = record.rdp.as_ref()?.surface.lock().ok()?;
+        let (left, top, width, height) = surface.viewport();
+        let position = surface.pointer_position.and_then(|(x, y)| {
+            (x >= left && y >= top && x - left < width && y - top < height)
+                .then(|| (x - left, y - top))
+        });
+        Some(RdpCursorSnapshot {
+            shape: surface.pointer.clone(),
+            position,
+            position_generation: surface.pointer_position_generation,
+        })
+    }
+
+    pub fn active_rdp_display_control(&self) -> Option<(DisplayControlState, Option<usize>)> {
+        let record = self.sessions.get(&self.active_session?)?;
+        let surface = record.rdp.as_ref()?.surface.lock().ok()?;
+        Some((surface.display.clone(), surface.selected_monitor))
+    }
+
+    pub fn select_active_rdp_monitor(&mut self, selected: Option<usize>) -> Result<(), String> {
+        let id = self.active_session.ok_or("没有活动会话")?;
+        let record = self.sessions.get(&id).ok_or("找不到活动会话")?;
+        let rdp = record.rdp.as_ref().ok_or("当前会话不是 RDP")?;
+        let profile_id = record.summary.profile_id;
+        let monitors = {
+            let surface = rdp.surface.lock().map_err(|_| "无法读取显示器布局")?;
+            if !surface.display.applied
+                || selected.is_some_and(|i| i >= surface.display.sent_layout.len())
+            {
+                return Err("远程桌面尚未应用该布局".into());
+            }
+            surface.display.sent_layout.clone()
+        };
+        let mut options = self.profile(profile_id).ok_or("找不到会话配置")?.session_options.clone();
+        options.rdp_monitors = Some(monitors.iter().map(to_profile_monitor).collect());
+        options.rdp_selected_monitor = selected;
+        options.validate()?;
+        {
+            let mut surface = rdp.surface.lock().map_err(|_| "无法读取显示器布局")?;
+            if !surface.display.applied || surface.display.sent_layout != monitors {
+                return Err("显示器布局已变化，请重试".into());
+            }
+            surface.selected_monitor = selected;
+            surface.generation = surface.generation.wrapping_add(1);
+        }
+        self.set_profile_session_options(profile_id, options.clone()).map_err(|e| e.to_string())?;
+        if let Some(record) = self.sessions.get_mut(&id) {
+            record.options.rdp_monitors = options.rdp_monitors;
+            record.options.rdp_selected_monitor = options.rdp_selected_monitor;
+        }
+        Ok(())
+    }
+
+    /// Convenient live single/dual layout choices. Arbitrary persisted layouts
+    /// use RdpClientHandle::spawn_with_monitors/configure_monitors instead.
+    pub fn set_active_rdp_monitor_count(&mut self, count: u16) -> Result<(), String> {
+        if !(1..=2).contains(&count) {
+            return Err("仅支持选择单屏或双屏布局".into());
+        }
+        let id = self.active_session.ok_or("没有活动会话")?;
+        let record = self.sessions.get(&id).ok_or("找不到活动会话")?;
+        let rdp = record.rdp.as_ref().ok_or("当前会话不是 RDP")?;
+        let profile_id = record.summary.profile_id;
+        let (width, height, max_area) = match rdp.surface.lock() {
+            Ok(s) => {
+                if count as u32 > s.display.max_monitors {
+                    return Err("服务端不支持所选显示器数量".into());
+                }
+                let (w, h) = s
+                    .display
+                    .sent_layout
+                    .first()
+                    .map_or((s.width, s.height), |m| (m.width, m.height));
+                // Grow the virtual desktop when adding a monitor. Splitting the
+                // old bounding box would appear to succeed even if the server
+                // ignored the request, because its size would already match.
+                (w.clamp(800, 4096) & !1, h.clamp(600, 8192), s.display.max_area)
+            }
+            Err(_) => return Err("无法读取显示器布局".into()),
+        };
+        let monitors: Vec<Monitor> = (0..count)
+            .map(|i| Monitor {
+                left: i32::from(i * width),
+                top: 0,
+                width,
+                height,
+                primary: i == 0,
+                scale_percent: 100,
+            })
+            .collect();
+        monitor_bounds(&monitors).map_err(str::to_owned)?;
+        let area: u64 = monitors.iter().map(|m| u64::from(m.width) * u64::from(m.height)).sum();
+        if area > max_area { return Err("布局超过服务端支持的总面积".into()); }
+        let mut options = self.profile(profile_id).ok_or("找不到会话配置")?.session_options.clone();
+        options.rdp_monitors = Some(monitors.iter().map(to_profile_monitor).collect());
+        options.rdp_selected_monitor = None;
+        options.validate()?;
+        rdp.configure_monitors(monitors, None)?;
+        self.set_profile_session_options(profile_id, options.clone()).map_err(|e| e.to_string())?;
+        if let Some(record) = self.sessions.get_mut(&id) {
+            record.options.rdp_monitors = options.rdp_monitors;
+            record.options.rdp_selected_monitor = None;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod rdp_presentation_tests {
+    use super::*;
+    fn monitors() -> Vec<Monitor> {
+        vec![
+            Monitor {
+                left: -200,
+                top: 0,
+                width: 200,
+                height: 200,
+                primary: false,
+                scale_percent: 100,
+            },
+            Monitor {
+                left: 0,
+                top: 0,
+                width: 200,
+                height: 200,
+                primary: true,
+                scale_percent: 100,
+            },
+        ]
+    }
+    fn handle(surface: Surface) -> (RdpClientHandle, std_mpsc::Receiver<ClientMsg>) {
+        let (cmd_tx, rx) = std_mpsc::channel();
+        let (_, event_rx) = std_mpsc::channel();
+        (
+            RdpClientHandle {
+                cmd_tx,
+                event_rx,
+                surface: Arc::new(Mutex::new(surface)),
+                child: Arc::new(Mutex::new(None)),
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn monitor_choices_are_sent_and_persisted_without_replacing_other_session_options() {
+        let mut manager = super::super::SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        let old = adit_domain::ReconnectPolicy { max_attempts: 3, ..Default::default() };
+        let mut options = adit_domain::SessionOptions { reconnect: Some(old.clone()), ..Default::default() };
+        manager.set_profile_session_options(profile_id, options.clone()).unwrap();
+        let session = manager.open_mock_session(profile_id).unwrap();
+        let mut surface = Surface::new(800, 600);
+        surface.display.max_monitors = 2;
+        surface.display.max_area = 2 * 800 * 600;
+        let (rdp, rx) = handle(surface);
+        manager.sessions.get_mut(&session).unwrap().rdp = Some(rdp);
+
+        manager.set_active_rdp_monitor_count(2).unwrap();
+        let ClientMsg::Input(InputEvent::MonitorLayout(layout)) = rx.recv().unwrap() else {
+            panic!("expected an actual monitor layout command");
+        };
+        assert_eq!(layout.len(), 2);
+        assert_eq!(manager.profile(profile_id).unwrap().session_options.rdp_monitors.as_ref().unwrap().len(), 2);
+
+        // A profile edit made after connection must not overwrite that session's
+        // unrelated reconnect snapshot when choosing a monitor.
+        options = manager.profile(profile_id).unwrap().session_options.clone();
+        options.reconnect = Some(adit_domain::ReconnectPolicy { max_attempts: 7, ..Default::default() });
+        manager.set_profile_session_options(profile_id, options).unwrap();
+        {
+            let record = manager.sessions.get_mut(&session).unwrap();
+            let mut surface = record.rdp.as_ref().unwrap().surface.lock().unwrap();
+            surface.display.sent_layout = layout;
+            surface.resize(1600, 600);
+        }
+        manager.select_active_rdp_monitor(Some(1)).unwrap();
+        assert_eq!(manager.profile(profile_id).unwrap().session_options.rdp_selected_monitor, Some(1));
+        assert_eq!(manager.session_options(session).unwrap().reconnect, Some(old));
+        let saved = serde_json::to_string(manager.profile(profile_id).unwrap()).unwrap();
+        let restored: adit_domain::ConnectionProfile = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.session_options.rdp_selected_monitor, Some(1));
+        assert_eq!(restored.session_options.rdp_monitors.unwrap().len(), 2);
+    }
+    #[test]
+    fn second_monitor_crop_and_input_use_identical_signed_layout_offset() {
+        let mut surface = Surface::new(400, 200);
+        surface.display.sent_layout = monitors();
+        surface.match_layout_size();
+        surface.selected_monitor = Some(1);
+        for row in 0..200usize {
+            for x in 0..400usize {
+                let start = (row * 400 + x) * 4;
+                surface.rgba[start..start + 4].copy_from_slice(&[
+                    (x / 200) as u8,
+                    row as u8,
+                    x as u8,
+                    255,
+                ]);
+            }
+        }
+        surface.generation = 3;
+        let (handle, rx) = handle(surface);
+        let frame = handle.frame_if_newer(0).unwrap();
+        assert_eq!((frame.width, frame.height), (200, 200));
+        assert_eq!(&frame.rgba[..4], &[1, 0, 200, 255]);
+        assert_eq!(&frame.rgba[frame.rgba.len() - 4..], &[1, 199, 143, 255]);
+        handle.send_input(InputEvent::MouseMove { x: 17, y: 23 });
+        assert!(matches!(
+            rx.recv().unwrap(),
+            ClientMsg::Input(InputEvent::MouseMove { x: 217, y: 23 })
+        ));
+        handle.send_input(InputEvent::Resize {
+            width: 800,
+            height: 600,
+        });
+        assert!(
+            rx.try_recv().is_err(),
+            "automatic resize must not erase the layout"
+        );
+    }
+    #[test]
+    fn monitor_selection_waits_for_size_and_survives_resize_metadata() {
+        let mut s = Surface::new(200, 200);
+        s.display.sent_layout = monitors();
+        s.selected_monitor = Some(1);
+        s.match_layout_size();
+        assert!(!s.display.applied);
+        assert_eq!(s.viewport(), (0, 0, 200, 200));
+        s.resize(400, 200);
+        assert!(s.display.applied);
+        assert_eq!(s.viewport(), (200, 0, 200, 200));
+        s.resize(9000, 1);
+        assert_eq!((s.width, s.height), (8192, 1));
+        assert!(!s.display.applied);
+    }
+    #[test]
+    fn ipc_cursor_stays_separate_from_frame_pixels_and_validates_malformed_bitmap() {
+        let mut s = Surface::new(2, 2);
+        let original = s.rgba.clone();
+        let update = PointerUpdate::Bitmap {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            rgba: vec![250, 120, 60, 128, 0, 255, 0, 255],
+        };
+        let mut pipe = Vec::new();
+        write_msg(&mut pipe, &HostMsg::Pointer(update)).unwrap();
+        let Some(HostMsg::Pointer(decoded)) = read_msg(&mut std::io::Cursor::new(pipe)).unwrap()
+        else {
+            panic!("pointer")
+        };
+        s.update_pointer(decoded);
+        assert_eq!(s.pointer.as_ref().unwrap().hotspot_x, 1);
+        assert_eq!(&s.pointer.as_ref().unwrap().rgba[..4], &[250, 120, 60, 128]);
+        s.update_pointer(PointerUpdate::Bitmap {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            rgba: vec![0],
+        });
+        assert_eq!(s.pointer.as_ref().unwrap().rgba.len(), 8);
+        s.update_pointer(PointerUpdate::Position { x: 1, y: 1 });
+        assert_eq!(s.pointer_position, Some((1, 1)));
+        let warp_generation = s.pointer_position_generation;
+        s.update_pointer(PointerUpdate::Position { x: 1, y: 1 });
+        assert_ne!(
+            s.pointer_position_generation, warp_generation,
+            "repeated server warps must not disappear"
+        );
+        s.update_pointer(PointerUpdate::Hidden);
+        assert_eq!(s.pointer.as_ref().unwrap().width, 0);
+        s.update_pointer(PointerUpdate::Default);
+        assert!(s.pointer.is_none());
+        assert_eq!(s.rgba, original);
+        assert_eq!(
+            s.generation, 0,
+            "pointer changes must not trigger full framebuffer upload"
+        );
+    }
 }

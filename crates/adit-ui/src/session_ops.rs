@@ -1933,6 +1933,18 @@ pub(crate) fn rdp_quality_label(quality: RdpQuality) -> &'static str {
     }
 }
 
+pub(crate) fn persist_rdp_monitor_preferences(app: &mut AditApp) {
+    let Some(profile_id) = app.manager.active_session_summary().map(|s| s.profile_id) else {
+        return;
+    };
+    if app.selected_profile == Some(profile_id) {
+        if let Some(profile) = app.manager.profile(profile_id) {
+            app.profile_options.update_monitor_preferences(&profile.session_options);
+        }
+    }
+    persist_profiles(app);
+}
+
 /// Send Ctrl+Alt+Del to the remote desktop.
 ///
 /// It cannot be typed: Windows reserves the real sequence for the local machine

@@ -8,8 +8,20 @@ pub struct SessionOptions {
     pub environment: BTreeMap<String, String>,
     pub encoding: TerminalEncoding,
     pub rdp_quality: Option<DesktopQuality>,
+    pub rdp_monitors: Option<Vec<DesktopMonitor>>,
+    pub rdp_selected_monitor: Option<usize>,
     pub reconnect: Option<ReconnectPolicy>,
     pub logging: Option<LogPolicy>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DesktopMonitor {
+    pub left: i32,
+    pub top: i32,
+    pub width: u16,
+    pub height: u16,
+    pub primary: bool,
+    pub scale_percent: u32,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +111,71 @@ pub struct LogPolicy {
 
 impl SessionOptions {
     pub fn validate(&self) -> Result<(), String> {
+        if let Some(monitors) = &self.rdp_monitors {
+            if monitors.is_empty()
+                || monitors.len() > 16
+                || monitors.iter().filter(|m| m.primary).count() != 1
+                || self.rdp_selected_monitor.is_some_and(|i| i >= monitors.len())
+                || monitors.iter().any(|m| {
+                    !(200..=8192).contains(&m.width)
+                        || m.width & 1 != 0
+                        || !(200..=8192).contains(&m.height)
+                        || !(100..=500).contains(&m.scale_percent)
+                        || !(-8192..=8192).contains(&m.left)
+                        || !(-8192..=8192).contains(&m.top)
+                        || (m.primary && (m.left != 0 || m.top != 0))
+                })
+            {
+                return Err("远程显示器配置无效".into());
+            }
+            for (index, m) in monitors.iter().enumerate() {
+                for other in &monitors[..index] {
+                    if m.left < other.left + i32::from(other.width)
+                        && other.left < m.left + i32::from(m.width)
+                        && m.top < other.top + i32::from(other.height)
+                        && other.top < m.top + i32::from(m.height)
+                    {
+                        return Err("远程显示器不能重叠".into());
+                    }
+                }
+            }
+            let left = monitors.iter().map(|m| m.left).min().unwrap_or(0);
+            let top = monitors.iter().map(|m| m.top).min().unwrap_or(0);
+            let right = monitors.iter().map(|m| m.left + i32::from(m.width)).max().unwrap_or(0);
+            let bottom = monitors.iter().map(|m| m.top + i32::from(m.height)).max().unwrap_or(0);
+            if right - left > 8192 || bottom - top > 8192 {
+                return Err("远程桌面宽高不能超过 8192 像素".into());
+            }
+            let mut connected = vec![false; monitors.len()];
+            let primary = monitors.iter().position(|m| m.primary).ok_or("缺少主显示器")?;
+            connected[primary] = true;
+            loop {
+                let mut changed = false;
+                for (index, a) in monitors.iter().enumerate() {
+                    if connected[index] { continue; }
+                    if monitors.iter().enumerate().any(|(other_index, b)| {
+                        connected[other_index]
+                            && (((a.left + i32::from(a.width) == b.left
+                                || b.left + i32::from(b.width) == a.left)
+                                && a.top < b.top + i32::from(b.height)
+                                && b.top < a.top + i32::from(a.height))
+                                || ((a.top + i32::from(a.height) == b.top
+                                    || b.top + i32::from(b.height) == a.top)
+                                    && a.left < b.left + i32::from(b.width)
+                                    && b.left < a.left + i32::from(a.width)))
+                    }) {
+                        connected[index] = true;
+                        changed = true;
+                    }
+                }
+                if !changed { break; }
+            }
+            if connected.contains(&false) {
+                return Err("远程显示器之间必须相邻".into());
+            }
+        } else if self.rdp_selected_monitor.is_some() {
+            return Err("请先配置远程显示器布局".into());
+        }
         if self.environment.len() > 64 {
             return Err("环境变量最多为 64 项".into());
         }
@@ -185,6 +262,28 @@ mod tests {
             }),
             ..Default::default()
         };
+        assert!(options.validate().is_err());
+    }
+
+    #[test]
+    fn monitor_preferences_reject_bad_selection_overlap_and_disconnected_layouts() {
+        let screen = DesktopMonitor {
+            left: 0, top: 0, width: 800, height: 600, primary: true, scale_percent: 100,
+        };
+        let mut options = SessionOptions {
+            rdp_monitors: Some(vec![screen.clone()]),
+            rdp_selected_monitor: Some(1),
+            ..Default::default()
+        };
+        assert!(options.validate().is_err());
+        options.rdp_selected_monitor = None;
+        options.rdp_monitors.as_mut().unwrap().push(DesktopMonitor {
+            left: 800, primary: false, ..screen.clone()
+        });
+        assert!(options.validate().is_ok());
+        options.rdp_monitors.as_mut().unwrap()[1].left = 799;
+        assert!(options.validate().is_err());
+        options.rdp_monitors.as_mut().unwrap()[1].left = 801;
         assert!(options.validate().is_err());
     }
 }

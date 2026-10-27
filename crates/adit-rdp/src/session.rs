@@ -9,7 +9,8 @@
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 
-use adit_rdp_proto::{ClipFile, ConnectRequest, HostMsg, InputEvent};
+use crate::display::{self, SharedDisplay};
+use adit_rdp_proto::{ClipFile, ConnectRequest, HostMsg, InputEvent, PointerUpdate};
 use ironrdp_connector::{ClientConnector, ConnectionResult, ServerName};
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
@@ -86,6 +87,8 @@ pub(crate) async fn run_session(
         "starting RDP session"
     );
     let shared_egfx = egfx::new_shared();
+    let shared_display = SharedDisplay::default();
+    let mut pending_layout = None;
     // Clipboard state outlives a single CLIPRDR channel on purpose: a GNOME
     // system-mode handover redirects and rebuilds the channel, and the text the
     // user copied did not change under them.
@@ -106,6 +109,7 @@ pub(crate) async fn run_session(
                 &request,
                 &shared_egfx,
                 &shared_clipboard,
+                &shared_display,
                 routing_token.as_deref(),
                 rdstls_creds.as_ref(),
             );
@@ -129,8 +133,10 @@ pub(crate) async fn run_session(
                         )));
                     }
                     msg = input_rx.recv() => {
-                        if msg.is_none() {
-                            return Err(RdpError::ControlChannelClosed);
+                        match msg {
+                            None => return Err(RdpError::ControlChannelClosed),
+                            Some(SessionCmd::Input(InputEvent::MonitorLayout(layout))) => pending_layout = Some(layout),
+                            _ => {}
                         }
                     }
                 }
@@ -160,12 +166,23 @@ pub(crate) async fn run_session(
             &host_tx,
             &shared_egfx,
             &shared_clipboard,
+            (&shared_display, &mut pending_layout),
         )
         .await
         .map_err(|e| RdpError::Session(e.to_string()))?
         {
             None => return Ok(()),
             Some(redir) => {
+                if pending_layout.is_none() {
+                    let sent = shared_display
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .sent_layout
+                        .clone();
+                    if !sent.is_empty() {
+                        pending_layout = Some(sent);
+                    }
+                }
                 redirects += 1;
                 if redirects > MAX_REDIRECTS {
                     return Err(RdpError::Session("too many server redirections".into()));
@@ -215,6 +232,7 @@ async fn connect(
     request: &ConnectRequest,
     shared_egfx: &SharedEgfx,
     shared_clipboard: &SharedClipboard,
+    shared_display: &SharedDisplay,
     routing_token: Option<&[u8]>,
     rdstls_creds: Option<&crate::rdstls::RdstlsCreds>,
 ) -> Result<(ConnectionResult, UpgradedFramed), ironrdp_connector::ConnectorError> {
@@ -251,8 +269,13 @@ async fn connect(
         };
     let egfx_client =
         GraphicsPipelineClient::new(Box::new(EgfxHandler::new(Arc::clone(shared_egfx))), h264);
+    let display_caps = Arc::clone(shared_display);
+    *shared_display.lock().unwrap_or_else(|e| e.into_inner()) = Default::default();
     let drdynvc = DrdynvcClient::new()
-        .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new())))
+        .with_dynamic_channel(DisplayControlClient::new(move |caps| {
+            display::capabilities(&display_caps, &caps);
+            Ok(Vec::new())
+        }))
         .with_dynamic_channel(egfx_client);
     // `mut` for the `&mut connector` borrows in `connect_begin` /
     // `mark_as_upgraded`, and for the optional-channel blocks below, which
@@ -317,19 +340,57 @@ async fn connect(
     Ok((connection_result, upgraded_framed))
 }
 
-/// Snapshot the whole decoded image as one framebuffer tile. `data()` is already
-/// `R,G,B,A`, which is exactly what the app's `iced` image expects.
-//
-// TODO(perf): send only the dirty region from `GraphicsUpdate` instead of the
-// full frame to cut IPC bandwidth; the app already keeps a full framebuffer.
-fn full_frame_tile(image: &DecodedImage) -> HostMsg {
-    HostMsg::Tile {
-        x: 0,
-        y: 0,
-        width: image.width(),
-        height: image.height(),
-        rgba: image.data().to_vec(),
-    }
+/// Copy only changed legacy pixels, using the same cost planner as EGFX.
+fn image_tiles(image: &DecodedImage, mut rects: Vec<egfx::Rect>) -> Vec<HostMsg> {
+    egfx::prefer_full_frame(
+        &mut rects,
+        usize::from(image.width()),
+        usize::from(image.height()),
+    );
+    rects
+        .into_iter()
+        .filter_map(|(x, y, w, h)| {
+            let fw = usize::from(image.width());
+            let fh = usize::from(image.height());
+            if x >= fw || y >= fh {
+                return None;
+            }
+            let w = w.min(fw - x);
+            let h = h.min(fh - y);
+            if w == 0 || h == 0 {
+                return None;
+            }
+            let mut rgba = Vec::with_capacity(w * h * 4);
+            for row in y..y + h {
+                let start = (row * fw + x) * 4;
+                rgba.extend_from_slice(&image.data()[start..start + w * 4]);
+            }
+            Some(HostMsg::Tile {
+                x: x as u16,
+                y: y as u16,
+                width: w as u16,
+                height: h as u16,
+                rgba,
+            })
+        })
+        .collect()
+}
+
+/// Keep accelerated RGBA and the hotspot intact, including cached updates.
+fn pointer_update(output: &ActiveStageOutput) -> Option<PointerUpdate> {
+    Some(match output {
+        ActiveStageOutput::PointerDefault => PointerUpdate::Default,
+        ActiveStageOutput::PointerHidden => PointerUpdate::Hidden,
+        ActiveStageOutput::PointerPosition { x, y } => PointerUpdate::Position { x: *x, y: *y },
+        ActiveStageOutput::PointerBitmap(p) => PointerUpdate::Bitmap {
+            width: p.width,
+            height: p.height,
+            hotspot_x: p.hotspot_x,
+            hotspot_y: p.hotspot_y,
+            rgba: p.bitmap_data.clone(),
+        },
+        _ => return None,
+    })
 }
 
 /// The head of a PDU as hex, for a log line about one we could not decode.
@@ -390,7 +451,9 @@ async fn active_session(
     host_tx: &std_mpsc::Sender<HostMsg>,
     egfx: &SharedEgfx,
     clip: &SharedClipboard,
+    display_request: (&SharedDisplay, &mut Option<Vec<adit_rdp_proto::Monitor>>),
 ) -> Result<Option<crate::redirect::Redirection>, ironrdp_session::SessionError> {
+    let (display, pending_layout) = display_request;
     let (mut reader, mut writer) = split_tokio_framed(framed);
 
     let desktop_size = connection_result.desktop_size;
@@ -400,6 +463,7 @@ async fn active_session(
     // A resize requested before the DisplayControl channel is up would be
     // silently dropped; park it here and retry once the channel connects.
     let mut pending_resize: Option<(u32, u32)> = None;
+    let mut last_display_state = None;
     let mut keys_logged = 0u32;
     // Frame-flow probe: a frozen desktop and a healthy one look identical from
     // outside, so record what actually reached the app.
@@ -460,6 +524,11 @@ async fn active_session(
                     None => {
                         input_open = false;
                         active_stage.graceful_shutdown()?
+                    }
+                    Some(SessionCmd::Input(InputEvent::MonitorLayout(layout))) => {
+                        *pending_layout = Some(layout);
+                        pending_resize = None;
+                        Vec::new()
                     }
                     Some(SessionCmd::Input(InputEvent::Resize { width, height })) => {
                         let (w, h) = MonitorLayoutEntry::adjust_display_size(
@@ -556,20 +625,32 @@ async fn active_session(
             }
         };
 
-        let mut dirty = false;
+        let mut dirty_rects = Vec::new();
         for out in outputs {
+            if let Some(pointer) = pointer_update(&out) {
+                if host_tx.send(HostMsg::Pointer(pointer)).is_err() {
+                    break 'session;
+                }
+                continue;
+            }
             match out {
                 ActiveStageOutput::ResponseFrame(frame_bytes) => writer
                     .write_all(&frame_bytes)
                     .await
                     .map_err(|e| ironrdp_session::custom_err!("write frame", e))?,
-                ActiveStageOutput::GraphicsUpdate(_region) => dirty = true,
-                // Pointer is composited into `image` (software rendering), so these
-                // need no separate handling for display.
-                ActiveStageOutput::PointerDefault
-                | ActiveStageOutput::PointerHidden
-                | ActiveStageOutput::PointerPosition { .. }
-                | ActiveStageOutput::PointerBitmap(_) => {}
+                ActiveStageOutput::GraphicsUpdate(region) => {
+                    if region.right >= region.left && region.bottom >= region.top {
+                        egfx::add_dirty_rect(
+                            &mut dirty_rects,
+                            (
+                                usize::from(region.left),
+                                usize::from(region.top),
+                                usize::from(region.right) - usize::from(region.left) + 1,
+                                usize::from(region.bottom) - usize::from(region.top) + 1,
+                            ),
+                        );
+                    }
+                }
                 ActiveStageOutput::DeactivateAll => {
                     // Deactivation-Reactivation (e.g. after a resize): re-run the
                     // activation sequence from the factory captured at connect time,
@@ -700,7 +781,15 @@ async fn active_session(
                             break 'activation;
                         }
                     }
-                    dirty = true;
+                    egfx::add_dirty_rect(
+                        &mut dirty_rects,
+                        (
+                            0,
+                            0,
+                            usize::from(image.width()),
+                            usize::from(image.height()),
+                        ),
+                    );
                 }
                 ActiveStageOutput::Terminate(_reason) => break 'session,
                 // Multitransport (UDP) and auto-detect are advisory; ignore.
@@ -731,9 +820,43 @@ async fn active_session(
         // `image` black apart from a software cursor); emitting it would flash a
         // black frame over the real content — including right after a
         // Deactivation-Reactivation, which rebuilds `image` empty.
-        if dirty && !egfx_active && host_tx.send(full_frame_tile(&image)).is_err() {
-            // The app stopped listening; end the session.
-            break 'session;
+        if !egfx_active {
+            for tile in image_tiles(&image, dirty_rects) {
+                if host_tx.send(tile).is_err() {
+                    break 'session;
+                }
+            }
+        }
+
+        if let Some(layout) = pending_layout.as_ref() {
+            if let Some(encoded) = display::encode_layout(&mut active_stage, layout, display) {
+                match encoded {
+                    Ok(bytes) => {
+                        writer
+                            .write_all(&bytes)
+                            .await
+                            .map_err(|e| ironrdp_session::custom_err!("write monitor layout", e))?;
+                        let mut state = display.lock().unwrap_or_else(|e| e.into_inner());
+                        state.sent_layout = layout.clone();
+                        state.applied = false;
+                        state.error = None;
+                    }
+                    Err(error) => {
+                        display.lock().unwrap_or_else(|e| e.into_inner()).error = Some(error)
+                    }
+                }
+                *pending_layout = None;
+            }
+        }
+        let state = display.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        if last_display_state.as_ref() != Some(&state) {
+            if host_tx
+                .send(HostMsg::DisplayControl(state.clone()))
+                .is_err()
+            {
+                break 'session;
+            }
+            last_display_state = Some(state);
         }
 
         // Retry a parked resize now that more channels may have connected.
@@ -829,5 +952,73 @@ mod process_error_tests {
         assert!(
             matches!(outputs.as_slice(), [ActiveStageOutput::ResponseFrame(bytes)] if bytes == &[1, 2, 3])
         );
+    }
+}
+
+#[cfg(test)]
+mod desktop_output_tests {
+    use super::*;
+    use ironrdp_graphics::pointer::DecodedPointer;
+    #[test]
+    fn actual_stage_pointer_outputs_keep_pixels_hotspot_visibility_and_position() {
+        let shape = Arc::new(DecodedPointer {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            bitmap_data: vec![250, 120, 60, 128, 0, 255, 0, 255],
+        });
+        let event = pointer_update(&ActiveStageOutput::PointerBitmap(Arc::clone(&shape))).unwrap();
+        let mut pipe = Vec::new();
+        adit_rdp_proto::write_msg(&mut pipe, &HostMsg::Pointer(event.clone())).unwrap();
+        let got = adit_rdp_proto::read_msg::<_, HostMsg>(&mut std::io::Cursor::new(pipe))
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(got, HostMsg::Pointer(PointerUpdate::Bitmap { width: 2, height: 1,
+            hotspot_x: 1, hotspot_y: 0, rgba }) if rgba == shape.bitmap_data)
+        );
+        assert_eq!(
+            pointer_update(&ActiveStageOutput::PointerHidden),
+            Some(PointerUpdate::Hidden)
+        );
+        assert_eq!(
+            pointer_update(&ActiveStageOutput::PointerDefault),
+            Some(PointerUpdate::Default)
+        );
+        assert_eq!(
+            pointer_update(&ActiveStageOutput::PointerPosition { x: 77, y: 31 }),
+            Some(PointerUpdate::Position { x: 77, y: 31 })
+        );
+        assert_eq!(
+            pointer_update(&ActiveStageOutput::PointerBitmap(shape)),
+            Some(event)
+        );
+    }
+    #[test]
+    fn legacy_dirty_rects_copy_only_the_inclusive_changed_region() {
+        let image = DecodedImage::new(PixelFormat::RgbA32, 16, 12);
+        let tiles = image_tiles(&image, vec![(15, 10, 3, 3)]);
+        assert_eq!(tiles.len(), 1);
+        let HostMsg::Tile {
+            x,
+            y,
+            width,
+            height,
+            rgba,
+        } = &tiles[0]
+        else {
+            panic!("tile")
+        };
+        assert_eq!((*x, *y, *width, *height), (15, 10, 1, 2));
+        let expected: Vec<u8> = [10usize, 11]
+            .into_iter()
+            .flat_map(|row| {
+                image.data()[(row * 16 + 15) * 4..(row * 16 + 16) * 4]
+                    .iter()
+                    .copied()
+            })
+            .collect();
+        assert_eq!(rgba, &expected);
     }
 }

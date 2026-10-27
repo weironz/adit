@@ -25,6 +25,124 @@ use serde::{Deserialize, Serialize};
 /// the writer instead of desyncing the reader.
 pub const MAX_MESSAGE_BYTES: usize = 288 * 1024 * 1024;
 
+/// Straight-alpha RGBA from IronRDP's accelerated pointer decoder.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PointerUpdate {
+    Default,
+    Hidden,
+    Position {
+        x: u16,
+        y: u16,
+    },
+    Bitmap {
+        width: u16,
+        height: u16,
+        hotspot_x: u16,
+        hotspot_y: u16,
+        rgba: Vec<u8>,
+    },
+}
+
+/// Coordinates are relative to the primary monitor at (0, 0).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Monitor {
+    pub left: i32,
+    pub top: i32,
+    pub width: u16,
+    pub height: u16,
+    pub primary: bool,
+    pub scale_percent: u32,
+}
+
+/// Shared validation keeps helper allocations and GUI input coordinates bounded.
+pub fn monitor_bounds(monitors: &[Monitor]) -> Result<(i32, i32, u16, u16), &'static str> {
+    if monitors.is_empty()
+        || monitors.len() > 16
+        || monitors.iter().filter(|m| m.primary).count() != 1
+    {
+        return Err("a layout needs 1..16 monitors and exactly one primary");
+    }
+    let mut left = i32::MAX;
+    let mut top = i32::MAX;
+    let mut right = i32::MIN;
+    let mut bottom = i32::MIN;
+    for (i, m) in monitors.iter().enumerate() {
+        if !(200..=8192).contains(&m.width)
+            || m.width & 1 != 0
+            || !(200..=8192).contains(&m.height)
+            || !(100..=500).contains(&m.scale_percent)
+            || (m.primary && (m.left != 0 || m.top != 0))
+            || !(-8192..=8192).contains(&m.left)
+            || !(-8192..=8192).contains(&m.top)
+        {
+            return Err("invalid monitor dimensions, origin or scale");
+        }
+        let r = m.left + i32::from(m.width);
+        let b = m.top + i32::from(m.height);
+        for other in &monitors[..i] {
+            if m.left < other.left + i32::from(other.width)
+                && other.left < r
+                && m.top < other.top + i32::from(other.height)
+                && other.top < b
+            {
+                return Err("monitors must not overlap");
+            }
+        }
+        left = left.min(m.left);
+        top = top.min(m.top);
+        right = right.max(r);
+        bottom = bottom.max(b);
+    }
+    if right - left > 8192 || bottom - top > 8192 {
+        return Err("combined desktop exceeds 8192 pixels per side");
+    }
+    let mut connected = vec![false; monitors.len()];
+    connected[monitors
+        .iter()
+        .position(|m| m.primary)
+        .expect("validated primary")] = true;
+    loop {
+        let mut changed = false;
+        for (i, a) in monitors.iter().enumerate() {
+            if connected[i] {
+                continue;
+            }
+            if monitors.iter().enumerate().any(|(j, b)| {
+                connected[j]
+                    && (((a.left + i32::from(a.width) == b.left
+                        || b.left + i32::from(b.width) == a.left)
+                        && a.top < b.top + i32::from(b.height)
+                        && b.top < a.top + i32::from(a.height))
+                        || ((a.top + i32::from(a.height) == b.top
+                            || b.top + i32::from(b.height) == a.top)
+                            && a.left < b.left + i32::from(b.width)
+                            && b.left < a.left + i32::from(a.width)))
+            }) {
+                connected[i] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    if connected.contains(&false) {
+        return Err("monitors must share connected edges");
+    }
+    Ok((left, top, (right - left) as u16, (bottom - top) as u16))
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DisplayControlState {
+    pub max_monitors: u32,
+    pub max_area: u64,
+    /// Last layout actually encoded onto the DisplayControl channel.
+    pub sent_layout: Vec<Monitor>,
+    /// Selection opens only after the corresponding desktop size arrives.
+    pub applied: bool,
+    pub error: Option<String>,
+}
+
 /// How much of the remote desktop's visual fidelity to ask for, traded against
 /// bandwidth. This is mstsc's "Experience" tab, and like mstsc's it is a
 /// **connect-time** choice: it becomes RDP performance flags in the Client Info
@@ -79,10 +197,19 @@ pub enum MouseButton {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum InputEvent {
     /// Absolute pointer position, in surface pixels.
-    MouseMove { x: u16, y: u16 },
-    MouseButton { button: MouseButton, pressed: bool },
+    MouseMove {
+        x: u16,
+        y: u16,
+    },
+    MouseButton {
+        button: MouseButton,
+        pressed: bool,
+    },
     /// Wheel scroll; `delta` is in wheel units (±120 per notch), + is up/right.
-    Wheel { vertical: bool, delta: i16 },
+    Wheel {
+        vertical: bool,
+        delta: i16,
+    },
     /// A physical key by RDP scancode; `extended` marks the E0 set.
     Key {
         scancode: u8,
@@ -90,11 +217,19 @@ pub enum InputEvent {
         pressed: bool,
     },
     /// A character via the Unicode input path (IME, unmapped layouts).
-    Unicode { ch: char, pressed: bool },
+    Unicode {
+        ch: char,
+        pressed: bool,
+    },
     /// Resize the remote desktop.
-    Resize { width: u16, height: u16 },
+    Resize {
+        width: u16,
+        height: u16,
+    },
     /// Offer freshly-copied local text to the remote clipboard.
     ClipboardText(String),
+    /// Send a complete MS-RDPEDISP monitor layout.
+    MonitorLayout(Vec<Monitor>),
 }
 
 /// How many bytes one file-transfer chunk carries.
@@ -145,7 +280,10 @@ pub enum ClientMsg {
     /// [`HostMsg::FileContentsNeeded`]. `None` reports a read failure, which the
     /// helper turns into the protocol's error response — a paste that fails
     /// loudly beats one that silently writes a truncated file.
-    FileContents { stream_id: u32, data: Option<Vec<u8>> },
+    FileContents {
+        stream_id: u32,
+        data: Option<Vec<u8>>,
+    },
     /// Ask the remote for a byte range of a file it offered. Drives a local
     /// paste: Explorer pulls from our data object, which pulls through here.
     RequestFileContents {
@@ -162,7 +300,10 @@ pub enum ClientMsg {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HostMsg {
     /// Handshake finished; the negotiated desktop size is authoritative.
-    Connected { width: u16, height: u16 },
+    Connected {
+        width: u16,
+        height: u16,
+    },
     /// A rectangular framebuffer update. `rgba` is `width * height * 4` bytes,
     /// `R,G,B,A` order, row-major, to be blitted at (`x`, `y`) into the surface.
     Tile {
@@ -173,7 +314,10 @@ pub enum HostMsg {
         rgba: Vec<u8>,
     },
     /// The desktop was resized; the app should reallocate its surface.
-    Resized { width: u16, height: u16 },
+    Resized {
+        width: u16,
+        height: u16,
+    },
     /// Server → client clipboard text.
     ClipboardText(String),
     /// The remote copied an image; the app should put these `CF_DIB` bytes on
@@ -192,11 +336,16 @@ pub enum HostMsg {
     },
     /// Bytes from the remote, answering [`ClientMsg::RequestFileContents`].
     /// `None` means the remote refused or failed the read.
-    FileContents { stream_id: u32, data: Option<Vec<u8>> },
+    FileContents {
+        stream_id: u32,
+        data: Option<Vec<u8>>,
+    },
     /// A fatal error; [`HostMsg::Closed`] follows.
     Error(String),
     /// The session ended.
     Closed,
+    Pointer(PointerUpdate),
+    DisplayControl(DisplayControlState),
 }
 
 /// Write a length-prefixed, bincode-encoded message and flush. Fails if the
@@ -204,7 +353,8 @@ pub enum HostMsg {
 /// as a writer error rather than a message the peer can't read (which would
 /// desync the stream).
 pub fn write_msg<W: Write, T: Serialize>(w: &mut W, msg: &T) -> io::Result<()> {
-    let bytes = bincode::serialize(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let bytes =
+        bincode::serialize(msg).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     if bytes.len() > MAX_MESSAGE_BYTES {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -258,8 +408,7 @@ mod tests {
             &ClientMsg::Input(InputEvent::ClipboardText(text.to_owned())),
         )
         .expect("write app → helper");
-        write_msg(&mut pipe, &HostMsg::ClipboardText(text.to_owned()))
-            .expect("write helper → app");
+        write_msg(&mut pipe, &HostMsg::ClipboardText(text.to_owned())).expect("write helper → app");
 
         let mut cursor = io::Cursor::new(pipe);
         let inbound: ClientMsg = read_msg(&mut cursor)
@@ -342,7 +491,10 @@ mod tests {
 
         assert!(matches!(
             failure,
-            ClientMsg::FileContents { stream_id: 7, data: None }
+            ClientMsg::FileContents {
+                stream_id: 7,
+                data: None
+            }
         ));
         assert!(matches!(
             empty,
@@ -358,5 +510,81 @@ mod tests {
             .expect("read")
             .expect("a message");
         assert!(matches!(msg, HostMsg::ClipboardText(text) if text.is_empty()));
+    }
+}
+
+#[cfg(test)]
+mod desktop_protocol_tests {
+    use super::*;
+    fn screen(left: i32, top: i32, primary: bool) -> Monitor {
+        Monitor {
+            left,
+            top,
+            width: 800,
+            height: 600,
+            primary,
+            scale_percent: 150,
+        }
+    }
+    #[test]
+    fn signed_monitor_layout_and_pointer_bitmap_survive_ipc() {
+        let layout = vec![screen(-800, 0, false), screen(0, 0, true)];
+        assert_eq!(monitor_bounds(&layout), Ok((-800, 0, 1600, 600)));
+        let mut pipe = Vec::new();
+        write_msg(
+            &mut pipe,
+            &ClientMsg::Input(InputEvent::MonitorLayout(layout.clone())),
+        )
+        .unwrap();
+        let pointer = PointerUpdate::Bitmap {
+            width: 2,
+            height: 2,
+            hotspot_x: 1,
+            hotspot_y: 1,
+            rgba: vec![255, 0, 0, 128, 0, 255, 0, 255, 0, 0, 255, 0, 3, 5, 7, 255],
+        };
+        write_msg(&mut pipe, &HostMsg::Pointer(pointer.clone())).unwrap();
+        let mut input = io::Cursor::new(pipe);
+        assert!(matches!(read_msg::<_, ClientMsg>(&mut input).unwrap(),
+            Some(ClientMsg::Input(InputEvent::MonitorLayout(got))) if got == layout));
+        assert!(
+            matches!(read_msg::<_, HostMsg>(&mut input).unwrap(), Some(HostMsg::Pointer(got)) if got == pointer)
+        );
+    }
+    #[test]
+    fn invalid_layouts_are_rejected_before_allocation() {
+        for monitors in [
+            vec![],
+            vec![screen(0, 0, false)],
+            vec![screen(0, 0, true), screen(0, 0, false)],
+            vec![screen(0, 0, true), screen(1600, 0, false)],
+            vec![screen(0, 0, true), screen(0, 0, true)],
+        ] {
+            assert!(monitor_bounds(&monitors).is_err());
+        }
+        let mut m = screen(0, 0, true);
+        m.width = 801;
+        assert!(monitor_bounds(&[m]).is_err());
+        let mut too_wide = Vec::new();
+        for i in 0..11 {
+            too_wide.push(screen(i * 800, 0, i == 0));
+        }
+        assert!(monitor_bounds(&too_wide).is_err());
+    }
+    #[test]
+    fn tile_framing_cost_is_24_bytes_before_pixels() {
+        let mut pipe = Vec::new();
+        write_msg(
+            &mut pipe,
+            &HostMsg::Tile {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+                rgba: vec![0; 4],
+            },
+        )
+        .unwrap();
+        assert_eq!(pipe.len(), 24 + 4);
     }
 }

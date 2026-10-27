@@ -98,7 +98,11 @@ const VNC_FIELDS: &[&str] = &[
     "gateway_profile",
 ];
 const JUMP_FIELDS: &[&str] = &["host", "port", "username"];
-const SESSION_OPTION_FIELDS: &[&str] = &["environment", "encoding", "rdp_quality", "reconnect", "logging"];
+const SESSION_OPTION_FIELDS: &[&str] = &[
+    "environment", "encoding", "rdp_quality", "rdp_monitors", "rdp_selected_monitor",
+    "reconnect", "logging",
+];
+const MONITOR_FIELDS: &[&str] = &["left", "top", "width", "height", "primary", "scale_percent"];
 const RECONNECT_FIELDS: &[&str] = &["enabled", "max_attempts", "initial_delay_secs", "max_delay_secs"];
 const LOG_FIELDS: &[&str] = &["auto_start", "directory", "filename_pattern", "plaintext", "record_input"];
 const TUNNEL_FIELDS: &[&str] = &[
@@ -145,6 +149,14 @@ fn check_profile_fields(value: &serde_json::Value) -> Result<(), String> {
         }
     }
     if let Some(options) = object.get("session_options").and_then(|v| v.as_object()) {
+        if let Some(monitors) = options.get("rdp_monitors").filter(|v| !v.is_null()) {
+            for monitor in monitors.as_array().ok_or("rdp_monitors 必须为列表")? {
+                let fields = monitor.as_object().ok_or("无效的显示器配置")?;
+                if fields.keys().any(|key| !MONITOR_FIELDS.contains(&key.as_str())) {
+                    return Err("显示器配置包含未知字段".into());
+                }
+            }
+        }
         for (field, allowed) in [("reconnect", RECONNECT_FIELDS), ("logging", LOG_FIELDS)] {
             if let Some(value) = options.get(field).filter(|value| !value.is_null()) {
                 let fields = value.as_object().ok_or_else(|| format!("无效的 {field} 配置"))?;

@@ -558,6 +558,20 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RemoveMission => remove_mission(app),
         Message::FocusMissionPane(index) => focus_mission(app, Some(index)),
         Message::ReturnToMission => focus_mission(app, None),
+        Message::RdpMonitorCount(count) => {
+            release_rdp_modifiers(app);
+            match app.manager.set_active_rdp_monitor_count(count) {
+                Ok(()) => persist_rdp_monitor_preferences(app),
+                Err(error) => app.last_error = Some(error),
+            }
+        }
+        Message::RdpMonitorSelected(selected) => {
+            release_rdp_modifiers(app);
+            match app.manager.select_active_rdp_monitor(selected) {
+                Ok(()) => persist_rdp_monitor_preferences(app),
+                Err(error) => app.last_error = Some(error),
+            }
+        }
         Message::DesktopPaneMoved(id, point) => desktop_panes::moved(app, id, point),
         Message::DesktopPanePressed(id, button) => desktop_panes::pressed(app, id, button),
         Message::DesktopPaneReleased(id, button) => desktop_panes::released(app, id, button),

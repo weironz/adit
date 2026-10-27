@@ -14,6 +14,15 @@ pub(crate) struct DesktopPanes {
     // Input leases outlive textures: hiding/pruning a pane must not erase the
     // information needed to release its remote buttons.
     owned_buttons: Vec<(SessionId, mouse::Button)>,
+    cursors: HashMap<SessionId, RdpCursorVisual>,
+}
+
+#[derive(Clone)]
+struct RdpCursorVisual {
+    shape: Option<adit_session::VncCursor>,
+    handle: Option<iced::widget::image::Handle>,
+    position: Option<(u16, u16)>,
+    position_generation: u64,
 }
 
 #[derive(Default)]
@@ -113,6 +122,51 @@ pub(crate) fn needs_frames(app: &AditApp) -> bool {
 /// Prune before throttling: an Error must retire its pixels on the very next
 /// update even when the previous upload was less than 33 ms ago.
 pub(crate) fn refresh(app: &mut AditApp) {
+    let mut cursor_sessions = app.panes.clone();
+    if let Some(active) = app.manager.active_session() {
+        if !cursor_sessions.contains(&active) {
+            cursor_sessions.push(active);
+        }
+    }
+    app.desktop_panes
+        .cursors
+        .retain(|id, _| cursor_sessions.contains(id));
+    for id in cursor_sessions {
+        if let Some(cursor) = app.manager.session_rdp_cursor(id) {
+            let shape = cursor.shape;
+            let position = cursor.position;
+            let position_generation = cursor.position_generation;
+            let changed = app.desktop_panes.cursors.get(&id).is_none_or(|old| {
+                old.shape.as_ref().map(|s| s.generation) != shape.as_ref().map(|s| s.generation)
+            });
+            if changed {
+                let handle = shape
+                    .as_ref()
+                    .filter(|s| s.width > 0 && s.height > 0)
+                    .map(|s| {
+                        iced::widget::image::Handle::from_rgba(
+                            u32::from(s.width),
+                            u32::from(s.height),
+                            s.rgba.clone(),
+                        )
+                    });
+                app.desktop_panes.cursors.insert(
+                    id,
+                    RdpCursorVisual {
+                        shape,
+                        handle,
+                        position,
+                        position_generation,
+                    },
+                );
+            } else if let Some(old) = app.desktop_panes.cursors.get_mut(&id) {
+                old.position = position;
+                old.position_generation = position_generation;
+            }
+        } else {
+            app.desktop_panes.cursors.remove(&id);
+        }
+    }
     let visible: Vec<_> = if split_visible(app) {
         app.panes
             .iter()
@@ -363,7 +417,11 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
         // Mouse coordinates include the black bars. Testing the inverse
         // transform rejects those bars instead of clicking the remote edge.
         mouse_area(
-            container(tile_grid(&pane.tiles, fit))
+            container(iced::widget::stack![
+                tile_grid(&pane.tiles, fit),
+                rdp_cursor_layer(app, id, f32::from(fit.remote.0) / fit.width,
+                    f32::from(fit.remote.1) / fit.height, iced::Size::new(fit.width, fit.height))
+            ])
                 .center_x(Fill)
                 .center_y(Fill)
                 .style(|_| desktop_background()),
@@ -1014,5 +1072,192 @@ mod tests {
         app.manager.close(b);
         peer_a.join().unwrap();
         peer_b.join().unwrap();
+    }
+}
+
+/// Both desktop renderers use the same server bitmap and hotspot transform.
+pub(crate) fn rdp_cursor_layer(
+    app: &AditApp,
+    id: SessionId,
+    scale_x: f32,
+    scale_y: f32,
+    size: iced::Size,
+) -> Element<'static, Message> {
+    Element::new(RdpCursorLayer {
+        visual: app.desktop_panes.cursors.get(&id).cloned(),
+        id,
+        scale_x,
+        scale_y,
+        size,
+    })
+}
+
+struct RdpCursorLayer {
+    id: SessionId,
+    visual: Option<RdpCursorVisual>,
+    scale_x: f32,
+    scale_y: f32,
+    size: iced::Size,
+}
+
+#[derive(Default)]
+struct RdpCursorMotion {
+    owner: Option<SessionId>,
+    server_generation: u64,
+    server: Option<(u16, u16)>,
+    use_server: bool,
+}
+
+fn rdp_cursor_bounds(
+    point: Point,
+    shape: &adit_session::VncCursor,
+    sx: f32,
+    sy: f32,
+) -> iced::Rectangle {
+    // The desktop may stretch during resize, but the cursor keeps its aspect.
+    // Its anchor still follows the desktop's per-axis input transform.
+    let scale = sx.max(sy);
+    iced::Rectangle {
+        x: point.x - f32::from(shape.hotspot_x) / scale,
+        y: point.y - f32::from(shape.hotspot_y) / scale,
+        width: f32::from(shape.width) / scale,
+        height: f32::from(shape.height) / scale,
+    }
+}
+
+impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<RdpCursorMotion>()
+    }
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(RdpCursorMotion::default())
+    }
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size::new(
+            Length::Fixed(self.size.width),
+            Length::Fixed(self.size.height),
+        )
+    }
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        iced::advanced::layout::Node::new(limits.resolve(
+            Length::Fixed(self.size.width),
+            Length::Fixed(self.size.height),
+            self.size,
+        ))
+    }
+    fn update(
+        &mut self,
+        tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        _shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &iced::Rectangle,
+    ) {
+        let state = tree.state.downcast_mut::<RdpCursorMotion>();
+        let server = self.visual.as_ref().and_then(|v| v.position);
+        let generation = self.visual.as_ref().map_or(0, |v| v.position_generation);
+        if state.server != server
+            || state.server_generation != generation
+            || state.owner != Some(self.id)
+        {
+            state.owner = Some(self.id);
+            state.server_generation = generation;
+            state.server = server;
+            state.use_server = server.is_some();
+        }
+        if matches!(event, iced::Event::Mouse(mouse::Event::CursorMoved { .. }))
+            && cursor.is_over(layout.bounds())
+        {
+            state.use_server = false;
+        }
+    }
+    fn draw(
+        &self,
+        tree: &iced::advanced::widget::Tree,
+        renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        layout: iced::advanced::Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &iced::Rectangle,
+    ) {
+        let Some(visual) = &self.visual else {
+            return;
+        };
+        let (Some(shape), Some(handle)) = (&visual.shape, &visual.handle) else {
+            return;
+        };
+        let bounds = layout.bounds();
+        let motion = tree.state.downcast_ref::<RdpCursorMotion>();
+        let point = if motion.use_server {
+            visual.position.map(|(x, y)| {
+                Point::new(
+                    bounds.x + f32::from(x) / self.scale_x,
+                    bounds.y + f32::from(y) / self.scale_y,
+                )
+            })
+        } else {
+            cursor.position_over(bounds)
+        };
+        let Some(point) = point else {
+            return;
+        };
+        if let Some(clip) = bounds.intersection(viewport) {
+            iced::advanced::image::Renderer::draw_image(
+                renderer,
+                iced::advanced::image::Image::new(handle.clone()),
+                rdp_cursor_bounds(point, shape, self.scale_x, self.scale_y),
+                clip,
+            );
+        }
+    }
+    fn mouse_interaction(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        layout: iced::advanced::Layout<'_>,
+        cursor: mouse::Cursor,
+        _viewport: &iced::Rectangle,
+        _renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        if self.visual.as_ref().is_some_and(|v| v.shape.is_some())
+            && cursor.is_over(layout.bounds())
+        {
+            mouse::Interaction::Hidden
+        } else {
+            mouse::Interaction::None
+        }
+    }
+}
+
+#[cfg(test)]
+mod rdp_cursor_tests {
+    use super::*;
+    #[test]
+    fn server_hotspot_tracks_scaled_surface_in_both_renderers() {
+        let shape = adit_session::VncCursor {
+            width: 32,
+            height: 24,
+            hotspot_x: 7,
+            hotspot_y: 11,
+            rgba: vec![255; 32 * 24 * 4],
+            generation: 1,
+        };
+        for (sx, sy) in [(1.0_f32, 1.0_f32), (2.0, 2.0), (1.5, 0.7)] {
+            let scale = sx.max(sy);
+            let p = Point::new(230.0, 145.0);
+            let b = rdp_cursor_bounds(p, &shape, sx, sy);
+            assert!((b.x + 7.0 / scale - p.x).abs() < 0.001);
+            assert!((b.y + 11.0 / scale - p.y).abs() < 0.001);
+            assert_eq!(b.width, 32.0 / scale);
+            assert_eq!(b.height, 24.0 / scale);
+        }
     }
 }

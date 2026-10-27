@@ -120,7 +120,7 @@ pub(crate) struct EgfxFrame {
 }
 
 /// A dirty region: `(x, y, w, h)` in pixels.
-type Rect = (usize, usize, usize, usize);
+pub(crate) type Rect = (usize, usize, usize, usize);
 
 /// How many separate dirty rects to carry before coalescing.
 ///
@@ -146,11 +146,24 @@ fn union(a: Rect, b: Rect) -> Rect {
     (x0, y0, x1 - x0, y1 - y0)
 }
 
-/// Pixels that merging `a` and `b` would send without either having asked for
-/// them. Zero when they overlap or tile exactly edge to edge, which is what
-/// lets a row of adjacent tiles collapse into one strip at no cost.
-fn merge_cost(a: Rect, b: Rect) -> usize {
-    area(union(a, b)).saturating_sub(area(a) + area(b))
+// Tile framing is 24 bytes (prefix, enum, four u16s, Vec length). The
+// additional 232 byte-equivalents are a policy estimate for allocation/serialize/flush
+// and receiver dispatch. Keep this policy explicit and deterministic.
+const MESSAGE_COST: i64 = 256;
+/// Change in byte-equivalent cost: RGBA pixels plus one saved IPC message.
+fn merge_cost(a: Rect, b: Rect) -> i64 {
+    (area(union(a, b)) as i64 - area(a) as i64 - area(b) as i64) * 4 - MESSAGE_COST
+}
+
+pub(crate) fn prefer_full_frame(rects: &mut Vec<Rect>, width: usize, height: usize) {
+    if rects
+        .iter()
+        .map(|r| area(*r) as i64 * 4 + MESSAGE_COST)
+        .sum::<i64>()
+        > (width * height) as i64 * 4 + MESSAGE_COST
+    {
+        *rects = vec![(0, 0, width, height)];
+    }
 }
 
 impl EgfxFrame {
@@ -220,6 +233,7 @@ pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
         rects.push((0, 0, fw, fh));
     }
 
+    prefer_full_frame(&mut rects, fw, fh);
     let mut out = Vec::with_capacity(rects.len());
     for (x, y, w, h) in rects {
         let (x, y) = (x.min(fw), y.min(fh));
@@ -281,14 +295,17 @@ fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
     add_dirty_rect(&mut frame.dirty_rects, (x, y, w, h));
 }
 
-/// Add one changed rect, merging where merging is free and coalescing only
+/// Add one changed rect, merging when total cost decreases and coalescing only
 /// once the list is full.
 ///
-/// The free merges are what keep this cheap on the hot path: a progressive
+/// The beneficial merges keep this cheap on the hot path: a progressive
 /// frame arrives as hundreds of adjacent 64x64 tiles, and each folds into the
 /// strip beside it at zero cost, so the list stays short without any search.
-fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
-    // Fold into anything it overlaps or tiles against, repeatedly: a rect that
+pub(crate) fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
+    if new.2 == 0 || new.3 == 0 {
+        return;
+    }
+    // Fold into any cheaper union, repeatedly: a rect that
     // just grew can now reach a third one, and leaving those apart would send
     // the pixels they share twice.
     let mut merged = new;
@@ -297,7 +314,7 @@ fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
         again = false;
         let mut index = 0;
         while index < rects.len() {
-            if merge_cost(rects[index], merged) == 0 {
+            if merge_cost(rects[index], merged) <= 0 {
                 merged = union(rects.swap_remove(index), merged);
                 again = true;
             } else {
@@ -311,7 +328,7 @@ fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
     // time means the list cannot grow past the cap, however scattered the
     // paints are.
     while rects.len() > MAX_DIRTY_RECTS {
-        let mut best = (0, 1, usize::MAX);
+        let mut best = (0, 1, i64::MAX);
         for i in 0..rects.len() {
             for j in (i + 1)..rects.len() {
                 let cost = merge_cost(rects[i], rects[j]);
@@ -1578,10 +1595,79 @@ mod dirty_rect_tests {
     /// Overlapping and edge-to-edge merges are free; a diagonal neighbour is
     /// not, and that difference is what keeps unrelated activity apart.
     #[test]
-    fn merge_cost_is_zero_only_when_nothing_extra_is_sent() {
-        assert_eq!(merge_cost((0, 0, 10, 10), (10, 0, 10, 10)), 0);
-        assert_eq!(merge_cost((0, 0, 10, 10), (5, 0, 10, 10)), 0);
-        assert_eq!(merge_cost((0, 0, 10, 10), (0, 0, 10, 10)), 0);
+    fn merge_cost_counts_duplicate_pixels_and_message_overhead() {
+        assert!(merge_cost((0, 0, 10, 10), (10, 0, 10, 10)) < 0);
+        assert!(merge_cost((0, 0, 10, 10), (5, 0, 10, 10)) < 0);
+        assert!(merge_cost((0, 0, 10, 10), (0, 0, 10, 10)) < 0);
         assert!(merge_cost((0, 0, 10, 10), (10, 10, 10, 10)) > 0);
+    }
+}
+
+#[cfg(test)]
+mod cost_merge_tests {
+    use super::*;
+    #[test]
+    fn small_gap_merges_when_one_message_costs_more_than_the_gap_pixels() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 8, 8));
+        add_dirty_rect(&mut rects, (9, 0, 8, 8));
+        assert_eq!(rects, vec![(0, 0, 17, 8)]);
+        assert!(merge_cost((0, 0, 8, 8), (9, 0, 8, 8)) < 0);
+        assert!(merge_cost((0, 0, 8, 8), (100, 0, 8, 8)) > 0);
+    }
+    #[test]
+    fn heavily_overlapping_plan_uses_full_frame_when_it_is_cheaper() {
+        let mut rects = vec![(0, 0, 100, 100), (0, 0, 100, 100)];
+        prefer_full_frame(&mut rects, 100, 100);
+        assert_eq!(rects, vec![(0, 0, 100, 100)]);
+    }
+    #[test]
+    fn contained_rect_saves_duplicate_pixels_instead_of_charging_them_again() {
+        assert_eq!(
+            merge_cost((0, 0, 20, 20), (3, 4, 5, 6)),
+            -(5 * 6 * 4) - MESSAGE_COST
+        );
+    }
+    #[test]
+    fn emitted_tiles_reconstruct_every_changed_pixel_and_preserve_gap_pixels() {
+        let shared = new_shared();
+        let mut expected = vec![0u8; 128 * 96 * 4];
+        let mut before = expected.clone();
+        // Distinct old pixels make a wrongly zero-filled merged gap observable.
+        for (i, pixel) in expected.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[(i % 251) as u8, (i % 97) as u8, 7, 255]);
+        }
+        before.copy_from_slice(&expected);
+        let marks: Vec<Rect> = (0..80)
+            .map(|i| ((i * 17) % 120, (i * 29) % 88, 8, 8))
+            .collect();
+        {
+            let mut frame = shared.lock().unwrap();
+            frame.resize(128, 96);
+            for &(x, y, w, h) in &marks {
+                for row in y..y + h {
+                    for col in x..x + w {
+                        let start = (row * 128 + col) * 4;
+                        expected[start..start + 4].copy_from_slice(&[20, 40, 90, 255]);
+                    }
+                }
+                grow_dirty(&mut frame, x, y, w, h);
+            }
+            frame.rgba.copy_from_slice(&expected);
+            frame.dirty = true;
+        }
+        let updates = take_frames(&shared);
+        assert!(!updates.is_empty());
+        assert!(updates.len() <= MAX_DIRTY_RECTS);
+        for update in updates {
+            for row in 0..usize::from(update.height) {
+                let src = row * usize::from(update.width) * 4;
+                let dst = ((usize::from(update.y) + row) * 128 + usize::from(update.x)) * 4;
+                let len = usize::from(update.width) * 4;
+                before[dst..dst + len].copy_from_slice(&update.rgba[src..src + len]);
+            }
+        }
+        assert_eq!(before, expected);
+        assert!(take_frames(&shared).is_empty());
     }
 }

@@ -9,8 +9,8 @@
 //! Connection path: direct TCP → TLS → CredSSP/NLA (`sspi`) → active session loop
 //! (`ActiveStage`), mirroring the reference `ironrdp-client`. The desktop image is
 //! `RGBA32`. The server pointer is delivered as separate updates (not composited),
-//! and the app draws the OS cursor over the surface — so there's no laggy second
-//! cursor; rendering the real server cursor shape is a later refinement.
+//! then sent over IPC; both GUI desktop views draw its bitmap at the scaled
+//! hotspot while local motion stays independent of remote frame delivery.
 
 use ironrdp_connector::{Config as ConnectorConfig, Credentials, DesktopSize};
 use thiserror::Error;
@@ -23,6 +23,7 @@ mod input;
 mod rdstls;
 mod redirect;
 mod session;
+mod display;
 
 pub use host::run_host;
 
@@ -156,9 +157,8 @@ pub(crate) fn build_connector_config(
         // password again.
         autologon: !request.password.is_empty(),
         enable_audio_playback: request.enable_audio,
-        // Deliver the pointer as separate updates (not composited into the image);
-        // the app shows the OS cursor, so we avoid a laggy composited second
-        // cursor. Rendering the real server cursor shape is a later refinement.
+        // Accelerated pointer decoding yields straight-alpha RGBA for the GUI
+        // overlay. Keep it out of both the legacy and EGFX framebuffers.
         enable_server_pointer: true,
         pointer_software_rendering: false,
         multitransport_flags: None,

@@ -802,6 +802,8 @@ pub enum Message {
     RemoveMission,
     FocusMissionPane(usize),
     ReturnToMission,
+    RdpMonitorCount(u16),
+    RdpMonitorSelected(Option<usize>),
     DesktopPaneMoved(SessionId, Point),
     DesktopPanePressed(SessionId, mouse::Button),
     DesktopPaneReleased(SessionId, mouse::Button),

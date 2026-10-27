@@ -58,7 +58,9 @@ pub(crate) fn map_input(
             Operation::UnicodeKeyReleased(*ch)
         }],
         // Handled by the session loop, not as fast-path input.
-        InputEvent::Resize { .. } | InputEvent::ClipboardText(_) => return SmallVec::new(),
+        InputEvent::Resize { .. } | InputEvent::ClipboardText(_) | InputEvent::MonitorLayout(_) => {
+            return SmallVec::new()
+        }
     };
     db.apply(ops)
 }

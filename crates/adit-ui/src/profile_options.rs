@@ -80,6 +80,11 @@ impl ProfileOptionsForm {
         Ok(value)
     }
 
+    pub(crate) fn update_monitor_preferences(&mut self, options: &SessionOptions) {
+        self.options.rdp_monitors = options.rdp_monitors.clone();
+        self.options.rdp_selected_monitor = options.rdp_selected_monitor;
+    }
+
     pub(crate) fn update(&mut self, edit: ProfileOptionEdit) {
         match edit {
             ProfileOptionEdit::Encoding(v) => self.options.encoding = v,
