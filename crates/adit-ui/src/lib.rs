@@ -109,6 +109,7 @@ use update_loop::*;
 mod updater;
 use updater::*;
 mod profiles;
+mod jump_auth_ui;
 use profiles::*;
 mod session_ops;
 use session_ops::*;
@@ -255,6 +256,7 @@ pub struct AditApp {
     /// Jump-host chain as an editable OpenSSH-style spec (`user@host:port`,
     /// comma/newline separated), parsed to `profile.jumps` on save.
     profile_jumps: String,
+    profile_jump_auth: Vec<JumpHop>,
     profile_terminal_type: String,
     /// Per-profile tab colour-coding drafts.
     profile_environment: Environment,
@@ -921,9 +923,9 @@ pub enum Message {
         session_id: SessionId,
         decision: adit_session::HostKeyDecision,
     },
-    AuthPromptInput { index: usize, value: String },
-    SubmitAuthPrompt { session_id: SessionId },
-    CancelAuthPrompt { session_id: SessionId },
+    AuthPromptInput { challenge_id: u64, index: usize, value: jump_auth_ui::SecretAnswer },
+    SubmitAuthPrompt { session_id: SessionId, challenge_id: u64 },
+    CancelAuthPrompt { session_id: SessionId, challenge_id: u64 },
     OpenHyperlink(String),
     ConfirmOpenHyperlink,
     CancelOpenHyperlink,
@@ -1014,6 +1016,7 @@ pub enum Message {
     SecureCrtFolderPicked(Option<std::path::PathBuf>),
     ProfileStartupCommandChanged(String),
     ProfileJumpsChanged(String),
+    ProfileHopAuthChanged { index: usize, owner: Option<ProfileId> },
     ProfileEnvironmentChanged(Environment),
     ProfileAccentColorChanged(String),
     ProfileLabelChanged(String),
@@ -1599,6 +1602,7 @@ impl AditApp {
             profile_identity_file: String::new(),
             profile_startup_command: String::new(),
             profile_jumps: String::new(),
+            profile_jump_auth: Vec::new(),
             profile_terminal_type: String::new(),
             profile_environment: Environment::None,
             profile_accent_color: String::new(),
@@ -2867,6 +2871,7 @@ mod tests {
         app.profile_port = "22".into();
         app.profile_password.clear();
         app.profile_jumps.clear();
+        app.profile_jump_auth.clear();
         let _ = update(&mut app, Message::ProfileProtocolChanged(Protocol::Vnc));
         assert_eq!(app.profile_port, "5900");
         let id = save_profile_from_form(&mut app, false).expect("VNC profile saves");

@@ -221,7 +221,7 @@ pub(crate) fn host_key_dialog_overlay(
 pub(crate) fn sync_auth_prompt(app: &mut AditApp) {
     match app.manager.pending_auth_prompt() {
         Some((session_id, prompt)) => {
-            let is_new = app.auth_prompt.as_ref().map(|(id, _)| *id) != Some(session_id)
+            let is_new = app.auth_prompt.as_ref().map(|(id, p)| (*id, p.id)) != Some((session_id, prompt.id))
                 || app.auth_prompt_answers.len() != prompt.prompts.len();
             if is_new {
                 app.auth_prompt_answers = vec![String::new(); prompt.prompts.len()];
@@ -257,6 +257,7 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
         );
     }
 
+    let challenge_id = prompt.id;
     let last = prompt.prompts.len().saturating_sub(1);
     for (index, field) in prompt.prompts.iter().enumerate() {
         let value = answers.get(index).map(String::as_str).unwrap_or("");
@@ -266,14 +267,14 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
             field.prompt.clone()
         };
         let mut input = text_input("", value)
-            .on_input(move |value| Message::AuthPromptInput { index, value })
+            .on_input(move |value| Message::AuthPromptInput { challenge_id, index, value: jump_auth_ui::SecretAnswer(value) })
             .padding([6, 8])
             .style(text_input_style)
             .width(Fill);
         // Only the last field submits on Enter, so a multi-field round isn't sent
         // prematurely with later fields still blank.
         if index == last {
-            input = input.on_submit(Message::SubmitAuthPrompt { session_id });
+            input = input.on_submit(Message::SubmitAuthPrompt { session_id, challenge_id });
         }
         if !field.echo {
             input = input.secure(true);
@@ -289,12 +290,12 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::CancelAuthPrompt { session_id }),
+                    .on_press(Message::CancelAuthPrompt { session_id, challenge_id }),
                 button("确定")
                     .width(Fill)
                     .padding([6, 10])
                     .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::SubmitAuthPrompt { session_id }),
+                    .on_press(Message::SubmitAuthPrompt { session_id, challenge_id }),
             ]
             .spacing(8),
         ]

@@ -594,6 +594,7 @@ pub(crate) fn load_selected_profile(app: &mut AditApp) {
         app.profile_icon = profile.icon.clone();
         app.profile_startup_command = profile.startup_command;
         app.profile_jumps = jumps_to_spec(&profile.jumps);
+        app.profile_jump_auth = profile.jumps.clone();
         app.profile_terminal_type = profile.terminal_type;
         app.profile_environment = profile.environment;
         app.profile_accent_color = profile.accent_color.clone().unwrap_or_default();
@@ -942,7 +943,7 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
     };
     // Validate the jump chain up front: a bad hop must block the save (and be
     // reported) rather than be dropped, which would silently bypass the bastion.
-    let jumps = match parse_jumps_checked(&app.profile_jumps) {
+    let mut jumps = match parse_jumps_checked(&app.profile_jumps) {
         Ok(jumps) => jumps,
         Err(error) => {
             app.last_error = Some(error);
@@ -950,6 +951,9 @@ pub(crate) fn save_profile_from_form(app: &mut AditApp, show_notice: bool) -> Op
         }
     };
 
+    for (hop, configured) in jumps.iter_mut().zip(&app.profile_jump_auth) {
+        hop.auth_profile = configured.auth_profile;
+    }
     let result = if app.profile_protocol == Protocol::Vnc {
         let mut profile = app
             .selected_profile

@@ -247,14 +247,19 @@ impl Environment {
 }
 
 /// One bastion/jump host in a [`ConnectionProfile`]'s chain. Authenticates via
-/// SSH agent / default keys / the profile's identity file (no per-hop password
-/// yet).
+/// an explicitly referenced credential profile. Legacy hops without an owner
+/// use the local agent/default keys or ask independently; they never inherit
+/// the target's password, identity file or passphrase.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct JumpHop {
     pub host: String,
     #[serde(default = "default_ssh_port")]
     pub port: u16,
     pub username: String,
+    /// Credential owner only; secrets stay in CredentialStore under this ID.
+    /// None keeps old profiles readable and requests independent authentication.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_profile: Option<ProfileId>,
 }
 
 fn default_ssh_port() -> u16 {
@@ -292,6 +297,7 @@ impl JumpHop {
             host,
             port,
             username,
+            auth_profile: None,
         })
     }
 

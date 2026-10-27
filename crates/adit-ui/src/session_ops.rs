@@ -97,6 +97,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
         app.last_error = Some(String::from(t("请选择要连接的会话配置")));
         return;
     };
+    if !jump_auth_ui::prepare(app, profile_id) { return; }
     change_main_view(app, MainView::Terminal);
 
     if profile.protocol == Protocol::Vnc {
@@ -143,7 +144,7 @@ pub(crate) fn connect_profile(app: &mut AditApp) {
     }
 
     // Non-SSH terminal protocols (local shell, serial) need no credential.
-    let password = if profile.protocol == Protocol::Ssh {
+    let password = if profile.protocol.is_ssh_based() {
         let stored = app
             .credential_store
             .load_profile_password(profile_id)
@@ -430,6 +431,7 @@ pub(crate) fn confirm_connection(app: &mut AditApp) {
         return;
     }
 
+    if !jump_auth_ui::prepare(app, dialog.profile_id) { return; }
     let credential_warning = sync_connection_password(app, dialog.profile_id).err();
     let passphrase = app
         .credential_store

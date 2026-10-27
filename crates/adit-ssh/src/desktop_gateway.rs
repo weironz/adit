@@ -76,8 +76,9 @@ pub async fn connect(
         let mut session =
             client::connect(config, (request.host.as_str(), request.port), handler).await?;
         let mut interactive = InteractiveKbd {
-            events: &events,
-            responses: kbd_rx,
+            events: AuthEventSink::Shell(&events),
+            endpoint: format!("{}@{}:{}", request.username, request.host, request.port),
+            responses: Some(kbd_rx),
         };
         authenticate_with_available_methods(
             &mut session,

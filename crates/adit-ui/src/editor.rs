@@ -595,11 +595,12 @@ fn advanced_section(app: &AditApp) -> Element<'_, Message> {
 
     section = section
         .push(text_field(
-            "跳板机 ProxyJump（可选，user@bastion:22，多个用逗号按顺序；各跳板机复用本会话的密码/密钥）",
+            "跳板机 ProxyJump（可选，user@bastion:22，多个用逗号按顺序）",
             "jump@bastion.example.com:22",
             &app.profile_jumps,
             Message::ProfileJumpsChanged,
         ))
+        .push(jump_auth_ui::view(app))
         .push(
             row![
                 cell(

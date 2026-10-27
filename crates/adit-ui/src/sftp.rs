@@ -1004,6 +1004,7 @@ pub(crate) fn form_matches_selected_profile(app: &AditApp) -> bool {
         // an unsaved/invalid hop the user typed must read as "modified", never
         // "saved", so the silent-drop guard on save isn't masked by the indicator.
         && app.profile_jumps.trim() == jumps_to_spec(&profile.jumps)
+        && app.profile_jump_auth.iter().map(|h| h.auth_profile).eq(profile.jumps.iter().map(|h| h.auth_profile))
         && profile.environment == app.profile_environment
         && profile.accent_color.as_deref().unwrap_or_default() == app.profile_accent_color.trim()
         && profile.label.as_deref().unwrap_or_default() == app.profile_label.trim()

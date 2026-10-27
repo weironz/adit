@@ -2,6 +2,9 @@ mod sftp_shell;
 mod terminal_encoding;
 mod triggers;
 mod sftp_transfers;
+mod jump_auth;
+pub use jump_auth::jump_credential;
+pub use adit_ssh::{JumpCredential, JumpCredentials};
 
 pub use sftp_shell::SftpShell;
 pub use adit_ssh::TransferMode;
@@ -158,8 +161,8 @@ struct SessionRecord {
 ///
 /// SFTP is just another channel, so reusing the connection means the server
 /// authenticates once. Dialling separately re-runs the whole auth chain, which
-/// an MFA host answers by demanding a second one-time code — and then rejecting
-/// it, because it is one-time. That is why MFA hosts fail SFTP today.
+/// may require another MFA conversation. The standalone path now routes that
+/// conversation to the same GUI; a factor is never reused silently.
 ///
 /// Falls back to dialling when there is nothing to ride on: the shell has
 /// already exited, or this was never an SSH session.
@@ -285,6 +288,8 @@ impl ReconnectState {
 /// tied to a connected session's profile.
 pub struct SftpBrowser {
     handle: SftpHandle,
+    owner: SessionId,
+    pending_auth_prompt: Option<AuthPromptRequest>,
     pub profile_id: ProfileId,
     pub endpoint: String,
     // Remote pane.
@@ -411,6 +416,7 @@ enum PendingDesktopClipboard {
 
 pub struct SessionManager {
     profiles: Vec<ConnectionProfile>,
+    jump_credentials: JumpCredentials,
     sessions: HashMap<SessionId, SessionRecord>,
     active_session: Option<SessionId>,
     auto_reconnect: bool,
@@ -467,6 +473,8 @@ pub struct RdpFileRead {
 /// A live port-forwarding tunnel and its observable state.
 pub struct TunnelState {
     handle: adit_ssh::TunnelHandle,
+    owner: SessionId,
+    pending_auth_prompt: Option<AuthPromptRequest>,
     pub id: u64,
     pub kind: adit_ssh::TunnelKind,
     pub bind: String,
@@ -513,6 +521,7 @@ impl SessionManager {
 
         Self {
             profiles,
+            jump_credentials: JumpCredentials::new(),
             sessions: HashMap::new(),
             active_session: None,
             // Off unless the stored setting turns it on; see
@@ -913,6 +922,7 @@ impl SessionManager {
     }
 
     pub fn delete_profile(&mut self, profile_id: ProfileId) -> Result<(), SessionError> {
+        self.jump_credentials.remove(&profile_id);
         let original_len = self.profiles.len();
         self.profiles.retain(|profile| profile.id != profile_id);
 
@@ -1103,6 +1113,7 @@ impl SessionManager {
                     self.connect_timeout_secs,
                     size,
                     self.auto_accept_host_keys,
+                    &self.resolve_jump_credentials(&profile)?,
                 )?;
                 let endpoint = profile.endpoint();
                 // The terminal stays clean on connect — connection progress shows
@@ -2456,6 +2467,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
+        request.jump_credentials = self.resolve_jump_credentials(&profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = open_tunnel_for(record, request)?;
 
@@ -2463,6 +2475,8 @@ impl SessionManager {
         self.next_tunnel_id += 1;
         self.tunnels.push(TunnelState {
             handle,
+            owner: session_id,
+            pending_auth_prompt: None,
             id,
             kind,
             bind,
@@ -2527,6 +2541,7 @@ impl SessionManager {
         for tunnel in &mut self.tunnels {
             while let Some(event) = tunnel.handle.try_recv() {
                 match event {
+                    TunnelEvent::AuthPrompt(prompt) => tunnel.pending_auth_prompt = Some(prompt),
                     TunnelEvent::Status(status) => tunnel.status = status,
                     TunnelEvent::Listening { bind } => {
                         tunnel.listening = true;
@@ -2545,7 +2560,11 @@ impl SessionManager {
                     }
                     TunnelEvent::Stopped => {
                         tunnel.listening = false;
-                        stopped.push(tunnel.id);
+                        tunnel.active = 0;
+                        tunnel.pending_auth_prompt = None;
+                        // Keep a failed handshake visible until the user closes
+                        // it; otherwise Error + Stopped vanishes in one poll.
+                        if tunnel.error.is_none() { stopped.push(tunnel.id); }
                     }
                 }
             }
@@ -2594,6 +2613,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
+        request.jump_credentials = self.resolve_jump_credentials(&profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = open_sftp_for(record, request)?;
 
@@ -2642,9 +2662,8 @@ impl SessionManager {
     ///
     /// The sibling [`Self::open_sftp_shell_for_active`] rides a live SSH
     /// session, which is cheaper and answers only one MFA challenge. This one
-    /// has nothing to ride on — that is the whole point of the protocol, and
-    /// also why it inherits the caveat that MFA hosts cannot be reached this
-    /// way: the dial path is non-interactive.
+    /// has nothing to ride on, so it authenticates independently and surfaces
+    /// fresh keyboard-interactive challenges through its own SFTP shell.
     fn open_sftp_session(
         &mut self,
         profile: &ConnectionProfile,
@@ -2659,6 +2678,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(profile, password, passphrase);
         request.jumps = profile.jumps.clone();
+        request.jump_credentials = self.resolve_jump_credentials(profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = adit_ssh::spawn_sftp_session(request)?;
 
@@ -2763,6 +2783,7 @@ impl SessionManager {
         );
         request.auth = auth_options_for_profile(&profile, &password, &passphrase);
         request.jumps = profile.jumps.clone();
+        request.jump_credentials = self.resolve_jump_credentials(&profile)?;
         request.connect_timeout_secs = self.connect_timeout_secs;
         let handle = open_sftp_for(record, request)?;
 
@@ -2770,6 +2791,8 @@ impl SessionManager {
         let local_entries = read_local_dir(&local_cwd);
         self.sftp = Some(SftpBrowser {
             handle,
+            owner: session_id,
+            pending_auth_prompt: None,
             profile_id,
             endpoint,
             cwd: String::from("/"),
@@ -3043,6 +3066,7 @@ impl SessionManager {
         if let Some(browser) = &mut self.sftp {
             while let Some(event) = browser.handle.try_recv() {
                 match event {
+                    SftpEvent::AuthPrompt(prompt) => browser.pending_auth_prompt = Some(prompt),
                     SftpEvent::Status(status) => browser.status = status,
                     SftpEvent::Ready { home } => {
                         browser.connected = true;
@@ -3150,7 +3174,13 @@ impl SessionManager {
             }
         }
         if closed {
-            self.sftp = None;
+            if let Some(browser) = self.sftp.as_mut().filter(|b| b.status.starts_with("error:")) {
+                browser.connected = false;
+                browser.busy = false;
+                browser.pending_auth_prompt = None;
+            } else {
+                self.sftp = None;
+            }
         }
     }
 
@@ -3195,12 +3225,42 @@ impl SessionManager {
     /// answers (keyboard-interactive / MFA).
     #[must_use]
     pub fn pending_auth_prompt(&self) -> Option<(SessionId, AuthPromptRequest)> {
-        self.sessions.iter().find_map(|(id, record)| {
-            record
-                .pending_auth_prompt
-                .clone()
-                .map(|prompt| (*id, prompt))
-        })
+        self.sessions
+            .iter()
+            .find_map(|(id, record)| {
+                record
+                    .pending_auth_prompt
+                    .as_ref()
+                    .filter(|p| p.is_pending())
+                    .cloned()
+                    .or_else(|| {
+                        record
+                            .sftp_shell
+                            .as_ref()
+                            .and_then(SftpShell::pending_auth_prompt)
+                    })
+                    .map(|prompt| (*id, prompt))
+            })
+            .or_else(|| {
+                self.sftp.as_ref().and_then(|browser| {
+                    browser
+                        .pending_auth_prompt
+                        .as_ref()
+                        .filter(|p| p.is_pending())
+                        .cloned()
+                        .map(|p| (browser.owner, p))
+                })
+            })
+            .or_else(|| {
+                self.tunnels.iter().find_map(|tunnel| {
+                    tunnel
+                        .pending_auth_prompt
+                        .as_ref()
+                        .filter(|p| p.is_pending())
+                        .cloned()
+                        .map(|p| (tunnel.owner, p))
+                })
+            })
     }
 
     /// Take the next session whose handshake failed on credentials, so the caller
@@ -3263,22 +3323,13 @@ impl SessionManager {
         session_id: SessionId,
         answers: Vec<String>,
     ) -> Result<(), SessionError> {
-        let record = self
-            .sessions
-            .get_mut(&session_id)
+        let (_, prompt) = self
+            .pending_auth_prompt()
+            .filter(|(id, _)| *id == session_id)
             .ok_or(SessionError::SessionNotFound)?;
-        record.pending_auth_prompt = None;
-        let cancelled = answers.is_empty();
-        if let Some(live) = &record.live {
-            live.send(LiveShellCommand::AuthResponses(answers))?;
-        } else if let Some(vnc) = &record.vnc {
-            vnc.send_gateway(LiveShellCommand::AuthResponses(answers));
+        if !prompt.respond(answers) {
+            return Err(SshError::AuthenticationCancelled.into());
         }
-        record.terminal.append_status(if cancelled {
-            "authentication cancelled"
-        } else {
-            "sending authentication response"
-        });
         Ok(())
     }
 
@@ -3398,8 +3449,8 @@ impl SessionManager {
                         // An auth prompt can't be answered on a dead connection.
                         record.pending_auth_prompt = None;
                     }
-                    LiveShellEvent::SecurityRejected(error) => {
-                        record.terminal.append_status(format!("host identity rejected: {error}"));
+                    LiveShellEvent::SecurityRejected(error) | LiveShellEvent::ConnectStopped(error) => {
+                        record.terminal.append_status(format!("connection stopped: {error}"));
                         record.summary.status = SessionStatus::Error;
                         record.pending_host_key = None;
                         record.pending_auth_prompt = None;
@@ -3678,6 +3729,17 @@ impl SessionManager {
             return;
         };
 
+        let jump_credentials = match self.resolve_jump_credentials(&profile) {
+            Ok(credentials) => credentials,
+            Err(error) => {
+                if let Some(record) = self.sessions.get_mut(&session_id) {
+                    record.summary.status = SessionStatus::Error;
+                    record.terminal.append_status(error.to_string());
+                    if let Some(reconnect) = &mut record.reconnect { reconnect.retry_at = None; }
+                }
+                return;
+            }
+        };
         match spawn_live_shell(
             &profile,
             &password,
@@ -3685,6 +3747,7 @@ impl SessionManager {
             self.connect_timeout_secs,
             self.default_size,
             self.auto_accept_host_keys,
+            &jump_credentials,
         ) {
             Ok(live) => {
                 if let Some(record) = self.sessions.get_mut(&session_id) {
@@ -3949,6 +4012,7 @@ fn spawn_live_shell(
     connect_timeout_secs: u64,
     size: TerminalSize,
     auto_accept_host_keys: bool,
+    jump_credentials: &JumpCredentials,
 ) -> Result<LiveShellHandle, SessionError> {
     let mut request = LiveShellRequest::new(
         profile.host.clone(),
@@ -3966,6 +4030,7 @@ fn spawn_live_shell(
     request.environment = profile.session_options.environment.clone();
     request.connect_timeout_secs = connect_timeout_secs;
     request.jumps = profile.jumps.clone();
+    request.jump_credentials = jump_credentials.clone();
     Ok(adit_ssh::spawn_password_shell(request)?)
 }
 
@@ -3985,6 +4050,7 @@ fn auth_options_for_profile(
             try_default_keys: true,
             identity_file,
             passphrase,
+            agent_socket: None,
         },
         AuthMethod::Password => AuthOptions {
             try_password: true,
@@ -3992,6 +4058,7 @@ fn auth_options_for_profile(
             try_default_keys: false,
             identity_file: None,
             passphrase: None,
+            agent_socket: None,
         },
         AuthMethod::Key => AuthOptions {
             try_password: false,
@@ -3999,6 +4066,7 @@ fn auth_options_for_profile(
             try_default_keys: identity_file.is_none(),
             identity_file,
             passphrase,
+            agent_socket: None,
         },
         AuthMethod::Agent => AuthOptions {
             try_password: false,
@@ -4006,6 +4074,7 @@ fn auth_options_for_profile(
             try_default_keys: false,
             identity_file: None,
             passphrase: None,
+            agent_socket: None,
         },
     }
 }

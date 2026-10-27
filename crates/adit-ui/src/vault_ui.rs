@@ -159,6 +159,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<super::Message
             }
         }
         Message::Run(action) => {
+            if matches!(action, Action::Lock | Action::Import) { app.manager.clear_jump_credentials(); }
             if app.vault_ui.busy {
                 return Task::none();
             }

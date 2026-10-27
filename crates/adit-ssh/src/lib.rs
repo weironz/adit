@@ -1,5 +1,10 @@
 pub mod desktop_gateway;
 mod sftp_transfer;
+mod auth_ui;
+mod auxiliary;
+use auth_ui::{AuthEventSink, hop_credentials};
+pub use auth_ui::JumpCredential;
+pub type JumpCredentials = std::collections::HashMap<adit_domain::ProfileId, JumpCredential>;
 pub use adit_domain::JumpHop;
 use bytes::Bytes;
 use russh::{
@@ -64,7 +69,7 @@ impl PasswordShellProbe {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct LiveShellRequest {
     pub host: String,
     pub port: u16,
@@ -91,6 +96,7 @@ pub struct LiveShellRequest {
     /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`). Empty ⇒
     /// connect directly.
     pub jumps: Vec<JumpHop>,
+    pub jump_credentials: JumpCredentials,
 }
 
 impl LiveShellRequest {
@@ -117,14 +123,17 @@ impl LiveShellRequest {
             connect_timeout_secs: 20,
             auto_accept_host_keys: false,
             jumps: Vec::new(),
+            jump_credentials: JumpCredentials::new(),
         }
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthOptions {
     pub try_password: bool,
     pub try_agent: bool,
+    /// Explicit socket for an isolated agent; None uses the platform agent.
+    pub agent_socket: Option<PathBuf>,
     pub try_default_keys: bool,
     pub identity_file: Option<PathBuf>,
     /// Passphrase for an encrypted `identity_file`, distinct from the login
@@ -138,6 +147,7 @@ impl Default for AuthOptions {
         Self {
             try_password: true,
             try_agent: true,
+            agent_socket: None,
             try_default_keys: true,
             identity_file: None,
             passphrase: None,
@@ -150,7 +160,7 @@ pub struct ShellProbeOutput {
     pub transcript: String,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum LiveShellCommand {
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
@@ -169,6 +179,8 @@ pub enum LiveShellEvent {
     Error(String),
     /// Server identity or local trust-store failure; never retry as a network drop.
     SecurityRejected(String),
+    /// User cancellation or a jump credential error requires an explicit retry.
+    ConnectStopped(String),
     /// Authentication failed in a way the user can fix by supplying credentials
     /// (rejected password/key, a missing password, or no method available). Kept
     /// separate from [`LiveShellEvent::Error`] so the UI can re-prompt for the
@@ -201,9 +213,8 @@ pub enum LiveShellEvent {
 /// An authenticated SSH connection that further channels can ride on.
 ///
 /// SFTP and port forwarding are just channels. Opening them here instead of
-/// dialling a second connection means the server authenticates once — which is
-/// what makes MFA work at all, since a one-time code is one-time and a host that
-/// demands a fresh one per connection rejects the second and the third.
+/// dialling a second connection means the server authenticates once. A fresh
+/// connection may require another factor; codes are never cached or replayed.
 ///
 /// Sharing is sound because every `channel_open_*` in `russh` takes `&self` and
 /// waits on a receiver it creates per call; only authentication takes `&mut`,
@@ -269,8 +280,10 @@ impl std::fmt::Debug for SharedSession {
 
 /// A keyboard-interactive challenge from the server that Adit can't auto-answer
 /// with the stored password (e.g. a one-time code), surfaced for the user.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct AuthPromptRequest {
+    pub id: u64,
+    reply: auth_ui::Reply,
     /// Server-supplied heading (often empty).
     pub name: String,
     /// Server-supplied instructions (often empty).
@@ -354,6 +367,18 @@ pub enum SshError {
     AuthenticationRejected,
     #[error("authentication cancelled")]
     AuthenticationCancelled,
+    #[error("interactive authentication requires a fresh response from the user")]
+    InteractiveAuthenticationRequired,
+    #[error("the accepted authentication method requires an additional factor")]
+    AdditionalFactorRequired,
+    #[error("jump authentication profile {0} has no resolved credentials")]
+    MissingJumpCredential(adit_domain::ProfileId),
+    #[error("jump {index} ({host}) authentication failed: {source}")]
+    JumpAuthentication {
+        index: usize,
+        host: String,
+        source: Box<SshError>,
+    },
     #[error("could not load private key {0}; if it is passphrase-protected, set its passphrase in the profile")]
     KeyPassphraseRequired(String),
     #[error("could not load private key {0} with the given passphrase (wrong passphrase or unsupported key format)")]
@@ -438,6 +463,11 @@ pub fn spawn_password_shell(request: LiveShellRequest) -> Result<LiveShellHandle
 /// user just dismissed the prompt, so re-opening it would trap them in a loop.
 fn live_shell_failure(error: &SshError) -> LiveShellEvent {
     match error {
+        SshError::AuthenticationCancelled
+        | SshError::InteractiveAuthenticationRequired
+        | SshError::AdditionalFactorRequired
+        | SshError::MissingJumpCredential(_)
+        | SshError::JumpAuthentication { .. } => LiveShellEvent::ConnectStopped(error.to_string()),
         SshError::AuthenticationRejected
         | SshError::EmptyPassword
         | SshError::NoAuthenticationMethod
@@ -1369,30 +1399,27 @@ async fn run_live_password_shell(
         // than threading a single one across the connect block's borrow.
         let (kbd_tx, kbd_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
         let mut interactive = InteractiveKbd {
-            events: &events,
-            responses: kbd_rx,
+            events: AuthEventSink::Shell(&events),
+            endpoint: format!("{}@{}:{}", request.username, request.host, request.port),
+            responses: Some(kbd_rx),
         };
         let connect = connect_through_jumps(
             &request.jumps,
-            &request.auth,
-            &request.password,
+            &request.jump_credentials,
+            &request.username,
             &request.host,
             request.port,
             final_handler,
             &config,
             &request.known_hosts_path,
+            request.connect_timeout_secs,
             Some(&mut interactive),
         );
         tokio::pin!(connect);
-        let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
-        tokio::pin!(deadline);
         let mut decision_tx = Some(decision_tx);
         loop {
             tokio::select! {
                 result = &mut connect => break result?,
-                _ = &mut deadline => {
-                    return Err(SshError::Timeout(request.connect_timeout_secs));
-                }
                 command = commands.recv() => match command {
                     Some(LiveShellCommand::HostKeyDecision(decision)) => {
                         if let Some(tx) = decision_tx.take() {
@@ -1427,8 +1454,9 @@ async fn run_live_password_shell(
     {
         let (kbd_tx, kbd_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
         let mut interactive = InteractiveKbd {
-            events: &events,
-            responses: kbd_rx,
+            events: AuthEventSink::Shell(&events),
+            endpoint: format!("{}@{}:{}", request.username, request.host, request.port),
+            responses: Some(kbd_rx),
         };
         let auth = authenticate_with_available_methods(
             &mut session,
@@ -1631,24 +1659,23 @@ fn effective_timeout_secs(configured: u64) -> u64 {
 /// which the caller MUST keep alive for the whole session (dropping one closes
 /// its tunnel).
 ///
-/// Each hop authenticates with the same profile credentials as the target
-/// (`hop_auth` + `hop_password`) — Adit stores one credential per profile, so a
-/// bastion is expected to accept the same password / key / passphrase. `hop_auth`
-/// carries the password's double duty as a key passphrase, so an encrypted
-/// identity file decrypts on every hop. Jump hops auto-record their host keys
+/// Explicit owners resolve only their own password, identity/passphrase or
+/// agent settings. Unconfigured legacy hops ask independently and may try the
+/// local agent/default keys, without inheriting target secrets. Hops record host keys
 /// (no interactive prompt through the tunnel); a *changed* hop key is rejected.
 /// The target key is checked by `final_handler`, which the caller can make
 /// interactive.
 #[allow(clippy::too_many_arguments)] // cohesive connect params; a struct adds noise
 async fn connect_through_jumps(
     jumps: &[JumpHop],
-    hop_auth: &AuthOptions,
-    hop_password: &str,
+    resolved: &JumpCredentials,
+    target_username: &str,
     final_host: &str,
     final_port: u16,
     final_handler: KnownHostsClient,
     config: &Arc<client::Config>,
     known_hosts_path: &Path,
+    connect_timeout_secs: u64,
     // Offered to every hop: an MFA-gated bastion challenges on the way through,
     // and answering only at the final target would never reach it.
     mut interactive: Option<&mut InteractiveKbd<'_>>,
@@ -1664,6 +1691,8 @@ async fn connect_through_jumps(
         if hop.host.trim().is_empty() {
             return Err(SshError::EmptyHost);
         }
+        let credential = hop_credentials(hop, resolved, target_username)?;
+        let username = credential.username.as_str();
         // Non-interactive handler: `decision`/`auto_accept` both None ⇒ record an
         // unknown key on first use and reject a changed one.
         let handler = KnownHostsClient::new(
@@ -1673,53 +1702,81 @@ async fn connect_through_jumps(
             None,
             None,
         );
-        let mut session = if index == 0 {
-            client::connect(config.clone(), (hop.host.as_str(), hop.port), handler).await?
-        } else {
-            let prev = hops.last().expect("previous hop exists");
-            let channel = prev
-                .channel_open_direct_tcpip(
-                    hop.host.clone(),
-                    u32::from(hop.port),
-                    "127.0.0.1".to_string(),
-                    0,
-                )
-                .await?;
-            client::connect_stream(config.clone(), channel.into_stream(), handler).await?
+        let connect_hop = async {
+            if index == 0 {
+                client::connect(config.clone(), (hop.host.as_str(), hop.port), handler).await
+            } else {
+                let prev = hops.last().expect("previous hop exists");
+                let channel = prev
+                    .channel_open_direct_tcpip(
+                        hop.host.clone(),
+                        u32::from(hop.port),
+                        "127.0.0.1".to_string(),
+                        0,
+                    )
+                    .await?;
+                client::connect_stream(config.clone(), channel.into_stream(), handler).await
+            }
         };
-        authenticate_with_available_methods(
+        let mut session = tokio::time::timeout(
+            Duration::from_secs(effective_timeout_secs(connect_timeout_secs)),
+            connect_hop,
+        )
+        .await
+        .map_err(|_| SshError::Timeout(connect_timeout_secs))??;
+        if let Some(kbd) = interactive.as_deref_mut() {
+            kbd.endpoint = format!("跳板 {}：{}@{}:{}", index + 1, username, hop.host, hop.port);
+        }
+        if let Err(error) = authenticate_with_available_methods(
             &mut session,
-            &hop.username,
-            hop_password,
-            hop_auth,
+            username,
+            &credential.password,
+            &credential.auth,
             None,
-            // Reborrow so the next hop still gets it.
             interactive.as_deref_mut(),
         )
-        .await?;
+        .await
+        {
+            if matches!(error, SshError::AuthenticationCancelled) {
+                return Err(error);
+            }
+            return Err(SshError::JumpAuthentication {
+                index: index + 1,
+                host: hop.host.clone(),
+                source: Box::new(error),
+            });
+        }
         hops.push(session);
     }
 
-    let last = hops.last().expect("at least one jump host");
-    let channel = last
-        .channel_open_direct_tcpip(
-            final_host.to_string(),
-            u32::from(final_port),
-            "127.0.0.1".to_string(),
-            0,
-        )
-        .await?;
-    let target =
-        client::connect_stream(config.clone(), channel.into_stream(), final_handler).await?;
+    let connect_target = async {
+        let last = hops.last().expect("at least one jump host");
+        let channel = last
+            .channel_open_direct_tcpip(
+                final_host.to_string(),
+                u32::from(final_port),
+                "127.0.0.1".to_string(),
+                0,
+            )
+            .await?;
+        client::connect_stream(config.clone(), channel.into_stream(), final_handler).await
+    };
+    let target = tokio::time::timeout(
+        Duration::from_secs(effective_timeout_secs(connect_timeout_secs)),
+        connect_target,
+    )
+    .await
+    .map_err(|_| SshError::Timeout(connect_timeout_secs))??;
     Ok((target, hops))
 }
 
 /// Channel back to the UI for answering keyboard-interactive challenges that
 /// can't be auto-filled from the stored password (an MFA/OTP code). Present only
-/// on the interactive shell path; SFTP/tunnel connections pass `None`.
+/// on shell, standalone SFTP and standalone tunnel connections.
 struct InteractiveKbd<'a> {
-    events: &'a mpsc::Sender<LiveShellEvent>,
-    responses: tokio_mpsc::UnboundedReceiver<Vec<String>>,
+    events: AuthEventSink<'a>,
+    endpoint: String,
+    responses: Option<tokio_mpsc::UnboundedReceiver<Vec<String>>>,
 }
 
 async fn authenticate_with_available_methods(
@@ -1728,20 +1785,57 @@ async fn authenticate_with_available_methods(
     password: &str,
     auth: &AuthOptions,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
+    mut interactive: Option<&mut InteractiveKbd<'_>>,
+) -> Result<(), SshError> {
+    match authenticate_initial_methods(
+        session,
+        username,
+        password,
+        auth,
+        events,
+        interactive.as_deref_mut(),
+    )
+    .await
+    {
+        Err(SshError::AdditionalFactorRequired) => {
+            if authenticate_password_or_keyboard_interactive(
+                session,
+                username,
+                "",
+                events,
+                interactive,
+            )
+            .await?
+            {
+                Ok(())
+            } else {
+                Err(SshError::AuthenticationRejected)
+            }
+        }
+        result => result,
+    }
+}
+
+async fn authenticate_initial_methods(
+    session: &mut client::Handle<KnownHostsClient>,
+    username: &str,
+    password: &str,
+    auth: &AuthOptions,
+    events: Option<&mpsc::Sender<LiveShellEvent>>,
     // Borrowed, not owned, so a jump-host chain can offer the same channel to
     // every hop instead of the last one silently losing it.
-    interactive: Option<&mut InteractiveKbd<'_>>,
+    mut interactive: Option<&mut InteractiveKbd<'_>>,
 ) -> Result<(), SshError> {
     let mut attempted = false;
 
-    if auth.try_password && !password.is_empty() {
+    if auth.try_password && (!password.is_empty() || interactive.is_some()) {
         attempted = true;
         if authenticate_password_or_keyboard_interactive(
             session,
             username,
             password,
             events,
-            interactive,
+            interactive.as_deref_mut(),
         )
         .await?
         {
@@ -1780,7 +1874,8 @@ async fn authenticate_with_available_methods(
 
     if auth.try_agent {
         let (authenticated, agent_attempted) =
-            authenticate_with_ssh_agent(session, username, events).await?;
+            authenticate_with_ssh_agent(session, username, events, auth.agent_socket.as_deref())
+                .await?;
         attempted |= agent_attempted;
         if authenticated {
             return Ok(());
@@ -1796,6 +1891,32 @@ async fn authenticate_with_available_methods(
         }
     }
 
+    // Password-only sshd may disable keyboard-interactive entirely. Ask here
+    // only after automatic methods failed, and never substitute another host's
+    // password for this connection's missing one.
+    if auth.try_password && password.is_empty() {
+        let kbd = interactive.ok_or(SshError::InteractiveAuthenticationRequired)?;
+        let mut answers = kbd
+            .ask(
+                "SSH 账户密码",
+                "请输入本次连接的账户密码；此回答不会保存到会话配置。",
+                vec![AuthPromptField {
+                    prompt: "密码".to_owned(),
+                    echo: false,
+                }],
+            )
+            .await?;
+        let supplied = answers.remove(0);
+        if authenticate_password_or_keyboard_interactive(
+            session, username, &supplied, events, Some(kbd),
+        )
+        .await?
+        {
+            return Ok(());
+        }
+        attempted = true;
+    }
+
     if attempted {
         Err(SshError::AuthenticationRejected)
     } else {
@@ -1807,7 +1928,24 @@ async fn authenticate_with_ssh_agent(
     session: &mut client::Handle<KnownHostsClient>,
     username: &str,
     events: Option<&mpsc::Sender<LiveShellEvent>>,
+    agent_socket: Option<&Path>,
 ) -> Result<(bool, bool), SshError> {
+    if let Some(path) = agent_socket {
+        #[cfg(unix)]
+        {
+            let agent = AgentClient::connect_uds(path)
+                .await
+                .map_err(|e| SshError::Agent(e.to_string()))?;
+            return authenticate_agent_identities(session, username, agent, events).await;
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            return Err(SshError::Agent(
+                "explicit Unix agent sockets are unavailable on this platform".to_owned(),
+            ));
+        }
+    }
     #[cfg(windows)]
     {
         match AgentClient::connect_named_pipe(r"\\.\pipe\openssh-ssh-agent").await {
@@ -1899,7 +2037,7 @@ where
                 .map_err(|error| SshError::Agent(error.to_string()))?,
         };
 
-        if auth.success() {
+        if auth_ui::key_auth_result(auth)? {
             return Ok((true, true));
         }
     }
@@ -1914,12 +2052,9 @@ async fn authenticate_password_or_keyboard_interactive(
     events: Option<&mpsc::Sender<LiveShellEvent>>,
     mut interactive: Option<&mut InteractiveKbd<'_>>,
 ) -> Result<bool, SshError> {
-    let auth = session
-        .authenticate_password(username.to_owned(), password.to_owned())
-        .await?;
-
-    if auth.success() {
-        return Ok(true);
+    if !password.is_empty() {
+        let auth = session.authenticate_password(username.to_owned(), password.to_owned()).await?;
+        if auth.success() { return Ok(true); }
     }
 
     send_status(
@@ -1972,8 +2107,8 @@ async fn authenticate_password_or_keyboard_interactive(
 /// remaining field (an MFA code, a *new* password, an echoed username) is asked
 /// of the user when an interactive channel is available. A user cancel surfaces
 /// as [`SshError::AuthenticationCancelled`] so the whole connect aborts. Without
-/// an interactive channel (SFTP/tunnel) it falls back to the best-effort
-/// heuristic.
+/// an interactive channel it refuses the unknown field rather than sending a
+/// saved password as an OTP.
 async fn keyboard_interactive_round_answers(
     name: &str,
     instructions: &str,
@@ -2007,30 +2142,10 @@ async fn keyboard_interactive_round_answers(
                 })
                 .collect();
             send_status(events, "waiting for interactive authentication (MFA)");
-            let _ = kbd.events.send(LiveShellEvent::AuthPrompt(AuthPromptRequest {
-                name: name.to_owned(),
-                instructions: instructions.to_owned(),
-                prompts: fields,
-            }));
-            // Block until the user answers; a closed channel or an empty vec is a
-            // deliberate cancel that aborts authentication.
-            let user = kbd
-                .responses
-                .recv()
-                .await
-                .ok_or(SshError::AuthenticationCancelled)?;
-            if user.is_empty() {
-                return Err(SshError::AuthenticationCancelled);
-            }
+            let user = kbd.ask(name, instructions, fields).await?;
             Ok(fill_answers(answers, user.into_iter()))
         }
-        None => {
-            // Non-interactive path: best effort with the stored password.
-            Ok(prompts
-                .iter()
-                .map(|p| keyboard_interactive_answer(&p.prompt, p.echo, password))
-                .collect())
-        }
+        None => Err(SshError::InteractiveAuthenticationRequired),
     }
 }
 
@@ -2046,10 +2161,8 @@ fn fill_answers(
 }
 
 /// Whether Adit may auto-fill a keyboard-interactive prompt with the stored
-/// account password, rather than asking the user. Mirrors the pre-MFA behaviour
-/// (any masked field is the password) but carves out the two cases where reusing
-/// the stored password is wrong: a *second factor* (OTP / verification code /
-/// Duo / token) and *setting a new* password (new / retype / confirm / change).
+/// account password, rather than asking the user. Only recognized account-
+/// password labels qualify; a masked field alone does not identify its purpose.
 fn should_autofill_password(prompt: &str, echo: bool) -> bool {
     let p = prompt.to_ascii_lowercase();
 
@@ -2070,20 +2183,26 @@ fn should_autofill_password(prompt: &str, echo: bool) -> bool {
         "pin",
         "yubikey",
         "securid",
+        "验证码",
+        "动态",
+        "一次性",
+        "令牌",
     ];
     if SECOND_FACTOR.iter().any(|needle| p.contains(needle)) {
         return false;
     }
 
     // Choosing / confirming a *new* password — don't reuse the old one.
-    const NEW_PASSWORD: &[&str] = &["new ", "retype", "re-type", "again", "confirm", "change"];
+    const NEW_PASSWORD: &[&str] = &[
+        "new ", "retype", "re-type", "again", "confirm", "change",
+        "新密码", "确认", "重新", "更改", "重复",
+    ];
     if NEW_PASSWORD.iter().any(|needle| p.contains(needle)) {
         return false;
     }
 
-    // A masked (non-echoed) field is the account password / passphrase; an
-    // explicitly password-labelled field qualifies even if oddly echoed.
-    !echo || p.contains("password") || p.contains("passphrase")
+    // Unknown/localized masked challenges need an explicit user answer.
+    !echo && (p.contains("password") || p.contains("passwort") || p.contains("密码"))
 }
 
 async fn authenticate_with_default_private_keys(
@@ -2185,7 +2304,7 @@ async fn authenticate_with_private_key_and_hash(
         )
         .await?;
 
-    Ok(auth.success())
+    auth_ui::key_auth_result(auth)
 }
 
 fn default_private_key_paths() -> Vec<PathBuf> {
@@ -2230,20 +2349,6 @@ fn agent_identity_label(identity: &AgentIdentity) -> String {
     }
 }
 
-fn keyboard_interactive_answer(prompt: &str, echo: bool, password: &str) -> String {
-    let prompt = prompt.to_ascii_lowercase();
-    if !echo
-        || prompt.contains("password")
-        || prompt.contains("passphrase")
-        || prompt.contains("passcode")
-        || prompt.contains("otp")
-    {
-        password.to_owned()
-    } else {
-        String::new()
-    }
-}
-
 fn send_status(events: Option<&mpsc::Sender<LiveShellEvent>>, message: impl Into<String>) {
     if let Some(events) = events {
         let _ = events.send(LiveShellEvent::Status(message.into()));
@@ -2257,7 +2362,7 @@ const SFTP_PROGRESS_STEP: u64 = 256 * 1024;
 
 /// Connection details for an SFTP session (a separate SSH connection to the
 /// same host, reusing the profile's credentials).
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SftpRequest {
     pub host: String,
     pub port: u16,
@@ -2267,6 +2372,7 @@ pub struct SftpRequest {
     pub known_hosts_path: PathBuf,
     /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
     pub jumps: Vec<JumpHop>,
+    pub jump_credentials: JumpCredentials,
     /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
     pub connect_timeout_secs: u64,
     /// Keepalive probe interval in seconds (0 ⇒ disabled), as for a shell session.
@@ -2289,6 +2395,7 @@ impl SftpRequest {
             auth: AuthOptions::default(),
             known_hosts_path: default_known_hosts_path(),
             jumps: Vec::new(),
+            jump_credentials: JumpCredentials::new(),
             connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
             keepalive_secs: DEFAULT_KEEPALIVE_SECS,
         }
@@ -2378,6 +2485,7 @@ pub enum TransferMode {
 
 #[derive(Debug, Clone)]
 pub enum SftpEvent {
+    AuthPrompt(AuthPromptRequest),
     Status(String),
     Ready { home: String },
     Listing { path: String, entries: Vec<SftpEntry> },
@@ -2513,83 +2621,40 @@ pub fn spawn_sftp_session(request: SftpRequest) -> Result<SftpHandle, SshError> 
 
 async fn run_sftp_session(
     request: SftpRequest,
-    commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
+    mut commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
     events: mpsc::Sender<SftpEvent>,
     cancel: CancelSet,
 ) -> Result<(), SshError> {
-    let _ = events.send(SftpEvent::Status(String::from("connecting")));
-
-    let config = Arc::new(client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: (request.keepalive_secs > 0)
-            .then(|| Duration::from_secs(request.keepalive_secs)),
-        keepalive_max: 3,
-        ..Default::default()
-    });
-    // Connect directly, or chain through jump hosts (their handles are kept
-    // alive alongside the session). Host keys are verified non-interactively.
-    let (mut session, _jump_handles) = if request.jumps.is_empty() {
-        let handler = KnownHostsClient::new(
-            request.host.clone(),
-            request.port,
-            request.known_hosts_path.clone(),
-            None,
-            None,
-        );
-        let session =
-            client::connect(config, (request.host.as_str(), request.port), handler).await?;
-        (session, Vec::new())
-    } else {
-        let final_handler = KnownHostsClient::new(
-            request.host.clone(),
-            request.port,
-            request.known_hosts_path.clone(),
-            None,
-            None,
-        );
-        // Bound the whole chain's handshake so a hop that opens the socket but
-        // never completes the SSH handshake can't hang the session forever.
-        tokio::time::timeout(
-            Duration::from_secs(effective_timeout_secs(request.connect_timeout_secs)),
-            connect_through_jumps(
-                &request.jumps,
-                &request.auth,
-                &request.password,
-                &request.host,
-                request.port,
-                final_handler,
-                &config,
-                &request.known_hosts_path,
-                // No prompt path here: these dial their own connection and
-                // authenticate non-interactively. They only reach this code when
-                // there is no live session to ride on.
-                None,
-            ),
-        )
-        .await
-        .map_err(|_| SshError::Timeout(request.connect_timeout_secs))??
+    let _ = events.send(SftpEvent::Status("connecting".to_owned()));
+    let connection = auxiliary::sftp_request(&request);
+    let mut pending = std::collections::VecDeque::new();
+    let (session, _jump_handles, sftp) = {
+        let handshake = async {
+            let (session, jumps) = auxiliary::connect(
+                connection,
+                AuthEventSink::Sftp(&events),
+                ForwardRegistry::default(),
+            )
+            .await?;
+            let channel = session.channel_open_session().await?;
+            channel.request_subsystem(true, "sftp").await?;
+            let sftp = SftpSession::new(channel.into_stream())
+                .await
+                .map_err(|e| SshError::Sftp(e.to_string()))?;
+            Ok::<_, SshError>((session, jumps, sftp))
+        };
+        tokio::pin!(handshake);
+        loop {
+            tokio::select! {
+                result = &mut handshake => break result?,
+                command = commands.recv() => match command {
+                    Some(SftpCommand::Disconnect) | None => return Ok(()),
+                    Some(command) => pending.push_back(command),
+                }
+            }
+        }
     };
-
-    let _ = events.send(SftpEvent::Status(String::from("authenticating")));
-    authenticate_with_available_methods(
-        &mut session,
-        &request.username,
-        &request.password,
-        &request.auth,
-        None,
-        None,
-    )
-    .await?;
-
-    let channel = session.channel_open_session().await?;
-    channel.request_subsystem(true, "sftp").await?;
-    let sftp = SftpSession::new(channel.into_stream())
-        .await
-        .map_err(|error| SshError::Sftp(error.to_string()))?;
-
-    run_sftp_commands(sftp, commands, events, cancel).await;
-
-    // We dialled this connection, so we own it and take it down with us.
+    run_sftp_commands(sftp, commands, events, cancel, pending).await;
     let _ = session
         .disconnect(Disconnect::ByApplication, "sftp session closed", "en")
         .await;
@@ -2600,8 +2665,7 @@ async fn run_sftp_session(
 ///
 /// This is the whole point of [`SharedSession`]: SFTP is just another channel,
 /// so the server authenticates once. Dialling separately re-runs the auth chain,
-/// and an MFA host answers that by demanding a second one-time code — which is
-/// one-time, so it rejects it.
+/// and an MFA host may require a fresh interactive response on that connection.
 async fn run_sftp_session_on(
     shared: SharedSession,
     commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
@@ -2610,7 +2674,7 @@ async fn run_sftp_session_on(
 ) -> Result<(), SshError> {
     let _ = events.send(SftpEvent::Status(String::from("attaching to the session")));
     let sftp = shared.open_sftp().await?;
-    run_sftp_commands(sftp, commands, events, cancel).await;
+    run_sftp_commands(sftp, commands, events, cancel, Default::default()).await;
     // Dropping `shared` only releases our reference. Never disconnect here — the
     // shell owns this connection and is still using it.
     Ok(())
@@ -2626,12 +2690,20 @@ async fn run_sftp_commands(
     mut commands: tokio_mpsc::UnboundedReceiver<SftpCommand>,
     events: mpsc::Sender<SftpEvent>,
     cancel: CancelSet,
+    mut pending: std::collections::VecDeque<SftpCommand>,
 ) {
-    let home = sftp.canonicalize(".").await.unwrap_or_else(|_| String::from("/"));
+    let home = sftp
+        .canonicalize(".")
+        .await
+        .unwrap_or_else(|_| String::from("/"));
     let _ = events.send(SftpEvent::Ready { home: home.clone() });
     list_dir(&sftp, &home, &events).await;
 
-    while let Some(command) = commands.recv().await {
+    while let Some(command) = if let Some(command) = pending.pop_front() {
+        Some(command)
+    } else {
+        commands.recv().await
+    } {
         let mode = match &command {
             SftpCommand::DownloadWith { mode, .. } | SftpCommand::UploadWith { mode, .. } => *mode,
             _ => TransferMode::CreateNew,
@@ -3126,7 +3198,7 @@ where
 
 pub use adit_domain::TunnelKind;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct TunnelRequest {
     pub host: String,
     pub port: u16,
@@ -3142,6 +3214,7 @@ pub struct TunnelRequest {
     pub target_port: u16,
     /// Jump hosts to chain through before `host` (OpenSSH `ProxyJump`).
     pub jumps: Vec<JumpHop>,
+    pub jump_credentials: JumpCredentials,
     /// Handshake deadline for a jump chain, in seconds (0 ⇒ effectively none).
     pub connect_timeout_secs: u64,
     /// Keepalive probe interval in seconds (0 ⇒ disabled), as for a shell session.
@@ -3175,6 +3248,7 @@ impl TunnelRequest {
             target_host: target_host.into(),
             target_port,
             jumps: Vec::new(),
+            jump_credentials: JumpCredentials::new(),
             connect_timeout_secs: DEFAULT_JUMP_CONNECT_TIMEOUT_SECS,
             keepalive_secs: DEFAULT_KEEPALIVE_SECS,
         }
@@ -3188,6 +3262,7 @@ pub enum TunnelCommand {
 
 #[derive(Debug, Clone)]
 pub enum TunnelEvent {
+    AuthPrompt(AuthPromptRequest),
     Status(String),
     Listening { bind: String },
     Opened { peer: String },
@@ -3319,76 +3394,25 @@ pub fn spawn_tunnel_session(request: TunnelRequest) -> Result<TunnelHandle, SshE
 
 async fn run_tunnel_session(
     request: TunnelRequest,
-    commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
+    mut commands: tokio_mpsc::UnboundedReceiver<TunnelCommand>,
     events: mpsc::Sender<TunnelEvent>,
 ) -> Result<(), SshError> {
-    let _ = events.send(TunnelEvent::Status(String::from("connecting")));
-
-    let config = Arc::new(client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: (request.keepalive_secs > 0)
-            .then(|| Duration::from_secs(request.keepalive_secs)),
-        keepalive_max: 3,
-        ..Default::default()
-    });
-    // One handler for every tunnel kind now. A remote forward registers its
-    // target in `forwards` when it starts rather than baking it into the handler
-    // here, which is what lets the shared-session path work at all.
+    let _ = events.send(TunnelEvent::Status("connecting".to_owned()));
     let forwards = ForwardRegistry::default();
-    let handler = KnownHostsClient::new(
-        request.host.clone(),
-        request.port,
-        request.known_hosts_path.clone(),
-        None,
-        None,
-    )
-    .with_forwards(forwards.clone());
-    // Connect directly, or chain through jump hosts (their handles are kept
-    // alive alongside the session). The tunnel's forward handler rides the
-    // final target session either way.
-    let (mut session, _jump_handles) = if request.jumps.is_empty() {
-        let session =
-            client::connect(config.clone(), (request.host.as_str(), request.port), handler).await?;
-        (session, Vec::new())
-    } else {
-        // Same whole-chain handshake bound as the SFTP path (see above).
-        tokio::time::timeout(
-            Duration::from_secs(effective_timeout_secs(request.connect_timeout_secs)),
-            connect_through_jumps(
-                &request.jumps,
-                &request.auth,
-                &request.password,
-                &request.host,
-                request.port,
-                handler,
-                &config,
-                &request.known_hosts_path,
-                // No prompt path here: these dial their own connection and
-                // authenticate non-interactively. They only reach this code when
-                // there is no live session to ride on.
-                None,
-            ),
-        )
-        .await
-        .map_err(|_| SshError::Timeout(request.connect_timeout_secs))??
+    let (session, _jump_handles) = {
+        let handshake = auxiliary::connect(
+            auxiliary::tunnel_request(&request),
+            AuthEventSink::Tunnel(&events),
+            forwards.clone(),
+        );
+        tokio::pin!(handshake);
+        tokio::select! {
+            result = &mut handshake => result?,
+            _ = commands.recv() => return Ok(()),
+        }
     };
-
-    let _ = events.send(TunnelEvent::Status(String::from("authenticating")));
-    authenticate_with_available_methods(
-        &mut session,
-        &request.username,
-        &request.password,
-        &request.auth,
-        None,
-        None,
-    )
-    .await?;
-
     let session = Arc::new(session);
     let result = run_tunnel_over(Arc::clone(&session), forwards, request, commands, events).await;
-
-    // We dialled this connection, so we take it down with us. The shared entry
-    // point below must not, which is the only difference between the two.
     let _ = session
         .disconnect(Disconnect::ByApplication, "tunnel closed", "en")
         .await;
@@ -4353,6 +4377,18 @@ fn platform_config_dir() -> PathBuf {
     PathBuf::from(".").join(".adit")
 }
 
+impl std::fmt::Debug for LiveShellCommand {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::AuthResponses(_) => f.write_str("AuthResponses(<redacted>)"),
+            Self::Input(bytes) => f.debug_tuple("Input").field(&bytes.len()).finish(),
+            Self::Resize { cols, rows } => f.debug_tuple("Resize").field(cols).field(rows).finish(),
+            Self::Disconnect => f.write_str("Disconnect"),
+            Self::HostKeyDecision(d) => f.debug_tuple("HostKeyDecision").field(d).finish(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4755,17 +4791,17 @@ mod tests {
 
     #[test]
     fn should_autofill_password_distinguishes_password_from_mfa_and_new_password() {
-        // The account password / key passphrase (masked): auto-fillable.
+        // Only the account password is auto-filled into a remote challenge.
         assert!(should_autofill_password("Password: ", false));
         assert!(should_autofill_password("Password for user:", false));
-        assert!(should_autofill_password(
+        assert!(!should_autofill_password(
             "Enter passphrase for key /home/x/.ssh/id_ed25519:",
             false
         ));
-        // A masked field with a localized or empty label is still the password
-        // (mirrors the pre-MFA behaviour — no regression).
+        // Recognized localized account labels qualify; unknown masked fields
+        // need an explicit answer and must not receive the login password.
         assert!(should_autofill_password("Passwort: ", false));
-        assert!(should_autofill_password("", false));
+        assert!(!should_autofill_password("", false));
         // Second factors / one-time codes must NOT be auto-filled.
         assert!(!should_autofill_password("Verification code: ", false));
         assert!(!should_autofill_password("One-time password (OTP): ", false));
@@ -4781,6 +4817,7 @@ mod tests {
         assert!(!should_autofill_password("Confirm password: ", false));
         // Echoed fields (e.g. a username) are asked, not auto-filled.
         assert!(!should_autofill_password("Username: ", true));
+        assert!(!should_autofill_password("Password: ", true));
     }
 
     #[test]
@@ -4807,8 +4844,9 @@ mod tests {
             let (events_tx, events_rx) = mpsc::channel::<LiveShellEvent>();
             let (resp_tx, resp_rx) = tokio_mpsc::unbounded_channel::<Vec<String>>();
             let mut kbd = InteractiveKbd {
-                events: &events_tx,
-                responses: resp_rx,
+                events: AuthEventSink::Shell(&events_tx),
+                endpoint: String::new(),
+                responses: Some(resp_rx),
             };
 
             // A password-only round auto-fills silently — no AuthPrompt emitted.
@@ -4897,18 +4935,16 @@ mod tests {
     }
 
     #[test]
-    fn kbd_round_without_interactive_channel_falls_back_to_heuristic() {
+    fn kbd_round_without_interactive_channel_requires_user_response() {
         let rt = current_thread_rt();
         rt.block_on(async {
-            // SFTP/tunnel path: no user to ask, so best-effort with the password.
+            // Headless callers must not disclose their password as a factor.
             let code = [client::Prompt {
                 prompt: "Verification code: ".into(),
                 echo: false,
             }];
-            let answers = keyboard_interactive_round_answers("", "", &code, "pw", None, None)
-                .await
-                .unwrap();
-            assert_eq!(answers, vec!["pw".to_string()]);
+            let result = keyboard_interactive_round_answers("", "", &code, "pw", None, None).await;
+            assert!(matches!(result, Err(SshError::InteractiveAuthenticationRequired)));
         });
     }
 
@@ -5276,6 +5312,21 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_or_jump_authentication_never_prompts_for_target_password_or_auto_retries() {
+        for error in [
+            SshError::AuthenticationCancelled,
+            SshError::MissingJumpCredential(adit_domain::ProfileId::new()),
+            SshError::JumpAuthentication {
+                index: 1,
+                host: "fixture.invalid".into(),
+                source: Box::new(SshError::AuthenticationRejected),
+            },
+        ] {
+            assert!(matches!(live_shell_failure(&error), LiveShellEvent::ConnectStopped(_)));
+        }
+    }
+
+    #[test]
     fn revocation_wins_over_a_trusted_duplicate_and_survives_pin_replacement() {
         let path = temp_known_hosts_path("revocation-priority");
         let key = public_key(ED25519_KEY);
@@ -5360,3 +5411,4 @@ mod tests {
             .join("known_hosts")
     }
 }
+

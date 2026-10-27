@@ -57,6 +57,7 @@ enum Pending {
 /// A command-line SFTP session: its own SFTP connection plus a line editor.
 pub struct SftpShell {
     handle: SftpHandle,
+    pending_auth_prompt: Option<adit_ssh::AuthPromptRequest>,
     /// Remote working directory.
     pub cwd: String,
     /// Remote home, for a bare `cd`.
@@ -85,9 +86,14 @@ const COMMANDS: &[&str] = &[
 ];
 
 impl SftpShell {
+    pub(crate) fn pending_auth_prompt(&self) -> Option<adit_ssh::AuthPromptRequest> {
+        self.pending_auth_prompt.as_ref().filter(|p| p.is_pending()).cloned()
+    }
+
     pub(crate) fn new(handle: SftpHandle, local_cwd: PathBuf) -> Self {
         Self {
             handle,
+            pending_auth_prompt: None,
             cwd: String::from("/"),
             home: String::from("/"),
             local_cwd,
@@ -219,6 +225,7 @@ impl SftpShell {
     /// Fold an SFTP event into the transcript. Returns true when the connection closed.
     pub(crate) fn on_event(&mut self, terminal: &mut VtTerminal, event: SftpEvent) -> bool {
         match event {
+            SftpEvent::AuthPrompt(prompt) => self.pending_auth_prompt = Some(prompt),
             SftpEvent::Status(status) => {
                 // Only interesting before the prompt exists; afterwards it is noise.
                 if !self.connected || self.active_transfer.is_some() {

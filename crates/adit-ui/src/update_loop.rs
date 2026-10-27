@@ -1433,25 +1433,16 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 });
             }
         }
-        Message::AuthPromptInput { index, value } => {
-            if let Some(slot) = app.auth_prompt_answers.get_mut(index) {
-                *slot = value;
+        Message::AuthPromptInput { challenge_id, index, value } => {
+            if app.auth_prompt.as_ref().is_some_and(|(_, p)| p.id == challenge_id && p.is_pending()) {
+                if let Some(slot) = app.auth_prompt_answers.get_mut(index) { *slot = value.0; }
             }
         }
-        Message::SubmitAuthPrompt { session_id } => {
-            let answers = std::mem::take(&mut app.auth_prompt_answers);
-            app.auth_prompt = None;
-            if let Err(error) = app.manager.respond_auth_prompt(session_id, answers) {
-                app.last_error = Some(error.to_string());
-            }
+        Message::SubmitAuthPrompt { session_id, challenge_id } => {
+            jump_auth_ui::respond(app, session_id, challenge_id, false);
         }
-        Message::CancelAuthPrompt { session_id } => {
-            app.auth_prompt_answers.clear();
-            app.auth_prompt = None;
-            // An empty answer set cancels the authentication.
-            if let Err(error) = app.manager.respond_auth_prompt(session_id, Vec::new()) {
-                app.last_error = Some(error.to_string());
-            }
+        Message::CancelAuthPrompt { session_id, challenge_id } => {
+            jump_auth_ui::respond(app, session_id, challenge_id, true);
         }
         Message::OpenHyperlink(url) => {
             // Terminal output is remote-controlled: confirm the real destination
@@ -1847,7 +1838,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ProfileJumpsChanged(value) => {
             app.terminal_focused = false;
-            app.profile_jumps = value;
+            jump_auth_ui::edit_chain(app, value);
+        }
+        Message::ProfileHopAuthChanged { index, owner } => {
+            if let Some(hop) = app.profile_jump_auth.get_mut(index) { hop.auth_profile = owner; }
         }
         Message::ProfileEnvironmentChanged(environment) => {
             app.terminal_focused = false;

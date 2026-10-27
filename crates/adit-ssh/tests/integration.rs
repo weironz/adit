@@ -23,7 +23,7 @@ use std::ops::ControlFlow;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use std::{fs, thread};
 
@@ -34,7 +34,13 @@ use adit_ssh::{
     SharedSession, TunnelEvent, TunnelKind, TunnelRequest,
 };
 
-const IMAGE: &str = "adit-test-sshd:latest";
+const OWNER_LABEL: &str = "io.adit.fixture.owner";
+fn run_owner() -> &'static str {
+    static OWNER: OnceLock<String> = OnceLock::new();
+    OWNER
+        .get_or_init(|| format!("{}-{}", std::process::id(), unique()))
+        .as_str()
+}
 const USER: &str = "adit";
 const PASS: &str = "aditpw";
 
@@ -55,17 +61,61 @@ fn docker(args: &[&str]) -> Result<String, String> {
 }
 
 /// Build the test sshd image once per test run (layer-cached, so it's cheap).
-fn ensure_image() {
-    static BUILT: OnceLock<()> = OnceLock::new();
-    BUILT.get_or_init(|| {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("docker")
-            .join("test-sshd");
-        let dir = dir.to_string_lossy().to_string();
-        docker(&["build", "-t", IMAGE, &dir]).expect("docker build test-sshd image");
-    });
+struct TestImage {
+    tag: String,
+}
+impl Drop for TestImage {
+    fn drop(&mut self) {
+        cleanup_owned("image", &self.tag);
+    }
+}
+fn cleanup_owned(kind: &str, resource: &str) {
+    let template = format!("{{{{index .Config.Labels \"{}\"}}}}", OWNER_LABEL);
+    let template = if kind == "network" {
+        template.replace(".Config.Labels", ".Labels")
+    } else {
+        template
+    };
+    if docker(&[kind, "inspect", "--format", &template, resource]).as_deref() == Ok(run_owner()) {
+        let args = match kind {
+            "container" => vec!["container", "rm", "-f", "-v", resource],
+            "network" => vec!["network", "rm", resource],
+            "image" => vec!["image", "rm", resource],
+            _ => return,
+        };
+        let _ = docker(&args);
+    }
+}
+fn ensure_image() -> Arc<TestImage> {
+    static BUILT: OnceLock<Mutex<Weak<TestImage>>> = OnceLock::new();
+    let mut cached = BUILT
+        .get_or_init(|| Mutex::new(Weak::new()))
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
+    if let Some(image) = cached.upgrade() {
+        return image;
+    }
+    let tag = format!("adit-test-sshd:run-{}-{}", run_owner(), unique());
+    assert!(
+        docker(&["image", "inspect", &tag]).is_err(),
+        "refuse to overwrite an existing image tag"
+    );
+    let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join("docker/test-sshd");
+    let label = format!("{OWNER_LABEL}={}", run_owner());
+    docker(&[
+        "build",
+        "--label",
+        &label,
+        "-t",
+        &tag,
+        &dir.to_string_lossy(),
+    ])
+    .expect("build owned sshd fixture");
+    let image = Arc::new(TestImage { tag });
+    *cached = Arc::downgrade(&image);
+    image
 }
 
 /// A throwaway user-defined bridge network; removed on drop. Containers on it
@@ -78,14 +128,15 @@ struct TestNetwork {
 impl TestNetwork {
     fn create() -> TestNetwork {
         let name = format!("adit-it-net-{}", unique());
-        docker(&["network", "create", &name]).expect("docker network create");
+        let label = format!("{OWNER_LABEL}={}", run_owner());
+        docker(&["network", "create", "--label", &label, &name]).expect("docker network create");
         TestNetwork { name }
     }
 }
 
 impl Drop for TestNetwork {
     fn drop(&mut self) {
-        let _ = docker(&["network", "rm", &self.name]);
+        cleanup_owned("network", &self.name);
     }
 }
 
@@ -95,18 +146,26 @@ struct KeyPair {
     public: PathBuf,
 }
 
+impl Drop for KeyPair {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.private);
+        let _ = fs::remove_file(&self.public);
+    }
+}
+
 /// A throwaway sshd container; removed on drop.
 struct TestServer {
     id: String,
     port: u16,
+    _image: Arc<TestImage>,
+    _network: Option<TestNetwork>,
 }
 
 impl TestServer {
     fn start() -> TestServer {
-        ensure_image();
-        let id = docker(&["run", "-d", "-P", IMAGE]).expect("docker run");
-        let port = published_port(&id, 2222);
-        let server = TestServer { id, port };
+        let net = TestNetwork::create();
+        let mut server = Self::start_on_network(&net, "server", true);
+        server._network = Some(net);
         server.wait_ready(Duration::from_secs(30));
         server
     }
@@ -116,13 +175,19 @@ impl TestServer {
     /// not, it is reachable only from inside `net` — the shape a real bastion
     /// hides its targets behind.
     fn start_on_network(net: &TestNetwork, alias: &str, publish: bool) -> TestServer {
-        ensure_image();
+        let image = ensure_image();
+        let label = format!("{OWNER_LABEL}={}", run_owner());
+        let name = format!("adit-it-{}-{}", run_owner(), unique());
         // `--hostname alias` makes the container self-identifying: a shell that
         // runs `hostname` there prints `alias`, so the test transcript itself
         // proves *which* server was reached (bastion vs target).
         let mut args = vec![
             "run",
             "-d",
+            "--name",
+            &name,
+            "--label",
+            &label,
             "--network",
             net.name.as_str(),
             "--network-alias",
@@ -131,16 +196,20 @@ impl TestServer {
             alias,
         ];
         if publish {
-            args.push("-P");
+            args.extend(["-p", "127.0.0.1::2222"]);
         }
-        args.push(IMAGE);
+        args.push(&image.tag);
         let id = docker(&args).expect("docker run on network");
-        let port = if publish {
-            published_port(&id, 2222)
-        } else {
-            0
+        let mut server = TestServer {
+            id,
+            port: 0,
+            _image: image,
+            _network: None,
         };
-        TestServer { id, port }
+        if publish {
+            server.port = published_port(&server.id, 2222);
+        }
+        server
     }
 
     /// Wait until the container's own sshd answers from inside it. Used for a
@@ -303,7 +372,7 @@ impl TestServer {
 
 impl Drop for TestServer {
     fn drop(&mut self) {
-        let _ = docker(&["rm", "-f", "-v", &self.id]);
+        cleanup_owned("container", &self.id);
     }
 }
 
@@ -385,7 +454,9 @@ fn read_line(port: u16, timeout: Duration) -> std::io::Result<String> {
             Err(error) => return Err(error),
         }
     }
-    Ok(String::from_utf8_lossy(&buf).trim_end_matches('\r').to_string())
+    Ok(String::from_utf8_lossy(&buf)
+        .trim_end_matches('\r')
+        .to_string())
 }
 
 /// Pump SFTP events until the next `Done` (panicking on `Error`).
@@ -458,7 +529,11 @@ fn greeting_listener() -> (u16, String) {
 }
 
 /// A `-R` request pointing the container's `remote_port` at a local `target_port`.
-fn remote_forward_request(server: &TestServer, remote_port: u16, target_port: u16) -> TunnelRequest {
+fn remote_forward_request(
+    server: &TestServer,
+    remote_port: u16,
+    target_port: u16,
+) -> TunnelRequest {
     let mut request = TunnelRequest::new(
         "127.0.0.1",
         server.port,
@@ -487,7 +562,11 @@ fn wait_tunnel_listening(handle: &adit_ssh::TunnelHandle, timeout: Duration) {
             _ => ControlFlow::Continue(()),
         },
     );
-    assert_eq!(listening, Some(true), "the server should accept the remote forward");
+    assert_eq!(
+        listening,
+        Some(true),
+        "the server should accept the remote forward"
+    );
 }
 
 /// Dial the container's forwarded port from inside the container, which is the
@@ -496,7 +575,11 @@ fn wait_tunnel_listening(handle: &adit_ssh::TunnelHandle, timeout: Duration) {
 /// `Listening` proves only that sshd accepted the request; the forwarded channel
 /// can still resolve to no target on the client and be dropped without a word,
 /// which is exactly how this failed on a shared connection.
-fn probe_forward_from_inside(server: &TestServer, remote_port: u16, greeting: &str) -> (bool, String) {
+fn probe_forward_from_inside(
+    server: &TestServer,
+    remote_port: u16,
+    greeting: &str,
+) -> (bool, String) {
     let mut got = String::new();
     let reached = wait_until(Duration::from_secs(20), || {
         got = docker(&[
@@ -535,13 +618,21 @@ fn assert_sftp_round_trip(handle: &SftpHandle, tag: &str) {
     let remote = format!("/tmp/adit-it-{}.bin", unique());
 
     handle
-        .send(SftpCommand::Upload { id: 0, local: local_up, remote: remote.clone() })
+        .send(SftpCommand::Upload {
+            id: 0,
+            local: local_up,
+            remote: remote.clone(),
+        })
         .unwrap();
     wait_sftp_done(handle, Duration::from_secs(20));
 
     let local_down = temp_path("down.bin");
     handle
-        .send(SftpCommand::Download { id: 1, remote, local: local_down.clone() })
+        .send(SftpCommand::Download {
+            id: 1,
+            remote,
+            local: local_down.clone(),
+        })
         .unwrap();
     wait_sftp_done(handle, Duration::from_secs(20));
 
@@ -585,12 +676,19 @@ fn password_auth_opens_shell_and_runs_a_command() {
             _ => ControlFlow::Continue(()),
         },
     );
-    assert_eq!(found, Some(true), "shell should run the command; transcript:\n{transcript}");
+    assert_eq!(
+        found,
+        Some(true),
+        "shell should run the command; transcript:\n{transcript}"
+    );
     let _ = handle.send(LiveShellCommand::Disconnect);
 
     // TOFU recorded the container's host key.
     let recorded = fs::read_to_string(&known_hosts).unwrap_or_default();
-    assert!(!recorded.trim().is_empty(), "host key should have been recorded to known_hosts");
+    assert!(
+        !recorded.trim().is_empty(),
+        "host key should have been recorded to known_hosts"
+    );
 }
 
 /// `exit` in the remote shell must report `Closed` even while something is
@@ -640,7 +738,10 @@ fn exit_reports_closed_while_the_connection_is_still_held() {
         Some(true),
         "`exit` must report Closed while the connection is held, not after",
     );
-    assert!(held.is_some(), "the connection should have been offered to hold");
+    assert!(
+        held.is_some(),
+        "the connection should have been offered to hold"
+    );
     // Ordering, not just presence: `Closed` is where the session layer decides
     // whether to reconnect, so a ShellExited arriving after it would be read
     // too late and `exit` would be undone by an automatic reconnect.
@@ -661,6 +762,7 @@ fn wrong_password_is_rejected() {
     request.auth = AuthOptions {
         try_password: true,
         try_agent: false,
+        agent_socket: None,
         try_default_keys: false,
         identity_file: None,
         passphrase: None,
@@ -713,17 +815,29 @@ fn sftp_round_trips_a_file() {
     let remote = format!("/tmp/adit-it-{}.bin", unique());
 
     handle
-        .send(SftpCommand::Upload { id: 0, local: local_up, remote: remote.clone() })
+        .send(SftpCommand::Upload {
+            id: 0,
+            local: local_up,
+            remote: remote.clone(),
+        })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(20));
 
     let local_down = temp_path("download.bin");
     handle
-        .send(SftpCommand::Download { id: 1, remote, local: local_down.clone() })
+        .send(SftpCommand::Download {
+            id: 1,
+            remote,
+            local: local_down.clone(),
+        })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(20));
 
-    assert_eq!(fs::read(&local_down).unwrap(), content, "downloaded bytes must match uploaded");
+    assert_eq!(
+        fs::read(&local_down).unwrap(),
+        content,
+        "downloaded bytes must match uploaded"
+    );
 }
 
 #[test]
@@ -752,7 +866,11 @@ fn sftp_round_trips_a_directory_tree() {
     let name = format!("adit-it-tree-{}", unique());
     let remote = format!("/tmp/{name}");
     handle
-        .send(SftpCommand::Upload { id: 0, local: tree, remote: remote.clone() })
+        .send(SftpCommand::Upload {
+            id: 0,
+            local: tree,
+            remote: remote.clone(),
+        })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(30));
 
@@ -760,12 +878,19 @@ fn sftp_round_trips_a_directory_tree() {
     fs::create_dir_all(&down_root).unwrap();
     let down = down_root.join(&name);
     handle
-        .send(SftpCommand::Download { id: 1, remote, local: down.clone() })
+        .send(SftpCommand::Download {
+            id: 1,
+            remote,
+            local: down.clone(),
+        })
         .unwrap();
     wait_sftp_done(&handle, Duration::from_secs(30));
 
     assert_eq!(fs::read(down.join("a.txt")).unwrap(), b"file a\n");
-    assert_eq!(fs::read(down.join("sub").join("b.txt")).unwrap(), b"file b nested\n");
+    assert_eq!(
+        fs::read(down.join("sub").join("b.txt")).unwrap(),
+        b"file b nested\n"
+    );
 }
 
 #[test]
@@ -835,10 +960,17 @@ fn assert_jump_shell_reaches_target(bastion_port: u16, auth: AuthOptions, passwo
     // "JUMP-target" proves the shell ran on the *target* (not the bastion, which
     // would print "JUMP-bastion") — the transcript alone attests to the jump.
     request.startup_command = String::from("echo JUMP-$(hostname)");
+    let owner = adit_domain::ProfileId::new();
+    request.jump_credentials.insert(owner, adit_ssh::JumpCredential {
+        username: USER.to_owned(),
+        password: password.to_owned(),
+        auth: auth.clone(),
+    });
     request.auth = auth;
     request.jumps = vec![JumpHop {
         host: String::from("127.0.0.1"),
         port: bastion_port,
+        auth_profile: Some(owner),
         username: String::from(USER),
     }];
 
@@ -879,9 +1011,7 @@ fn assert_jump_shell_reaches_target(bastion_port: u16, auth: AuthOptions, passwo
 
 #[test]
 fn jump_host_reaches_a_target_behind_a_bastion() {
-    // Password auth through the whole chain — the profile's default. Both the
-    // bastion and the target accept the same password (as Adit stores one
-    // credential per profile), which is exactly the common case that must work.
+    // Explicitly reuse a fixture credential for the bastion and target.
     let net = TestNetwork::create();
     let target = TestServer::start_on_network(&net, "target", false);
     target.wait_ready_internal(Duration::from_secs(30));
@@ -893,6 +1023,7 @@ fn jump_host_reaches_a_target_behind_a_bastion() {
         AuthOptions {
             try_password: true,
             try_agent: false,
+            agent_socket: None,
             try_default_keys: false,
             identity_file: None,
             passphrase: None,
@@ -920,8 +1051,9 @@ fn jump_host_authenticates_with_a_key() {
         AuthOptions {
             try_password: false,
             try_agent: false,
+            agent_socket: None,
             try_default_keys: false,
-            identity_file: Some(keys.private),
+            identity_file: Some(keys.private.clone()),
             passphrase: None,
         },
         "", // no password — key only
@@ -937,6 +1069,7 @@ fn encrypted_key_request(server: &TestServer, key: PathBuf, passphrase: &str) ->
     request.auth = AuthOptions {
         try_password: false,
         try_agent: false,
+        agent_socket: None,
         try_default_keys: false,
         identity_file: Some(key),
         passphrase: (!passphrase.is_empty()).then(|| passphrase.to_string()),
@@ -970,7 +1103,11 @@ fn encrypted_key_connects_with_its_passphrase() {
             _ => ControlFlow::Continue(()),
         },
     );
-    assert_eq!(found, Some(true), "encrypted key + right passphrase should log in");
+    assert_eq!(
+        found,
+        Some(true),
+        "encrypted key + right passphrase should log in"
+    );
     let _ = handle.send(LiveShellCommand::Disconnect);
 }
 
@@ -1077,7 +1214,11 @@ fn the_connection_outlives_the_shell_and_dies_with_the_last_user() {
     );
     // "Not closed" is easy to satisfy by accident; a transfer is not.
     assert_sftp_round_trip(&sftp, "after-the-shell-exited");
-    assert_eq!(server.established_connections(), 1, "the connection should still be up");
+    assert_eq!(
+        server.established_connections(),
+        1,
+        "the connection should still be up"
+    );
 
     // Now let go of every user of it.
     let _ = sftp.send(SftpCommand::Disconnect);
@@ -1088,7 +1229,8 @@ fn the_connection_outlives_the_shell_and_dies_with_the_last_user() {
     // just a connection the server keeps until it times out. This assertion is
     // the only thing standing between that and a release.
     assert!(
-        wait_until(Duration::from_secs(20), || server.established_connections() == 0),
+        wait_until(Duration::from_secs(20), || server.established_connections()
+            == 0),
         "the connection must be torn down once nothing is using it"
     );
 }
@@ -1154,3 +1296,6 @@ fn remote_forward_works_on_the_shells_connection() {
     drop(handle);
     let _ = shell.send(LiveShellCommand::Disconnect);
 }
+
+#[path = "integration/authentication.rs"]
+mod authentication;
