@@ -316,6 +316,7 @@ pub(super) fn spawn_vnc_session(
     port: u16,
     password: String,
     options: VncOptions,
+    reconnect: Option<adit_domain::ReconnectPolicy>,
     gateway: Option<LiveShellRequest>,
 ) -> std::io::Result<VncClientHandle> {
     let commands = Arc::new(CommandQueue::default());
@@ -339,6 +340,7 @@ pub(super) fn spawn_vnc_session(
         state: Arc::clone(&state),
         stopped,
         events,
+        reconnect,
     };
     std::thread::Builder::new()
         .name("adit-vnc".into())
@@ -382,16 +384,29 @@ fn is_auth_error(error: &VncError) -> bool {
     matches!(error, VncError::WrongPassword | VncError::NoPassword)
 }
 
-fn next_reconnect_delay(attempts: &mut u32, connected_for: Option<Duration>) -> Option<Duration> {
+fn effective_reconnect_policy(
+    vnc_enabled: bool,
+    override_policy: Option<&adit_domain::ReconnectPolicy>,
+) -> adit_domain::ReconnectPolicy {
+    let mut policy = override_policy.cloned().unwrap_or_default();
+    policy.enabled &= vnc_enabled;
+    policy
+}
+
+fn next_reconnect_delay(
+    attempts: &mut u32,
+    connected_for: Option<Duration>,
+    policy: &adit_domain::ReconnectPolicy,
+) -> Option<Duration> {
     // A slow failed handshake is not a recovered connection. Only time spent
     // in an authenticated session can earn a fresh retry budget.
     if connected_for.is_some_and(|duration| duration >= Duration::from_secs(30)) {
         *attempts = 0;
     }
-    if *attempts >= 10 {
+    if !policy.enabled || *attempts >= policy.max_attempts {
         return None;
     }
-    let delay = Duration::from_secs((1_u64 << (*attempts).min(5)).min(30));
+    let delay = Duration::from_secs(policy.delay_secs(*attempts));
     *attempts += 1;
     Some(delay)
 }
@@ -416,6 +431,7 @@ struct Worker {
     state: Arc<Mutex<SharedState>>,
     stopped: watch::Receiver<bool>,
     events: std_mpsc::Sender<RdpClientEvent>,
+    reconnect: Option<adit_domain::ReconnectPolicy>,
 }
 impl Worker {
     async fn run(
@@ -492,18 +508,23 @@ impl Worker {
             };
             let transient = matches!(&error, VncError::IoError(_) | VncError::ClientNotRunning)
                 || matches!(&error, VncError::General(m) if m == "Channel closed");
-            if !ever_connected || !options.auto_reconnect || !transient {
+            let policy =
+                effective_reconnect_policy(options.auto_reconnect, self.reconnect.as_ref());
+            if !ever_connected || !transient {
                 return Err(error);
             }
-            let Some(delay) = next_reconnect_delay(&mut attempts, connected_for) else {
+            let Some(delay) = next_reconnect_delay(&mut attempts, connected_for, &policy) else {
                 return Err(error);
             };
             {
                 let mut state = self.state.lock().unwrap();
                 state.accepting_input = false;
                 state.cursor = None;
-                state.diagnostics.status =
-                    format!("连接中断，{} 秒后重试（{attempts}/10）", delay.as_secs());
+                state.diagnostics.status = format!(
+                    "连接中断，{} 秒后重试（{attempts}/{}）",
+                    delay.as_secs(),
+                    policy.max_attempts
+                );
             }
             self.commands.pending.lock().unwrap().clear();
             // Clear stale pixels/clipboard ownership instead of presenting a
@@ -1096,14 +1117,18 @@ mod tests {
             let mut attempts = 0;
             let delays: Vec<_> = (0..10)
                 .map(|_| {
-                    next_reconnect_delay(&mut attempts, connected_for)
+                    next_reconnect_delay(&mut attempts, connected_for, &Default::default())
                         .unwrap()
                         .as_secs()
                 })
                 .collect();
             assert_eq!(delays, [1, 2, 4, 8, 16, 30, 30, 30, 30, 30]);
-            assert!(next_reconnect_delay(&mut attempts, connected_for).is_none());
-            assert!(next_reconnect_delay(&mut attempts, connected_for).is_none());
+            assert!(
+                next_reconnect_delay(&mut attempts, connected_for, &Default::default()).is_none()
+            );
+            assert!(
+                next_reconnect_delay(&mut attempts, connected_for, &Default::default()).is_none()
+            );
         }
     }
 
@@ -1111,10 +1136,42 @@ mod tests {
     fn a_stable_authenticated_connection_renews_even_an_exhausted_retry_budget() {
         let mut attempts = 10;
         assert_eq!(
-            next_reconnect_delay(&mut attempts, Some(Duration::from_secs(30))),
+            next_reconnect_delay(
+                &mut attempts,
+                Some(Duration::from_secs(30)),
+                &Default::default()
+            ),
             Some(Duration::from_secs(1))
         );
         assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn vnc_reconnect_uses_profile_budget_delay_and_disabled_state() {
+        let mut policy = adit_domain::ReconnectPolicy {
+            enabled: true,
+            max_attempts: 3,
+            initial_delay_secs: 2,
+            max_delay_secs: 3,
+        };
+        let mut attempts = 0;
+        for seconds in [2, 3, 3] {
+            assert_eq!(
+                next_reconnect_delay(&mut attempts, None, &policy),
+                Some(Duration::from_secs(seconds))
+            );
+        }
+        assert_eq!(next_reconnect_delay(&mut attempts, None, &policy), None);
+        policy.enabled = false;
+        assert_eq!(
+            next_reconnect_delay(&mut attempts, Some(Duration::from_secs(30)), &policy),
+            None
+        );
+        policy.enabled = true;
+        assert!(!effective_reconnect_policy(false, Some(&policy)).enabled);
+        assert!(effective_reconnect_policy(true, Some(&policy)).enabled);
+        assert!(!effective_reconnect_policy(false, None).enabled);
+        assert!(effective_reconnect_policy(true, None).enabled);
     }
 
     #[test]

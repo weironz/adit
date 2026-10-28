@@ -831,6 +831,12 @@ fn dropped_transport_reconnects_the_same_tab_and_manual_close_stops_retry() {
     let mut profile = manager.profile(id).unwrap().clone();
     profile.vnc.auto_reconnect = true;
     profile.vnc.read_only = true;
+    profile.session_options.reconnect = Some(adit_domain::ReconnectPolicy {
+        enabled: true,
+        max_attempts: 2,
+        initial_delay_secs: 2,
+        max_delay_secs: 2,
+    });
     manager.save_vnc_profile(profile).unwrap();
     let session = manager.open_live_vnc_session(id, String::new()).unwrap();
     wait(&mut manager, |m| {
@@ -840,6 +846,11 @@ fn dropped_transport_reconnects_the_same_tab_and_manual_close_stops_retry() {
     wait(&mut manager, |m| {
         m.active_session_summary().unwrap().status == SessionStatus::Connecting
     });
+    assert!(manager
+        .active_vnc_diagnostics()
+        .unwrap()
+        .status
+        .contains("（1/2）"));
     wait(&mut manager, |m| {
         m.active_session_summary().unwrap().status == SessionStatus::Connected
     });

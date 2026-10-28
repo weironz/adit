@@ -1447,6 +1447,7 @@ impl SessionManager {
             profile.port,
             password,
             profile.vnc.clone(),
+            profile.session_options.reconnect.clone(),
             gateway,
         )
         .map_err(|error| SessionError::Unsupported(error.to_string()))?;
@@ -1640,6 +1641,7 @@ impl SessionManager {
             profile.port,
             password,
             profile.vnc.clone(),
+            record.options.reconnect.clone(),
             gateway,
         )
         .map_err(|error| SessionError::Unsupported(error.to_string()))?;

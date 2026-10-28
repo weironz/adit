@@ -479,6 +479,7 @@ const COMMON: &[(&str, &str)] = &[
     ("光标：远端形状在本地跟随鼠标绘制；桌面内隐藏系统箭头以避免重叠", "Cursor: remote shape drawn locally at the mouse; system arrow hidden inside the desktop to avoid overlap"),
     ("安全：{}\n建立传输 {} ms；握手累计 {} ms\n首像素 {} ms；完整更新 {} ms；覆盖完成 {} ms\n首屏覆盖 {}%（{}/{}）\n更新 {}；接收 {} 字节；未完成请求 {}\nFence RTT {} ms；输入队列峰值 {}\n编码 {}；UTF-8 剪贴板 {}\n{}\n{}", "Security: {}\nTransport {} ms; cumulative handshake {} ms\nFirst pixel {} ms; full update {} ms; coverage complete {} ms\nInitial coverage {}% ({}/{})\nUpdates {}; received {} bytes; pending requests {}\nFence RTT {} ms; input queue peak {}\nEncoding {}; UTF-8 clipboard {}\n{}\n{}"),
     ("搜索终端历史…", "Search terminal history..."),
+    ("VNC 自动重连和会话重连策略必须同时开启。", "VNC auto-reconnect and the session reconnect policy must both be enabled."),
     ("逐字符即时发送到目标…（回车提交整行）", "Send each keystroke to the target (Enter submits the line)"),
     ("输入命令，回车广播到所有会话", "Enter a command; Enter broadcasts to all sessions"),
     ("输入命令，回车发送到当前会话", "Enter a command; Enter sends to the current session"),

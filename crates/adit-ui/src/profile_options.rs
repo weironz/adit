@@ -299,12 +299,19 @@ pub(crate) fn profile_options_editor(app: &AditApp) -> Element<'_, Message> {
                 .color(muted_text()),
         );
     }
-    if app.profile_protocol == Protocol::Ssh {
+    if matches!(app.profile_protocol, Protocol::Ssh | Protocol::Vnc) {
         body = body.push(
             checkbox(form.options.reconnect.is_some())
                 .label(t("为此会话单独配置重连"))
                 .on_toggle(|v| edit(ProfileOptionEdit::ReconnectOverride(v))),
         );
+        if app.profile_protocol == Protocol::Vnc {
+            body = body.push(
+                text(t("VNC 自动重连和会话重连策略必须同时开启。"))
+                    .size(10)
+                    .color(muted_text()),
+            );
+        }
         if let Some(policy) = &form.options.reconnect {
             body = body
                 .push(
