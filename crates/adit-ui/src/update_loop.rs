@@ -1,5 +1,10 @@
 use super::*;
 
+fn read_terminal_clipboard(app: &AditApp) -> Task<Message> {
+    let session = app.manager.active_session();
+    clipboard::read().map(move |contents| Message::ClipboardPasted(session, contents))
+}
+
 #[derive(Default)]
 pub(super) struct VncFrameCoverage {
     resize_epoch: Option<u64>,
@@ -2796,7 +2801,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
 
             if is_terminal_paste_shortcut(&event) {
-                return clipboard::read().map(Message::ClipboardPasted);
+                return read_terminal_clipboard(app);
             }
 
             if let Some(action) = terminal_scroll_shortcut(&event, app.terminal_size.rows) {
@@ -2915,7 +2920,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             focus_pane(app, index);
             app.terminal_selecting = false;
             if app.right_click_paste {
-                return clipboard::read().map(Message::ClipboardPasted);
+                return read_terminal_clipboard(app);
             }
             app.context_menu_pos = app.cursor_pos;
             app.terminal_context_menu = true;
@@ -3063,7 +3068,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.terminal_selecting = false;
             // Right-click-paste (PuTTY-style): skip the menu and paste directly.
             if app.right_click_paste {
-                return clipboard::read().map(Message::ClipboardPasted);
+                return read_terminal_clipboard(app);
             }
             app.context_menu_pos = app.cursor_pos;
             app.terminal_context_menu = true;
@@ -3082,9 +3087,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::PasteIntoTerminal => {
             app.terminal_context_menu = false;
-            return clipboard::read().map(Message::ClipboardPasted);
+            return read_terminal_clipboard(app);
         }
-        Message::ClipboardPasted(contents) => {
+        Message::ClipboardPasted(session, contents) => {
+            if session.is_none() || session != app.manager.active_session() {
+                return Task::none();
+            }
             if let Some(contents) = contents {
                 if contents.is_empty() {
                     return Task::none();
@@ -3096,6 +3104,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // guard.
                 if app.confirm_multiline_paste && multiline && !bracketed {
                     app.pending_paste = Some(contents);
+                    app.pending_paste_session = app.manager.active_session();
                     app.paste_confirm_open = true;
                 } else {
                     perform_paste(app, &contents, bracketed);
@@ -3104,14 +3113,21 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::ConfirmPaste => {
             app.paste_confirm_open = false;
-            if let Some(contents) = app.pending_paste.take() {
-                let bracketed = app.manager.active_bracketed_paste();
-                perform_paste(app, &contents, bracketed);
+            let target = app.pending_paste_session.take();
+            let contents = app.pending_paste.take();
+            if target.is_some() && target == app.manager.active_session() {
+                if let Some(contents) = contents {
+                    let bracketed = app.manager.active_bracketed_paste();
+                    perform_paste(app, &contents, bracketed);
+                }
+            } else {
+                app.notice = String::from(t("已取消粘贴"));
             }
         }
         Message::CancelPaste => {
             app.paste_confirm_open = false;
             app.pending_paste = None;
+            app.pending_paste_session = None;
             app.notice = String::from(t("已取消粘贴"));
         }
         Message::ToggleConfirmMultilinePaste(enabled) => {

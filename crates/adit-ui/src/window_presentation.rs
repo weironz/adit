@@ -96,6 +96,7 @@ presentation! {
     missions: Missions = Missions::default(),
     desktop_panes: desktop_panes::DesktopPanes = Default::default(),
     pending_paste: Option<String> = None,
+    pending_paste_session: Option<SessionId> = None,
     paste_confirm_open: bool = false,
     mouse_button_down: bool = false,
     mouse_report_cell: Option<TerminalPoint> = None,

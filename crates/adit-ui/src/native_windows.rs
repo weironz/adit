@@ -110,7 +110,7 @@ fn input_message(message: &Message) -> bool {
             | Message::ModifiersChanged(_)
             | Message::NativeImeEvent(..)
             | Message::VncImeEvent(..)
-            | Message::ClipboardPasted(_)
+            | Message::ClipboardPasted(..)
             | Message::RdpClipboardPolled(..)
             | Message::PasteIntoTerminal
             | Message::ConfirmPaste
@@ -1173,6 +1173,54 @@ mod tests {
                 .manager
                 .snapshot_for(session, Viewport::visible(200)),
         )
+    }
+
+    #[test]
+    fn merging_another_window_cannot_redirect_a_pending_multiline_paste() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.focus(desktop.primary);
+        desktop.app.manager.activate(ids[2]).unwrap();
+        desktop.app.confirm_multiline_paste = true;
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::ClipboardPasted(Some(ids[2]), Some("first\nfixture_marker".into())),
+        );
+        assert!(desktop.app.paste_confirm_open);
+        desktop.focus(child);
+        let _ = desktop.dispatch(child, Message::MergeNativeWindow);
+        desktop.focus(desktop.primary);
+        let _ = desktop.dispatch(desktop.primary, Message::ConfirmPaste);
+        assert!(!text(&desktop, ids[0]).contains("fixture_marker"));
+        assert!(!text(&desktop, ids[2]).contains("fixture_marker"));
+        assert!(!desktop.app.paste_confirm_open);
+    }
+
+    #[test]
+    fn confirmed_multiline_paste_still_reaches_its_original_session() {
+        let (mut desktop, ids) = fixture();
+        desktop.app.confirm_multiline_paste = true;
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::ClipboardPasted(Some(ids[2]), Some("first\nfixture_marker".into())),
+        );
+        assert!(desktop.app.paste_confirm_open);
+        let _ = desktop.dispatch(desktop.primary, Message::ConfirmPaste);
+        assert!(text(&desktop, ids[2]).contains("fixture_marker"));
+        assert!(!text(&desktop, ids[0]).contains("fixture_marker"));
+    }
+
+    #[test]
+    fn delayed_clipboard_read_cannot_paste_into_a_new_active_session() {
+        let (mut desktop, ids) = fixture();
+        desktop.app.manager.activate(ids[0]).unwrap();
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::ClipboardPasted(Some(ids[2]), Some("stale_marker".into())),
+        );
+        assert!(!text(&desktop, ids[0]).contains("stale_marker"));
+        assert!(!desktop.app.paste_confirm_open);
     }
 
     #[test]

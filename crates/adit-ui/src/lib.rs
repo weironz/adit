@@ -615,6 +615,7 @@ pub struct AditApp {
     right_click_paste: bool,
     confirm_multiline_paste: bool,
     pending_paste: Option<String>,
+    pending_paste_session: Option<SessionId>,
     paste_confirm_open: bool,
     /// Left button held over a mouse-reporting terminal (for drag/release
     /// reports); and the last cell already reported (to dedupe motion events).
@@ -1174,7 +1175,7 @@ pub enum Message {
     HideTerminalContextMenu,
     CopyTerminalSelection,
     PasteIntoTerminal,
-    ClipboardPasted(Option<String>),
+    ClipboardPasted(Option<SessionId>, Option<String>),
     /// The local clipboard, sampled for the active RDP session's remote.
     RdpClipboardPolled(SessionId, u64, Option<String>),
     TerminalJumpToBottom,
@@ -1872,6 +1873,7 @@ impl AditApp {
             right_click_paste,
             confirm_multiline_paste,
             pending_paste: None,
+            pending_paste_session: None,
             paste_confirm_open: false,
             mouse_button_down: false,
             mouse_report_cell: None,
