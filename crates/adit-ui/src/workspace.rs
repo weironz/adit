@@ -1778,6 +1778,11 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         return row![];
     };
     if state.max_monitors == 0 {
+        if let Some(error) = state.error {
+            return row![text(tf("显示器布局失败：{}", &[&runtime(&error)]))
+                .size(10)
+                .color(muted_text())];
+        }
         return row![text(t("显示器：等待服务端能力"))
             .size(10)
             .color(muted_text())];
@@ -1797,7 +1802,7 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         ),
     ]
     .spacing(2);
-    if state.sent_layout.len() > 1 && state.applied {
+    if state.sent_layout.len() > 1 && state.size_matches {
         controls = controls.push(rdp_toolbar_button(
             "全部",
             "查看整个远程桌面",
@@ -1814,9 +1819,16 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
                     .on_press(Message::RdpMonitorSelected(Some(i))),
             );
         }
-    } else if !state.sent_layout.is_empty() && !state.applied {
+    } else if !state.sent_layout.is_empty() && !state.size_matches {
         controls = controls.push(
             text(t("布局已发送，等待桌面尺寸"))
+                .size(10)
+                .color(muted_text()),
+        );
+    }
+    if !state.sent_layout.is_empty() && state.size_matches {
+        controls = controls.push(
+            text(t("尺寸匹配，排列未确认"))
                 .size(10)
                 .color(muted_text()),
         );

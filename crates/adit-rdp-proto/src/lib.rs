@@ -138,8 +138,9 @@ pub struct DisplayControlState {
     pub max_area: u64,
     /// Last layout actually encoded onto the DisplayControl channel.
     pub sent_layout: Vec<Monitor>,
-    /// Selection opens only after the corresponding desktop size arrives.
-    pub applied: bool,
+    /// The framebuffer bounds match the sent layout. This does not confirm the
+    /// server accepted the monitor arrangement: DisplayControl has no layout ack.
+    pub size_matches: bool,
     pub error: Option<String>,
 }
 
@@ -229,7 +230,14 @@ pub enum InputEvent {
     /// Offer freshly-copied local text to the remote clipboard.
     ClipboardText(String),
     /// Send a complete MS-RDPEDISP monitor layout.
-    MonitorLayout(Vec<Monitor>),
+    MonitorLayout {
+        request_id: u64,
+        monitors: Vec<Monitor>,
+    },
+    /// Discard a still-parked request after the app's deadline expires.
+    CancelMonitorLayout {
+        request_id: u64,
+    },
 }
 
 /// How many bytes one file-transfer chunk carries.
@@ -359,6 +367,14 @@ pub enum HostMsg {
     Closed,
     Pointer(PointerUpdate),
     DisplayControl(DisplayControlState),
+    /// Reports local encoding/writing only, not acceptance by the server.
+    MonitorLayoutResult {
+        request_id: u64,
+        result: Result<(), String>,
+    },
+    /// The helper is reconnecting after server redirection; the app may reissue
+    /// the current layout with a fresh request ID.
+    DisplayControlReset,
 }
 
 /// Write a length-prefixed, bincode-encoded message and flush. Fails if the
@@ -596,7 +612,10 @@ mod desktop_protocol_tests {
         let mut pipe = Vec::new();
         write_msg(
             &mut pipe,
-            &ClientMsg::Input(InputEvent::MonitorLayout(layout.clone())),
+            &ClientMsg::Input(InputEvent::MonitorLayout {
+                request_id: 42,
+                monitors: layout.clone(),
+            }),
         )
         .unwrap();
         let pointer = PointerUpdate::Bitmap {
@@ -609,7 +628,7 @@ mod desktop_protocol_tests {
         write_msg(&mut pipe, &HostMsg::Pointer(pointer.clone())).unwrap();
         let mut input = io::Cursor::new(pipe);
         assert!(matches!(read_msg::<_, ClientMsg>(&mut input).unwrap(),
-            Some(ClientMsg::Input(InputEvent::MonitorLayout(got))) if got == layout));
+            Some(ClientMsg::Input(InputEvent::MonitorLayout { request_id: 42, monitors: got })) if got == layout));
         assert!(
             matches!(read_msg::<_, HostMsg>(&mut input).unwrap(), Some(HostMsg::Pointer(got)) if got == pointer)
         );

@@ -82,6 +82,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 # Only for the offline progressive replay: a decoded frame has to be LOOKED at.
 image = { version = "0.25", default-features = false, features = ["png"] }
+tokio = { version = "1", features = ["test-util"] }
 
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }

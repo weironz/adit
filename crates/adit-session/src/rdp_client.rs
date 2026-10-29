@@ -10,8 +10,9 @@ use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use adit_rdp_proto::{monitor_bounds, DisplayControlState, Monitor, PointerUpdate};
 use adit_rdp_proto::{
@@ -37,6 +38,21 @@ fn to_profile_monitor(m: &Monitor) -> adit_domain::DesktopMonitor {
         height: m.height,
         primary: m.primary,
         scale_percent: m.scale_percent,
+    }
+}
+
+fn display_error(error: &str) -> &str {
+    match error {
+        "DisplayControl capabilities timed out" => "等待服务端显示能力超时",
+        "DisplayControl channel closed"
+        | "DisplayControl channel disappeared"
+        | "DisplayControl channel not connected" => "显示控制通道已关闭",
+        "DisplayControl processor unavailable" => "显示控制通道不可用",
+        "DisplayControl capabilities not ready" => "服务端显示能力尚未就绪",
+        "requested layout exceeds server monitor count/area capability" => {
+            "显示器布局超过服务端能力"
+        }
+        _ => error,
     }
 }
 
@@ -111,7 +127,28 @@ pub(super) struct Surface {
     pointer_position_generation: u64,
     display: DisplayControlState,
     selected_monitor: Option<usize>,
-    layout_pending: bool,
+    layout_pending: Option<PendingLayout>,
+    next_layout_id: u64,
+    blocked_resize: Option<(u16, u16)>,
+}
+
+// Includes the helper's 30-second connection deadline. Once it has sent the
+// layout, allow a separate short window for a matching framebuffer size.
+const LAYOUT_HELPER_TIMEOUT: Duration = Duration::from_secs(40);
+const LAYOUT_SIZE_TIMEOUT: Duration = Duration::from_secs(8);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutPhase {
+    WaitingForHelper,
+    WaitingForSize,
+}
+
+struct PendingLayout {
+    id: u64,
+    monitors: Vec<Monitor>,
+    selected: Option<usize>,
+    phase: LayoutPhase,
+    deadline: Instant,
 }
 
 /// Ceiling per side for a framebuffer allocation. Mirrors the request-side clamp
@@ -137,12 +174,14 @@ impl Surface {
             pointer_position_generation: 0,
             display: DisplayControlState::default(),
             selected_monitor: None,
-            layout_pending: false,
+            layout_pending: None,
+            next_layout_id: 0,
+            blocked_resize: None,
         }
     }
 
     fn viewport(&self) -> (u16, u16, u16, u16) {
-        if self.display.applied {
+        if self.display.size_matches {
             if let Some(m) = self
                 .selected_monitor
                 .and_then(|i| self.display.sent_layout.get(i))
@@ -221,15 +260,111 @@ impl Surface {
         next.pointer_position_generation = self.pointer_position_generation;
         next.display = std::mem::take(&mut self.display);
         next.selected_monitor = self.selected_monitor;
-        next.layout_pending = self.layout_pending;
+        next.layout_pending = self.layout_pending.take();
+        next.next_layout_id = self.next_layout_id;
+        next.blocked_resize = self.blocked_resize.take();
         next.generation = self.generation.wrapping_add(1);
         next.match_layout_size();
         *self = next;
     }
 
     fn match_layout_size(&mut self) {
-        self.display.applied = monitor_bounds(&self.display.sent_layout)
+        self.display.size_matches = monitor_bounds(&self.display.sent_layout)
             .is_ok_and(|(_, _, w, h)| (w, h) == (self.width, self.height));
+    }
+
+    fn finish_matching_layout(&mut self) -> Option<(u16, u16)> {
+        if self.display.size_matches
+            && self
+                .layout_pending
+                .as_ref()
+                .is_some_and(|pending| pending.phase == LayoutPhase::WaitingForSize)
+        {
+            let pending = self.layout_pending.take().expect("checked above");
+            self.selected_monitor = pending.selected;
+            if self.display.sent_layout.len() <= 1 {
+                return self.blocked_resize.take();
+            }
+        }
+        None
+    }
+
+    fn fail_layout(&mut self, error: &str) -> Option<(u16, u16)> {
+        self.layout_pending = None;
+        self.display.sent_layout.clear();
+        self.display.size_matches = false;
+        self.display.error = Some(error.to_owned());
+        self.selected_monitor = None;
+        self.generation = self.generation.wrapping_add(1);
+        self.blocked_resize.take()
+    }
+
+    fn expire_layout(&mut self, now: Instant) -> Option<(u64, Option<(u16, u16)>)> {
+        let pending = self.layout_pending.as_ref()?;
+        if now < pending.deadline {
+            return None;
+        }
+        let id = pending.id;
+        let error = match pending.phase {
+            LayoutPhase::WaitingForHelper => "显示器布局请求等待 helper 响应超时",
+            LayoutPhase::WaitingForSize => "布局已发送，但桌面尺寸等待超时",
+        };
+        Some((id, self.fail_layout(error)))
+    }
+
+    fn close_layout(&mut self) {
+        self.layout_pending = None;
+        self.display.sent_layout.clear();
+        self.display.size_matches = false;
+        self.selected_monitor = None;
+        self.blocked_resize = None;
+    }
+
+    fn display_capabilities(&mut self, state: DisplayControlState) -> Option<(u16, u16)> {
+        let closed = self.display.max_monitors > 0 && state.max_monitors == 0;
+        self.display.max_monitors = state.max_monitors;
+        self.display.max_area = state.max_area;
+        self.generation = self.generation.wrapping_add(1);
+        if closed
+            && self
+                .layout_pending
+                .as_ref()
+                .is_some_and(|pending| pending.phase == LayoutPhase::WaitingForHelper)
+        {
+            // A capability snapshot can have been queued before the current
+            // request. Its result (or its deadline) owns that request instead.
+            self.display.sent_layout.clear();
+            self.display.size_matches = false;
+            self.selected_monitor = None;
+            None
+        } else {
+            closed
+                .then(|| self.fail_layout("显示控制通道已关闭"))
+                .flatten()
+        }
+    }
+
+    fn layout_result(
+        &mut self,
+        request_id: u64,
+        result: Result<(), String>,
+        now: Instant,
+    ) -> Option<(u16, u16)> {
+        let pending = self.layout_pending.as_ref()?;
+        if pending.id != request_id || pending.phase != LayoutPhase::WaitingForHelper {
+            return None;
+        }
+        if let Err(error) = result {
+            return self.fail_layout(display_error(&error));
+        }
+        self.display.sent_layout = pending.monitors.clone();
+        self.display.error = None;
+        self.match_layout_size();
+        let pending = self.layout_pending.as_mut().expect("checked above");
+        pending.phase = LayoutPhase::WaitingForSize;
+        pending.deadline = now + LAYOUT_SIZE_TIMEOUT;
+        self.generation = self.generation.wrapping_add(1);
+        self.finish_matching_layout()
     }
 
     /// Blit a tile into the surface, ignoring anything out of bounds (defensive
@@ -348,13 +483,117 @@ pub struct RdpCursorSnapshot {
     pub position_generation: u64,
 }
 
+fn send_deferred_resize(tx: &std_mpsc::Sender<ClientMsg>, size: Option<(u16, u16)>) {
+    if let Some((width, height)) = size {
+        let _ = tx.send(ClientMsg::Input(InputEvent::Resize { width, height }));
+    }
+}
+
+fn expire_layout(surface: &mut Surface, tx: &std_mpsc::Sender<ClientMsg>, now: Instant) -> bool {
+    let Some((request_id, resize)) = surface.expire_layout(now) else {
+        return false;
+    };
+    let _ = tx.send(ClientMsg::Input(InputEvent::CancelMonitorLayout {
+        request_id,
+    }));
+    send_deferred_resize(tx, resize);
+    true
+}
+
+fn start_layout_watchdog(
+    surface: &Arc<Mutex<Surface>>,
+    tx: &Arc<std_mpsc::Sender<ClientMsg>>,
+    wake: &Arc<Condvar>,
+    request_id: u64,
+) -> std::io::Result<()> {
+    let surface = Arc::downgrade(surface);
+    let tx = Arc::downgrade(tx);
+    let wake = Arc::clone(wake);
+    thread::Builder::new()
+        .name("adit-rdp-layout-deadline".into())
+        .spawn(move || {
+            let Some(surface) = surface.upgrade() else {
+                return;
+            };
+            let Ok(mut surface) = surface.lock() else {
+                return;
+            };
+            loop {
+                let Some(pending) = surface
+                    .layout_pending
+                    .as_ref()
+                    .filter(|p| p.id == request_id)
+                else {
+                    return;
+                };
+                let remaining = pending.deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    if let Some(tx) = tx.upgrade() {
+                        expire_layout(&mut surface, &tx, Instant::now());
+                    } else {
+                        let _ = surface.expire_layout(Instant::now());
+                    }
+                    wake.notify_all();
+                    return;
+                }
+                let Ok((next, _)) = wake.wait_timeout(surface, remaining) else {
+                    return;
+                };
+                surface = next;
+            }
+        })?;
+    Ok(())
+}
+
+// The caller holds the surface lock so a deadline, a reconnect, and a new user
+// request cannot reorder their command-channel writes.
+fn queue_monitor_layout(
+    surface: &mut Surface,
+    shared_surface: &Arc<Mutex<Surface>>,
+    tx: &Arc<std_mpsc::Sender<ClientMsg>>,
+    wake: &Arc<Condvar>,
+    monitors: Vec<Monitor>,
+    selected: Option<usize>,
+) -> Result<(), String> {
+    surface.next_layout_id = surface.next_layout_id.wrapping_add(1).max(1);
+    let request_id = surface.next_layout_id;
+    surface.layout_pending = Some(PendingLayout {
+        id: request_id,
+        monitors: monitors.clone(),
+        selected,
+        phase: LayoutPhase::WaitingForHelper,
+        deadline: Instant::now() + LAYOUT_HELPER_TIMEOUT,
+    });
+    surface.display.error = None;
+    wake.notify_all();
+    if let Err(error) = start_layout_watchdog(shared_surface, tx, wake, request_id) {
+        let resize = surface.fail_layout("无法启动显示器布局超时计时");
+        send_deferred_resize(tx, resize);
+        return Err(error.to_string());
+    }
+    if tx
+        .send(ClientMsg::Input(InputEvent::MonitorLayout {
+            request_id,
+            monitors,
+        }))
+        .is_err()
+    {
+        let resize = surface.fail_layout("RDP helper 命令通道已关闭");
+        send_deferred_resize(tx, resize);
+        wake.notify_all();
+        return Err("RDP helper 命令通道已关闭".to_owned());
+    }
+    Ok(())
+}
+
 /// Handle to a live RDP session running in the helper process.
 pub struct RdpClientHandle {
     remote_offer: Arc<FileEpoch>,
     event_tx: std_mpsc::Sender<RdpClientEvent>,
-    cmd_tx: std_mpsc::Sender<ClientMsg>,
+    cmd_tx: Arc<std_mpsc::Sender<ClientMsg>>,
     event_rx: std_mpsc::Receiver<RdpClientEvent>,
     surface: Arc<Mutex<Surface>>,
+    layout_wake: Arc<Condvar>,
     // Populated asynchronously: the helper is spawned on a background thread so the
     // UI thread never blocks on `Command::spawn` (see `spawn_rdp_session`). `None`
     // until the spawn completes.
@@ -379,9 +618,10 @@ impl RdpClientHandle {
             Self {
                 remote_offer: Arc::new(FileEpoch::default()),
                 event_tx: event_tx.clone(),
-                cmd_tx,
+                cmd_tx: Arc::new(cmd_tx),
                 event_rx,
                 surface: Arc::new(Mutex::new(Surface::new(1, 1))),
+                layout_wake: Arc::new(Condvar::new()),
                 child: Arc::new(Mutex::new(None)),
             },
             cmd_rx,
@@ -391,23 +631,31 @@ impl RdpClientHandle {
 
     /// Send an input event to the session.
     pub fn send_input(&self, mut event: InputEvent) {
-        if let Ok(surface) = self.surface.lock() {
-            match &mut event {
-                InputEvent::MouseMove { x, y } => {
-                    let (left, top, width, height) = surface.viewport();
-                    *x = (*x).min(width - 1).saturating_add(left);
-                    *y = (*y).min(height - 1).saturating_add(top);
-                }
-                // Window resize must not replace a multi-monitor layout with
-                // ActiveStage's single-primary resize message.
-                InputEvent::Resize { .. }
-                    if surface.layout_pending || surface.display.sent_layout.len() > 1 =>
-                {
-                    return
-                }
-                _ => {}
+        let Ok(mut surface) = self.surface.lock() else {
+            let _ = self.cmd_tx.send(ClientMsg::Input(event));
+            return;
+        };
+        match &mut event {
+            InputEvent::MouseMove { x, y } => {
+                let (left, top, width, height) = surface.viewport();
+                *x = (*x).min(width - 1).saturating_add(left);
+                *y = (*y).min(height - 1).saturating_add(top);
             }
+            // Window resize must not replace a multi-monitor layout with
+            // ActiveStage's single-primary resize message.
+            InputEvent::Resize { width, height }
+                if surface.layout_pending.is_some()
+                    || (surface.display.error.is_none()
+                        && surface.display.size_matches
+                        && surface.display.sent_layout.len() > 1) =>
+            {
+                surface.blocked_resize = Some((*width, *height));
+                return;
+            }
+            _ => {}
         }
+        // Keep this lock until the unbounded send completes: otherwise a new
+        // layout could be queued between the resize check and the resize send.
         let _ = self.cmd_tx.send(ClientMsg::Input(event));
     }
 
@@ -452,7 +700,7 @@ impl RdpClientHandle {
 
     pub(crate) fn file_requester_for_generation(&self, generation: u64) -> RdpFileRequester {
         RdpFileRequester {
-            tx: Arc::new(Mutex::new(self.cmd_tx.clone())),
+            tx: Arc::new(Mutex::new(self.cmd_tx.as_ref().clone())),
             generation,
             current: self.remote_offer.clone(),
             replies: self.event_tx.clone(),
@@ -467,6 +715,10 @@ impl RdpClientHandle {
     pub fn close(&self) {
         self.remote_offer.closed.store(true, Ordering::Release);
         self.remote_offer.generation.store(0, Ordering::Release);
+        if let Ok(mut surface) = self.surface.lock() {
+            surface.close_layout();
+        }
+        self.layout_wake.notify_all();
         let _ = self.cmd_tx.send(ClientMsg::Close);
     }
 
@@ -535,13 +787,15 @@ impl RdpClientHandle {
         if selected.is_some_and(|i| i >= monitors.len()) {
             return Err("selected monitor index is outside the layout".to_owned());
         }
-        if let Ok(mut surface) = self.surface.lock() {
-            surface.layout_pending = true;
-            surface.selected_monitor = selected;
-        }
-        self.cmd_tx
-            .send(ClientMsg::Input(InputEvent::MonitorLayout(monitors)))
-            .map_err(|_| "RDP helper command channel is closed".to_owned())
+        let mut surface = self.surface.lock().map_err(|_| "无法读取显示器布局")?;
+        queue_monitor_layout(
+            &mut surface,
+            &self.surface,
+            &self.cmd_tx,
+            &self.layout_wake,
+            monitors,
+            selected,
+        )
     }
 }
 
@@ -549,6 +803,10 @@ impl Drop for RdpClientHandle {
     fn drop(&mut self) {
         self.remote_offer.closed.store(true, Ordering::Release);
         self.remote_offer.generation.store(0, Ordering::Release);
+        if let Ok(mut surface) = self.surface.lock() {
+            surface.close_layout();
+        }
+        self.layout_wake.notify_all();
         // Ask for a graceful close, then let the helper actually run its RDP
         // shutdown sequence before we force-kill. A synchronous `kill()` here would
         // race ahead of the `Close` even reaching the helper's stdin, so we reap on
@@ -653,10 +911,13 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
 
     let surface = Arc::new(Mutex::new(Surface::new(1, 1)));
     let (cmd_tx, cmd_rx) = std_mpsc::channel::<ClientMsg>();
+    let cmd_tx = Arc::new(cmd_tx);
+    let layout_wake = Arc::new(Condvar::new());
     // A clone for the stdout reader, so it can answer a file-contents request
     // with a refusal itself. The reader must not depend on the app being awake:
     // a remote paste blocks on the stream it asked for.
     let cmd_tx_reader = cmd_tx.clone();
+    let layout_wake_reader = Arc::clone(&layout_wake);
     let (event_tx, event_rx) = std_mpsc::channel::<RdpClientEvent>();
     let remote_offer = Arc::new(FileEpoch::default());
     let remote_offer_bg = remote_offer.clone();
@@ -679,6 +940,10 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
             let mut child = match command.spawn() {
                 Ok(child) => child,
                 Err(e) => {
+                    if let Ok(mut surface) = surface_bg.lock() {
+                        surface.close_layout();
+                    }
+                    layout_wake_reader.notify_all();
                     let _ = event_tx.send(RdpClientEvent::Error(format!(
                         "could not start the RDP helper: {e}"
                     )));
@@ -698,9 +963,13 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
                 cmd_rx,
                 cmd_tx_reader,
                 event_tx.clone(),
-                &surface_bg,
+                (&surface_bg, Arc::clone(&layout_wake_reader)),
                 remote_offer_bg.clone(),
             ) {
+                if let Ok(mut surface) = surface_bg.lock() {
+                    surface.close_layout();
+                }
+                layout_wake_reader.notify_all();
                 let _ = child.kill();
                 let _ = child.wait();
                 let _ = event_tx.send(RdpClientEvent::Error(error.to_string()));
@@ -719,6 +988,7 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
         cmd_tx,
         event_rx,
         surface,
+        layout_wake,
         child: child_slot,
     })
 }
@@ -733,16 +1003,17 @@ fn wire_up(
     cmd_rx: std_mpsc::Receiver<ClientMsg>,
     // A second handle on the command channel, for the reader thread to answer a
     // file request with a refusal without going through the app.
-    refuse_tx: std_mpsc::Sender<ClientMsg>,
+    refuse_tx: Arc<std_mpsc::Sender<ClientMsg>>,
     event_tx: std_mpsc::Sender<RdpClientEvent>,
-    surface: &Arc<Mutex<Surface>>,
+    display: (&Arc<Mutex<Surface>>, Arc<Condvar>),
     remote_offer: Arc<FileEpoch>,
 ) -> Result<(), RdpClientError> {
+    let (surface, layout_wake) = display;
     let mut stdin = child
         .stdin
         .take()
         .ok_or_else(|| RdpClientError::Spawn("helper stdin unavailable".into()))?;
-    let mut stdout = child
+    let stdout = child
         .stdout
         .take()
         .ok_or_else(|| RdpClientError::Spawn("helper stdout unavailable".into()))?;
@@ -768,133 +1039,205 @@ fn wire_up(
     thread::Builder::new()
         .name("adit-rdp-client-stdout".into())
         .spawn(move || {
-            loop {
-                match read_msg::<_, HostMsg>(&mut stdout) {
-                    Ok(Some(HostMsg::Connected { width, height })) => {
-                        if let Ok(mut s) = reader_surface.lock() {
-                            s.resize(width, height);
-                        }
-                        let _ = event_tx.send(RdpClientEvent::Connected { width, height });
-                    }
-                    Ok(Some(HostMsg::Resized { width, height })) => {
-                        if let Ok(mut s) = reader_surface.lock() {
-                            s.resize(width, height);
-                        }
-                        let _ = event_tx.send(RdpClientEvent::Resized { width, height });
-                    }
-                    // Clipboard file transfer. The helper speaks the whole
-                    // MS-RDPECLIP file protocol, but the half that has to answer
-                    // these lives in the GUI process and is not built yet: it
-                    // needs a Win32 `CF_HDROP` reader and a COM `IDataObject`
-                    // with delay-rendered `IStream`s, neither of which iced's
-                    // text-only clipboard can express.
-                    //
-                    // Answering `FileContentsNeeded` with a refusal rather than
-                    // dropping it is the important part — a remote paste blocks
-                    // on the stream it asked for, so silence would hang Explorer
-                    // over there instead of failing it.
-                    Ok(Some(HostMsg::ClipboardImage(image))) => {
-                        let _ = event_tx.send(RdpClientEvent::ClipboardImage(image));
-                    }
-                    Ok(Some(HostMsg::ClipboardFiles { generation, files })) => {
-                        remote_offer.observe_offer(generation, !files.is_empty());
-                        let files = if remote_offer.accepts(generation) {
-                            files
-                        } else {
-                            Vec::new()
-                        };
-                        let _ = event_tx.send(RdpClientEvent::ClipboardFiles { generation, files });
-                    }
-                    Ok(Some(HostMsg::FileContentsNeeded {
-                        stream_id,
-                        index,
-                        offset,
-                        length,
-                    })) => {
-                        // Refuse on the spot if the app is no longer listening.
-                        // Silence would leave the remote paste hanging on a
-                        // stream that is never going to arrive.
-                        if event_tx
-                            .send(RdpClientEvent::FileContentsNeeded {
-                                stream_id,
-                                index,
-                                offset,
-                                length,
-                            })
-                            .is_err()
-                        {
-                            let _ = refuse_tx.send(ClientMsg::FileContents {
-                                stream_id,
-                                data: None,
-                            });
-                        }
-                    }
-                    Ok(Some(HostMsg::FileContents {
-                        generation,
-                        stream_id,
-                        data,
-                    })) => {
-                        let data = data.filter(|_| remote_offer.accepts(generation));
-                        let _ = event_tx.send(RdpClientEvent::FileContents {
-                            generation,
-                            stream_id,
-                            data,
-                        });
-                    }
-                    Ok(Some(HostMsg::Pointer(pointer))) => {
-                        if let Ok(mut s) = reader_surface.lock() {
-                            s.update_pointer(pointer);
-                        }
-                    }
-                    Ok(Some(HostMsg::DisplayControl(state))) => {
-                        if let Ok(mut s) = reader_surface.lock() {
-                            s.display = state;
-                            // A capability announcement is not the answer to an
-                            // initial request still waiting inside the helper.
-                            if !s.display.sent_layout.is_empty() || s.display.error.is_some() {
-                                s.layout_pending = false;
-                            }
-                            s.match_layout_size();
-                            s.generation = s.generation.wrapping_add(1);
-                        }
-                    }
-                    Ok(Some(HostMsg::Tile {
-                        x,
-                        y,
-                        width,
-                        height,
-                        rgba,
-                    })) => {
-                        if let Ok(mut s) = reader_surface.lock() {
-                            s.blit(x, y, width, height, &rgba);
-                        }
-                    }
-                    Ok(Some(HostMsg::ClipboardText(text))) => {
-                        let _ = event_tx.send(RdpClientEvent::ClipboardText(text));
-                    }
-                    Ok(Some(HostMsg::Error(message))) => {
-                        remote_offer.closed.store(true, Ordering::Release);
-                        remote_offer.generation.store(0, Ordering::Release);
-                        let _ = event_tx.send(RdpClientEvent::Error(message));
-                    }
-                    Ok(Some(HostMsg::Closed)) | Ok(None) => {
-                        remote_offer.closed.store(true, Ordering::Release);
-                        remote_offer.generation.store(0, Ordering::Release);
-                        let _ = event_tx.send(RdpClientEvent::Closed);
-                        break;
-                    }
-                    Err(_) => {
-                        remote_offer.closed.store(true, Ordering::Release);
-                        remote_offer.generation.store(0, Ordering::Release);
-                        let _ = event_tx.send(RdpClientEvent::Closed);
-                        break;
-                    }
-                }
-            }
+            read_helper_messages(
+                stdout,
+                reader_surface,
+                event_tx,
+                refuse_tx,
+                remote_offer,
+                layout_wake,
+            )
         })
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
 
     Ok(())
+}
+
+fn read_helper_messages<R: std::io::Read>(
+    mut stdout: R,
+    reader_surface: Arc<Mutex<Surface>>,
+    event_tx: std_mpsc::Sender<RdpClientEvent>,
+    refuse_tx: Arc<std_mpsc::Sender<ClientMsg>>,
+    remote_offer: Arc<FileEpoch>,
+    layout_wake: Arc<Condvar>,
+) {
+    loop {
+        match read_msg::<_, HostMsg>(&mut stdout) {
+            Ok(Some(HostMsg::Connected { width, height })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    expire_layout(&mut s, &refuse_tx, Instant::now());
+                    s.resize(width, height);
+                    let resize = s.finish_matching_layout();
+                    send_deferred_resize(&refuse_tx, resize);
+                    layout_wake.notify_all();
+                }
+                let _ = event_tx.send(RdpClientEvent::Connected { width, height });
+            }
+            Ok(Some(HostMsg::Resized { width, height })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    expire_layout(&mut s, &refuse_tx, Instant::now());
+                    s.resize(width, height);
+                    let resize = s.finish_matching_layout();
+                    send_deferred_resize(&refuse_tx, resize);
+                    layout_wake.notify_all();
+                }
+                let _ = event_tx.send(RdpClientEvent::Resized { width, height });
+            }
+            // Clipboard file transfer. The helper speaks the whole
+            // MS-RDPECLIP file protocol, but the half that has to answer
+            // these lives in the GUI process and is not built yet: it
+            // needs a Win32 `CF_HDROP` reader and a COM `IDataObject`
+            // with delay-rendered `IStream`s, neither of which iced's
+            // text-only clipboard can express.
+            //
+            // Answering `FileContentsNeeded` with a refusal rather than
+            // dropping it is the important part — a remote paste blocks
+            // on the stream it asked for, so silence would hang Explorer
+            // over there instead of failing it.
+            Ok(Some(HostMsg::ClipboardImage(image))) => {
+                let _ = event_tx.send(RdpClientEvent::ClipboardImage(image));
+            }
+            Ok(Some(HostMsg::ClipboardFiles { generation, files })) => {
+                remote_offer.observe_offer(generation, !files.is_empty());
+                let files = if remote_offer.accepts(generation) {
+                    files
+                } else {
+                    Vec::new()
+                };
+                let _ = event_tx.send(RdpClientEvent::ClipboardFiles { generation, files });
+            }
+            Ok(Some(HostMsg::FileContentsNeeded {
+                stream_id,
+                index,
+                offset,
+                length,
+            })) => {
+                // Refuse on the spot if the app is no longer listening.
+                // Silence would leave the remote paste hanging on a
+                // stream that is never going to arrive.
+                if event_tx
+                    .send(RdpClientEvent::FileContentsNeeded {
+                        stream_id,
+                        index,
+                        offset,
+                        length,
+                    })
+                    .is_err()
+                {
+                    let _ = refuse_tx.send(ClientMsg::FileContents {
+                        stream_id,
+                        data: None,
+                    });
+                }
+            }
+            Ok(Some(HostMsg::FileContents {
+                generation,
+                stream_id,
+                data,
+            })) => {
+                let data = data.filter(|_| remote_offer.accepts(generation));
+                let _ = event_tx.send(RdpClientEvent::FileContents {
+                    generation,
+                    stream_id,
+                    data,
+                });
+            }
+            Ok(Some(HostMsg::Pointer(pointer))) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    s.update_pointer(pointer);
+                }
+            }
+            Ok(Some(HostMsg::DisplayControl(state))) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    let resize = s.display_capabilities(state);
+                    send_deferred_resize(&refuse_tx, resize);
+                    layout_wake.notify_all();
+                }
+            }
+            Ok(Some(HostMsg::MonitorLayoutResult { request_id, result })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    let now = Instant::now();
+                    expire_layout(&mut s, &refuse_tx, now);
+                    let resize = s.layout_result(request_id, result, now);
+                    send_deferred_resize(&refuse_tx, resize);
+                    layout_wake.notify_all();
+                }
+            }
+            Ok(Some(HostMsg::DisplayControlReset)) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    expire_layout(&mut s, &refuse_tx, Instant::now());
+                    let desired = s
+                        .layout_pending
+                        .as_ref()
+                        .map(|pending| (pending.monitors.clone(), pending.selected))
+                        .or_else(|| {
+                            (!s.display.sent_layout.is_empty() && s.display.error.is_none())
+                                .then(|| (s.display.sent_layout.clone(), s.selected_monitor))
+                        });
+                    s.display.max_monitors = 0;
+                    s.display.max_area = 0;
+                    s.display.sent_layout.clear();
+                    s.display.size_matches = false;
+                    s.selected_monitor = None;
+                    s.generation = s.generation.wrapping_add(1);
+                    if let Some((monitors, selected)) = desired {
+                        let _ = queue_monitor_layout(
+                            &mut s,
+                            &reader_surface,
+                            &refuse_tx,
+                            &layout_wake,
+                            monitors,
+                            selected,
+                        );
+                    }
+                    layout_wake.notify_all();
+                }
+            }
+            Ok(Some(HostMsg::Tile {
+                x,
+                y,
+                width,
+                height,
+                rgba,
+            })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    s.blit(x, y, width, height, &rgba);
+                }
+            }
+            Ok(Some(HostMsg::ClipboardText(text))) => {
+                let _ = event_tx.send(RdpClientEvent::ClipboardText(text));
+            }
+            Ok(Some(HostMsg::Error(message))) => {
+                remote_offer.closed.store(true, Ordering::Release);
+                remote_offer.generation.store(0, Ordering::Release);
+                if let Ok(mut s) = reader_surface.lock() {
+                    s.close_layout();
+                }
+                layout_wake.notify_all();
+                let _ = event_tx.send(RdpClientEvent::Error(message));
+            }
+            Ok(Some(HostMsg::Closed)) | Ok(None) => {
+                remote_offer.closed.store(true, Ordering::Release);
+                remote_offer.generation.store(0, Ordering::Release);
+                if let Ok(mut s) = reader_surface.lock() {
+                    s.close_layout();
+                }
+                layout_wake.notify_all();
+                let _ = event_tx.send(RdpClientEvent::Closed);
+                break;
+            }
+            Err(_) => {
+                remote_offer.closed.store(true, Ordering::Release);
+                remote_offer.generation.store(0, Ordering::Release);
+                if let Ok(mut s) = reader_surface.lock() {
+                    s.close_layout();
+                }
+                layout_wake.notify_all();
+                let _ = event_tx.send(RdpClientEvent::Closed);
+                break;
+            }
+        }
+    }
 }
 
 // These adapters live with the RDP client to keep the generic session lifecycle
@@ -933,10 +1276,10 @@ impl super::SessionManager {
         let profile_id = record.summary.profile_id;
         let monitors = {
             let surface = rdp.surface.lock().map_err(|_| "无法读取显示器布局")?;
-            if !surface.display.applied
+            if !surface.display.size_matches
                 || selected.is_some_and(|i| i >= surface.display.sent_layout.len())
             {
-                return Err("远程桌面尚未应用该布局".into());
+                return Err("桌面尺寸尚未匹配显示器布局".into());
             }
             surface.display.sent_layout.clone()
         };
@@ -950,7 +1293,7 @@ impl super::SessionManager {
         options.validate()?;
         {
             let mut surface = rdp.surface.lock().map_err(|_| "无法读取显示器布局")?;
-            if !surface.display.applied || surface.display.sent_layout != monitors {
+            if !surface.display.size_matches || surface.display.sent_layout != monitors {
                 return Err("显示器布局已变化，请重试".into());
             }
             surface.selected_monitor = selected;
@@ -1063,13 +1406,698 @@ mod rdp_presentation_tests {
             RdpClientHandle {
                 remote_offer: Arc::new(FileEpoch::default()),
                 event_tx,
-                cmd_tx,
+                cmd_tx: Arc::new(cmd_tx),
                 event_rx,
                 surface: Arc::new(Mutex::new(surface)),
+                layout_wake: Arc::new(Condvar::new()),
                 child: Arc::new(Mutex::new(None)),
             },
             rx,
         )
+    }
+
+    // A synthetic helper writes the real framed IPC format to the production
+    // reader; it never starts a process, connects a server, or opens a clipboard.
+    struct SyntheticStdout {
+        chunks: std_mpsc::Receiver<Vec<u8>>,
+        current: std::io::Cursor<Vec<u8>>,
+    }
+
+    impl std::io::Read for SyntheticStdout {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            loop {
+                let read = std::io::Read::read(&mut self.current, bytes)?;
+                if read != 0 || bytes.is_empty() {
+                    return Ok(read);
+                }
+                match self.chunks.recv() {
+                    Ok(chunk) => self.current = std::io::Cursor::new(chunk),
+                    Err(_) => return Ok(0),
+                }
+            }
+        }
+    }
+
+    fn synthetic_helper(
+        handle: &RdpClientHandle,
+    ) -> (std_mpsc::Sender<Vec<u8>>, thread::JoinHandle<()>) {
+        let (tx, rx) = std_mpsc::channel();
+        let reader = SyntheticStdout {
+            chunks: rx,
+            current: std::io::Cursor::new(Vec::new()),
+        };
+        let surface = Arc::clone(&handle.surface);
+        let events = handle.event_tx.clone();
+        let commands = Arc::clone(&handle.cmd_tx);
+        let offers = Arc::clone(&handle.remote_offer);
+        let wake = Arc::clone(&handle.layout_wake);
+        let thread = thread::spawn(move || {
+            read_helper_messages(reader, surface, events, commands, offers, wake)
+        });
+        (tx, thread)
+    }
+
+    fn helper_send(tx: &std_mpsc::Sender<Vec<u8>>, message: HostMsg) {
+        let mut bytes = Vec::new();
+        write_msg(&mut bytes, &message).unwrap();
+        tx.send(bytes).unwrap();
+    }
+
+    fn helper_resize(
+        tx: &std_mpsc::Sender<Vec<u8>>,
+        handle: &RdpClientHandle,
+        width: u16,
+        height: u16,
+    ) {
+        helper_send(tx, HostMsg::Resized { width, height });
+        assert!(matches!(
+            handle.event_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
+            RdpClientEvent::Resized { width: w, height: h } if (w, h) == (width, height)
+        ));
+    }
+
+    fn helper_request(rx: &std_mpsc::Receiver<ClientMsg>) -> (u64, Vec<Monitor>) {
+        let message = rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        let mut bytes = Vec::new();
+        write_msg(&mut bytes, &message).unwrap();
+        match read_msg::<_, ClientMsg>(&mut std::io::Cursor::new(bytes))
+            .unwrap()
+            .unwrap()
+        {
+            ClientMsg::Input(InputEvent::MonitorLayout {
+                request_id,
+                monitors,
+            }) => (request_id, monitors),
+            other => panic!("expected a framed monitor request, got {other:?}"),
+        }
+    }
+
+    fn caps() -> DisplayControlState {
+        DisplayControlState {
+            max_monitors: 2,
+            max_area: 800 * 600 * 2,
+            ..Default::default()
+        }
+    }
+
+    fn close_synthetic_helper(
+        tx: std_mpsc::Sender<Vec<u8>>,
+        reader: thread::JoinHandle<()>,
+        handle: &RdpClientHandle,
+    ) {
+        helper_send(&tx, HostMsg::Closed);
+        assert!(matches!(
+            handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            RdpClientEvent::Closed
+        ));
+        reader.join().unwrap();
+    }
+
+    #[test]
+    fn synthetic_helper_delayed_capabilities_and_monitor_switch_keep_input_coordinates() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&handle);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (id, requested) = helper_request(&commands);
+        assert_eq!(requested, monitors());
+        handle.send_input(InputEvent::Resize {
+            width: 700,
+            height: 500,
+        });
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_resize(&host, &handle, 200, 200);
+        assert!(handle.surface.lock().unwrap().layout_pending.is_some());
+        assert!(commands.try_recv().is_err());
+
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: id,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 400, 200);
+        {
+            let surface = handle.surface.lock().unwrap();
+            assert!(surface.layout_pending.is_none());
+            assert!(surface.display.size_matches);
+            assert_eq!(surface.viewport(), (200, 0, 200, 200));
+        }
+        handle.send_input(InputEvent::MouseMove { x: 17, y: 23 });
+        handle.send_input(InputEvent::Key {
+            scancode: 30,
+            extended: false,
+            pressed: true,
+        });
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::MouseMove { x: 217, y: 23 })
+        ));
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Key {
+                scancode: 30,
+                pressed: true,
+                ..
+            })
+        ));
+
+        // A redirected session reissues the layout with a fresh ID; an old
+        // reply cannot disturb the new request or its selected monitor.
+        helper_send(&host, HostMsg::DisplayControlReset);
+        let (reissued, layout) = helper_request(&commands);
+        assert_ne!(reissued, id);
+        assert_eq!(layout, requested);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: id,
+                result: Err("old session result".into()),
+            },
+        );
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: reissued,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 400, 200);
+        assert_eq!(
+            handle.surface.lock().unwrap().viewport(),
+            (200, 0, 200, 200)
+        );
+
+        // Switching back to one screen releases the latest resize, which the UI
+        // has already deduplicated and would otherwise never send again.
+        handle
+            .configure_monitors(vec![monitors()[1].clone()], None)
+            .unwrap();
+        let (single, _) = helper_request(&commands);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: single,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 700,
+                height: 500
+            })
+        ));
+        handle.send_input(InputEvent::MouseMove { x: 17, y: 23 });
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::MouseMove { x: 17, y: 23 })
+        ));
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn synthetic_helper_failures_retry_and_ignore_old_results() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&handle);
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_resize(&host, &handle, 200, 200);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (old, _) = helper_request(&commands);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (current, _) = helper_request(&commands);
+        assert_ne!(old, current);
+        handle.send_input(InputEvent::Resize {
+            width: 900,
+            height: 700,
+        });
+        // This channel-closed snapshot may have been queued before the retry.
+        helper_send(
+            &host,
+            HostMsg::DisplayControl(DisplayControlState::default()),
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert_eq!(
+            handle
+                .surface
+                .lock()
+                .unwrap()
+                .layout_pending
+                .as_ref()
+                .unwrap()
+                .id,
+            current
+        );
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_resize(&host, &handle, 200, 200);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: old,
+                result: Err("old failure".into()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert_eq!(
+            handle
+                .surface
+                .lock()
+                .unwrap()
+                .layout_pending
+                .as_ref()
+                .unwrap()
+                .id,
+            current
+        );
+        assert!(commands.try_recv().is_err());
+
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: current,
+                result: Err("encoding failed".into()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 900,
+                height: 700
+            })
+        ));
+        assert!(handle
+            .surface
+            .lock()
+            .unwrap()
+            .display
+            .sent_layout
+            .is_empty());
+
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (retry, _) = helper_request(&commands);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: old,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert_eq!(
+            handle
+                .surface
+                .lock()
+                .unwrap()
+                .layout_pending
+                .as_ref()
+                .unwrap()
+                .id,
+            retry
+        );
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: retry,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 400, 200);
+        assert_eq!(
+            handle.surface.lock().unwrap().viewport(),
+            (200, 0, 200, 200)
+        );
+
+        // Channel closure after a usable multi-screen layout also releases the
+        // resize most recently suppressed while the layout was active.
+        handle.send_input(InputEvent::Resize {
+            width: 1000,
+            height: 800,
+        });
+        helper_send(
+            &host,
+            HostMsg::DisplayControl(DisplayControlState::default()),
+        );
+        helper_resize(&host, &handle, 400, 200);
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 1000,
+                height: 800
+            })
+        ));
+        assert_eq!(handle.surface.lock().unwrap().viewport(), (0, 0, 400, 200));
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn synthetic_failure_after_a_multimonitor_layout_releases_resize() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&handle);
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_resize(&host, &handle, 200, 200);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (multi, _) = helper_request(&commands);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: multi,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 400, 200);
+        handle.send_input(InputEvent::Resize {
+            width: 800,
+            height: 600,
+        });
+        handle
+            .configure_monitors(vec![monitors()[1].clone()], None)
+            .unwrap();
+        let (single, _) = helper_request(&commands);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: single,
+                result: Err("encoding failed".into()),
+            },
+        );
+        helper_resize(&host, &handle, 400, 200);
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 800,
+                height: 600
+            })
+        ));
+        let surface = handle.surface.lock().unwrap();
+        assert!(surface.layout_pending.is_none());
+        assert!(surface.display.sent_layout.is_empty());
+        drop(surface);
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn synthetic_helper_deadlines_cancel_and_release_both_waiting_phases() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&handle);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (first, _) = helper_request(&commands);
+        handle.send_input(InputEvent::Resize {
+            width: 640,
+            height: 480,
+        });
+        handle
+            .surface
+            .lock()
+            .unwrap()
+            .layout_pending
+            .as_mut()
+            .unwrap()
+            .deadline = Instant::now();
+        handle.layout_wake.notify_all();
+        assert!(
+            matches!(commands.recv_timeout(Duration::from_secs(2)).unwrap(), ClientMsg::Input(InputEvent::CancelMonitorLayout { request_id }) if request_id == first)
+        );
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 640,
+                height: 480
+            })
+        ));
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: first,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert!(handle
+            .surface
+            .lock()
+            .unwrap()
+            .display
+            .sent_layout
+            .is_empty());
+
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (retry, _) = helper_request(&commands);
+        handle.send_input(InputEvent::Resize {
+            width: 800,
+            height: 600,
+        });
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: retry,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert!(!handle.surface.lock().unwrap().display.size_matches);
+        handle
+            .surface
+            .lock()
+            .unwrap()
+            .layout_pending
+            .as_mut()
+            .unwrap()
+            .deadline = Instant::now();
+        handle.layout_wake.notify_all();
+        assert!(
+            matches!(commands.recv_timeout(Duration::from_secs(2)).unwrap(), ClientMsg::Input(InputEvent::CancelMonitorLayout { request_id }) if request_id == retry)
+        );
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 800,
+                height: 600
+            })
+        ));
+        assert!(handle.surface.lock().unwrap().layout_pending.is_none());
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn a_late_result_cannot_win_a_race_with_the_deadline_worker() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&handle);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (id, _) = helper_request(&commands);
+        handle.send_input(InputEvent::Resize {
+            width: 640,
+            height: 480,
+        });
+        // Do not wake the worker: the reader itself must reject a late result.
+        handle
+            .surface
+            .lock()
+            .unwrap()
+            .layout_pending
+            .as_mut()
+            .unwrap()
+            .deadline = Instant::now();
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: id,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert!(
+            matches!(commands.recv().unwrap(), ClientMsg::Input(InputEvent::CancelMonitorLayout { request_id }) if request_id == id)
+        );
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 640,
+                height: 480
+            })
+        ));
+        let surface = handle.surface.lock().unwrap();
+        assert!(surface.layout_pending.is_none());
+        assert!(surface.display.sent_layout.is_empty());
+        drop(surface);
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn synthetic_helper_reports_capability_timeout_and_channel_closure() {
+        for error in [
+            "DisplayControl capabilities timed out",
+            "DisplayControl channel closed",
+        ] {
+            let (handle, commands) = handle(Surface::new(200, 200));
+            let (host, reader) = synthetic_helper(&handle);
+            handle.configure_monitors(monitors(), Some(1)).unwrap();
+            let (id, _) = helper_request(&commands);
+            handle.send_input(InputEvent::Resize {
+                width: 640,
+                height: 480,
+            });
+            helper_send(
+                &host,
+                HostMsg::MonitorLayoutResult {
+                    request_id: id,
+                    result: Err(error.into()),
+                },
+            );
+            helper_resize(&host, &handle, 200, 200);
+            assert!(matches!(
+                commands.recv().unwrap(),
+                ClientMsg::Input(InputEvent::Resize {
+                    width: 640,
+                    height: 480
+                })
+            ));
+            let surface = handle.surface.lock().unwrap();
+            assert!(surface.layout_pending.is_none());
+            assert_eq!(surface.display.error.as_deref(), Some(display_error(error)));
+            drop(surface);
+            close_synthetic_helper(host, reader, &handle);
+        }
+    }
+
+    #[test]
+    fn channel_close_after_send_releases_resize_without_waiting_for_size_timeout() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&handle);
+        helper_send(&host, HostMsg::DisplayControl(caps()));
+        helper_resize(&host, &handle, 200, 200);
+        handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (id, _) = helper_request(&commands);
+        handle.send_input(InputEvent::Resize {
+            width: 640,
+            height: 480,
+        });
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: id,
+                result: Ok(()),
+            },
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert_eq!(
+            handle
+                .surface
+                .lock()
+                .unwrap()
+                .layout_pending
+                .as_ref()
+                .unwrap()
+                .phase,
+            LayoutPhase::WaitingForSize
+        );
+        helper_send(
+            &host,
+            HostMsg::DisplayControl(DisplayControlState::default()),
+        );
+        helper_resize(&host, &handle, 200, 200);
+        assert!(matches!(
+            commands.recv().unwrap(),
+            ClientMsg::Input(InputEvent::Resize {
+                width: 640,
+                height: 480
+            })
+        ));
+        assert!(handle.surface.lock().unwrap().layout_pending.is_none());
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn a_closed_command_channel_never_leaves_a_layout_pending() {
+        let (handle, commands) = handle(Surface::new(200, 200));
+        drop(commands);
+        assert!(handle.configure_monitors(monitors(), Some(1)).is_err());
+        let surface = handle.surface.lock().unwrap();
+        assert!(surface.layout_pending.is_none());
+        assert!(surface.display.sent_layout.is_empty());
+    }
+
+    #[test]
+    fn synthetic_helper_close_clears_pending_without_touching_a_new_session() {
+        let (old_handle, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&old_handle);
+        old_handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (old_id, _) = helper_request(&commands);
+        old_handle.send_input(InputEvent::Resize {
+            width: 640,
+            height: 480,
+        });
+        close_synthetic_helper(host, reader, &old_handle);
+        assert!(old_handle.surface.lock().unwrap().layout_pending.is_none());
+        assert!(commands.try_recv().is_err());
+
+        let (new_handle, new_commands) = handle(Surface::new(200, 200));
+        new_handle.configure_monitors(monitors(), Some(1)).unwrap();
+        let (new_id, _) = helper_request(&new_commands);
+        assert_eq!(old_id, new_id); // IDs are scoped to the helper session.
+        old_handle
+            .surface
+            .lock()
+            .unwrap()
+            .layout_result(old_id, Ok(()), Instant::now());
+        assert_eq!(
+            new_handle
+                .surface
+                .lock()
+                .unwrap()
+                .layout_pending
+                .as_ref()
+                .unwrap()
+                .id,
+            new_id
+        );
+    }
+
+    #[test]
+    fn failed_session_layout_does_not_remove_saved_monitor_preferences() {
+        let mut manager = super::super::SessionManager::with_demo_profiles();
+        let profile_id = manager.profiles()[0].id;
+        let mut options = manager.profile(profile_id).unwrap().session_options.clone();
+        options.rdp_monitors = Some(monitors().iter().map(to_profile_monitor).collect());
+        options.rdp_selected_monitor = Some(1);
+        manager
+            .set_profile_session_options(profile_id, options.clone())
+            .unwrap();
+        let session = manager.open_mock_session(profile_id).unwrap();
+        let (rdp, commands) = handle(Surface::new(200, 200));
+        let (host, reader) = synthetic_helper(&rdp);
+        rdp.configure_monitors(monitors(), Some(1)).unwrap();
+        let (id, _) = helper_request(&commands);
+        manager.sessions.get_mut(&session).unwrap().rdp = Some(rdp);
+        let rdp = manager
+            .sessions
+            .get(&session)
+            .unwrap()
+            .rdp
+            .as_ref()
+            .unwrap();
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                request_id: id,
+                result: Err("DisplayControl capabilities timed out".into()),
+            },
+        );
+        helper_resize(&host, rdp, 200, 200);
+        close_synthetic_helper(host, reader, rdp);
+        let saved = &manager.profile(profile_id).unwrap().session_options;
+        assert_eq!(saved.rdp_monitors, options.rdp_monitors);
+        assert_eq!(saved.rdp_selected_monitor, Some(1));
+        let encoded = serde_json::to_string(manager.profile(profile_id).unwrap()).unwrap();
+        let decoded: adit_domain::ConnectionProfile = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.session_options.rdp_monitors, options.rdp_monitors);
+        assert_eq!(decoded.session_options.rdp_selected_monitor, Some(1));
     }
 
     #[test]
@@ -1177,7 +2205,10 @@ mod rdp_presentation_tests {
         manager.sessions.get_mut(&session).unwrap().rdp = Some(rdp);
 
         manager.set_active_rdp_monitor_count(2).unwrap();
-        let ClientMsg::Input(InputEvent::MonitorLayout(layout)) = rx.recv().unwrap() else {
+        let ClientMsg::Input(InputEvent::MonitorLayout {
+            monitors: layout, ..
+        }) = rx.recv().unwrap()
+        else {
             panic!("expected an actual monitor layout command");
         };
         assert_eq!(layout.len(), 2);
@@ -1228,6 +2259,26 @@ mod rdp_presentation_tests {
         assert_eq!(restored.session_options.rdp_monitors.unwrap().len(), 2);
     }
     #[test]
+    fn failed_layout_does_not_keep_suppressing_window_resize() {
+        let mut surface = Surface::new(400, 200);
+        surface.display.sent_layout = monitors();
+        surface.display.error = Some("DisplayControl channel disappeared".into());
+        let (handle, rx) = handle(surface);
+
+        handle.send_input(InputEvent::Resize {
+            width: 800,
+            height: 600,
+        });
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(ClientMsg::Input(InputEvent::Resize {
+                width: 800,
+                height: 600
+            }))
+        ));
+    }
+
+    #[test]
     fn second_monitor_crop_and_input_use_identical_signed_layout_offset() {
         let mut surface = Surface::new(400, 200);
         surface.display.sent_layout = monitors();
@@ -1270,14 +2321,14 @@ mod rdp_presentation_tests {
         s.display.sent_layout = monitors();
         s.selected_monitor = Some(1);
         s.match_layout_size();
-        assert!(!s.display.applied);
+        assert!(!s.display.size_matches);
         assert_eq!(s.viewport(), (0, 0, 200, 200));
         s.resize(400, 200);
-        assert!(s.display.applied);
+        assert!(s.display.size_matches);
         assert_eq!(s.viewport(), (200, 0, 200, 200));
         s.resize(9000, 1);
         assert_eq!((s.width, s.height), (8192, 1));
-        assert!(!s.display.applied);
+        assert!(!s.display.size_matches);
     }
     #[test]
     fn ipc_cursor_stays_separate_from_frame_pixels_and_validates_malformed_bitmap() {

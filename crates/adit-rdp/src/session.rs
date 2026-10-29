@@ -90,6 +90,7 @@ pub(crate) async fn run_session(
     let shared_egfx = egfx::new_shared();
     let shared_display = SharedDisplay::default();
     let mut pending_layout = None;
+    let mut pending_resize = None;
     // Clipboard state outlives a single CLIPRDR channel on purpose: a GNOME
     // system-mode handover redirects and rebuilds the channel, and the text the
     // user copied did not change under them.
@@ -136,7 +137,17 @@ pub(crate) async fn run_session(
                     msg = input_rx.recv() => {
                         match msg {
                             None => return Err(RdpError::ControlChannelClosed),
-                            Some(SessionCmd::Input(InputEvent::MonitorLayout(layout))) => pending_layout = Some(layout),
+                            Some(SessionCmd::Input(InputEvent::MonitorLayout { request_id, monitors })) => {
+                                pending_layout = Some(display::PendingLayout::new(request_id, monitors));
+                                pending_resize = None;
+                            }
+                            Some(SessionCmd::Input(InputEvent::CancelMonitorLayout { request_id })) => {
+                                display::cancel_pending(&mut pending_layout, request_id);
+                            }
+                            Some(SessionCmd::Input(InputEvent::Resize { width, height })) => {
+                                pending_resize = Some(MonitorLayoutEntry::adjust_display_size(
+                                    u32::from(width), u32::from(height)));
+                            }
                             _ => {}
                         }
                     }
@@ -167,26 +178,22 @@ pub(crate) async fn run_session(
             &host_tx,
             &shared_egfx,
             &shared_clipboard,
-            (&shared_display, &mut pending_layout),
+            (&shared_display, &mut pending_layout, &mut pending_resize),
         )
         .await
         .map_err(|e| RdpError::Session(e.to_string()))?
         {
             None => return Ok(()),
             Some(redir) => {
-                if pending_layout.is_none() {
-                    let sent = shared_display
-                        .lock()
-                        .unwrap_or_else(|e| e.into_inner())
-                        .sent_layout
-                        .clone();
-                    if !sent.is_empty() {
-                        pending_layout = Some(sent);
-                    }
-                }
                 redirects += 1;
                 if redirects > MAX_REDIRECTS {
                     return Err(RdpError::Session("too many server redirections".into()));
+                }
+                // The GUI owns request IDs and decides whether the previous
+                // preference still needs replay after the channel is rebuilt.
+                pending_layout = None;
+                if host_tx.send(HostMsg::DisplayControlReset).is_err() {
+                    return Err(RdpError::ControlChannelClosed);
                 }
                 // Follow the redirection. GNOME hands off on the same host with a
                 // routing token (usually no target address); carry the token into the
@@ -452,9 +459,13 @@ async fn active_session(
     host_tx: &std_mpsc::Sender<HostMsg>,
     egfx: &SharedEgfx,
     clip: &SharedClipboard,
-    display_request: (&SharedDisplay, &mut Option<Vec<adit_rdp_proto::Monitor>>),
+    display_request: (
+        &SharedDisplay,
+        &mut Option<display::PendingLayout>,
+        &mut Option<(u32, u32)>,
+    ),
 ) -> Result<Option<crate::redirect::Redirection>, ironrdp_session::SessionError> {
-    let (display, pending_layout) = display_request;
+    let (display, pending_layout, pending_resize) = display_request;
     let (mut reader, mut writer) = split_tokio_framed(framed);
 
     let desktop_size = connection_result.desktop_size;
@@ -463,8 +474,14 @@ async fn active_session(
     let mut egfx_size = (desktop_size.width, desktop_size.height);
     // A resize requested before the DisplayControl channel is up would be
     // silently dropped; park it here and retry once the channel connects.
-    let mut pending_resize: Option<(u32, u32)> = None;
     let mut last_display_state = None;
+    let mut display_channel = display::ChannelWatch::default();
+    if let Some(request) = pending_layout.as_mut() {
+        request.start_waiting(tokio::time::Instant::now());
+    }
+    // A request received during connection must be considered even if the
+    // newly established desktop is otherwise completely idle.
+    let mut pump_initial_layout = pending_layout.is_some() || pending_resize.is_some();
     let mut keys_logged = 0u32;
     // Frame-flow probe: a frozen desktop and a healthy one look identical from
     // outside, so record what actually reached the app.
@@ -499,7 +516,18 @@ async fn active_session(
     let mut egfx_active = false;
 
     'session: loop {
+        let layout_deadline = pending_layout
+            .as_ref()
+            .and_then(|request| request.deadline)
+            .unwrap_or_else(|| tokio::time::Instant::now() + display::CAPABILITIES_TIMEOUT);
         let outputs = tokio::select! {
+            _ = std::future::ready(()), if pump_initial_layout => {
+                pump_initial_layout = false;
+                Vec::new()
+            }
+            _ = tokio::time::sleep_until(layout_deadline), if pending_layout.is_some() => {
+                Vec::new()
+            }
             frame_read = reader.read_pdu() => {
                 let (action, payload) = frame_read
                     .map_err(|e| ironrdp_session::custom_err!("read PDU", e))?;
@@ -526,15 +554,24 @@ async fn active_session(
                         input_open = false;
                         active_stage.graceful_shutdown()?
                     }
-                    Some(SessionCmd::Input(InputEvent::MonitorLayout(layout))) => {
-                        *pending_layout = Some(layout);
-                        pending_resize = None;
+                    Some(SessionCmd::Input(InputEvent::MonitorLayout { request_id, monitors })) => {
+                        let mut request = display::PendingLayout::new(request_id, monitors);
+                        request.start_waiting(tokio::time::Instant::now());
+                        *pending_layout = Some(request);
+                        *pending_resize = None;
+                        Vec::new()
+                    }
+                    Some(SessionCmd::Input(InputEvent::CancelMonitorLayout { request_id })) => {
+                        display::cancel_pending(pending_layout, request_id);
                         Vec::new()
                     }
                     Some(SessionCmd::Input(InputEvent::Resize { width, height })) => {
                         let (w, h) = MonitorLayoutEntry::adjust_display_size(
                             u32::from(width), u32::from(height));
-                        match active_stage.encode_resize(w, h, None, None) {
+                        let encoded = display::ready(&mut active_stage, display)
+                            .then(|| active_stage.encode_resize(w, h, None, None))
+                            .flatten();
+                        match encoded {
                             Some(frame_res) => {
                                 // Logged because the whole path was silent, and a
                                 // desktop stuck at its connect-time size is
@@ -545,7 +582,7 @@ async fn active_session(
                                     adjusted_w = w, adjusted_h = h,
                                     "resize sent to the server"
                                 );
-                                pending_resize = None;
+                                *pending_resize = None;
                                 vec![ActiveStageOutput::ResponseFrame(frame_res?)]
                             }
                             // DisplayControl not connected yet. Park the request
@@ -564,7 +601,7 @@ async fn active_session(
                                     requested_w = w, requested_h = h,
                                     "resize parked: DisplayControl is not connected yet"
                                 );
-                                pending_resize = Some((w, h));
+                                *pending_resize = Some((w, h));
                                 Vec::new()
                             }
                         }
@@ -829,24 +866,47 @@ async fn active_session(
             }
         }
 
-        if let Some(layout) = pending_layout.as_ref() {
-            if let Some(encoded) = display::encode_layout(&mut active_stage, layout, display) {
-                match encoded {
+        let channel_open = display::channel_open(&mut active_stage);
+        let channel_closed = display_channel.observe(channel_open);
+        if channel_closed {
+            let mut state = display.lock().unwrap_or_else(|e| e.into_inner());
+            state.max_monitors = 0;
+            state.max_area = 0;
+        }
+        if let Some(request) = pending_layout.as_ref() {
+            let encoded = display::poll_layout(
+                request,
+                tokio::time::Instant::now(),
+                channel_closed,
+                |monitors| {
+                    // Give already-queued cancellations and newer requests a
+                    // chance to supersede this one before it reaches the wire.
+                    if input_rx.is_empty() {
+                        display::encode_layout(&mut active_stage, monitors, display)
+                    } else {
+                        None
+                    }
+                },
+            );
+            if let Some(encoded) = encoded {
+                let request_id = request.request_id;
+                let result = match encoded {
                     Ok(bytes) => {
                         writer
                             .write_all(&bytes)
                             .await
                             .map_err(|e| ironrdp_session::custom_err!("write monitor layout", e))?;
-                        let mut state = display.lock().unwrap_or_else(|e| e.into_inner());
-                        state.sent_layout = layout.clone();
-                        state.applied = false;
-                        state.error = None;
+                        Ok(())
                     }
-                    Err(error) => {
-                        display.lock().unwrap_or_else(|e| e.into_inner()).error = Some(error)
-                    }
-                }
+                    Err(error) => Err(error),
+                };
                 *pending_layout = None;
+                if host_tx
+                    .send(HostMsg::MonitorLayoutResult { request_id, result })
+                    .is_err()
+                {
+                    break 'session;
+                }
             }
         }
         let state = display.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -861,10 +921,11 @@ async fn active_session(
         }
 
         // Retry a parked resize now that more channels may have connected.
-        if let Some((w, h)) = pending_resize {
+        if let Some((w, h)) = pending_resize.filter(|_| display::ready(&mut active_stage, display))
+        {
             if let Some(frame_res) = active_stage.encode_resize(w, h, None, None) {
                 tracing::info!(w, h, "parked resize went out once DisplayControl connected");
-                pending_resize = None;
+                *pending_resize = None;
                 writer
                     .write_all(&frame_res?)
                     .await
@@ -923,6 +984,95 @@ async fn active_session(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod display_deadline_tests {
+    use super::*;
+    use ironrdp_connector::connection_activation::ConnectionActivationFactory;
+
+    #[tokio::test(start_paused = true)]
+    async fn idle_active_session_reports_missing_capabilities_without_a_server_pdu() {
+        let request = ConnectRequest {
+            host: "synthetic.invalid".into(),
+            port: 0,
+            username: String::new(),
+            password: String::new(),
+            domain: None,
+            width: 800,
+            height: 600,
+            enable_clipboard: false,
+            enable_audio: false,
+            quality: adit_rdp_proto::Quality::default(),
+        };
+        let config = build_connector_config(&request, None);
+        let connection = ConnectionResult {
+            io_channel_id: 1003,
+            user_channel_id: 1001,
+            message_channel_id: None,
+            share_id: 1,
+            static_channels: Default::default(),
+            desktop_size: ironrdp_connector::DesktopSize {
+                width: 800,
+                height: 600,
+            },
+            enable_server_pointer: false,
+            pointer_software_rendering: false,
+            activation_factory: ConnectionActivationFactory::new(config, 1003, 1001),
+            compression_type: None,
+        };
+        let (stream, _peer) = tokio::io::duplex(1024);
+        let framed: UpgradedFramed = TokioFramed::new(Box::new(stream));
+        let (_input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
+        let (host_tx, host_rx) = std_mpsc::channel();
+        let egfx = egfx::new_shared();
+        let clip = clipboard::new_shared();
+        let display = SharedDisplay::default();
+        let mut pending = Some(display::PendingLayout::new(
+            42,
+            vec![adit_rdp_proto::Monitor {
+                left: 0,
+                top: 0,
+                width: 800,
+                height: 600,
+                primary: true,
+                scale_percent: 100,
+            }],
+        ));
+        let mut pending_resize = None;
+        let session = active_session(
+            framed,
+            connection,
+            &mut input_rx,
+            &host_tx,
+            &egfx,
+            &clip,
+            (&display, &mut pending, &mut pending_resize),
+        );
+        tokio::pin!(session);
+        // The initial capability snapshot proves the loop has started waiting.
+        tokio::select! {
+            biased;
+            result = &mut session => panic!("idle session exited: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(matches!(host_rx.try_recv(), Ok(HostMsg::DisplayControl(_))));
+        tokio::select! {
+            biased;
+            result = &mut session => panic!("idle session exited: {result:?}"),
+            _ = tokio::time::advance(display::CAPABILITIES_TIMEOUT) => {}
+        }
+        tokio::select! {
+            biased;
+            result = &mut session => panic!("idle session exited: {result:?}"),
+            _ = tokio::task::yield_now() => {}
+        }
+        assert!(matches!(
+            host_rx.try_recv(),
+            Ok(HostMsg::MonitorLayoutResult { request_id: 42, result: Err(error) })
+                if error == "DisplayControl capabilities timed out"
+        ));
+    }
 }
 
 #[cfg(test)]
