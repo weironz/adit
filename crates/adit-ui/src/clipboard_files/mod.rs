@@ -255,6 +255,22 @@ pub(crate) fn read_range(path: &Path, offset: u64, length: u32) -> Option<Vec<u8
     Some(buffer)
 }
 
+/// Do not open a previously offered path while clipboard sharing is disabled.
+pub(crate) fn read_offered_range(
+    enabled: bool,
+    files: &[OfferedFile],
+    index: u32,
+    offset: u64,
+    length: u32,
+) -> Option<Vec<u8>> {
+    if !enabled {
+        return None;
+    }
+    files
+        .get(index as usize)
+        .and_then(|file| read_range(&file.path, offset, length))
+}
+
 /// `CF_DIB`. Not exported by the `windows` crate's clipboard bindings.
 #[cfg(windows)]
 const CF_DIB: u32 = 8;
@@ -458,6 +474,18 @@ pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_sharing_does_not_read_an_offered_file() {
+        let root = tree();
+        let files = expand(&[root.join("work").join("a.bin")]);
+        assert_eq!(
+            read_offered_range(true, &files, 0, 0, 4),
+            Some(vec![0, 1, 2, 3])
+        );
+        assert_eq!(read_offered_range(false, &files, 0, 0, 4), None);
+        std::fs::remove_dir_all(&root).ok();
+    }
 
     /// Build a small tree and hand back its root.
     fn tree() -> PathBuf {

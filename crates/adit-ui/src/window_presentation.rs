@@ -148,15 +148,30 @@ clipboard_state! {
 }
 
 impl ClipboardLease {
-    pub fn service_streams(&mut self, manager: &mut SessionManager) {
+    #[cfg(test)]
+    pub fn test_bridge(&self) -> clipboard_files::ChunkBridge {
+        self.rdp_chunk_bridge.clone()
+    }
+
+    pub fn revoke_files(&mut self) {
+        self.rdp_offered_files.clear();
+        self.rdp_chunk_bridge.close();
+    }
+
+    pub fn service_streams(&mut self, manager: &mut SessionManager, enabled: bool) {
         for chunk in manager.take_rdp_file_chunks() {
-            self.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+            if enabled {
+                self.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+            }
         }
         for read in manager.take_rdp_file_reads() {
-            let data = self
-                .rdp_offered_files
-                .get(read.index as usize)
-                .and_then(|file| clipboard_files::read_range(&file.path, read.offset, read.length));
+            let data = clipboard_files::read_offered_range(
+                enabled,
+                &self.rdp_offered_files,
+                read.index,
+                read.offset,
+                read.length,
+            );
             manager.answer_rdp_file_read(read.stream_id, data);
         }
     }

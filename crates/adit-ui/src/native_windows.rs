@@ -479,7 +479,19 @@ impl DesktopApplication {
         );
         let had_sftp = self.app.manager.sftp_is_open();
         let had_dialog = self.app.connection_dialog.is_some();
+        let revoke_files = matches!(message, Message::ToggleRdpClipboard(false));
         let task = self.in_window(id, |app| update(app, message));
+        if revoke_files && !self.app.rdp_clipboard {
+            self.app.rdp_offered_files.clear();
+            self.app.rdp_chunk_bridge.close();
+            for window in self.windows.values_mut() {
+                window.state.rdp_offered_files.clear();
+                window.state.rdp_chunk_bridge.close();
+            }
+            for lease in self.clipboard_leases.values_mut() {
+                lease.revoke_files();
+            }
+        }
         if !had_sftp && self.app.manager.sftp_is_open() {
             self.app.native_sftp_window = Some(id);
         }
@@ -524,7 +536,7 @@ impl DesktopApplication {
             .retain(|id, _| self.app.manager.session_summary(*id).is_some());
         for (session, lease) in &mut self.clipboard_leases {
             if self.app.manager.select_session_context(*session).is_ok() {
-                lease.service_streams(&mut self.app.manager);
+                lease.service_streams(&mut self.app.manager, self.app.rdp_clipboard);
             }
         }
         if let Some(previous) = previous {
@@ -1129,6 +1141,40 @@ pub fn run_acceptance() -> iced::Result {
 mod tests {
     use super::*;
     use iced::advanced::input_method::Event as Ime;
+
+    #[test]
+    fn disabling_clipboard_clears_parked_and_detached_file_state() {
+        let (mut desktop, ids) = fixture();
+        let offered = |name: &str| clipboard_files::OfferedFile {
+            path: std::path::PathBuf::from(name),
+            meta: adit_session::ClipFile {
+                name: name.into(),
+                size: 1,
+                is_dir: false,
+            },
+        };
+        desktop.app.rdp_offered_files = vec![offered("parked.bin")];
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[1]));
+        desktop.app.rdp_offered_files = vec![offered("primary.bin")];
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        let _ = desktop.in_window(child, |app| {
+            app.rdp_offered_files = vec![offered("child.bin")];
+            Task::none()
+        });
+        let parked = desktop.clipboard_leases[&ids[2]].test_bridge();
+        let detached = desktop.windows[&child].state.rdp_chunk_bridge.clone();
+        let primary = desktop.app.rdp_chunk_bridge.clone();
+        assert!(parked.begin().is_ok());
+        assert!(detached.begin().is_ok());
+        assert!(primary.begin().is_ok());
+        let _ = desktop.dispatch(child, Message::ToggleRdpClipboard(false));
+        assert!(desktop.app.rdp_offered_files.is_empty());
+        assert!(desktop.windows[&child].state.rdp_offered_files.is_empty());
+        assert!(parked.begin().is_err());
+        assert!(detached.begin().is_err());
+        assert!(primary.begin().is_err());
+    }
 
     fn fixture() -> (DesktopApplication, [SessionId; 3]) {
         let mut profiles: Vec<_> = (0..3)

@@ -308,12 +308,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // protocol's error response, where silence would hang Explorer over
                 // there indefinitely.
                 for read in app.manager.take_rdp_file_reads() {
-                    let data = app
-                        .rdp_offered_files
-                        .get(read.index as usize)
-                        .and_then(|file| {
-                            clipboard_files::read_range(&file.path, read.offset, read.length)
-                        });
+                    let data = clipboard_files::read_offered_range(
+                        app.rdp_clipboard,
+                        &app.rdp_offered_files,
+                        read.index,
+                        read.offset,
+                        read.length,
+                    );
                     app.manager.answer_rdp_file_read(read.stream_id, data);
                 }
 
@@ -3618,6 +3619,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_chunk_bridge.close();
                 app.rdp_file_scope = None;
                 app.rdp_clipboard_offered = None;
+                app.rdp_offered_files.clear();
             }
             app.notice = if app.manager.active_is_vnc() {
                 if enabled {
