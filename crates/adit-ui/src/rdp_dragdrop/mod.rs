@@ -189,7 +189,7 @@ impl State {
         #[cfg(not(windows))]
         {
             let _ = (owner, title, files, request, generation, current);
-            return Err(t("OLE 文件拖放仅支持 Windows"));
+            Err(t("OLE 文件拖放仅支持 Windows"))
         }
         #[cfg(windows)]
         {

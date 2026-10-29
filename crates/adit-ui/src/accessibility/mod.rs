@@ -53,6 +53,7 @@ pub(crate) struct State {
     scrolls: HashMap<(window::Id, SessionId), usize>,
     /// Only the isolated acceptance runner sets this. Shipping instances use
     /// the actual visible control actions without a fixture policy.
+    #[cfg(windows)]
     pub action_filter: Option<fn(&Message) -> bool>,
 }
 
@@ -89,6 +90,7 @@ pub(crate) enum Kind {
 
 // No Debug implementation: even benign user-editable text can contain secrets.
 #[derive(Clone)]
+#[cfg_attr(not(windows), allow(dead_code))]
 pub(crate) struct Control {
     key: String,
     label: String,
