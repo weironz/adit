@@ -8,7 +8,14 @@ use iced::{
     },
     Event, Rectangle, Size,
 };
-use std::{cell::Cell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 struct Shield<'a> {
     child: Element<'a, Message>,
@@ -68,6 +75,7 @@ pub(crate) fn mission_escape_event(
     match event {
         Event::Keyboard(keyboard::Event::KeyPressed {
             key: Key::Named(Named::Escape),
+            repeat: false,
             ..
         }) if eligible => {
             *armed = true;
@@ -255,12 +263,74 @@ pub(crate) struct FocusState {
     group: FocusGroup,
 }
 
+// UIA can queue focus off-thread. Every later local choice or UIA request
+// advances this dialog's revision, including a choice of the current button.
+#[derive(Clone, Debug)]
+pub(crate) struct FocusRevision(Arc<AtomicU64>);
+
+#[derive(Clone, Debug)]
+pub struct FocusTicket {
+    revision: FocusRevision,
+    value: u64,
+}
+
+impl FocusRevision {
+    #[cfg(any(windows, test))]
+    pub(crate) fn issue(&self) -> FocusTicket {
+        FocusTicket {
+            revision: self.clone(),
+            value: self.0.fetch_add(1, Ordering::SeqCst).wrapping_add(1),
+        }
+    }
+
+    fn advance(&self) {
+        self.0.fetch_add(1, Ordering::SeqCst);
+    }
+
+    pub(crate) fn same_as(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl FocusTicket {
+    pub(crate) fn current(&self) -> bool {
+        self.revision.0.load(Ordering::SeqCst) == self.value
+    }
+
+    pub(crate) fn belongs_to(&self, revision: &FocusRevision) -> bool {
+        self.revision.same_as(revision)
+    }
+}
+
 #[derive(Clone)]
-pub(crate) struct FocusGroup(Rc<Cell<Option<usize>>>);
+pub(crate) struct FocusGroup {
+    selected: Rc<Cell<Option<usize>>>,
+    revision: Rc<RefCell<FocusRevision>>,
+}
 
 impl FocusGroup {
     pub(crate) fn new() -> Self {
-        Self(Rc::new(Cell::new(Some(0))))
+        Self {
+            selected: Rc::new(Cell::new(Some(0))),
+            revision: Rc::new(RefCell::new(FocusRevision(Arc::new(AtomicU64::new(0))))),
+        }
+    }
+
+    fn select(&self, index: usize) {
+        self.revision.borrow().advance();
+        self.selected.set(Some(index));
+    }
+
+    fn inherit(&self, old: &Self) {
+        // Keep outstanding tickets tied to the same window and dialog through
+        // view rebuilds; a new scope instead gets a fresh revision.
+        self.selected.set(old.selected.get());
+        let revision = old.revision.borrow().clone();
+        *self.revision.borrow_mut() = revision;
+    }
+
+    pub(crate) fn revision(&self) -> FocusRevision {
+        self.revision.borrow().clone()
     }
 }
 
@@ -272,11 +342,23 @@ impl Default for FocusGroup {
 
 impl FocusState {
     pub(crate) fn focused(&self) -> bool {
-        self.group.0.get() == Some(self.index)
+        self.group.selected.get() == Some(self.index)
     }
 
     pub(crate) fn focus(&mut self) {
-        self.group.0.set(Some(self.index));
+        self.group.selected.set(Some(self.index));
+    }
+
+    pub(crate) fn focus_if_current(&mut self, ticket: Option<&FocusTicket>) {
+        if ticket.is_none_or(|ticket| ticket.current() && ticket.belongs_to(&self.group.revision()))
+        {
+            self.focus();
+        }
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn revision(&self) -> FocusRevision {
+        self.group.revision()
     }
 }
 
@@ -325,7 +407,7 @@ fn confirmation_key(
                 (focus.index + 1) % focus.count
             };
             // The next event in this same iced batch must see this selection.
-            state.group.0.set(Some(next));
+            state.group.select(next);
             shell.request_redraw();
             shell.capture_event();
             true
@@ -361,7 +443,7 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
     fn diff(&self, tree: &mut Tree) {
         let state = tree.state.downcast_mut::<FocusState>();
         if state.scope == self.focus.scope {
-            self.focus.group.0.set(state.group.0.get());
+            self.focus.group.inherit(&state.group);
         }
         state.scope = self.focus.scope.clone();
         state.index = self.focus.index;
@@ -426,7 +508,10 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.is_over(layout.bounds()) =>
             {
-                self.focus.group.0.set(Some(self.focus.index));
+                tree.state
+                    .downcast_ref::<FocusState>()
+                    .group
+                    .select(self.focus.index);
                 shell.request_redraw();
             }
             _ => {}
@@ -588,7 +673,7 @@ mod tests {
             })
         ));
         messages.clear();
-        group.0.set(Some(3));
+        group.select(3);
         for event in [
             pressed(Named::Tab, keyboard::Modifiers::SHIFT),
             pressed(Named::Enter, keyboard::Modifiers::empty()),
@@ -608,7 +693,7 @@ mod tests {
         ));
         assert_eq!(messages.len(), 1);
         messages.clear();
-        group.0.set(Some(0));
+        group.select(0);
         for event in [
             pressed(Named::Tab, keyboard::Modifiers::SHIFT),
             pressed(Named::Enter, keyboard::Modifiers::empty()),
@@ -706,7 +791,7 @@ mod tests {
         let old = button_for("challenge:old", 0, &group);
         let mut tree = Tree::new(old.as_widget());
         assert!(tree.state.downcast_ref::<FocusState>().focused());
-        group.0.set(Some(3));
+        group.select(3);
         old.as_widget().diff(&mut tree);
         assert!(!tree.state.downcast_ref::<FocusState>().focused());
         let replacement_group = FocusGroup::new();
@@ -732,7 +817,7 @@ mod tests {
             .iter()
             .map(|button| Tree::new(button.as_widget()))
             .collect();
-        old_group.0.set(Some(2));
+        old_group.select(2);
         let new_group = FocusGroup::new();
         let rebuilt: Vec<_> = (0..4)
             .map(|i| button_for("challenge:same", i, &new_group))

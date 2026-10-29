@@ -1132,6 +1132,7 @@ pub enum Message {
     AccessibilityFocus {
         window: window::Id,
         id: iced::advanced::widget::Id,
+        ticket: Option<dialog_focus::FocusTicket>,
     },
     DismissMenu(MenuEscapeTarget),
     ToggleFullscreen,
@@ -2189,8 +2190,13 @@ fn mission_name_runtime_event(
     window: window::Id,
 ) -> Option<Message> {
     match &event {
-        // The focused rename widget owns both edges. A covered rename must not
-        // consume Escape captured by a different modal in this window.
+        // The visible rename widget owns both edges. An ignored first press can
+        // still cancel a hidden draft; repeats and modal-captured keys cannot.
+        event::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            repeat: false,
+            ..
+        }) if status == event::Status::Ignored => runtime_event(event, status, window),
         event::Event::Keyboard(keyboard::Event::KeyPressed {
             key: Key::Named(Named::Escape),
             ..

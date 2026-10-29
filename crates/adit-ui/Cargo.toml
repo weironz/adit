@@ -10,6 +10,10 @@ native-vnc-acceptance = []
 native-workbench-acceptance = ["dep:image"]
 native-accessibility-acceptance = []
 
+[dev-dependencies]
+iced_runtime = "=0.14.0"
+iced_tiny_skia = "=0.14.0"
+
 [[example]]
 name = "accessibility_acceptance"
 required-features = ["native-accessibility-acceptance"]

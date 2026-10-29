@@ -1384,6 +1384,7 @@ mod tests {
                 Message::AccessibilityFocus {
                     window: child,
                     id: iced::advanced::widget::Id::from("synthetic-link"),
+                    ticket: None,
                 },
             );
             assert!(!app.terminal_focused);

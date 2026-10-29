@@ -32,6 +32,7 @@ struct Route {
     invoke: Option<Message>,
     set_value: Option<fn(String) -> Message>,
     focus: Option<iced::advanced::widget::Id>,
+    focus_revision: Option<dialog_focus::FocusRevision>,
     range: Option<(window::Id, SessionId)>,
 }
 
@@ -40,6 +41,10 @@ struct Shared {
     routes: HashMap<NodeId, Route>,
     namespace: String,
     revoked: bool,
+    #[cfg(feature = "native-accessibility-acceptance")]
+    focus_enqueued: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "native-accessibility-acceptance")]
+    stale_focus_rejected: std::sync::atomic::AtomicU64,
 }
 
 struct Activate(Arc<Mutex<Shared>>);
@@ -56,6 +61,7 @@ struct Request {
     namespace: String,
     action: Action,
     value: Option<String>,
+    focus_ticket: Option<dialog_focus::FocusTicket>,
 }
 
 struct Actions {
@@ -80,9 +86,15 @@ impl accesskit::ActionHandler for Actions {
             namespace: state.namespace.clone(),
             action: request.action,
             value: None,
+            focus_ticket: None,
         };
         match (request.action, request.data) {
-            (Action::Focus, _) if route.focus.is_some() => {}
+            (Action::Focus, _) if route.focus.is_some() => {
+                out.focus_ticket = route
+                    .focus_revision
+                    .as_ref()
+                    .map(|revision| revision.issue());
+            }
             (Action::Click, _) if route.invoke.is_some() => {}
             (Action::SetValue, Some(ActionData::Value(value)))
                 if (route.set_value.is_some() || route.range.is_some()) && value.len() <= 8192 =>
@@ -94,7 +106,16 @@ impl accesskit::ActionHandler for Actions {
             }
             _ => return,
         }
-        let _ = self.tx.try_send(out);
+        #[cfg(feature = "native-accessibility-acceptance")]
+        let confirmation_focus = out.focus_ticket.is_some();
+        let queued = self.tx.try_send(out);
+        #[cfg(feature = "native-accessibility-acceptance")]
+        if confirmation_focus && queued.is_ok() {
+            state
+                .focus_enqueued
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        let _ = queued;
     }
 }
 
@@ -203,6 +224,10 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
             routes: HashMap::new(),
             namespace: String::new(),
             revoked: false,
+            #[cfg(feature = "native-accessibility-acceptance")]
+            focus_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
+            stale_focus_rejected: std::sync::atomic::AtomicU64::new(0),
         }));
         let (tx, rx) = mpsc::sync_channel(64);
         let window = Box::new(Window {
@@ -402,6 +427,7 @@ pub(super) fn publish(
                     invoke: control.invoke,
                     set_value: control.set_value,
                     focus: control.focus,
+                    focus_revision: control.focus_revision,
                     range: control
                         .range
                         .and_then(|(window, owner, _, _)| window.map(|window| (window, owner))),
@@ -461,8 +487,37 @@ pub(super) fn live(id: window::Id) -> bool {
     })
 }
 
+#[cfg(feature = "native-accessibility-acceptance")]
+pub(super) fn focus_statistics(id: window::Id) -> (u64, u64) {
+    WINDOWS.with(|windows| {
+        let windows = windows.borrow();
+        let Some(window) = windows.get(&id) else {
+            return (0, 0);
+        };
+        let Ok(state) = window.shared.lock() else {
+            return (0, 0);
+        };
+        use std::sync::atomic::Ordering::Relaxed;
+        (
+            state.focus_enqueued.load(Relaxed),
+            state.stale_focus_rejected.load(Relaxed),
+        )
+    })
+}
+
 fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
-    !state.revoked && request.namespace == namespace && state.namespace == namespace
+    !state.revoked
+        && request.namespace == namespace
+        && state.namespace == namespace
+        && request.focus_ticket.as_ref().is_none_or(|ticket| {
+            ticket.current()
+                && state.routes.get(&request.node).is_some_and(|route| {
+                    route
+                        .focus_revision
+                        .as_ref()
+                        .is_some_and(|revision| ticket.belongs_to(revision))
+                })
+        })
 }
 
 pub(super) fn drain(
@@ -485,6 +540,16 @@ pub(super) fn drain(
                     continue;
                 };
                 if !current(&state, &request, namespace) {
+                    #[cfg(feature = "native-accessibility-acceptance")]
+                    if request
+                        .focus_ticket
+                        .as_ref()
+                        .is_some_and(|ticket| !ticket.current())
+                    {
+                        state
+                            .stale_focus_rejected
+                            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    }
                     continue;
                 }
                 let Some(route) = state.routes.get(&request.node) else {
@@ -497,6 +562,7 @@ pub(super) fn drain(
                         .map(|focus| Message::AccessibilityFocus {
                             window: *id,
                             id: focus,
+                            ticket: request.focus_ticket,
                         }),
                     Action::Click => route.invoke.clone(),
                     Action::SetValue if route.set_value.is_some() => {
@@ -553,6 +619,10 @@ mod tests {
             routes: HashMap::from([(NodeId(2), route)]),
             namespace: "editor:fixture".into(),
             revoked: false,
+            #[cfg(feature = "native-accessibility-acceptance")]
+            focus_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
+            stale_focus_rejected: std::sync::atomic::AtomicU64::new(0),
         };
         (
             Actions {
@@ -580,6 +650,7 @@ mod tests {
             set_value: None,
             range: None,
             focus: Some(iced::advanced::widget::Id::new("fixture-password")),
+            focus_revision: None,
         });
         handler.do_action(request(
             Action::SetValue,
@@ -593,12 +664,61 @@ mod tests {
     }
 
     #[test]
+    fn newer_focus_selection_invalidates_queued_uia_focus_in_the_same_dialog() {
+        use accesskit::ActionHandler;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: None,
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision.clone()),
+        });
+        handler.do_action(request(Action::Focus, None));
+        let old = rx.try_recv().unwrap();
+        assert!(current(
+            &handler.state.lock().unwrap(),
+            &old,
+            "editor:fixture"
+        ));
+        let newer = revision.issue();
+        assert!(newer.current());
+        assert!(!current(
+            &handler.state.lock().unwrap(),
+            &old,
+            "editor:fixture"
+        ));
+        handler.do_action(request(Action::Focus, None));
+        let queued = rx.try_recv().unwrap();
+        assert!(current(
+            &handler.state.lock().unwrap(),
+            &queued,
+            "editor:fixture"
+        ));
+        let other_window = dialog_focus::FocusGroup::new().revision();
+        handler
+            .state
+            .lock()
+            .unwrap()
+            .routes
+            .get_mut(&NodeId(2))
+            .unwrap()
+            .focus_revision = Some(other_window);
+        assert!(!current(
+            &handler.state.lock().unwrap(),
+            &queued,
+            "editor:fixture"
+        ));
+    }
+
+    #[test]
     fn writable_range_actions_accept_numeric_set_value() {
         use accesskit::ActionHandler;
         let (mut handler, rx) = handler(Route {
             invoke: None,
             set_value: None,
             focus: None,
+            focus_revision: None,
             range: Some((window::Id::unique(), SessionId::new())),
         });
         handler.do_action(request(
@@ -617,6 +737,7 @@ mod tests {
             invoke: Some(Message::CloseProfileEditor),
             set_value: None,
             focus: None,
+            focus_revision: None,
             range: None,
         });
         for _ in 0..100 {

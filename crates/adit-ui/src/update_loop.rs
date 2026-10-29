@@ -141,10 +141,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             owner,
             lines,
         } => accessibility::scroll_lines(app, window, owner, lines),
-        Message::AccessibilityFocus { window, id } => {
+        Message::AccessibilityFocus { window, id, ticket } => {
             if app.accessibility.windows.contains(&window)
                 && app.native_window_id.or(app.accessibility.primary) == Some(window)
                 && accessibility::namespace(app) != "native-modal-blocked"
+                && ticket.as_ref().is_none_or(|ticket| ticket.current())
             {
                 accessibility::suspend_remote_focus(app, window);
                 release_rdp_modifiers(app);
@@ -152,7 +153,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // tree publication and terminal output never do this.
                 return Task::batch([
                     window::gain_focus(window),
-                    accessibility::focus_widget(Some(window), id),
+                    accessibility::focus_widget_with_ticket(Some(window), id, ticket),
                 ]);
             }
         }
@@ -2609,7 +2610,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
             if mission_name_editing(app) {
-                if is_escape_key(&event) {
+                if matches!(
+                    event,
+                    keyboard::Event::KeyPressed {
+                        key: Key::Named(Named::Escape),
+                        repeat: false,
+                        ..
+                    }
+                ) && accessibility::namespace(app) == "main"
+                    && app.main_view == MainView::Missions
+                    && (!app.sidebar_visible || app.fullscreen)
+                {
                     finish_mission_name(app, false);
                 }
                 return Task::none();

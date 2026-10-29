@@ -261,6 +261,9 @@ pub(crate) fn open_password_reprompt(
         auth_method: profile.auth_method,
         identity_file: profile.identity_file,
     });
+    if let Some(window) = app.native_window_id.or(app.accessibility.primary) {
+        accessibility::suspend_remote_focus(app, window);
+    }
     app.password.clear();
     // Save by default (SecureCRT-style), same as the normal connect dialog — so a
     // corrected password is remembered without the user re-ticking the box.
@@ -314,6 +317,9 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
         auth_method: profile.auth_method,
         identity_file: profile.identity_file,
     });
+    if let Some(window) = app.native_window_id.or(app.accessibility.primary) {
+        accessibility::suspend_remote_focus(app, window);
+    }
 
     match app.credential_store.load_profile_password(profile_id) {
         Ok(Some(password)) => {

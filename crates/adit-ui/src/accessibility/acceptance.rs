@@ -38,16 +38,24 @@ struct Snapshot {
     terminal_focused: bool,
     mission_name_editing: bool,
     active_menu: Option<MenuKind>,
+    connection_open: bool,
+    sidebar_visible: bool,
+    focus_enqueued: u64,
+    stale_focus_rejected: u64,
 }
 
 enum Command {
     Hold(mpsc::Sender<Snapshot>),
+    InspectHeld(mpsc::Sender<Snapshot>),
     Host(bool, mpsc::Sender<Snapshot>),
     Link(mpsc::Sender<Snapshot>),
     Barrier(mpsc::Sender<Snapshot>),
     LegacyFocus(mpsc::Sender<Snapshot>),
     Rename(mpsc::Sender<Snapshot>),
     Menu(mpsc::Sender<Snapshot>),
+    Connection(mpsc::Sender<Snapshot>),
+    CancelConnection(mpsc::Sender<Snapshot>),
+    ToggleSidebar(mpsc::Sender<Snapshot>),
 }
 
 struct Harness {
@@ -87,6 +95,9 @@ fn allowed(message: &Message) -> bool {
             | Message::AccessibilityFocus { .. }
             | Message::DismissMenu(_)
             | Message::FinishMissionName(_)
+            | Message::KeyboardInput(_)
+            | Message::ToggleSidebar
+            | Message::CancelConnection
             | Message::EditProfileFromContext(_)
             | Message::CloseProfileEditor
             | Message::SaveProfile
@@ -103,6 +114,10 @@ fn allowed(message: &Message) -> bool {
 
 fn snapshot(state: &Harness) -> Snapshot {
     let fixture = state.app.accessibility.fixture.as_ref().unwrap();
+    let (focus_enqueued, stale_focus_rejected) = state
+        .window
+        .map(native::focus_statistics)
+        .unwrap_or_default();
     Snapshot {
         challenge: fixture.host_key.as_ref().map(|(_, prompt)| prompt.id),
         decisions: fixture.decisions.clone(),
@@ -114,6 +129,10 @@ fn snapshot(state: &Harness) -> Snapshot {
         terminal_focused: state.app.terminal_focused,
         mission_name_editing: mission_name_editing(&state.app),
         active_menu: state.app.active_menu,
+        connection_open: state.app.connection_dialog.is_some(),
+        sidebar_visible: state.app.sidebar_visible,
+        focus_enqueued,
+        stale_focus_rejected,
     }
 }
 
@@ -178,6 +197,7 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         state.hold_actions = true;
                         (ack, None)
                     }
+                    Command::InspectHeld(ack) => (ack, None),
                     Command::LegacyFocus(ack) => {
                         state.hold_actions = false;
                         let _ = ack.send(snapshot(state));
@@ -197,6 +217,19 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         state.hold_actions = false;
                         state.app.active_menu = Some(MenuKind::File);
                         (ack, Some(Message::Tick))
+                    }
+                    Command::Connection(ack) => {
+                        state.hold_actions = false;
+                        open_connection_dialog(&mut state.app);
+                        (ack, Some(Message::Tick))
+                    }
+                    Command::CancelConnection(ack) => {
+                        state.hold_actions = false;
+                        (ack, Some(Message::CancelConnection))
+                    }
+                    Command::ToggleSidebar(ack) => {
+                        state.hold_actions = false;
+                        (ack, Some(Message::ToggleSidebar))
                     }
                     Command::Host(changed, ack) => {
                         let (prompt, receiver) = HostKeyPromptInfo::channel(

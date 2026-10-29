@@ -103,6 +103,19 @@ fn restorable_confirmation(scope: &str) -> bool {
 
 pub(crate) fn suspend_remote_focus(app: &mut AditApp, window: window::Id) {
     let scope = namespace(app);
+    if scope == "menu"
+        && app
+            .accessibility_focus_restore
+            .as_ref()
+            .is_some_and(|lease| {
+                lease.window == window
+                    && app.manager.active_session() == Some(lease.session)
+                    && native_windows::owns_selected_session(app)
+            })
+    {
+        app.terminal_focused = false;
+        return;
+    }
     let session = app
         .manager
         .active_session()
@@ -140,8 +153,10 @@ pub(crate) fn reconcile_remote_focus(app: &mut AditApp) {
         return;
     }
     let scope = namespace(app);
-    if scope == lease.scope || restorable_confirmation(&scope) {
-        lease.scope = scope;
+    if scope == lease.scope || restorable_confirmation(&scope) || scope == "menu" {
+        if scope != "menu" {
+            lease.scope = scope;
+        }
         app.accessibility_focus_restore = Some(lease);
     } else if scope == "main" && lease.terminal_was_focused && remote_workspace_eligible(app) {
         // This restores only local routing state. It never foregrounds a HWND
@@ -174,6 +189,7 @@ pub(crate) struct Control {
     set_value: Option<fn(String) -> Message>,
     range: Option<(Option<window::Id>, SessionId, usize, usize)>,
     focus: Option<iced::advanced::widget::Id>,
+    focus_revision: Option<dialog_focus::FocusRevision>,
 }
 
 impl Control {
@@ -187,6 +203,7 @@ impl Control {
             set_value: None,
             range: None,
             focus: None,
+            focus_revision: None,
         }
     }
 
@@ -207,6 +224,7 @@ impl Control {
             set_value: None,
             range: None,
             focus: None,
+            focus_revision: None,
         }
     }
 
@@ -241,6 +259,7 @@ impl Control {
             set_value: Some(changed),
             range: None,
             focus: None,
+            focus_revision: None,
         }
     }
 
@@ -259,6 +278,7 @@ impl Control {
             set_value: None,
             range: None,
             focus: None,
+            focus_revision: None,
         }
     }
 
@@ -272,6 +292,7 @@ impl Control {
             set_value: None,
             range: None,
             focus: None,
+            focus_revision: None,
         }
     }
 
@@ -285,6 +306,7 @@ impl Control {
             set_value: None,
             range: Some((BUILD_WINDOW.with(Cell::get), owner, value.min(max), max)),
             focus: None,
+            focus_revision: None,
         }
     }
 }
@@ -352,6 +374,7 @@ struct FocusIfPresent {
     target: iced::advanced::widget::Id,
     found: bool,
     confirmation: bool,
+    ticket: Option<dialog_focus::FocusTicket>,
 }
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
@@ -382,9 +405,14 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
 
     fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
         use iced::advanced::widget::operation::{focusable, Outcome};
-        if self.confirmation {
-            Outcome::Chain(Box::new(FocusConfirmation(self.target.clone())))
-        } else if self.found {
+        if self.ticket.as_ref().is_some_and(|ticket| !ticket.current()) {
+            Outcome::None
+        } else if self.confirmation {
+            Outcome::Chain(Box::new(FocusConfirmation {
+                target: self.target.clone(),
+                ticket: self.ticket.clone(),
+            }))
+        } else if self.found && self.ticket.is_none() {
             Outcome::Chain(Box::new(focusable::focus(self.target.clone())))
         } else {
             // A task queued for an old challenge must not unfocus the new
@@ -394,7 +422,10 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
     }
 }
 
-struct FocusConfirmation(iced::advanced::widget::Id);
+struct FocusConfirmation {
+    target: iced::advanced::widget::Id,
+    ticket: Option<dialog_focus::FocusTicket>,
+}
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>)) {
@@ -408,17 +439,26 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
         state: &mut dyn std::any::Any,
     ) {
         if let (true, Some(button)) = (
-            id == Some(&self.0),
+            id == Some(&self.target),
             state.downcast_mut::<dialog_focus::FocusState>(),
         ) {
-            button.focus();
+            button.focus_if_current(self.ticket.as_ref());
         }
     }
 }
 
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn focus_widget(
     window: Option<window::Id>,
     id: iced::advanced::widget::Id,
+) -> Task<Message> {
+    focus_widget_with_ticket(window, id, None)
+}
+
+pub(crate) fn focus_widget_with_ticket(
+    window: Option<window::Id>,
+    id: iced::advanced::widget::Id,
+    ticket: Option<dialog_focus::FocusTicket>,
 ) -> Task<Message> {
     #[cfg(windows)]
     use iced::advanced::widget::operation;
@@ -426,6 +466,7 @@ pub(crate) fn focus_widget(
         target: id,
         found: false,
         confirmation: false,
+        ticket,
     };
     #[cfg(windows)]
     if let Some(window) = window {
@@ -881,6 +922,7 @@ mod tests {
             Message::AccessibilityFocus {
                 window,
                 id: iced::advanced::widget::Id::from("synthetic-confirmation"),
+                ticket: None,
             },
         );
         assert!(!app.terminal_focused);
@@ -1010,6 +1052,235 @@ mod tests {
     }
 
     #[test]
+    fn menu_defers_confirmation_focus_restore_until_it_is_dismissed() {
+        let (mut app, window, session, _) = focus_fixture();
+        app.active_menu = Some(MenuKind::File);
+        let (generation, _) = focus_link(&mut app, window);
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert_eq!(namespace(&app), "menu");
+        assert!(!app.terminal_focused);
+        assert!(app.accessibility_focus_restore.is_some());
+        let _ = update_loop::update(
+            &mut app,
+            Message::AccessibilityFocus {
+                window,
+                id: iced::advanced::widget::Id::from("synthetic-menu-item"),
+                ticket: None,
+            },
+        );
+        assert!(app.accessibility_focus_restore.is_some());
+        let _ = update_loop::update(
+            &mut app,
+            Message::DismissMenu(MenuEscapeTarget::Active(MenuKind::File)),
+        );
+        assert!(app.terminal_focused);
+        assert_eq!(app.manager.active_session(), Some(session));
+        assert!(app.accessibility_focus_restore.is_none());
+    }
+
+    #[test]
+    fn opening_connection_dialog_preserves_the_previous_focus_before_uia() {
+        let (mut app, window, session, _) = focus_fixture();
+        let profile = app.manager.session_summary(session).unwrap().profile_id;
+        select_profile(&mut app, profile);
+        app.terminal_focused = true;
+        open_connection_dialog(&mut app);
+        assert_eq!(namespace(&app), "connection-dialog");
+        assert!(!app.terminal_focused);
+        let _ = update_loop::update(
+            &mut app,
+            Message::AccessibilityFocus {
+                window,
+                id: iced::advanced::widget::Id::from("synthetic-password"),
+                ticket: None,
+            },
+        );
+        let _ = update_loop::update(&mut app, Message::CancelConnection);
+        assert!(app.terminal_focused);
+        assert_eq!(app.manager.active_session(), Some(session));
+
+        app.terminal_focused = false;
+        open_connection_dialog(&mut app);
+        let _ = update_loop::update(&mut app, Message::CancelConnection);
+        assert!(!app.terminal_focused);
+
+        app.terminal_focused = true;
+        open_password_reprompt(&mut app, session, profile, "synthetic refusal");
+        assert!(!app.terminal_focused);
+        let _ = update_loop::update(&mut app, Message::CancelConnection);
+        assert!(app.terminal_focused);
+    }
+
+    #[test]
+    fn iced_event_batch_invalidates_already_dispatched_uia_focus() {
+        use adit_session::HostKeyDecision;
+        use iced::advanced::widget::{operation::Outcome, Operation};
+        use iced_runtime::user_interface::{Cache, UserInterface};
+
+        let _scope = building(Some(window::Id::unique()), "host-key-dialog:fixture");
+        let group = dialog_focus::FocusGroup::new();
+        let keys = ["reject", "reject-record", "once", "trust"];
+        let decisions = [
+            HostKeyDecision::Reject,
+            HostKeyDecision::RejectAndRecord,
+            HostKeyDecision::TrustOnce,
+            HostKeyDecision::TrustAndRecord,
+        ];
+        let mut row = iced::widget::Row::new();
+        for (index, decision) in decisions.iter().enumerate() {
+            row = row.push(confirmation_button(
+                &keys,
+                index,
+                &group,
+                keys[index],
+                Message::RespondHostKey {
+                    session_id: SessionId::new(),
+                    challenge_id: 1,
+                    decision: *decision,
+                },
+                Space::new().width(80).height(40),
+            ));
+        }
+        let mut renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+        ));
+        let mut ui = UserInterface::build(
+            row,
+            iced::Size::new(400.0, 100.0),
+            Cache::new(),
+            &mut renderer,
+        );
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let mut messages = Vec::new();
+        let ticket = group.revision().issue();
+        let mut discovery = FocusIfPresent {
+            target: input_id("trust"),
+            found: false,
+            confirmation: false,
+            ticket: Some(ticket.clone()),
+        };
+        ui.operate(&renderer, &mut discovery);
+        let Outcome::Chain(mut delayed) = <FocusIfPresent as Operation<()>>::finish(&discovery)
+        else {
+            panic!("the queued UIA focus should find the trust button");
+        };
+        let key = |named, code| {
+            let key = Key::Named(named);
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: keyboard::key::Physical::Code(code),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: None,
+                repeat: false,
+            })
+        };
+        let tab = key(Named::Tab, keyboard::key::Code::Tab);
+        let (_, statuses) = ui.update(
+            &[tab.clone(), tab.clone(), tab.clone(), tab],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert!(statuses
+            .iter()
+            .all(|status| *status == event::Status::Captured));
+        assert!(!ticket.current());
+        ui.operate(&renderer, delayed.as_mut());
+        ui.update(
+            &[key(Named::Enter, keyboard::key::Code::Enter)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::RespondHostKey {
+                decision: HostKeyDecision::Reject,
+                ..
+            }]
+        ));
+
+        messages.clear();
+        ui.operate(
+            &renderer,
+            &mut FocusConfirmation {
+                target: input_id("trust"),
+                ticket: None,
+            },
+        );
+        let ticket = group.revision().issue();
+        let mut discovery = FocusIfPresent {
+            target: input_id("trust"),
+            found: false,
+            confirmation: false,
+            ticket: Some(ticket.clone()),
+        };
+        ui.operate(&renderer, &mut discovery);
+        let Outcome::Chain(mut delayed) = <FocusIfPresent as Operation<()>>::finish(&discovery)
+        else {
+            panic!("the queued UIA focus should find the trust button");
+        };
+        ui.update(
+            &[iced::Event::Mouse(mouse::Event::ButtonPressed(
+                mouse::Button::Left,
+            ))],
+            mouse::Cursor::Available(iced::Point::new(10.0, 10.0)),
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert!(!ticket.current());
+        ui.operate(&renderer, delayed.as_mut());
+        ui.update(
+            &[key(Named::Enter, keyboard::key::Code::Enter)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::RespondHostKey {
+                decision: HostKeyDecision::Reject,
+                ..
+            }]
+        ));
+        messages.clear();
+        let ticket = group.revision().issue();
+        let mut discovery = FocusIfPresent {
+            target: input_id("trust"),
+            found: false,
+            confirmation: false,
+            ticket: Some(ticket),
+        };
+        ui.operate(&renderer, &mut discovery);
+        let Outcome::Chain(mut focus) = <FocusIfPresent as Operation<()>>::finish(&discovery)
+        else {
+            panic!("a fresh UIA focus must remain actionable");
+        };
+        ui.operate(&renderer, focus.as_mut());
+        ui.update(
+            &[key(Named::Enter, keyboard::key::Code::Enter)],
+            mouse::Cursor::Unavailable,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::RespondHostKey {
+                decision: HostKeyDecision::TrustAndRecord,
+                ..
+            }]
+        ));
+    }
+
+    #[test]
     fn delayed_focus_for_retired_dialog_cannot_clear_new_default() {
         use iced::advanced::widget::{
             operation::{Focusable, Outcome},
@@ -1034,6 +1305,7 @@ mod tests {
             target: old,
             found: false,
             confirmation: false,
+            ticket: None,
         };
         <FocusIfPresent as Operation<()>>::focusable(
             &mut request,
