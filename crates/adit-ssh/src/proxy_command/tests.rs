@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 const FIXTURE_REASON: &str =
     "build proxy_stdio_fixture and set ADIT_PROXY_FIXTURE; synthetic processes only";
+const FIXTURE_MARKER: &[u8] = b"adit-ssh synthetic proxy fixture";
 
 struct Fixture {
     dir: PathBuf,
@@ -21,6 +22,7 @@ impl Fixture {
             SEQUENCE.fetch_add(1, Ordering::Relaxed)
         ));
         fs::create_dir(&dir).unwrap();
+        fs::write(dir.join("OWNER.txt"), FIXTURE_MARKER).unwrap();
         let program = dir.join(if cfg!(windows) {
             "test proxy.exe"
         } else {
@@ -60,12 +62,21 @@ impl Fixture {
             }
         })
         .await
-        .expect("child started")
+        .unwrap_or_else(|_| {
+            panic!(
+                "fixture child did not start: {}",
+                self.request.proxy_command.args[0]
+            )
+        })
     }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.dir);
+        if self.dir.parent() == Some(env::temp_dir().as_path())
+            && fs::read(self.dir.join("OWNER.txt")).is_ok_and(|marker| marker == FIXTURE_MARKER)
+        {
+            let _ = fs::remove_dir_all(&self.dir);
+        }
     }
 }
 
@@ -471,7 +482,6 @@ fn real_ssh_handshake_and_shell_use_stdio_and_keep_shared_claim_alive() {
                 .proxy_command
                 .args
                 .extend(["%h".into(), "%p".into()]);
-            fixture.request.auto_accept_host_keys = true;
             let (commands, rx) = tokio_mpsc::unbounded_channel();
             let (events, event_rx) = mpsc::channel();
             let task = tokio::spawn(run_live_password_shell(fixture.request.clone(), rx, events));
@@ -482,6 +492,12 @@ fn real_ssh_handshake_and_shell_use_stdio_and_keep_shared_claim_alive() {
             loop {
                 if let Ok(event) = event_rx.try_recv() {
                     match event {
+                        LiveShellEvent::HostKeyPrompt(prompt) => {
+                            // Leave a Windows pipe read pending before handing
+                            // it back to russh after the user's response.
+                            tokio::time::sleep(Duration::from_millis(60)).await;
+                            assert!(prompt.respond(HostKeyDecision::TrustOnce));
+                        }
                         LiveShellEvent::SessionReady(session) => shared = Some(session),
                         LiveShellEvent::Status(status) if status == "connected" => {
                             commands
@@ -516,5 +532,90 @@ fn real_ssh_handshake_and_shell_use_stdio_and_keep_shared_claim_alive() {
         })
         .await
         .expect("synthetic SSH over child stdio must finish");
+    });
+}
+
+#[test]
+#[ignore = "requires ADIT_PROXY_FIXTURE"]
+fn trust_wait_eof_and_cancellation_reap_proxy_with_pending_pipe_read() {
+    runtime().block_on(async {
+        for eof in [false, true] {
+            let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                .await
+                .unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let key = russh::keys::PrivateKey::from(
+                russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[84; 32]),
+            );
+            let config = Arc::new(russh::server::Config {
+                keys: vec![key],
+                auth_rejection_time: Duration::ZERO,
+                ..Default::default()
+            });
+            let (control_tx, control_rx) = oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (socket, _) = listener.accept().await.unwrap();
+                let socket = socket.into_std().unwrap();
+                let control = socket.try_clone().unwrap();
+                let socket = tokio::net::TcpStream::from_std(socket).unwrap();
+                let _ = control_tx.send(control);
+                if let Ok(session) = russh::server::run_stream(config, socket, EchoServer).await {
+                    let _ = session.await;
+                }
+            });
+            let mode = if eof {
+                "bridge-close-output-hold"
+            } else {
+                "bridge"
+            };
+            let mut fixture = Fixture::new(mode);
+            fixture.request.port = port;
+            fixture
+                .request
+                .proxy_command
+                .args
+                .extend(["%h".into(), "%p".into()]);
+            let (commands, rx) = tokio_mpsc::unbounded_channel();
+            let (events, event_rx) = mpsc::channel();
+            let task = tokio::spawn(run_live_password_shell(fixture.request.clone(), rx, events));
+            let pid = fixture.pid("").await;
+            let prompt = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    match event_rx.try_recv() {
+                        Ok(LiveShellEvent::HostKeyPrompt(prompt)) => break prompt,
+                        Ok(LiveShellEvent::Error(error)) => panic!("{error}"),
+                        Ok(_) | Err(mpsc::TryRecvError::Empty) => {
+                            tokio::time::sleep(Duration::from_millis(5)).await;
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => panic!("event channel closed"),
+                    }
+                }
+            })
+            .await
+            .expect("synthetic host-key prompt");
+            tokio::time::sleep(Duration::from_millis(60)).await;
+            if eof {
+                control_rx.await.unwrap().shutdown(Shutdown::Both).unwrap();
+            } else {
+                commands.send(LiveShellCommand::Disconnect).unwrap();
+            }
+            let result = tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .expect("pipe cleanup must not wait for the child")
+                .unwrap();
+            if eof {
+                assert!(matches!(result, Err(SshError::Russh(russh::Error::IO(_)))));
+            } else {
+                result.unwrap();
+            }
+            assert!(!prompt.is_pending());
+            assert!(!prompt.respond(HostKeyDecision::TrustAndRecord));
+            assert!(!fixture.request.known_hosts_path.exists());
+            assert_dead(pid);
+            tokio::time::timeout(Duration::from_secs(5), server)
+                .await
+                .unwrap()
+                .unwrap();
+        }
     });
 }

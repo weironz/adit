@@ -107,6 +107,7 @@ pub async fn connect(
     loop {
         tokio::select! {
             result = &mut connect => return result,
+            error = budget.failed() => return Err(error),
             _ = budget.expired() => return Err(SshError::Timeout(request.connect_timeout_secs)),
             command = commands.recv() => match command {
                 Some(LiveShellCommand::HostKeyDecision(decision)) => {

@@ -52,7 +52,7 @@ fn main() -> io::Result<()> {
                 .spawn()?;
             let _ = child.wait();
         }
-        "bridge" => {
+        "bridge" | "bridge-close-output-hold" => {
             if args.get(3).map(String::as_str) != Some("127.0.0.1") {
                 return Err(io::Error::other("fixture only connects to IPv4 loopback"));
             }
@@ -72,8 +72,38 @@ fn main() -> io::Result<()> {
                 out.write_all(&bytes[..len])?;
                 out.flush()?;
             }
+            if mode == "bridge-close-output-hold" {
+                drop(out);
+                close_stdout()?;
+                thread::sleep(Duration::from_secs(60));
+            }
         }
         _ => return Err(io::Error::other("invalid fixture mode")),
+    }
+    Ok(())
+}
+
+// Exercise a child that closes only its output pipe but keeps running. The
+// production owner must terminate it even while a Tokio pipe read is pending.
+#[cfg(windows)]
+fn close_stdout() -> io::Result<()> {
+    use std::os::windows::io::{FromRawHandle, OwnedHandle};
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetStdHandle(kind: u32) -> *mut std::ffi::c_void;
+    }
+    let handle = unsafe { GetStdHandle((-11_i32) as u32) };
+    if handle.is_null() || handle as isize == -1 {
+        return Err(io::Error::last_os_error());
+    }
+    drop(unsafe { OwnedHandle::from_raw_handle(handle) });
+    Ok(())
+}
+
+#[cfg(unix)]
+fn close_stdout() -> io::Result<()> {
+    if unsafe { libc::close(1) } == -1 {
+        return Err(io::Error::last_os_error());
     }
     Ok(())
 }

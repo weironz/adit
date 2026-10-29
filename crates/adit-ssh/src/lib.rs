@@ -6,6 +6,7 @@ mod handshake;
 mod handshake_tests;
 mod proxy_command;
 mod sftp_transfer;
+mod trust_transport;
 mod tunnel;
 pub use auth_ui::JumpCredential;
 use auth_ui::{hop_credentials, AuthEventSink};
@@ -1455,6 +1456,7 @@ async fn run_live_password_shell(
         let session = loop {
             tokio::select! {
                 result = &mut connect => break result?,
+                error = budget.failed() => return Err(error),
                 _ = budget.expired() => {
                     return Err(SshError::Timeout(request.connect_timeout_secs));
                 }
@@ -1866,10 +1868,11 @@ async fn connect_through_jumps(
                 0,
             )
             .await?;
-        client::connect_stream(config.clone(), channel.into_stream(), final_handler).await
+        trust_transport::connect_stream(config.clone(), channel.into_stream(), final_handler).await
     };
     let target = tokio::select! {
         result = connect_target => result?,
+        error = budget.failed() => return Err(error),
         _ = budget.expired() => return Err(SshError::Timeout(connect_timeout_secs)),
     };
     Ok((target, hops))
@@ -3487,6 +3490,7 @@ struct KnownHostsClient {
     /// non-interactive trust-on-first-use.
     decision: Option<oneshot::Receiver<HostKeyDecision>>,
     budget: Option<HandshakeBudget>,
+    trust_monitor: Option<trust_transport::TrustMonitor>,
     /// Trust a never-seen host key automatically (record it, no prompt).
     auto_accept: bool,
     /// Where server-opened `forwarded-tcpip` channels go. Shared with whoever
@@ -3510,6 +3514,7 @@ impl KnownHostsClient {
             events,
             decision,
             budget: None,
+            trust_monitor: None,
             auto_accept: false,
             forwards: ForwardRegistry::default(),
         }
@@ -3532,6 +3537,20 @@ impl KnownHostsClient {
     fn with_forwards(mut self, forwards: ForwardRegistry) -> Self {
         self.forwards = forwards;
         self
+    }
+
+    fn apply_trust_decision(
+        &self,
+        operation: impl FnOnce() -> Result<bool, SshError>,
+    ) -> Result<bool, SshError> {
+        if self
+            .budget
+            .as_ref()
+            .is_some_and(|budget| !budget.claim_decision())
+        {
+            return Err(SshError::AuthenticationCancelled);
+        }
+        operation()
     }
 
     async fn request_host_key_decision(
@@ -3562,7 +3581,7 @@ impl KnownHostsClient {
                 .map_err(|_| SshError::AuthenticationCancelled)?;
         }
         let mut response_open = true;
-        loop {
+        let decision = loop {
             tokio::select! {
                 biased;
                 _ = async {
@@ -3571,13 +3590,40 @@ impl KnownHostsClient {
                         None => std::future::pending().await,
                     }
                 } => return Err(SshError::AuthenticationCancelled),
+                error = async {
+                    match &self.trust_monitor {
+                        Some(monitor) => monitor.disconnected().await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    if let Some(budget) = &self.budget {
+                        budget.fail_transport(&error);
+                    }
+                    return Err(SshError::Russh(russh::Error::IO(error)));
+                },
                 answer = &mut response, if response_open => match answer {
-                    Ok(decision) => return Ok(decision),
+                    Ok(decision) => break decision,
                     Err(_) => response_open = false,
                 },
-                answer = &mut legacy => return Ok(answer.unwrap_or(HostKeyDecision::Reject)),
+                answer = &mut legacy => break answer.unwrap_or(HostKeyDecision::Reject),
+            }
+        };
+        if let Some(monitor) = &self.trust_monitor {
+            if let Some(error) = monitor.check_before_decision().await {
+                if let Some(budget) = &self.budget {
+                    budget.fail_transport(&error);
+                }
+                return Err(SshError::Russh(russh::Error::IO(error)));
             }
         }
+        if self
+            .budget
+            .as_ref()
+            .is_some_and(|budget| !budget.while_active(|| true))
+        {
+            return Err(SshError::AuthenticationCancelled);
+        }
+        Ok(decision)
     }
 }
 
@@ -3665,10 +3711,10 @@ impl client::Handler for KnownHostsClient {
                 // closes unanswered is the session going away underneath us,
                 // and trusting a key because nobody was left to ask is exactly
                 // backwards.
-                match self
+                let answer = self
                     .request_host_key_decision(server_public_key, &fingerprint, None, decision)
-                    .await?
-                {
+                    .await?;
+                self.apply_trust_decision(|| match answer {
                     HostKeyDecision::TrustAndRecord => {
                         append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
                         send_status(
@@ -3693,7 +3739,7 @@ impl client::Handler for KnownHostsClient {
                         )?;
                         Err(SshError::HostKeyRejected)
                     }
-                }
+                })
             }
             HostKeyStatus::Changed {
                 fingerprint,
@@ -3707,15 +3753,15 @@ impl client::Handler for KnownHostsClient {
                         known_hosts_path: self.known_hosts_path.display().to_string(),
                     });
                 };
-                match self
+                let answer = self
                     .request_host_key_decision(
                         server_public_key,
                         &fingerprint,
                         Some(previous.join(", ")),
                         decision,
                     )
-                    .await?
-                {
+                    .await?;
+                self.apply_trust_decision(|| match answer {
                     HostKeyDecision::TrustAndRecord => {
                         replace_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
                         send_status(
@@ -3748,7 +3794,7 @@ impl client::Handler for KnownHostsClient {
                         )?;
                         Err(SshError::HostKeyRejected)
                     }
-                }
+                })
             }
         }
     }

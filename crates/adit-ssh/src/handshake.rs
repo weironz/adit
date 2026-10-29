@@ -1,15 +1,33 @@
 //! A network handshake budget which excludes time spent awaiting host-key trust.
 use super::{effective_timeout_secs, SshError};
-use std::time::Duration;
+use std::{io, time::Duration};
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct State {
     active: bool,
     paused: bool,
     deadline: Instant,
     remaining: Duration,
+    failure: Option<TransportFailure>,
+}
+
+#[derive(Debug, Clone)]
+struct TransportFailure {
+    kind: io::ErrorKind,
+    message: String,
+    raw_os_error: Option<i32>,
+}
+
+impl TransportFailure {
+    fn ssh_error(&self) -> SshError {
+        let error = match self.raw_os_error {
+            Some(code) => io::Error::from_raw_os_error(code),
+            None => io::Error::new(self.kind, self.message.clone()),
+        };
+        SshError::Russh(russh::Error::IO(error))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -32,6 +50,7 @@ impl HandshakeBudget {
             paused: false,
             deadline: Instant::now() + remaining,
             remaining,
+            failure: None,
         });
         let budget = Self {
             state,
@@ -66,6 +85,44 @@ impl HandshakeBudget {
         state.active && operation()
     }
 
+    /// Linearize a received decision against cancellation. Once this wins, its
+    /// write may finish after a later cancellation. Never hold the watch lock
+    /// across disk I/O: the UI also reads it to check whether a prompt is live.
+    pub(super) fn claim_decision(&self) -> bool {
+        self.state.borrow().active
+    }
+
+    /// Wake the connect owner as well as invalidating its outstanding prompt.
+    /// Russh may be stuck shutting down a pipe in its detached kex task; the
+    /// owner must be able to drop its ProxyCommand process without waiting.
+    pub(super) fn fail_transport(&self, error: &io::Error) {
+        self.state.send_if_modified(|state| {
+            if !state.active || !state.paused {
+                return false;
+            }
+            state.active = false;
+            state.failure = Some(TransportFailure {
+                kind: error.kind(),
+                message: error.to_string(),
+                raw_os_error: error.raw_os_error(),
+            });
+            true
+        });
+    }
+
+    pub(super) async fn failed(&self) -> SshError {
+        let mut changes = self.state.subscribe();
+        loop {
+            let state = changes.borrow_and_update().clone();
+            if let Some(failure) = state.failure {
+                return failure.ssh_error();
+            }
+            if !state.active || changes.changed().await.is_err() {
+                return std::future::pending().await;
+            }
+        }
+    }
+
     pub(super) async fn cancelled(&self) {
         let mut changes = self.state.subscribe();
         loop {
@@ -81,9 +138,9 @@ impl HandshakeBudget {
     pub(super) async fn expired(&self) {
         let mut changes = self.state.subscribe();
         loop {
-            let state = *changes.borrow_and_update();
+            let state = changes.borrow_and_update().clone();
             if !state.active {
-                return;
+                return std::future::pending().await;
             }
             if state.paused {
                 if changes.changed().await.is_err() {
@@ -96,7 +153,7 @@ impl HandshakeBudget {
                 _ = changes.changed() => {}
                 _ = tokio::time::sleep_until(state.deadline) => {
                     // A trust wait may have started while the timer was waking.
-                    let current = *changes.borrow_and_update();
+                    let current = changes.borrow_and_update().clone();
                     if current.active && !current.paused && Instant::now() >= current.deadline {
                         return;
                     }

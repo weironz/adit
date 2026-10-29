@@ -118,6 +118,39 @@ struct Peer {
 }
 
 impl Peer {
+    async fn closable(
+        seed: u8,
+        forward: Forward,
+    ) -> (Self, oneshot::Receiver<std::net::TcpStream>) {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let key = russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[seed; 32]);
+        let config = Arc::new(russh::server::Config {
+            keys: vec![key.into()],
+            auth_rejection_time: Duration::ZERO,
+            auth_rejection_time_initial: Some(Duration::ZERO),
+            ..Default::default()
+        });
+        let (tx, rx) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let (socket, _) = listener.accept().await.unwrap();
+            let socket = socket.into_std().unwrap();
+            let control = socket.try_clone().unwrap();
+            let socket = tokio::net::TcpStream::from_std(socket).unwrap();
+            let _ = tx.send(control);
+            let server = Server {
+                forward,
+                auth_delay: Duration::ZERO,
+            };
+            if let Ok(session) = russh::server::run_stream(config, socket, server).await {
+                let _ = session.await;
+            }
+        });
+        (Self { port, task }, rx)
+    }
+
     async fn start(
         seed: u8,
         handshake_delay: Duration,
@@ -169,6 +202,135 @@ impl Peer {
         });
         Self { port, task }
     }
+}
+
+#[test]
+fn transport_eof_invalidates_target_trust_directly_and_through_jump() {
+    runtime().block_on(async {
+        for (via_jump, close_jump) in [(false, false), (true, false), (true, true)] {
+            let (target, target_socket) = Peer::closable(80, Forward::Accept).await;
+            let (jump, jump_socket) = Peer::closable(81, Forward::Bridge).await;
+            let known_hosts = KnownHosts::new();
+            if via_jump {
+                let old = russh::keys::PrivateKey::from(
+                    russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[82; 32]),
+                );
+                append_known_host(
+                    &known_hosts.0,
+                    &known_host_spec("127.0.0.1", target.port),
+                    old.public_key(),
+                )
+                .unwrap();
+            }
+            let (_commands, rx) = tokio_mpsc::unbounded_channel();
+            let (events, event_rx) = mpsc::channel();
+            let task = tokio::spawn(run_live_password_shell(
+                request(&target, &known_hosts, via_jump.then_some(&jump)),
+                rx,
+                events,
+            ));
+            let challenge = prompt(&event_rx).await;
+            assert_eq!(challenge.previous_fingerprint.is_some(), via_jump);
+            let before = fs::read(&known_hosts.0).ok();
+            if close_jump {
+                jump_socket.await.unwrap().shutdown(Shutdown::Both).unwrap();
+            } else {
+                target_socket
+                    .await
+                    .unwrap()
+                    .shutdown(Shutdown::Both)
+                    .unwrap();
+            }
+            let result = tokio::time::timeout(Duration::from_secs(3), task)
+                .await
+                .expect("EOF must end the trust wait")
+                .unwrap();
+            assert!(matches!(result, Err(SshError::Russh(russh::Error::IO(_)))));
+            assert!(!challenge.is_pending());
+            assert!(!challenge.respond(HostKeyDecision::TrustAndRecord));
+            assert_eq!(fs::read(&known_hosts.0).ok(), before);
+        }
+    });
+}
+
+#[test]
+fn gateway_transport_eof_invalidates_pending_trust() {
+    runtime().block_on(async {
+        let (target, target_socket) = Peer::closable(83, Forward::Accept).await;
+        let known_hosts = KnownHosts::new();
+        let (_commands, rx) = tokio_mpsc::unbounded_channel();
+        let (events, event_rx) = mpsc::channel();
+        let task = tokio::spawn(desktop_gateway::connect(
+            request(&target, &known_hosts, None),
+            "127.0.0.1".into(),
+            5900,
+            rx,
+            events,
+        ));
+        let challenge = prompt(&event_rx).await;
+        target_socket
+            .await
+            .unwrap()
+            .shutdown(Shutdown::Both)
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(3), task)
+            .await
+            .expect("EOF must end the gateway trust wait")
+            .unwrap();
+        assert!(matches!(result, Err(SshError::Russh(russh::Error::IO(_)))));
+        assert!(!challenge.is_pending());
+        assert!(!challenge.respond(HostKeyDecision::RejectAndRecord));
+        assert!(!known_hosts.0.exists());
+    });
+}
+
+#[test]
+fn trusted_direct_and_jump_sessions_outlive_the_shell_while_shared() {
+    runtime().block_on(async {
+        for via_jump in [false, true] {
+            let target = Peer::start(86, Duration::ZERO, Duration::ZERO, Forward::Accept).await;
+            let jump = Peer::start(87, Duration::ZERO, Duration::ZERO, Forward::Bridge).await;
+            let known_hosts = KnownHosts::new();
+            let (commands, rx) = tokio_mpsc::unbounded_channel();
+            let (events, event_rx) = mpsc::channel();
+            let task = tokio::spawn(run_live_password_shell(
+                request(&target, &known_hosts, via_jump.then_some(&jump)),
+                rx,
+                events,
+            ));
+            let challenge = prompt(&event_rx).await;
+            assert!(challenge.respond(HostKeyDecision::TrustOnce));
+            let mut shared = None;
+            loop {
+                match next_event(&event_rx).await {
+                    LiveShellEvent::SessionReady(session) => shared = Some(session),
+                    LiveShellEvent::Status(status) if status == "connected" => break,
+                    LiveShellEvent::Error(error) | LiveShellEvent::AuthRejected(error) => {
+                        panic!("{error}")
+                    }
+                    _ => {}
+                }
+            }
+            commands.send(LiveShellCommand::Disconnect).unwrap();
+            while !matches!(next_event(&event_rx).await, LiveShellEvent::Closed) {}
+            let shared = shared.expect("authenticated session");
+            assert!(!task.is_finished());
+            let channel = tokio::time::timeout(
+                Duration::from_secs(3),
+                shared.handle().channel_open_session(),
+            )
+            .await
+            .expect("shared connection remains usable")
+            .unwrap();
+            channel.close().await.unwrap();
+            drop(shared);
+            tokio::time::timeout(Duration::from_secs(3), task)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+        }
+    });
 }
 
 impl Drop for Peer {
@@ -574,14 +736,22 @@ fn vnc_gateway_rejects_untrusted_key_and_wrong_synthetic_password() {
             }
             let (_commands, rx) = tokio_mpsc::unbounded_channel();
             let (events, event_rx) = mpsc::channel();
-            let task = tokio::spawn(desktop_gateway::connect(
+            let mut task = tokio::spawn(desktop_gateway::connect(
                 request,
                 "127.0.0.1".into(),
                 5900,
                 rx,
                 events,
             ));
-            let challenge = prompt(&event_rx).await;
+            let challenge = tokio::select! {
+                biased;
+                result = &mut task => match result {
+                    Ok(Err(error)) => panic!("gateway ended before trust prompt: {error:?}"),
+                    Ok(Ok(_)) => panic!("gateway connected without a trust prompt"),
+                    Err(error) => panic!("gateway task failed before trust prompt: {error}"),
+                },
+                challenge = prompt(&event_rx) => challenge,
+            };
             assert!(challenge.respond(if reject_key {
                 HostKeyDecision::Reject
             } else {

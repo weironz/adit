@@ -237,14 +237,14 @@ pub(super) async fn connect_endpoint(
         )
         .map_err(SshError::ProxyCommand)?;
     if !request.proxy_command.enabled {
-        return client::connect(config, (request.host.as_str(), request.port), handler).await;
+        return trust_transport::connect_tcp(config, &request.host, request.port, handler).await;
     }
     *process = Some(Process::spawn(request).await?);
     let stream = process
         .as_mut()
         .and_then(|p| p.io.take())
         .expect("fresh process stdio");
-    client::connect_stream(config, stream, handler).await
+    trust_transport::connect_stream(config, stream, handler).await
 }
 
 #[cfg(windows)]
