@@ -1467,6 +1467,7 @@ pub(crate) fn terminal_line(
     let mut scalar_col = 0_usize;
     let mut legacy_col = 0_usize;
     let mut row_widget = row![].spacing(0);
+    let mut link_colors = std::collections::HashMap::new();
 
     for cell in line.cells {
         let mut fg = style.color(cell.fg, style.foreground());
@@ -1538,7 +1539,22 @@ pub(crate) fn terminal_line(
                     Color::from_rgb8(245, 236, 210)
                 }
             } else if is_link {
-                hyperlink_color()
+                let background = style.color(cell.bg, style.background());
+                let key = (
+                    background.r.to_bits(),
+                    background.g.to_bits(),
+                    background.b.to_bits(),
+                );
+                if let Some(color) = link_colors.get(&key) {
+                    *color
+                } else {
+                    let color = hyperlink_color(background);
+                    if link_colors.len() == 64 {
+                        link_colors.clear();
+                    }
+                    link_colors.insert(key, color);
+                    color
+                }
             } else if let Some(color) = keyword_hit {
                 // Last before the cell's own colour, so selection, search and
                 // OSC 8 links all outrank a local rule. `spans` has already
@@ -1609,18 +1625,9 @@ pub(crate) fn terminal_line(
             } else {
                 cell_box.into()
             };
-            // Underline, drawn the way the strike above is, because iced's text
-            // has no underline either. Two sources:
-            //
-            // SGR 4, which the cell has always carried and nothing ever drew;
-            // and a link while the open modifier is held. The latter is what
-            // makes links *findable* — the pointer already turns into a hand
-            // over one, but only once you happen to be holding Ctrl and move
-            // across it, so nothing on screen says which text is clickable.
-            // Holding Ctrl now underlines every link at once, which is what
-            // iTerm2 and Windows Terminal do with the same modifier.
-            let glyph: Element<'static, Message> = if cell.underline || (is_link && links_clickable)
-            {
+            // A non-color cue keeps links distinguishable from arbitrary
+            // neighbouring text; the modifier still controls activation.
+            let glyph: Element<'static, Message> = if cell.underline || is_link {
                 stack![
                     glyph,
                     container(

@@ -97,10 +97,47 @@ pub(crate) fn accent() -> Color {
     )
 }
 
-/// Colour for OSC 8 hyperlink runs — a readable link blue on both light and dark
-/// terminal backgrounds.
-pub(crate) fn hyperlink_color() -> Color {
-    Color::from_rgb8(88, 166, 255)
+/// Keep the link blue where possible, adjusting it against the actual cell
+/// background rather than assuming that every terminal uses a dark theme.
+pub(crate) fn hyperlink_color(background: Color) -> Color {
+    let base = Color::from_rgb8(88, 166, 255);
+    let bg = relative_luminance(background);
+    let fg = relative_luminance(base);
+    // Leave a small margin for conversion to 8-bit display channels.
+    if (fg.max(bg) + 0.05) / (fg.min(bg) + 0.05) >= 4.55 {
+        return base;
+    }
+    let target = if bg > 0.179 { 0.0 } else { 1.0 };
+    let goal = if target == 0.0 {
+        (bg + 0.05) / 4.55 - 0.05
+    } else {
+        4.55 * (bg + 0.05) - 0.05
+    };
+    let amount = ((goal - fg) / (target - fg)).clamp(0.0, 1.0);
+    let mix = |channel| srgb_channel(linear_channel(channel) * (1.0 - amount) + target * amount);
+    Color::from_rgb(mix(base.r), mix(base.g), mix(base.b))
+}
+
+fn relative_luminance(color: Color) -> f32 {
+    0.2126 * linear_channel(color.r)
+        + 0.7152 * linear_channel(color.g)
+        + 0.0722 * linear_channel(color.b)
+}
+
+fn linear_channel(value: f32) -> f32 {
+    if value <= 0.04045 {
+        value / 12.92
+    } else {
+        ((value + 0.055) / 1.055).powf(2.4)
+    }
+}
+
+fn srgb_channel(value: f32) -> f32 {
+    if value <= 0.0031308 {
+        12.92 * value
+    } else {
+        1.055 * value.powf(1.0 / 2.4) - 0.055
+    }
 }
 
 /// Whether the link-open modifier is held (Ctrl, or Cmd/⌘ on macOS). A terminal
@@ -819,5 +856,58 @@ pub(crate) fn status_color(status: SessionStatus) -> Color {
         SessionStatus::Connected => Color::from_rgb8(34, 197, 94),
         SessionStatus::Disconnected => muted_text(),
         SessionStatus::Error => danger(),
+    }
+}
+
+#[cfg(test)]
+mod hyperlink_tests {
+    use super::hyperlink_color;
+    use iced::Color;
+
+    fn ratio(a: Color, b: Color) -> f32 {
+        let luminance = |color: Color| {
+            let linear = |value: f32| {
+                if value <= 0.04045 {
+                    value / 12.92
+                } else {
+                    ((value + 0.055) / 1.055).powf(2.4)
+                }
+            };
+            0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+        };
+        let a = luminance(a);
+        let b = luminance(b);
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    #[test]
+    fn links_are_readable_on_builtin_and_custom_backgrounds() {
+        let backgrounds = crate::theme::COLOR_SCHEMES
+            .iter()
+            .map(|scheme| scheme.background)
+            .chain((0..=255).map(|value| (value, value, value)))
+            .chain([
+                (200, 80, 110),
+                (20, 130, 110),
+                (100, 110, 210),
+                (21, 224, 234),
+                (164, 216, 168),
+            ]);
+        for (r, g, b) in backgrounds {
+            let background = Color::from_rgb8(r, g, b);
+            let color = hyperlink_color(background);
+            let rounded = Color::from_rgb8(
+                (color.r * 255.0).round() as u8,
+                (color.g * 255.0).round() as u8,
+                (color.b * 255.0).round() as u8,
+            );
+            assert!(ratio(rounded, background) >= 4.5, "background: {r},{g},{b}");
+        }
+    }
+
+    #[test]
+    fn existing_link_blue_is_preserved_when_it_is_readable() {
+        let background = Color::from_rgb8(20, 21, 28);
+        assert_eq!(hyperlink_color(background), Color::from_rgb8(88, 166, 255));
     }
 }

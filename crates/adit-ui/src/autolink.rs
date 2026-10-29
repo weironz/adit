@@ -58,13 +58,13 @@ pub(crate) fn link_bare_urls(line: &mut TerminalLine) {
 
     let mut out: Vec<TerminalCell> = Vec::with_capacity(line.cells.len() + urls.len() * 2);
     for (cell, (cell_start, cell_end)) in std::mem::take(&mut line.cells).into_iter().zip(spans) {
-        // Three things this must not take from the server, because a link renders
+        // Two things this must not take from the server, because a link renders
         // in `hyperlink_color()` and would overwrite them: its own OSC 8 target
         // (a server that deliberately pointed this text elsewhere keeps it), its
         // own colour (the same restraint keyword highlighting uses, so a URL in a
-        // syntax-highlighted buffer stays the colour vim gave it), and the cursor
-        // run, which is one cell the renderer paints specially.
-        let eligible = cell.hyperlink.is_none() && cell.fg == TermColor::Default && !cell.cursor;
+        // syntax-highlighted buffer stays the colour vim gave it). Cursor color
+        // remains controlled by the renderer, independently of link detection.
+        let eligible = cell.hyperlink.is_none() && cell.fg == TermColor::Default;
         let overlapping: Vec<(usize, usize)> = if eligible {
             urls.iter()
                 .map(|&(start, end)| (start.max(cell_start), end.min(cell_end)))
@@ -274,6 +274,22 @@ mod tests {
             line.cells[0].hyperlink.as_deref(),
             Some("https://declared.example"),
         );
+    }
+
+    #[test]
+    fn bare_url_remains_linked_under_the_cursor() {
+        let mut line = TerminalLine::from_cells(vec![
+            TerminalCell::plain("https://exa"),
+            TerminalCell {
+                cursor: true,
+                ..TerminalCell::plain("m")
+            },
+            TerminalCell::plain("ple.com"),
+        ]);
+        link_bare_urls(&mut line);
+        let cursor = line.cells.iter().find(|cell| cell.cursor).unwrap();
+        assert_eq!(cursor.text, "m");
+        assert_eq!(cursor.hyperlink.as_deref(), Some("https://example.com"));
     }
 
     /// A URL ending a CJK sentence. The full stop is not ASCII, and one non-ASCII
