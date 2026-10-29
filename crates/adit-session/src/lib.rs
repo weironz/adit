@@ -294,6 +294,8 @@ impl ReconnectState {
 /// tied to a connected session's profile.
 pub struct SftpBrowser {
     handle: SftpHandle,
+    /// Unique to this browser lifetime, including reopening the same session.
+    pub instance_id: SessionId,
     owner: SessionId,
     pending_auth_prompt: Option<AuthPromptRequest>,
     pub profile_id: ProfileId,
@@ -2915,6 +2917,7 @@ impl SessionManager {
         let local_entries = read_local_dir(&local_cwd);
         self.sftp = Some(SftpBrowser {
             handle,
+            instance_id: SessionId::new(),
             owner: session_id,
             pending_auth_prompt: None,
             profile_id,

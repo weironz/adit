@@ -6,12 +6,19 @@ use std::path::PathBuf;
 /// during confirmation must not redirect an approved overwrite to another file.
 #[derive(Debug, Clone)]
 pub struct PreparedTransfer {
+    browser_instance: SessionId,
     profile: ProfileId,
     endpoint: String,
     remote: String,
     local: PathBuf,
     direction: TransferDirection,
     exists: bool,
+}
+
+impl PreparedTransfer {
+    fn belongs_to(&self, instance: SessionId, profile: ProfileId, endpoint: &str) -> bool {
+        self.browser_instance == instance && self.profile == profile && self.endpoint == endpoint
+    }
 }
 
 fn prepare(app: &AditApp, transfer: PendingTransfer) -> Option<PreparedTransfer> {
@@ -50,6 +57,7 @@ fn prepare(app: &AditApp, transfer: PendingTransfer) -> Option<PreparedTransfer>
         TransferDirection::Upload => app.manager.sftp_remote_file_exists(&name),
     };
     Some(PreparedTransfer {
+        browser_instance: browser.instance_id,
         profile: browser.profile_id,
         endpoint: browser.endpoint.clone(),
         remote: format!("{}/{}", browser.cwd.trim_end_matches('/'), name),
@@ -101,7 +109,7 @@ pub(crate) fn run_transfers(app: &mut AditApp, transfers: &[PendingTransfer]) {
 
 fn queue(app: &mut AditApp, plan: &PreparedTransfer, mode: TransferMode) {
     if !app.manager.sftp_browser().is_some_and(|browser| {
-        browser.profile_id == plan.profile && browser.endpoint == plan.endpoint
+        plan.belongs_to(browser.instance_id, browser.profile_id, &browser.endpoint)
     }) {
         app.last_error = Some(t("SFTP 连接已改变，请重新选择传输目标").into());
         return;
@@ -153,4 +161,28 @@ pub(crate) fn begin_save_as(app: &AditApp, name: String) -> Task<Message> {
         },
         Message::SftpPrepared,
     )
+}
+
+#[cfg(test)]
+mod browser_identity_tests {
+    use super::*;
+
+    #[test]
+    fn reopening_the_same_profile_cannot_reuse_a_prepared_transfer() {
+        let browser_instance = SessionId::new();
+        let profile = ProfileId::new();
+        let plan = PreparedTransfer {
+            browser_instance,
+            profile,
+            endpoint: "fixture:22".into(),
+            remote: "/file".into(),
+            local: PathBuf::from("file"),
+            direction: TransferDirection::Download,
+            exists: false,
+        };
+        assert!(plan.belongs_to(browser_instance, profile, "fixture:22"));
+        assert!(!plan.belongs_to(SessionId::new(), profile, "fixture:22"));
+        assert!(!plan.belongs_to(browser_instance, ProfileId::new(), "fixture:22"));
+        assert!(!plan.belongs_to(browser_instance, profile, "other:22"));
+    }
 }
