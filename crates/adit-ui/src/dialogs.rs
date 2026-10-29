@@ -190,7 +190,13 @@ pub(crate) fn host_key_dialog_overlay(
         "信任并继续"
     };
 
-    let action = |key: &'static str, label: &'static str, decision, primary| {
+    let keys = [
+        "host-key:reject",
+        "host-key:reject-record",
+        "host-key:once",
+        "host-key:trust",
+    ];
+    let action = |index, label: &'static str, decision, primary| {
         let message = Message::RespondHostKey {
             session_id,
             challenge_id: prompt.id,
@@ -207,21 +213,16 @@ pub(crate) fn host_key_dialog_overlay(
                 }
             })
             .on_press(message.clone());
-        accessibility::button(key, t(label), message, button)
+        accessibility::confirmation_button(&keys, index, t(label), message, button)
     };
 
     let panel = container(
         column![
             details,
             row![
+                action(0, "拒绝", adit_session::HostKeyDecision::Reject, false),
                 action(
-                    "host-key:reject",
-                    "拒绝",
-                    adit_session::HostKeyDecision::Reject,
-                    false
-                ),
-                action(
-                    "host-key:reject-record",
+                    1,
                     "拒绝并记住",
                     adit_session::HostKeyDecision::RejectAndRecord,
                     false
@@ -230,14 +231,9 @@ pub(crate) fn host_key_dialog_overlay(
                 // and placed in the middle so it reads as the cautious middle
                 // ground it is — and deliberately not the default, because a
                 // key you actually checked still belongs on file.
+                action(2, "仅本次", adit_session::HostKeyDecision::TrustOnce, false),
                 action(
-                    "host-key:once",
-                    "仅本次",
-                    adit_session::HostKeyDecision::TrustOnce,
-                    false
-                ),
-                action(
-                    "host-key:trust",
+                    3,
                     accept_label,
                     adit_session::HostKeyDecision::TrustAndRecord,
                     true
@@ -412,8 +408,9 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str, generation: u64) -> Element<'
                 accessibility::Control::label("hyperlink:destination", url.to_owned()),
             ),
             row![
-                accessibility::button(
-                    "hyperlink:cancel",
+                accessibility::confirmation_button(
+                    &["hyperlink:cancel", "hyperlink:open"],
+                    0,
                     t("取消"),
                     Message::CancelOpenHyperlink(generation),
                     button(t("取消"))
@@ -422,8 +419,9 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str, generation: u64) -> Element<'
                         .style(|_theme, status| secondary_button_style(status))
                         .on_press(Message::CancelOpenHyperlink(generation))
                 ),
-                accessibility::button(
-                    "hyperlink:open",
+                accessibility::confirmation_button(
+                    &["hyperlink:cancel", "hyperlink:open"],
+                    1,
                     t("打开"),
                     Message::ConfirmOpenHyperlink(generation),
                     button(text(t("打开")).size(13))

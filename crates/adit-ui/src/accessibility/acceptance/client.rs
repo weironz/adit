@@ -3,12 +3,15 @@ use super::*;
 use windows::{
     core::BSTR,
     Win32::{
-        Foundation::HWND,
+        Foundation::{HWND, LPARAM, WPARAM},
         System::Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
             COINIT_MULTITHREADED,
         },
-        UI::Accessibility::*,
+        UI::{
+            Accessibility::*,
+            WindowsAndMessaging::{PostMessageW, WM_KEYDOWN, WM_KEYUP},
+        },
     },
 };
 
@@ -171,10 +174,25 @@ fn command(
         .map_err(|e| format!("fixture command timed out: {e}"))
 }
 
-fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Result<(), String> {
+fn post_key(hwnd: isize, vk: u16, scan: isize) -> Result<(), String> {
+    let hwnd = HWND(hwnd as *mut std::ffi::c_void);
+    let down = 1 | (scan << 16);
+    let up = down | (3isize << 30);
+    unsafe {
+        PostMessageW(Some(hwnd), WM_KEYDOWN, WPARAM(vk as usize), LPARAM(down))
+            .and_then(|_| PostMessageW(Some(hwnd), WM_KEYUP, WPARAM(vk as usize), LPARAM(up)))
+            .map_err(|error| format!("posting synthetic key to fixture failed: {error}"))
+    }
+}
+
+fn dialog_acceptance(
+    client: &Client,
+    commands: &mpsc::Sender<Command>,
+    hwnd: isize,
+) -> Result<(), String> {
     use adit_session::HostKeyDecision;
 
-    let background = client.named("任务分屏", "navigation:Missions")?;
+    let background = client.named("资源库", "navigation:Hosts")?;
     let first = command(commands, |ack| Command::Host(false, ack))?;
     let first_id = first.challenge.ok_or("first host challenge missing")?;
     let dialog = client.named("确认主机密钥", "host-key:dialog")?;
@@ -196,7 +214,12 @@ fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Resul
     // A cached provider from the covered view must not be able to act either.
     let _ = client.invoke(&background);
     let after_background = command(commands, Command::Barrier)?;
-    if after_background.challenge != Some(first_id) || !after_background.decisions.is_empty() {
+    if after_background.challenge != Some(first_id)
+        || !after_background.decisions.is_empty()
+        || after_background.main_view != first.main_view
+        || after_background.active_session != first.active_session
+        || after_background.terminal_input != first.terminal_input
+    {
         return Err("background action crossed the modal boundary".into());
     }
 
@@ -236,6 +259,13 @@ fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Resul
         {
             return Err(format!("host action {key} is not a UIA button"));
         }
+        unsafe { button.SetFocus() }.map_err(|e| format!("host button SetFocus failed: {e}"))?;
+        client.wait("UIA focused the actual host button", || {
+            unsafe { button.CurrentHasKeyboardFocus() }
+                .ok()?
+                .as_bool()
+                .then_some(())
+        })?;
         client.invoke(&button)?;
         let result = command(commands, Command::Barrier)?;
         if result.decisions.last() != Some(&(id, decision)) {
@@ -243,6 +273,54 @@ fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Resul
         }
         client.wait("host dialog closed after decision", || {
             client.by_id("host-key:dialog").is_none().then_some(())
+        })?;
+    }
+
+    // Exercise the real HWND's keyboard path as well as UIA Invoke. Each new
+    // challenge must begin at Reject, regardless of the previous selection.
+    for (index, key, decision) in [
+        (0, "host-key:reject", HostKeyDecision::Reject),
+        (
+            1,
+            "host-key:reject-record",
+            HostKeyDecision::RejectAndRecord,
+        ),
+        (2, "host-key:once", HostKeyDecision::TrustOnce),
+        (3, "host-key:trust", HostKeyDecision::TrustAndRecord),
+    ] {
+        let installed = command(commands, |ack| Command::Host(false, ack))?;
+        let id = installed.challenge.ok_or("keyboard challenge missing")?;
+        client.wait("keyboard challenge drawn", || {
+            client.by_id(&format!(":{id}/host-key:dialog"))
+        })?;
+        let refuse = client
+            .by_id("host-key:reject")
+            .ok_or("reject button missing")?;
+        client.wait("new challenge defaults to reject", || {
+            unsafe { refuse.CurrentHasKeyboardFocus() }
+                .ok()?
+                .as_bool()
+                .then_some(())
+        })?;
+        for _ in 0..index {
+            post_key(hwnd, 0x09, 0x0f)?; // Tab
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        let target = client.by_id(key).ok_or("keyboard target missing")?;
+        client.wait("Tab reached the selected host action", || {
+            unsafe { target.CurrentHasKeyboardFocus() }
+                .ok()?
+                .as_bool()
+                .then_some(())
+        })?;
+        if index % 2 == 0 {
+            post_key(hwnd, 0x0d, 0x1c)?; // Enter
+        } else {
+            post_key(hwnd, 0x20, 0x39)?; // Space
+        }
+        client.wait("keyboard action reached its challenge", || {
+            let result = command(commands, Command::Barrier).ok()?;
+            (result.decisions.last() == Some(&(id, decision))).then_some(())
         })?;
     }
 
@@ -259,7 +337,7 @@ fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Resul
     let replacement_id = replacement
         .challenge
         .ok_or("replacement host challenge missing")?;
-    if old_id == replacement_id || replacement.decisions.len() != 4 {
+    if old_id == replacement_id || replacement.decisions.len() != 8 {
         return Err("queued host action reached a replacement challenge".into());
     }
     client.wait("replacement host dialog", || {
@@ -267,7 +345,7 @@ fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Resul
     })?;
     let _ = client.invoke(&old_button);
     let after_stale = command(commands, Command::Barrier)?;
-    if after_stale.decisions.len() != 4 || after_stale.challenge != Some(replacement_id) {
+    if after_stale.decisions.len() != 8 || after_stale.challenge != Some(replacement_id) {
         return Err("cached host action reached a replacement challenge".into());
     }
     client.invoke(&client.named("拒绝", "host-key:reject")?)?;
@@ -290,7 +368,21 @@ fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Resul
     if client.by_id("navigation:Missions").is_some() {
         return Err("link dialog exposed background controls".into());
     }
+    let cancel = client.named("取消", "hyperlink:cancel")?;
+    client.wait("link confirmation defaults to cancel", || {
+        unsafe { cancel.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
     let old_link = client.named("打开", "hyperlink:open")?;
+    post_key(hwnd, 0x09, 0x0f)?;
+    client.wait("Tab reaches the link open button", || {
+        unsafe { old_link.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
     command(commands, Command::Hold)?;
     client.invoke(&old_link)?;
     // Even an identical URL is a different confirmation, not a renewed lease.
@@ -440,7 +532,7 @@ pub(super) fn run(
             (a == first_before && b != second_before).then_some(())
         },
     )?;
-    dialog_acceptance(&client, &commands)?;
+    dialog_acceptance(&client, &commands, hwnd)?;
     Ok(json!({
         "hwnd": hwnd, "native_uia": true, "production_iced_widgets": true,
         "navigation_invoke": true, "resource_invoke_and_value": true,
@@ -452,6 +544,8 @@ pub(super) fn run(
         "host_key_uia_details_and_four_actions": true,
         "link_uia_destination_cancel_and_open": true,
         "dialog_modal_isolation": true,
+        "host_key_keyboard_tab_enter_space_and_safe_default": true,
+        "link_keyboard_tab_and_safe_default": true,
         "queued_and_cached_stale_dialog_actions_rejected": true,
         "links_opened_only_in_fixture_sink": true,
     }))

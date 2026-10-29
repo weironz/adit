@@ -159,7 +159,14 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
     }
     if layers.len() > 1 {
         let top = layers.pop().unwrap();
+        layers = layers
+            .into_iter()
+            .map(|layer| dialog_focus::background(layer, true))
+            .collect();
         layers.push(accessibility::modal(top));
+    } else {
+        let base = layers.pop().unwrap();
+        layers.push(dialog_focus::background(base, false));
     }
     let content = if layers.len() == 1 {
         layers.pop().unwrap()

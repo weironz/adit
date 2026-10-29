@@ -133,6 +133,7 @@ mod session_ops;
 use session_ops::*;
 mod chrome;
 use chrome::*;
+mod dialog_focus;
 mod dialogs;
 use dialogs::*;
 mod sftp;
@@ -142,6 +143,8 @@ mod input;
 mod native_windows;
 #[cfg(feature = "native-workbench-acceptance")]
 pub use native_windows::run_acceptance as run_native_windows_acceptance;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub use native_windows::run_accessibility_acceptance as run_accessibility_detached_acceptance;
 mod native_ime;
 mod terminal_appearance;
 mod window_presentation;
@@ -1117,6 +1120,11 @@ pub enum Message {
     },
     AccessibilityFocus {
         window: window::Id,
+        id: iced::advanced::widget::Id,
+    },
+    DialogFocus {
+        window: Option<window::Id>,
+        scope: String,
         id: iced::advanced::widget::Id,
     },
     ToggleFullscreen,

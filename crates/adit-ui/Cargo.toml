@@ -15,6 +15,10 @@ name = "accessibility_acceptance"
 required-features = ["native-accessibility-acceptance"]
 
 [[example]]
+name = "accessibility_detached_acceptance"
+required-features = ["native-accessibility-acceptance"]
+
+[[example]]
 name = "workbench_acceptance"
 required-features = ["native-workbench-acceptance"]
 

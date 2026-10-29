@@ -104,9 +104,36 @@ struct Window {
     adapter: RefCell<Adapter>,
     shared: Arc<Mutex<Shared>>,
     rx: mpsc::Receiver<Request>,
-    ids: HashMap<String, NodeId>,
-    next_id: u64,
+    ids: NodeIds,
     last: Option<TreeUpdate>,
+}
+
+struct NodeIds {
+    keys: HashMap<String, NodeId>,
+    next: u64,
+}
+
+impl Default for NodeIds {
+    fn default() -> Self {
+        Self {
+            keys: HashMap::new(),
+            next: 2,
+        }
+    }
+}
+
+impl NodeIds {
+    fn get(&mut self, key: String) -> NodeId {
+        *self.keys.entry(key).or_insert_with(|| {
+            let id = NodeId(self.next);
+            self.next = self.next.checked_add(1).expect("UIA node IDs exhausted");
+            id
+        })
+    }
+
+    fn retain(&mut self, live: &HashSet<NodeId>) {
+        self.keys.retain(|_, id| live.contains(id));
+    }
 }
 
 thread_local! {
@@ -191,8 +218,7 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
             )),
             shared,
             rx,
-            ids: HashMap::new(),
-            next_id: 2,
+            ids: NodeIds::default(),
             last: None,
         });
         let pointer = (&*window as *const Window) as usize;
@@ -243,11 +269,7 @@ pub(super) fn node_id(window: window::Id, key: &str) -> NodeId {
         let Some(window) = windows.get_mut(&window) else {
             return ROOT;
         };
-        *window.ids.entry(key.to_owned()).or_insert_with(|| {
-            let id = NodeId(window.next_id);
-            window.next_id += 1;
-            id
-        })
+        window.ids.get(key.to_owned())
     })
 }
 
@@ -282,6 +304,9 @@ pub(super) fn publish(
                 f64::from(r.y + r.height) * scale,
             )
         };
+        // Keep only IDs present in this frame. Old providers must never be
+        // retargeted, so retired keys are discarded but numeric IDs are not reused.
+        let mut live_ids: HashSet<_> = rendered.iter().map(|r| r.id).collect();
         let visible: Vec<_> = rendered.into_iter().filter(|r| r.layer == layer).collect();
         let valid: HashSet<_> = visible.iter().map(|r| r.id).collect();
         let mut nodes = HashMap::new();
@@ -355,11 +380,8 @@ pub(super) fn publish(
             }
             if matches!(control.kind, Kind::Document) {
                 let key = format!("{namespace}/{}/text", control.key);
-                let text_id = *window.ids.entry(key).or_insert_with(|| {
-                    let id = NodeId(window.next_id);
-                    window.next_id += 1;
-                    id
-                });
+                let text_id = window.ids.get(key);
+                live_ids.insert(text_id);
                 let mut run = Node::new(Role::TextRun);
                 run.set_bounds(rect(item.bounds));
                 run.set_character_lengths(
@@ -410,6 +432,7 @@ pub(super) fn publish(
             tree_id: TreeId::ROOT,
             focus: focused,
         };
+        window.ids.retain(&live_ids);
         if let Ok(mut state) = window.shared.lock() {
             state.namespace = namespace;
             state.routes = routes;
@@ -504,6 +527,24 @@ pub(super) fn drain(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retired_generation_ids_are_pruned_without_reusing_a_provider_id() {
+        let mut ids = NodeIds::default();
+        let persistent = ids.get("main/navigation".into());
+        let mut retired = HashSet::new();
+        for generation in 0..10_000 {
+            let key = format!("challenge:{generation}/reject");
+            let current = ids.get(key.clone());
+            assert!(!retired.contains(&current));
+            assert_eq!(ids.get(key), current);
+            ids.retain(&HashSet::from([persistent, current]));
+            assert_eq!(ids.keys.len(), 2);
+            retired.insert(current);
+        }
+        let new = ids.get("challenge:replacement/reject".into());
+        assert!(!retired.contains(&new));
+    }
 
     fn handler(route: Route) -> (Actions, mpsc::Receiver<Request>) {
         let (tx, rx) = mpsc::sync_channel(64);

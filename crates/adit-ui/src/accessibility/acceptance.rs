@@ -32,6 +32,9 @@ struct Snapshot {
     decisions: Vec<(u64, adit_session::HostKeyDecision)>,
     opened_links: Vec<String>,
     link_pending: bool,
+    main_view: MainView,
+    active_session: Option<SessionId>,
+    terminal_input: String,
 }
 
 enum Command {
@@ -76,6 +79,7 @@ fn allowed(message: &Message) -> bool {
             | Message::ShowMainView(_)
             | Message::AccessibilityScrollLines { .. }
             | Message::AccessibilityFocus { .. }
+            | Message::DialogFocus { .. }
             | Message::EditProfileFromContext(_)
             | Message::CloseProfileEditor
             | Message::SaveProfile
@@ -97,6 +101,9 @@ fn snapshot(state: &Harness) -> Snapshot {
         decisions: fixture.decisions.clone(),
         opened_links: fixture.opened_links.clone(),
         link_pending: state.app.pending_hyperlink.is_some(),
+        main_view: state.app.main_view,
+        active_session: state.app.manager.active_session(),
+        terminal_input: state.app.terminal_input.clone(),
     }
 }
 

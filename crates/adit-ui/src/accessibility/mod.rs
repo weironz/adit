@@ -243,6 +243,93 @@ pub(crate) fn button<'a>(
     control(child, Control::button(key, label, message))
 }
 
+/// Confirmation buttons share a cyclic focus order, with the first (refusal)
+/// action selected whenever a new challenge or link generation appears.
+pub(crate) fn confirmation_button<'a>(
+    keys: &[&str],
+    index: usize,
+    label: &str,
+    message: Message,
+    child: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let scope = BUILD.with(|scope| scope.borrow().clone().unwrap_or_default());
+    let window = BUILD_WINDOW.with(Cell::get);
+    let id = input_id(keys[index]);
+    let previous = input_id(keys[(index + keys.len() - 1) % keys.len()]);
+    let next = input_id(keys[(index + 1) % keys.len()]);
+    let mut metadata = Control::button(keys[index], label, message.clone());
+    metadata.focus = Some(id.clone());
+    control(
+        dialog_focus::button(
+            child.into(),
+            dialog_focus::ButtonFocus {
+                window,
+                scope,
+                id,
+                previous,
+                next,
+                default: index == 0,
+                action: message,
+            },
+        ),
+        metadata,
+    )
+}
+
+#[cfg(windows)]
+fn window_scope_id(window: window::Id) -> iced::advanced::widget::Id {
+    iced::advanced::widget::Id::from(format!("adit-window:{window:?}"))
+}
+
+struct FocusIfPresent {
+    target: iced::advanced::widget::Id,
+    found: bool,
+}
+
+impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>)) {
+        operate(self);
+    }
+
+    fn focusable(
+        &mut self,
+        id: Option<&iced::advanced::widget::Id>,
+        _bounds: iced::Rectangle,
+        _state: &mut dyn iced::advanced::widget::operation::Focusable,
+    ) {
+        self.found |= id == Some(&self.target);
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
+        use iced::advanced::widget::operation::{focusable, Outcome};
+        if self.found {
+            Outcome::Chain(Box::new(focusable::focus(self.target.clone())))
+        } else {
+            // A task queued for an old challenge must not unfocus the new
+            // dialog's safe default when the old widget no longer exists.
+            Outcome::None
+        }
+    }
+}
+
+pub(crate) fn focus_widget(
+    window: Option<window::Id>,
+    id: iced::advanced::widget::Id,
+) -> Task<Message> {
+    #[cfg(windows)]
+    use iced::advanced::widget::operation;
+    let focus = FocusIfPresent {
+        target: id,
+        found: false,
+    };
+    #[cfg(windows)]
+    if let Some(window) = window {
+        return iced::advanced::widget::operate(operation::scope(window_scope_id(window), focus));
+    }
+    let _ = window;
+    iced::advanced::widget::operate(focus)
+}
+
 pub(crate) fn input<'a>(
     label: &'static str,
     value: &str,
@@ -283,6 +370,7 @@ pub(crate) fn scope<'a>(
 }
 
 pub(crate) fn modal<'a>(child: Element<'a, Message>) -> Element<'a, Message> {
+    let child = dialog_focus::shield(child);
     #[cfg(windows)]
     {
         widget::modal(child)
@@ -371,14 +459,14 @@ pub(crate) fn scroll(app: &mut AditApp, window: window::Id, owner: SessionId, re
 }
 
 pub(crate) fn scroll_offset(app: &AditApp, owner: SessionId) -> usize {
-    app.accessibility
-        .primary
+    app.native_window_id
+        .or(app.accessibility.primary)
         .and_then(|window| app.accessibility.scrolls.get(&(window, owner)).copied())
         .unwrap_or(0)
 }
 
 pub(crate) fn scroll_lines(app: &mut AditApp, window: window::Id, owner: SessionId, lines: i32) {
-    let current = if app.accessibility.primary == Some(window)
+    let current = if app.native_window_id.or(app.accessibility.primary) == Some(window)
         && app.manager.active_session() == Some(owner)
     {
         app.terminal_scroll_offset
@@ -648,6 +736,44 @@ pub(crate) fn detached_namespace(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn delayed_focus_for_retired_dialog_cannot_clear_new_default() {
+        use iced::advanced::widget::{
+            operation::{Focusable, Outcome},
+            Operation,
+        };
+        struct Focused(bool);
+        impl Focusable for Focused {
+            fn is_focused(&self) -> bool {
+                self.0
+            }
+            fn focus(&mut self) {
+                self.0 = true;
+            }
+            fn unfocus(&mut self) {
+                self.0 = false;
+            }
+        }
+        let old = iced::advanced::widget::Id::from("old-challenge");
+        let current = iced::advanced::widget::Id::from("new-reject");
+        let mut safe_default = Focused(true);
+        let mut request = FocusIfPresent {
+            target: old,
+            found: false,
+        };
+        <FocusIfPresent as Operation<()>>::focusable(
+            &mut request,
+            Some(&current),
+            iced::Rectangle::default(),
+            &mut safe_default,
+        );
+        assert!(matches!(
+            <FocusIfPresent as Operation<()>>::finish(&request),
+            Outcome::None
+        ));
+        assert!(safe_default.is_focused());
+    }
 
     #[test]
     fn protected_metadata_never_contains_the_original_value_or_length() {

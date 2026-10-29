@@ -6,6 +6,11 @@ use iced::widget::column;
 use std::collections::HashMap;
 use window_presentation::{ClipboardLease, WindowPresentation, WindowScene};
 
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+mod accessibility_acceptance;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub use accessibility_acceptance::run as run_accessibility_acceptance;
+
 pub(crate) const HEADER_HEIGHT: f32 = 36.0;
 
 #[derive(Debug, Clone)]
@@ -107,6 +112,9 @@ fn input_message(message: &Message) -> bool {
     matches!(
         message,
         Message::KeyboardInput(_)
+            | Message::TerminalInputChanged(_)
+            | Message::CommandHistoryPrev
+            | Message::CommandHistoryNext
             | Message::ModifiersChanged(_)
             | Message::NativeImeEvent(..)
             | Message::VncImeEvent(..)
@@ -390,6 +398,9 @@ impl DesktopApplication {
             return Task::none();
         } // drop late commits/tasks from a closed window
         if input_message(&message) && self.focused != Some(id) {
+            return Task::none();
+        }
+        if input_message(&message) && self.modal_owner.is_some_and(|owner| owner != id) {
             return Task::none();
         }
         // Global SFTP/credential services can outlive an explicitly closed tab.
@@ -1010,7 +1021,14 @@ impl DesktopApplication {
         }
         if layers.len() > 1 {
             let top = layers.pop().unwrap();
+            layers = layers
+                .into_iter()
+                .map(|layer| dialog_focus::background(layer, true))
+                .collect();
             layers.push(accessibility::modal(top));
+        } else {
+            let base = layers.pop().unwrap();
+            layers.push(dialog_focus::background(base, false));
         }
         let view: Element<'_, Message> =
             accessibility::scope(Some(id), namespace, stack(layers).into());
@@ -1237,6 +1255,89 @@ mod tests {
                 .manager
                 .snapshot_for(session, Viewport::visible(200)),
         )
+    }
+
+    #[test]
+    fn another_windows_modal_rejects_queued_command_edits_and_sends() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.focus(desktop.primary);
+        desktop.app.command_window_open = true;
+        desktop.app.command_send_immediately = true;
+        desktop.app.terminal_input = "original".into();
+        let profile = desktop
+            .app
+            .manager
+            .session_summary(ids[0])
+            .unwrap()
+            .profile_id;
+        desktop.app.connection_dialog = Some(ConnectionDialog {
+            profile_id: profile,
+            retry_session: Some(ids[0]),
+            title: "synthetic".into(),
+            endpoint: "fixture.invalid".into(),
+            auth_method: AuthMethod::Password,
+            identity_file: String::new(),
+        });
+        desktop.app.native_dialog_window = Some(child);
+        desktop.sync_modal_owner();
+        assert_eq!(desktop.modal_owner, Some(child));
+        let before = text(&desktop, ids[2]);
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::TerminalInputChanged("original LEAK".into()),
+        );
+        let _ = desktop.dispatch(desktop.primary, Message::SendTerminalInput);
+        let _ = desktop.dispatch(desktop.primary, Message::CommandHistoryPrev);
+        let epoch = desktop.app.vnc_input_epoch;
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::NativeImeEvent(
+                ids[2],
+                epoch,
+                iced::advanced::input_method::Event::Commit("SYNTHETIC-IME".into()),
+            ),
+        );
+        assert_eq!(desktop.app.terminal_input, "original");
+        assert_eq!(text(&desktop, ids[2]), before);
+        desktop.app.connection_dialog = None;
+        desktop.sync_modal_owner();
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::TerminalInputChanged("original ok".into()),
+        );
+        assert_eq!(desktop.app.terminal_input, "original ok");
+        assert!(text(&desktop, ids[2]).contains(" ok"));
+    }
+
+    #[test]
+    fn detached_uia_scroll_step_uses_current_window_position_after_mouse_scroll() {
+        let (mut desktop, ids) = fixture();
+        desktop.app.manager.activate(ids[0]).unwrap();
+        desktop
+            .app
+            .manager
+            .send_input_to_active(
+                (0..150)
+                    .map(|n| format!("line {n}\r\n"))
+                    .collect::<String>(),
+            )
+            .unwrap();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.app.accessibility.opening(desktop.primary);
+        desktop.app.accessibility.opening(child);
+        let _ = desktop.in_window(child, |app| {
+            accessibility::scroll(app, child, ids[0], 20);
+            assert_eq!(app.terminal_scroll_offset, 20);
+            // A regular wheel or drag updates presentation without touching the UIA cache.
+            app.terminal_scroll_offset = 7;
+            accessibility::scroll_lines(app, child, ids[0], 3);
+            assert_eq!(app.terminal_scroll_offset, 10);
+            Task::none()
+        });
+        assert_eq!(desktop.windows[&child].state.terminal_scroll_offset, 10);
     }
 
     #[test]

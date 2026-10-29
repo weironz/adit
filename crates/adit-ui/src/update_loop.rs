@@ -89,6 +89,18 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
 }
 
 fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
+    // A text input can have queued a message immediately before a modal was
+    // installed. Never let that message edit or send the covered command bar.
+    if matches!(
+        &message,
+        Message::TerminalInputChanged(_)
+            | Message::SendTerminalInput
+            | Message::CommandHistoryPrev
+            | Message::CommandHistoryNext
+    ) && accessibility::namespace(app) != "main"
+    {
+        return Task::none();
+    }
     match message {
         Message::DetachSession(_) | Message::MergeNativeWindow => {
             app.notice = "请通过原生主窗口拆出或合回会话".into();
@@ -130,7 +142,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         } => accessibility::scroll_lines(app, window, owner, lines),
         Message::AccessibilityFocus { window, id } => {
             if app.accessibility.windows.contains(&window)
-                && app.accessibility.primary == Some(window)
+                && app.native_window_id.or(app.accessibility.primary) == Some(window)
+                && accessibility::namespace(app) != "native-modal-blocked"
             {
                 app.terminal_focused = false;
                 release_rdp_modifiers(app);
@@ -138,10 +151,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // tree publication and terminal output never do this.
                 return Task::batch([
                     window::gain_focus(window),
-                    iced::advanced::widget::operate(
-                        iced::advanced::widget::operation::focusable::focus(id),
-                    ),
+                    accessibility::focus_widget(Some(window), id),
                 ]);
+            }
+        }
+        Message::DialogFocus { window, scope, id } => {
+            if window == app.native_window_id.or(app.accessibility.primary)
+                && scope == format!("{window:?}/{}", accessibility::namespace(app))
+            {
+                return accessibility::focus_widget(window, id);
             }
         }
         Message::Vault(message) => return vault_ui::update(app, message),
