@@ -814,9 +814,9 @@ async fn connect(
     state: Arc<Mutex<SharedState>>,
 ) -> Result<VncClient, VncError> {
     let start = Instant::now();
-    let connect = async {
-        let via_ssh = gateway.is_some();
-        let stream: Box<dyn DesktopStream> = if let Some(gateway) = gateway {
+    let via_ssh = gateway.is_some();
+    let establish_gateway = async {
+        if let Some(gateway) = gateway {
             let stream = adit_ssh::desktop_gateway::connect(
                 gateway,
                 host.into(),
@@ -826,69 +826,95 @@ async fn connect(
             )
             .await
             .map_err(gateway_error)?;
-            Box::new(stream)
+            Ok(Some(Box::new(stream) as Box<dyn DesktopStream>))
         } else {
-            let tcp = tokio::net::TcpStream::connect((host, port)).await?;
-            tcp.set_nodelay(true)?;
-            configure_tcp_liveness(&tcp)?;
-            Box::new(tcp)
-        };
-        state.lock().unwrap().diagnostics.tcp_ms = start.elapsed().as_millis() as u64;
-        let policy = match options.security {
-            VncSecurity::AllowNone => vnc::SecurityPolicy::AllowNone,
-            VncSecurity::RequireVncAuth => vnc::SecurityPolicy::RequireVncAuth,
-            VncSecurity::RequireTls => vnc::SecurityPolicy::RequireTls,
-        };
-        let mut connector = VncConnector::new(stream)
-            .set_auth_method(async move { Ok(password) })
-            .security_policy(policy)
-            .utf8_clipboard(!options.clipboard_legacy)
-            .add_encoding(VncEncoding::FencePseudo);
-        if options.quality != VncQuality::Zrle {
-            connector = connector
-                .tight_quality(2, (options.quality == VncQuality::Wan).then_some(7))
-                .add_encoding(VncEncoding::Tight);
+            Ok(None)
         }
-        connector = connector
-            .add_encoding(VncEncoding::Zrle)
-            .add_encoding(VncEncoding::CursorPseudo)
-            .add_encoding(VncEncoding::CopyRect)
-            .add_encoding(VncEncoding::Raw)
-            .add_encoding(VncEncoding::DesktopSizePseudo)
-            .add_encoding(VncEncoding::ExtendedDesktopSizePseudo)
-            .add_encoding(VncEncoding::LastRectPseudo)
-            .allow_shared(true)
-            .set_pixel_format(PixelFormat::rgba());
-        if !options.clipboard_legacy {
-            connector = connector.add_encoding(VncEncoding::ExtendedClipboard);
-        }
-        if options.security == VncSecurity::RequireTls {
-            let mut tls = vnc::TlsConfig {
-                server_name: host.into(),
-                ca_certificates_der: vec![],
-            };
-            if !options.tls_ca_file.trim().is_empty() {
-                // Dedicated trust material is not a credential. Read off UI thread.
-                let bytes = tokio::fs::read(options.tls_ca_file.trim()).await?;
-                tls.ca_certificates_der = certificate_der(&bytes)?;
-            }
-            connector = connector.tls_config(tls);
-        }
-        let client = connector.build()?.try_start().await?.finish()?;
-        let mut state = state.lock().unwrap();
-        state.diagnostics.handshake_ms = start.elapsed().as_millis() as u64;
-        state.diagnostics.security = format!(
-            "{}{:?}",
-            if via_ssh { "SSH + " } else { "" },
-            client.security()
-        );
-        state.diagnostics.encoding = match options.quality {
-            VncQuality::Zrle => "ZRLE/CopyRect/Raw（兼容无损）".into(),
-            quality => format!("Tight/ZRLE ({quality:?})"),
-        };
-        Ok(client)
     };
-    tokio::time::timeout(Duration::from_secs(60), connect)
+    gateway_then_vnc(
+        establish_gateway,
+        |gateway_stream| async move {
+            let stream: Box<dyn DesktopStream> = if let Some(stream) = gateway_stream {
+                stream
+            } else {
+                let tcp = tokio::net::TcpStream::connect((host, port)).await?;
+                tcp.set_nodelay(true)?;
+                configure_tcp_liveness(&tcp)?;
+                Box::new(tcp)
+            };
+            state.lock().unwrap().diagnostics.tcp_ms = start.elapsed().as_millis() as u64;
+            let policy = match options.security {
+                VncSecurity::AllowNone => vnc::SecurityPolicy::AllowNone,
+                VncSecurity::RequireVncAuth => vnc::SecurityPolicy::RequireVncAuth,
+                VncSecurity::RequireTls => vnc::SecurityPolicy::RequireTls,
+            };
+            let mut connector = VncConnector::new(stream)
+                .set_auth_method(async move { Ok(password) })
+                .security_policy(policy)
+                .utf8_clipboard(!options.clipboard_legacy)
+                .add_encoding(VncEncoding::FencePseudo);
+            if options.quality != VncQuality::Zrle {
+                connector = connector
+                    .tight_quality(2, (options.quality == VncQuality::Wan).then_some(7))
+                    .add_encoding(VncEncoding::Tight);
+            }
+            connector = connector
+                .add_encoding(VncEncoding::Zrle)
+                .add_encoding(VncEncoding::CursorPseudo)
+                .add_encoding(VncEncoding::CopyRect)
+                .add_encoding(VncEncoding::Raw)
+                .add_encoding(VncEncoding::DesktopSizePseudo)
+                .add_encoding(VncEncoding::ExtendedDesktopSizePseudo)
+                .add_encoding(VncEncoding::LastRectPseudo)
+                .allow_shared(true)
+                .set_pixel_format(PixelFormat::rgba());
+            if !options.clipboard_legacy {
+                connector = connector.add_encoding(VncEncoding::ExtendedClipboard);
+            }
+            if options.security == VncSecurity::RequireTls {
+                let mut tls = vnc::TlsConfig {
+                    server_name: host.into(),
+                    ca_certificates_der: vec![],
+                };
+                if !options.tls_ca_file.trim().is_empty() {
+                    // Dedicated trust material is not a credential. Read off UI thread.
+                    let bytes = tokio::fs::read(options.tls_ca_file.trim()).await?;
+                    tls.ca_certificates_der = certificate_der(&bytes)?;
+                }
+                connector = connector.tls_config(tls);
+            }
+            let client = connector.build()?.try_start().await?.finish()?;
+            let mut state = state.lock().unwrap();
+            state.diagnostics.handshake_ms = start.elapsed().as_millis() as u64;
+            state.diagnostics.security = format!(
+                "{}{:?}",
+                if via_ssh { "SSH + " } else { "" },
+                client.security()
+            );
+            state.diagnostics.encoding = match options.quality {
+                VncQuality::Zrle => "ZRLE/CopyRect/Raw（兼容无损）".into(),
+                quality => format!("Tight/ZRLE ({quality:?})"),
+            };
+            Ok(client)
+        },
+        Duration::from_secs(60),
+    )
+    .await
+}
+
+async fn gateway_then_vnc<T, G, F, H, R>(
+    gateway: G,
+    handshake: H,
+    timeout: Duration,
+) -> Result<R, VncError>
+where
+    G: std::future::Future<Output = Result<T, VncError>>,
+    H: FnOnce(T) -> F,
+    F: std::future::Future<Output = Result<R, VncError>>,
+{
+    // Gateway host-key confirmation has its own pausable network budget.
+    let stream = gateway.await?;
+    tokio::time::timeout(timeout, handshake(stream))
         .await
         .map_err(|_| {
             VncError::IoError(std::io::Error::new(
@@ -1078,6 +1104,32 @@ fn copy_rect(surface: &Arc<Mutex<VncSurface>>, dst: Rect, src: Rect) -> Result<(
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn gateway_wait_is_not_charged_to_vnc_handshake_timeout() {
+        let result = super::gateway_then_vnc(
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(80)).await;
+                Ok(7)
+            },
+            |value| async move { Ok(value) },
+            std::time::Duration::from_millis(20),
+        )
+        .await;
+        assert_eq!(result.unwrap(), 7);
+    }
+
+    #[tokio::test]
+    async fn stalled_vnc_handshake_still_times_out_after_gateway() {
+        let result = super::gateway_then_vnc(
+            async { Ok(()) },
+            |_| async { std::future::pending::<Result<(), vnc::VncError>>().await },
+            std::time::Duration::from_millis(20),
+        )
+        .await;
+        assert!(
+            matches!(result, Err(vnc::VncError::IoError(error)) if error.kind() == std::io::ErrorKind::TimedOut)
+        );
+    }
     use super::*;
 
     #[test]
