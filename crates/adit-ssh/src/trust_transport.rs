@@ -16,6 +16,7 @@ use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 // A peer may pipeline packets while the user is deciding. Do not let it grow
 // memory without bound, and do not silently discard any of those packets.
 const MAX_TRUST_BUFFER: usize = 256 * 1024;
+const MAX_READ_POLLS_PER_CHECK: usize = 4096;
 
 trait Transport: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Transport for T {}
@@ -108,7 +109,7 @@ impl TrustMonitor {
         tokio::task::yield_now().await;
         tokio::select! {
             biased;
-            error = self.disconnected() => Some(error),
+            error = tokio::task::unconstrained(self.disconnected()) => Some(error),
             _ = std::future::ready(()) => None,
         }
     }
@@ -127,7 +128,15 @@ impl TrustMonitor {
             let waker = Waker::from(wake.clone());
             let mut read_cx = Context::from_waker(&waker);
             let mut self_wakes = 0;
+            let mut read_polls = 0;
             loop {
+                read_polls += 1;
+                if read_polls > MAX_READ_POLLS_PER_CHECK {
+                    return Poll::Ready(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "SSH transport exceeded the host-key confirmation read-work limit",
+                    ));
+                }
                 let remaining = MAX_TRUST_BUFFER - inner.buffered.len();
                 let mut chunk = [0; 8192];
                 // At the limit, read one more byte to distinguish EOF from an
@@ -143,7 +152,7 @@ impl TrustMonitor {
                         if self_wakes > 128 {
                             return Poll::Ready(io::Error::new(
                                 io::ErrorKind::InvalidData,
-                                "SSH transport repeatedly woke without producing data",
+                                "SSH transport exceeded the host-key confirmation wake limit",
                             ));
                         }
                     }
@@ -215,6 +224,35 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     struct WakeBeforeEof(usize);
+
+    struct ByteStorm;
+
+    impl AsyncRead for ByteStorm {
+        fn poll_read(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            buf.put_slice(&[1]);
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    impl AsyncWrite for ByteStorm {
+        fn poll_write(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+            buf: &[u8],
+        ) -> Poll<io::Result<usize>> {
+            Poll::Ready(Ok(buf.len()))
+        }
+        fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+        fn poll_shutdown(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
 
     struct ChannelClose(tokio::sync::mpsc::UnboundedReceiver<()>);
 
@@ -305,6 +343,14 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn continuously_ready_small_reads_are_bounded() {
+        let (_stream, monitor) = TrustStream::new(ByteStorm);
+        let error = monitor.disconnected().await;
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("read-work limit"));
+    }
+
+    #[tokio::test]
     async fn decision_recheck_observes_channel_close_after_cooperative_budget_exhaustion() {
         let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
         sender.send(()).unwrap();
@@ -322,6 +368,21 @@ mod tests {
             decision_ready,
             "fixture must exhaust budget before EOF becomes visible"
         );
+        let error = monitor
+            .check_before_decision()
+            .await
+            .expect("closed channel");
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[tokio::test]
+    async fn decision_recheck_drains_128_channel_control_messages_before_eof() {
+        let (sender, receiver) = tokio::sync::mpsc::unbounded_channel();
+        for _ in 0..128 {
+            sender.send(()).unwrap();
+        }
+        drop(sender);
+        let (_stream, monitor) = TrustStream::new(ChannelClose(receiver));
         let error = monitor
             .check_before_decision()
             .await

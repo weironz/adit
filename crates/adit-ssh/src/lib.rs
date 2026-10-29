@@ -3592,7 +3592,7 @@ impl KnownHostsClient {
                 } => return Err(SshError::AuthenticationCancelled),
                 error = async {
                     match &self.trust_monitor {
-                        Some(monitor) => monitor.disconnected().await,
+                        Some(monitor) => tokio::task::unconstrained(monitor.disconnected()).await,
                         None => std::future::pending().await,
                     }
                 } => {

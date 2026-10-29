@@ -293,11 +293,15 @@ fn trusted_direct_and_jump_sessions_outlive_the_shell_while_shared() {
             let known_hosts = KnownHosts::new();
             let (commands, rx) = tokio_mpsc::unbounded_channel();
             let (events, event_rx) = mpsc::channel();
-            let task = tokio::spawn(run_live_password_shell(
-                request(&target, &known_hosts, via_jump.then_some(&jump)),
-                rx,
-                events,
-            ));
+            let connection = request(&target, &known_hosts, via_jump.then_some(&jump));
+            let diagnostics = events.clone();
+            let task = tokio::spawn(async move {
+                let result = run_live_password_shell(connection, rx, events).await;
+                if let Err(error) = &result {
+                    let _ = diagnostics.send(LiveShellEvent::Error(error.to_string()));
+                }
+                result
+            });
             let challenge = prompt(&event_rx).await;
             assert!(challenge.respond(HostKeyDecision::TrustOnce));
             let mut shared = None;
