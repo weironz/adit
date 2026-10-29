@@ -65,13 +65,15 @@ pub async fn connect(
     });
     let (decision_tx, decision_rx) = oneshot::channel();
     let (kbd_tx, kbd_rx) = tokio_mpsc::unbounded_channel();
+    let (budget, _guard) = HandshakeBudget::new(request.connect_timeout_secs);
     let handler = KnownHostsClient::new(
         request.host.clone(),
         request.port,
         request.known_hosts_path.clone(),
         Some(events.clone()),
         Some(decision_rx),
-    );
+    )
+    .with_handshake_budget(budget.clone());
     // Gateway trust is always explicit, including when terminal TOFU is enabled.
     let connect = async {
         let mut proxy_process = None;
@@ -101,15 +103,11 @@ pub async fn connect(
         })
     };
     tokio::pin!(connect);
-    let deadline = tokio::time::sleep(Duration::from_secs(effective_timeout_secs(
-        request.connect_timeout_secs,
-    )));
-    tokio::pin!(deadline);
     let mut decision_tx = Some(decision_tx);
     loop {
         tokio::select! {
             result = &mut connect => return result,
-            _ = &mut deadline => return Err(SshError::Timeout(request.connect_timeout_secs)),
+            _ = budget.expired() => return Err(SshError::Timeout(request.connect_timeout_secs)),
             command = commands.recv() => match command {
                 Some(LiveShellCommand::HostKeyDecision(decision)) => {
                     if let Some(tx) = decision_tx.take() { let _ = tx.send(decision); }

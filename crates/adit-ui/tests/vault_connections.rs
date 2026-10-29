@@ -44,9 +44,9 @@ fn wait(manager: &mut SessionManager, ready: impl Fn(&SessionManager) -> bool) {
     let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         manager.poll_events();
-        if let Some((id, _)) = manager.pending_host_key() {
+        if let Some((id, prompt)) = manager.pending_host_key() {
             manager
-                .respond_host_key(id, HostKeyDecision::TrustOnce)
+                .respond_host_key(id, prompt.id, HostKeyDecision::TrustOnce)
                 .unwrap();
         }
         if ready(manager) {

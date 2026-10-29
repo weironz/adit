@@ -178,6 +178,7 @@ pub(crate) fn host_key_dialog_overlay(
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::RespondHostKey {
                         session_id,
+                        challenge_id: prompt.id,
                         decision: adit_session::HostKeyDecision::Reject,
                     }),
                 button(text(t("拒绝并记住")))
@@ -186,6 +187,7 @@ pub(crate) fn host_key_dialog_overlay(
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::RespondHostKey {
                         session_id,
+                        challenge_id: prompt.id,
                         decision: adit_session::HostKeyDecision::RejectAndRecord,
                     }),
                 // Between refusing and vouching. Styled as a secondary action
@@ -198,6 +200,7 @@ pub(crate) fn host_key_dialog_overlay(
                     .style(|_theme, status| secondary_button_style(status))
                     .on_press(Message::RespondHostKey {
                         session_id,
+                        challenge_id: prompt.id,
                         decision: adit_session::HostKeyDecision::TrustOnce,
                     }),
                 button(text(t(accept_label)))
@@ -206,6 +209,7 @@ pub(crate) fn host_key_dialog_overlay(
                     .style(|_theme, status| primary_button_style(status))
                     .on_press(Message::RespondHostKey {
                         session_id,
+                        challenge_id: prompt.id,
                         decision: adit_session::HostKeyDecision::TrustAndRecord,
                     }),
             ]

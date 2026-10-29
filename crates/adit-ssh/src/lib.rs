@@ -1,11 +1,15 @@
 mod auth_ui;
 mod auxiliary;
 pub mod desktop_gateway;
+mod handshake;
+#[cfg(test)]
+mod handshake_tests;
 mod proxy_command;
 mod sftp_transfer;
 mod tunnel;
 pub use auth_ui::JumpCredential;
 use auth_ui::{hop_credentials, AuthEventSink};
+use handshake::HandshakeBudget;
 pub use tunnel::{
     spawn_tunnel_session, spawn_tunnel_session_on, TunnelCommand, TunnelEvent, TunnelHandle,
     TunnelKind, TunnelRequest,
@@ -337,6 +341,8 @@ pub enum HostKeyDecision {
 /// A server host key awaiting the user's trust decision during connect.
 #[derive(Debug, Clone)]
 pub struct HostKeyPrompt {
+    /// Identifies this specific trust request, even across reconnects.
+    pub id: u64,
     pub host: String,
     pub port: u16,
     pub key_type: String,
@@ -344,6 +350,64 @@ pub struct HostKeyPrompt {
     /// `Some` when the key differs from a previously stored one (a potential
     /// man-in-the-middle); `None` for a first-time unknown host.
     pub previous_fingerprint: Option<String>,
+    reply: Arc<Mutex<Option<oneshot::Sender<HostKeyDecision>>>>,
+    budget: Option<HandshakeBudget>,
+}
+
+impl HostKeyPrompt {
+    /// Create a challenge and its receiver, for producers and isolated tests.
+    #[must_use]
+    pub fn channel(
+        host: String,
+        port: u16,
+        key_type: String,
+        fingerprint: String,
+        previous_fingerprint: Option<String>,
+    ) -> (Self, oneshot::Receiver<HostKeyDecision>) {
+        static NEXT_PROMPT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let (reply, response) = oneshot::channel();
+        (
+            Self {
+                id: NEXT_PROMPT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+                host,
+                port,
+                key_type,
+                fingerprint,
+                previous_fingerprint,
+                reply: Arc::new(Mutex::new(Some(reply))),
+                budget: None,
+            },
+            response,
+        )
+    }
+
+    /// False after a reply, disconnect, timeout, or cancellation.
+    #[must_use]
+    pub fn is_pending(&self) -> bool {
+        let check = || {
+            self.reply
+                .lock()
+                .ok()
+                .is_some_and(|reply| reply.as_ref().is_some_and(|tx| !tx.is_closed()))
+        };
+        self.budget
+            .as_ref()
+            .map_or_else(check, |budget| budget.while_active(check))
+    }
+
+    /// Reply only to the handshake that produced this prompt.
+    pub fn respond(&self, decision: HostKeyDecision) -> bool {
+        let send = || {
+            self.reply
+                .lock()
+                .ok()
+                .and_then(|mut reply| reply.take())
+                .is_some_and(|tx| tx.send(decision).is_ok())
+        };
+        self.budget
+            .as_ref()
+            .map_or_else(send, |budget| budget.while_active(send))
+    }
 }
 
 pub struct LiveShellHandle {
@@ -1356,10 +1420,6 @@ async fn run_live_password_shell(
         keepalive_max: 3,
         ..Default::default()
     });
-    // Cap the connect/handshake so an unreachable host fails fast instead of
-    // hanging on the OS TCP timeout. A very long sleep stands in for "disabled".
-    let timeout_secs = effective_timeout_secs(request.connect_timeout_secs);
-
     // Built before the handler so a clone survives into SharedSession: once russh
     // owns the handler, this registry is the only way a later `-R` on this
     // connection can tell it where to pipe forwarded channels.
@@ -1376,6 +1436,7 @@ async fn run_live_password_shell(
         // concurrently forwarding the user's HostKeyDecision (and an early
         // Disconnect) into the handler's one-shot decision channel.
         let (decision_tx, decision_rx) = oneshot::channel::<HostKeyDecision>();
+        let (budget, _guard) = HandshakeBudget::new(request.connect_timeout_secs);
         let handler = KnownHostsClient::new(
             request.host.clone(),
             request.port,
@@ -1383,19 +1444,18 @@ async fn run_live_password_shell(
             Some(events.clone()),
             Some(decision_rx),
         )
+        .with_handshake_budget(budget.clone())
         .with_auto_accept(request.auto_accept_host_keys)
         .with_forwards(forwards.clone());
 
         let connect =
             proxy_command::connect_endpoint(&request, config.clone(), handler, &mut proxy_process);
         tokio::pin!(connect);
-        let deadline = tokio::time::sleep(std::time::Duration::from_secs(timeout_secs));
-        tokio::pin!(deadline);
         let mut decision_tx = Some(decision_tx);
         let session = loop {
             tokio::select! {
                 result = &mut connect => break result?,
-                _ = &mut deadline => {
+                _ = budget.expired() => {
                     return Err(SshError::Timeout(request.connect_timeout_secs));
                 }
                 command = commands.recv() => match command {
@@ -1794,6 +1854,8 @@ async fn connect_through_jumps(
         hops.push(session);
     }
 
+    let (budget, _guard) = HandshakeBudget::new(connect_timeout_secs);
+    let final_handler = final_handler.with_handshake_budget(budget.clone());
     let connect_target = async {
         let last = hops.last().expect("at least one jump host");
         let channel = last
@@ -1806,12 +1868,10 @@ async fn connect_through_jumps(
             .await?;
         client::connect_stream(config.clone(), channel.into_stream(), final_handler).await
     };
-    let target = tokio::time::timeout(
-        Duration::from_secs(effective_timeout_secs(connect_timeout_secs)),
-        connect_target,
-    )
-    .await
-    .map_err(|_| SshError::Timeout(connect_timeout_secs))??;
+    let target = tokio::select! {
+        result = connect_target => result?,
+        _ = budget.expired() => return Err(SshError::Timeout(connect_timeout_secs)),
+    };
     Ok((target, hops))
 }
 
@@ -3426,6 +3486,7 @@ struct KnownHostsClient {
     /// confirmed by the user; absent for the one-shot probe, which keeps
     /// non-interactive trust-on-first-use.
     decision: Option<oneshot::Receiver<HostKeyDecision>>,
+    budget: Option<HandshakeBudget>,
     /// Trust a never-seen host key automatically (record it, no prompt).
     auto_accept: bool,
     /// Where server-opened `forwarded-tcpip` channels go. Shared with whoever
@@ -3448,6 +3509,7 @@ impl KnownHostsClient {
             known_hosts_path,
             events,
             decision,
+            budget: None,
             auto_accept: false,
             forwards: ForwardRegistry::default(),
         }
@@ -3459,6 +3521,11 @@ impl KnownHostsClient {
         self
     }
 
+    fn with_handshake_budget(mut self, budget: HandshakeBudget) -> Self {
+        self.budget = Some(budget);
+        self
+    }
+
     /// Hand this handler the registry it should consult, so the connection's
     /// owner can keep a clone and register remote forwards after russh has taken
     /// the handler away.
@@ -3467,20 +3534,49 @@ impl KnownHostsClient {
         self
     }
 
-    fn emit_prompt(
+    async fn request_host_key_decision(
         &self,
         key: &russh::keys::ssh_key::PublicKey,
         fingerprint: &str,
         previous_fingerprint: Option<String>,
-    ) {
+        mut legacy: oneshot::Receiver<HostKeyDecision>,
+    ) -> Result<HostKeyDecision, SshError> {
+        // russh drives this callback in a separate task. Pause before publishing
+        // the prompt so even an immediate answer preserves the exact budget.
+        let _wait = self
+            .budget
+            .as_ref()
+            .map(HandshakeBudget::pause_for_trust)
+            .transpose()?;
+        let (mut prompt, mut response) = HostKeyPrompt::channel(
+            self.host.clone(),
+            self.port,
+            key.algorithm().to_string(),
+            fingerprint.to_string(),
+            previous_fingerprint,
+        );
+        prompt.budget = self.budget.clone();
         if let Some(events) = &self.events {
-            let _ = events.send(LiveShellEvent::HostKeyPrompt(HostKeyPrompt {
-                host: self.host.clone(),
-                port: self.port,
-                key_type: key.algorithm().to_string(),
-                fingerprint: fingerprint.to_string(),
-                previous_fingerprint,
-            }));
+            events
+                .send(LiveShellEvent::HostKeyPrompt(prompt))
+                .map_err(|_| SshError::AuthenticationCancelled)?;
+        }
+        let mut response_open = true;
+        loop {
+            tokio::select! {
+                biased;
+                _ = async {
+                    match &self.budget {
+                        Some(budget) => budget.cancelled().await,
+                        None => std::future::pending().await,
+                    }
+                } => return Err(SshError::AuthenticationCancelled),
+                answer = &mut response, if response_open => match answer {
+                    Ok(decision) => return Ok(decision),
+                    Err(_) => response_open = false,
+                },
+                answer = &mut legacy => return Ok(answer.unwrap_or(HostKeyDecision::Reject)),
+            }
         }
     }
 }
@@ -3565,12 +3661,14 @@ impl client::Handler for KnownHostsClient {
                     return Ok(true);
                 }
                 let decision = self.decision.take().expect("decision present");
-                self.emit_prompt(server_public_key, &fingerprint, None);
                 // A dropped channel counts as a rejection: the only way it
                 // closes unanswered is the session going away underneath us,
                 // and trusting a key because nobody was left to ask is exactly
                 // backwards.
-                match decision.await.unwrap_or(HostKeyDecision::Reject) {
+                match self
+                    .request_host_key_decision(server_public_key, &fingerprint, None, decision)
+                    .await?
+                {
                     HostKeyDecision::TrustAndRecord => {
                         append_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
                         send_status(
@@ -3609,8 +3707,15 @@ impl client::Handler for KnownHostsClient {
                         known_hosts_path: self.known_hosts_path.display().to_string(),
                     });
                 };
-                self.emit_prompt(server_public_key, &fingerprint, Some(previous.join(", ")));
-                match decision.await.unwrap_or(HostKeyDecision::Reject) {
+                match self
+                    .request_host_key_decision(
+                        server_public_key,
+                        &fingerprint,
+                        Some(previous.join(", ")),
+                        decision,
+                    )
+                    .await?
+                {
                     HostKeyDecision::TrustAndRecord => {
                         replace_known_host(&self.known_hosts_path, &host_spec, server_public_key)?;
                         send_status(

@@ -955,6 +955,7 @@ pub enum Message {
     CancelConnection,
     RespondHostKey {
         session_id: SessionId,
+        challenge_id: u64,
         decision: adit_session::HostKeyDecision,
     },
     AuthPromptInput {

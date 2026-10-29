@@ -1550,9 +1550,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::RespondHostKey {
             session_id,
+            challenge_id,
             decision,
         } => {
-            if let Err(error) = app.manager.respond_host_key(session_id, decision) {
+            if let Err(error) = app
+                .manager
+                .respond_host_key(session_id, challenge_id, decision)
+            {
                 app.last_error = Some(runtime(&error));
             } else {
                 app.notice = String::from(match decision {

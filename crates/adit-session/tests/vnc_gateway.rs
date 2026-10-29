@@ -542,9 +542,9 @@ async fn established_tunnel_interruption_reaches_session_error() {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             manager.poll_events();
-            if let Some((session, _)) = manager.pending_host_key() {
+            if let Some((session, prompt)) = manager.pending_host_key() {
                 manager
-                    .respond_host_key(session, HostKeyDecision::TrustOnce)
+                    .respond_host_key(session, prompt.id, HostKeyDecision::TrustOnce)
                     .unwrap();
             }
             assert!(

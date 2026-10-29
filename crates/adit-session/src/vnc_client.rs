@@ -126,7 +126,8 @@ impl SharedState {
 
 pub(super) struct VncClientHandle {
     commands: Arc<CommandQueue>,
-    gateway: mpsc::UnboundedSender<LiveShellCommand>,
+    // Keep the gateway command channel alive until the owning session drops.
+    _gateway: mpsc::UnboundedSender<LiveShellCommand>,
     stop: watch::Sender<bool>,
     events: std_mpsc::Receiver<RdpClientEvent>,
     errors: std_mpsc::Sender<RdpClientEvent>,
@@ -252,9 +253,6 @@ impl VncClientHandle {
             .errors
             .send(RdpClientEvent::Notice(BMP_ONLY_NOTICE.into()));
     }
-    pub(super) fn send_gateway(&self, command: LiveShellCommand) {
-        let _ = self.gateway.send(command);
-    }
     pub(super) fn read_only(&self) -> bool {
         self.state.lock().unwrap().options.read_only
     }
@@ -371,7 +369,7 @@ pub(super) fn spawn_vnc_session(
         })?;
     Ok(VncClientHandle {
         commands,
-        gateway: gateway_tx,
+        _gateway: gateway_tx,
         stop,
         events: event_rx,
         errors,

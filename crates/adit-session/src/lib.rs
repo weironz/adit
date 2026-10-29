@@ -82,6 +82,8 @@ pub enum SessionError {
     ProfileNotFound,
     #[error("session was not found")]
     SessionNotFound,
+    #[error("host key confirmation is no longer pending")]
+    HostKeyPromptExpired,
     #[error("profile name is required")]
     EmptyProfileName,
     #[error("profile host is required")]
@@ -3327,9 +3329,14 @@ impl SessionManager {
     /// The first session whose connect is paused awaiting a host-key decision.
     #[must_use]
     pub fn pending_host_key(&self) -> Option<(SessionId, HostKeyPrompt)> {
-        self.sessions
-            .iter()
-            .find_map(|(id, record)| record.pending_host_key.clone().map(|prompt| (*id, prompt)))
+        self.sessions.iter().find_map(|(id, record)| {
+            record
+                .pending_host_key
+                .as_ref()
+                .filter(|p| p.is_pending())
+                .cloned()
+                .map(|prompt| (*id, prompt))
+        })
     }
 
     /// Answer a pending host-key prompt: accept records/replaces the key and lets
@@ -3337,18 +3344,25 @@ impl SessionManager {
     pub fn respond_host_key(
         &mut self,
         session_id: SessionId,
+        challenge_id: u64,
         decision: HostKeyDecision,
     ) -> Result<(), SessionError> {
         let record = self
             .sessions
             .get_mut(&session_id)
             .ok_or(SessionError::SessionNotFound)?;
-        record.pending_host_key = None;
-        if let Some(live) = &record.live {
-            live.send(LiveShellCommand::HostKeyDecision(decision))?;
-        } else if let Some(vnc) = &record.vnc {
-            vnc.send_gateway(LiveShellCommand::HostKeyDecision(decision));
+        let Some(prompt) = record
+            .pending_host_key
+            .as_ref()
+            .filter(|p| p.id == challenge_id)
+        else {
+            return Err(SessionError::HostKeyPromptExpired);
+        };
+        if !prompt.respond(decision) {
+            record.pending_host_key = None;
+            return Err(SessionError::HostKeyPromptExpired);
         }
+        record.pending_host_key = None;
         // Spelled out per case rather than "trusted / rejected": the difference
         // between the two trusting answers is the whole point, and the
         // transcript is where someone looks afterwards to see which they chose.
@@ -3598,6 +3612,7 @@ impl SessionManager {
                             record.summary.endpoint
                         ));
                         record.summary.status = SessionStatus::Error;
+                        record.pending_host_key = None;
                         // An auth prompt can't be answered on a dead connection.
                         record.pending_auth_prompt = None;
                     }
@@ -3621,6 +3636,7 @@ impl SessionManager {
                             record.summary.endpoint
                         ));
                         record.summary.status = SessionStatus::Error;
+                        record.pending_host_key = None;
                         record.pending_auth_prompt = None;
                         // Flag it so the UI re-prompts for the password. A rejected
                         // password would only be re-rejected, so don't auto-retry.
@@ -3646,6 +3662,7 @@ impl SessionManager {
                     }
                     LiveShellEvent::Closed => {
                         closed = true;
+                        record.pending_host_key = None;
                         // Release our claim on the connection. Holding it keeps
                         // the connection open, and this record outlives the
                         // shell so `Enter` can reconnect — without this an
@@ -3853,12 +3870,14 @@ impl SessionManager {
                         ));
                     }
                     RdpClientEvent::AuthRejected(message) => {
+                        record.pending_host_key = None;
                         record.desktop_error = Some(message.clone());
                         record.summary.status = SessionStatus::Error;
                         record.terminal.append_status(&message);
                         record.auth_rejected = Some(message);
                     }
                     RdpClientEvent::Error(message) => {
+                        record.pending_host_key = None;
                         record.desktop_error = Some(message.clone());
                         record.summary.status = SessionStatus::Error;
                         record
@@ -3869,6 +3888,7 @@ impl SessionManager {
                         }
                     }
                     RdpClientEvent::Closed => {
+                        record.pending_host_key = None;
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Closed {
                             session: record.summary.id,
                         });
@@ -4584,6 +4604,73 @@ fn probe_terminal(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn host_key_response_without_live_pending_challenge_is_rejected() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile = manager.profiles()[0].id;
+        let session = manager.open_mock_session(profile).unwrap();
+        assert!(matches!(
+            manager.respond_host_key(session, 0, HostKeyDecision::TrustOnce),
+            Err(SessionError::HostKeyPromptExpired)
+        ));
+        assert!(manager.pending_host_key().is_none());
+    }
+
+    #[test]
+    fn old_host_key_response_cannot_answer_a_new_challenge() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile = manager.profiles()[0].id;
+        let session = manager.open_mock_session(profile).unwrap();
+        let (old, old_rx) = HostKeyPrompt::channel(
+            "fixture.invalid".into(),
+            22,
+            "ssh-ed25519".into(),
+            "old".into(),
+            None,
+        );
+        let (new, mut new_rx) = HostKeyPrompt::channel(
+            "fixture.invalid".into(),
+            22,
+            "ssh-ed25519".into(),
+            "new".into(),
+            None,
+        );
+        manager.sessions.get_mut(&session).unwrap().pending_host_key = Some(new.clone());
+        assert!(matches!(
+            manager.respond_host_key(session, old.id, HostKeyDecision::TrustOnce),
+            Err(SessionError::HostKeyPromptExpired)
+        ));
+        assert_eq!(manager.pending_host_key().unwrap().1.id, new.id);
+        assert!(new_rx.try_recv().is_err());
+        manager
+            .respond_host_key(session, new.id, HostKeyDecision::TrustOnce)
+            .unwrap();
+        assert!(matches!(new_rx.try_recv(), Ok(HostKeyDecision::TrustOnce)));
+        drop(old_rx);
+    }
+
+    #[test]
+    fn disconnected_host_key_challenge_is_not_offered_or_reported_trusted() {
+        let mut manager = SessionManager::with_demo_profiles();
+        let profile = manager.profiles()[0].id;
+        let session = manager.open_mock_session(profile).unwrap();
+        let (prompt, receiver) = HostKeyPrompt::channel(
+            "fixture.invalid".into(),
+            22,
+            "ssh-ed25519".into(),
+            "test".into(),
+            None,
+        );
+        let challenge_id = prompt.id;
+        manager.sessions.get_mut(&session).unwrap().pending_host_key = Some(prompt);
+        drop(receiver);
+        assert!(manager.pending_host_key().is_none());
+        assert!(matches!(
+            manager.respond_host_key(session, challenge_id, HostKeyDecision::TrustOnce),
+            Err(SessionError::HostKeyPromptExpired)
+        ));
+    }
+
     #[test]
     fn session_options_are_persisted_and_open_sessions_keep_independent_snapshots() {
         let mut manager = SessionManager::with_demo_profiles();
