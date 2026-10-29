@@ -1559,15 +1559,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             {
                 app.last_error = Some(runtime(&error));
             } else {
-                app.notice = String::from(match decision {
-                    adit_session::HostKeyDecision::TrustAndRecord => t("已信任主机密钥，继续连接"),
-                    // Says what did NOT happen, because that is the part worth
-                    // knowing: the key is not on file, so the next connection
-                    // asks again.
-                    adit_session::HostKeyDecision::TrustOnce => t("仅本次信任，未写入 known_hosts"),
-                    adit_session::HostKeyDecision::Reject => t("已拒绝主机密钥"),
-                    adit_session::HostKeyDecision::RejectAndRecord => t("已请求拒绝并记录主机密钥"),
-                });
+                app.notice = String::from(t("已提交主机密钥决定，等待连接结果"));
             }
         }
         Message::AuthPromptInput {

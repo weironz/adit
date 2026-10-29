@@ -3363,13 +3363,12 @@ impl SessionManager {
             return Err(SessionError::HostKeyPromptExpired);
         }
         record.pending_host_key = None;
-        // Spelled out per case rather than "trusted / rejected": the difference
-        // between the two trusting answers is the whole point, and the
-        // transcript is where someone looks afterwards to see which they chose.
+        // A queued decision is not proof that the handshake accepted it or
+        // that the known-hosts write succeeded.
         record.terminal.append_status(match decision {
-            HostKeyDecision::TrustAndRecord => "host key trusted and recorded",
-            HostKeyDecision::TrustOnce => "host key trusted for this session only",
-            HostKeyDecision::Reject => "host key rejected",
+            HostKeyDecision::TrustAndRecord => "host key trust and record requested",
+            HostKeyDecision::TrustOnce => "host key temporary trust requested",
+            HostKeyDecision::Reject => "host key rejection requested",
             HostKeyDecision::RejectAndRecord => "host key rejection recording requested",
         });
         Ok(())
@@ -4646,6 +4645,14 @@ mod tests {
             .respond_host_key(session, new.id, HostKeyDecision::TrustOnce)
             .unwrap();
         assert!(matches!(new_rx.try_recv(), Ok(HostKeyDecision::TrustOnce)));
+        let snapshot = manager.snapshot_for(session, Viewport::tail(30));
+        let transcript: String = snapshot
+            .lines
+            .iter()
+            .flat_map(|line| line.cells.iter().map(|cell| cell.text.as_str()))
+            .collect();
+        assert!(transcript.contains("host key temporary trust requested"));
+        assert!(!transcript.contains("host key trusted for this session only"));
         drop(old_rx);
     }
 

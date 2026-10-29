@@ -800,6 +800,7 @@ const COMMON: &[(&str, &str)] = &[
         ("已从 ~/.ssh/config 导入 {} 个会话（跳过 {} 个已存在）", "Imported {} sessions from ~/.ssh/config ({} already existed)"),
         ("已从系统密钥环导入 {} 条密码到配置目录(可随 Dropbox 同步)", "Moved {} passwords from the system keyring into the config folder, where Dropbox and the like can carry them"),
         ("已信任主机密钥，继续连接", "Host key trusted; connecting"),
+        ("已提交主机密钥决定，等待连接结果", "Host key decision submitted; waiting for connection"),
         ("已克隆 RDP 会话", "RDP session cloned"),
         ("已克隆会话", "Session cloned"),
         // Host manager: the pinned band and its context-menu toggle.
