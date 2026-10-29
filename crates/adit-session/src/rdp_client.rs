@@ -364,16 +364,29 @@ pub struct RdpClientHandle {
 impl RdpClientHandle {
     #[cfg(test)]
     pub(crate) fn test_fixture() -> Self {
-        let (cmd_tx, _cmd_rx) = std_mpsc::channel();
+        Self::test_fixture_with_channels().0
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_fixture_with_channels() -> (
+        Self,
+        std_mpsc::Receiver<ClientMsg>,
+        std_mpsc::Sender<RdpClientEvent>,
+    ) {
+        let (cmd_tx, cmd_rx) = std_mpsc::channel();
         let (event_tx, event_rx) = std_mpsc::channel();
-        Self {
-            remote_offer: Arc::new(FileEpoch::default()),
+        (
+            Self {
+                remote_offer: Arc::new(FileEpoch::default()),
+                event_tx: event_tx.clone(),
+                cmd_tx,
+                event_rx,
+                surface: Arc::new(Mutex::new(Surface::new(1, 1))),
+                child: Arc::new(Mutex::new(None)),
+            },
+            cmd_rx,
             event_tx,
-            cmd_tx,
-            event_rx,
-            surface: Arc::new(Mutex::new(Surface::new(1, 1))),
-            child: Arc::new(Mutex::new(None)),
-        }
+        )
     }
 
     /// Send an input event to the session.

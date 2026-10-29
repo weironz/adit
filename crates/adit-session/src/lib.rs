@@ -614,6 +614,15 @@ impl SessionManager {
             self.pending_rdp_clipboard = None;
             self.pending_rdp_clipboard_files = None;
             self.pending_rdp_file_chunks.clear();
+            for (session, read) in self.pending_rdp_file_reads.drain(..) {
+                if let Some(rdp) = self
+                    .sessions
+                    .get(&session)
+                    .and_then(|record| record.rdp.as_ref())
+                {
+                    rdp.answer_file_contents(read.stream_id, None);
+                }
+            }
         }
     }
 
@@ -3858,15 +3867,21 @@ impl SessionManager {
                         offset,
                         length,
                     } => {
-                        self.pending_rdp_file_reads.push((
-                            record.summary.id,
-                            RdpFileRead {
-                                stream_id,
-                                index,
-                                offset,
-                                length,
-                            },
-                        ));
+                        if !self.rdp_clipboard {
+                            if let Some(rdp) = &record.rdp {
+                                rdp.answer_file_contents(stream_id, None);
+                            }
+                        } else {
+                            self.pending_rdp_file_reads.push((
+                                record.summary.id,
+                                RdpFileRead {
+                                    stream_id,
+                                    index,
+                                    offset,
+                                    length,
+                                },
+                            ));
+                        }
                     }
                     RdpClientEvent::AuthRejected(message) => {
                         record.pending_host_key = None;

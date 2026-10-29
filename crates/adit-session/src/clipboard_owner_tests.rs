@@ -1,5 +1,61 @@
 use super::*;
 
+#[test]
+fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
+    let profiles = vec![
+        ConnectionProfile::new("a", "a.invalid", 22, "fixture"),
+        ConnectionProfile::new("b", "b.invalid", 22, "fixture"),
+    ];
+    let ids = [profiles[0].id, profiles[1].id];
+    let mut manager = SessionManager::with_profiles(profiles);
+    let a = manager.open_mock_session(ids[0]).unwrap();
+    let b = manager.open_mock_session(ids[1]).unwrap();
+    let (handle_a, rx_a, events_a) = RdpClientHandle::test_fixture_with_channels();
+    let (handle_b, rx_b, events_b) = RdpClientHandle::test_fixture_with_channels();
+    manager.sessions.get_mut(&a).unwrap().rdp = Some(handle_a);
+    manager.sessions.get_mut(&b).unwrap().rdp = Some(handle_b);
+    manager.activate(b).unwrap();
+    let read = RdpFileRead {
+        stream_id: 7,
+        index: 0,
+        offset: 0,
+        length: 1,
+    };
+    manager.pending_rdp_file_reads = vec![(a, read), (b, read)];
+    manager.set_rdp_clipboard(false);
+    for rx in [&rx_a, &rx_b] {
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(adit_rdp_proto::ClientMsg::FileContents {
+                stream_id: 7,
+                data: None
+            })
+        ));
+    }
+    assert!(manager.pending_rdp_file_reads.is_empty());
+    for tx in [events_a, events_b] {
+        tx.send(RdpClientEvent::FileContentsNeeded {
+            stream_id: 7,
+            index: 0,
+            offset: 0,
+            length: 1,
+        })
+        .unwrap();
+    }
+    manager.poll_events();
+    for rx in [&rx_a, &rx_b] {
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(adit_rdp_proto::ClientMsg::FileContents {
+                stream_id: 7,
+                data: None
+            })
+        ));
+    }
+    assert!(manager.pending_rdp_file_reads.is_empty());
+    assert_eq!(manager.active_session, Some(b));
+}
+
 fn attach_test_rdp(manager: &mut SessionManager, session: SessionId) -> RdpFileRequester {
     let handle = RdpClientHandle::test_fixture();
     let requester = handle.file_requester_for_generation(1);
