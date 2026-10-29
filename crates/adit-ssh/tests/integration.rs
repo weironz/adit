@@ -1420,3 +1420,6 @@ fn remote_forward_works_on_the_shells_connection() {
 
 #[path = "integration/authentication.rs"]
 mod authentication;
+
+#[path = "integration/sftp_resume.rs"]
+mod sftp_resume;
