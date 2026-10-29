@@ -214,6 +214,19 @@ fn fixture_profiles() -> Vec<ConnectionProfile> {
             profile.vnc.clipboard_send = false;
             profile.vnc.clipboard_receive = false;
             profile.vnc.auto_reconnect = false;
+            if std::env::var_os("ADIT_WORKBENCH_APPEARANCE_FIXTURE").is_some() {
+                match index {
+                    0 => profile.session_options.terminal_appearance.font_size = Some(18),
+                    1 => {
+                        profile.session_options.terminal_appearance.background = Some([38, 57, 42])
+                    }
+                    2 => profile.environment = adit_domain::Environment::Production,
+                    3 => {
+                        profile.session_options.terminal_appearance.background = Some([48, 39, 61])
+                    }
+                    _ => {}
+                }
+            }
             profile
         })
         .collect()
