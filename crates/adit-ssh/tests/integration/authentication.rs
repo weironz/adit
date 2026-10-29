@@ -374,7 +374,7 @@ fn cancellation_or_bad_credentials_on_second_jump_never_authenticate_the_target(
     }
 }
 
-fn socks_banner(proxy_port: u16, address: &[u8], port: u16) {
+pub(super) fn socks_banner(proxy_port: u16, address: &[u8], port: u16) {
     let mut stream = TcpStream::connect(("127.0.0.1", proxy_port)).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(10)))

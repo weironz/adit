@@ -175,6 +175,15 @@ impl TestServer {
     /// not, it is reachable only from inside `net` — the shape a real bastion
     /// hides its targets behind.
     fn start_on_network(net: &TestNetwork, alias: &str, publish: bool) -> TestServer {
+        Self::start_on_network_with_port(net, alias, publish, None)
+    }
+
+    fn start_on_network_with_port(
+        net: &TestNetwork,
+        alias: &str,
+        publish: bool,
+        host_port: Option<u16>,
+    ) -> TestServer {
         let image = ensure_image();
         let label = format!("{OWNER_LABEL}={}", run_owner());
         let name = format!("adit-it-{}-{}", run_owner(), unique());
@@ -195,8 +204,12 @@ impl TestServer {
             "--hostname",
             alias,
         ];
+        let port_mapping = host_port.map_or_else(
+            || "127.0.0.1::2222".to_string(),
+            |port| format!("127.0.0.1:{port}:2222"),
+        );
         if publish {
-            args.extend(["-p", "127.0.0.1::2222"]);
+            args.extend(["-p", &port_mapping]);
         }
         args.push(&image.tag);
         let id = docker(&args).expect("docker run on network");
@@ -946,6 +959,109 @@ fn local_forward_reaches_the_remote_sshd() {
         banner.starts_with("SSH-2.0"),
         "expected the remote sshd banner through the forward, got: {banner:?}"
     );
+}
+
+#[test]
+fn local_forward_redials_after_its_sshd_restarts() {
+    let net = TestNetwork::create();
+    let server =
+        TestServer::start_on_network_with_port(&net, "server", true, Some(free_local_port()));
+    server.wait_ready(Duration::from_secs(30));
+    let bind_port = free_local_port();
+    let mut request = TunnelRequest::new(
+        "127.0.0.1",
+        server.port,
+        USER,
+        PASS,
+        TunnelKind::Local,
+        "127.0.0.1",
+        bind_port,
+        "127.0.0.1",
+        2222,
+    );
+    request.known_hosts_path = temp_known_hosts();
+    request.reconnect_delays = vec![Duration::from_secs(2); 6];
+    let handle = spawn_tunnel_session(request).expect("spawn tunnel");
+    wait_tunnel_listening(&handle, Duration::from_secs(20));
+    assert!(read_line(bind_port, Duration::from_secs(5))
+        .unwrap()
+        .starts_with("SSH-"));
+
+    // Only the uniquely named and labelled fixture container is restarted.
+    docker(&["restart", "-t", "1", &server.id]).expect("restart fixture sshd");
+    assert_eq!(published_port(&server.id, 2222), server.port);
+    server.wait_ready(Duration::from_secs(30));
+    let reconnected = pump_until(
+        Duration::from_secs(30),
+        || handle.try_recv(),
+        |event| match event {
+            TunnelEvent::Listening { .. } => ControlFlow::Break(true),
+            TunnelEvent::RetryExhausted { .. } | TunnelEvent::Stopped => ControlFlow::Break(false),
+            _ => ControlFlow::Continue(()),
+        },
+    );
+    assert_eq!(reconnected, Some(true), "tunnel should listen again");
+    assert!(read_line(bind_port, Duration::from_secs(5))
+        .unwrap()
+        .starts_with("SSH-"));
+    handle.send(adit_ssh::TunnelCommand::Disconnect).unwrap();
+}
+
+#[test]
+fn dynamic_and_remote_forwards_redial_after_sshd_restarts() {
+    for kind in [TunnelKind::Dynamic, TunnelKind::Remote] {
+        let net = TestNetwork::create();
+        let server =
+            TestServer::start_on_network_with_port(&net, "server", true, Some(free_local_port()));
+        server.wait_ready(Duration::from_secs(30));
+        let (target_port, greeting) = greeting_listener();
+        let bind_port = if matches!(kind, TunnelKind::Remote) {
+            18024
+        } else {
+            free_local_port()
+        };
+        let mut request = TunnelRequest::new(
+            "127.0.0.1",
+            server.port,
+            USER,
+            PASS,
+            kind,
+            "127.0.0.1",
+            bind_port,
+            "127.0.0.1",
+            target_port,
+        );
+        request.known_hosts_path = temp_known_hosts();
+        request.reconnect_delays = vec![Duration::from_secs(2); 6];
+        let handle = spawn_tunnel_session(request).expect("spawn tunnel");
+        wait_tunnel_listening(&handle, Duration::from_secs(20));
+        if matches!(kind, TunnelKind::Dynamic) {
+            authentication::socks_banner(bind_port, &[1, 127, 0, 0, 1], 2222);
+        } else {
+            assert!(probe_forward_from_inside(&server, bind_port, &greeting).0);
+        }
+        docker(&["restart", "-t", "1", &server.id]).expect("restart fixture sshd");
+        assert_eq!(published_port(&server.id, 2222), server.port);
+        server.wait_ready(Duration::from_secs(30));
+        let reconnected = pump_until(
+            Duration::from_secs(30),
+            || handle.try_recv(),
+            |event| match event {
+                TunnelEvent::Listening { .. } => ControlFlow::Break(true),
+                TunnelEvent::RetryExhausted { .. } | TunnelEvent::Stopped => {
+                    ControlFlow::Break(false)
+                }
+                _ => ControlFlow::Continue(()),
+            },
+        );
+        assert_eq!(reconnected, Some(true), "tunnel should listen again");
+        if matches!(kind, TunnelKind::Dynamic) {
+            authentication::socks_banner(bind_port, &[1, 127, 0, 0, 1], 2222);
+        } else {
+            assert!(probe_forward_from_inside(&server, bind_port, &greeting).0);
+        }
+        handle.send(adit_ssh::TunnelCommand::Disconnect).unwrap();
+    }
 }
 
 /// Drive a shell whose target sits behind `bastion` (published) on an
