@@ -163,7 +163,12 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
             .into_iter()
             .map(|layer| dialog_focus::background(layer, true))
             .collect();
-        layers.push(accessibility::modal(top));
+        let escape = if a11y_namespace == "menu" {
+            top_menu_escape(app).map(Message::DismissMenu)
+        } else {
+            None
+        };
+        layers.push(accessibility::modal(top, escape));
     } else {
         let base = layers.pop().unwrap();
         layers.push(dialog_focus::background(base, false));
@@ -174,6 +179,22 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         stack(layers).into()
     };
     accessibility::scope(window, a11y_namespace, content)
+}
+
+pub(crate) fn top_menu_escape(app: &AditApp) -> Option<MenuEscapeTarget> {
+    if app.terminal_context_menu {
+        Some(MenuEscapeTarget::Terminal)
+    } else if app.move_to_group_menu && !app.selected_profiles.is_empty() {
+        Some(MenuEscapeTarget::MoveGroup)
+    } else if let Some(group) = &app.group_context_menu {
+        Some(MenuEscapeTarget::Group(group.clone()))
+    } else if let Some(session) = app.tab_context_menu {
+        Some(MenuEscapeTarget::Tab(session))
+    } else if let Some(profile) = app.profile_context_menu {
+        Some(MenuEscapeTarget::Profile(profile))
+    } else {
+        app.active_menu.map(MenuEscapeTarget::Active)
+    }
 }
 
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {

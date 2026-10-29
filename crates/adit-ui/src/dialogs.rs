@@ -196,6 +196,7 @@ pub(crate) fn host_key_dialog_overlay(
         "host-key:once",
         "host-key:trust",
     ];
+    let group = dialog_focus::FocusGroup::new();
     let action = |index, label: &'static str, decision, primary| {
         let message = Message::RespondHostKey {
             session_id,
@@ -213,7 +214,7 @@ pub(crate) fn host_key_dialog_overlay(
                 }
             })
             .on_press(message.clone());
-        accessibility::confirmation_button(&keys, index, t(label), message, button)
+        accessibility::confirmation_button(&keys, index, &group, t(label), message, button)
     };
 
     let panel = container(
@@ -383,6 +384,7 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
 /// Confirm-before-open for a terminal hyperlink: shows the **real** destination
 /// (the URL came from remote output) before launching the browser.
 pub(crate) fn hyperlink_confirm_overlay(url: &str, generation: u64) -> Element<'static, Message> {
+    let group = dialog_focus::FocusGroup::new();
     let panel = container(
         column![
             text(t("打开链接？")).size(16).color(primary_text()),
@@ -411,6 +413,7 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str, generation: u64) -> Element<'
                 accessibility::confirmation_button(
                     &["hyperlink:cancel", "hyperlink:open"],
                     0,
+                    &group,
                     t("取消"),
                     Message::CancelOpenHyperlink(generation),
                     button(t("取消"))
@@ -422,6 +425,7 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str, generation: u64) -> Element<'
                 accessibility::confirmation_button(
                     &["hyperlink:cancel", "hyperlink:open"],
                     1,
+                    &group,
                     t("打开"),
                     Message::ConfirmOpenHyperlink(generation),
                     button(text(t("打开")).size(13))

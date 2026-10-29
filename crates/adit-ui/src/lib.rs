@@ -384,6 +384,7 @@ pub struct AditApp {
     tunnel_save: bool,
     terminal_input: String,
     terminal_focused: bool,
+    accessibility_focus_restore: Option<accessibility::RemoteFocusLease>,
     terminal_size: TerminalSize,
     terminal_pointer: Option<TerminalPoint>,
     // Anchored in ABSOLUTE scrollback rows (not viewport rows) so it stays correct
@@ -665,6 +666,16 @@ pub enum MenuKind {
     Transfer,
     Script,
     Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuEscapeTarget {
+    Active(MenuKind),
+    Profile(ProfileId),
+    Tab(SessionId),
+    Group(String),
+    MoveGroup,
+    Terminal,
 }
 
 /// Which text box in the sync panel changed. One message with a field tag
@@ -1122,11 +1133,7 @@ pub enum Message {
         window: window::Id,
         id: iced::advanced::widget::Id,
     },
-    DialogFocus {
-        window: Option<window::Id>,
-        scope: String,
-        id: iced::advanced::widget::Id,
-    },
+    DismissMenu(MenuEscapeTarget),
     ToggleFullscreen,
     CloseSyncPanel,
     SyncProviderChanged(adit_storage::SyncProvider),
@@ -1774,6 +1781,7 @@ impl AditApp {
             tunnel_save: true,
             terminal_input: String::new(),
             terminal_focused: false,
+            accessibility_focus_restore: None,
             // Startup is never fullscreen (the flag is deliberately not
             // persisted, see `AditApp::fullscreen`).
             terminal_size: estimated_terminal_size(
@@ -2181,8 +2189,8 @@ fn mission_name_runtime_event(
     window: window::Id,
 ) -> Option<Message> {
     match &event {
-        // text_input consumes Escape to blur itself. Retain the local lease
-        // through key-up, then cancel, so neither half reaches the desktop.
+        // The focused rename widget owns both edges. A covered rename must not
+        // consume Escape captured by a different modal in this window.
         event::Event::Keyboard(keyboard::Event::KeyPressed {
             key: Key::Named(Named::Escape),
             ..
@@ -2190,7 +2198,7 @@ fn mission_name_runtime_event(
         event::Event::Keyboard(keyboard::Event::KeyReleased {
             key: Key::Named(Named::Escape),
             ..
-        }) => Some(Message::FinishMissionName(false)),
+        }) => None,
         _ => runtime_event(event, status, window),
     }
 }

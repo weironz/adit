@@ -1025,7 +1025,9 @@ impl DesktopApplication {
                 .into_iter()
                 .map(|layer| dialog_focus::background(layer, true))
                 .collect();
-            layers.push(accessibility::modal(top));
+            let escape = (namespace == "menu" && state.terminal_context_menu)
+                .then_some(Message::DismissMenu(MenuEscapeTarget::Terminal));
+            layers.push(accessibility::modal(top, escape));
         } else {
             let base = layers.pop().unwrap();
             layers.push(dialog_focus::background(base, false));
@@ -1359,6 +1361,40 @@ mod tests {
         assert!(desktop.app.pending_hyperlink.is_none());
         let _ = desktop.dispatch(child, Message::CancelOpenHyperlink(second));
         assert!(desktop.windows[&child].state.pending_hyperlink.is_none());
+    }
+
+    #[test]
+    fn uia_focus_restores_only_the_detached_windows_original_session() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.app.accessibility.opening(desktop.primary);
+        desktop.app.accessibility.opening(child);
+        desktop.app.terminal_focused = false;
+        let _ = desktop.in_window(child, |app| {
+            app.terminal_focused = true;
+            app.desktop_window_focused = true;
+            let _ = update(
+                app,
+                Message::OpenHyperlink("https://fixture.invalid".into()),
+            );
+            let generation = app.hyperlink_prompt_generation;
+            let _ = update(
+                app,
+                Message::AccessibilityFocus {
+                    window: child,
+                    id: iced::advanced::widget::Id::from("synthetic-link"),
+                },
+            );
+            assert!(!app.terminal_focused);
+            let _ = update(app, Message::CancelOpenHyperlink(generation));
+            assert!(app.terminal_focused);
+            assert_eq!(app.manager.active_session(), Some(ids[0]));
+            Task::none()
+        });
+        assert!(desktop.windows[&child].state.terminal_focused);
+        assert!(!desktop.app.terminal_focused);
+        assert_ne!(desktop.app.manager.active_session(), Some(ids[0]));
     }
 
     #[test]

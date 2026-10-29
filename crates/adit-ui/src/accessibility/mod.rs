@@ -37,6 +37,10 @@ fn input_id(label: &str) -> iced::advanced::widget::Id {
     })
 }
 
+pub(crate) fn current_build_scope() -> String {
+    BUILD.with(|scope| scope.borrow().clone().unwrap_or_default())
+}
+
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 mod acceptance;
 #[cfg(windows)]
@@ -77,6 +81,72 @@ impl State {
         }
         #[cfg(windows)]
         native::unregister(window);
+    }
+}
+
+/// A UIA focus request temporarily owns a confirmation's keyboard focus.
+/// The lease is projected with its window's presentation, never globally.
+pub(crate) struct RemoteFocusLease {
+    window: window::Id,
+    session: SessionId,
+    scope: String,
+    terminal_was_focused: bool,
+}
+
+fn restorable_confirmation(scope: &str) -> bool {
+    scope.starts_with("host-key-dialog:")
+        || scope.starts_with("hyperlink:")
+        || scope.starts_with("challenge:")
+        || scope == "connection-dialog"
+        || scope == "native-modal-blocked"
+}
+
+pub(crate) fn suspend_remote_focus(app: &mut AditApp, window: window::Id) {
+    let scope = namespace(app);
+    let session = app
+        .manager
+        .active_session()
+        .filter(|_| restorable_confirmation(&scope) && native_windows::owns_selected_session(app));
+    if let Some(session) = session {
+        match app.accessibility_focus_restore.as_mut() {
+            Some(lease) if lease.window == window && lease.session == session => {
+                lease.scope = scope;
+            }
+            _ => {
+                app.accessibility_focus_restore = Some(RemoteFocusLease {
+                    window,
+                    session,
+                    scope,
+                    terminal_was_focused: app.terminal_focused,
+                });
+            }
+        }
+    } else {
+        app.accessibility_focus_restore = None;
+    }
+    app.terminal_focused = false;
+}
+
+pub(crate) fn reconcile_remote_focus(app: &mut AditApp) {
+    let Some(mut lease) = app.accessibility_focus_restore.take() else {
+        return;
+    };
+    if !app.accessibility.windows.contains(&lease.window)
+        || app.native_window_id.or(app.accessibility.primary) != Some(lease.window)
+        || app.manager.active_session() != Some(lease.session)
+        || app.manager.session_summary(lease.session).is_none()
+        || !native_windows::owns_selected_session(app)
+    {
+        return;
+    }
+    let scope = namespace(app);
+    if scope == lease.scope || restorable_confirmation(&scope) {
+        lease.scope = scope;
+        app.accessibility_focus_restore = Some(lease);
+    } else if scope == "main" && lease.terminal_was_focused && remote_workspace_eligible(app) {
+        // This restores only local routing state. It never foregrounds a HWND
+        // or revives a held key or an old IME composition.
+        app.terminal_focused = true;
     }
 }
 
@@ -243,32 +313,29 @@ pub(crate) fn button<'a>(
     control(child, Control::button(key, label, message))
 }
 
-/// Confirmation buttons share a cyclic focus order, with the first (refusal)
-/// action selected whenever a new challenge or link generation appears.
+/// Confirmation buttons share focus, starting on refusal for each generation.
+/// Reverse navigation stops there instead of wrapping directly to trust/open.
 pub(crate) fn confirmation_button<'a>(
     keys: &[&str],
     index: usize,
+    group: &dialog_focus::FocusGroup,
     label: &str,
     message: Message,
     child: impl Into<Element<'a, Message>>,
 ) -> Element<'a, Message> {
     let scope = BUILD.with(|scope| scope.borrow().clone().unwrap_or_default());
-    let window = BUILD_WINDOW.with(Cell::get);
     let id = input_id(keys[index]);
-    let previous = input_id(keys[(index + keys.len() - 1) % keys.len()]);
-    let next = input_id(keys[(index + 1) % keys.len()]);
     let mut metadata = Control::button(keys[index], label, message.clone());
     metadata.focus = Some(id.clone());
     control(
         dialog_focus::button(
             child.into(),
             dialog_focus::ButtonFocus {
-                window,
                 scope,
                 id,
-                previous,
-                next,
-                default: index == 0,
+                index,
+                count: keys.len(),
+                group: group.clone(),
                 action: message,
             },
         ),
@@ -284,6 +351,7 @@ fn window_scope_id(window: window::Id) -> iced::advanced::widget::Id {
 struct FocusIfPresent {
     target: iced::advanced::widget::Id,
     found: bool,
+    confirmation: bool,
 }
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
@@ -300,14 +368,50 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
         self.found |= id == Some(&self.target);
     }
 
+    fn custom(
+        &mut self,
+        id: Option<&iced::advanced::widget::Id>,
+        _bounds: iced::Rectangle,
+        state: &mut dyn std::any::Any,
+    ) {
+        if id == Some(&self.target) && state.is::<dialog_focus::FocusState>() {
+            self.found = true;
+            self.confirmation = true;
+        }
+    }
+
     fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
         use iced::advanced::widget::operation::{focusable, Outcome};
-        if self.found {
+        if self.confirmation {
+            Outcome::Chain(Box::new(FocusConfirmation(self.target.clone())))
+        } else if self.found {
             Outcome::Chain(Box::new(focusable::focus(self.target.clone())))
         } else {
             // A task queued for an old challenge must not unfocus the new
             // dialog's safe default when the old widget no longer exists.
             Outcome::None
+        }
+    }
+}
+
+struct FocusConfirmation(iced::advanced::widget::Id);
+
+impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>)) {
+        operate(self);
+    }
+
+    fn custom(
+        &mut self,
+        id: Option<&iced::advanced::widget::Id>,
+        _bounds: iced::Rectangle,
+        state: &mut dyn std::any::Any,
+    ) {
+        if let (true, Some(button)) = (
+            id == Some(&self.0),
+            state.downcast_mut::<dialog_focus::FocusState>(),
+        ) {
+            button.focus();
         }
     }
 }
@@ -321,6 +425,7 @@ pub(crate) fn focus_widget(
     let focus = FocusIfPresent {
         target: id,
         found: false,
+        confirmation: false,
     };
     #[cfg(windows)]
     if let Some(window) = window {
@@ -369,8 +474,11 @@ pub(crate) fn scope<'a>(
     }
 }
 
-pub(crate) fn modal<'a>(child: Element<'a, Message>) -> Element<'a, Message> {
-    let child = dialog_focus::shield(child);
+pub(crate) fn modal<'a>(
+    child: Element<'a, Message>,
+    escape: Option<Message>,
+) -> Element<'a, Message> {
+    let child = dialog_focus::shield(child, escape);
     #[cfg(windows)]
     {
         widget::modal(child)
@@ -737,6 +845,170 @@ pub(crate) fn detached_namespace(
 mod tests {
     use super::*;
 
+    fn focus_fixture() -> (AditApp, window::Id, SessionId, SessionId) {
+        let profiles = vec![
+            ConnectionProfile::new("one", "fixture.invalid", 22, "fixture"),
+            ConnectionProfile::new("two", "fixture.invalid", 22, "fixture"),
+        ];
+        let ids: Vec<_> = profiles.iter().map(|profile| profile.id).collect();
+        let mut manager = SessionManager::with_profiles(profiles);
+        let one = manager.open_mock_session(ids[0]).unwrap();
+        let two = manager.open_mock_session(ids[1]).unwrap();
+        manager.activate(one).unwrap();
+        let window = window::Id::unique();
+        let mut app = AditApp {
+            manager,
+            main_view: MainView::Terminal,
+            native_main_window: Some(window),
+            native_window_id: Some(window),
+            terminal_focused: true,
+            desktop_window_focused: true,
+            ..AditApp::default()
+        };
+        app.accessibility.opening(window);
+        (app, window, one, two)
+    }
+
+    fn focus_link(app: &mut AditApp, window: window::Id) -> (u64, u64) {
+        let _ = update_loop::update(
+            app,
+            Message::OpenHyperlink("https://fixture.invalid".into()),
+        );
+        let generation = app.hyperlink_prompt_generation;
+        let old_epoch = app.vnc_input_epoch;
+        let _ = update_loop::update(
+            app,
+            Message::AccessibilityFocus {
+                window,
+                id: iced::advanced::widget::Id::from("synthetic-confirmation"),
+            },
+        );
+        assert!(!app.terminal_focused);
+        (generation, old_epoch)
+    }
+
+    #[test]
+    fn uia_confirmation_restores_only_same_session_and_fresh_input() {
+        let (mut app, window, session, _) = focus_fixture();
+        let (generation, old_epoch) = focus_link(&mut app, window);
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(app.terminal_focused);
+        assert!(remote_workspace_accepts_input(&app));
+        let before = snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200)));
+        let _ = update_loop::update(
+            &mut app,
+            Message::NativeImeEvent(
+                session,
+                old_epoch,
+                iced::advanced::input_method::Event::Commit("STALE".into()),
+            ),
+        );
+        assert_eq!(
+            snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200))),
+            before
+        );
+        let current_epoch = app.vnc_input_epoch;
+        let _ = update_loop::update(
+            &mut app,
+            Message::NativeImeEvent(
+                session,
+                current_epoch,
+                iced::advanced::input_method::Event::Commit("SYNTHETIC-FRESH-IME".into()),
+            ),
+        );
+        assert!(
+            snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200)))
+                .contains("SYNTHETIC-FRESH-IME")
+        );
+        let after_ime =
+            snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200)));
+        let key = Key::Character("q".into());
+        let _ = update_loop::update(
+            &mut app,
+            Message::KeyboardInput(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyQ),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: Some("q".into()),
+                repeat: false,
+            }),
+        );
+        assert_ne!(
+            snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200))),
+            after_ime
+        );
+    }
+
+    #[test]
+    fn uia_focus_restore_does_not_steal_another_session_window_or_local_field() {
+        let (mut app, window, _, other) = focus_fixture();
+        let (generation, _) = focus_link(&mut app, window);
+        app.manager.activate(other).unwrap();
+        let _ = update_loop::update(&mut app, Message::ClearError);
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(!app.terminal_focused);
+        assert_eq!(app.manager.active_session(), Some(other));
+
+        let (mut app, window, _, _) = focus_fixture();
+        app.terminal_focused = false;
+        let (generation, _) = focus_link(&mut app, window);
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(!app.terminal_focused);
+
+        let (mut app, window, _, _) = focus_fixture();
+        let (generation, _) = focus_link(&mut app, window);
+        app.desktop_window_focused = false;
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(app.terminal_focused);
+        assert!(!remote_workspace_accepts_input(&app));
+        app.desktop_window_focused = true;
+        assert!(remote_workspace_accepts_input(&app));
+
+        let (mut app, window, _, _) = focus_fixture();
+        let (generation, _) = focus_link(&mut app, window);
+        app.search_open = true;
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(!app.terminal_focused);
+        assert!(app.search_open);
+
+        let (mut app, window, _, _) = focus_fixture();
+        let (generation, _) = focus_link(&mut app, window);
+        app.native_window_id = Some(window::Id::unique());
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(!app.terminal_focused);
+
+        let (mut app, window, _, _) = focus_fixture();
+        let (generation, _) = focus_link(&mut app, window);
+        app.accessibility.closed(window);
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(!app.terminal_focused);
+    }
+
+    #[test]
+    fn another_windows_modal_defers_focus_restore_for_the_same_session() {
+        let (mut app, window, session, _) = focus_fixture();
+        let (generation, _) = focus_link(&mut app, window);
+        let profile = app.manager.session_summary(session).unwrap().profile_id;
+        app.native_dialog_window = Some(window::Id::unique());
+        app.connection_dialog = Some(ConnectionDialog {
+            profile_id: profile,
+            retry_session: None,
+            title: "synthetic".into(),
+            endpoint: "fixture.invalid".into(),
+            auth_method: AuthMethod::Password,
+            identity_file: String::new(),
+        });
+        let _ = update_loop::update(&mut app, Message::ClearError);
+        assert_eq!(namespace(&app), "native-modal-blocked");
+        assert!(!app.terminal_focused);
+        app.connection_dialog = None;
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert!(app.terminal_focused);
+        assert_eq!(app.manager.active_session(), Some(session));
+    }
+
     #[test]
     fn delayed_focus_for_retired_dialog_cannot_clear_new_default() {
         use iced::advanced::widget::{
@@ -761,6 +1033,7 @@ mod tests {
         let mut request = FocusIfPresent {
             target: old,
             found: false,
+            confirmation: false,
         };
         <FocusIfPresent as Operation<()>>::focusable(
             &mut request,

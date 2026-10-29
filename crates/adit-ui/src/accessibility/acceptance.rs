@@ -35,6 +35,9 @@ struct Snapshot {
     main_view: MainView,
     active_session: Option<SessionId>,
     terminal_input: String,
+    terminal_focused: bool,
+    mission_name_editing: bool,
+    active_menu: Option<MenuKind>,
 }
 
 enum Command {
@@ -42,6 +45,9 @@ enum Command {
     Host(bool, mpsc::Sender<Snapshot>),
     Link(mpsc::Sender<Snapshot>),
     Barrier(mpsc::Sender<Snapshot>),
+    LegacyFocus(mpsc::Sender<Snapshot>),
+    Rename(mpsc::Sender<Snapshot>),
+    Menu(mpsc::Sender<Snapshot>),
 }
 
 struct Harness {
@@ -79,7 +85,8 @@ fn allowed(message: &Message) -> bool {
             | Message::ShowMainView(_)
             | Message::AccessibilityScrollLines { .. }
             | Message::AccessibilityFocus { .. }
-            | Message::DialogFocus { .. }
+            | Message::DismissMenu(_)
+            | Message::FinishMissionName(_)
             | Message::EditProfileFromContext(_)
             | Message::CloseProfileEditor
             | Message::SaveProfile
@@ -104,6 +111,9 @@ fn snapshot(state: &Harness) -> Snapshot {
         main_view: state.app.main_view,
         active_session: state.app.manager.active_session(),
         terminal_input: state.app.terminal_input.clone(),
+        terminal_focused: state.app.terminal_focused,
+        mission_name_editing: mission_name_editing(&state.app),
+        active_menu: state.app.active_menu,
     }
 }
 
@@ -167,6 +177,26 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                     Command::Hold(ack) => {
                         state.hold_actions = true;
                         (ack, None)
+                    }
+                    Command::LegacyFocus(ack) => {
+                        state.hold_actions = false;
+                        let _ = ack.send(snapshot(state));
+                        return iced::advanced::widget::operate(
+                            iced::advanced::widget::operation::focusable::focus(command_input_id()),
+                        )
+                        .map(Event::App);
+                    }
+                    Command::Rename(ack) => {
+                        state.hold_actions = false;
+                        let task = begin_mission_name(&mut state.app);
+                        rename_mission(&mut state.app, "SYNTHETIC mission draft".into());
+                        let _ = ack.send(snapshot(state));
+                        return task.map(Event::App);
+                    }
+                    Command::Menu(ack) => {
+                        state.hold_actions = false;
+                        state.app.active_menu = Some(MenuKind::File);
+                        (ack, Some(Message::Tick))
                     }
                     Command::Host(changed, ack) => {
                         let (prompt, receiver) = HostKeyPromptInfo::channel(
@@ -270,8 +300,14 @@ fn view(state: &Harness) -> Element<'_, Event> {
     chrome::view(&state.app).map(Event::App)
 }
 
-fn subscription(_: &Harness) -> Subscription<Event> {
+fn subscription(state: &Harness) -> Subscription<Event> {
+    let mission = if mission_name_editing(&state.app) {
+        event::listen_with(mission_name_runtime_event).map(Event::App)
+    } else {
+        Subscription::none()
+    };
     Subscription::batch([
+        mission,
         iced::time::every(Duration::from_millis(40)).map(|_| Event::Pulse),
         event::listen_with(|event, _, id| match event {
             event::Event::Window(window::Event::Opened { size, .. })

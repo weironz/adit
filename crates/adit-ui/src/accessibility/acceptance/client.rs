@@ -266,15 +266,69 @@ fn dialog_acceptance(
                 .as_bool()
                 .then_some(())
         })?;
+        if command(commands, Command::Barrier)?.terminal_focused {
+            return Err("UIA focus did not suspend remote keyboard input".into());
+        }
         client.invoke(&button)?;
         let result = command(commands, Command::Barrier)?;
         if result.decisions.last() != Some(&(id, decision)) {
             return Err(format!("host action {key} did not reach its challenge"));
         }
+        if !result.terminal_focused || result.active_session != first.active_session {
+            return Err("host confirmation did not restore the original session focus".into());
+        }
         client.wait("host dialog closed after decision", || {
             client.by_id("host-key:dialog").is_none().then_some(())
         })?;
     }
+
+    // Post both keys without an intervening application update or UIA wait.
+    let installed = command(commands, |ack| Command::Host(false, ack))?;
+    let id = installed.challenge.ok_or("batched challenge missing")?;
+    client.wait("batched host challenge", || {
+        client.by_id(&format!(":{id}/host-key:dialog"))
+    })?;
+    let reject = client.named("拒绝", "host-key:reject")?;
+    client.wait("batched challenge defaults to reject", || {
+        unsafe { reject.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x09, 0x0f)?;
+    post_key(hwnd, 0x20, 0x39)?;
+    client.wait("batched Tab and Space select reject-and-record", || {
+        let result = command(commands, Command::Barrier).ok()?;
+        (result.decisions.last() == Some(&(id, HostKeyDecision::RejectAndRecord))).then_some(())
+    })?;
+
+    let installed = command(commands, |ack| Command::Host(false, ack))?;
+    let id = installed
+        .challenge
+        .ok_or("legacy-focus challenge missing")?;
+    client.wait("legacy-focus challenge", || {
+        client.by_id(&format!(":{id}/host-key:dialog"))
+    })?;
+    let reject = client.named("拒绝", "host-key:reject")?;
+    client.wait("legacy-focus challenge defaults to reject", || {
+        unsafe { reject.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    command(commands, Command::LegacyFocus)?;
+    std::thread::sleep(Duration::from_millis(100));
+    client.wait("legacy global focus did not clear reject", || {
+        unsafe { reject.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x0d, 0x1c)?;
+    client.wait("Enter after old focus rejects", || {
+        let result = command(commands, Command::Barrier).ok()?;
+        (result.decisions.last() == Some(&(id, HostKeyDecision::Reject))).then_some(())
+    })?;
 
     // Exercise the real HWND's keyboard path as well as UIA Invoke. Each new
     // challenge must begin at Reject, regardless of the previous selection.
@@ -325,6 +379,7 @@ fn dialog_acceptance(
     }
 
     // Hold the queue so an old Invoke is definitely queued before replacement.
+    let decision_count = command(commands, Command::Barrier)?.decisions.len();
     let old = command(commands, |ack| Command::Host(false, ack))?;
     let old_id = old.challenge.ok_or("old host challenge missing")?;
     client.wait("old host dialog", || {
@@ -337,7 +392,7 @@ fn dialog_acceptance(
     let replacement_id = replacement
         .challenge
         .ok_or("replacement host challenge missing")?;
-    if old_id == replacement_id || replacement.decisions.len() != 8 {
+    if old_id == replacement_id || replacement.decisions.len() != decision_count {
         return Err("queued host action reached a replacement challenge".into());
     }
     client.wait("replacement host dialog", || {
@@ -345,7 +400,9 @@ fn dialog_acceptance(
     })?;
     let _ = client.invoke(&old_button);
     let after_stale = command(commands, Command::Barrier)?;
-    if after_stale.decisions.len() != 8 || after_stale.challenge != Some(replacement_id) {
+    if after_stale.decisions.len() != decision_count
+        || after_stale.challenge != Some(replacement_id)
+    {
         return Err("cached host action reached a replacement challenge".into());
     }
     client.invoke(&client.named("拒绝", "host-key:reject")?)?;
@@ -415,6 +472,34 @@ fn dialog_acceptance(
     let opened = command(commands, Command::Barrier)?;
     if opened.link_pending || opened.opened_links != [LINK] {
         return Err("link confirmation did not reach the isolated open sink".into());
+    }
+    let rename = command(commands, Command::Rename)?;
+    if !rename.mission_name_editing {
+        return Err("fixture did not start the synthetic mission rename".into());
+    }
+    command(commands, Command::Menu)?;
+    client.wait("menu covers the mission rename", || {
+        let state = command(commands, Command::Barrier).ok()?;
+        (state.active_menu == Some(MenuKind::File) && client.by_id("navigation:Missions").is_none())
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x1b, 0x01)?;
+    client.wait("Escape dismisses menu without cancelling rename", || {
+        let state = command(commands, Command::Barrier).ok()?;
+        (state.active_menu.is_none() && state.mission_name_editing).then_some(())
+    })?;
+    command(commands, Command::Link)?;
+    client.named("打开链接？", "hyperlink:dialog")?;
+    post_key(hwnd, 0x1b, 0x01)?;
+    std::thread::sleep(Duration::from_millis(150));
+    let covered_rename = command(commands, Command::Barrier)?;
+    if !covered_rename.link_pending || !covered_rename.mission_name_editing {
+        return Err("modal Escape changed the covered mission rename".into());
+    }
+    client.invoke(&client.named("取消", "hyperlink:cancel")?)?;
+    let after_cancel = command(commands, Command::Barrier)?;
+    if after_cancel.link_pending || !after_cancel.mission_name_editing {
+        return Err("link cancellation did not preserve the mission rename".into());
     }
     Ok(())
 }
@@ -545,6 +630,9 @@ pub(super) fn run(
         "link_uia_destination_cancel_and_open": true,
         "dialog_modal_isolation": true,
         "host_key_keyboard_tab_enter_space_and_safe_default": true,
+        "batched_keyboard_and_legacy_focus_safe": true,
+        "uia_dialog_focus_restores_original_session": true,
+        "menu_escape_and_covered_mission_rename": true,
         "link_keyboard_tab_and_safe_default": true,
         "queued_and_cached_stale_dialog_actions_rejected": true,
         "links_opened_only_in_fixture_sink": true,

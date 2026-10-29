@@ -194,9 +194,13 @@ pub(crate) fn vnc_accepts_text_input(app: &AditApp) -> bool {
 }
 
 pub(crate) fn remote_workspace_accepts_input(app: &AditApp) -> bool {
-    app.desktop_window_focused
-        && native_windows::owns_selected_session(app)
-        && app.terminal_focused
+    app.desktop_window_focused && app.terminal_focused && remote_workspace_eligible(app)
+}
+
+/// Whether the selected session can own input, independently of native-window
+/// and widget focus. Used to restore only the same uncovered session.
+pub(crate) fn remote_workspace_eligible(app: &AditApp) -> bool {
+    native_windows::owns_selected_session(app)
         && app.main_view != MainView::Hosts
         && (app.main_view != MainView::Missions || mission_has_active_member(app))
         && app.active_menu.is_none()

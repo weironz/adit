@@ -27,6 +27,8 @@ struct Snapshot {
     terminal: String,
     view: MainView,
     child_scroll: usize,
+    child_terminal: String,
+    child_terminal_focused: bool,
     primary_focused: bool,
     command_open: bool,
     immediate: bool,
@@ -40,6 +42,7 @@ enum Command {
     ProbeBackground(mpsc::Sender<Snapshot>),
     Modal(mpsc::Sender<Snapshot>),
     CloseModal(mpsc::Sender<Snapshot>),
+    Ime(bool, mpsc::Sender<Snapshot>),
     Wheel(usize, mpsc::Sender<Snapshot>),
     Snapshot(mpsc::Sender<Snapshot>),
 }
@@ -79,6 +82,14 @@ fn snapshot(state: &Harness) -> Snapshot {
         child_scroll: state.desktop.windows[&state.child]
             .state
             .terminal_scroll_offset,
+        child_terminal: snapshot_to_text(
+            &state
+                .desktop
+                .app
+                .manager
+                .snapshot_for(state.child_session, Viewport::visible(300)),
+        ),
+        child_terminal_focused: state.desktop.windows[&state.child].state.terminal_focused,
         primary_focused: state.desktop.focused == Some(state.desktop.primary),
         command_open: state.desktop.app.command_window_open,
         immediate: state.desktop.app.command_send_immediately,
@@ -195,6 +206,22 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                     state.desktop.app.connection_dialog = None;
                     state.desktop.sync_modal_owner();
                     (ack, Task::none())
+                }
+                Command::Ime(stale, ack) => {
+                    let epoch = state.desktop.windows[&state.child].state.vnc_input_epoch;
+                    let epoch = if stale { epoch.wrapping_sub(1) } else { epoch };
+                    let task = state.desktop.dispatch(
+                        state.child,
+                        Message::NativeImeEvent(
+                            state.child_session,
+                            epoch,
+                            iced::advanced::input_method::Event::Commit(
+                                "SYNTHETIC-FRESH-IME".into(),
+                            ),
+                        ),
+                    );
+                    let _ = ack.send(snapshot(state));
+                    return task.map(Event::Native);
                 }
                 Command::Wheel(offset, ack) => {
                     state
@@ -410,6 +437,9 @@ fn client(
             .as_bool()
             .then_some(())
     })?;
+    if command(&sender, Command::Snapshot)?.child_terminal_focused {
+        return Err("UIA focus did not suspend detached remote input".into());
+    }
     command(&sender, Command::BackgroundFocus)?;
     if command(&sender, Command::ProbeBackground)?.background_focusable_found != Some(false) {
         return Err("covered command input remained reachable by widget operations".into());
@@ -421,6 +451,23 @@ fn client(
         return Err("queued focus on the covered window displaced modal focus".into());
     }
     command(&sender, Command::CloseModal)?;
+    let restored = wait("detached session focus restored", || {
+        let state = command(&sender, Command::Snapshot).ok()?;
+        state.child_terminal_focused.then_some(state)
+    })?;
+    post_key(child, 0x41, 0x1e)?;
+    let after_key = wait("detached keyboard works after confirmation", || {
+        let state = command(&sender, Command::Snapshot).ok()?;
+        (state.child_terminal != restored.child_terminal).then_some(state)
+    })?;
+    let stale = command(&sender, |ack| Command::Ime(true, ack))?;
+    if stale.child_terminal != after_key.child_terminal {
+        return Err("stale detached IME commit was accepted".into());
+    }
+    let fresh = command(&sender, |ack| Command::Ime(false, ack))?;
+    if !fresh.child_terminal.contains("SYNTHETIC-FRESH-IME") {
+        return Err("fresh detached IME commit did not reach its mock session".into());
+    }
     std::thread::sleep(Duration::from_millis(200));
     if command(&sender, Command::ProbeBackground)?.background_focusable_found != Some(true) {
         return Err("command input did not return after the modal closed".into());
@@ -449,6 +496,7 @@ fn client(
         json!({"native_uia": true, "production_detached_window_router": true,
         "cross_window_command_keyboard_blocked": true, "detached_uia_focus": true,
         "background_focus_operation_blocked": true,
+        "detached_focus_keyboard_and_fresh_ime_restored": true,
         "detached_scroll_after_wheel": true, "screen_reader_tested": false, "remote_server_tested": false}),
     )
 }

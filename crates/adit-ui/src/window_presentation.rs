@@ -43,6 +43,7 @@ presentation! {
     hyperlink_prompt_generation: u64 = 0,
     terminal_input: String = String::new(),
     terminal_focused: bool = true,
+    accessibility_focus_restore: Option<accessibility::RemoteFocusLease> = None,
     terminal_size: TerminalSize = TerminalSize::default(),
     terminal_pointer: Option<TerminalPoint> = None,
     terminal_selection: Option<TerminalSelection> = None,

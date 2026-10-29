@@ -74,6 +74,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
             tasks.push(update_message(app, message));
         }
     }
+    accessibility::reconcile_remote_focus(app);
     // Focus can move locally without a WindowUnfocused event (settings, menus,
     // sidebar fields). Release keys before returning even from early Task paths.
     if app.manager.active_is_vnc() && !vnc_accepts_text_input(app) {
@@ -145,7 +146,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 && app.native_window_id.or(app.accessibility.primary) == Some(window)
                 && accessibility::namespace(app) != "native-modal-blocked"
             {
-                app.terminal_focused = false;
+                accessibility::suspend_remote_focus(app, window);
                 release_rdp_modifiers(app);
                 // Only an explicit UIA SetFocus requests native focus. Tick,
                 // tree publication and terminal output never do this.
@@ -155,11 +156,18 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 ]);
             }
         }
-        Message::DialogFocus { window, scope, id } => {
-            if window == app.native_window_id.or(app.accessibility.primary)
-                && scope == format!("{window:?}/{}", accessibility::namespace(app))
+        Message::DismissMenu(target) => {
+            if accessibility::namespace(app) == "menu"
+                && chrome::top_menu_escape(app) == Some(target.clone())
             {
-                return accessibility::focus_widget(window, id);
+                match target {
+                    MenuEscapeTarget::Active(_) => app.active_menu = None,
+                    MenuEscapeTarget::Profile(_) => app.profile_context_menu = None,
+                    MenuEscapeTarget::Tab(_) => app.tab_context_menu = None,
+                    MenuEscapeTarget::Group(_) => app.group_context_menu = None,
+                    MenuEscapeTarget::MoveGroup => app.move_to_group_menu = false,
+                    MenuEscapeTarget::Terminal => app.terminal_context_menu = false,
+                }
             }
         }
         Message::Vault(message) => return vault_ui::update(app, message),
@@ -684,7 +692,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::PickMission(id) => pick_mission(app, id),
         Message::MissionNameChanged(name) => rename_mission(app, name),
         Message::BeginMissionName => return begin_mission_name(app),
-        Message::FinishMissionName(commit) => finish_mission_name(app, commit),
+        Message::FinishMissionName(commit) => {
+            if accessibility::namespace(app) == "main" {
+                finish_mission_name(app, commit);
+            }
+        }
         Message::MissionPickerToggled => toggle_mission_picker(app),
         Message::AddMissionSession(id) => add_mission_session(app, id),
         Message::ActivateMissionSession(id) => activate_mission_session(app, id),
