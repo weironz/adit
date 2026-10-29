@@ -2235,6 +2235,16 @@ mod tests {
     use iced::keyboard::key::{Code, Physical};
 
     #[test]
+    fn closing_sftp_discards_pending_overwrite_confirmation() {
+        let mut app = AditApp {
+            sftp_overwrite: Some((Vec::new(), vec![String::from("fixture.txt")])),
+            ..AditApp::default()
+        };
+        let _ = update_loop::update(&mut app, Message::CloseSftp);
+        assert!(app.sftp_overwrite.is_none());
+    }
+
+    #[test]
     fn default_test_apps_never_use_the_users_stores() {
         let first = AditApp::default();
         let second = AditApp::default();

@@ -1616,6 +1616,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::CloseSftp => {
             app.manager.close_sftp();
+            app.sftp_overwrite = None;
             app.sftp_rename = None;
             app.sftp_delete_target = None;
             app.sftp_context_menu = None;

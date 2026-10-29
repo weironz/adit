@@ -68,10 +68,25 @@ fn prepare(app: &AditApp, transfer: PendingTransfer) -> Option<PreparedTransfer>
 }
 
 pub(crate) fn start_transfers(app: &mut AditApp, transfers: Vec<PendingTransfer>) {
+    let mut stale = false;
     let prepared: Vec<_> = transfers
         .into_iter()
+        .filter(|transfer| {
+            if let PendingTransfer::Prepared(plan) = transfer {
+                let current = app.manager.sftp_browser().is_some_and(|browser| {
+                    plan.belongs_to(browser.instance_id, browser.profile_id, &browser.endpoint)
+                });
+                stale |= !current;
+                current
+            } else {
+                true
+            }
+        })
         .filter_map(|transfer| prepare(app, transfer))
         .collect();
+    if stale {
+        app.last_error = Some(t("SFTP 连接已改变，请重新选择传输目标").into());
+    }
     let clashing = prepared
         .iter()
         .filter(|p| p.exists)
@@ -166,6 +181,23 @@ pub(crate) fn begin_save_as(app: &AditApp, name: String) -> Task<Message> {
 #[cfg(test)]
 mod browser_identity_tests {
     use super::*;
+
+    #[test]
+    fn stale_save_dialog_does_not_restore_an_overwrite_prompt() {
+        let mut app = AditApp::default();
+        let plan = PreparedTransfer {
+            browser_instance: SessionId::new(),
+            profile: ProfileId::new(),
+            endpoint: "fixture:22".into(),
+            remote: "/fixture.txt".into(),
+            local: PathBuf::from("fixture.txt"),
+            direction: TransferDirection::Download,
+            exists: true,
+        };
+        start_transfers(&mut app, vec![PendingTransfer::Prepared(plan)]);
+        assert!(app.sftp_overwrite.is_none());
+        assert!(app.last_error.is_some());
+    }
 
     #[test]
     fn reopening_the_same_profile_cannot_reuse_a_prepared_transfer() {
