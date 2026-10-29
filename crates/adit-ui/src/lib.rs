@@ -1414,7 +1414,14 @@ pub(crate) struct RdpTile {
 
 impl Default for AditApp {
     fn default() -> Self {
+        #[cfg(not(test))]
         let profile_store = ProfileStore::default();
+        #[cfg(test)]
+        let profile_store = ProfileStore::new(
+            std::env::temp_dir()
+                .join(format!("adit-ui-test-{}", SessionId::new()))
+                .join("profiles.json"),
+        );
         let load_result = profile_store.load_catalog();
         // Captured before the match below consumes the catalog. Taken only from
         // a successful load: a failed one must not look like "every group had
@@ -1495,7 +1502,11 @@ impl AditApp {
 
         // Restore persisted preferences (theme, folded groups, window size,
         // auto-reconnect).
+        #[cfg(not(test))]
         let settings_store = SettingsStore::default();
+        #[cfg(test)]
+        let settings_store =
+            SettingsStore::new(profile_store.path().with_file_name("settings.json"));
         let settings = settings_store.load().unwrap_or_default();
         // A settings file written before `theme_mode` existed still carries the
         // boolean, so anyone who had picked a theme keeps it instead of being
@@ -1622,6 +1633,21 @@ impl AditApp {
             SIDEBAR_REVEAL_WIDTH
         };
 
+        #[cfg(not(test))]
+        let config_dir = adit_storage::config_dir();
+        #[cfg(test)]
+        let config_dir = profile_store.path().parent().unwrap().to_path_buf();
+        #[cfg(not(test))]
+        let config_dir_custom = adit_storage::custom_config_dir().is_some();
+        #[cfg(test)]
+        let config_dir_custom = false;
+        #[cfg(not(test))]
+        let credential_store = CredentialStore::default();
+        #[cfg(test)]
+        let credential_store = CredentialStore::with_path(
+            "Adit SSH test",
+            profile_store.path().with_file_name("credentials.json"),
+        );
         let mut app = Self {
             accessibility: accessibility::State::default(),
             native_window_id: None,
@@ -1635,7 +1661,7 @@ impl AditApp {
             group_icons,
             manager,
             profile_store,
-            credential_store: CredentialStore::default(),
+            credential_store,
             vault_ui: vault_ui::State::default(),
             selected_profile,
             hovered_profile: None,
@@ -1835,9 +1861,9 @@ impl AditApp {
             sync_held: None,
             sync_status: String::new(),
             sync_conflicts: Vec::new(),
-            config_dir: adit_storage::config_dir(),
+            config_dir,
             pending_config_dir: None,
-            config_dir_custom: adit_storage::custom_config_dir().is_some(),
+            config_dir_custom,
             log_dir,
             log_name_pattern,
             auto_log_on_connect,
@@ -2204,6 +2230,22 @@ fn runtime_event(
 mod tests {
     use super::*;
     use iced::keyboard::key::{Code, Physical};
+
+    #[test]
+    fn default_test_apps_never_use_the_users_stores() {
+        let first = AditApp::default();
+        let second = AditApp::default();
+        let dir = first.profile_store.path().parent().unwrap();
+        assert!(dir.starts_with(std::env::temp_dir()));
+        assert!(dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("adit-ui-test-"));
+        assert_eq!(first.settings_store.path().parent(), Some(dir));
+        assert_eq!(first.credential_store.path().parent(), Some(dir));
+        assert_ne!(first.profile_store.path(), second.profile_store.path());
+    }
 
     #[test]
     fn monitor_rescale_is_handled_without_resizing_or_remote_keyboard_focus() {
