@@ -19,6 +19,7 @@ pub(crate) const BMP_ONLY_NOTICE: &str = "VNC 字符兼容模式：本次输入�
 // path. Bound queued text bodies to 1 MiB and avoid one long, uncancellable batch.
 const MAX_TEXT_BYTES: usize = 4 * 1024;
 pub(crate) const TEXT_TOO_LONG_NOTICE: &str = "VNC：单次文本超过 4 KiB，整段未发送；请分段输入";
+const RFB_CONNECT_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn non_bmp_keysym(keysym: u32) -> bool {
     (0x0101_0000..=0x0110_ffff).contains(&keysym)
@@ -317,6 +318,26 @@ pub(super) fn spawn_vnc_session(
     reconnect: Option<adit_domain::ReconnectPolicy>,
     gateway: Option<LiveShellRequest>,
 ) -> std::io::Result<VncClientHandle> {
+    spawn_vnc_session_with_timeout(
+        host,
+        port,
+        password,
+        options,
+        reconnect,
+        gateway,
+        RFB_CONNECT_TIMEOUT,
+    )
+}
+
+fn spawn_vnc_session_with_timeout(
+    host: String,
+    port: u16,
+    password: String,
+    options: VncOptions,
+    reconnect: Option<adit_domain::ReconnectPolicy>,
+    gateway: Option<LiveShellRequest>,
+    rfb_timeout: Duration,
+) -> std::io::Result<VncClientHandle> {
     let commands = Arc::new(CommandQueue::default());
     let (stop, stopped) = watch::channel(false);
     let (events, event_rx) = std_mpsc::channel();
@@ -339,6 +360,7 @@ pub(super) fn spawn_vnc_session(
         stopped,
         events,
         reconnect,
+        rfb_timeout,
     };
     std::thread::Builder::new()
         .name("adit-vnc".into())
@@ -430,6 +452,7 @@ struct Worker {
     stopped: watch::Receiver<bool>,
     events: std_mpsc::Sender<RdpClientEvent>,
     reconnect: Option<adit_domain::ReconnectPolicy>,
+    rfb_timeout: Duration,
 }
 impl Worker {
     async fn run(
@@ -463,6 +486,7 @@ impl Worker {
                 handshake_rx,
                 ssh_events,
                 Arc::clone(&self.state),
+                self.rfb_timeout,
             );
             tokio::pin!(connect);
             let client_result = loop {
@@ -812,6 +836,7 @@ async fn connect(
     gateway_commands: mpsc::UnboundedReceiver<LiveShellCommand>,
     gateway_events: std_mpsc::Sender<LiveShellEvent>,
     state: Arc<Mutex<SharedState>>,
+    rfb_timeout: Duration,
 ) -> Result<VncClient, VncError> {
     let start = Instant::now();
     let via_ssh = gateway.is_some();
@@ -897,7 +922,7 @@ async fn connect(
             };
             Ok(client)
         },
-        Duration::from_secs(60),
+        rfb_timeout,
     )
     .await
 }
@@ -1101,6 +1126,9 @@ fn copy_rect(surface: &Arc<Mutex<VncSurface>>, dst: Rect, src: Rect) -> Result<(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod gateway_deadline_tests;
 
 #[cfg(test)]
 mod tests {

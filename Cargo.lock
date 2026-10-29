@@ -90,6 +90,7 @@ dependencies = [
  "encoding_rs",
  "image",
  "regex",
+ "russh",
  "rustls-pemfile",
  "serde_json",
  "socket2",
