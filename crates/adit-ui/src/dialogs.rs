@@ -122,44 +122,66 @@ pub(crate) fn host_key_dialog_overlay(
     };
     let title_color = if changed { danger() } else { primary_text() };
 
+    let host = format!("{}:{}", prompt.host, prompt.port);
+    let key_type = tf("密钥类型: {}", &[&prompt.key_type]);
     let mut details = column![
         text(t(title)).size(16).color(title_color),
-        text(format!("{}:{}", prompt.host, prompt.port))
-            .size(13)
-            .color(primary_text()),
-        text(tf("密钥类型: {}", &[&prompt.key_type]))
-            .size(11)
-            .color(muted_text()),
+        accessibility::control(
+            text(host.clone()).size(13).color(primary_text()),
+            accessibility::Control::label("host-key:host", host),
+        ),
+        accessibility::control(
+            text(key_type.clone()).size(11).color(muted_text()),
+            accessibility::Control::label("host-key:type", key_type),
+        ),
         text(t("SHA256 指纹")).size(11).color(muted_text()),
-        text(prompt.fingerprint.clone())
-            .size(12)
-            .font(Font::MONOSPACE)
-            .color(primary_text()),
+        accessibility::control(
+            text(prompt.fingerprint.clone())
+                .size(12)
+                .font(Font::MONOSPACE)
+                .color(primary_text()),
+            accessibility::Control::label(
+                "host-key:fingerprint",
+                format!("{}: {}", t("SHA256 指纹"), prompt.fingerprint),
+            ),
+        ),
     ]
     .spacing(6);
 
     if let Some(previous) = &prompt.previous_fingerprint {
         details = details
             .push(text(t("此前记录的指纹")).size(11).color(muted_text()))
-            .push(
+            .push(accessibility::control(
                 text(previous.clone())
                     .size(12)
                     .font(Font::MONOSPACE)
                     .color(danger()),
-            )
-            .push(
+                accessibility::Control::label(
+                    "host-key:previous",
+                    format!("{}: {}", t("此前记录的指纹"), previous),
+                ),
+            ))
+            .push(accessibility::control(
                 text(t(
                     "密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。",
                 ))
                 .size(11)
                 .color(danger()),
-            );
+                accessibility::Control::label(
+                    "host-key:warning",
+                    t("密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。"),
+                ),
+            ));
     } else {
-        details = details.push(
+        details = details.push(accessibility::control(
             text(t("首次连接此主机。请通过其它可信渠道核对指纹后再信任。"))
                 .size(11)
                 .color(muted_text()),
-        );
+            accessibility::Control::label(
+                "host-key:warning",
+                t("首次连接此主机。请通过其它可信渠道核对指纹后再信任。"),
+            ),
+        ));
     }
 
     let accept_label = if changed {
@@ -168,50 +190,58 @@ pub(crate) fn host_key_dialog_overlay(
         "信任并继续"
     };
 
+    let action = |key: &'static str, label: &'static str, decision, primary| {
+        let message = Message::RespondHostKey {
+            session_id,
+            challenge_id: prompt.id,
+            decision,
+        };
+        let button = button(text(t(label)))
+            .width(Fill)
+            .padding([6, 10])
+            .style(move |_theme, status| {
+                if primary {
+                    primary_button_style(status)
+                } else {
+                    secondary_button_style(status)
+                }
+            })
+            .on_press(message.clone());
+        accessibility::button(key, t(label), message, button)
+    };
+
     let panel = container(
         column![
             details,
             row![
-                button(t("拒绝"))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::RespondHostKey {
-                        session_id,
-                        challenge_id: prompt.id,
-                        decision: adit_session::HostKeyDecision::Reject,
-                    }),
-                button(text(t("拒绝并记住")))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::RespondHostKey {
-                        session_id,
-                        challenge_id: prompt.id,
-                        decision: adit_session::HostKeyDecision::RejectAndRecord,
-                    }),
+                action(
+                    "host-key:reject",
+                    "拒绝",
+                    adit_session::HostKeyDecision::Reject,
+                    false
+                ),
+                action(
+                    "host-key:reject-record",
+                    "拒绝并记住",
+                    adit_session::HostKeyDecision::RejectAndRecord,
+                    false
+                ),
                 // Between refusing and vouching. Styled as a secondary action
                 // and placed in the middle so it reads as the cautious middle
                 // ground it is — and deliberately not the default, because a
                 // key you actually checked still belongs on file.
-                button(text(t("仅本次")))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::RespondHostKey {
-                        session_id,
-                        challenge_id: prompt.id,
-                        decision: adit_session::HostKeyDecision::TrustOnce,
-                    }),
-                button(text(t(accept_label)))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::RespondHostKey {
-                        session_id,
-                        challenge_id: prompt.id,
-                        decision: adit_session::HostKeyDecision::TrustAndRecord,
-                    }),
+                action(
+                    "host-key:once",
+                    "仅本次",
+                    adit_session::HostKeyDecision::TrustOnce,
+                    false
+                ),
+                action(
+                    "host-key:trust",
+                    accept_label,
+                    adit_session::HostKeyDecision::TrustAndRecord,
+                    true
+                ),
             ]
             .spacing(8),
         ]
@@ -221,12 +251,15 @@ pub(crate) fn host_key_dialog_overlay(
     .padding(14)
     .style(|_theme| connection_dialog_style());
 
-    container(panel)
-        .width(Fill)
-        .height(Fill)
-        .center(Fill)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    container(accessibility::control(
+        panel,
+        accessibility::Control::dialog("host-key:dialog", t(title)),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .center(Fill)
+    .style(|_theme| dialog_scrim_style())
+    .into()
 }
 
 /// Mirror the session manager's pending interactive-auth prompt into UI state,
@@ -353,33 +386,52 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
 
 /// Confirm-before-open for a terminal hyperlink: shows the **real** destination
 /// (the URL came from remote output) before launching the browser.
-pub(crate) fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> {
+pub(crate) fn hyperlink_confirm_overlay(url: &str, generation: u64) -> Element<'static, Message> {
     let panel = container(
         column![
             text(t("打开链接？")).size(16).color(primary_text()),
-            text(t("此链接来自终端输出，请确认目标地址后再打开："))
-                .size(11)
-                .color(muted_text()),
-            container(
-                text(url.to_string())
-                    .size(12)
-                    .font(Font::MONOSPACE)
-                    .color(primary_text()),
-            )
-            .padding([6, 8])
-            .width(Fill)
-            .style(|_theme| connection_dialog_style()),
+            accessibility::control(
+                text(t("此链接来自终端输出，请确认目标地址后再打开："))
+                    .size(11)
+                    .color(muted_text()),
+                accessibility::Control::label(
+                    "hyperlink:warning",
+                    t("此链接来自终端输出，请确认目标地址后再打开："),
+                ),
+            ),
+            accessibility::control(
+                container(
+                    text(url.to_string())
+                        .size(12)
+                        .font(Font::MONOSPACE)
+                        .color(primary_text()),
+                )
+                .padding([6, 8])
+                .width(Fill)
+                .style(|_theme| connection_dialog_style()),
+                accessibility::Control::label("hyperlink:destination", url.to_owned()),
+            ),
             row![
-                button(t("取消"))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::CancelOpenHyperlink),
-                button(text(t("打开")).size(13))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::ConfirmOpenHyperlink),
+                accessibility::button(
+                    "hyperlink:cancel",
+                    t("取消"),
+                    Message::CancelOpenHyperlink(generation),
+                    button(t("取消"))
+                        .width(Fill)
+                        .padding([6, 10])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::CancelOpenHyperlink(generation))
+                ),
+                accessibility::button(
+                    "hyperlink:open",
+                    t("打开"),
+                    Message::ConfirmOpenHyperlink(generation),
+                    button(text(t("打开")).size(13))
+                        .width(Fill)
+                        .padding([6, 10])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::ConfirmOpenHyperlink(generation))
+                ),
             ]
             .spacing(8),
         ]
@@ -389,12 +441,15 @@ pub(crate) fn hyperlink_confirm_overlay(url: &str) -> Element<'static, Message> 
     .padding(14)
     .style(|_theme| connection_dialog_style());
 
-    container(panel)
-        .width(Fill)
-        .height(Fill)
-        .center(Fill)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    container(accessibility::control(
+        panel,
+        accessibility::Control::dialog("hyperlink:dialog", t("打开链接？")),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .center(Fill)
+    .style(|_theme| dialog_scrim_style())
+    .into()
 }
 
 pub(crate) fn add_tunnel(app: &mut AditApp) {

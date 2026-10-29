@@ -337,6 +337,7 @@ impl DesktopApplication {
         let Some(mut window) = self.windows.remove(&id) else {
             return Task::none();
         };
+        self.app.accessibility.closed(id);
         self.app.native_session_windows.remove(&window.session);
         if self.focused == Some(id) {
             self.focused = None;
@@ -804,6 +805,15 @@ impl DesktopApplication {
             return Space::new().into();
         };
         let state = &window.state;
+        let namespace = accessibility::detached_namespace(
+            &self.app,
+            id,
+            state.pending_hyperlink.is_some(),
+            state.hyperlink_prompt_generation,
+            state.paste_confirm_open,
+            state.terminal_context_menu,
+        );
+        let _building = accessibility::building(Some(id), &namespace);
         let title = self
             .app
             .manager
@@ -965,7 +975,10 @@ impl DesktopApplication {
             )));
         }
         if let Some(url) = &state.pending_hyperlink {
-            layers.push(opaque(hyperlink_confirm_overlay(url)));
+            layers.push(opaque(hyperlink_confirm_overlay(
+                url,
+                state.hyperlink_prompt_generation,
+            )));
         }
         if state.paste_confirm_open {
             layers.push(opaque(
@@ -995,7 +1008,12 @@ impl DesktopApplication {
                     .style(|_| dialog_scrim_style()),
             ));
         }
-        let view: Element<'_, Message> = stack(layers).into();
+        if layers.len() > 1 {
+            let top = layers.pop().unwrap();
+            layers.push(accessibility::modal(top));
+        }
+        let view: Element<'_, Message> =
+            accessibility::scope(Some(id), namespace, stack(layers).into());
         let session = Some(window.session);
         let epoch = state.vnc_input_epoch;
         view.map(move |m| NativeMessage::View(id, session, epoch, m))
@@ -1219,6 +1237,27 @@ mod tests {
                 .manager
                 .snapshot_for(session, Viewport::visible(200)),
         )
+    }
+
+    #[test]
+    fn accessibility_detached_link_generations_stay_with_their_window() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        let url = "https://fixture.invalid/same";
+        let _ = desktop.dispatch(child, Message::OpenHyperlink(url.into()));
+        let first = desktop.windows[&child].state.hyperlink_prompt_generation;
+        let _ = desktop.dispatch(child, Message::OpenHyperlink(url.into()));
+        let second = desktop.windows[&child].state.hyperlink_prompt_generation;
+        assert_ne!(first, second);
+        let _ = desktop.dispatch(child, Message::CancelOpenHyperlink(first));
+        assert_eq!(
+            desktop.windows[&child].state.pending_hyperlink.as_deref(),
+            Some(url)
+        );
+        assert!(desktop.app.pending_hyperlink.is_none());
+        let _ = desktop.dispatch(child, Message::CancelOpenHyperlink(second));
+        assert!(desktop.windows[&child].state.pending_hyperlink.is_none());
     }
 
     #[test]

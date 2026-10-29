@@ -40,6 +40,7 @@ presentation! {
     session_rename_draft: String = String::new(),
     dragged_tab: Option<SessionId> = None,
     pending_hyperlink: Option<String> = None,
+    hyperlink_prompt_generation: u64 = 0,
     terminal_input: String = String::new(),
     terminal_focused: bool = true,
     terminal_size: TerminalSize = TerminalSize::default(),

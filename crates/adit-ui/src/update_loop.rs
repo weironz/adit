@@ -1554,6 +1554,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             challenge_id,
             decision,
         } => {
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            if accessibility::acceptance_host_key_reply(app, session_id, challenge_id, decision) {
+                return Task::none();
+            }
             if let Err(error) = app
                 .manager
                 .respond_host_key(session_id, challenge_id, decision)
@@ -1594,19 +1598,29 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // Terminal output is remote-controlled: confirm the real destination
             // before opening, and only offer http(s).
             if is_openable_http_url(&url) {
+                app.hyperlink_prompt_generation = app.hyperlink_prompt_generation.wrapping_add(1);
                 app.pending_hyperlink = Some(url);
             } else {
                 app.last_error = Some(String::from(t("仅支持打开 http/https 链接")));
             }
         }
-        Message::ConfirmOpenHyperlink => {
+        Message::ConfirmOpenHyperlink(generation)
+            if generation == app.hyperlink_prompt_generation =>
+        {
             if let Some(url) = app.pending_hyperlink.take() {
+                #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                if accessibility::acceptance_open_link(app, &url) {
+                    return Task::none();
+                }
                 open_external_link(app, &url);
             }
         }
-        Message::CancelOpenHyperlink => {
+        Message::CancelOpenHyperlink(generation)
+            if generation == app.hyperlink_prompt_generation =>
+        {
             app.pending_hyperlink = None;
         }
+        Message::ConfirmOpenHyperlink(_) | Message::CancelOpenHyperlink(_) => {}
         Message::CloseSftp => {
             app.manager.close_sftp();
             app.sftp_overwrite = None;

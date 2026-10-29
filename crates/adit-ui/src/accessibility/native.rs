@@ -292,6 +292,8 @@ pub(super) fn publish(
             let control = item.control;
             let role = match control.kind {
                 Kind::Button => Role::Button,
+                Kind::Dialog => Role::Dialog,
+                Kind::Label => Role::Label,
                 Kind::Item => Role::ListItem,
                 Kind::Edit => Role::TextInput,
                 Kind::Protected => Role::PasswordInput,
@@ -299,7 +301,14 @@ pub(super) fn publish(
                 Kind::Range => Role::Slider,
             };
             let mut node = Node::new(role);
-            node.set_label(control.label);
+            if matches!(control.kind, Kind::Label) {
+                node.set_value(control.label);
+            } else {
+                node.set_label(control.label);
+            }
+            if matches!(control.kind, Kind::Dialog) {
+                node.set_modal();
+            }
             node.set_author_id(format!("{namespace}/{}", control.key));
             node.set_bounds(rect(item.bounds));
             if control.focus.is_some() {
@@ -435,12 +444,16 @@ fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
 
 pub(super) fn drain(
     registered: &HashSet<window::Id>,
+    current_window: Option<window::Id>,
     namespace: &str,
 ) -> Vec<(window::Id, String, Message)> {
     WINDOWS.with(|windows| {
         let windows = windows.borrow();
         let mut messages = Vec::new();
-        for (id, window) in windows.iter().filter(|(id, _)| registered.contains(id)) {
+        for (id, window) in windows
+            .iter()
+            .filter(|(id, _)| Some(**id) == current_window && registered.contains(id))
+        {
             for _ in 0..32 {
                 let Ok(request) = window.rx.try_recv() else {
                     break;

@@ -27,6 +27,24 @@ struct Client {
 }
 
 impl Client {
+    fn assert_modal_dialog(&self, element: &IUIAutomationElement) -> Result<(), String> {
+        if unsafe { element.CurrentControlType() }.map_err(|e| e.to_string())?
+            != UIA_WindowControlTypeId
+        {
+            return Err("confirmation is not a UIA dialog".into());
+        }
+        let window: IUIAutomationWindowPattern =
+            unsafe { element.GetCurrentPatternAs(UIA_WindowPatternId) }
+                .map_err(|e| format!("dialog has no UIA window pattern: {e}"))?;
+        if !unsafe { window.CurrentIsModal() }
+            .map_err(|e| e.to_string())?
+            .as_bool()
+        {
+            return Err("UIA dialog is not marked modal".into());
+        }
+        Ok(())
+    }
+
     fn elements(&self) -> Vec<IUIAutomationElement> {
         unsafe {
             let Ok(condition) = self.automation.CreateTrueCondition() else {
@@ -143,7 +161,177 @@ impl Client {
     }
 }
 
-pub(super) fn run(hwnd: isize, owners: &[SessionId]) -> Result<Value, String> {
+fn command(
+    sender: &mpsc::Sender<Command>,
+    make: impl FnOnce(mpsc::Sender<Snapshot>) -> Command,
+) -> Result<Snapshot, String> {
+    let (tx, rx) = mpsc::channel();
+    sender.send(make(tx)).map_err(|e| e.to_string())?;
+    rx.recv_timeout(Duration::from_secs(5))
+        .map_err(|e| format!("fixture command timed out: {e}"))
+}
+
+fn dialog_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Result<(), String> {
+    use adit_session::HostKeyDecision;
+
+    let background = client.named("任务分屏", "navigation:Missions")?;
+    let first = command(commands, |ack| Command::Host(false, ack))?;
+    let first_id = first.challenge.ok_or("first host challenge missing")?;
+    let dialog = client.named("确认主机密钥", "host-key:dialog")?;
+    client.assert_modal_dialog(&dialog)?;
+    client.named("fixture.invalid:2222", "host-key:host")?;
+    client.named("密钥类型: ssh-ed25519", "host-key:type")?;
+    client.named(
+        &format!("SHA256 指纹: {FINGERPRINT}"),
+        "host-key:fingerprint",
+    )?;
+    client.named(
+        "首次连接此主机。请通过其它可信渠道核对指纹后再信任。",
+        "host-key:warning",
+    )?;
+    if client.by_id("host-key:previous").is_some() || client.by_id("navigation:Missions").is_some()
+    {
+        return Err("first host dialog exposed previous fingerprint or background controls".into());
+    }
+    // A cached provider from the covered view must not be able to act either.
+    let _ = client.invoke(&background);
+    let after_background = command(commands, Command::Barrier)?;
+    if after_background.challenge != Some(first_id) || !after_background.decisions.is_empty() {
+        return Err("background action crossed the modal boundary".into());
+    }
+
+    for (changed, key, label, decision) in [
+        (false, "host-key:reject", "拒绝", HostKeyDecision::Reject),
+        (
+            true,
+            "host-key:reject-record",
+            "拒绝并记住",
+            HostKeyDecision::RejectAndRecord,
+        ),
+        (false, "host-key:once", "仅本次", HostKeyDecision::TrustOnce),
+        (
+            true,
+            "host-key:trust",
+            "更新并继续",
+            HostKeyDecision::TrustAndRecord,
+        ),
+    ] {
+        let installed = command(commands, |ack| Command::Host(changed, ack))?;
+        let id = installed.challenge.ok_or("host challenge missing")?;
+        let scope = format!(":{id}/host-key:dialog");
+        client.wait("current host challenge", || client.by_id(&scope))?;
+        if changed {
+            client.named("⚠ 主机密钥已变更", "host-key:dialog")?;
+            client.named(&format!("此前记录的指纹: {PREVIOUS}"), "host-key:previous")?;
+            client.named(
+                "密钥变更可能意味着中间人攻击。仅在你确知服务器更换过密钥时才接受。",
+                "host-key:warning",
+            )?;
+        } else {
+            client.named("信任并继续", "host-key:trust")?;
+        }
+        let button = client.named(label, key)?;
+        if unsafe { button.CurrentControlType() }.map_err(|e| e.to_string())?
+            != UIA_ButtonControlTypeId
+        {
+            return Err(format!("host action {key} is not a UIA button"));
+        }
+        client.invoke(&button)?;
+        let result = command(commands, Command::Barrier)?;
+        if result.decisions.last() != Some(&(id, decision)) {
+            return Err(format!("host action {key} did not reach its challenge"));
+        }
+        client.wait("host dialog closed after decision", || {
+            client.by_id("host-key:dialog").is_none().then_some(())
+        })?;
+    }
+
+    // Hold the queue so an old Invoke is definitely queued before replacement.
+    let old = command(commands, |ack| Command::Host(false, ack))?;
+    let old_id = old.challenge.ok_or("old host challenge missing")?;
+    client.wait("old host dialog", || {
+        client.by_id(&format!(":{old_id}/host-key:dialog"))
+    })?;
+    let old_button = client.named("拒绝", "host-key:reject")?;
+    command(commands, Command::Hold)?;
+    client.invoke(&old_button)?;
+    let replacement = command(commands, |ack| Command::Host(false, ack))?;
+    let replacement_id = replacement
+        .challenge
+        .ok_or("replacement host challenge missing")?;
+    if old_id == replacement_id || replacement.decisions.len() != 4 {
+        return Err("queued host action reached a replacement challenge".into());
+    }
+    client.wait("replacement host dialog", || {
+        client.by_id(&format!(":{replacement_id}/host-key:dialog"))
+    })?;
+    let _ = client.invoke(&old_button);
+    let after_stale = command(commands, Command::Barrier)?;
+    if after_stale.decisions.len() != 4 || after_stale.challenge != Some(replacement_id) {
+        return Err("cached host action reached a replacement challenge".into());
+    }
+    client.invoke(&client.named("拒绝", "host-key:reject")?)?;
+    let result = command(commands, Command::Barrier)?;
+    if result.decisions.last() != Some(&(replacement_id, HostKeyDecision::Reject)) {
+        return Err("replacement host challenge was not actionable".into());
+    }
+    client.wait("host dialog closed", || {
+        client.by_id("host-key:dialog").is_none().then_some(())
+    })?;
+
+    command(commands, Command::Link)?;
+    let link_dialog = client.named("打开链接？", "hyperlink:dialog")?;
+    client.assert_modal_dialog(&link_dialog)?;
+    client.named(LINK, "hyperlink:destination")?;
+    client.named(
+        "此链接来自终端输出，请确认目标地址后再打开：",
+        "hyperlink:warning",
+    )?;
+    if client.by_id("navigation:Missions").is_some() {
+        return Err("link dialog exposed background controls".into());
+    }
+    let old_link = client.named("打开", "hyperlink:open")?;
+    command(commands, Command::Hold)?;
+    client.invoke(&old_link)?;
+    // Even an identical URL is a different confirmation, not a renewed lease.
+    let replacement = command(commands, Command::Link)?;
+    if !replacement.link_pending || !replacement.opened_links.is_empty() {
+        return Err("queued link action opened a replacement confirmation".into());
+    }
+    client.wait("replacement link dialog", || {
+        let element = client.by_id("hyperlink:open")?;
+        let old = unsafe { old_link.CurrentAutomationId() }.ok();
+        let new = unsafe { element.CurrentAutomationId() }.ok();
+        (old.is_none() || old != new).then_some(element)
+    })?;
+    let _ = client.invoke(&old_link);
+    let after_stale = command(commands, Command::Barrier)?;
+    if !after_stale.link_pending || !after_stale.opened_links.is_empty() {
+        return Err("cached link action opened a replacement confirmation".into());
+    }
+    client.invoke(&client.named("取消", "hyperlink:cancel")?)?;
+    let cancelled = command(commands, Command::Barrier)?;
+    if cancelled.link_pending || !cancelled.opened_links.is_empty() {
+        return Err("link cancellation did not close without opening".into());
+    }
+    client.wait("cancelled link dialog closed", || {
+        client.by_id("hyperlink:dialog").is_none().then_some(())
+    })?;
+    command(commands, Command::Link)?;
+    client.named(LINK, "hyperlink:destination")?;
+    client.invoke(&client.named("打开", "hyperlink:open")?)?;
+    let opened = command(commands, Command::Barrier)?;
+    if opened.link_pending || opened.opened_links != [LINK] {
+        return Err("link confirmation did not reach the isolated open sink".into());
+    }
+    Ok(())
+}
+
+pub(super) fn run(
+    hwnd: isize,
+    owners: &[SessionId],
+    commands: mpsc::Sender<Command>,
+) -> Result<Value, String> {
     unsafe { CoInitializeEx(None, COINIT_MULTITHREADED).ok() }
         .map_err(|e| format!("UIA COM initialization failed: {e}"))?;
     let _com = Com;
@@ -252,6 +440,7 @@ pub(super) fn run(hwnd: isize, owners: &[SessionId]) -> Result<Value, String> {
             (a == first_before && b != second_before).then_some(())
         },
     )?;
+    dialog_acceptance(&client, &commands)?;
     Ok(json!({
         "hwnd": hwnd, "native_uia": true, "production_iced_widgets": true,
         "navigation_invoke": true, "resource_invoke_and_value": true,
@@ -260,5 +449,10 @@ pub(super) fn run(hwnd: isize, owners: &[SessionId]) -> Result<Value, String> {
         "protected_controls_seen": protected, "protected_readback": "masked-or-denied",
         "terminal_text_pattern": true, "terminal_scroll_owner_isolation": true,
         "remote_text_never_executed": true,
+        "host_key_uia_details_and_four_actions": true,
+        "link_uia_destination_cancel_and_open": true,
+        "dialog_modal_isolation": true,
+        "queued_and_cached_stale_dialog_actions_rejected": true,
+        "links_opened_only_in_fixture_sink": true,
     }))
 }

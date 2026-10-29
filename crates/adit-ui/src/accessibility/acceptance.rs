@@ -6,14 +6,40 @@ use std::{
     error::Error,
     fs,
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{mpsc, Arc, Mutex},
 };
 
 mod client;
 
 const PASSWORD: &str = "SYNTHETIC-UIA-PASSWORD-DO-NOT-EXPOSE";
 const PROXY: &str = "SYNTHETIC-UIA-PROXY-TOKEN-DO-NOT-EXPOSE";
+const FINGERPRINT: &str = "SHA256:SYNTHETIC-new-fingerprint";
+const PREVIOUS: &str = "SHA256:SYNTHETIC-old-fingerprint";
+const LINK: &str = "https://fixture.invalid/synthetic?from=terminal";
 type Outcome = Arc<Mutex<Option<Result<Value, String>>>>;
+
+#[derive(Default)]
+pub(super) struct Fixture {
+    pub host_key: Option<(SessionId, HostKeyPromptInfo)>,
+    pub receiver: Option<tokio::sync::oneshot::Receiver<adit_session::HostKeyDecision>>,
+    pub decisions: Vec<(u64, adit_session::HostKeyDecision)>,
+    pub opened_links: Vec<String>,
+}
+
+#[derive(Clone)]
+struct Snapshot {
+    challenge: Option<u64>,
+    decisions: Vec<(u64, adit_session::HostKeyDecision)>,
+    opened_links: Vec<String>,
+    link_pending: bool,
+}
+
+enum Command {
+    Hold(mpsc::Sender<Snapshot>),
+    Host(bool, mpsc::Sender<Snapshot>),
+    Link(mpsc::Sender<Snapshot>),
+    Barrier(mpsc::Sender<Snapshot>),
+}
 
 struct Harness {
     app: AditApp,
@@ -23,6 +49,9 @@ struct Harness {
     attached: bool,
     protected_seeded: bool,
     owner_ids: Vec<SessionId>,
+    commands: mpsc::Receiver<Command>,
+    command_sender: mpsc::Sender<Command>,
+    hold_actions: bool,
     outcome: Outcome,
 }
 
@@ -55,7 +84,20 @@ fn allowed(message: &Message) -> bool {
             | Message::ProfilePortChanged(_)
             | Message::ProfileUsernameChanged(_)
             | Message::ProfileGroupChanged(_)
+            | Message::RespondHostKey { .. }
+            | Message::ConfirmOpenHyperlink(_)
+            | Message::CancelOpenHyperlink(_)
     )
+}
+
+fn snapshot(state: &Harness) -> Snapshot {
+    let fixture = state.app.accessibility.fixture.as_ref().unwrap();
+    Snapshot {
+        challenge: fixture.host_key.as_ref().map(|(_, prompt)| prompt.id),
+        decisions: fixture.decisions.clone(),
+        opened_links: fixture.opened_links.clone(),
+        link_pending: state.app.pending_hyperlink.is_some(),
+    }
 }
 
 fn finish(state: &mut Harness, result: Result<Value, String>) -> Task<Event> {
@@ -91,6 +133,9 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
             if !allowed(&message) {
                 return Task::none();
             }
+            if state.hold_actions {
+                return Task::none();
+            }
             let task = update_loop::update(&mut state.app, message).map(Event::App);
             if state.app.profile_editor.is_some() {
                 if !state.protected_seeded {
@@ -110,6 +155,44 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
             task
         }
         Event::Pulse => {
+            if let Ok(command) = state.commands.try_recv() {
+                let (ack, message) = match command {
+                    Command::Hold(ack) => {
+                        state.hold_actions = true;
+                        (ack, None)
+                    }
+                    Command::Host(changed, ack) => {
+                        let (prompt, receiver) = HostKeyPromptInfo::channel(
+                            "fixture.invalid".into(),
+                            2222,
+                            "ssh-ed25519".into(),
+                            FINGERPRINT.into(),
+                            changed.then(|| PREVIOUS.into()),
+                        );
+                        let fixture = state.app.accessibility.fixture.as_mut().unwrap();
+                        fixture.host_key = Some((state.owner_ids[0], prompt));
+                        fixture.receiver = Some(receiver);
+                        state.hold_actions = false;
+                        (ack, Some(Message::Tick))
+                    }
+                    Command::Link(ack) => {
+                        state.hold_actions = false;
+                        (ack, Some(Message::OpenHyperlink(LINK.into())))
+                    }
+                    Command::Barrier(ack) => {
+                        state.hold_actions = false;
+                        (ack, Some(Message::Tick))
+                    }
+                };
+                let task = message
+                    .map(|message| update_loop::update(&mut state.app, message).map(Event::App))
+                    .unwrap_or_else(Task::none);
+                let _ = ack.send(snapshot(state));
+                return task;
+            }
+            if state.hold_actions {
+                return Task::none();
+            }
             let task = update_loop::update(&mut state.app, Message::Tick).map(Event::App);
             if !protected_unchanged(state) {
                 return finish(
@@ -121,6 +204,7 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                 if let Some(window) = state.window {
                     state.client_started = true;
                     let owners = state.owner_ids.clone();
+                    let commands = state.command_sender.clone();
                     return Task::batch([
                         task,
                         window::run(window, |window| {
@@ -132,12 +216,15 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         })
                         .then(move |hwnd| {
                             let owners = owners.clone();
+                            let commands = commands.clone();
                             Task::perform(
                                 async move {
-                                    tokio::task::spawn_blocking(move || client::run(hwnd, &owners))
-                                        .await
-                                        .map_err(|_| "UIA client thread ended".to_owned())
-                                        .and_then(|v| v)
+                                    tokio::task::spawn_blocking(move || {
+                                        client::run(hwnd, &owners, commands)
+                                    })
+                                    .await
+                                    .map_err(|_| "UIA client thread ended".to_owned())
+                                    .and_then(|v| v)
                                 },
                                 Event::Finished,
                             )
@@ -239,6 +326,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             ..AditApp::default()
         };
         app.accessibility.action_filter = Some(allowed);
+        app.accessibility.fixture = Some(Fixture::default());
         app.manager.set_auto_reconnect(false);
         app.manager.set_rdp_clipboard(false);
         let mut ids = Vec::new();
@@ -261,6 +349,7 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
         ] {
             let _ = update_loop::update(&mut app, message);
         }
+        let (command_sender, commands) = mpsc::channel();
         (
             Harness {
                 app,
@@ -270,6 +359,9 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 attached: false,
                 protected_seeded: false,
                 owner_ids: ids,
+                commands,
+                command_sender,
+                hold_actions: false,
                 outcome: Arc::clone(&boot_outcome),
             },
             Task::none(),

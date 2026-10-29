@@ -84,9 +84,7 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
     if app.connection_dialog.is_some() && native_windows::dialog_visible(app) {
         layers.push(opaque(connection_dialog_overlay(app)));
     }
-    if let Some((session_id, prompt)) = app
-        .manager
-        .pending_host_key()
+    if let Some((session_id, prompt)) = accessibility::pending_host_key(app)
         .filter(|(sid, _)| native_windows::prompt_visible(app, *sid))
     {
         layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
@@ -103,7 +101,10 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         )));
     }
     if let Some(url) = &app.pending_hyperlink {
-        layers.push(opaque(hyperlink_confirm_overlay(url)));
+        layers.push(opaque(hyperlink_confirm_overlay(
+            url,
+            app.hyperlink_prompt_generation,
+        )));
     }
     if app.manager.sftp_is_open() && native_windows::sftp_visible(app) {
         layers.push(opaque(sftp_panel_overlay(app)));

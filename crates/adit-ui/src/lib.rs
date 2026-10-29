@@ -332,6 +332,8 @@ pub struct AditApp {
     auth_prompt_answers: Vec<String>,
     /// A terminal hyperlink awaiting the user's confirm-before-open decision.
     pending_hyperlink: Option<String>,
+    /// Distinguishes consecutive confirmations, including for the same URL.
+    hyperlink_prompt_generation: u64,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -972,8 +974,8 @@ pub enum Message {
         challenge_id: u64,
     },
     OpenHyperlink(String),
-    ConfirmOpenHyperlink,
-    CancelOpenHyperlink,
+    ConfirmOpenHyperlink(u64),
+    CancelOpenHyperlink(u64),
     CloseSftp,
     OpenTunnels,
     CloseTunnels,
@@ -1730,6 +1732,7 @@ impl AditApp {
             auth_prompt: None,
             auth_prompt_answers: Vec::new(),
             pending_hyperlink: None,
+            hyperlink_prompt_generation: 0,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),

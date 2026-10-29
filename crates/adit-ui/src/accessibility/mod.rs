@@ -55,6 +55,8 @@ pub(crate) struct State {
     /// the actual visible control actions without a fixture policy.
     #[cfg(windows)]
     pub action_filter: Option<fn(&Message) -> bool>,
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    fixture: Option<acceptance::Fixture>,
 }
 
 impl State {
@@ -81,6 +83,8 @@ impl State {
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
     Button,
+    Dialog,
+    Label,
     Item,
     Edit,
     Protected,
@@ -120,6 +124,28 @@ impl Control {
         Self {
             kind: Kind::Item,
             ..Self::button(key, label, message)
+        }
+    }
+
+    pub fn dialog(key: &str, label: &str) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: Kind::Dialog,
+            value: String::new(),
+            invoke: None,
+            set_value: None,
+            range: None,
+            focus: None,
+        }
+    }
+
+    pub fn label(key: &str, label: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            label: label.into(),
+            kind: Kind::Label,
+            ..Self::dialog(key, "")
         }
     }
 
@@ -292,14 +318,18 @@ pub(crate) fn register(id: window::Id) -> Task<Message> {
 pub(crate) fn drain(app: &AditApp) -> Vec<(window::Id, String, Message)> {
     #[cfg(windows)]
     {
-        native::drain(&app.accessibility.windows, &namespace(app))
-            .into_iter()
-            .filter(|(_, _, message)| {
-                app.accessibility
-                    .action_filter
-                    .is_none_or(|allow| allow(message))
-            })
-            .collect()
+        native::drain(
+            &app.accessibility.windows,
+            app.native_window_id.or(app.accessibility.primary),
+            &namespace(app),
+        )
+        .into_iter()
+        .filter(|(_, _, message)| {
+            app.accessibility
+                .action_filter
+                .is_none_or(|allow| allow(message))
+        })
+        .collect()
     }
     #[cfg(not(windows))]
     {
@@ -309,7 +339,7 @@ pub(crate) fn drain(app: &AditApp) -> Vec<(window::Id, String, Message)> {
 }
 
 pub(crate) fn action_current(app: &AditApp, window: window::Id, scope: &str) -> bool {
-    app.accessibility.primary == Some(window)
+    app.native_window_id.or(app.accessibility.primary) == Some(window)
         && app.accessibility.windows.contains(&window)
         && scope == namespace(app)
         && {
@@ -421,7 +451,76 @@ pub(crate) fn scroll_controls(
     .into()
 }
 
+pub(crate) fn pending_host_key(app: &AditApp) -> Option<(SessionId, HostKeyPromptInfo)> {
+    let prompt = app.manager.pending_host_key();
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    let prompt = prompt.or_else(|| {
+        app.accessibility
+            .fixture
+            .as_ref()?
+            .host_key
+            .as_ref()
+            .filter(|(_, prompt)| prompt.is_pending())
+            .cloned()
+    });
+    prompt
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn acceptance_host_key_reply(
+    app: &mut AditApp,
+    session: SessionId,
+    challenge: u64,
+    decision: adit_session::HostKeyDecision,
+) -> bool {
+    let Some(fixture) = app.accessibility.fixture.as_mut() else {
+        return false;
+    };
+    if fixture.host_key.as_ref().is_some_and(|(owner, prompt)| {
+        *owner == session && prompt.id == challenge && prompt.respond(decision)
+    }) && fixture
+        .receiver
+        .as_mut()
+        .and_then(|receiver| receiver.try_recv().ok())
+        == Some(decision)
+    {
+        fixture.decisions.push((challenge, decision));
+    }
+    true
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn acceptance_open_link(app: &mut AditApp, url: &str) -> bool {
+    let Some(fixture) = app.accessibility.fixture.as_mut() else {
+        return false;
+    };
+    fixture.opened_links.push(url.into());
+    true
+}
+
 pub(crate) fn namespace(app: &AditApp) -> String {
+    if let Some(window) = app.native_window_id.filter(|_| app.native_auxiliary) {
+        return detached_namespace(
+            app,
+            window,
+            app.pending_hyperlink.is_some(),
+            app.hyperlink_prompt_generation,
+            app.paste_confirm_open,
+            app.terminal_context_menu,
+        );
+    }
+    if app.native_window_id.is_some()
+        && (pending_host_key(app)
+            .is_some_and(|(session, _)| !native_windows::prompt_visible(app, session))
+            || app
+                .auth_prompt
+                .as_ref()
+                .is_some_and(|(session, _)| !native_windows::prompt_visible(app, *session))
+            || (app.connection_dialog.is_some() && !native_windows::dialog_visible(app))
+            || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app)))
+    {
+        return "native-modal-blocked".into();
+    }
     // Same topmost-modal order as chrome::view. Hidden editor/navigation
     // actions cannot run during a newer dialog, even before the next redraw.
     if app.known_hosts_open {
@@ -452,13 +551,13 @@ pub(crate) fn namespace(app: &AditApp) -> String {
         return "sftp".into();
     }
     if app.pending_hyperlink.is_some() {
-        return "hyperlink".into();
+        return format!("hyperlink:{}", app.hyperlink_prompt_generation);
     }
     if let Some((_, prompt)) = &app.auth_prompt {
         return format!("challenge:{}", prompt.id);
     }
-    if app.manager.pending_host_key().is_some() {
-        return "host-key-dialog".into();
+    if let Some((session, prompt)) = pending_host_key(app) {
+        return format!("host-key-dialog:{session}:{}", prompt.id);
     }
     if app.connection_dialog.is_some() {
         return "connection-dialog".into();
@@ -473,6 +572,74 @@ pub(crate) fn namespace(app: &AditApp) -> String {
         || app.move_to_group_menu
         || app.terminal_context_menu
     {
+        return "menu".into();
+    }
+    "main".into()
+}
+
+/// Mirrors the top layer of a detached window, before and after projecting its
+/// presentation into AditApp. A global modal in another window revokes old
+/// routes immediately, even before this window repaints its blocking scrim.
+pub(crate) fn detached_namespace(
+    app: &AditApp,
+    window: window::Id,
+    link: bool,
+    link_generation: u64,
+    paste: bool,
+    context_menu: bool,
+) -> String {
+    let host = pending_host_key(app);
+    let owner = host
+        .as_ref()
+        .map(|(session, _)| *session)
+        .or_else(|| app.auth_prompt.as_ref().map(|(session, _)| *session));
+    let modal_owner = owner
+        .map(|session| {
+            app.native_session_windows
+                .get(&session)
+                .copied()
+                .or(app.native_main_window)
+        })
+        .or_else(|| {
+            app.connection_dialog
+                .as_ref()
+                .map(|_| app.native_dialog_window.or(app.native_main_window))
+        })
+        .or_else(|| {
+            app.manager
+                .sftp_is_open()
+                .then(|| app.native_sftp_window.or(app.native_main_window))
+        })
+        .flatten();
+    if modal_owner.is_some_and(|owner| owner != window) {
+        return "native-modal-blocked".into();
+    }
+    if paste {
+        return "paste".into();
+    }
+    if link {
+        return format!("hyperlink:{link_generation}");
+    }
+    if let Some((session, prompt)) = &app.auth_prompt {
+        let owner = app
+            .native_session_windows
+            .get(session)
+            .copied()
+            .or(app.native_main_window);
+        if owner == Some(window) {
+            return format!("challenge:{}", prompt.id);
+        }
+    }
+    if let Some((session, prompt)) = host {
+        return format!("host-key-dialog:{session}:{}", prompt.id);
+    }
+    if app.connection_dialog.is_some() {
+        return "connection-dialog".into();
+    }
+    if app.manager.sftp_is_open() {
+        return "sftp".into();
+    }
+    if context_menu {
         return "menu".into();
     }
     "main".into()
@@ -526,5 +693,110 @@ mod tests {
         assert!(control.set_value.is_none());
         assert!(control.range.is_none());
         assert_eq!(control.key, format!("terminal:{owner}"));
+    }
+
+    #[test]
+    fn repeated_hyperlink_confirmations_have_distinct_scopes() {
+        let mut app = AditApp::default();
+        let url = "https://fixture.invalid/same";
+        let _ = update_loop::update(&mut app, Message::OpenHyperlink(url.into()));
+        let first = namespace(&app);
+        let first_generation = app.hyperlink_prompt_generation;
+        let _ = update_loop::update(&mut app, Message::OpenHyperlink(url.into()));
+        let second = namespace(&app);
+        assert_ne!(first, second);
+        assert!(!first.contains(url));
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(first_generation));
+        assert_eq!(namespace(&app), second);
+        #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+        {
+            app.accessibility.fixture = Some(acceptance::Fixture::default());
+            let _ = update_loop::update(&mut app, Message::ConfirmOpenHyperlink(first_generation));
+            assert_eq!(namespace(&app), second);
+            assert!(app
+                .accessibility
+                .fixture
+                .as_ref()
+                .unwrap()
+                .opened_links
+                .is_empty());
+        }
+        let generation = app.hyperlink_prompt_generation;
+        let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
+        assert_ne!(namespace(&app), second);
+        let _ = update_loop::update(&mut app, Message::OpenHyperlink(url.into()));
+        assert_ne!(namespace(&app), second);
+    }
+
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    #[test]
+    fn host_key_scope_tracks_the_live_challenge() {
+        let mut app = AditApp::default();
+        let owner = SessionId::new();
+        let make = || {
+            HostKeyPromptInfo::channel(
+                "fixture.invalid".into(),
+                22,
+                "ssh-ed25519".into(),
+                "SHA256:synthetic".into(),
+                None,
+            )
+        };
+        let (first, first_rx) = make();
+        app.accessibility.fixture = Some(acceptance::Fixture {
+            host_key: Some((owner, first)),
+            receiver: Some(first_rx),
+            ..Default::default()
+        });
+        let old = namespace(&app);
+        let (second, second_rx) = make();
+        let fixture = app.accessibility.fixture.as_mut().unwrap();
+        fixture.host_key = Some((owner, second));
+        fixture.receiver = Some(second_rx);
+        let current = namespace(&app);
+        assert_ne!(old, current);
+        app.accessibility.fixture.as_mut().unwrap().receiver = None;
+        assert_ne!(current, namespace(&app));
+    }
+
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    #[test]
+    fn detached_dialog_scope_matches_its_projected_window_and_blocks_other_windows() {
+        let mut app = AditApp::default();
+        let primary = window::Id::unique();
+        let child = window::Id::unique();
+        let owner = SessionId::new();
+        let (prompt, receiver) = HostKeyPromptInfo::channel(
+            "fixture.invalid".into(),
+            2222,
+            "ssh-ed25519".into(),
+            "SHA256:synthetic".into(),
+            None,
+        );
+        app.accessibility.fixture = Some(acceptance::Fixture {
+            host_key: Some((owner, prompt)),
+            receiver: Some(receiver),
+            ..Default::default()
+        });
+        app.native_main_window = Some(primary);
+        app.native_session_windows.insert(owner, child);
+        let rendered = detached_namespace(&app, child, false, 0, false, false);
+        app.native_window_id = Some(child);
+        app.native_auxiliary = true;
+        assert_eq!(namespace(&app), rendered);
+        assert!(rendered.starts_with("host-key-dialog:"));
+        app.pending_hyperlink = Some("https://fixture.invalid".into());
+        app.hyperlink_prompt_generation = 4;
+        assert_eq!(
+            namespace(&app),
+            detached_namespace(&app, child, true, 4, false, false)
+        );
+        app.native_window_id = Some(primary);
+        app.native_auxiliary = false;
+        assert_eq!(namespace(&app), "native-modal-blocked");
+        assert_eq!(
+            detached_namespace(&app, primary, true, 4, false, false),
+            "native-modal-blocked"
+        );
     }
 }
