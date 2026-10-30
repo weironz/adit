@@ -391,27 +391,26 @@ had already captured, so nothing stays queued for the next remote that asks.
 
 ### Files (CLIPRDR file transfer)
 
-**Ordinary files copy both ways, byte for byte** — the transfer path carries raw
-bytes and knows nothing about text. Copy a selection in Explorer and paste it into the
-remote desktop, or the reverse. Directory trees travel as a flat list of relative paths
-with the directories included as their own entries, which is how MS-RDPECLIP represents
-a tree.
+**Temporary safety restriction:** local files cannot be copied to an RDP
+desktop. The app does not enumerate a local file selection or open its files
+for RDP, and the helper ignores legacy local-file metadata and byte messages.
+Unsolicited SIZE and RANGE requests receive protocol errors; the desktop stays
+connected. This is a temporary mitigation, not completion of issue #94.
 
-**Nothing is staged or pre-read in either direction.** A copy publishes names and sizes;
-bytes leave disk (or the wire) only when something actually pastes. Copying a 4 GB folder
-and never pasting it costs nothing.
+Windows text and images, Linux text, and remote-to-local files remain available.
+On Windows, a `CF_HDROP` or registered file-descriptor/content selection is not
+treated as text or image, and an asynchronous text read is discarded if the
+clipboard changes. The patched helper also rejects old app file IPC messages,
+but cannot identify filenames deliberately sent by an old app as plain text. On X11 some
+applications expose file selections as plain text or URI text. Plain text is
+still shared and cannot always be distinguished from such representations, so
+filenames or paths may still be sent as text; this mitigation does not claim
+zero risk for X11.
 
-The two halves are asymmetric because Windows is:
-
-* **Local → remote** reads `CF_HDROP`, expands the selection, and answers the server's
-  `FileContentsRequest`s by reading byte ranges off disk. A `SIZE` request is answered
-  from metadata already held — Explorer issues one per file before reading anything, so
-  that is most of the traffic and none of it touches the disk.
-* **Remote → local** needs a COM `IDataObject` with delay-rendered `IStream`s, published
-  by `OleSetClipboard`. That call is apartment-bound, so it runs on a dedicated
-  `OleInitialize`d STA thread with a message pump — the same shape FreeRDP uses, and for
-  the same reason. The offer, not the object, crosses to that thread: building the data
-  object there means no COM pointer is passed between apartments.
+**Remote → local** uses a COM `IDataObject` with delay-rendered `IStream`s on
+Windows, published by `OleSetClipboard` on a dedicated `OleInitialize`d STA.
+Linux publishes a private read-only FUSE mount over X11. Remote file bytes are
+read on demand from the captured RDP session.
 
 `IStream::Read` is synchronous and the bytes are three hops away, so it blocks — on
 *Explorer's* thread, never Adit's, which would surface as "Not Responding" and nothing
@@ -429,7 +428,7 @@ after the first disconnect fail forever.
 File names share one validator across the helper and COM boundary: absolute paths,
 parent components, alternate streams, device names, duplicate paths and excessive
 descriptors are rejected. Remote reparse/device attributes are checked before they
-are reduced to the app's metadata; local reparse selections are skipped. The shared
+are reduced to the app's metadata. The shared
 validator rejects unsafe names instead of rewriting them.
 
 ### Explicit OLE file drag out (Windows)
@@ -488,10 +487,9 @@ dependency at all — and its whole state machine is unit-tested without a live 
 
 Consequences of that split:
 
-- **Text only.** `CF_UNICODETEXT` is advertised; `CF_TEXT` / `CF_OEMTEXT` are accepted
-  inbound. **Images and file copy-paste are out of scope** — files need a staging
-  directory, chunked `FileContents` streaming and clipboard locking, none of which the
-  helper IPC carries.
+- Text uses `CF_UNICODETEXT` outbound, and accepts `CF_TEXT` / `CF_OEMTEXT`
+  inbound. Windows images and remote-to-local files are also supported;
+  local-to-RDP file transfer is temporarily disabled as described above.
 - **Local → remote is delay-rendered**, like mstsc: only the format list is advertised,
   and the text crosses the wire when something on the remote actually pastes.
 - **Remote → local is eager**: the moment the remote advertises text we fetch it, because
@@ -597,9 +595,8 @@ Verified shortcomings, so nobody has to rediscover them.
   `full_frame_tile` in `session.rs` still ships the whole framebuffer as one tile per
   update, which is what its `TODO(perf)` names and what the 288 MiB IPC message cap
   exists to accommodate. (H.264 *is* decoded — AVC420 and a from-scratch AVC444 — so a
-  host that negotiates AVC no longer renders black.) The clipboard is **text only** —
-  no images, no file copy-paste (see
-  [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
+  host that negotiates AVC no longer renders black.) Clipboard support varies by
+  platform and direction (see [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
   because it pulls native Opus (needs CMake).
 - **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
   designation, no custom tab stops. `TerminalChangeSet` dirty-row tracking is a stub

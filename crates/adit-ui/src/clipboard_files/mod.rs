@@ -16,17 +16,10 @@
 //!   mounts a FUSE filesystem to make remote files appear real without
 //!   downloading them first.
 //!
-//! A trait over those three would be inventing a fourth model. So the shared
-//! part here is the part that genuinely is shared — validating a read-only
-//! remote tree with bounded reads, turning a set of selected
-//! paths into the flat, relative-path list MS-RDPECLIP wants, and reading a byte
-//! range out of one — and the OS-specific clipboard access sits behind `cfg`.
-//!
-//! Nothing is ever copied or staged: a selection becomes metadata, and bytes are
-//! read from the original path only when the remote actually pastes. Linux
-//! publishes private read-only FUSE paths over X11's file-URI clipboard; reads
-//! stay on the filesystem worker and retain the originating session requester.
-//! Missing DISPLAY/FUSE support reports a clipboard error without closing RDP.
+//! The app publishes remote files through delayed reads. Local file-to-RDP
+//! sharing is temporarily disabled; the production path does not enumerate or
+//! open locally selected files. Linux publishes a private read-only FUSE mount
+//! and reports DISPLAY/FUSE errors without closing the RDP session.
 
 // The bridge's *users* — `data_object` and `ole` — are Windows-only, but the
 // type itself cannot be, because it appears in `offer_remote_files`'s
@@ -104,7 +97,9 @@ pub(crate) fn shutdown_file_clipboard() {
     linux::shutdown();
 }
 
-use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use adit_session::ClipFile;
 
@@ -112,17 +107,24 @@ use adit_session::ClipFile;
 /// arrives fully flattened, so copying a source checkout could otherwise turn
 /// into hundreds of thousands of descriptors — enumerated on the UI thread and
 /// then framed down the helper pipe. The helper enforces the same bound.
+#[cfg(any(target_os = "linux", test))]
 pub(crate) const MAX_CLIPBOARD_FILES: usize = 65_536;
 
+// Legacy local-file code below is retained only for isolated tests; it is not
+// compiled into the app while local-to-RDP transfers are disabled.
 /// How deep directory recursion may go. Guards against a pathological tree and,
 /// on Windows, against a directory junction that points at one of its own
 /// ancestors — which `read_dir` will happily walk forever.
+#[cfg(test)]
 const MAX_DEPTH: u32 = 32;
 
 /// A file offered to the remote: where it really lives, and what the remote was
 /// told about it. The two are kept together because a `FileContentsRequest`
 /// names an index into the offered list, and the local path is the only thing
 /// that can answer it.
+// Window state still carries this type, but production no longer reads local
+// file metadata while the temporary restriction is active.
+#[cfg_attr(not(test), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct OfferedFile {
     pub(crate) path: PathBuf,
@@ -140,6 +142,7 @@ pub(crate) struct OfferedFile {
 /// Names are relative to each selected root's parent, so copying `C:\work\docs`
 /// produces `docs`, `docs\a.txt`, … — which is what makes the paste land as a
 /// folder rather than as loose files.
+#[cfg(test)]
 pub(crate) fn expand(roots: &[PathBuf]) -> Vec<OfferedFile> {
     let mut out = Vec::new();
     for root in roots {
@@ -155,6 +158,7 @@ pub(crate) fn expand(roots: &[PathBuf]) -> Vec<OfferedFile> {
     out
 }
 
+#[cfg(test)]
 fn push_entry(out: &mut Vec<OfferedFile>, path: &Path, base: &Path, depth: u32) {
     if out.len() >= MAX_CLIPBOARD_FILES {
         return;
@@ -216,6 +220,7 @@ fn push_entry(out: &mut Vec<OfferedFile>, path: &Path, base: &Path, depth: u32) 
 }
 
 /// The `\`-separated path of `path` relative to `base`, or `None` if it escapes.
+#[cfg(test)]
 fn relative_name(path: &Path, base: &Path) -> Option<String> {
     let relative = path.strip_prefix(base).ok()?;
     let name = relative
@@ -236,6 +241,7 @@ fn relative_name(path: &Path, base: &Path) -> Option<String> {
 /// silently truncated file, which is the one outcome a file transfer must never
 /// produce — so a short read at the end of the file is fine (the range simply
 /// runs past the end), but an I/O error is not.
+#[cfg(test)]
 pub(crate) fn read_range(path: &Path, offset: u64, length: u32) -> Option<Vec<u8>> {
     use std::io::{Read as _, Seek as _, SeekFrom};
 
@@ -256,6 +262,7 @@ pub(crate) fn read_range(path: &Path, offset: u64, length: u32) -> Option<Vec<u8
 }
 
 /// Do not open a previously offered path while clipboard sharing is disabled.
+#[cfg(test)]
 pub(crate) fn read_offered_range(
     enabled: bool,
     files: &[OfferedFile],
@@ -403,72 +410,40 @@ pub(crate) fn set_clipboard_image(_bytes: &[u8]) -> bool {
     false
 }
 
-/// The paths currently on the Windows clipboard as a file selection (`CF_HDROP`),
-/// or `None` when it holds something else.
+/// Snapshot text only while Windows does not expose a file selection. Sequence
+/// checks discard async reads if the clipboard changes before completion.
 #[cfg(windows)]
-pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
-    use std::os::windows::ffi::OsStringExt as _;
-
+pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
     use windows::Win32::System::DataExchange::{
-        CloseClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
+        IsClipboardFormatAvailable, RegisterClipboardFormatW,
     };
-    use windows::Win32::UI::Shell::{DragQueryFileW, HDROP};
-
-    const CF_HDROP: u32 = 15;
-
-    // SAFETY: the clipboard is opened and unconditionally closed on every path
-    // out of this block. Holding it open freezes every other application that
-    // tries to read the clipboard, so the close is not optional.
-    unsafe {
-        if IsClipboardFormatAvailable(CF_HDROP).is_err() {
-            return None;
-        }
-        // A null owner is legal and means "the current task". Opening can fail
-        // simply because another process holds it; that is a normal race on a
-        // 500 ms poll, not an error worth reporting.
-        if OpenClipboard(None).is_err() {
-            return None;
-        }
-
-        let paths = (|| {
-            let handle = GetClipboardData(CF_HDROP).ok()?;
-            let drop_handle = HDROP(handle.0);
-            // Index 0xFFFF_FFFF asks for the count rather than a name.
-            let count = DragQueryFileW(drop_handle, u32::MAX, None);
-            let mut paths = Vec::with_capacity(count as usize);
-            for index in 0..count.min(MAX_CLIPBOARD_FILES as u32) {
-                // Called twice per file by design: once for the length, once for
-                // the characters. The first call must pass no buffer.
-                let len = DragQueryFileW(drop_handle, index, None);
-                if len == 0 {
-                    continue;
-                }
-                // +1 for the null terminator the second call writes.
-                let mut buffer = vec![0u16; len as usize + 1];
-                let written = DragQueryFileW(drop_handle, index, Some(&mut buffer));
-                if written == 0 {
-                    continue;
-                }
-                buffer.truncate(written as usize);
-                paths.push(PathBuf::from(std::ffi::OsString::from_wide(&buffer)));
-            }
-            (!paths.is_empty()).then_some(paths)
-        })();
-
-        let _ = CloseClipboard();
-        paths
-    }
+    let before = clipboard_sequence();
+    // Check only format availability: do not fetch paths, descriptors or bytes.
+    let has_files = unsafe {
+        let registered = [
+            RegisterClipboardFormatW(windows::core::w!("FileGroupDescriptorW")),
+            RegisterClipboardFormatW(windows::core::w!("FileGroupDescriptor")),
+            RegisterClipboardFormatW(windows::core::w!("FileContents")),
+        ];
+        registered.contains(&0)
+            || IsClipboardFormatAvailable(15).is_ok()
+            || registered
+                .iter()
+                .any(|id| IsClipboardFormatAvailable(*id).is_ok())
+    };
+    let after = clipboard_sequence();
+    safe_clipboard_snapshot(before, after, has_files).then_some(before)
 }
 
-/// Linux reads file-URI selections on the clipboard worker.
-#[cfg(target_os = "linux")]
-pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
-    linux::paths()
+#[cfg(not(windows))]
+pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
+    // X11 file selections can also appear as plain text; see docs/features.md.
+    Some(0)
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
-pub(crate) fn clipboard_paths() -> Option<Vec<PathBuf>> {
-    None
+#[cfg(any(windows, test))]
+pub(crate) fn safe_clipboard_snapshot(before: u32, after: u32, has_files: bool) -> bool {
+    before != 0 && before == after && !has_files
 }
 
 #[cfg(test)]

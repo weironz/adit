@@ -231,6 +231,7 @@ impl RemoteMount {
         })
     }
 
+    #[cfg(test)]
     pub fn owns(&self, path: &std::path::Path) -> bool {
         path.starts_with(&self.directory.0)
     }

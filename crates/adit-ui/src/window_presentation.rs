@@ -165,14 +165,7 @@ impl ClipboardLease {
             }
         }
         for read in manager.take_rdp_file_reads() {
-            let data = clipboard_files::read_offered_range(
-                enabled,
-                &self.rdp_offered_files,
-                read.index,
-                read.offset,
-                read.length,
-            );
-            manager.answer_rdp_file_read(read.stream_id, data);
+            manager.answer_rdp_file_read(read.stream_id, None);
         }
     }
 }

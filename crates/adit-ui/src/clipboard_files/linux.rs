@@ -1,12 +1,13 @@
 //! Clipboard ownership and FUSE lifetime run off the iced thread. X11 selections
 //! expose URI metadata; file reads are serviced by the captured remote offer.
 use super::linux_fuse::RemoteMount;
-use super::{ChunkBridge, ClipFile, MAX_CLIPBOARD_FILES};
+#[cfg(test)]
+use super::MAX_CLIPBOARD_FILES;
+use super::{ChunkBridge, ClipFile};
 use clipboard_rs::{
     Clipboard, ClipboardContext, ClipboardHandler, ClipboardWatcher, ClipboardWatcherContext,
 };
 use std::{
-    path::PathBuf,
     sync::{
         atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering},
         mpsc::{sync_channel, SyncSender},
@@ -32,7 +33,6 @@ struct Shared {
     dirty: AtomicBool,
     stop: AtomicBool,
     failed: AtomicBool,
-    paths: Mutex<Option<Vec<PathBuf>>>,
     error: Mutex<Option<String>>,
 }
 
@@ -106,7 +106,6 @@ fn run(shared: Arc<Shared>, events: std::sync::mpsc::Receiver<()>) -> Result<(),
             if offer.files.is_empty() {
                 offer.bridge.close();
                 drop(mount.take());
-                *shared.paths.lock().unwrap_or_else(|e| e.into_inner()) = None;
                 shared.sequence.fetch_add(1, Ordering::Release);
                 continue;
             }
@@ -139,13 +138,8 @@ fn run(shared: Arc<Shared>, events: std::sync::mpsc::Receiver<()>) -> Result<(),
             }
         }
         if shared.dirty.swap(false, Ordering::AcqRel) {
-            // Never fetch arbitrary text/image formats, and never reflect our
-            // own virtual paths back as a local-to-remote file offer.
-            let paths = clipboard
-                .get_files()
-                .ok()
-                .and_then(|values| local_paths(values, mount.as_ref()));
-            *shared.paths.lock().unwrap_or_else(|e| e.into_inner()) = paths;
+            // Only observe that ownership changed. Do not fetch local file
+            // URI metadata while local-to-RDP file transfer is disabled.
             if shared
                 .sequence
                 .fetch_add(1, Ordering::Release)
@@ -162,7 +156,12 @@ fn run(shared: Arc<Shared>, events: std::sync::mpsc::Receiver<()>) -> Result<(),
     Ok(())
 }
 
-fn local_paths(values: Vec<String>, mount: Option<&RemoteMount>) -> Option<Vec<PathBuf>> {
+#[cfg(test)]
+fn local_paths(
+    values: Vec<String>,
+    mount: Option<&RemoteMount>,
+) -> Option<Vec<std::path::PathBuf>> {
+    use std::path::PathBuf;
     if values.is_empty()
         || values.len() > MAX_CLIPBOARD_FILES
         || values.iter().map(String::len).sum::<usize>() > 8 * 1024 * 1024
@@ -237,15 +236,6 @@ pub(super) fn offer(
 
 pub(super) fn sequence() -> u32 {
     service().map_or(0, |service| service.shared.sequence.load(Ordering::Acquire))
-}
-
-pub(super) fn paths() -> Option<Vec<PathBuf>> {
-    service()?
-        .shared
-        .paths
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone()
 }
 
 pub(super) fn take_error() -> Option<String> {
@@ -383,10 +373,6 @@ mod tests {
             );
             thread::sleep(Duration::from_millis(10));
         }
-        assert!(
-            shared.paths.lock().unwrap().is_none(),
-            "an owned remote URI must not echo back"
-        );
         shared.stop.store(true, Ordering::Release);
         let _ = wake.try_send(());
         let deadline = Instant::now() + Duration::from_secs(5);

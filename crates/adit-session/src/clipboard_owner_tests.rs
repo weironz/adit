@@ -56,6 +56,73 @@ fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
     assert_eq!(manager.active_session, Some(b));
 }
 
+#[test]
+fn enabled_clipboard_refuses_old_helper_reads_on_the_originating_session() {
+    let a = ConnectionProfile::new("a", "a.invalid", 22, "fixture");
+    let b = ConnectionProfile::new("b", "b.invalid", 22, "fixture");
+    let ids = [a.id, b.id];
+    let mut manager = SessionManager::with_profiles(vec![a, b]);
+    let a = manager.open_mock_session(ids[0]).unwrap();
+    let b = manager.open_mock_session(ids[1]).unwrap();
+    let (handle_a, rx_a, events_a) = RdpClientHandle::test_fixture_with_channels();
+    let (handle_b, rx_b, events_b) = RdpClientHandle::test_fixture_with_channels();
+    manager.sessions.get_mut(&a).unwrap().rdp = Some(handle_a);
+    manager.sessions.get_mut(&b).unwrap().rdp = Some(handle_b);
+    manager.set_rdp_clipboard(true);
+    manager.activate(b).unwrap();
+    for tx in [events_a, events_b] {
+        tx.send(RdpClientEvent::FileContentsNeeded {
+            stream_id: 9,
+            index: 0,
+            offset: 0,
+            length: 7,
+        })
+        .unwrap();
+    }
+    manager.poll_events();
+    for rx in [&rx_a, &rx_b] {
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(adit_rdp_proto::ClientMsg::FileContents {
+                stream_id: 9,
+                data: None
+            })
+        ));
+    }
+    assert!(manager.pending_rdp_file_reads.is_empty());
+    assert_eq!(manager.active_session, Some(b));
+    for id in [a, b] {
+        assert_eq!(
+            manager.sessions[&id].summary.status,
+            SessionStatus::Connected
+        );
+    }
+}
+
+#[test]
+fn legacy_session_api_cannot_send_file_metadata_or_bytes() {
+    let (handle, rx, _) = RdpClientHandle::test_fixture_with_channels();
+    handle.send_clipboard_files(vec![ClipFile {
+        name: "private.txt".into(),
+        size: 7,
+        is_dir: false,
+    }]);
+    assert!(rx.try_recv().is_err());
+    handle.answer_file_contents(4, Some(b"private".to_vec()));
+    assert!(matches!(
+        rx.try_recv(),
+        Ok(adit_rdp_proto::ClientMsg::FileContents {
+            stream_id: 4,
+            data: None
+        })
+    ));
+    handle.send_clipboard_files(Vec::new());
+    assert!(
+        matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::ClipboardFiles(files))
+        if files.is_empty())
+    );
+}
+
 fn attach_test_rdp(manager: &mut SessionManager, session: SessionId) -> RdpFileRequester {
     let handle = RdpClientHandle::test_fixture();
     let requester = handle.file_requester_for_generation(1);

@@ -600,7 +600,11 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         ),
         rdp_toolbar_button(
             "📋",
-            t("剪贴板同步"),
+            if app.manager.active_is_vnc() {
+                t("剪贴板同步")
+            } else {
+                t("剪贴板同步（暂不支持本地文件发送至 RDP）")
+            },
             app.rdp_clipboard,
             Some(Message::ToggleRdpClipboard(!app.rdp_clipboard)),
         ),

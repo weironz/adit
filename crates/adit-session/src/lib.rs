@@ -3861,26 +3861,11 @@ impl SessionManager {
                                 .file_requester_for_generation(generation),
                         });
                     }
-                    RdpClientEvent::FileContentsNeeded {
-                        stream_id,
-                        index,
-                        offset,
-                        length,
-                    } => {
-                        if !self.rdp_clipboard {
-                            if let Some(rdp) = &record.rdp {
-                                rdp.answer_file_contents(stream_id, None);
-                            }
-                        } else {
-                            self.pending_rdp_file_reads.push((
-                                record.summary.id,
-                                RdpFileRead {
-                                    stream_id,
-                                    index,
-                                    offset,
-                                    length,
-                                },
-                            ));
+                    RdpClientEvent::FileContentsNeeded { stream_id, .. } => {
+                        // A helper from an older installation may still ask.
+                        // Refuse on its own session without opening a local file.
+                        if let Some(rdp) = &record.rdp {
+                            rdp.answer_file_contents(stream_id, None);
                         }
                     }
                     RdpClientEvent::AuthRejected(message) => {

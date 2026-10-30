@@ -416,18 +416,20 @@ impl RdpClientHandle {
         let _ = self.cmd_tx.send(ClientMsg::ClipboardImage(image));
     }
 
-    /// Offer a local file selection to the remote clipboard. Metadata only —
-    /// nothing is read from disk until the remote pastes.
+    /// Local file offers are temporarily disabled. An empty offer is retained
+    /// as a metadata-free IPC barrier for older peers.
     pub fn send_clipboard_files(&self, files: Vec<ClipFile>) {
-        let _ = self.cmd_tx.send(ClientMsg::ClipboardFiles(files));
+        if files.is_empty() {
+            let _ = self.cmd_tx.send(ClientMsg::ClipboardFiles(files));
+        }
     }
 
-    /// Answer a [`RdpClientEvent::FileContentsNeeded`]. `None` reports a failed
-    /// read, which becomes the protocol's error response.
-    pub fn answer_file_contents(&self, stream_id: u32, data: Option<Vec<u8>>) {
-        let _ = self
-            .cmd_tx
-            .send(ClientMsg::FileContents { stream_id, data });
+    /// Always reject local file reads, including requests from an older helper.
+    pub fn answer_file_contents(&self, stream_id: u32, _data: Option<Vec<u8>>) {
+        let _ = self.cmd_tx.send(ClientMsg::FileContents {
+            stream_id,
+            data: None,
+        });
     }
 
     /// A handle for asking the remote for file bytes.
@@ -782,17 +784,9 @@ fn wire_up(
                         }
                         let _ = event_tx.send(RdpClientEvent::Resized { width, height });
                     }
-                    // Clipboard file transfer. The helper speaks the whole
-                    // MS-RDPECLIP file protocol, but the half that has to answer
-                    // these lives in the GUI process and is not built yet: it
-                    // needs a Win32 `CF_HDROP` reader and a COM `IDataObject`
-                    // with delay-rendered `IStream`s, neither of which iced's
-                    // text-only clipboard can express.
-                    //
-                    // Answering `FileContentsNeeded` with a refusal rather than
-                    // dropping it is the important part — a remote paste blocks
-                    // on the stream it asked for, so silence would hang Explorer
-                    // over there instead of failing it.
+                    // Remote file offers stay bound to their session. A local
+                    // file request from an older helper is refused by the
+                    // session manager so a remote paste cannot wait forever.
                     Ok(Some(HostMsg::ClipboardImage(image))) => {
                         let _ = event_tx.send(RdpClientEvent::ClipboardImage(image));
                     }

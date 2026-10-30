@@ -1178,7 +1178,7 @@ pub enum Message {
     PasteIntoTerminal,
     ClipboardPasted(Option<SessionId>, Option<String>),
     /// The local clipboard, sampled for the active RDP session's remote.
-    RdpClipboardPolled(SessionId, u64, Option<String>),
+    RdpClipboardPolled(SessionId, u64, Option<u32>, Option<String>),
     TerminalJumpToBottom,
     OpenSelectedProfile,
     ConnectSelectedProfile,
@@ -3285,12 +3285,20 @@ mod tests {
     }
 
     #[test]
+    fn windows_file_selection_and_changed_clipboard_do_not_produce_a_safe_snapshot() {
+        assert!(clipboard_files::safe_clipboard_snapshot(4, 4, false));
+        assert!(!clipboard_files::safe_clipboard_snapshot(4, 4, true));
+        assert!(!clipboard_files::safe_clipboard_snapshot(4, 5, false));
+        assert!(!clipboard_files::safe_clipboard_snapshot(0, 0, false));
+    }
+
+    #[test]
     fn stale_desktop_clipboard_reads_do_not_cross_tab_or_sharing_boundaries() {
         let mut app = drag_test_app();
         app.rdp_clipboard_offered = None;
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(SessionId::new(), 0, Some("stale".into())),
+            Message::RdpClipboardPolled(SessionId::new(), 0, None, Some("stale".into())),
         );
         assert!(app.rdp_clipboard_offered.is_none());
         let profile = app.manager.profiles()[0].id;
@@ -3300,13 +3308,18 @@ mod tests {
         let _ = update(&mut app, Message::ToggleRdpClipboard(true));
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(session, epoch, Some("captured before off/on".into())),
+            Message::RdpClipboardPolled(
+                session,
+                epoch,
+                None,
+                Some("captured before off/on".into()),
+            ),
         );
         assert!(app.rdp_clipboard_offered.is_none());
         app.rdp_clipboard = false;
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(SessionId::new(), 0, Some("disabled".into())),
+            Message::RdpClipboardPolled(SessionId::new(), 0, None, Some("disabled".into())),
         );
         assert!(app.rdp_clipboard_offered.is_none());
     }

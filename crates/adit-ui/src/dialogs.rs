@@ -1322,7 +1322,7 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         )
         .push(
             checkbox(app.rdp_clipboard)
-                .label(t("远程桌面共享剪贴板（VNC 仅基础文本）"))
+                .label(t("远程桌面共享剪贴板（RDP 暂不发送本地文件；VNC 仅文本）"))
                 .on_toggle(Message::ToggleRdpClipboard)
                 .size(16)
                 .text_size(12),

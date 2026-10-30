@@ -204,6 +204,8 @@ const COMMON: &[(&str, &str)] = &[
     ("名称（可选）", "Name (optional)"),
     ("命令，如 tail -f /var/log/syslog", "Command, e.g. tail -f /var/log/syslog"),
     ("远程桌面共享剪贴板（VNC 仅基础文本）", "Share the clipboard with remote desktops (VNC: basic text only)"),
+    ("远程桌面共享剪贴板（RDP 暂不发送本地文件；VNC 仅文本）", "Share the clipboard with remote desktops (local files to RDP temporarily unavailable; VNC: text only)"),
+    ("剪贴板同步（暂不支持本地文件发送至 RDP）", "Clipboard sharing (local files to RDP temporarily unavailable)"),
     ("本地转发 -L", "Local forwarding -L"),
     ("动态 SOCKS -D", "Dynamic SOCKS -D"),
     ("远程转发 -R", "Remote forwarding -R"),

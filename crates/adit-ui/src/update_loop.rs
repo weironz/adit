@@ -302,20 +302,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     app.rdp_chunk_bridge.close();
                 }
 
-                // Byte ranges the remote is pasting. Answered before the polls below
-                // because a remote paste is *blocked* on each one, and every request
-                // gets a reply even when the read fails — `None` becomes the
-                // protocol's error response, where silence would hang Explorer over
-                // there indefinitely.
+                // Defend against requests already queued by an older helper.
                 for read in app.manager.take_rdp_file_reads() {
-                    let data = clipboard_files::read_offered_range(
-                        app.rdp_clipboard,
-                        &app.rdp_offered_files,
-                        read.index,
-                        read.offset,
-                        read.length,
-                    );
-                    app.manager.answer_rdp_file_read(read.stream_id, data);
+                    app.manager.answer_rdp_file_read(read.stream_id, None);
                 }
 
                 let clipboard_ready = !app.manager.active_is_vnc()
@@ -333,27 +322,32 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         .rdp_clipboard_ticks
                         .is_multiple_of(RDP_CLIPBOARD_POLL_TICKS)
                     {
-                        // Explorer also offers file names as text. RDP checks files
-                        // first; VNC supports text only and never requests local files.
-                        if !app.manager.active_is_vnc() {
-                            offer_local_files_if_changed(app);
+                        let token = if app.manager.active_is_vnc() {
+                            None
+                        } else {
+                            let Some(token) = clipboard_files::rdp_text_clipboard_token() else {
+                                return Task::none();
+                            };
                             offer_local_image_if_changed(app);
-                        }
+                            Some(token)
+                        };
                         if let Some(session) = app.manager.active_session() {
                             let epoch = app.desktop_clipboard_epoch;
                             return clipboard::read().map(move |contents| {
-                                Message::RdpClipboardPolled(session, epoch, contents)
+                                Message::RdpClipboardPolled(session, epoch, token, contents)
                             });
                         }
                     }
                 }
             }
         }
-        Message::RdpClipboardPolled(session, epoch, contents) => {
+        Message::RdpClipboardPolled(session, epoch, token, contents) => {
             // A read can finish after a tab switch or after sharing was disabled.
             if !app.rdp_clipboard
                 || app.manager.active_session() != Some(session)
                 || app.desktop_clipboard_epoch != epoch
+                || token
+                    .is_some_and(|token| clipboard_files::rdp_text_clipboard_token() != Some(token))
             {
                 return Task::none();
             }
@@ -3830,39 +3824,17 @@ pub(crate) fn offer_local_image_if_changed(app: &mut AditApp) {
     if seq == app.rdp_image_offered_seq {
         return;
     }
+    let Some(token) = clipboard_files::rdp_text_clipboard_token() else {
+        return;
+    };
     let Some(image) = clipboard_files::clipboard_image() else {
         return;
     };
-    app.rdp_image_offered_seq = seq;
-    app.manager.offer_image_to_active_rdp(image);
-}
-
-/// Sample the local clipboard for a *file* selection and offer it to the active
-/// RDP desktop, but only when the selection actually changed.
-///
-/// The offer costs a `FormatList` on the RDP wire and the expansion walks the
-/// selected directories, so repeating it on every poll tick would be expensive
-/// twice over. Comparing the expanded list rather than the raw paths is
-/// deliberate: re-copying the same folder after editing a file inside it is a
-/// genuinely different offer, and the sizes are what changed.
-pub(crate) fn offer_local_files_if_changed(app: &mut AditApp) {
-    let Some(paths) = clipboard_files::clipboard_paths() else {
-        // Not a file selection. The offered list is deliberately *kept*: the
-        // remote may still be pasting from it, and a paste reads its bytes by
-        // index long after Explorer's clipboard has moved on to something else.
-        return;
-    };
-    let expanded = clipboard_files::expand(&paths);
-    if expanded == app.rdp_offered_files {
+    if clipboard_files::rdp_text_clipboard_token() != Some(token) {
         return;
     }
-    app.rdp_offered_files = expanded;
-    let metadata = app
-        .rdp_offered_files
-        .iter()
-        .map(|file| file.meta.clone())
-        .collect();
-    app.manager.offer_rdp_files_to_active(metadata);
+    app.rdp_image_offered_seq = seq;
+    app.manager.offer_image_to_active_rdp(image);
 }
 
 /// Returns true while a VNC tab has no authenticated active connection.
