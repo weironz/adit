@@ -414,7 +414,6 @@ impl FocusActivation {
         self.revision.same_as(revision)
     }
 
-    #[cfg(windows)]
     pub(crate) fn current(&self) -> bool {
         self.revision.0.lock().is_ok_and(|state| self.valid(&state))
     }

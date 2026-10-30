@@ -4088,7 +4088,7 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
     let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 pub(super) fn observe_windows_clipboard(app: &mut AditApp, sequence: u32) {
     app.manager.observe_windows_clipboard_sequence(sequence);
     if !app.manager.active_is_vnc() && (sequence == 0 || app.rdp_text_observed_seq != sequence) {

@@ -471,7 +471,7 @@ pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
     Some(0)
 }
 
-#[cfg(any(windows, test))]
+#[cfg(windows)]
 pub(crate) fn safe_clipboard_snapshot(before: u32, after: u32, has_files: bool) -> bool {
     before != 0 && before == after && !has_files
 }

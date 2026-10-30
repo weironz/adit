@@ -1825,6 +1825,7 @@ mod tests {
         assert_eq!(desktop.app.manager.sessions().len(), 3);
     }
 
+    #[cfg(windows)]
     #[test]
     fn confirmation_activation_survives_an_unrelated_vnc_epoch_change() {
         let (mut desktop, ids) = fixture();

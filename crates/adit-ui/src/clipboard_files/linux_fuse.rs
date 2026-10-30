@@ -158,6 +158,8 @@ impl Drop for MountDirectory {
 
 pub(super) struct RemoteMount {
     session: Option<BackgroundSession>,
+    // Held for RAII: MountDirectory drops only after the FUSE session is joined.
+    #[cfg_attr(not(test), allow(dead_code))]
     directory: MountDirectory,
     bridge: ChunkBridge,
     pub paths: Vec<String>,
