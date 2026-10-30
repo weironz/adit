@@ -41,6 +41,8 @@ struct Snapshot {
     connection_open: bool,
     sidebar_visible: bool,
     focus_enqueued: u64,
+    invoke_enqueued: u64,
+    keyboard_attempts: u64,
     stale_focus_rejected: u64,
     held_host_actions: usize,
 }
@@ -87,6 +89,21 @@ fn allowed(message: &Message) -> bool {
     if let Message::DialogFocusActivate { action, .. } = message {
         return allowed(action);
     }
+    if let Message::KeyboardInput(event) = message {
+        return match event {
+            keyboard::Event::KeyPressed {
+                key: Key::Named(Named::Escape),
+                modifiers,
+                ..
+            }
+            | keyboard::Event::KeyReleased {
+                key: Key::Named(Named::Escape),
+                modifiers,
+                ..
+            } => !modifiers.control() && !modifiers.alt() && !modifiers.logo(),
+            _ => false,
+        };
+    }
     matches!(
         message,
         Message::Tick
@@ -102,7 +119,6 @@ fn allowed(message: &Message) -> bool {
             | Message::AccessibilityFocus { .. }
             | Message::DismissMenu(_)
             | Message::FinishMissionName(_)
-            | Message::KeyboardInput(_)
             | Message::ToggleSidebar
             | Message::CancelConnection
             | Message::EditProfileFromContext(_)
@@ -139,6 +155,11 @@ fn snapshot(state: &Harness) -> Snapshot {
         connection_open: state.app.connection_dialog.is_some(),
         sidebar_visible: state.app.sidebar_visible,
         focus_enqueued,
+        invoke_enqueued: state
+            .window
+            .map(native::invoke_statistics)
+            .unwrap_or_default(),
+        keyboard_attempts: diagnostics::keyboard_attempts(),
         stale_focus_rejected,
         held_host_actions: state.held_host_actions,
     }
@@ -356,7 +377,7 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
 }
 
 fn view(state: &Harness) -> Element<'_, Event> {
-    chrome::view(&state.app).map(Event::App)
+    acceptance_guard::no_clipboard(chrome::view(&state.app)).map(Event::App)
 }
 
 fn subscription(state: &Harness) -> Subscription<Event> {
@@ -394,6 +415,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     if path == temp || !path.starts_with(&temp) || fs::read_dir(&path)?.next().is_some() {
         return Err("acceptance config must be a fresh empty directory beneath OS temp".into());
     }
+    acceptance_guard::validate_environment(&temp)?;
+    diagnostics::enable();
     let profiles: Vec<_> = (0..3)
         .map(|i| {
             let mut profile = ConnectionProfile::with_group(
@@ -495,5 +518,26 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
             Ok(())
         }
         Err(error) => Err(error.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_harness_rejects_clipboard_keyboard_shortcuts() {
+        let key = Key::Character("v".into());
+        let event = keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyV),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        };
+        assert!(!allowed(&Message::KeyboardInput(event)));
+        assert!(!allowed(&Message::PasteIntoTerminal));
     }
 }

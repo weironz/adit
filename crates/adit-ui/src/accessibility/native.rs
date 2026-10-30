@@ -50,6 +50,11 @@ fn capture_foreground(
     let foreground = unsafe { GetForegroundWindow() }.0 as isize;
     let generation = {
         let guard = state.lock().ok()?;
+        #[cfg(feature = "native-accessibility-acceptance")]
+        diagnostics::event(format_args!(
+            "foreground-capture target_registered={} foreground_registered={} same={} generation={}",
+            guard.windows.contains(&target), guard.windows.contains(&foreground), foreground == target, guard.generation,
+        ));
         if !guard.windows.contains(&foreground) || !guard.windows.contains(&target) {
             return None;
         }
@@ -79,11 +84,26 @@ pub(super) fn foreground_lease_current(lease: &WindowFocusLease) -> bool {
     lease_current_for(lease, unsafe { GetForegroundWindow() }.0 as isize)
 }
 
+#[cfg(feature = "native-accessibility-acceptance")]
+pub(super) fn synthetic_cross_window_lease(id: window::Id) -> Option<WindowFocusLease> {
+    let (target, epoch, generation) = WINDOWS.with(|windows| {
+        let windows = windows.borrow();
+        let window = windows.get(&id)?;
+        let state = window.shared.lock().ok()?;
+        Some((
+            window.hwnd.0 as isize,
+            Arc::clone(&state.scope_epoch),
+            state.scope_epoch.load(Ordering::SeqCst),
+        ))
+    })?;
+    capture_foreground(target, epoch, generation).filter(|lease| lease.foreground != lease.target)
+}
+
 pub(super) fn activate_for_focus(
     lease: &WindowFocusLease,
     ticket: Option<&dialog_focus::FocusTicket>,
 ) -> Option<WindowFocusLease> {
-    defer_focus_events(|| {
+    let result = defer_focus_events(|| {
         let activate = || {
             if !foreground_lease_current(lease) {
                 return None;
@@ -108,7 +128,10 @@ pub(super) fn activate_for_focus(
         } else {
             activate()
         }
-    })
+    });
+    #[cfg(feature = "native-accessibility-acceptance")]
+    diagnostics::foreground_attempt(result.is_some());
+    result
 }
 
 // SetForegroundWindow synchronously sends WM_SETFOCUS/WM_KILLFOCUS. Defer
@@ -154,6 +177,8 @@ struct Shared {
     #[cfg(feature = "native-accessibility-acceptance")]
     focus_enqueued: std::sync::atomic::AtomicU64,
     #[cfg(feature = "native-accessibility-acceptance")]
+    invoke_enqueued: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "native-accessibility-acceptance")]
     stale_focus_rejected: std::sync::atomic::AtomicU64,
 }
 
@@ -176,12 +201,43 @@ struct Request {
     window_lease: Option<WindowFocusLease>,
 }
 
+impl Request {
+    fn cancel(&self) {
+        if let Some(ticket) = &self.focus_ticket {
+            ticket.cancel();
+        }
+        if let Some(activation) = &self.activation {
+            activation.cancel();
+        }
+    }
+}
+
 struct Actions {
     state: Arc<Mutex<Shared>>,
     tx: mpsc::SyncSender<Request>,
+    priority: Arc<Mutex<Option<Request>>>,
     hwnd: isize,
     #[cfg(test)]
     allow_unregistered: bool,
+}
+
+impl Actions {
+    fn enqueue(&self, request: Request, refusal: bool, displaced: &mut Option<Request>) -> bool {
+        match self.tx.try_send(request) {
+            Ok(()) => true,
+            // A separate single slot keeps the queue bounded while allowing a
+            // later refusal to invalidate trust even when all 64 slots are busy.
+            Err(mpsc::TrySendError::Full(request)) if refusal => {
+                if let Ok(mut priority) = self.priority.lock() {
+                    *displaced = priority.replace(request);
+                    true
+                } else {
+                    false
+                }
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 impl accesskit::ActionHandler for Actions {
@@ -213,6 +269,19 @@ impl accesskit::ActionHandler for Actions {
             activation: None,
             window_lease: None,
         };
+        #[cfg(feature = "native-accessibility-acceptance")]
+        {
+            let challenge = out
+                .namespace
+                .rsplit(':')
+                .next()
+                .and_then(|id| id.parse::<u64>().ok());
+            diagnostics::event(format_args!(
+                "native-received challenge={challenge:?} node={} action={:?} index={:?}",
+                out.node.0, out.action, route.focus_index
+            ));
+        }
+        let refusal = route.invoke.as_ref().is_some_and(dialog_focus::is_refusal);
         match (request.action, request.data) {
             (Action::Focus, _) if route.focus.is_some() => {
                 #[cfg(test)]
@@ -225,10 +294,15 @@ impl accesskit::ActionHandler for Actions {
                     return;
                 }
                 if let Some(revision) = &route.focus_revision {
-                    let queued = revision.enqueue(route.focus_index, |ticket| {
+                    let mut displaced = None;
+                    let queued = revision.enqueue(route.focus_index, refusal, |ticket| {
                         out.focus_ticket = Some(ticket);
-                        self.tx.try_send(out).is_ok()
+                        self.enqueue(out, refusal, &mut displaced)
                     });
+                    // Do not re-lock a focus group while enqueue holds it.
+                    if let Some(displaced) = displaced {
+                        displaced.cancel();
+                    }
                     #[cfg(feature = "native-accessibility-acceptance")]
                     if queued {
                         if let Ok(state) = self.state.lock() {
@@ -253,10 +327,22 @@ impl accesskit::ActionHandler for Actions {
                     if out.window_lease.is_none() && !allow_unregistered {
                         return;
                     }
-                    let _ = revision.enqueue_activation(route.focus_index, |activation| {
-                        out.activation = Some(activation);
-                        self.tx.try_send(out).is_ok()
-                    });
+                    let mut displaced = None;
+                    let queued =
+                        revision.enqueue_activation(route.focus_index, refusal, |activation| {
+                            out.activation = Some(activation);
+                            self.enqueue(out, refusal, &mut displaced)
+                        });
+                    if let Some(displaced) = displaced {
+                        displaced.cancel();
+                    }
+                    #[cfg(feature = "native-accessibility-acceptance")]
+                    if queued {
+                        if let Ok(state) = self.state.lock() {
+                            state.invoke_enqueued.fetch_add(1, Ordering::Relaxed);
+                        }
+                    }
+                    let _ = queued;
                     return;
                 }
             }
@@ -291,6 +377,7 @@ struct Window {
     adapter: RefCell<Adapter>,
     shared: Arc<Mutex<Shared>>,
     rx: mpsc::Receiver<Request>,
+    priority: Arc<Mutex<Option<Request>>>,
     ids: NodeIds,
     last: Option<TreeUpdate>,
 }
@@ -417,9 +504,12 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
             #[cfg(feature = "native-accessibility-acceptance")]
             focus_enqueued: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
+            invoke_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
             stale_focus_rejected: std::sync::atomic::AtomicU64::new(0),
         }));
         let (tx, rx) = mpsc::sync_channel(64);
+        let priority = Arc::new(Mutex::new(None));
         let window = Box::new(Window {
             hwnd,
             alive: Cell::new(true),
@@ -429,6 +519,7 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
                 Actions {
                     state: Arc::clone(&shared),
                     tx,
+                    priority: Arc::clone(&priority),
                     hwnd: raw,
                     #[cfg(test)]
                     allow_unregistered: false,
@@ -436,6 +527,7 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
             )),
             shared,
             rx,
+            priority,
             ids: NodeIds::default(),
             last: None,
         });
@@ -690,6 +782,11 @@ pub(super) fn live(id: window::Id) -> bool {
     })
 }
 
+#[cfg(test)]
+pub(super) fn test_scope_epoch(id: window::Id) -> Arc<AtomicU64> {
+    WINDOWS.with(|windows| Arc::clone(&windows.borrow()[&id].shared.lock().unwrap().scope_epoch))
+}
+
 pub(super) fn retire_scope(id: window::Id, namespace: &str) {
     WINDOWS.with(|windows| {
         let windows = windows.borrow();
@@ -736,6 +833,23 @@ pub(super) fn focus_statistics(id: window::Id) -> (u64, u64) {
     })
 }
 
+#[cfg(feature = "native-accessibility-acceptance")]
+pub(super) fn invoke_statistics(id: window::Id) -> u64 {
+    WINDOWS.with(|windows| {
+        windows
+            .borrow()
+            .get(&id)
+            .and_then(|window| {
+                window
+                    .shared
+                    .lock()
+                    .ok()
+                    .map(|state| state.invoke_enqueued.load(Ordering::Relaxed))
+            })
+            .unwrap_or_default()
+    })
+}
+
 fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
     !state.revoked
         && request.namespace == namespace
@@ -764,6 +878,15 @@ fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
         })
 }
 
+fn accept_request(state: &Shared, request: &Request, namespace: &str) -> bool {
+    if current(state, request, namespace) {
+        true
+    } else {
+        request.cancel();
+        false
+    }
+}
+
 pub(super) fn drain(
     registered: &HashSet<window::Id>,
     current_window: Option<window::Id>,
@@ -781,16 +904,28 @@ pub(super) fn drain(
                 continue;
             }
             for _ in 0..32 {
-                let Ok(request) = window.rx.try_recv() else {
+                let priority = window.priority.lock().ok().and_then(|mut slot| slot.take());
+                let Some(request) = priority.or_else(|| window.rx.try_recv().ok()) else {
                     break;
                 };
                 let Ok(state) = window.shared.lock() else {
                     continue;
                 };
-                if !current(&state, &request, namespace) {
-                    if let Some(ticket) = &request.focus_ticket {
-                        ticket.cancel();
-                    }
+                #[cfg(feature = "native-accessibility-acceptance")]
+                {
+                    let challenge = request
+                        .namespace
+                        .rsplit(':')
+                        .next()
+                        .and_then(|id| id.parse::<u64>().ok());
+                    diagnostics::event(format_args!(
+                        "native-drain challenge={challenge:?} node={} action={:?} current={}",
+                        request.node.0,
+                        request.action,
+                        current(&state, &request, namespace)
+                    ));
+                }
+                if !accept_request(&state, &request, namespace) {
                     #[cfg(feature = "native-accessibility-acceptance")]
                     if request.action == Action::Focus {
                         state
@@ -881,12 +1016,15 @@ mod tests {
             #[cfg(feature = "native-accessibility-acceptance")]
             focus_enqueued: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
+            invoke_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
             stale_focus_rejected: std::sync::atomic::AtomicU64::new(0),
         };
         (
             Actions {
                 state: Arc::new(Mutex::new(shared)),
                 tx,
+                priority: Arc::new(Mutex::new(None)),
                 hwnd: 0,
                 allow_unregistered: true,
             },
@@ -1054,8 +1192,10 @@ mod tests {
         assert!(activation.current());
         assert!(!focus.focus_ticket.as_ref().unwrap().current());
         assert!(activation.commit(|| false, || ()).is_none());
-        assert!(activation.current());
-        assert!(activation.commit(|| true, || ()).is_some());
+        assert!(!activation.current());
+        handler.do_action(request(Action::Click, None));
+        let fresh = rx.try_recv().unwrap();
+        assert!(fresh.activation.unwrap().commit(|| true, || ()).is_some());
         assert!(!focus.focus_ticket.as_ref().unwrap().current());
     }
 
@@ -1064,7 +1204,7 @@ mod tests {
         use accesskit::ActionHandler;
         let revision = dialog_focus::FocusGroup::new().revision();
         let (mut handler, rx) = handler(Route {
-            invoke: Some(Message::ClearError),
+            invoke: Some(host_action(adit_session::HostKeyDecision::TrustAndRecord)),
             set_value: None,
             range: None,
             focus: Some(iced::advanced::widget::Id::new("trust")),
@@ -1074,18 +1214,209 @@ mod tests {
         handler.do_action(request(Action::Click, None));
         let trust = rx.try_recv().unwrap();
         assert!(trust.activation.as_ref().unwrap().current());
-        handler
-            .state
-            .lock()
-            .unwrap()
-            .routes
-            .get_mut(&NodeId(2))
-            .unwrap()
-            .focus_index = Some(0);
+        {
+            let mut state = handler.state.lock().unwrap();
+            let route = state.routes.get_mut(&NodeId(2)).unwrap();
+            route.focus_index = Some(0);
+            route.invoke = Some(host_action(adit_session::HostKeyDecision::Reject));
+        }
         handler.do_action(request(Action::Click, None));
         let rejection = rx.try_recv().unwrap();
         assert!(!trust.activation.as_ref().unwrap().current());
         assert!(rejection.activation.as_ref().unwrap().current());
+    }
+
+    fn host_action(decision: adit_session::HostKeyDecision) -> Message {
+        Message::RespondHostKey {
+            session_id: SessionId::new(),
+            challenge_id: 116,
+            decision,
+        }
+    }
+
+    #[test]
+    fn reject_and_record_supersedes_pending_trust_invoke() {
+        use accesskit::ActionHandler;
+        use adit_session::HostKeyDecision::{RejectAndRecord, TrustAndRecord};
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(host_action(TrustAndRecord)),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision),
+            focus_index: Some(3),
+        });
+        handler.do_action(request(Action::Click, None));
+        let trust = rx.try_recv().unwrap();
+        {
+            let mut state = handler.state.lock().unwrap();
+            let route = state.routes.get_mut(&NodeId(2)).unwrap();
+            route.focus_index = Some(1);
+            route.invoke = Some(host_action(RejectAndRecord));
+        }
+        handler.do_action(request(Action::Click, None));
+        let refusal = rx.try_recv().expect("reject-and-record was dropped");
+        assert!(!trust.activation.unwrap().current());
+        assert!(refusal.activation.unwrap().current());
+    }
+
+    #[test]
+    fn implicit_trust_focus_and_invoke_cannot_supersede_a_pending_rejection() {
+        use accesskit::ActionHandler;
+        use adit_session::HostKeyDecision::{Reject, TrustAndRecord};
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(host_action(Reject)),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("reject")),
+            focus_revision: Some(revision),
+            focus_index: Some(0),
+        });
+        handler.do_action(request(Action::Focus, None));
+        let rejection = rx.try_recv().unwrap();
+        {
+            let mut state = handler.state.lock().unwrap();
+            let route = state.routes.get_mut(&NodeId(2)).unwrap();
+            route.focus_index = Some(3);
+            route.invoke = Some(host_action(TrustAndRecord));
+        }
+        // Windows UIA Invoke can generate Focus on the same button first.
+        handler.do_action(request(Action::Focus, None));
+        handler.do_action(request(Action::Click, None));
+        assert!(
+            rejection.focus_ticket.as_ref().unwrap().current(),
+            "implicit trust focus superseded the pending rejection"
+        );
+        assert!(
+            rx.try_iter().all(|request| request.activation.is_none()),
+            "trust invoke survived while the rejection was pending"
+        );
+    }
+
+    #[test]
+    fn full_queue_reject_invalidates_previously_queued_trust() {
+        use accesskit::ActionHandler;
+        use adit_session::HostKeyDecision::{Reject, TrustAndRecord};
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(host_action(TrustAndRecord)),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision),
+            focus_index: Some(3),
+        });
+        for _ in 0..64 {
+            handler.do_action(request(Action::Click, None));
+        }
+        {
+            let mut state = handler.state.lock().unwrap();
+            let route = state.routes.get_mut(&NodeId(2)).unwrap();
+            route.focus_index = Some(0);
+            route.invoke = Some(host_action(Reject));
+        }
+        handler.do_action(request(Action::Click, None));
+        let queued: Vec<_> = rx.try_iter().collect();
+        assert_eq!(queued.len(), 64);
+        assert!(
+            !queued
+                .last()
+                .unwrap()
+                .activation
+                .as_ref()
+                .unwrap()
+                .current(),
+            "a full queue preserved the old trust after a later rejection"
+        );
+        let refusal = handler
+            .priority
+            .lock()
+            .unwrap()
+            .take()
+            .expect("refusal reserved slot");
+        assert!(refusal.activation.unwrap().commit(|| true, || ()).is_some());
+    }
+
+    #[test]
+    fn invalid_activation_lease_cannot_leave_a_permanent_pending_request() {
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut stale = None;
+        assert!(revision.enqueue_activation(Some(3), false, |activation| {
+            stale = Some(activation);
+            true
+        }));
+        let stale = stale.unwrap();
+        assert!(stale.commit(|| false, || ()).is_none());
+        assert!(!stale.current(), "revoked activation is still pending");
+        assert!(
+            revision.enqueue_activation(Some(2), false, |_| true),
+            "revoked activation blocked a later selection indefinitely"
+        );
+    }
+
+    #[test]
+    fn stale_route_cancels_its_invoke_without_blocking_a_new_action() {
+        use accesskit::ActionHandler;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(host_action(adit_session::HostKeyDecision::TrustAndRecord)),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision.clone()),
+            focus_index: Some(3),
+        });
+        handler.do_action(request(Action::Click, None));
+        let stale = rx.try_recv().unwrap();
+        {
+            let mut state = handler.state.lock().unwrap();
+            state.routes.remove(&NodeId(2));
+            assert!(!accept_request(&state, &stale, "editor:fixture"));
+        }
+        assert!(!stale.activation.as_ref().unwrap().current());
+        assert!(revision.enqueue_activation(Some(2), false, |_| true));
+    }
+
+    #[test]
+    fn full_queue_reserves_latest_reject_and_record_after_its_focus() {
+        use accesskit::ActionHandler;
+        use adit_session::HostKeyDecision::{RejectAndRecord, TrustAndRecord};
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(host_action(TrustAndRecord)),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision),
+            focus_index: Some(3),
+        });
+        for _ in 0..64 {
+            handler.do_action(request(Action::Click, None));
+        }
+        {
+            let mut state = handler.state.lock().unwrap();
+            let route = state.routes.get_mut(&NodeId(2)).unwrap();
+            route.focus_index = Some(1);
+            route.invoke = Some(host_action(RejectAndRecord));
+        }
+        handler.do_action(request(Action::Focus, None));
+        assert!(handler
+            .priority
+            .lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .focus_ticket
+            .as_ref()
+            .unwrap()
+            .current());
+        handler.do_action(request(Action::Click, None));
+        let refusal = handler.priority.lock().unwrap().take().unwrap();
+        assert!(refusal.activation.as_ref().unwrap().current());
+        assert!(rx.try_iter().all(|old| !old.activation.unwrap().current()));
+        assert!(refusal.activation.unwrap().commit(|| true, || ()).is_some());
     }
 
     #[test]

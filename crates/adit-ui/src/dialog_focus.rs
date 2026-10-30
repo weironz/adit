@@ -266,11 +266,49 @@ pub(crate) struct FocusState {
 // applying or activating its selection have one ordering.
 #[derive(Debug)]
 struct FocusSelection {
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    diagnostic_id: u64,
     revision: u64,
     selected: Option<usize>,
     pending: bool,
     pending_target: Option<usize>,
+    #[cfg_attr(not(windows), allow(dead_code))]
+    pending_refusal: bool,
     blocked: bool,
+}
+
+impl FocusSelection {
+    fn cancel(&mut self) {
+        // An old trust selection may not be activated after an accepted
+        // request was lost or its window lease was revoked.
+        self.blocked = self.selected != Some(0);
+        self.pending = false;
+        self.pending_target = None;
+        self.pending_refusal = false;
+        self.revision = self.revision.wrapping_add(1);
+    }
+}
+
+/// Classify the action itself, not its position: host-key dialogs have two
+/// refusal buttons while the link dialog has only one.
+#[cfg(windows)]
+pub(crate) fn is_refusal(action: &Message) -> bool {
+    matches!(
+        action,
+        Message::RespondHostKey {
+            decision: adit_session::HostKeyDecision::Reject
+                | adit_session::HostKeyDecision::RejectAndRecord,
+            ..
+        } | Message::CancelOpenHyperlink(_)
+    )
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+fn trace_selection(event: &'static str, target: Option<usize>, state: &FocusSelection) {
+    accessibility::diagnostics::event(format_args!(
+        "{event} group={} revision={} selected={:?} pending={} pending_target={:?} pending_refusal={} blocked={} target={target:?}",
+        state.diagnostic_id, state.revision, state.selected, state.pending, state.pending_target, state.pending_refusal, state.blocked,
+    ));
 }
 
 #[derive(Clone, Debug)]
@@ -318,7 +356,13 @@ impl FocusActivation {
         action: impl FnOnce() -> T,
     ) -> Option<T> {
         let mut state = self.revision.0.lock().ok()?;
-        if !self.valid(&state) || !allowed() {
+        #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+        trace_selection("commit-check", self.pending_target.or(self.index), &state);
+        if !self.valid(&state) {
+            return None;
+        }
+        if !allowed() {
+            state.cancel();
             return None;
         }
         // Once a decision commits, even an accepted focus task for this
@@ -326,8 +370,23 @@ impl FocusActivation {
         state.revision = state.revision.wrapping_add(1);
         state.pending = false;
         state.pending_target = None;
+        state.pending_refusal = false;
         state.blocked = false;
+        #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+        trace_selection(
+            "commit-accepted",
+            self.pending_target.or(self.index),
+            &state,
+        );
         Some(action())
+    }
+
+    pub(crate) fn cancel(&self) {
+        if let Ok(mut state) = self.revision.0.lock() {
+            if self.valid(&state) {
+                state.cancel();
+            }
+        }
     }
 }
 
@@ -336,17 +395,24 @@ impl FocusRevision {
     pub(crate) fn enqueue_activation(
         &self,
         target: Option<usize>,
+        refusal: bool,
         send: impl FnOnce(FocusActivation) -> bool,
     ) -> bool {
         let Some(target) = target else { return false };
         let Ok(mut state) = self.0.lock() else {
             return false;
         };
+        #[cfg(feature = "native-accessibility-acceptance")]
+        trace_selection("invoke-attempt", Some(target), &state);
         // A refusal can supersede an outstanding trust request. A trust
         // invocation cannot supersede a newer, still-pending refusal.
-        if (state.pending && state.pending_target != Some(target) && target != 0)
-            || (state.blocked && target != 0)
+        if !refusal
+            && (state.blocked
+                || (state.pending
+                    && (state.pending_refusal || state.pending_target != Some(target))))
         {
+            #[cfg(feature = "native-accessibility-acceptance")]
+            trace_selection("invoke-denied", Some(target), &state);
             return false;
         }
         let activation = FocusActivation {
@@ -359,8 +425,16 @@ impl FocusRevision {
             state.revision = activation.value;
             state.pending = true;
             state.pending_target = Some(target);
+            state.pending_refusal = refusal;
+            #[cfg(feature = "native-accessibility-acceptance")]
+            trace_selection("invoke-enqueued", Some(target), &state);
             true
         } else {
+            if refusal {
+                state.cancel();
+            }
+            #[cfg(feature = "native-accessibility-acceptance")]
+            trace_selection("invoke-queue-full", Some(target), &state);
             false
         }
     }
@@ -368,7 +442,7 @@ impl FocusRevision {
     #[cfg(test)]
     pub(crate) fn issue(&self) -> FocusTicket {
         let mut issued = None;
-        assert!(self.enqueue(None, |ticket| {
+        assert!(self.enqueue(None, false, |ticket| {
             issued = Some(ticket);
             true
         }));
@@ -379,11 +453,21 @@ impl FocusRevision {
     pub(crate) fn enqueue(
         &self,
         target: Option<usize>,
+        refusal: bool,
         send: impl FnOnce(FocusTicket) -> bool,
     ) -> bool {
         let Ok(mut state) = self.0.lock() else {
             return false;
         };
+        #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+        trace_selection("focus-attempt", target, &state);
+        // UIA's Invoke emits Focus first. It must not turn a pending refusal
+        // into a pending trust before the corresponding Click arrives.
+        if state.pending && state.pending_refusal && !refusal {
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            trace_selection("focus-denied", target, &state);
+            return false;
+        }
         let ticket = FocusTicket {
             revision: self.clone(),
             value: state.revision.wrapping_add(1),
@@ -392,8 +476,16 @@ impl FocusRevision {
             state.revision = ticket.value;
             state.pending = true;
             state.pending_target = target;
+            state.pending_refusal = refusal;
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            trace_selection("focus-enqueued", target, &state);
             true
         } else {
+            if refusal {
+                state.cancel();
+            }
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            trace_selection("focus-queue-full", target, &state);
             false
         }
     }
@@ -408,6 +500,7 @@ impl FocusRevision {
             state.revision = state.revision.wrapping_add(1);
             state.pending = false;
             state.pending_target = None;
+            state.pending_refusal = false;
         }
     }
 }
@@ -436,10 +529,7 @@ impl FocusTicket {
                 // Do not mutate a background window's selection. A previously
                 // selected trust action stays inert until an explicit fresh
                 // focus or local navigation resolves it.
-                state.blocked = state.selected != Some(0);
-                state.pending = false;
-                state.pending_target = None;
-                state.revision = state.revision.wrapping_add(1);
+                state.cancel();
             }
         }
     }
@@ -455,10 +545,17 @@ impl FocusGroup {
         Self {
             revision: Rc::new(RefCell::new(FocusRevision(Arc::new(Mutex::new(
                 FocusSelection {
+                    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                    diagnostic_id: {
+                        static NEXT: std::sync::atomic::AtomicU64 =
+                            std::sync::atomic::AtomicU64::new(1);
+                        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    },
                     revision: 0,
                     selected: Some(0),
                     pending: false,
                     pending_target: None,
+                    pending_refusal: false,
                     blocked: false,
                 },
             ))))),
@@ -471,7 +568,10 @@ impl FocusGroup {
             state.selected = Some(index);
             state.pending = false;
             state.pending_target = None;
+            state.pending_refusal = false;
             state.blocked = false;
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            trace_selection("local-select", Some(index), &state);
         }
     }
 
@@ -482,6 +582,7 @@ impl FocusGroup {
         state.selected = Some(index);
         state.pending = false;
         state.pending_target = None;
+        state.pending_refusal = false;
         state.blocked = false;
         Some(FocusActivation {
             revision: revision.clone(),
@@ -495,6 +596,10 @@ impl FocusGroup {
         // Keep outstanding tickets tied to the same window and dialog through
         // view rebuilds; a new scope instead gets a fresh revision.
         let revision = old.revision.borrow().clone();
+        #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+        if let Ok(state) = revision.0.lock() {
+            trace_selection("inherit-group", None, &state);
+        }
         *self.revision.borrow_mut() = revision;
     }
 
@@ -541,7 +646,10 @@ impl FocusState {
                     state.selected = Some(self.index);
                     state.pending = false;
                     state.pending_target = None;
+                    state.pending_refusal = false;
                     state.blocked = false;
+                    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                    trace_selection("focus-applied", Some(self.index), &state);
                     return true;
                 }
             }
@@ -619,12 +727,20 @@ fn confirmation_key(
             selection.selected = Some(next);
             selection.pending = false;
             selection.pending_target = None;
+            selection.pending_refusal = false;
             selection.blocked = false;
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            trace_selection("keyboard-tab", Some(next), &selection);
             shell.request_redraw();
             shell.capture_event();
             true
         }
         Key::Named(Named::Enter | Named::Space) => {
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            {
+                accessibility::diagnostics::keyboard_attempt();
+                trace_selection("keyboard-activate", Some(focus.index), &selection);
+            }
             if !selection.pending && !selection.blocked {
                 shell.publish(Message::DialogFocusActivate {
                     activation: Some(FocusActivation {
@@ -1303,7 +1419,7 @@ mod tests {
         group.select(3);
         let revision = group.revision();
         let accepted = revision.issue();
-        assert!(!revision.enqueue(None, |_| false));
+        assert!(!revision.enqueue(None, false, |_| false));
         assert!(accepted.current());
         let mut refusal = FocusState {
             scope: "challenge:fixture".into(),
@@ -1334,7 +1450,7 @@ mod tests {
             attempt_tx.send(()).unwrap();
             done_tx.send(ticket.current()).unwrap();
         });
-        assert!(revision.enqueue(None, |ticket| {
+        assert!(revision.enqueue(None, false, |ticket| {
             queue_tx.try_send(ticket).unwrap();
             attempt_rx.recv().unwrap();
             assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());

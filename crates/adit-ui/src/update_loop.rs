@@ -72,12 +72,8 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         // here so the detached-window router can route instead of guessing.
         if accessibility::action_current(app, window, &scope) {
             tasks.push(update_message(app, message));
-        } else if let Message::AccessibilityFocus {
-            ticket: Some(ticket),
-            ..
-        } = message
-        {
-            ticket.cancel();
+        } else {
+            accessibility::cancel_discarded_message(&message);
         }
     }
     accessibility::retire_changed_scope(app);
@@ -162,6 +158,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     .commit(
                         || lease.as_ref().is_none_or(|lease| lease.current()),
                         || {
+                            accessibility::suspend_for_confirmation_action(app, action.as_ref());
                             (generation == app.hyperlink_prompt_generation)
                                 .then(|| app.pending_hyperlink.take())
                                 .flatten()
@@ -180,7 +177,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             return activation
                 .commit(
                     || lease.as_ref().is_none_or(|lease| lease.current()),
-                    || update_message(app, *action),
+                    || {
+                        accessibility::suspend_for_confirmation_action(app, action.as_ref());
+                        update_message(app, *action)
+                    },
                 )
                 .unwrap_or_else(Task::none);
         }

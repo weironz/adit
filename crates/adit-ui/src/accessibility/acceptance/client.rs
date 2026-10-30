@@ -405,19 +405,34 @@ fn dialog_acceptance(
     })?;
     let before = command(commands, Command::Hold)?;
     unsafe { reject.SetFocus() }.map_err(|e| format!("reject SetFocus failed: {e}"))?;
+    diagnostics::event(format_args!(
+        "pending-reject begin challenge={id} decisions={:?}",
+        before.decisions
+    ));
     let queued = command(commands, Command::InspectHeld)?;
     if queued.focus_enqueued <= before.focus_enqueued {
         return Err("pending rejection was not actually queued".into());
     }
     post_key(hwnd, 0x0d, 0x1c)?;
+    client.wait("Enter observed while the rejection is pending", || {
+        (command(commands, Command::InspectHeld)
+            .ok()?
+            .keyboard_attempts
+            > before.keyboard_attempts)
+            .then_some(())
+    })?;
     client.invoke(&trust)?;
-    std::thread::sleep(Duration::from_millis(150));
     if command(commands, Command::InspectHeld)?.held_host_actions != before.held_host_actions {
         return Err("Enter activated Trust while a rejection was pending".into());
     }
     let after = command(commands, Command::Barrier)?;
+    diagnostics::event(format_args!(
+        "pending-reject barrier challenge={id} current={:?} decision_delta={:?}",
+        after.challenge,
+        after.decisions.get(before.decisions.len()..)
+    ));
     if after.decisions != before.decisions {
-        return Err("UIA Invoke activated Trust while rejection was pending".into());
+        return Err(format!("UIA Invoke changed decisions while rejection was pending: challenge={id} current={:?} delta={:?}", after.challenge, after.decisions.get(before.decisions.len()..)));
     }
     client.wait("pending rejection applied", || {
         unsafe { reject.CurrentHasKeyboardFocus() }
@@ -430,6 +445,38 @@ fn dialog_acceptance(
         let result = command(commands, Command::Barrier).ok()?;
         (result.decisions.last() == Some(&(id, HostKeyDecision::Reject))).then_some(())
     })?;
+
+    // A real pending Trust Invoke must be superseded by the second refusal,
+    // which is not the first button in the host-key dialog.
+    let installed = command(commands, |ack| Command::Host(false, ack))?;
+    let id = installed
+        .challenge
+        .ok_or("reject-and-record challenge missing")?;
+    client.wait("reject-and-record challenge", || {
+        client.by_id(&format!(":{id}/host-key:dialog"))
+    })?;
+    let trust = client.named("信任并继续", "host-key:trust")?;
+    let refusal = client.named("拒绝并记住", "host-key:reject-record")?;
+    let before = command(commands, Command::Hold)?;
+    client.invoke(&trust)?;
+    let trust_queued = command(commands, Command::InspectHeld)?;
+    if trust_queued.invoke_enqueued <= before.invoke_enqueued {
+        return Err("pending Trust Invoke was not enqueued".into());
+    }
+    client.invoke(&refusal)?;
+    let refusal_queued = command(commands, Command::InspectHeld)?;
+    if refusal_queued.invoke_enqueued <= trust_queued.invoke_enqueued {
+        return Err("reject-and-record Invoke was not enqueued after Trust".into());
+    }
+    let result = command(commands, Command::Barrier)?;
+    if result.decisions.get(before.decisions.len()..)
+        != Some(&[(id, HostKeyDecision::RejectAndRecord)][..])
+    {
+        return Err(format!(
+            "pending Trust / reject-and-record decision delta was {:?}",
+            result.decisions.get(before.decisions.len()..)
+        ));
+    }
 
     // Hold the already-generated Enter message itself, then accept a newer
     // UIA Reject request before allowing that old message to commit.
@@ -661,6 +708,7 @@ fn dialog_acceptance(
         .challenge
         .ok_or("menu-covered confirmation missing")?;
     let reject = client.named("拒绝", "host-key:reject")?;
+    let before_menu_invoke = command(commands, Command::Hold)?;
     unsafe { reject.SetFocus() }.map_err(|e| format!("UIA focus for menu test failed: {e}"))?;
     client.wait("menu test focused Reject", || {
         unsafe { reject.CurrentHasKeyboardFocus() }
@@ -669,13 +717,30 @@ fn dialog_acceptance(
             .then_some(())
     })?;
     client.invoke(&reject)?;
-    client.wait("menu keeps remote focus suspended", || {
-        let state = command(commands, Command::Barrier).ok()?;
-        (state.decisions.last() == Some(&(id, HostKeyDecision::Reject))
-            && state.active_menu == Some(MenuKind::File)
-            && !state.terminal_focused)
-            .then_some(())
-    })?;
+    let queued_menu_invoke = command(commands, Command::InspectHeld)?;
+    if queued_menu_invoke.focus_enqueued <= before_menu_invoke.focus_enqueued
+        || queued_menu_invoke.invoke_enqueued <= before_menu_invoke.invoke_enqueued
+    {
+        return Err("menu test did not queue both UIA Focus and Invoke".into());
+    }
+    command(commands, Command::Barrier)?;
+    client
+        .wait("menu keeps remote focus suspended", || {
+            let state = command(commands, Command::Barrier).ok()?;
+            (state.decisions.last() == Some(&(id, HostKeyDecision::Reject))
+                && state.active_menu == Some(MenuKind::File)
+                && !state.terminal_focused)
+                .then_some(())
+        })
+        .map_err(|error| {
+            let state = command(commands, Command::Barrier).ok();
+            format!(
+                "{error}; challenge={id} latest_decision={:?} menu={:?} terminal_focused={:?}",
+                state.as_ref().and_then(|value| value.decisions.last()),
+                state.as_ref().and_then(|value| value.active_menu),
+                state.as_ref().map(|value| value.terminal_focused)
+            )
+        })?;
     post_key(hwnd, 0x1b, 0x01)?;
     client.wait("remote focus returns after the menu closes", || {
         let state = command(commands, Command::Barrier).ok()?;
@@ -881,6 +946,7 @@ pub(super) fn run(
         "same_challenge_queued_uia_focus_cannot_override_keyboard": true,
         "pending_uia_rejection_blocks_enter_on_old_trust": true,
         "pending_uia_rejection_blocks_invoke_on_old_trust": true,
+        "reject_and_record_supersedes_pending_uia_trust": true,
         "queued_enter_cannot_commit_after_new_uia_rejection": true,
         "confirmation_uia_focus_requests_enqueued": focus_statistics.focus_enqueued,
         "stale_confirmation_uia_focus_rejected": focus_statistics.stale_focus_rejected,

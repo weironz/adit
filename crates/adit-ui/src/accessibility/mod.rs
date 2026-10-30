@@ -43,12 +43,95 @@ pub(crate) fn current_build_scope() -> String {
 
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 mod acceptance;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) mod acceptance_guard;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) mod diagnostics {
+    use std::sync::{
+        atomic::{AtomicBool, AtomicU64, Ordering},
+        Mutex, OnceLock,
+    };
+    use std::time::Instant;
+
+    static ENABLED: AtomicBool = AtomicBool::new(false);
+    static KEYBOARD_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+    static FOREGROUND_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+    static TRACE: OnceLock<Mutex<(Instant, u64)>> = OnceLock::new();
+
+    // Only the synthetic acceptance harness enables this. Callers supply fixed
+    // event names, numeric IDs and enum state, never widget values or text.
+    pub(crate) fn enable() {
+        ENABLED.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn keyboard_attempt() {
+        if ENABLED.load(Ordering::SeqCst) {
+            KEYBOARD_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    pub(crate) fn keyboard_attempts() -> u64 {
+        KEYBOARD_ATTEMPTS.load(Ordering::SeqCst)
+    }
+    pub(crate) fn foreground_attempt(accepted: bool) {
+        if ENABLED.load(Ordering::SeqCst) {
+            FOREGROUND_ATTEMPTS.fetch_add(1, Ordering::SeqCst);
+            event(format_args!(
+                "scheduled-foreground-attempt accepted={accepted}"
+            ));
+        }
+    }
+    pub(crate) fn foreground_attempts() -> u64 {
+        FOREGROUND_ATTEMPTS.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn event(args: std::fmt::Arguments<'_>) {
+        if !ENABLED.load(Ordering::SeqCst) {
+            return;
+        }
+        let mut trace = TRACE
+            .get_or_init(|| Mutex::new((Instant::now(), 0)))
+            .lock()
+            .unwrap();
+        trace.1 += 1;
+        eprintln!(
+            "SYNTHETIC-UIA seq={} us={} {args}",
+            trace.1,
+            trace.0.elapsed().as_micros()
+        );
+    }
+}
 #[cfg(windows)]
 mod native;
+#[cfg(all(windows, test))]
+pub(crate) fn test_register_window(id: window::Id, hwnd: isize) -> bool {
+    native::register(id, hwnd)
+}
+#[cfg(all(windows, test))]
+pub(crate) fn test_unregister_window(id: window::Id) {
+    native::unregister(id);
+}
+#[cfg(all(windows, test))]
+pub(crate) fn test_scope_epoch(id: window::Id) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+    native::test_scope_epoch(id)
+}
 #[cfg(windows)]
 mod widget;
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(super) use acceptance::run as run_acceptance;
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn use_synthetic_fixture(app: &mut AditApp) {
+    app.accessibility.fixture = Some(acceptance::Fixture::default());
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn synthetic_cross_window_focus(
+    window: window::Id,
+    id: iced::advanced::widget::Id,
+) -> Option<Task<Message>> {
+    let lease = native::synthetic_cross_window_lease(window)?;
+    Some(request_focus(window, id, None, Some(lease)))
+}
 
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn hold_native_actions(window: window::Id, hold: bool) {
@@ -188,6 +271,29 @@ pub(crate) fn suspend_remote_focus(app: &mut AditApp, window: window::Id) {
         app.accessibility_focus_restore = None;
     }
     app.terminal_focused = false;
+}
+
+/// An Invoke can supersede its preceding UIA Focus before iced dispatches it.
+/// Preserve and suspend remote input at commit for the still-visible dialog.
+pub(crate) fn suspend_for_confirmation_action(app: &mut AditApp, action: &Message) {
+    let scope = namespace(app);
+    let matches_scope = match action {
+        Message::RespondHostKey {
+            session_id,
+            challenge_id,
+            ..
+        } => scope == format!("host-key-dialog:{session_id}:{challenge_id}"),
+        Message::ConfirmOpenHyperlink(generation) | Message::CancelOpenHyperlink(generation) => {
+            scope == format!("hyperlink:{generation}")
+        }
+        _ => false,
+    };
+    if matches_scope {
+        if let Some(window) = app.native_window_id.or(app.accessibility.primary) {
+            suspend_remote_focus(app, window);
+            release_rdp_modifiers(app);
+        }
+    }
 }
 
 pub(crate) fn reconcile_remote_focus(app: &mut AditApp) {
@@ -712,13 +818,7 @@ pub(crate) fn drain(app: &AditApp) -> Vec<(window::Id, String, Message)> {
                 .action_filter
                 .is_none_or(|allow| allow(message));
             if !allowed {
-                if let Message::AccessibilityFocus {
-                    ticket: Some(ticket),
-                    ..
-                } = message
-                {
-                    ticket.cancel();
-                }
+                cancel_discarded_message(message);
             }
             allowed
         })
@@ -729,6 +829,29 @@ pub(crate) fn drain(app: &AditApp) -> Vec<(window::Id, String, Message)> {
         let _ = app;
         Vec::new()
     }
+}
+
+pub(crate) fn cancel_discarded_message(message: &Message) {
+    match message {
+        Message::AccessibilityFocus {
+            ticket: Some(ticket),
+            ..
+        } => ticket.cancel(),
+        Message::DialogFocusActivate {
+            activation: Some(activation),
+            ..
+        } => activation.cancel(),
+        _ => {}
+    }
+}
+
+/// Revoke already scheduled UIA tasks before a modal in another HWND can
+/// appear; waiting for this window's next redraw is too late.
+pub(crate) fn block_background_window(window: window::Id) {
+    #[cfg(windows)]
+    native::retire_scope(window, "native-modal-blocked");
+    #[cfg(not(windows))]
+    let _ = window;
 }
 
 pub(crate) fn retire_changed_scope(app: &AditApp) {
@@ -887,6 +1010,10 @@ pub(crate) fn acceptance_host_key_reply(
         == Some(decision)
     {
         fixture.decisions.push((challenge, decision));
+        diagnostics::event(format_args!(
+            "decision challenge={challenge} value={decision:?} count={}",
+            fixture.decisions.len()
+        ));
     }
     true
 }
@@ -1284,6 +1411,80 @@ mod tests {
         assert!(!app.terminal_focused);
         let _ = update_loop::update(&mut app, Message::CancelConnection);
         assert!(app.terminal_focused);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn invoke_without_a_dispatched_focus_still_suspends_and_restores_remote_input() {
+        let (mut app, window, session, _) = focus_fixture();
+        let _ = update_loop::update(
+            &mut app,
+            Message::OpenHyperlink("https://fixture.invalid".into()),
+        );
+        let generation = app.hyperlink_prompt_generation;
+        app.active_menu = Some(MenuKind::File);
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut activation = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            activation = Some(value);
+            true
+        }));
+        let _ = update_loop::update(
+            &mut app,
+            Message::DialogFocusActivate {
+                activation,
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        );
+        assert!(app.pending_hyperlink.is_none());
+        assert!(
+            !app.terminal_focused,
+            "Invoke closed the modal without suspending remote focus under the menu"
+        );
+        assert!(app.accessibility_focus_restore.is_some());
+        let _ = update_loop::update(
+            &mut app,
+            Message::DismissMenu(MenuEscapeTarget::Active(MenuKind::File)),
+        );
+        assert!(app.terminal_focused);
+        assert_eq!(app.manager.active_session(), Some(session));
+        assert_eq!(app.native_window_id, Some(window));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn stale_confirmation_invoke_does_not_suspend_the_replacement_scope() {
+        let (mut app, _, _, _) = focus_fixture();
+        let _ = update_loop::update(
+            &mut app,
+            Message::OpenHyperlink("https://fixture.invalid/one".into()),
+        );
+        let old = app.hyperlink_prompt_generation;
+        let _ = update_loop::update(
+            &mut app,
+            Message::OpenHyperlink("https://fixture.invalid/two".into()),
+        );
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut activation = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            activation = Some(value);
+            true
+        }));
+        let _ = update_loop::update(
+            &mut app,
+            Message::DialogFocusActivate {
+                activation,
+                action: Box::new(Message::CancelOpenHyperlink(old)),
+                lease: None,
+            },
+        );
+        assert_eq!(
+            app.pending_hyperlink.as_deref(),
+            Some("https://fixture.invalid/two")
+        );
+        assert!(app.terminal_focused);
+        assert!(app.accessibility_focus_restore.is_none());
     }
 
     #[test]

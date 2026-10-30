@@ -396,12 +396,15 @@ impl DesktopApplication {
 
     fn dispatch(&mut self, id: window::Id, message: Message) -> Task<NativeMessage> {
         if !self.known(id) {
+            accessibility::cancel_discarded_message(&message);
             return Task::none();
         } // drop late commits/tasks from a closed window
         if input_message(&message) && self.focused != Some(id) {
+            accessibility::cancel_discarded_message(&message);
             return Task::none();
         }
         if input_message(&message) && self.modal_owner.is_some_and(|owner| owner != id) {
+            accessibility::cancel_discarded_message(&message);
             return Task::none();
         }
         let routed_message = match &message {
@@ -454,6 +457,7 @@ impl DesktopApplication {
             | Message::SubmitAuthPrompt { session_id, .. }
             | Message::CancelAuthPrompt { session_id, .. } => {
                 if self.owner(*session_id) != id {
+                    accessibility::cancel_discarded_message(&message);
                     return Task::none();
                 }
             }
@@ -611,6 +615,9 @@ impl DesktopApplication {
                     .chain(self.windows.keys().copied())
                     .collect();
                 for id in ids {
+                    if owner != Some(id) {
+                        accessibility::block_background_window(id);
+                    }
                     let focused = self.focused == Some(id);
                     self.release(id);
                     let _ = self.in_window(id, |app| {
@@ -626,15 +633,26 @@ impl DesktopApplication {
         let task = match message {
             NativeMessage::Window(id, message) => self.dispatch(id, message),
             NativeMessage::View(id, session, epoch, message) => {
-                let valid = if id == self.primary {
-                    self.app.manager.active_session() == session
-                        && self.app.vnc_input_epoch == epoch
+                let (same_session, same_epoch) = if id == self.primary {
+                    (
+                        self.app.manager.active_session() == session,
+                        self.app.vnc_input_epoch == epoch,
+                    )
                 } else {
-                    self.windows.get(&id).is_some_and(|window| {
-                        Some(window.session) == session && window.state.vnc_input_epoch == epoch
+                    self.windows.get(&id).map_or((false, false), |window| {
+                        (
+                            Some(window.session) == session,
+                            window.state.vnc_input_epoch == epoch,
+                        )
                     })
                 };
-                if input_message(&message) && !valid {
+                // Confirmation activations have their own dialog revision and
+                // lease. VNC input revocation during the same event batch must
+                // not discard them, while session and foreground checks remain.
+                let needs_input_epoch = !matches!(&message, Message::DialogFocusActivate { .. });
+                if input_message(&message) && (!same_session || (needs_input_epoch && !same_epoch))
+                {
+                    accessibility::cancel_discarded_message(&message);
                     return Task::none();
                 }
                 self.dispatch(id, message)
@@ -1665,6 +1683,169 @@ mod tests {
         ));
         assert!(desktop.windows[&child].state.terminal_pointer.is_some());
         assert_eq!(desktop.app.manager.sessions().len(), 3);
+    }
+
+    #[test]
+    fn confirmation_activation_survives_an_unrelated_vnc_epoch_change() {
+        let (mut desktop, ids) = fixture();
+        let primary = desktop.primary;
+        let _ = desktop.dispatch(
+            primary,
+            Message::OpenHyperlink("https://fixture.invalid".into()),
+        );
+        let generation = desktop.app.hyperlink_prompt_generation;
+        let epoch = desktop.app.vnc_input_epoch;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut activation = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            activation = Some(value);
+            true
+        }));
+        desktop.app.vnc_input_epoch = epoch.wrapping_add(1);
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[2]),
+            epoch,
+            Message::DialogFocusActivate {
+                activation,
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        ));
+        assert!(
+            desktop.app.pending_hyperlink.is_none(),
+            "an unrelated VNC input epoch invalidated the confirmation"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn confirmation_from_a_different_session_is_cancelled_and_can_be_retried() {
+        let (mut desktop, ids) = fixture();
+        let primary = desktop.primary;
+        let _ = desktop.dispatch(
+            primary,
+            Message::OpenHyperlink("https://fixture.invalid".into()),
+        );
+        let generation = desktop.app.hyperlink_prompt_generation;
+        let epoch = desktop.app.vnc_input_epoch;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut stale = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            stale = Some(value);
+            true
+        }));
+        let stale = stale.unwrap();
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[1]),
+            epoch,
+            Message::DialogFocusActivate {
+                activation: Some(stale.clone()),
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        ));
+        assert!(desktop.app.pending_hyperlink.is_some());
+        assert!(!stale.current());
+        let mut fresh = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            fresh = Some(value);
+            true
+        }));
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[2]),
+            epoch,
+            Message::DialogFocusActivate {
+                activation: fresh,
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        ));
+        assert!(desktop.app.pending_hyperlink.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn modal_in_another_window_revokes_already_scheduled_focus() {
+        use windows::{
+            core::HSTRING,
+            Win32::{
+                Foundation::HINSTANCE,
+                System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
+                UI::WindowsAndMessaging::{
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW,
+                    UnregisterClassW, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+                },
+            },
+        };
+        unsafe extern "system" fn proc(
+            hwnd: windows::Win32::Foundation::HWND,
+            msg: u32,
+            w: windows::Win32::Foundation::WPARAM,
+            l: windows::Win32::Foundation::LPARAM,
+        ) -> windows::Win32::Foundation::LRESULT {
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
+        }
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        unsafe {
+            let instance = HINSTANCE(GetModuleHandleW(None).unwrap().0);
+            let name = HSTRING::from(format!("Adit-SYNTHETIC-modal-{}", GetCurrentThreadId()));
+            let class = WNDCLASSW {
+                hInstance: instance,
+                lpfnWndProc: Some(proc),
+                lpszClassName: windows::core::PCWSTR(name.as_ptr()),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0);
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                &name,
+                windows::core::w!("SYNTHETIC"),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                200,
+                100,
+                None,
+                None,
+                Some(instance),
+                None,
+            )
+            .unwrap();
+            assert!(accessibility::test_register_window(
+                desktop.primary,
+                hwnd.0 as isize
+            ));
+            let epoch = accessibility::test_scope_epoch(desktop.primary);
+            let scheduled = epoch.load(std::sync::atomic::Ordering::SeqCst);
+            desktop.app.connection_dialog = Some(ConnectionDialog {
+                profile_id: desktop
+                    .app
+                    .manager
+                    .session_summary(ids[0])
+                    .unwrap()
+                    .profile_id,
+                retry_session: Some(ids[0]),
+                title: "SYNTHETIC".into(),
+                endpoint: "fixture.invalid".into(),
+                auth_method: AuthMethod::Password,
+                identity_file: String::new(),
+            });
+            desktop.app.native_dialog_window = Some(child);
+            desktop.sync_modal_owner();
+            let revoked = epoch.load(std::sync::atomic::Ordering::SeqCst) != scheduled;
+            accessibility::test_unregister_window(desktop.primary);
+            DestroyWindow(hwnd).unwrap();
+            UnregisterClassW(&name, Some(instance)).unwrap();
+            assert!(
+                revoked,
+                "a focus task retained its lease after another window opened a modal"
+            );
+        }
     }
 
     #[test]

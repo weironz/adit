@@ -36,12 +36,15 @@ struct Snapshot {
     background_focusable_found: Option<bool>,
     child_focus_enqueued: u64,
     child_focus_rejected: u64,
+    cross_window_lease: Option<bool>,
+    foreground_attempts: u64,
 }
 
 enum Command {
     Focus(mpsc::Sender<Snapshot>),
     BackgroundFocus(mpsc::Sender<Snapshot>),
     HoldChild(bool, mpsc::Sender<Snapshot>),
+    DispatchPrimaryThenModal(mpsc::Sender<Snapshot>),
     Switch(bool, mpsc::Sender<Snapshot>),
     ProbeBackground(mpsc::Sender<Snapshot>),
     Modal(mpsc::Sender<Snapshot>),
@@ -70,6 +73,50 @@ enum Event {
     Pulse,
     ProbeResult(bool, mpsc::Sender<Snapshot>),
     Finished(Result<Value, String>),
+}
+
+// This fixture must remain unable to open links, connect, read credentials,
+// or dispatch application clipboard tasks, even if an operator interacts
+// with its visible windows while the synthetic UIA client is running.
+fn allowed_message(message: &Message) -> bool {
+    if let Message::KeyboardInput(event) = message {
+        return allowed_runtime(&iced::Event::Keyboard(event.clone()));
+    }
+    matches!(
+        message,
+        Message::Tick
+            | Message::RdpTick
+            | Message::CursorBlink
+            | Message::WindowResized { .. }
+            | Message::DisplayScale(_)
+            | Message::AccessibilityReady { .. }
+            | Message::AccessibilityClosed(_)
+            | Message::AccessibilityFocus { .. }
+            | Message::AccessibilityScroll { .. }
+            | Message::AccessibilityScrollLines { .. }
+            | Message::TerminalInputChanged(_)
+            | Message::SendTerminalInput
+            | Message::NativeImeEvent(..)
+            | Message::ModifiersChanged(_)
+    )
+}
+
+fn allowed_runtime(event: &iced::Event) -> bool {
+    match event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. })
+        | iced::Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+            !modifiers.control()
+                && !modifiers.alt()
+                && !modifiers.logo()
+                && (matches!(key, Key::Named(Named::Enter))
+                    || matches!(key, Key::Character(value) if value.eq_ignore_ascii_case("a") || value.eq_ignore_ascii_case("b")))
+        }
+        iced::Event::Keyboard(_)
+        | iced::Event::InputMethod(_)
+        | iced::Event::Mouse(_)
+        | iced::Event::Window(window::Event::FileDropped(_)) => false,
+        _ => true,
+    }
 }
 
 fn snapshot(state: &Harness) -> Snapshot {
@@ -103,6 +150,8 @@ fn snapshot(state: &Harness) -> Snapshot {
         background_focusable_found: None,
         child_focus_enqueued,
         child_focus_rejected,
+        cross_window_lease: None,
+        foreground_attempts: accessibility::diagnostics::foreground_attempts(),
     }
 }
 
@@ -113,6 +162,17 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
     }
     match event {
         Event::Native(message) => {
+            match &message {
+                NativeMessage::Window(_, message) | NativeMessage::View(_, _, _, message)
+                    if !allowed_message(message) =>
+                {
+                    return Task::none()
+                }
+                NativeMessage::Runtime(_, event, _) if !allowed_runtime(event) => {
+                    return Task::none()
+                }
+                _ => {}
+            }
             if let NativeMessage::Window(
                 _,
                 Message::AccessibilityReady {
@@ -178,6 +238,37 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                 Command::HoldChild(hold, ack) => {
                     accessibility::hold_native_actions(state.child, hold);
                     (ack, Task::none())
+                }
+                Command::DispatchPrimaryThenModal(ack) => {
+                    let primary = state.desktop.primary;
+                    // Prepare the production window task while the other real
+                    // HWND is foreground, then install its modal before polling.
+                    let task =
+                        accessibility::synthetic_cross_window_focus(primary, command_input_id());
+                    let prepared = task.is_some();
+                    let profile = state
+                        .desktop
+                        .app
+                        .manager
+                        .session_summary(state.child_session)
+                        .unwrap()
+                        .profile_id;
+                    state.desktop.app.connection_dialog = Some(ConnectionDialog {
+                        profile_id: profile,
+                        retry_session: Some(state.child_session),
+                        title: "SYNTHETIC".into(),
+                        endpoint: "fixture.invalid".into(),
+                        auth_method: AuthMethod::Password,
+                        identity_file: String::new(),
+                    });
+                    state.desktop.app.native_dialog_window = Some(state.child);
+                    state.desktop.sync_modal_owner();
+                    let mut result = snapshot(state);
+                    result.cross_window_lease = Some(prepared);
+                    let _ = ack.send(result);
+                    return task.unwrap_or_else(Task::none).map(move |message| {
+                        Event::Native(NativeMessage::Window(primary, message))
+                    });
                 }
                 Command::Switch(child, ack) => (
                     ack,
@@ -307,7 +398,7 @@ fn hwnd(window: &dyn iced::window::Window) -> isize {
 }
 
 fn view(state: &Harness, id: window::Id) -> Element<'_, Event> {
-    state.desktop.view(id).map(Event::Native)
+    accessibility::acceptance_guard::no_clipboard(state.desktop.view(id)).map(Event::Native)
 }
 
 fn subscription(state: &Harness) -> Subscription<Event> {
@@ -429,6 +520,36 @@ fn client(
             before.input, before.immediate, before.primary_active
         ));
     }
+
+    // This schedules the shipping focus task with a real cross-HWND lease.
+    // The remaining scenarios exercise UIA SetFocus and Invoke themselves.
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("child foreground before scheduled primary focus", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
+    })?;
+    let scheduled = command(&sender, Command::DispatchPrimaryThenModal)?;
+    if scheduled.cross_window_lease != Some(true) {
+        return Err("could not prepare a focus task while the other HWND was foreground".into());
+    }
+    wait(
+        "scheduled foreground attempt completed after the child modal",
+        || {
+            (command(&sender, Command::Snapshot)
+                .ok()?
+                .foreground_attempts
+                > scheduled.foreground_attempts)
+                .then_some(())
+        },
+    )?;
+    if unsafe { GetForegroundWindow() }.0 as isize != child {
+        return Err("already-scheduled primary focus stole foreground after child modal".into());
+    }
+    command(&sender, Command::CloseModal)?;
+    command(&sender, |ack| Command::Switch(false, ack))?;
+    wait(
+        "primary foreground restored before the next scenario",
+        || (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(()),
+    )?;
 
     command(&sender, Command::Modal)?;
     let password = wait("detached connection input", || {
@@ -571,6 +692,7 @@ fn client(
         "cross_window_command_keyboard_blocked": true, "detached_uia_focus": true,
         "background_focus_operation_blocked": true,
         "stale_uia_request_cannot_steal_foreground_or_change_background_focus": true,
+        "scheduled_focus_revoked_before_other_window_modal": true,
         "detached_focus_keyboard_and_fresh_ime_restored": true,
         "detached_scroll_after_wheel": true, "screen_reader_tested": false, "remote_server_tested": false}),
     )
@@ -584,6 +706,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     if path == temp || !path.starts_with(&temp) || fs::read_dir(&path)?.next().is_some() {
         return Err("acceptance config must be a fresh empty directory beneath OS temp".into());
     }
+    accessibility::acceptance_guard::validate_environment(&temp)?;
+    accessibility::diagnostics::enable();
     let profiles: Vec<_> = (0..2)
         .map(|i| ConnectionProfile::new(format!("SYNTHETIC-{i}"), "fixture.invalid", 22, "fixture"))
         .collect();
@@ -606,6 +730,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 startup_maximize_pending: false,
                 ..AditApp::default()
             };
+            accessibility::use_synthetic_fixture(&mut app);
+            app.accessibility.action_filter = Some(allowed_message);
             app.manager.set_auto_reconnect(false);
             app.manager.set_rdp_clipboard(false);
             let child_session = app.manager.open_mock_session(profiles[0].id).unwrap();
