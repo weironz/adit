@@ -1527,6 +1527,9 @@ impl RdpClientHandle {
     /// Local file offers are temporarily disabled. An empty offer is retained
     /// as a metadata-free IPC barrier for older peers.
     pub fn send_clipboard_files(&self, files: Vec<ClipFile>) {
+        if !files.is_empty() {
+            return;
+        }
         if let Ok(surface) = self.surface.lock() {
             if !surface.closed || files.is_empty() {
                 let _ = self.cmd_tx.send(ClientMsg::EpochClipboardFiles {
@@ -1539,11 +1542,11 @@ impl RdpClientHandle {
 
     /// Answer a [`RdpClientEvent::FileContentsNeeded`]. `None` reports a failed
     /// read, which becomes the protocol's error response.
-    pub fn answer_file_contents(&self, epoch: u64, stream_id: u32, data: Option<Vec<u8>>) {
+    pub fn answer_file_contents(&self, epoch: u64, stream_id: u32, _data: Option<Vec<u8>>) {
         let _ = self.cmd_tx.send(ClientMsg::FileContents {
             epoch,
             stream_id,
-            data,
+            data: None,
         });
     }
 

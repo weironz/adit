@@ -116,7 +116,7 @@ fn auth_dialog_does_not_send_its_clipboard_to_the_vnc_peer() {
     let epoch = app.desktop_clipboard_epoch;
     let _ = update(
         &mut app,
-        Message::RdpClipboardPolled(session, epoch, Some("before".into())),
+        Message::RdpClipboardPolled(session, epoch, None, Some("before".into())),
     );
     assert_eq!(
         received.recv_timeout(Duration::from_secs(3)).unwrap(),
@@ -125,7 +125,7 @@ fn auth_dialog_does_not_send_its_clipboard_to_the_vnc_peer() {
     open_password_reprompt(&mut app, session, id, "synthetic");
     let _ = update(
         &mut app,
-        Message::RdpClipboardPolled(session, epoch, Some("synthetic-otp".into())),
+        Message::RdpClipboardPolled(session, epoch, None, Some("synthetic-otp".into())),
     );
     assert!(matches!(
         received.recv_timeout(Duration::from_millis(150)),
@@ -134,12 +134,12 @@ fn auth_dialog_does_not_send_its_clipboard_to_the_vnc_peer() {
     app.connection_dialog = None;
     let _ = update(
         &mut app,
-        Message::RdpClipboardPolled(session, epoch, Some("stale".into())),
+        Message::RdpClipboardPolled(session, epoch, None, Some("stale".into())),
     );
     let epoch = app.desktop_clipboard_epoch;
     let _ = update(
         &mut app,
-        Message::RdpClipboardPolled(session, epoch, Some("synthetic-otp".into())),
+        Message::RdpClipboardPolled(session, epoch, None, Some("synthetic-otp".into())),
     );
     assert!(matches!(
         received.recv_timeout(Duration::from_millis(150)),
@@ -147,7 +147,7 @@ fn auth_dialog_does_not_send_its_clipboard_to_the_vnc_peer() {
     ));
     let _ = update(
         &mut app,
-        Message::RdpClipboardPolled(session, epoch, Some("after".into())),
+        Message::RdpClipboardPolled(session, epoch, None, Some("after".into())),
     );
     assert_eq!(
         received.recv_timeout(Duration::from_secs(3)).unwrap(),

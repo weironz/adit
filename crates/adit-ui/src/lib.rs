@@ -3358,32 +3358,32 @@ mod tests {
         open_password_reprompt(&mut app, session, id, "synthetic");
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(session, old_epoch, Some("before".into())),
+            Message::RdpClipboardPolled(session, old_epoch, None, Some("before".into())),
         );
         assert!(app.rdp_clipboard_offered.is_none());
         assert!(app.vnc_clipboard_needs_baseline);
         let modal_epoch = app.desktop_clipboard_epoch;
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(session, modal_epoch, Some("synthetic-otp".into())),
+            Message::RdpClipboardPolled(session, modal_epoch, None, Some("synthetic-otp".into())),
         );
         assert!(app.rdp_clipboard_offered.is_none());
         app.connection_dialog = None;
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(session, modal_epoch, Some("late".into())),
+            Message::RdpClipboardPolled(session, modal_epoch, None, Some("late".into())),
         );
         assert!(app.rdp_clipboard_offered.is_none());
         let epoch = app.desktop_clipboard_epoch;
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(session, epoch, Some("synthetic-otp".into())),
+            Message::RdpClipboardPolled(session, epoch, None, Some("synthetic-otp".into())),
         );
         assert_eq!(app.rdp_clipboard_offered.as_deref(), Some("synthetic-otp"));
         assert!(!app.vnc_clipboard_needs_baseline);
         let _ = update(
             &mut app,
-            Message::RdpClipboardPolled(session, epoch, Some("new copy".into())),
+            Message::RdpClipboardPolled(session, epoch, None, Some("new copy".into())),
         );
         assert_eq!(app.rdp_clipboard_offered.as_deref(), Some("new copy"));
         app.manager.disconnect(session).unwrap();

@@ -99,6 +99,7 @@ fn enabled_clipboard_refuses_old_helper_reads_on_the_originating_session() {
     manager.activate(b).unwrap();
     for tx in [events_a, events_b] {
         tx.send(RdpClientEvent::FileContentsNeeded {
+            epoch: 0,
             stream_id: 9,
             index: 0,
             offset: 0,
@@ -111,6 +112,7 @@ fn enabled_clipboard_refuses_old_helper_reads_on_the_originating_session() {
         assert!(matches!(
             rx.try_recv(),
             Ok(adit_rdp_proto::ClientMsg::FileContents {
+                epoch: 0,
                 stream_id: 9,
                 data: None
             })
@@ -135,17 +137,18 @@ fn legacy_session_api_cannot_send_file_metadata_or_bytes() {
         is_dir: false,
     }]);
     assert!(rx.try_recv().is_err());
-    handle.answer_file_contents(4, Some(b"private".to_vec()));
+    handle.answer_file_contents(0, 4, Some(b"private".to_vec()));
     assert!(matches!(
         rx.try_recv(),
         Ok(adit_rdp_proto::ClientMsg::FileContents {
+            epoch: 0,
             stream_id: 4,
             data: None
         })
     ));
     handle.send_clipboard_files(Vec::new());
     assert!(
-        matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::ClipboardFiles(files))
+        matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::EpochClipboardFiles { files, .. })
         if files.is_empty())
     );
 }
@@ -167,7 +170,7 @@ fn windows_clipboard_change_revokes_all_helpers_without_closing_sessions() {
     manager.observe_windows_clipboard_sequence(10);
     for rx in [&rx_a, &rx_b] {
         assert!(
-            matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::ClipboardFiles(files)) if files.is_empty())
+            matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::EpochClipboardFiles { files, .. }) if files.is_empty())
         );
     }
     manager.observe_windows_clipboard_sequence(10);
@@ -175,7 +178,7 @@ fn windows_clipboard_change_revokes_all_helpers_without_closing_sessions() {
     manager.observe_windows_clipboard_sequence(11);
     for rx in [&rx_a, &rx_b] {
         assert!(
-            matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::ClipboardFiles(files)) if files.is_empty())
+            matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::EpochClipboardFiles { files, .. }) if files.is_empty())
         );
     }
     for id in [a, b] {

@@ -408,14 +408,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
 
                 // Defend against requests already queued by an older helper.
                 for read in app.manager.take_rdp_file_reads() {
-                    let data = clipboard_files::read_offered_range(
-                        app.rdp_clipboard,
-                        &app.rdp_offered_files,
-                        read.index,
-                        read.offset,
-                        read.length,
-                    );
-                    app.manager.answer_rdp_file_read(read, data);
+                    app.manager.answer_rdp_file_read(read, None);
                 }
 
                 let clipboard_ready = !app.manager.active_is_vnc()

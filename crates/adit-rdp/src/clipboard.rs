@@ -378,17 +378,16 @@ pub(crate) fn offer_local_image(state: &SharedClipboard, image: Vec<u8>) {
     }
 }
 
+/// Clear cached local text/image without touching the remote file offer.
+pub(crate) fn clear_local_offer(state: &SharedClipboard) {
+    if let Ok(mut state) = state.lock() {
+        state.clear_local_offer(true);
+    }
+}
+
 #[cfg(test)]
 pub(crate) fn test_local_image(state: &SharedClipboard) -> Option<Vec<u8>> {
     state.lock().unwrap().local_image.clone()
-}
-
-/// Hand a local file selection to the CLIPRDR state machine. Metadata only —
-/// nothing is read from disk until the remote pastes.
-pub(crate) fn offer_local_files(state: &SharedClipboard, files: Vec<ClipFile>) {
-    if let Ok(mut guard) = state.lock() {
-        guard.offer_local_files(files);
-    }
 }
 
 /// Request a range from the captured remote file offer.

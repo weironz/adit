@@ -642,6 +642,20 @@ impl SessionManager {
         }
     }
 
+    /// Retire all helpers' cached local offers once per Windows clipboard change.
+    /// Zero is an unavailable sequence and must remain fail-closed.
+    pub fn observe_windows_clipboard_sequence(&mut self, sequence: u32) {
+        if self.windows_clipboard_sequence == Some(sequence) {
+            return;
+        }
+        self.windows_clipboard_sequence = Some(sequence);
+        for record in self.sessions.values() {
+            if let Some(rdp) = &record.rdp {
+                rdp.send_clipboard_files(Vec::new());
+            }
+        }
+    }
+
     /// Set the visual-fidelity preset for RDP sessions. Like the clipboard flag
     /// above, it lands on the *next* connection: the performance flags ride the
     /// Client Info PDU, which RDP sends once and never revises, so a live desktop
@@ -3923,27 +3937,10 @@ impl SessionManager {
                         });
                     }
                     RdpClientEvent::FileContentsNeeded {
-                        epoch,
-                        stream_id,
-                        index,
-                        offset,
-                        length,
+                        epoch, stream_id, ..
                     } => {
-                        if !self.rdp_clipboard {
-                            if let Some(rdp) = &record.rdp {
-                                rdp.answer_file_contents(epoch, stream_id, None);
-                            }
-                        } else {
-                            self.pending_rdp_file_reads.push((
-                                record.summary.id,
-                                RdpFileRead {
-                                    epoch,
-                                    stream_id,
-                                    index,
-                                    offset,
-                                    length,
-                                },
-                            ));
+                        if let Some(rdp) = &record.rdp {
+                            rdp.answer_file_contents(epoch, stream_id, None);
                         }
                     }
                     RdpClientEvent::AuthRejected(message) => {

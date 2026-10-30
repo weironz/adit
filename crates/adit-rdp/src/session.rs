@@ -64,6 +64,8 @@ pub(crate) enum SessionCmd {
         epoch: u64,
         image: Vec<u8>,
     },
+    /// A local clipboard change retires cached text/image without sending files.
+    ClearLocalClipboard,
     /// Offer a local file selection to the remote clipboard (metadata only).
     ClipboardFiles {
         epoch: u64,
@@ -1330,7 +1332,13 @@ async fn active_session(
                         Vec::new()
                     }
                     Some(SessionCmd::ClipboardFiles { files, .. }) => {
-                        clipboard::offer_local_files(clip, files);
+                        if files.is_empty() {
+                            clipboard::clear_local_offer(clip);
+                        }
+                        Vec::new()
+                    }
+                    Some(SessionCmd::ClearLocalClipboard) => {
+                        clipboard::clear_local_offer(clip);
                         Vec::new()
                     }
                     Some(SessionCmd::FileContents { stream_id, data, .. }) => {
