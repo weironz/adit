@@ -3599,7 +3599,7 @@ mod rdp_presentation_tests {
     }
 
     #[test]
-    fn framed_file_requests_keep_their_connection_across_redirect() {
+    fn framed_file_requests_keep_their_connection_and_refuse_bytes_across_redirect() {
         let (handle, commands) = handle(Surface::new(2, 2));
         handle.remote_offer.observe_offer(5, true);
         let (host, reader) = synthetic_helper(&handle);
@@ -3649,7 +3649,7 @@ mod rdp_presentation_tests {
         assert!(!handle.remote_offer.accepts(5));
         handle.answer_file_contents(0, 17, Some(vec![1]));
         handle.answer_file_contents(1, 17, Some(vec![2]));
-        for (expected, byte) in [(0, 1), (1, 2)] {
+        for expected in [0, 1] {
             let mut bytes = Vec::new();
             write_msg(
                 &mut bytes,
@@ -3658,7 +3658,7 @@ mod rdp_presentation_tests {
             .unwrap();
             assert!(
                 matches!(read_msg::<_, ClientMsg>(&mut std::io::Cursor::new(bytes)).unwrap(),
-                Some(ClientMsg::FileContents { epoch, stream_id: 17, data: Some(data) }) if epoch == expected && data == vec![byte])
+                Some(ClientMsg::FileContents { epoch, stream_id: 17, data: None }) if epoch == expected)
             );
         }
         close_synthetic_helper(host, reader, &handle);
