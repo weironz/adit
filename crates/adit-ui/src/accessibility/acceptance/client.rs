@@ -385,6 +385,100 @@ fn dialog_acceptance(
         (result.decisions.last() == Some(&(id, HostKeyDecision::Reject))).then_some(())
     })?;
 
+    // Keep Trust applied, then queue Reject without draining it. An Enter
+    // delivered to the real HWND while Reject is pending must do nothing.
+    let installed = command(commands, |ack| Command::Host(false, ack))?;
+    let id = installed
+        .challenge
+        .ok_or("pending-rejection challenge missing")?;
+    client.wait("pending-rejection challenge", || {
+        client.by_id(&format!(":{id}/host-key:dialog"))
+    })?;
+    let trust = client.named("信任并继续", "host-key:trust")?;
+    let reject = client.named("拒绝", "host-key:reject")?;
+    unsafe { trust.SetFocus() }.map_err(|e| format!("trust SetFocus failed: {e}"))?;
+    client.wait("trust is applied before pending rejection", || {
+        unsafe { trust.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    let before = command(commands, Command::Hold)?;
+    unsafe { reject.SetFocus() }.map_err(|e| format!("reject SetFocus failed: {e}"))?;
+    let queued = command(commands, Command::InspectHeld)?;
+    if queued.focus_enqueued <= before.focus_enqueued {
+        return Err("pending rejection was not actually queued".into());
+    }
+    post_key(hwnd, 0x0d, 0x1c)?;
+    client.invoke(&trust)?;
+    std::thread::sleep(Duration::from_millis(150));
+    if command(commands, Command::InspectHeld)?.held_host_actions != before.held_host_actions {
+        return Err("Enter activated Trust while a rejection was pending".into());
+    }
+    let after = command(commands, Command::Barrier)?;
+    if after.decisions != before.decisions {
+        return Err("UIA Invoke activated Trust while rejection was pending".into());
+    }
+    client.wait("pending rejection applied", || {
+        unsafe { reject.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x0d, 0x1c)?;
+    client.wait("Enter after pending rejection rejects", || {
+        let result = command(commands, Command::Barrier).ok()?;
+        (result.decisions.last() == Some(&(id, HostKeyDecision::Reject))).then_some(())
+    })?;
+
+    // Hold the already-generated Enter message itself, then accept a newer
+    // UIA Reject request before allowing that old message to commit.
+    let installed = command(commands, |ack| Command::Host(false, ack))?;
+    let id = installed
+        .challenge
+        .ok_or("queued-enter challenge missing")?;
+    client.wait("queued-enter challenge", || {
+        client.by_id(&format!(":{id}/host-key:dialog"))
+    })?;
+    let trust = client.named("信任并继续", "host-key:trust")?;
+    let reject = client.named("拒绝", "host-key:reject")?;
+    unsafe { trust.SetFocus() }.map_err(|e| format!("queued-enter trust focus failed: {e}"))?;
+    client.wait("queued-enter trust applied", || {
+        unsafe { trust.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    let before = command(commands, Command::Hold)?;
+    post_key(hwnd, 0x0d, 0x1c)?;
+    client.wait("old Enter reached application queue", || {
+        (command(commands, Command::InspectHeld)
+            .ok()?
+            .held_host_actions
+            > before.held_host_actions)
+            .then_some(())
+    })?;
+    unsafe { reject.SetFocus() }.map_err(|e| format!("queued-enter reject focus failed: {e}"))?;
+    let queued = command(commands, Command::InspectHeld)?;
+    if queued.focus_enqueued <= before.focus_enqueued {
+        return Err("new rejection was not enqueued before the old Enter".into());
+    }
+    let replayed = command(commands, Command::ReplayHeld)?;
+    if replayed.decisions != before.decisions {
+        return Err("old queued Enter committed after the new rejection".into());
+    }
+    client.wait("queued-enter rejection applied", || {
+        unsafe { reject.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x0d, 0x1c)?;
+    client.wait("queued-enter challenge rejects", || {
+        let result = command(commands, Command::Barrier).ok()?;
+        (result.decisions.last() == Some(&(id, HostKeyDecision::Reject))).then_some(())
+    })?;
+
     let installed = command(commands, |ack| Command::Host(false, ack))?;
     let id = installed
         .challenge
@@ -785,6 +879,9 @@ pub(super) fn run(
         "host_key_keyboard_tab_enter_space_and_safe_default": true,
         "batched_keyboard_and_legacy_focus_safe": true,
         "same_challenge_queued_uia_focus_cannot_override_keyboard": true,
+        "pending_uia_rejection_blocks_enter_on_old_trust": true,
+        "pending_uia_rejection_blocks_invoke_on_old_trust": true,
+        "queued_enter_cannot_commit_after_new_uia_rejection": true,
         "confirmation_uia_focus_requests_enqueued": focus_statistics.focus_enqueued,
         "stale_confirmation_uia_focus_rejected": focus_statistics.stale_focus_rejected,
         "uia_dialog_focus_restores_original_session": true,

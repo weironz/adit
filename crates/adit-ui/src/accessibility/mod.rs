@@ -50,10 +50,51 @@ mod widget;
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(super) use acceptance::run as run_acceptance;
 
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn hold_native_actions(window: window::Id, hold: bool) {
+    native::hold_actions(window, hold);
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn native_focus_statistics(window: window::Id) -> (u64, u64) {
+    native::focus_statistics(window)
+}
+
+/// Captured when UIA asks for focus; revoked by a subsequent window switch.
+#[derive(Clone, Debug)]
+pub struct WindowFocusLease {
+    #[cfg(windows)]
+    state: std::sync::Arc<std::sync::Mutex<native::ForegroundState>>,
+    #[cfg(windows)]
+    generation: u64,
+    #[cfg(windows)]
+    foreground: isize,
+    #[cfg(windows)]
+    target: isize,
+    #[cfg(windows)]
+    scope_epoch: std::sync::Arc<std::sync::atomic::AtomicU64>,
+    #[cfg(windows)]
+    scope_generation: u64,
+}
+
+impl WindowFocusLease {
+    pub(crate) fn current(&self) -> bool {
+        #[cfg(windows)]
+        {
+            native::foreground_lease_current(self)
+        }
+        #[cfg(not(windows))]
+        {
+            false
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct State {
     pub primary: Option<window::Id>,
     pub windows: HashSet<window::Id>,
+    live_windows: HashSet<window::Id>,
     scrolls: HashMap<(window::Id, SessionId), usize>,
     /// Only the isolated acceptance runner sets this. Shipping instances use
     /// the actual visible control actions without a fixture policy.
@@ -65,15 +106,16 @@ pub(crate) struct State {
 
 impl State {
     pub fn opening(&mut self, window: window::Id) -> bool {
-        let first = self.windows.is_empty();
+        self.live_windows.insert(window);
         let added = self.windows.insert(window);
-        if first && added {
+        if self.primary.is_none() && added {
             self.primary = Some(window);
         }
         added
     }
 
     pub fn closed(&mut self, window: window::Id) {
+        self.live_windows.remove(&window);
         self.windows.remove(&window);
         self.scrolls.retain(|(owner, _), _| *owner != window);
         if self.primary == Some(window) {
@@ -81,6 +123,14 @@ impl State {
         }
         #[cfg(windows)]
         native::unregister(window);
+    }
+
+    pub fn registration_failed(&mut self, window: window::Id) {
+        self.windows.remove(&window);
+        #[cfg(windows)]
+        native::unregister(window);
+        // The native window still exists. Its identity is also needed to
+        // restore terminal routing after an ordinary connection dialog.
     }
 }
 
@@ -144,7 +194,7 @@ pub(crate) fn reconcile_remote_focus(app: &mut AditApp) {
     let Some(mut lease) = app.accessibility_focus_restore.take() else {
         return;
     };
-    if !app.accessibility.windows.contains(&lease.window)
+    if !app.accessibility.live_windows.contains(&lease.window)
         || app.native_window_id.or(app.accessibility.primary) != Some(lease.window)
         || app.manager.active_session() != Some(lease.session)
         || app.manager.session_summary(lease.session).is_none()
@@ -190,6 +240,7 @@ pub(crate) struct Control {
     range: Option<(Option<window::Id>, SessionId, usize, usize)>,
     focus: Option<iced::advanced::widget::Id>,
     focus_revision: Option<dialog_focus::FocusRevision>,
+    focus_index: Option<usize>,
 }
 
 impl Control {
@@ -204,6 +255,7 @@ impl Control {
             range: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
         }
     }
 
@@ -225,6 +277,7 @@ impl Control {
             range: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
         }
     }
 
@@ -260,6 +313,7 @@ impl Control {
             range: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
         }
     }
 
@@ -279,6 +333,7 @@ impl Control {
             range: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
         }
     }
 
@@ -293,6 +348,7 @@ impl Control {
             range: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
         }
     }
 
@@ -307,6 +363,7 @@ impl Control {
             range: Some((BUILD_WINDOW.with(Cell::get), owner, value.min(max), max)),
             focus: None,
             focus_revision: None,
+            focus_index: None,
         }
     }
 }
@@ -375,6 +432,7 @@ struct FocusIfPresent {
     found: bool,
     confirmation: bool,
     ticket: Option<dialog_focus::FocusTicket>,
+    lease: Option<WindowFocusLease>,
 }
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
@@ -404,17 +462,30 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
     }
 
     fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
-        use iced::advanced::widget::operation::{focusable, Outcome};
-        if self.ticket.as_ref().is_some_and(|ticket| !ticket.current()) {
+        use iced::advanced::widget::operation::Outcome;
+        if self.ticket.as_ref().is_some_and(|ticket| !ticket.current())
+            || self.lease.as_ref().is_some_and(|lease| !lease.current())
+        {
+            if let Some(ticket) = &self.ticket {
+                ticket.cancel();
+            }
             Outcome::None
         } else if self.confirmation {
             Outcome::Chain(Box::new(FocusConfirmation {
                 target: self.target.clone(),
                 ticket: self.ticket.clone(),
+                lease: self.lease.clone(),
+                applied: false,
             }))
         } else if self.found && self.ticket.is_none() {
-            Outcome::Chain(Box::new(focusable::focus(self.target.clone())))
+            Outcome::Chain(Box::new(GuardedFocus {
+                target: self.target.clone(),
+                lease: self.lease.clone(),
+            }))
         } else {
+            if let Some(ticket) = &self.ticket {
+                ticket.cancel();
+            }
             // A task queued for an old challenge must not unfocus the new
             // dialog's safe default when the old widget no longer exists.
             Outcome::None
@@ -425,6 +496,8 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
 struct FocusConfirmation {
     target: iced::advanced::widget::Id,
     ticket: Option<dialog_focus::FocusTicket>,
+    lease: Option<WindowFocusLease>,
+    applied: bool,
 }
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
@@ -442,7 +515,49 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
             id == Some(&self.target),
             state.downcast_mut::<dialog_focus::FocusState>(),
         ) {
-            button.focus_if_current(self.ticket.as_ref());
+            self.applied |= button.focus_if_current(self.ticket.as_ref(), || {
+                self.lease.as_ref().is_none_or(WindowFocusLease::current)
+            });
+            if self.lease.as_ref().is_some_and(|lease| !lease.current()) {
+                if let Some(ticket) = &self.ticket {
+                    ticket.cancel();
+                }
+            }
+        }
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
+        if !self.applied {
+            if let Some(ticket) = &self.ticket {
+                ticket.cancel();
+            }
+        }
+        iced::advanced::widget::operation::Outcome::None
+    }
+}
+
+struct GuardedFocus {
+    target: iced::advanced::widget::Id,
+    lease: Option<WindowFocusLease>,
+}
+
+impl<T: 'static> iced::advanced::widget::Operation<T> for GuardedFocus {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn iced::advanced::widget::Operation<T>)) {
+        operate(self);
+    }
+
+    fn focusable(
+        &mut self,
+        id: Option<&iced::advanced::widget::Id>,
+        _bounds: iced::Rectangle,
+        state: &mut dyn iced::advanced::widget::operation::Focusable,
+    ) {
+        if self.lease.as_ref().is_none_or(WindowFocusLease::current) {
+            if id == Some(&self.target) {
+                state.focus();
+            } else {
+                state.unfocus();
+            }
         }
     }
 }
@@ -452,13 +567,42 @@ pub(crate) fn focus_widget(
     window: Option<window::Id>,
     id: iced::advanced::widget::Id,
 ) -> Task<Message> {
-    focus_widget_with_ticket(window, id, None)
+    focus_widget_with_ticket(window, id, None, None)
+}
+
+pub(crate) fn request_focus(
+    window: window::Id,
+    id: iced::advanced::widget::Id,
+    ticket: Option<dialog_focus::FocusTicket>,
+    lease: Option<WindowFocusLease>,
+) -> Task<Message> {
+    #[cfg(windows)]
+    if let Some(lease) = lease {
+        let check = ticket.clone();
+        return window::run(window, move |_| {
+            native::activate_for_focus(&lease, check.as_ref())
+        })
+        .then(move |fresh| {
+            if let Some(fresh) = fresh {
+                focus_widget_with_ticket(Some(window), id.clone(), ticket.clone(), Some(fresh))
+            } else {
+                if let Some(ticket) = &ticket {
+                    ticket.cancel();
+                }
+                Task::none()
+            }
+        });
+    }
+    #[cfg(not(windows))]
+    let _ = lease;
+    focus_widget_with_ticket(Some(window), id, ticket, None)
 }
 
 pub(crate) fn focus_widget_with_ticket(
     window: Option<window::Id>,
     id: iced::advanced::widget::Id,
     ticket: Option<dialog_focus::FocusTicket>,
+    lease: Option<WindowFocusLease>,
 ) -> Task<Message> {
     #[cfg(windows)]
     use iced::advanced::widget::operation;
@@ -467,6 +611,7 @@ pub(crate) fn focus_widget_with_ticket(
         found: false,
         confirmation: false,
         ticket,
+        lease,
     };
     #[cfg(windows)]
     if let Some(window) = window {
@@ -562,9 +707,20 @@ pub(crate) fn drain(app: &AditApp) -> Vec<(window::Id, String, Message)> {
         )
         .into_iter()
         .filter(|(_, _, message)| {
-            app.accessibility
+            let allowed = app
+                .accessibility
                 .action_filter
-                .is_none_or(|allow| allow(message))
+                .is_none_or(|allow| allow(message));
+            if !allowed {
+                if let Message::AccessibilityFocus {
+                    ticket: Some(ticket),
+                    ..
+                } = message
+                {
+                    ticket.cancel();
+                }
+            }
+            allowed
         })
         .collect()
     }
@@ -573,6 +729,15 @@ pub(crate) fn drain(app: &AditApp) -> Vec<(window::Id, String, Message)> {
         let _ = app;
         Vec::new()
     }
+}
+
+pub(crate) fn retire_changed_scope(app: &AditApp) {
+    #[cfg(windows)]
+    if let Some(window) = app.native_window_id.or(app.accessibility.primary) {
+        native::retire_scope(window, &namespace(app));
+    }
+    #[cfg(not(windows))]
+    let _ = app;
 }
 
 pub(crate) fn action_current(app: &AditApp, window: window::Id, scope: &str) -> bool {
@@ -886,6 +1051,13 @@ pub(crate) fn detached_namespace(
 mod tests {
     use super::*;
 
+    fn focused_action(message: &Message) -> &Message {
+        match message {
+            Message::DialogFocusActivate { action, .. } => action,
+            _ => message,
+        }
+    }
+
     fn focus_fixture() -> (AditApp, window::Id, SessionId, SessionId) {
         let profiles = vec![
             ConnectionProfile::new("one", "fixture.invalid", 22, "fixture"),
@@ -923,6 +1095,7 @@ mod tests {
                 window,
                 id: iced::advanced::widget::Id::from("synthetic-confirmation"),
                 ticket: None,
+                lease: None,
             },
         );
         assert!(!app.terminal_focused);
@@ -1066,6 +1239,7 @@ mod tests {
                 window,
                 id: iced::advanced::widget::Id::from("synthetic-menu-item"),
                 ticket: None,
+                lease: None,
             },
         );
         assert!(app.accessibility_focus_restore.is_some());
@@ -1093,6 +1267,7 @@ mod tests {
                 window,
                 id: iced::advanced::widget::Id::from("synthetic-password"),
                 ticket: None,
+                lease: None,
             },
         );
         let _ = update_loop::update(&mut app, Message::CancelConnection);
@@ -1109,6 +1284,34 @@ mod tests {
         assert!(!app.terminal_focused);
         let _ = update_loop::update(&mut app, Message::CancelConnection);
         assert!(app.terminal_focused);
+    }
+
+    #[test]
+    fn connection_cancel_restores_terminal_after_uia_registration_fails() {
+        for native_window in [true, false] {
+            let (mut app, window, session, _) = focus_fixture();
+            if !native_window {
+                app.native_window_id = None;
+                app.native_main_window = None;
+            }
+            let profile = app.manager.session_summary(session).unwrap().profile_id;
+            select_profile(&mut app, profile);
+            app.terminal_focused = true;
+            let _ = update_loop::update(
+                &mut app,
+                Message::AccessibilityReady {
+                    window,
+                    attached: false,
+                },
+            );
+            assert!(!app.accessibility.windows.contains(&window));
+            assert_eq!(app.accessibility.primary, Some(window));
+            open_connection_dialog(&mut app);
+            assert!(!app.terminal_focused);
+            let _ = update_loop::update(&mut app, Message::CancelConnection);
+            assert!(app.terminal_focused);
+            assert_eq!(app.manager.active_session(), Some(session));
+        }
     }
 
     #[test]
@@ -1159,6 +1362,7 @@ mod tests {
             found: false,
             confirmation: false,
             ticket: Some(ticket.clone()),
+            lease: None,
         };
         ui.operate(&renderer, &mut discovery);
         let Outcome::Chain(mut delayed) = <FocusIfPresent as Operation<()>>::finish(&discovery)
@@ -1197,12 +1401,13 @@ mod tests {
             &mut clipboard,
             &mut messages,
         );
+        assert_eq!(messages.len(), 1);
         assert!(matches!(
-            messages.as_slice(),
-            [Message::RespondHostKey {
+            focused_action(&messages[0]),
+            Message::RespondHostKey {
                 decision: HostKeyDecision::Reject,
                 ..
-            }]
+            }
         ));
 
         messages.clear();
@@ -1211,6 +1416,8 @@ mod tests {
             &mut FocusConfirmation {
                 target: input_id("trust"),
                 ticket: None,
+                lease: None,
+                applied: false,
             },
         );
         let ticket = group.revision().issue();
@@ -1219,6 +1426,7 @@ mod tests {
             found: false,
             confirmation: false,
             ticket: Some(ticket.clone()),
+            lease: None,
         };
         ui.operate(&renderer, &mut discovery);
         let Outcome::Chain(mut delayed) = <FocusIfPresent as Operation<()>>::finish(&discovery)
@@ -1243,12 +1451,13 @@ mod tests {
             &mut clipboard,
             &mut messages,
         );
+        assert_eq!(messages.len(), 1);
         assert!(matches!(
-            messages.as_slice(),
-            [Message::RespondHostKey {
+            focused_action(&messages[0]),
+            Message::RespondHostKey {
                 decision: HostKeyDecision::Reject,
                 ..
-            }]
+            }
         ));
         messages.clear();
         let ticket = group.revision().issue();
@@ -1257,6 +1466,7 @@ mod tests {
             found: false,
             confirmation: false,
             ticket: Some(ticket),
+            lease: None,
         };
         ui.operate(&renderer, &mut discovery);
         let Outcome::Chain(mut focus) = <FocusIfPresent as Operation<()>>::finish(&discovery)
@@ -1271,12 +1481,13 @@ mod tests {
             &mut clipboard,
             &mut messages,
         );
+        assert_eq!(messages.len(), 1);
         assert!(matches!(
-            messages.as_slice(),
-            [Message::RespondHostKey {
+            focused_action(&messages[0]),
+            Message::RespondHostKey {
                 decision: HostKeyDecision::TrustAndRecord,
                 ..
-            }]
+            }
         ));
     }
 
@@ -1306,6 +1517,7 @@ mod tests {
             found: false,
             confirmation: false,
             ticket: None,
+            lease: None,
         };
         <FocusIfPresent as Operation<()>>::focusable(
             &mut request,

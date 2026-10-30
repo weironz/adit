@@ -42,11 +42,13 @@ struct Snapshot {
     sidebar_visible: bool,
     focus_enqueued: u64,
     stale_focus_rejected: u64,
+    held_host_actions: usize,
 }
 
 enum Command {
     Hold(mpsc::Sender<Snapshot>),
     InspectHeld(mpsc::Sender<Snapshot>),
+    ReplayHeld(mpsc::Sender<Snapshot>),
     Host(bool, mpsc::Sender<Snapshot>),
     Link(mpsc::Sender<Snapshot>),
     Barrier(mpsc::Sender<Snapshot>),
@@ -69,6 +71,8 @@ struct Harness {
     commands: mpsc::Receiver<Command>,
     command_sender: mpsc::Sender<Command>,
     hold_actions: bool,
+    held_host_actions: usize,
+    held_messages: Vec<Message>,
     outcome: Outcome,
 }
 
@@ -80,6 +84,9 @@ enum Event {
 }
 
 fn allowed(message: &Message) -> bool {
+    if let Message::DialogFocusActivate { action, .. } = message {
+        return allowed(action);
+    }
     matches!(
         message,
         Message::Tick
@@ -133,6 +140,7 @@ fn snapshot(state: &Harness) -> Snapshot {
         sidebar_visible: state.app.sidebar_visible,
         focus_enqueued,
         stale_focus_rejected,
+        held_host_actions: state.held_host_actions,
     }
 }
 
@@ -170,6 +178,13 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                 return Task::none();
             }
             if state.hold_actions {
+                if matches!(message, Message::RespondHostKey { .. })
+                    || matches!(&message, Message::DialogFocusActivate { action, .. }
+                        if matches!(action.as_ref(), Message::RespondHostKey { .. }))
+                {
+                    state.held_host_actions += 1;
+                    state.held_messages.push(message);
+                }
                 return Task::none();
             }
             let task = update_loop::update(&mut state.app, message).map(Event::App);
@@ -198,6 +213,17 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         (ack, None)
                     }
                     Command::InspectHeld(ack) => (ack, None),
+                    Command::ReplayHeld(ack) => {
+                        state.hold_actions = false;
+                        let tasks = std::mem::take(&mut state.held_messages)
+                            .into_iter()
+                            .map(|message| {
+                                update_loop::update(&mut state.app, message).map(Event::App)
+                            })
+                            .collect::<Vec<_>>();
+                        let _ = ack.send(snapshot(state));
+                        return Task::batch(tasks);
+                    }
                     Command::LegacyFocus(ack) => {
                         state.hold_actions = false;
                         let _ = ack.send(snapshot(state));
@@ -438,6 +464,8 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
                 commands,
                 command_sender,
                 hold_actions: false,
+                held_host_actions: 0,
+                held_messages: Vec::new(),
                 outcome: Arc::clone(&boot_outcome),
             },
             Task::none(),

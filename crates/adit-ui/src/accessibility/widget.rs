@@ -237,12 +237,11 @@ impl Widget<Message, Theme, iced::Renderer> for Accessible<'_> {
                             .downcast_ref::<dialog_focus::FocusState>()
                             .focused()));
             if tree.children[0].tag == widget::tree::Tag::of::<dialog_focus::FocusState>() {
-                control.focus_revision = Some(
-                    tree.children[0]
-                        .state
-                        .downcast_ref::<dialog_focus::FocusState>()
-                        .revision(),
-                );
+                let focus = tree.children[0]
+                    .state
+                    .downcast_ref::<dialog_focus::FocusState>();
+                control.focus_revision = Some(focus.revision());
+                control.focus_index = Some(focus.index());
             }
             frame.nodes.push(native::Rendered {
                 id,

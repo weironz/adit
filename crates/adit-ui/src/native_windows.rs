@@ -112,6 +112,7 @@ fn input_message(message: &Message) -> bool {
     matches!(
         message,
         Message::KeyboardInput(_)
+            | Message::DialogFocusActivate { .. }
             | Message::TerminalInputChanged(_)
             | Message::CommandHistoryPrev
             | Message::CommandHistoryNext
@@ -403,6 +404,10 @@ impl DesktopApplication {
         if input_message(&message) && self.modal_owner.is_some_and(|owner| owner != id) {
             return Task::none();
         }
+        let routed_message = match &message {
+            Message::DialogFocusActivate { action, .. } => action.as_ref(),
+            _ => &message,
+        };
         // Global SFTP/credential services can outlive an explicitly closed tab.
         // Move their modal back to primary instead of borrowing its live host
         // as the stale window's input target or trapping an unclosable modal.
@@ -413,7 +418,7 @@ impl DesktopApplication {
                 .is_some_and(|window| self.app.manager.session_summary(window.session).is_none())
             && (is_sftp(&message)
                 || matches!(
-                    &message,
+                    routed_message,
                     Message::AuthPromptInput { .. }
                         | Message::SubmitAuthPrompt { .. }
                         | Message::CancelAuthPrompt { .. }
@@ -436,7 +441,7 @@ impl DesktopApplication {
             let task = self.dispatch(self.primary, message);
             return Task::batch([task, window::gain_focus(self.primary)]);
         }
-        match &message {
+        match routed_message {
             Message::DetachSession(session) => return self.detach(*session),
             Message::MergeNativeWindow => return self.merge(id, true),
             Message::TabClicked(session) | Message::ShowTabContextMenu(session) => {
@@ -1385,6 +1390,7 @@ mod tests {
                     window: child,
                     id: iced::advanced::widget::Id::from("synthetic-link"),
                     ticket: None,
+                    lease: None,
                 },
             );
             assert!(!app.terminal_focused);

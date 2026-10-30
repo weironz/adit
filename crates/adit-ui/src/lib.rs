@@ -1133,6 +1133,12 @@ pub enum Message {
         window: window::Id,
         id: iced::advanced::widget::Id,
         ticket: Option<dialog_focus::FocusTicket>,
+        lease: Option<accessibility::WindowFocusLease>,
+    },
+    DialogFocusActivate {
+        activation: Option<dialog_focus::FocusActivation>,
+        action: Box<Message>,
+        lease: Option<accessibility::WindowFocusLease>,
     },
     DismissMenu(MenuEscapeTarget),
     ToggleFullscreen,

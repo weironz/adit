@@ -72,8 +72,15 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         // here so the detached-window router can route instead of guessing.
         if accessibility::action_current(app, window, &scope) {
             tasks.push(update_message(app, message));
+        } else if let Message::AccessibilityFocus {
+            ticket: Some(ticket),
+            ..
+        } = message
+        {
+            ticket.cancel();
         }
     }
+    accessibility::retire_changed_scope(app);
     accessibility::reconcile_remote_focus(app);
     // Focus can move locally without a WindowUnfocused event (settings, menus,
     // sidebar fields). Release keys before returning even from early Task paths.
@@ -117,7 +124,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::AccessibilityReady { window, attached } => {
             if !attached {
-                app.accessibility.closed(window);
+                app.accessibility.registration_failed(window);
             }
         }
         Message::AccessibilityClosed(window) => app.accessibility.closed(window),
@@ -141,20 +148,60 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             owner,
             lines,
         } => accessibility::scroll_lines(app, window, owner, lines),
-        Message::AccessibilityFocus { window, id, ticket } => {
+        Message::DialogFocusActivate {
+            activation,
+            action,
+            lease,
+        } => {
+            let Some(activation) = activation else {
+                return Task::none();
+            };
+            if let Message::ConfirmOpenHyperlink(generation) = action.as_ref() {
+                let generation = *generation;
+                let url = activation
+                    .commit(
+                        || lease.as_ref().is_none_or(|lease| lease.current()),
+                        || {
+                            (generation == app.hyperlink_prompt_generation)
+                                .then(|| app.pending_hyperlink.take())
+                                .flatten()
+                        },
+                    )
+                    .flatten();
+                if let Some(url) = url {
+                    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                    if accessibility::acceptance_open_link(app, &url) {
+                        return Task::none();
+                    }
+                    open_external_link(app, &url);
+                }
+                return Task::none();
+            }
+            return activation
+                .commit(
+                    || lease.as_ref().is_none_or(|lease| lease.current()),
+                    || update_message(app, *action),
+                )
+                .unwrap_or_else(Task::none);
+        }
+        Message::AccessibilityFocus {
+            window,
+            id,
+            ticket,
+            lease,
+        } => {
             if app.accessibility.windows.contains(&window)
                 && app.native_window_id.or(app.accessibility.primary) == Some(window)
                 && accessibility::namespace(app) != "native-modal-blocked"
                 && ticket.as_ref().is_none_or(|ticket| ticket.current())
+                && lease.as_ref().is_none_or(|lease| lease.current())
             {
                 accessibility::suspend_remote_focus(app, window);
                 release_rdp_modifiers(app);
-                // Only an explicit UIA SetFocus requests native focus. Tick,
-                // tree publication and terminal output never do this.
-                return Task::batch([
-                    window::gain_focus(window),
-                    accessibility::focus_widget_with_ticket(Some(window), id, ticket),
-                ]);
+                return accessibility::request_focus(window, id, ticket, lease);
+            }
+            if let Some(ticket) = ticket {
+                ticket.cancel();
             }
         }
         Message::DismissMenu(target) => {

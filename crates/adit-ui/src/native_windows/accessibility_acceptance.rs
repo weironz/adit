@@ -15,7 +15,7 @@ use windows::Win32::{
     },
     UI::{
         Accessibility::*,
-        WindowsAndMessaging::{PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP},
+        WindowsAndMessaging::{GetForegroundWindow, PostMessageW, WM_CHAR, WM_KEYDOWN, WM_KEYUP},
     },
 };
 
@@ -34,11 +34,15 @@ struct Snapshot {
     immediate: bool,
     primary_active: bool,
     background_focusable_found: Option<bool>,
+    child_focus_enqueued: u64,
+    child_focus_rejected: u64,
 }
 
 enum Command {
     Focus(mpsc::Sender<Snapshot>),
     BackgroundFocus(mpsc::Sender<Snapshot>),
+    HoldChild(bool, mpsc::Sender<Snapshot>),
+    Switch(bool, mpsc::Sender<Snapshot>),
     ProbeBackground(mpsc::Sender<Snapshot>),
     Modal(mpsc::Sender<Snapshot>),
     CloseModal(mpsc::Sender<Snapshot>),
@@ -69,6 +73,8 @@ enum Event {
 }
 
 fn snapshot(state: &Harness) -> Snapshot {
+    let (child_focus_enqueued, child_focus_rejected) =
+        accessibility::native_focus_statistics(state.child);
     Snapshot {
         input: state.desktop.app.terminal_input.clone(),
         terminal: snapshot_to_text(
@@ -95,6 +101,8 @@ fn snapshot(state: &Harness) -> Snapshot {
         immediate: state.desktop.app.command_send_immediately,
         primary_active: state.desktop.app.manager.active_session() == Some(state.primary_session),
         background_focusable_found: None,
+        child_focus_enqueued,
+        child_focus_rejected,
     }
 }
 
@@ -166,6 +174,18 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                 Command::BackgroundFocus(ack) => (
                     ack,
                     accessibility::focus_widget(Some(state.desktop.primary), command_input_id()),
+                ),
+                Command::HoldChild(hold, ack) => {
+                    accessibility::hold_native_actions(state.child, hold);
+                    (ack, Task::none())
+                }
+                Command::Switch(child, ack) => (
+                    ack,
+                    window::gain_focus(if child {
+                        state.child
+                    } else {
+                        state.desktop.primary
+                    }),
                 ),
                 Command::ProbeBackground(ack) => {
                     let scope = iced::advanced::widget::Id::from(format!(
@@ -430,6 +450,60 @@ fn client(
     {
         return Err("keyboard changed or sent the covered primary command input".into());
     }
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("inspect child focus before queuing", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
+    })?;
+    if unsafe { password.CurrentHasKeyboardFocus() }
+        .map_err(|e| e.to_string())?
+        .as_bool()
+    {
+        return Err("switch fixture password was already focused".into());
+    }
+    command(&sender, |ack| Command::Switch(false, ack))?;
+    wait("return to primary before queuing", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(())
+    })?;
+    let before_switch = command(&sender, |ack| Command::HoldChild(true, ack))?;
+    unsafe { password.SetFocus() }.map_err(|e| format!("queued child focus failed: {e}"))?;
+    if command(&sender, Command::Snapshot)?.child_focus_enqueued
+        <= before_switch.child_focus_enqueued
+    {
+        return Err("child focus request was not enqueued".into());
+    }
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("switch to child before dispatch", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
+    })?;
+    command(&sender, |ack| Command::Switch(false, ack))?;
+    wait("switch back to primary before dispatch", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(())
+    })?;
+    command(&sender, |ack| Command::HoldChild(false, ack))?;
+    wait("old child request rejected after switch", || {
+        (command(&sender, Command::Snapshot)
+            .ok()?
+            .child_focus_rejected
+            > before_switch.child_focus_rejected)
+            .then_some(())
+    })?;
+    if unsafe { GetForegroundWindow() }.0 as isize != primary {
+        return Err("stale child request stole foreground from primary".into());
+    }
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("return to child to inspect its focus", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
+    })?;
+    if unsafe { password.CurrentHasKeyboardFocus() }
+        .map_err(|e| e.to_string())?
+        .as_bool()
+    {
+        return Err("stale request changed the background child's selection".into());
+    }
+    command(&sender, |ack| Command::Switch(false, ack))?;
+    wait("return to primary for fresh UIA focus", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(())
+    })?;
     unsafe { password.SetFocus() }.map_err(|e| format!("detached UIA SetFocus failed: {e}"))?;
     wait("detached UIA SetFocus reached iced", || {
         unsafe { password.CurrentHasKeyboardFocus() }
@@ -496,6 +570,7 @@ fn client(
         json!({"native_uia": true, "production_detached_window_router": true,
         "cross_window_command_keyboard_blocked": true, "detached_uia_focus": true,
         "background_focus_operation_blocked": true,
+        "stale_uia_request_cannot_steal_foreground_or_change_background_focus": true,
         "detached_focus_keyboard_and_fresh_ime_restored": true,
         "detached_scroll_after_wheel": true, "screen_reader_tested": false, "remote_server_tested": false}),
     )

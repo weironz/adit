@@ -4,11 +4,14 @@ use super::*;
 use accesskit::{
     Action, ActionData, ActionRequest, Node, NodeId, Role, TreeId, TreeInfo, TreeUpdate,
 };
-use accesskit_windows::Adapter;
+use accesskit_windows::{Adapter, QueuedEvents};
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    sync::{mpsc, Arc, Mutex},
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        mpsc, Arc, Mutex, OnceLock,
+    },
 };
 use windows::Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
@@ -18,8 +21,8 @@ use windows::Win32::{
         Input::KeyboardAndMouse::GetFocus,
         Shell::{DefSubclassProc, RemoveWindowSubclass, SetWindowSubclass},
         WindowsAndMessaging::{
-            GetWindowThreadProcessId, IsWindow, WM_GETOBJECT, WM_KILLFOCUS, WM_NCDESTROY,
-            WM_SETFOCUS,
+            GetForegroundWindow, GetWindowThreadProcessId, IsWindow, SetForegroundWindow,
+            WM_GETOBJECT, WM_KILLFOCUS, WM_NCDESTROY, WM_SETFOCUS,
         },
     },
 };
@@ -27,12 +30,118 @@ use windows::Win32::{
 const ROOT: NodeId = NodeId(1);
 const SUBCLASS: usize = 0x4144_4954;
 
+#[derive(Debug, Default)]
+pub(super) struct ForegroundState {
+    generation: u64,
+    windows: HashSet<isize>,
+}
+
+fn foreground_state() -> Arc<Mutex<ForegroundState>> {
+    static STATE: OnceLock<Arc<Mutex<ForegroundState>>> = OnceLock::new();
+    Arc::clone(STATE.get_or_init(|| Arc::new(Mutex::new(ForegroundState::default()))))
+}
+
+fn capture_foreground(
+    target: isize,
+    scope_epoch: Arc<AtomicU64>,
+    scope_generation: u64,
+) -> Option<WindowFocusLease> {
+    let state = foreground_state();
+    let foreground = unsafe { GetForegroundWindow() }.0 as isize;
+    let generation = {
+        let guard = state.lock().ok()?;
+        if !guard.windows.contains(&foreground) || !guard.windows.contains(&target) {
+            return None;
+        }
+        guard.generation
+    };
+    Some(WindowFocusLease {
+        state,
+        generation,
+        foreground,
+        target,
+        scope_epoch,
+        scope_generation,
+    })
+}
+
+fn lease_current_for(lease: &WindowFocusLease, foreground: isize) -> bool {
+    lease.state.lock().is_ok_and(|state| {
+        lease.scope_epoch.load(Ordering::SeqCst) == lease.scope_generation
+            && state.generation == lease.generation
+            && state.windows.contains(&lease.target)
+            && state.windows.contains(&foreground)
+            && foreground == lease.foreground
+    })
+}
+
+pub(super) fn foreground_lease_current(lease: &WindowFocusLease) -> bool {
+    lease_current_for(lease, unsafe { GetForegroundWindow() }.0 as isize)
+}
+
+pub(super) fn activate_for_focus(
+    lease: &WindowFocusLease,
+    ticket: Option<&dialog_focus::FocusTicket>,
+) -> Option<WindowFocusLease> {
+    defer_focus_events(|| {
+        let activate = || {
+            if !foreground_lease_current(lease) {
+                return None;
+            }
+            if lease.foreground != lease.target {
+                let hwnd = HWND(lease.target as *mut std::ffi::c_void);
+                if !unsafe { SetForegroundWindow(hwnd) }.as_bool()
+                    || unsafe { GetForegroundWindow() } != hwnd
+                {
+                    return None;
+                }
+            }
+            capture_foreground(
+                lease.target,
+                Arc::clone(&lease.scope_epoch),
+                lease.scope_generation,
+            )
+            .filter(|fresh| fresh.foreground == fresh.target && fresh.current())
+        };
+        if let Some(ticket) = ticket {
+            ticket.while_pending(activate).flatten()
+        } else {
+            activate()
+        }
+    })
+}
+
+// SetForegroundWindow synchronously sends WM_SETFOCUS/WM_KILLFOCUS. Defer
+// AccessKit notifications until the ticket lock is released: UIA listeners
+// can re-enter the provider and issue another focus request from those events.
+fn defer_focus_events<T>(action: impl FnOnce() -> T) -> T {
+    let nested = DEFER_FOCUS_EVENTS.with(|defer| defer.replace(true));
+    let result = action();
+    if !nested {
+        DEFER_FOCUS_EVENTS.with(|defer| defer.set(false));
+        let events = DEFERRED_FOCUS_EVENTS.with(|queue| std::mem::take(&mut *queue.borrow_mut()));
+        for event in events {
+            event.raise();
+        }
+    }
+    result
+}
+
+fn raise_focus_events(events: QueuedEvents) {
+    if DEFER_FOCUS_EVENTS.with(Cell::get) {
+        DEFERRED_FOCUS_EVENTS.with(|queue| queue.borrow_mut().push(events));
+    } else {
+        events.raise();
+    }
+}
+
 #[derive(Clone)]
 struct Route {
     invoke: Option<Message>,
     set_value: Option<fn(String) -> Message>,
     focus: Option<iced::advanced::widget::Id>,
     focus_revision: Option<dialog_focus::FocusRevision>,
+    focus_index: Option<usize>,
     range: Option<(window::Id, SessionId)>,
 }
 
@@ -41,6 +150,7 @@ struct Shared {
     routes: HashMap<NodeId, Route>,
     namespace: String,
     revoked: bool,
+    scope_epoch: Arc<AtomicU64>,
     #[cfg(feature = "native-accessibility-acceptance")]
     focus_enqueued: std::sync::atomic::AtomicU64,
     #[cfg(feature = "native-accessibility-acceptance")]
@@ -62,11 +172,16 @@ struct Request {
     action: Action,
     value: Option<String>,
     focus_ticket: Option<dialog_focus::FocusTicket>,
+    activation: Option<dialog_focus::FocusActivation>,
+    window_lease: Option<WindowFocusLease>,
 }
 
 struct Actions {
     state: Arc<Mutex<Shared>>,
     tx: mpsc::SyncSender<Request>,
+    hwnd: isize,
+    #[cfg(test)]
+    allow_unregistered: bool,
 }
 
 impl accesskit::ActionHandler for Actions {
@@ -74,28 +189,77 @@ impl accesskit::ActionHandler for Actions {
         if request.target_tree != TreeId::ROOT {
             return;
         }
-        let Ok(state) = self.state.lock() else { return };
-        if state.revoked {
-            return;
-        }
-        let Some(route) = state.routes.get(&request.target_node) else {
-            return;
+        let (route, namespace, scope_epoch, scope_generation) = {
+            let Ok(state) = self.state.lock() else { return };
+            if state.revoked {
+                return;
+            }
+            let Some(route) = state.routes.get(&request.target_node) else {
+                return;
+            };
+            (
+                route.clone(),
+                state.namespace.clone(),
+                Arc::clone(&state.scope_epoch),
+                state.scope_epoch.load(Ordering::SeqCst),
+            )
         };
         let mut out = Request {
             node: request.target_node,
-            namespace: state.namespace.clone(),
+            namespace,
             action: request.action,
             value: None,
             focus_ticket: None,
+            activation: None,
+            window_lease: None,
         };
         match (request.action, request.data) {
             (Action::Focus, _) if route.focus.is_some() => {
-                out.focus_ticket = route
-                    .focus_revision
-                    .as_ref()
-                    .map(|revision| revision.issue());
+                #[cfg(test)]
+                let allow_unregistered = self.allow_unregistered;
+                #[cfg(not(test))]
+                let allow_unregistered = false;
+                out.window_lease =
+                    capture_foreground(self.hwnd, Arc::clone(&scope_epoch), scope_generation);
+                if out.window_lease.is_none() && !allow_unregistered {
+                    return;
+                }
+                if let Some(revision) = &route.focus_revision {
+                    let queued = revision.enqueue(route.focus_index, |ticket| {
+                        out.focus_ticket = Some(ticket);
+                        self.tx.try_send(out).is_ok()
+                    });
+                    #[cfg(feature = "native-accessibility-acceptance")]
+                    if queued {
+                        if let Ok(state) = self.state.lock() {
+                            state
+                                .focus_enqueued
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                    let _ = queued;
+                    return;
+                }
             }
-            (Action::Click, _) if route.invoke.is_some() => {}
+            (Action::Click, _) if route.invoke.is_some() => {
+                if let Some(revision) = &route.focus_revision {
+                    #[cfg(test)]
+                    let allow_unregistered = self.allow_unregistered;
+                    #[cfg(not(test))]
+                    let allow_unregistered = false;
+                    out.window_lease =
+                        capture_foreground(self.hwnd, Arc::clone(&scope_epoch), scope_generation)
+                            .filter(|lease| lease.foreground == lease.target);
+                    if out.window_lease.is_none() && !allow_unregistered {
+                        return;
+                    }
+                    let _ = revision.enqueue_activation(route.focus_index, |activation| {
+                        out.activation = Some(activation);
+                        self.tx.try_send(out).is_ok()
+                    });
+                    return;
+                }
+            }
             (Action::SetValue, Some(ActionData::Value(value)))
                 if (route.set_value.is_some() || route.range.is_some()) && value.len() <= 8192 =>
             {
@@ -107,13 +271,15 @@ impl accesskit::ActionHandler for Actions {
             _ => return,
         }
         #[cfg(feature = "native-accessibility-acceptance")]
-        let confirmation_focus = out.focus_ticket.is_some();
+        let focus_request = out.action == Action::Focus;
         let queued = self.tx.try_send(out);
         #[cfg(feature = "native-accessibility-acceptance")]
-        if confirmation_focus && queued.is_ok() {
-            state
-                .focus_enqueued
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if focus_request && queued.is_ok() {
+            if let Ok(state) = self.state.lock() {
+                state
+                    .focus_enqueued
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
         }
         let _ = queued;
     }
@@ -159,6 +325,21 @@ impl NodeIds {
 
 thread_local! {
     static WINDOWS: RefCell<HashMap<window::Id, Box<Window>>> = RefCell::new(HashMap::new());
+    static DEFER_FOCUS_EVENTS: Cell<bool> = const { Cell::new(false) };
+    static DEFERRED_FOCUS_EVENTS: RefCell<Vec<QueuedEvents>> = const { RefCell::new(Vec::new()) };
+    #[cfg(feature = "native-accessibility-acceptance")]
+    static HELD_ACTIONS: RefCell<HashSet<window::Id>> = RefCell::new(HashSet::new());
+}
+
+#[cfg(feature = "native-accessibility-acceptance")]
+pub(super) fn hold_actions(id: window::Id, hold: bool) {
+    HELD_ACTIONS.with(|held| {
+        if hold {
+            held.borrow_mut().insert(id);
+        } else {
+            held.borrow_mut().remove(&id);
+        }
+    });
 }
 
 unsafe extern "system" fn subclass(
@@ -184,18 +365,26 @@ unsafe extern "system" fn subclass(
             }
         }
         WM_SETFOCUS | WM_KILLFOCUS => {
+            if let Ok(mut state) = foreground_state().lock() {
+                state.generation = state.generation.wrapping_add(1);
+            }
             let events = window
                 .adapter
                 .borrow_mut()
                 .update_window_focus_state(message == WM_SETFOCUS);
             if let Some(events) = events {
-                events.raise();
+                raise_focus_events(events);
             }
         }
         WM_NCDESTROY => {
             window.alive.set(false);
+            if let Ok(mut state) = foreground_state().lock() {
+                state.windows.remove(&(hwnd.0 as isize));
+                state.generation = state.generation.wrapping_add(1);
+            }
             if let Ok(mut state) = window.shared.lock() {
                 state.revoked = true;
+                state.scope_epoch.fetch_add(1, Ordering::SeqCst);
                 state.routes.clear();
                 state.tree = None;
             }
@@ -224,6 +413,7 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
             routes: HashMap::new(),
             namespace: String::new(),
             revoked: false,
+            scope_epoch: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "native-accessibility-acceptance")]
             focus_enqueued: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
@@ -239,6 +429,9 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
                 Actions {
                     state: Arc::clone(&shared),
                     tx,
+                    hwnd: raw,
+                    #[cfg(test)]
+                    allow_unregistered: false,
                 },
             )),
             shared,
@@ -250,6 +443,10 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
         if !unsafe { SetWindowSubclass(hwnd, Some(subclass), SUBCLASS, pointer) }.as_bool() {
             return false;
         }
+        if let Ok(mut state) = foreground_state().lock() {
+            state.windows.insert(raw);
+            state.generation = state.generation.wrapping_add(1);
+        }
         windows.insert(id, window);
         true
     })
@@ -258,8 +455,13 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
 pub(super) fn unregister(id: window::Id) {
     let removed = WINDOWS.with(|windows| windows.borrow_mut().remove(&id));
     if let Some(window) = removed {
+        if let Ok(mut state) = foreground_state().lock() {
+            state.windows.remove(&(window.hwnd.0 as isize));
+            state.generation = state.generation.wrapping_add(1);
+        }
         if let Ok(mut state) = window.shared.lock() {
             state.revoked = true;
+            state.scope_epoch.fetch_add(1, Ordering::SeqCst);
             state.routes.clear();
             state.tree = None;
         }
@@ -428,6 +630,7 @@ pub(super) fn publish(
                     set_value: control.set_value,
                     focus: control.focus,
                     focus_revision: control.focus_revision,
+                    focus_index: control.focus_index,
                     range: control
                         .range
                         .and_then(|(window, owner, _, _)| window.map(|window| (window, owner))),
@@ -460,7 +663,7 @@ pub(super) fn publish(
         };
         window.ids.retain(&live_ids);
         if let Ok(mut state) = window.shared.lock() {
-            state.namespace = namespace;
+            retire_shared_scope(&mut state, &namespace);
             state.routes = routes;
             state.tree = Some(tree.clone());
         }
@@ -487,6 +690,34 @@ pub(super) fn live(id: window::Id) -> bool {
     })
 }
 
+pub(super) fn retire_scope(id: window::Id, namespace: &str) {
+    WINDOWS.with(|windows| {
+        let windows = windows.borrow();
+        let Some(window) = windows.get(&id) else {
+            return;
+        };
+        let Ok(mut state) = window.shared.lock() else {
+            return;
+        };
+        retire_shared_scope(&mut state, namespace);
+    });
+}
+
+fn retire_shared_scope(state: &mut Shared, namespace: &str) {
+    if state.namespace != namespace {
+        state.scope_epoch.fetch_add(1, Ordering::SeqCst);
+        for revision in state
+            .routes
+            .values()
+            .filter_map(|route| route.focus_revision.as_ref())
+        {
+            revision.retire();
+        }
+        state.routes.clear();
+        state.namespace = namespace.to_owned();
+    }
+}
+
 #[cfg(feature = "native-accessibility-acceptance")]
 pub(super) fn focus_statistics(id: window::Id) -> (u64, u64) {
     WINDOWS.with(|windows| {
@@ -509,6 +740,10 @@ fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
     !state.revoked
         && request.namespace == namespace
         && state.namespace == namespace
+        && request
+            .window_lease
+            .as_ref()
+            .is_none_or(WindowFocusLease::current)
         && request.focus_ticket.as_ref().is_none_or(|ticket| {
             ticket.current()
                 && state.routes.get(&request.node).is_some_and(|route| {
@@ -516,6 +751,15 @@ fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
                         .focus_revision
                         .as_ref()
                         .is_some_and(|revision| ticket.belongs_to(revision))
+                })
+        })
+        && request.activation.as_ref().is_none_or(|activation| {
+            activation.current()
+                && state.routes.get(&request.node).is_some_and(|route| {
+                    route
+                        .focus_revision
+                        .as_ref()
+                        .is_some_and(|revision| activation.belongs_to(revision))
                 })
         })
 }
@@ -532,6 +776,10 @@ pub(super) fn drain(
             .iter()
             .filter(|(id, _)| Some(**id) == current_window && registered.contains(id))
         {
+            #[cfg(feature = "native-accessibility-acceptance")]
+            if HELD_ACTIONS.with(|held| held.borrow().contains(id)) {
+                continue;
+            }
             for _ in 0..32 {
                 let Ok(request) = window.rx.try_recv() else {
                     break;
@@ -540,12 +788,11 @@ pub(super) fn drain(
                     continue;
                 };
                 if !current(&state, &request, namespace) {
+                    if let Some(ticket) = &request.focus_ticket {
+                        ticket.cancel();
+                    }
                     #[cfg(feature = "native-accessibility-acceptance")]
-                    if request
-                        .focus_ticket
-                        .as_ref()
-                        .is_some_and(|ticket| !ticket.current())
-                    {
+                    if request.action == Action::Focus {
                         state
                             .stale_focus_rejected
                             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -563,8 +810,19 @@ pub(super) fn drain(
                             window: *id,
                             id: focus,
                             ticket: request.focus_ticket,
+                            lease: request.window_lease,
                         }),
-                    Action::Click => route.invoke.clone(),
+                    Action::Click => route.invoke.clone().map(|action| {
+                        if let Some(activation) = request.activation {
+                            Message::DialogFocusActivate {
+                                activation: Some(activation),
+                                action: Box::new(action),
+                                lease: request.window_lease,
+                            }
+                        } else {
+                            action
+                        }
+                    }),
                     Action::SetValue if route.set_value.is_some() => {
                         request.value.map(|value| (route.set_value.unwrap())(value))
                     }
@@ -619,6 +877,7 @@ mod tests {
             routes: HashMap::from([(NodeId(2), route)]),
             namespace: "editor:fixture".into(),
             revoked: false,
+            scope_epoch: Arc::new(AtomicU64::new(0)),
             #[cfg(feature = "native-accessibility-acceptance")]
             focus_enqueued: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
@@ -628,6 +887,8 @@ mod tests {
             Actions {
                 state: Arc::new(Mutex::new(shared)),
                 tx,
+                hwnd: 0,
+                allow_unregistered: true,
             },
             rx,
         )
@@ -651,6 +912,7 @@ mod tests {
             range: None,
             focus: Some(iced::advanced::widget::Id::new("fixture-password")),
             focus_revision: None,
+            focus_index: None,
         });
         handler.do_action(request(
             Action::SetValue,
@@ -673,6 +935,7 @@ mod tests {
             range: None,
             focus: Some(iced::advanced::widget::Id::new("trust")),
             focus_revision: Some(revision.clone()),
+            focus_index: Some(3),
         });
         handler.do_action(request(Action::Focus, None));
         let old = rx.try_recv().unwrap();
@@ -712,6 +975,159 @@ mod tests {
     }
 
     #[test]
+    fn full_queue_does_not_invalidate_an_accepted_focus_request() {
+        use accesskit::ActionHandler;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(Message::CloseProfileEditor),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("reject")),
+            focus_revision: Some(revision),
+            focus_index: Some(0),
+        });
+        for _ in 0..63 {
+            handler.do_action(request(Action::Click, None));
+        }
+        handler.do_action(request(Action::Focus, None));
+        handler.do_action(request(Action::Focus, None));
+        handler.do_action(request(Action::Click, None));
+        let queued: Vec<_> = rx.try_iter().collect();
+        assert_eq!(queued.len(), 64);
+        let accepted = queued.last().unwrap();
+        assert!(accepted.focus_ticket.as_ref().unwrap().current());
+        assert!(current(
+            &handler.state.lock().unwrap(),
+            accepted,
+            "editor:fixture"
+        ));
+    }
+
+    #[test]
+    fn uia_invoke_cannot_overtake_an_accepted_focus_request() {
+        use accesskit::ActionHandler;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(Message::ClearError),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision),
+            focus_index: Some(3),
+        });
+        handler.do_action(request(Action::Click, None));
+        let invoke = rx.try_recv().unwrap();
+        assert!(invoke.activation.as_ref().unwrap().current());
+        handler
+            .state
+            .lock()
+            .unwrap()
+            .routes
+            .get_mut(&NodeId(2))
+            .unwrap()
+            .focus_index = Some(0);
+        handler.do_action(request(Action::Focus, None));
+        let focus = rx.try_recv().unwrap();
+        assert!(focus.focus_ticket.as_ref().unwrap().current());
+        assert!(!invoke.activation.as_ref().unwrap().current());
+        handler
+            .state
+            .lock()
+            .unwrap()
+            .routes
+            .get_mut(&NodeId(2))
+            .unwrap()
+            .focus_index = Some(3);
+        handler.do_action(request(Action::Click, None));
+        assert!(rx.try_recv().is_err(), "pending focus accepted an invoke");
+        handler
+            .state
+            .lock()
+            .unwrap()
+            .routes
+            .get_mut(&NodeId(2))
+            .unwrap()
+            .focus_index = Some(0);
+        handler.do_action(request(Action::Click, None));
+        let same_target = rx.try_recv().unwrap();
+        let activation = same_target.activation.as_ref().unwrap();
+        assert!(activation.current());
+        assert!(!focus.focus_ticket.as_ref().unwrap().current());
+        assert!(activation.commit(|| false, || ()).is_none());
+        assert!(activation.current());
+        assert!(activation.commit(|| true, || ()).is_some());
+        assert!(!focus.focus_ticket.as_ref().unwrap().current());
+    }
+
+    #[test]
+    fn later_uia_rejection_supersedes_an_earlier_trust_invoke() {
+        use accesskit::ActionHandler;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(Message::ClearError),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("trust")),
+            focus_revision: Some(revision),
+            focus_index: Some(3),
+        });
+        handler.do_action(request(Action::Click, None));
+        let trust = rx.try_recv().unwrap();
+        assert!(trust.activation.as_ref().unwrap().current());
+        handler
+            .state
+            .lock()
+            .unwrap()
+            .routes
+            .get_mut(&NodeId(2))
+            .unwrap()
+            .focus_index = Some(0);
+        handler.do_action(request(Action::Click, None));
+        let rejection = rx.try_recv().unwrap();
+        assert!(!trust.activation.as_ref().unwrap().current());
+        assert!(rejection.activation.as_ref().unwrap().current());
+    }
+
+    #[test]
+    fn window_switch_revokes_the_original_foreground_lease_even_after_switching_back() {
+        let state = Arc::new(Mutex::new(ForegroundState {
+            generation: 3,
+            windows: HashSet::from([1, 2]),
+        }));
+        let lease = WindowFocusLease {
+            state: Arc::clone(&state),
+            generation: 3,
+            foreground: 1,
+            target: 2,
+            scope_epoch: Arc::new(AtomicU64::new(0)),
+            scope_generation: 0,
+        };
+        assert!(lease_current_for(&lease, 1));
+        assert!(!lease_current_for(&lease, 2));
+        state.lock().unwrap().generation += 2;
+        assert!(!lease_current_for(&lease, 1));
+    }
+
+    #[test]
+    fn closing_the_scope_revokes_a_plain_window_focus_lease() {
+        let scope_epoch = Arc::new(AtomicU64::new(4));
+        let lease = WindowFocusLease {
+            state: Arc::new(Mutex::new(ForegroundState {
+                generation: 3,
+                windows: HashSet::from([1, 2]),
+            })),
+            generation: 3,
+            foreground: 1,
+            target: 2,
+            scope_epoch: Arc::clone(&scope_epoch),
+            scope_generation: 4,
+        };
+        assert!(lease_current_for(&lease, 1));
+        scope_epoch.fetch_add(1, Ordering::SeqCst);
+        assert!(!lease_current_for(&lease, 1));
+    }
+
+    #[test]
     fn writable_range_actions_accept_numeric_set_value() {
         use accesskit::ActionHandler;
         let (mut handler, rx) = handler(Route {
@@ -719,6 +1135,7 @@ mod tests {
             set_value: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
             range: Some((window::Id::unique(), SessionId::new())),
         });
         handler.do_action(request(
@@ -738,6 +1155,7 @@ mod tests {
             set_value: None,
             focus: None,
             focus_revision: None,
+            focus_index: None,
             range: None,
         });
         for _ in 0..100 {

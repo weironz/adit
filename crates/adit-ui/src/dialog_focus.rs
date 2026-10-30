@@ -9,12 +9,9 @@ use iced::{
     Event, Rectangle, Size,
 };
 use std::{
-    cell::{Cell, RefCell},
+    cell::RefCell,
     rc::Rc,
-    sync::{
-        atomic::{AtomicU64, Ordering},
-        Arc,
-    },
+    sync::{Arc, Mutex},
 };
 
 struct Shield<'a> {
@@ -261,12 +258,23 @@ pub(crate) struct FocusState {
     scope: String,
     index: usize,
     group: FocusGroup,
+    pointer_activation: Option<FocusActivation>,
 }
 
-// UIA can queue focus off-thread. Every later local choice or UIA request
-// advances this dialog's revision, including a choice of the current button.
+// UIA issues requests off-thread while iced applies them later. The revision,
+// pending request and selection share one lock so checking a ticket and
+// applying or activating its selection have one ordering.
+#[derive(Debug)]
+struct FocusSelection {
+    revision: u64,
+    selected: Option<usize>,
+    pending: bool,
+    pending_target: Option<usize>,
+    blocked: bool,
+}
+
 #[derive(Clone, Debug)]
-pub(crate) struct FocusRevision(Arc<AtomicU64>);
+pub(crate) struct FocusRevision(Arc<Mutex<FocusSelection>>);
 
 #[derive(Clone, Debug)]
 pub struct FocusTicket {
@@ -274,57 +282,218 @@ pub struct FocusTicket {
     value: u64,
 }
 
+#[derive(Clone, Debug)]
+pub struct FocusActivation {
+    revision: FocusRevision,
+    value: u64,
+    index: Option<usize>,
+    pending_target: Option<usize>,
+}
+
+impl FocusActivation {
+    #[cfg(windows)]
+    pub(crate) fn belongs_to(&self, revision: &FocusRevision) -> bool {
+        self.revision.same_as(revision)
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn current(&self) -> bool {
+        self.revision.0.lock().is_ok_and(|state| self.valid(&state))
+    }
+
+    fn valid(&self, state: &FocusSelection) -> bool {
+        let settled = !state.pending
+            && !state.blocked
+            && self.index.is_none_or(|index| state.selected == Some(index));
+        let requested = state.pending
+            && self.index.is_none()
+            && self.pending_target.is_some()
+            && self.pending_target == state.pending_target;
+        state.revision == self.value && (settled || requested)
+    }
+
+    pub(crate) fn commit<T>(
+        &self,
+        allowed: impl FnOnce() -> bool,
+        action: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let mut state = self.revision.0.lock().ok()?;
+        if !self.valid(&state) || !allowed() {
+            return None;
+        }
+        // Once a decision commits, even an accepted focus task for this
+        // dialog must not foreground a window after the dialog is gone.
+        state.revision = state.revision.wrapping_add(1);
+        state.pending = false;
+        state.pending_target = None;
+        state.blocked = false;
+        Some(action())
+    }
+}
+
 impl FocusRevision {
-    #[cfg(any(windows, test))]
-    pub(crate) fn issue(&self) -> FocusTicket {
-        FocusTicket {
+    #[cfg(windows)]
+    pub(crate) fn enqueue_activation(
+        &self,
+        target: Option<usize>,
+        send: impl FnOnce(FocusActivation) -> bool,
+    ) -> bool {
+        let Some(target) = target else { return false };
+        let Ok(mut state) = self.0.lock() else {
+            return false;
+        };
+        // A refusal can supersede an outstanding trust request. A trust
+        // invocation cannot supersede a newer, still-pending refusal.
+        if (state.pending && state.pending_target != Some(target) && target != 0)
+            || (state.blocked && target != 0)
+        {
+            return false;
+        }
+        let activation = FocusActivation {
             revision: self.clone(),
-            value: self.0.fetch_add(1, Ordering::SeqCst).wrapping_add(1),
+            value: state.revision.wrapping_add(1),
+            index: None,
+            pending_target: Some(target),
+        };
+        if send(activation.clone()) {
+            state.revision = activation.value;
+            state.pending = true;
+            state.pending_target = Some(target);
+            true
+        } else {
+            false
         }
     }
 
-    fn advance(&self) {
-        self.0.fetch_add(1, Ordering::SeqCst);
+    #[cfg(test)]
+    pub(crate) fn issue(&self) -> FocusTicket {
+        let mut issued = None;
+        assert!(self.enqueue(None, |ticket| {
+            issued = Some(ticket);
+            true
+        }));
+        issued.unwrap()
+    }
+
+    #[cfg(any(windows, test))]
+    pub(crate) fn enqueue(
+        &self,
+        target: Option<usize>,
+        send: impl FnOnce(FocusTicket) -> bool,
+    ) -> bool {
+        let Ok(mut state) = self.0.lock() else {
+            return false;
+        };
+        let ticket = FocusTicket {
+            revision: self.clone(),
+            value: state.revision.wrapping_add(1),
+        };
+        if send(ticket.clone()) {
+            state.revision = ticket.value;
+            state.pending = true;
+            state.pending_target = target;
+            true
+        } else {
+            false
+        }
     }
 
     pub(crate) fn same_as(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.0, &other.0)
     }
+
+    #[cfg(windows)]
+    pub(crate) fn retire(&self) {
+        if let Ok(mut state) = self.0.lock() {
+            state.revision = state.revision.wrapping_add(1);
+            state.pending = false;
+            state.pending_target = None;
+        }
+    }
 }
 
 impl FocusTicket {
     pub(crate) fn current(&self) -> bool {
-        self.revision.0.load(Ordering::SeqCst) == self.value
+        self.revision
+            .0
+            .lock()
+            .is_ok_and(|state| state.revision == self.value)
     }
 
     pub(crate) fn belongs_to(&self, revision: &FocusRevision) -> bool {
         self.revision.same_as(revision)
     }
+
+    #[cfg(windows)]
+    pub(crate) fn while_pending<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let state = self.revision.0.lock().ok()?;
+        (state.revision == self.value && state.pending).then(action)
+    }
+
+    pub(crate) fn cancel(&self) {
+        if let Ok(mut state) = self.revision.0.lock() {
+            if state.revision == self.value && state.pending {
+                // Do not mutate a background window's selection. A previously
+                // selected trust action stays inert until an explicit fresh
+                // focus or local navigation resolves it.
+                state.blocked = state.selected != Some(0);
+                state.pending = false;
+                state.pending_target = None;
+                state.revision = state.revision.wrapping_add(1);
+            }
+        }
+    }
 }
 
 #[derive(Clone)]
 pub(crate) struct FocusGroup {
-    selected: Rc<Cell<Option<usize>>>,
     revision: Rc<RefCell<FocusRevision>>,
 }
 
 impl FocusGroup {
     pub(crate) fn new() -> Self {
         Self {
-            selected: Rc::new(Cell::new(Some(0))),
-            revision: Rc::new(RefCell::new(FocusRevision(Arc::new(AtomicU64::new(0))))),
+            revision: Rc::new(RefCell::new(FocusRevision(Arc::new(Mutex::new(
+                FocusSelection {
+                    revision: 0,
+                    selected: Some(0),
+                    pending: false,
+                    pending_target: None,
+                    blocked: false,
+                },
+            ))))),
         }
     }
 
     fn select(&self, index: usize) {
-        self.revision.borrow().advance();
-        self.selected.set(Some(index));
+        if let Ok(mut state) = self.revision.borrow().0.lock() {
+            state.revision = state.revision.wrapping_add(1);
+            state.selected = Some(index);
+            state.pending = false;
+            state.pending_target = None;
+            state.blocked = false;
+        }
+    }
+
+    fn press(&self, index: usize) -> Option<FocusActivation> {
+        let revision = self.revision();
+        let mut state = revision.0.lock().ok()?;
+        state.revision = state.revision.wrapping_add(1);
+        state.selected = Some(index);
+        state.pending = false;
+        state.pending_target = None;
+        state.blocked = false;
+        Some(FocusActivation {
+            revision: revision.clone(),
+            value: state.revision,
+            index: Some(index),
+            pending_target: None,
+        })
     }
 
     fn inherit(&self, old: &Self) {
         // Keep outstanding tickets tied to the same window and dialog through
         // view rebuilds; a new scope instead gets a fresh revision.
-        self.selected.set(old.selected.get());
         let revision = old.revision.borrow().clone();
         *self.revision.borrow_mut() = revision;
     }
@@ -342,23 +511,52 @@ impl Default for FocusGroup {
 
 impl FocusState {
     pub(crate) fn focused(&self) -> bool {
-        self.group.selected.get() == Some(self.index)
+        self.group
+            .revision()
+            .0
+            .lock()
+            .is_ok_and(|state| state.selected == Some(self.index))
     }
 
     pub(crate) fn focus(&mut self) {
-        self.group.selected.set(Some(self.index));
+        self.group.select(self.index);
     }
 
-    pub(crate) fn focus_if_current(&mut self, ticket: Option<&FocusTicket>) {
-        if ticket.is_none_or(|ticket| ticket.current() && ticket.belongs_to(&self.group.revision()))
-        {
-            self.focus();
+    pub(crate) fn focus_if_current(
+        &mut self,
+        ticket: Option<&FocusTicket>,
+        allowed: impl FnOnce() -> bool,
+    ) -> bool {
+        let Some(ticket) = ticket else {
+            if allowed() {
+                self.focus();
+                return true;
+            }
+            return false;
+        };
+        let revision = self.group.revision();
+        if ticket.belongs_to(&revision) {
+            if let Ok(mut state) = revision.0.lock() {
+                if state.revision == ticket.value && state.pending && allowed() {
+                    state.selected = Some(self.index);
+                    state.pending = false;
+                    state.pending_target = None;
+                    state.blocked = false;
+                    return true;
+                }
+            }
         }
+        false
     }
 
     #[cfg(windows)]
     pub(crate) fn revision(&self) -> FocusRevision {
         self.group.revision()
+    }
+
+    #[cfg(windows)]
+    pub(crate) fn index(&self) -> usize {
+        self.index
     }
 }
 
@@ -393,12 +591,22 @@ fn confirmation_key(
     let Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event else {
         return false;
     };
-    if !state.focused() || modifiers.control() || modifiers.alt() || modifiers.logo() {
+    if modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return false;
+    }
+    let revision = state.group.revision();
+    let Ok(mut selection) = revision.0.lock() else {
+        shell.capture_event();
+        return true;
+    };
+    if selection.selected != Some(state.index) {
         return false;
     }
     match key {
         Key::Named(Named::Tab) => {
-            let next = if modifiers.shift() {
+            let next = if selection.blocked {
+                0
+            } else if modifiers.shift() {
                 // Do not wrap the safe default backwards onto trust/open: an
                 // immediately following Enter could otherwise accept before
                 // the newly selected action has even been painted.
@@ -407,18 +615,44 @@ fn confirmation_key(
                 (focus.index + 1) % focus.count
             };
             // The next event in this same iced batch must see this selection.
-            state.group.select(next);
+            selection.revision = selection.revision.wrapping_add(1);
+            selection.selected = Some(next);
+            selection.pending = false;
+            selection.pending_target = None;
+            selection.blocked = false;
             shell.request_redraw();
             shell.capture_event();
             true
         }
         Key::Named(Named::Enter | Named::Space) => {
-            shell.publish(focus.action.clone());
+            if !selection.pending && !selection.blocked {
+                shell.publish(Message::DialogFocusActivate {
+                    activation: Some(FocusActivation {
+                        revision: revision.clone(),
+                        value: selection.revision,
+                        index: Some(focus.index),
+                        pending_target: None,
+                    }),
+                    action: Box::new(focus.action.clone()),
+                    lease: None,
+                });
+            }
             shell.capture_event();
             true
         }
         Key::Character(value) if value.as_str() == " " => {
-            shell.publish(focus.action.clone());
+            if !selection.pending && !selection.blocked {
+                shell.publish(Message::DialogFocusActivate {
+                    activation: Some(FocusActivation {
+                        revision: revision.clone(),
+                        value: selection.revision,
+                        index: Some(focus.index),
+                        pending_target: None,
+                    }),
+                    action: Box::new(focus.action.clone()),
+                    lease: None,
+                });
+            }
             shell.capture_event();
             true
         }
@@ -435,6 +669,7 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
             scope: self.focus.scope.clone(),
             index: self.focus.index,
             group: self.focus.group.clone(),
+            pointer_activation: None,
         })
     }
     fn children(&self) -> Vec<Tree> {
@@ -444,6 +679,8 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
         let state = tree.state.downcast_mut::<FocusState>();
         if state.scope == self.focus.scope {
             self.focus.group.inherit(&state.group);
+        } else {
+            state.pointer_activation = None;
         }
         state.scope = self.focus.scope.clone();
         state.index = self.focus.index;
@@ -506,16 +743,17 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
         }
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            | Event::Touch(iced::touch::Event::FingerPressed { .. })
                 if cursor.is_over(layout.bounds()) =>
             {
-                tree.state
-                    .downcast_ref::<FocusState>()
-                    .group
-                    .select(self.focus.index);
+                let state = tree.state.downcast_mut::<FocusState>();
+                state.pointer_activation = state.group.press(self.focus.index);
                 shell.request_redraw();
             }
             _ => {}
         }
+        let mut child_messages = Vec::new();
+        let mut child_shell = Shell::new(&mut child_messages);
         self.child.as_widget_mut().update(
             &mut tree.children[0],
             event,
@@ -523,9 +761,27 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
             cursor,
             renderer,
             clipboard,
-            shell,
+            &mut child_shell,
             viewport,
         );
+        let activation = if matches!(
+            event,
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                | Event::Touch(iced::touch::Event::FingerLifted { .. })
+                | Event::Touch(iced::touch::Event::FingerLost { .. })
+        ) {
+            tree.state
+                .downcast_mut::<FocusState>()
+                .pointer_activation
+                .take()
+        } else {
+            None
+        };
+        shell.merge(child_shell, |message| Message::DialogFocusActivate {
+            activation: activation.clone(),
+            action: Box::new(message),
+            lease: None,
+        });
     }
     fn mouse_interaction(
         &self,
@@ -599,6 +855,13 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
 mod tests {
     use super::*;
 
+    fn focused_action(message: &Message) -> &Message {
+        match message {
+            Message::DialogFocusActivate { action, .. } => action,
+            _ => message,
+        }
+    }
+
     fn pressed(named: Named, modifiers: keyboard::Modifiers) -> Event {
         let key = Key::Named(named);
         let code = match named {
@@ -649,6 +912,7 @@ mod tests {
                 scope: "challenge:synthetic".into(),
                 index,
                 group: group.clone(),
+                pointer_activation: None,
             })
             .collect();
         let mut messages = Vec::new();
@@ -666,7 +930,7 @@ mod tests {
             pressed(Named::Space, keyboard::Modifiers::empty()),
         ]);
         assert!(matches!(
-            messages.last(),
+            messages.last().map(focused_action),
             Some(Message::RespondHostKey {
                 decision: HostKeyDecision::RejectAndRecord,
                 ..
@@ -685,7 +949,7 @@ mod tests {
             assert!(shell.is_event_captured());
         }
         assert!(matches!(
-            messages.last(),
+            messages.last().map(focused_action),
             Some(Message::RespondHostKey {
                 decision: HostKeyDecision::TrustOnce,
                 ..
@@ -704,12 +968,13 @@ mod tests {
             }
             assert!(shell.is_event_captured());
         }
+        assert_eq!(messages.len(), 1);
         assert!(matches!(
-            messages.as_slice(),
-            [Message::RespondHostKey {
+            focused_action(&messages[0]),
+            Message::RespondHostKey {
                 decision: HostKeyDecision::Reject,
                 ..
-            }]
+            }
         ));
     }
 
@@ -721,6 +986,7 @@ mod tests {
             scope: "challenge".into(),
             index: 0,
             group,
+            pointer_activation: None,
         };
         let mut old =
             widget::operation::focusable::focus::<()>(widget::Id::from("stale-background"));
@@ -836,6 +1102,335 @@ mod tests {
             })
             .collect();
         assert_eq!(focused, vec![2]);
+    }
+
+    #[test]
+    fn acceptance_and_selection_write_are_ordered_and_pending_cannot_activate_trust() {
+        use std::{sync::mpsc, time::Duration};
+        let group = FocusGroup::new();
+        group.select(3);
+        let revision = group.revision();
+        let old = revision.issue();
+        let (start_tx, start_rx) = mpsc::channel();
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            start_rx.recv().unwrap();
+            attempt_tx.send(()).unwrap();
+            done_tx.send(revision.issue()).unwrap();
+        });
+        let mut trust = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 3,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        trust.focus_if_current(Some(&old), || {
+            start_tx.send(()).unwrap();
+            attempt_rx.recv().unwrap();
+            assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+            true
+        });
+        let newer_reject = done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        let button = ButtonFocus {
+            scope: "challenge:fixture".into(),
+            id: widget::Id::from("trust"),
+            index: 3,
+            count: 4,
+            group: group.clone(),
+            action: Message::ClearError,
+        };
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        assert!(confirmation_key(
+            &button,
+            &trust,
+            &pressed(Named::Enter, keyboard::Modifiers::empty()),
+            &mut shell,
+        ));
+        assert!(messages.is_empty(), "pending rejection activated old trust");
+        let mut reject = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 0,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        reject.focus_if_current(Some(&newer_reject), || true);
+        assert!(reject.focused());
+        assert!(!trust.focused());
+    }
+
+    #[test]
+    fn a_newer_accepted_rejection_prevents_the_old_trust_write() {
+        let group = FocusGroup::new();
+        let revision = group.revision();
+        let old = revision.issue();
+        let reject = revision.issue();
+        let mut trust = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 3,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        trust.focus_if_current(Some(&old), || true);
+        assert!(!trust.focused());
+        let mut refusal = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 0,
+            group,
+            pointer_activation: None,
+        };
+        refusal.focus_if_current(Some(&reject), || true);
+        assert!(refusal.focused());
+    }
+
+    #[test]
+    fn queued_enter_cannot_commit_after_a_newer_focus_request() {
+        let group = FocusGroup::new();
+        group.select(3);
+        let state = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 3,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        let button = ButtonFocus {
+            scope: "challenge:fixture".into(),
+            id: widget::Id::from("trust"),
+            index: 3,
+            count: 4,
+            group: group.clone(),
+            action: Message::ClearError,
+        };
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        assert!(confirmation_key(
+            &button,
+            &state,
+            &pressed(Named::Enter, keyboard::Modifiers::empty()),
+            &mut shell,
+        ));
+        assert_eq!(messages.len(), 1);
+        let rejection = group.revision().issue();
+        let mut app = AditApp {
+            last_error: Some("synthetic".into()),
+            ..AditApp::default()
+        };
+        let _ = update_loop::update(&mut app, messages.pop().unwrap());
+        assert_eq!(app.last_error.as_deref(), Some("synthetic"));
+        assert!(rejection.current());
+    }
+
+    #[test]
+    fn pointer_release_cannot_commit_after_a_newer_focus_request() {
+        use iced_runtime::user_interface::{Cache, UserInterface};
+        let group = FocusGroup::new();
+        let control = button(
+            iced::widget::button("synthetic trust")
+                .width(120)
+                .height(40)
+                .on_press(Message::ClearError)
+                .into(),
+            ButtonFocus {
+                scope: "challenge:fixture".into(),
+                id: widget::Id::from("trust"),
+                index: 3,
+                count: 4,
+                group: group.clone(),
+                action: Message::ClearError,
+            },
+        );
+        let mut renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
+            iced::Font::default(),
+            iced::Pixels(16.0),
+        ));
+        let mut ui = UserInterface::build(
+            control,
+            iced::Size::new(150.0, 60.0),
+            Cache::new(),
+            &mut renderer,
+        );
+        let mut clipboard = iced::advanced::clipboard::Null;
+        let cursor = mouse::Cursor::Available(iced::Point::new(10.0, 10.0));
+        let mut messages = Vec::new();
+        ui.update(
+            &[Event::Mouse(mouse::Event::ButtonPressed(
+                mouse::Button::Left,
+            ))],
+            cursor,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        let rejection = group.revision().issue();
+        ui.update(
+            &[Event::Mouse(mouse::Event::ButtonReleased(
+                mouse::Button::Left,
+            ))],
+            cursor,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert_eq!(messages.len(), 1);
+        let mut app = AditApp {
+            last_error: Some("synthetic".into()),
+            ..AditApp::default()
+        };
+        let _ = update_loop::update(&mut app, messages.pop().unwrap());
+        assert_eq!(app.last_error.as_deref(), Some("synthetic"));
+        assert!(rejection.current());
+
+        ui.update(
+            &[
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            ],
+            cursor,
+            &mut renderer,
+            &mut clipboard,
+            &mut messages,
+        );
+        assert_eq!(messages.len(), 1);
+        let _ = update_loop::update(&mut app, messages.pop().unwrap());
+        assert!(app.last_error.is_none());
+    }
+
+    #[test]
+    fn rejected_enqueue_cannot_discard_an_accepted_rejection() {
+        let group = FocusGroup::new();
+        group.select(3);
+        let revision = group.revision();
+        let accepted = revision.issue();
+        assert!(!revision.enqueue(None, |_| false));
+        assert!(accepted.current());
+        let mut refusal = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 0,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        refusal.focus_if_current(Some(&accepted), || true);
+        let trust = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 3,
+            group,
+            pointer_activation: None,
+        };
+        assert!(refusal.focused());
+        assert!(!trust.focused());
+    }
+
+    #[test]
+    fn dequeued_ticket_cannot_observe_an_uncommitted_generation() {
+        use std::{sync::mpsc, time::Duration};
+        let revision = FocusGroup::new().revision();
+        let (queue_tx, queue_rx) = mpsc::sync_channel::<FocusTicket>(1);
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let consumer = std::thread::spawn(move || {
+            let ticket = queue_rx.recv().unwrap();
+            attempt_tx.send(()).unwrap();
+            done_tx.send(ticket.current()).unwrap();
+        });
+        assert!(revision.enqueue(None, |ticket| {
+            queue_tx.try_send(ticket).unwrap();
+            attempt_rx.recv().unwrap();
+            assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+            true
+        }));
+        assert!(done_rx.recv_timeout(Duration::from_secs(2)).unwrap());
+        consumer.join().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn foreground_action_and_acceptance_share_the_ticket_order() {
+        use std::{sync::mpsc, time::Duration};
+        let revision = FocusGroup::new().revision();
+        let old = revision.issue();
+        let (start_tx, start_rx) = mpsc::channel();
+        let (attempt_tx, attempt_rx) = mpsc::channel();
+        let (done_tx, done_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            start_rx.recv().unwrap();
+            attempt_tx.send(()).unwrap();
+            done_tx.send(revision.issue()).unwrap();
+        });
+        assert!(old
+            .while_pending(|| {
+                start_tx.send(()).unwrap();
+                attempt_rx.recv().unwrap();
+                assert!(done_rx.recv_timeout(Duration::from_millis(100)).is_err());
+            })
+            .is_some());
+        let newer = done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        worker.join().unwrap();
+        assert!(!old.current());
+        assert!(newer.current());
+        assert!(old
+            .while_pending(|| panic!("stale foreground action"))
+            .is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retiring_a_confirmation_revokes_its_pending_foreground_action() {
+        let revision = FocusGroup::new().revision();
+        let pending = revision.issue();
+        revision.retire();
+        assert!(!pending.current());
+        assert!(pending
+            .while_pending(|| panic!("retired dialog foregrounded its window"))
+            .is_none());
+    }
+
+    #[test]
+    fn abandoned_request_leaves_background_selection_but_blocks_trust() {
+        let group = FocusGroup::new();
+        group.select(3);
+        let pending = group.revision().issue();
+        pending.cancel();
+        let trust = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 3,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        assert!(trust.focused());
+        let button = ButtonFocus {
+            scope: "challenge:fixture".into(),
+            id: widget::Id::from("trust"),
+            index: 3,
+            count: 4,
+            group: group.clone(),
+            action: Message::ClearError,
+        };
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        assert!(confirmation_key(
+            &button,
+            &trust,
+            &pressed(Named::Enter, keyboard::Modifiers::empty()),
+            &mut shell,
+        ));
+        assert!(messages.is_empty());
+        let mut shell = Shell::new(&mut messages);
+        assert!(confirmation_key(
+            &button,
+            &trust,
+            &pressed(Named::Tab, keyboard::Modifiers::empty()),
+            &mut shell,
+        ));
+        let refusal = FocusState {
+            scope: "challenge:fixture".into(),
+            index: 0,
+            group,
+            pointer_activation: None,
+        };
+        assert!(refusal.focused());
+        assert!(!pending.current());
     }
 
     #[test]
