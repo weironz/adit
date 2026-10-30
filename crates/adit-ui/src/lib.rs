@@ -489,6 +489,8 @@ pub struct AditApp {
     display_scale: f32,
     rdp_clipboard_ticks: u8,
     desktop_clipboard_epoch: u64,
+    vnc_clipboard_modal: bool,
+    vnc_clipboard_needs_baseline: bool,
     vnc_pressed_keys: Vec<(keyboard::key::Physical, u32)>,
     vnc_fit: bool,
     vnc_grab_keys: bool,
@@ -1804,6 +1806,8 @@ impl AditApp {
             display_scale: 1.0,
             rdp_clipboard_ticks: 0,
             desktop_clipboard_epoch: 0,
+            vnc_clipboard_modal: false,
+            vnc_clipboard_needs_baseline: false,
             vnc_pressed_keys: Vec::new(),
             vnc_fit: true,
             vnc_grab_keys: false,
@@ -3282,6 +3286,59 @@ mod tests {
         send_vnc_keyboard(&mut app, &press);
         let _ = update(&mut app, Message::WindowUnfocused);
         assert!(app.vnc_pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn vnc_auth_dialog_quarantines_clipboard_reads_until_a_fresh_baseline() {
+        let mut app = drag_test_app();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut profile = ConnectionProfile::new(
+            "synthetic VNC",
+            "127.0.0.1",
+            listener.local_addr().unwrap().port(),
+            "",
+        );
+        profile.protocol = Protocol::Vnc;
+        let id = profile.id;
+        app.manager = SessionManager::with_profiles(vec![profile]);
+        let session = app
+            .manager
+            .open_live_vnc_session(id, String::new())
+            .unwrap();
+        app.rdp_clipboard = true;
+        let old_epoch = app.desktop_clipboard_epoch;
+        open_password_reprompt(&mut app, session, id, "synthetic");
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, old_epoch, Some("before".into())),
+        );
+        assert!(app.rdp_clipboard_offered.is_none());
+        assert!(app.vnc_clipboard_needs_baseline);
+        let modal_epoch = app.desktop_clipboard_epoch;
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, modal_epoch, Some("synthetic-otp".into())),
+        );
+        assert!(app.rdp_clipboard_offered.is_none());
+        app.connection_dialog = None;
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, modal_epoch, Some("late".into())),
+        );
+        assert!(app.rdp_clipboard_offered.is_none());
+        let epoch = app.desktop_clipboard_epoch;
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, epoch, Some("synthetic-otp".into())),
+        );
+        assert_eq!(app.rdp_clipboard_offered.as_deref(), Some("synthetic-otp"));
+        assert!(!app.vnc_clipboard_needs_baseline);
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, epoch, Some("new copy".into())),
+        );
+        assert_eq!(app.rdp_clipboard_offered.as_deref(), Some("new copy"));
+        app.manager.disconnect(session).unwrap();
     }
 
     #[test]

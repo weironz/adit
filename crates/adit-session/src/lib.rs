@@ -626,6 +626,15 @@ impl SessionManager {
         }
     }
 
+    /// Suspend only outbound VNC clipboard data while a local security dialog is open.
+    pub fn set_vnc_clipboard_send_paused(&self, paused: bool) {
+        for record in self.sessions.values() {
+            if let Some(vnc) = &record.vnc {
+                vnc.set_clipboard_send_paused(paused);
+            }
+        }
+    }
+
     /// Set the visual-fidelity preset for RDP sessions. Like the clipboard flag
     /// above, it lands on the *next* connection: the performance flags ride the
     /// Client Info PDU, which RDP sends once and never revises, so a live desktop

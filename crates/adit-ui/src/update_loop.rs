@@ -65,15 +65,38 @@ fn vnc_frame_covered(frame: &adit_session::RdpFrame) -> bool {
             .all(|pixel| pixel[3] == 255)
 }
 
+pub(crate) fn vnc_clipboard_security_modal(app: &AditApp) -> bool {
+    app.connection_dialog.is_some()
+        || app.auth_prompt.is_some()
+        || app.manager.pending_host_key().is_some()
+}
+
+pub(crate) fn set_vnc_clipboard_security_modal(app: &mut AditApp, active: bool) {
+    if active || app.vnc_clipboard_modal != active {
+        app.manager.set_vnc_clipboard_send_paused(active);
+    }
+    if app.vnc_clipboard_modal != active {
+        app.vnc_clipboard_modal = active;
+        app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
+        if active {
+            // Do not replay clipboard contents copied for local authentication.
+            app.vnc_clipboard_needs_baseline = true;
+        }
+    }
+}
+
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
+    set_vnc_clipboard_security_modal(app, vnc_clipboard_security_modal(app));
     let mut tasks = vec![update_message(app, message)];
     for (window, scope, message) in accessibility::drain(app) {
         // The legacy application has one view state. Keep the window identity
         // here so the detached-window router can route instead of guessing.
         if accessibility::action_current(app, window, &scope) {
             tasks.push(update_message(app, message));
+            set_vnc_clipboard_security_modal(app, vnc_clipboard_security_modal(app));
         }
     }
+    set_vnc_clipboard_security_modal(app, vnc_clipboard_security_modal(app));
     // Focus can move locally without a WindowUnfocused event (settings, menus,
     // sidebar fields). Release keys before returning even from early Task paths.
     if app.manager.active_is_vnc() && !vnc_accepts_text_input(app) {
@@ -325,6 +348,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         .is_some_and(|s| s.status == SessionStatus::Connected);
                 if app.desktop_window_focused
                     && app.rdp_clipboard
+                    && (!app.manager.active_is_vnc() || !app.vnc_clipboard_modal)
                     && app.manager.active_is_desktop()
                     && clipboard_ready
                 {
@@ -354,7 +378,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if !app.rdp_clipboard
                 || app.manager.active_session() != Some(session)
                 || app.desktop_clipboard_epoch != epoch
+                || (app.manager.active_is_vnc() && app.vnc_clipboard_modal)
             {
+                return Task::none();
+            }
+            if app.manager.active_is_vnc() && app.vnc_clipboard_needs_baseline {
+                if let Some(text) = contents {
+                    app.rdp_clipboard_offered = Some(text);
+                    app.vnc_clipboard_needs_baseline = false;
+                }
                 return Task::none();
             }
             if let Some(text) =

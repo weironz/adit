@@ -5,6 +5,158 @@ use std::io::{Read, Write};
 
 type ObservedKey = (usize, u32, bool);
 
+#[test]
+fn auth_dialog_does_not_send_its_clipboard_to_the_vnc_peer() {
+    use std::sync::mpsc;
+    use std::time::{Duration, Instant};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let (sent, received) = mpsc::channel();
+    let peer = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream.write_all(b"RFB 003.008\n").unwrap();
+        let mut version = [0; 12];
+        stream.read_exact(&mut version).unwrap();
+        stream.write_all(&[1, 1]).unwrap();
+        let mut kind = [0];
+        stream.read_exact(&mut kind).unwrap();
+        assert_eq!(kind, [1]);
+        stream.write_all(&[0, 0, 0, 0]).unwrap();
+        stream.read_exact(&mut kind).unwrap();
+        let mut init = vec![
+            0, 1, 0, 1, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0,
+        ];
+        init.extend_from_slice(&4u32.to_be_bytes());
+        init.extend_from_slice(b"wire");
+        stream.write_all(&init).unwrap();
+        while stream.read_exact(&mut kind).is_ok() {
+            match kind[0] {
+                0 => {
+                    let mut body = [0; 19];
+                    if stream.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                }
+                2 => {
+                    let mut header = [0; 3];
+                    stream.read_exact(&mut header).unwrap();
+                    let n = usize::from(u16::from_be_bytes([header[1], header[2]]));
+                    let mut body = vec![0; n * 4];
+                    stream.read_exact(&mut body).unwrap();
+                }
+                3 => {
+                    let mut body = [0; 9];
+                    if stream.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                    if stream.write_all(&[0, 0, 0, 0]).is_err() {
+                        break;
+                    }
+                }
+                4 => {
+                    let mut body = [0; 7];
+                    if stream.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                }
+                5 => {
+                    let mut body = [0; 5];
+                    if stream.read_exact(&mut body).is_err() {
+                        break;
+                    }
+                }
+                6 => {
+                    let mut header = [0; 7];
+                    stream.read_exact(&mut header).unwrap();
+                    let n = u32::from_be_bytes(header[3..7].try_into().unwrap()) as usize;
+                    assert!(n < 1024);
+                    let mut body = vec![0; n];
+                    stream.read_exact(&mut body).unwrap();
+                    if sent.send(String::from_utf8(body).unwrap()).is_err() {
+                        break;
+                    }
+                }
+                other => panic!("unexpected RFB client message {other}"),
+            }
+        }
+    });
+
+    let mut profile = ConnectionProfile::new("synthetic", "127.0.0.1", port, "");
+    profile.protocol = Protocol::Vnc;
+    profile.vnc.security = VncSecurity::AllowNone;
+    profile.vnc.clipboard_legacy = true;
+    profile.vnc.auto_reconnect = false;
+    let id = profile.id;
+    let mut app = AditApp {
+        manager: SessionManager::with_profiles(vec![profile]),
+        ..AditApp::default()
+    };
+    app.rdp_clipboard = true;
+    let session = app
+        .manager
+        .open_live_vnc_session(id, String::new())
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        app.manager.poll_events();
+        if app
+            .manager
+            .active_session_summary()
+            .is_some_and(|s| s.status == SessionStatus::Connected)
+        {
+            break;
+        }
+        assert!(Instant::now() < deadline, "synthetic VNC did not connect");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let epoch = app.desktop_clipboard_epoch;
+    let _ = update(
+        &mut app,
+        Message::RdpClipboardPolled(session, epoch, Some("before".into())),
+    );
+    assert_eq!(
+        received.recv_timeout(Duration::from_secs(3)).unwrap(),
+        "before"
+    );
+    open_password_reprompt(&mut app, session, id, "synthetic");
+    let _ = update(
+        &mut app,
+        Message::RdpClipboardPolled(session, epoch, Some("synthetic-otp".into())),
+    );
+    assert!(matches!(
+        received.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    app.connection_dialog = None;
+    let _ = update(
+        &mut app,
+        Message::RdpClipboardPolled(session, epoch, Some("stale".into())),
+    );
+    let epoch = app.desktop_clipboard_epoch;
+    let _ = update(
+        &mut app,
+        Message::RdpClipboardPolled(session, epoch, Some("synthetic-otp".into())),
+    );
+    assert!(matches!(
+        received.recv_timeout(Duration::from_millis(150)),
+        Err(mpsc::RecvTimeoutError::Timeout)
+    ));
+    let _ = update(
+        &mut app,
+        Message::RdpClipboardPolled(session, epoch, Some("after".into())),
+    );
+    assert_eq!(
+        received.recv_timeout(Duration::from_secs(3)).unwrap(),
+        "after"
+    );
+    app.manager.disconnect(session).unwrap();
+    peer.join().unwrap();
+}
+
 fn wire_peers() -> (
     u16,
     std::sync::mpsc::Receiver<ObservedKey>,
