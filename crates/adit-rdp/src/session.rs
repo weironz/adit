@@ -8,6 +8,7 @@
 
 use std::collections::VecDeque;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
@@ -263,6 +264,21 @@ async fn next_active_command(
     deferred: &mut VecDeque<SessionCmd>,
     epoch: u64,
 ) -> Option<SessionCmd> {
+    if deferred.front().is_some_and(|command| {
+        matches!(
+            command,
+            SessionCmd::Resize { .. }
+                | SessionCmd::Input {
+                    event: InputEvent::MonitorLayout { .. }
+                        | InputEvent::CancelMonitorLayout { .. },
+                    ..
+                }
+        )
+    }) {
+        return deferred
+            .pop_front()
+            .map(|command| classify_command(command, epoch));
+    }
     if !deferred.is_empty() {
         let command = display.try_recv().ok().or_else(|| deferred.pop_front());
         return command.map(|command| classify_command(command, epoch));
@@ -276,6 +292,8 @@ struct SessionInput<'a> {
     routing: &'a InputRouting,
     epoch: u64,
     deferred: &'a mut VecDeque<SessionCmd>,
+    idle_generation: &'a AtomicU64,
+    network_progress: &'a AtomicU64,
 }
 
 type PendingResize = (u32, u32, u64);
@@ -388,13 +406,23 @@ const WRITE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 struct IdleWrite<T> {
     inner: T,
     deadline: Option<Pin<Box<tokio::time::Sleep>>>,
+    generation: Arc<AtomicU64>,
+    progress: Arc<AtomicU64>,
+    observed_generation: u64,
 }
 
 impl<T> IdleWrite<T> {
     fn new(inner: T) -> Self {
+        Self::with_generation(inner, Arc::new(AtomicU64::new(0)))
+    }
+
+    fn with_generation(inner: T, generation: Arc<AtomicU64>) -> Self {
         Self {
             inner,
             deadline: None,
+            observed_generation: generation.load(Ordering::Relaxed),
+            generation,
+            progress: Arc::new(AtomicU64::new(0)),
         }
     }
 }
@@ -415,9 +443,17 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for IdleWrite<T> {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<std::io::Result<usize>> {
+        let generation = self.generation.load(Ordering::Relaxed);
+        if generation != self.observed_generation {
+            self.deadline = None;
+            self.observed_generation = generation;
+        }
         match Pin::new(&mut self.inner).poll_write(cx, buf) {
             Poll::Ready(result) => {
                 self.deadline = None;
+                if let Ok(bytes) = result.as_ref() {
+                    self.progress.fetch_add(*bytes as u64, Ordering::Relaxed);
+                }
                 Poll::Ready(result)
             }
             Poll::Pending => {
@@ -448,13 +484,161 @@ impl<T: AsyncWrite + Unpin> AsyncWrite for IdleWrite<T> {
 
 // A failed write may have transmitted a prefix, so the caller must close the
 // connection instead of sending another PDU on a corrupted stream.
+#[cfg(test)]
 async fn write_frame<W: AsyncWrite + Unpin>(
     writer: &mut TokioFramed<W>,
     bytes: &[u8],
 ) -> std::io::Result<()> {
     let (stream, _) = writer.get_inner_mut();
-    stream.write_all(bytes).await?;
+    let mut written = 0;
+    while written < bytes.len() {
+        match stream.write(&bytes[written..]).await {
+            Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+            Ok(n) => written += n,
+            Err(error) => {
+                return Err(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "RDP frame write {}: {error}",
+                        if written == 0 {
+                            "before reported progress"
+                        } else {
+                            "after partial progress"
+                        }
+                    ),
+                ))
+            }
+        }
+    }
     stream.flush().await
+}
+
+enum DisplayWrite {
+    Sent,
+    Superseded(SessionCmd),
+    UnstartedTimeout,
+}
+
+/// Only a write that has not accepted any plaintext can be cancelled safely.
+/// Once TLS accepted a prefix we must finish it, or fail the connection.
+async fn write_display_frame<W: AsyncWrite + Unpin>(
+    writer: &mut TokioFramed<W>,
+    bytes: &[u8],
+    mut display_rx: Option<&mut tokio_mpsc::UnboundedReceiver<SessionCmd>>,
+    idle_generation: &AtomicU64,
+    network_progress: &AtomicU64,
+    epoch: u64,
+    layout_request: Option<u64>,
+) -> std::io::Result<DisplayWrite> {
+    let (stream, _) = writer.get_inner_mut();
+    let start_progress = network_progress.load(Ordering::Relaxed);
+    let deadline = tokio::time::sleep(WRITE_TIMEOUT);
+    tokio::pin!(deadline);
+    let mut written = 0;
+    loop {
+        if written == bytes.len() {
+            match stream.flush().await {
+                Ok(()) => return Ok(DisplayWrite::Sent),
+                Err(error)
+                    if error.kind() == std::io::ErrorKind::TimedOut
+                        && network_progress.load(Ordering::Relaxed) == start_progress =>
+                {
+                    // TLS has buffered the PDU, so it cannot be cancelled; an
+                    // idle socket can retry the flush without corrupting it.
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        if written == 0 {
+            tokio::select! {
+                biased;
+                command = receive_optional_display(&mut display_rx) => {
+                    if let Some(command) = command {
+                        let command = classify_command(command, epoch);
+                        if matches!(command, SessionCmd::Discarded) || matches!(&command,
+                            SessionCmd::Input { event: InputEvent::CancelMonitorLayout { request_id }, .. }
+                                if Some(*request_id) != layout_request) {
+                            continue;
+                        }
+                        idle_generation.fetch_add(1, Ordering::Relaxed);
+                        return Ok(DisplayWrite::Superseded(command));
+                    }
+                }
+                _ = &mut deadline => {
+                    idle_generation.fetch_add(1, Ordering::Relaxed);
+                    return Ok(DisplayWrite::UnstartedTimeout);
+                }
+                result = stream.write(bytes) => {
+                    match result? {
+                        0 => return Err(std::io::ErrorKind::WriteZero.into()),
+                        n => written = n,
+                    }
+                }
+            }
+        } else {
+            match stream.write(&bytes[written..]).await? {
+                0 => return Err(std::io::ErrorKind::WriteZero.into()),
+                n => written += n,
+            }
+        }
+    }
+}
+
+async fn receive_optional_display(
+    display_rx: &mut Option<&mut tokio_mpsc::UnboundedReceiver<SessionCmd>>,
+) -> Option<SessionCmd> {
+    match display_rx.as_deref_mut() {
+        Some(rx) if !rx.is_closed() || !rx.is_empty() => rx.recv().await,
+        _ => std::future::pending().await,
+    }
+}
+
+/// Protocol responses and pointer releases cannot be dropped. If the socket
+/// has not accepted this PDU, keep retrying; once a prefix is on the wire, a
+/// stalled write remains a fatal stream error.
+async fn write_required_frame<W: AsyncWrite + Unpin>(
+    writer: &mut TokioFramed<W>,
+    bytes: &[u8],
+    idle_generation: &AtomicU64,
+    network_progress: &AtomicU64,
+) -> std::io::Result<()> {
+    loop {
+        match write_display_frame(
+            writer,
+            bytes,
+            None,
+            idle_generation,
+            network_progress,
+            0,
+            None,
+        )
+        .await?
+        {
+            DisplayWrite::Sent => return Ok(()),
+            DisplayWrite::UnstartedTimeout => continue,
+            DisplayWrite::Superseded(_) => {
+                unreachable!("required frame has no cancellation receiver")
+            }
+        }
+    }
+}
+
+async fn while_control_open<T>(
+    operation: impl std::future::Future<Output = std::io::Result<T>>,
+    input_rx: &tokio_mpsc::UnboundedReceiver<SessionCmd>,
+) -> std::io::Result<T> {
+    tokio::pin!(operation);
+    loop {
+        tokio::select! {
+            result = &mut operation => return result,
+            _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {
+                if input_rx.is_closed() {
+                    return Err(std::io::Error::new(std::io::ErrorKind::ConnectionAborted, "RDP control channel closed"));
+                }
+            }
+        }
+    }
 }
 
 fn defer_connect_command(deferred: &mut VecDeque<SessionCmd>, command: SessionCmd) -> bool {
@@ -487,6 +671,23 @@ fn announce_desktop(
         .map_err(|_| RdpError::ControlChannelClosed)
 }
 
+fn server_monitor_layout(
+    payload: &[u8],
+    io_channel_id: u16,
+) -> Option<Vec<adit_rdp_proto::MonitorGeometry>> {
+    let ctx = ironrdp_pdu::mcs::decode_send_data_indication(payload).ok()?;
+    if ctx.channel_id != io_channel_id {
+        return None;
+    }
+    let data = ironrdp_pdu::rdp::headers::decode_share_data(ctx).ok()?;
+    match data.pdu {
+        ironrdp_pdu::rdp::headers::ShareDataPdu::MonitorLayout(layout) => {
+            Some(egfx::monitor_geometries(&layout.monitors))
+        }
+        _ => None,
+    }
+}
+
 /// Cap on chained server redirections (guards against a redirect loop).
 const MAX_REDIRECTS: u32 = 5;
 
@@ -510,7 +711,6 @@ pub(crate) async fn run_session(
         password_len = request.password.len(),
         "starting RDP session"
     );
-    let shared_egfx = egfx::new_shared();
     let shared_display = SharedDisplay::default();
     let mut pending_layout = None;
     let mut pending_resize = None;
@@ -527,11 +727,14 @@ pub(crate) async fn run_session(
     let mut deferred_commands = VecDeque::new();
 
     loop {
+        // A redirected connection owns a fresh graphics mailbox. Reusing the
+        // old one lets unconsumed tiles cross the connection boundary.
+        let shared_egfx = egfx::new_shared();
         // Connect with a timeout; a Close (input channel drop) cancels a hung
         // handshake instead of blocking forever. Scoped in its own block so the
         // futures borrowing `request` / `routing_token` are dropped before we may
         // reassign those on a redirect.
-        let (connection_result, framed) = {
+        let (connection_result, framed, idle_generation, network_progress) = {
             let connect_fut = connect(
                 &request,
                 &shared_egfx,
@@ -601,6 +804,8 @@ pub(crate) async fn run_session(
                 routing: &routing,
                 epoch,
                 deferred: &mut deferred_commands,
+                idle_generation: &idle_generation,
+                network_progress: &network_progress,
             },
             &host_tx,
             &shared_egfx,
@@ -683,7 +888,15 @@ async fn connect(
     shared_display: &SharedDisplay,
     routing_token: Option<&[u8]>,
     rdstls_creds: Option<&crate::rdstls::RdstlsCreds>,
-) -> Result<(ConnectionResult, UpgradedFramed), ironrdp_connector::ConnectorError> {
+) -> Result<
+    (
+        ConnectionResult,
+        UpgradedFramed,
+        Arc<AtomicU64>,
+        Arc<AtomicU64>,
+    ),
+    ironrdp_connector::ConnectorError,
+> {
     let dest = format!("{}:{}", request.host, request.port);
     let stream = TcpStream::connect(&dest)
         .await
@@ -751,10 +964,12 @@ async fn connect(
     let should_upgrade = ironrdp_tokio::connect_begin(&mut framed, &mut connector).await?;
 
     let (initial_stream, leftover) = framed.into_inner();
-    let (mut tls_stream, tls_cert) =
-        ironrdp_tls::upgrade(IdleWrite::new(initial_stream), &request.host)
-            .await
-            .map_err(|e| ironrdp_connector::custom_err!("TLS upgrade", e))?;
+    let timed_stream = IdleWrite::new(initial_stream);
+    let idle_generation = Arc::clone(&timed_stream.generation);
+    let network_progress = Arc::clone(&timed_stream.progress);
+    let (mut tls_stream, tls_cert) = ironrdp_tls::upgrade(timed_stream, &request.host)
+        .await
+        .map_err(|e| ironrdp_connector::custom_err!("TLS upgrade", e))?;
 
     // GNOME system-mode handover: authenticate with the one-time credentials via
     // RDSTLS on the freshly-upgraded TLS stream, before MCS. The connector selected
@@ -786,7 +1001,12 @@ async fn connect(
     )
     .await?;
 
-    Ok((connection_result, upgraded_framed))
+    Ok((
+        connection_result,
+        upgraded_framed,
+        idle_generation,
+        network_progress,
+    ))
 }
 
 /// Copy only changed legacy pixels, using the same cost planner as EGFX.
@@ -908,6 +1128,8 @@ async fn active_session(
         routing,
         epoch,
         deferred,
+        idle_generation,
+        network_progress,
     } = input;
     let (display, pending_layout, pending_resize) = display_request;
     let (mut reader, mut writer) = split_tokio_framed(framed);
@@ -981,6 +1203,9 @@ async fn active_session(
                 if matches!(action, ironrdp_pdu::Action::X224) {
                     if let Some(redirection) = crate::redirect::detect(&payload, io_channel_id) {
                         return Ok(Some(redirection));
+                    }
+                    if let Some(monitors) = server_monitor_layout(&payload, io_channel_id) {
+                        if host_tx.send(HostMsg::MonitorLayoutObserved { epoch, monitors }).is_err() { break 'session; }
                     }
                 }
                 // Tolerate a single PDU the active stage can't decode/process rather
@@ -1098,11 +1323,17 @@ async fn active_session(
                 continue;
             }
             match out {
-                ActiveStageOutput::ResponseFrame(frame_bytes) => {
-                    write_frame(&mut writer, &frame_bytes)
-                        .await
-                        .map_err(|e| ironrdp_session::custom_err!("write frame", e))?
-                }
+                ActiveStageOutput::ResponseFrame(frame_bytes) => while_control_open(
+                    write_required_frame(
+                        &mut writer,
+                        &frame_bytes,
+                        idle_generation,
+                        network_progress,
+                    ),
+                    input_rx,
+                )
+                .await
+                .map_err(|e| ironrdp_session::custom_err!("write frame", e))?,
                 ActiveStageOutput::GraphicsUpdate(region) => {
                     if region.right >= region.left && region.bottom >= region.top {
                         egfx::add_dirty_rect(
@@ -1130,7 +1361,17 @@ async fn active_session(
                     if !released.is_empty() {
                         for out in active_stage.process_fastpath_input(&mut image, &released)? {
                             if let ActiveStageOutput::ResponseFrame(bytes) = out {
-                                write_frame(&mut writer, &bytes).await.map_err(|e| {
+                                while_control_open(
+                                    write_required_frame(
+                                        &mut writer,
+                                        &bytes,
+                                        idle_generation,
+                                        network_progress,
+                                    ),
+                                    input_rx,
+                                )
+                                .await
+                                .map_err(|e| {
                                     ironrdp_session::custom_err!(
                                         "release pointer before reactivation",
                                         e
@@ -1198,6 +1439,19 @@ async fn active_session(
                                     );
                                     return Ok(Some(redirection));
                                 }
+                                if let Some(monitors) = server_monitor_layout(bytes, io_channel_id)
+                                {
+                                    if host_tx
+                                        .send(HostMsg::MonitorLayoutObserved { epoch, monitors })
+                                        .is_err()
+                                    {
+                                        return Ok(None);
+                                    }
+                                    // IronRDP's finalization sequence rejects this
+                                    // optional metadata PDU; consuming it here keeps
+                                    // the reactivation state machine in sync.
+                                    continue 'activation;
+                                }
                                 connection_activation.step(bytes, &mut buf)
                             }
                             None => connection_activation.step_no_input(&mut buf),
@@ -1225,9 +1479,17 @@ async fn active_session(
                             }
                         };
                         if written.size().is_some() {
-                            write_frame(&mut writer, buf.filled()).await.map_err(|e| {
-                                ironrdp_session::custom_err!("write reactivation", e)
-                            })?;
+                            while_control_open(
+                                write_required_frame(
+                                    &mut writer,
+                                    buf.filled(),
+                                    idle_generation,
+                                    network_progress,
+                                ),
+                                input_rx,
+                            )
+                            .await
+                            .map_err(|e| ironrdp_session::custom_err!("write reactivation", e))?;
                         }
                         if let ConnectionActivationState::Finalized {
                             desktop_size,
@@ -1289,6 +1551,22 @@ async fn active_session(
             }
         }
 
+        // Announce a graphics reset before writing any newly queued layout.
+        // Otherwise a reset processed in this iteration could be mistaken for
+        // confirmation of a layout sent later in the same iteration.
+        if let Some((width, height, monitors)) = egfx::take_reset(egfx) {
+            egfx_size = (width, height);
+            if host_tx
+                .send(HostMsg::MonitorLayoutObserved { epoch, monitors })
+                .is_err()
+            {
+                break 'session;
+            }
+            if host_tx.send(HostMsg::Resized { width, height }).is_err() {
+                break 'session;
+            }
+        }
+
         // CLIPRDR work the backend queued while it ran inside `process` above (it
         // is borrowed by the processor there and can reach neither the channel
         // nor the socket), plus anything a local copy just enqueued. Emitted
@@ -1296,9 +1574,17 @@ async fn active_session(
         match clipboard::pump(clip, &mut active_stage, host_tx, epoch) {
             Some(frames) => {
                 for frame in frames {
-                    write_frame(&mut writer, &frame)
-                        .await
-                        .map_err(|e| ironrdp_session::custom_err!("write clipboard frame", e))?;
+                    while_control_open(
+                        write_required_frame(
+                            &mut writer,
+                            &frame,
+                            idle_generation,
+                            network_progress,
+                        ),
+                        input_rx,
+                    )
+                    .await
+                    .map_err(|e| ironrdp_session::custom_err!("write clipboard frame", e))?;
                 }
             }
             // The app stopped listening; end the session.
@@ -1345,10 +1631,32 @@ async fn active_session(
                 let request_id = request.request_id;
                 let result = match encoded {
                     Ok(bytes) => {
-                        write_frame(&mut writer, &bytes)
-                            .await
-                            .map_err(|e| ironrdp_session::custom_err!("write monitor layout", e))?;
-                        Ok(())
+                        match while_control_open(
+                            write_display_frame(
+                                &mut writer,
+                                &bytes,
+                                Some(display_rx),
+                                idle_generation,
+                                network_progress,
+                                epoch,
+                                Some(request_id),
+                            ),
+                            input_rx,
+                        )
+                        .await
+                        .map_err(|e| ironrdp_session::custom_err!("write monitor layout", e))?
+                        {
+                            DisplayWrite::Sent => Ok(()),
+                            DisplayWrite::UnstartedTimeout => {
+                                Err("DisplayControl write timed out before starting".into())
+                            }
+                            DisplayWrite::Superseded(command) => {
+                                *pending_layout = None;
+                                deferred.push_front(command);
+                                pump_initial_layout = true;
+                                continue 'session;
+                            }
+                        }
                     }
                     Err(error) => Err(error),
                 };
@@ -1388,14 +1696,42 @@ async fn active_session(
             if let Some(frame_res) = active_stage.encode_resize(w, h, None, None) {
                 tracing::info!(w, h, "parked resize went out once DisplayControl connected");
                 *pending_resize = None;
-                write_frame(&mut writer, &frame_res?)
-                    .await
-                    .map_err(|e| ironrdp_session::custom_err!("write resize frame", e))?;
-                if host_tx
-                    .send(HostMsg::ResizeSent { epoch, revision })
-                    .is_err()
+                match while_control_open(
+                    write_display_frame(
+                        &mut writer,
+                        &frame_res?,
+                        Some(display_rx),
+                        idle_generation,
+                        network_progress,
+                        epoch,
+                        None,
+                    ),
+                    input_rx,
+                )
+                .await
+                .map_err(|e| ironrdp_session::custom_err!("write resize frame", e))?
                 {
-                    break 'session;
+                    DisplayWrite::Sent => {
+                        if host_tx
+                            .send(HostMsg::ResizeSent { epoch, revision })
+                            .is_err()
+                        {
+                            break 'session;
+                        }
+                    }
+                    DisplayWrite::UnstartedTimeout => {
+                        if host_tx
+                            .send(HostMsg::ResizeRejected { epoch, revision })
+                            .is_err()
+                        {
+                            break 'session;
+                        }
+                    }
+                    DisplayWrite::Superseded(command) => {
+                        deferred.push_front(command);
+                        pump_initial_layout = true;
+                        continue 'session;
+                    }
                 }
             }
         }
@@ -1435,16 +1771,25 @@ async fn active_session(
                     "emitted frame region"
                 );
             }
-            if host_tx
-                .send(HostMsg::Tile {
+            let message = if let Some(painted) = update.painted {
+                HostMsg::MaskedTile {
                     x: update.x,
                     y: update.y,
                     width: update.width,
                     height: update.height,
                     rgba: update.rgba,
-                })
-                .is_err()
-            {
+                    painted,
+                }
+            } else {
+                HostMsg::Tile {
+                    x: update.x,
+                    y: update.y,
+                    width: update.width,
+                    height: update.height,
+                    rgba: update.rgba,
+                }
+            };
+            if host_tx.send(message).is_err() {
                 break 'session;
             }
         }
@@ -1457,6 +1802,62 @@ async fn active_session(
 mod display_deadline_tests {
     use super::*;
     use ironrdp_connector::connection_activation::ConnectionActivationFactory;
+
+    static TEST_IDLE_GENERATION: AtomicU64 = AtomicU64::new(0);
+    static TEST_NETWORK_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn issue97_legacy_monitor_layout_pdu_preserves_actual_geometry() {
+        use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
+        use ironrdp_pdu::mcs::SendDataIndication;
+        use ironrdp_pdu::rdp::client_info::CompressionType;
+        use ironrdp_pdu::rdp::finalization_messages::MonitorLayoutPdu;
+        use ironrdp_pdu::rdp::headers::{
+            CompressionFlags, ShareControlHeader, ShareControlPdu, ShareDataHeader, ShareDataPdu,
+            StreamPriority,
+        };
+        use ironrdp_pdu::x224::X224;
+        let monitors = vec![
+            Monitor {
+                left: -400,
+                top: 0,
+                right: -1,
+                bottom: 199,
+                flags: MonitorFlags::empty(),
+            },
+            Monitor {
+                left: 0,
+                top: 0,
+                right: 199,
+                bottom: 199,
+                flags: MonitorFlags::PRIMARY,
+            },
+        ];
+        let body = ironrdp_core::encode_vec(&ShareControlHeader {
+            share_control_pdu: ShareControlPdu::Data(ShareDataHeader {
+                share_data_pdu: ShareDataPdu::MonitorLayout(MonitorLayoutPdu {
+                    monitors: monitors.clone(),
+                }),
+                stream_priority: StreamPriority::Medium,
+                compression_flags: CompressionFlags::empty(),
+                compression_type: CompressionType::K8,
+            }),
+            pdu_source: 1001,
+            share_id: 1,
+        })
+        .unwrap();
+        let packet = ironrdp_core::encode_vec(&X224(SendDataIndication {
+            initiator_id: 1001,
+            channel_id: 1003,
+            user_data: body.into(),
+        }))
+        .unwrap();
+        assert_eq!(
+            server_monitor_layout(&packet, 1003),
+            Some(egfx::monitor_geometries(&monitors))
+        );
+        assert_eq!(server_monitor_layout(&packet, 1004), None);
+    }
 
     fn monitor() -> adit_rdp_proto::Monitor {
         adit_rdp_proto::Monitor {
@@ -1694,6 +2095,8 @@ mod display_deadline_tests {
                 routing: &routing,
                 epoch: 0,
                 deferred: &mut deferred,
+                idle_generation: &TEST_IDLE_GENERATION,
+                network_progress: &TEST_NETWORK_PROGRESS,
             },
             &host,
             &egfx,
@@ -1741,6 +2144,303 @@ mod display_deadline_tests {
         assert!(result.is_none());
         drop(session);
         assert!(pending.is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_unstarted_and_partial_write_timeouts_are_distinguishable() {
+        let (mut blocked, _peer) = tokio::io::duplex(1);
+        blocked.write_all(&[0]).await.unwrap();
+        let mut unstarted = TokioFramed::new(IdleWrite::new(blocked));
+        let no_bytes = write_frame(&mut unstarted, &[1, 2]).await.unwrap_err();
+
+        let (partial, _peer) = tokio::io::duplex(1);
+        let mut partial = TokioFramed::new(IdleWrite::new(partial));
+        let prefix = write_frame(&mut partial, &[1, 2]).await.unwrap_err();
+        assert_eq!(no_bytes.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(prefix.kind(), std::io::ErrorKind::TimedOut);
+        assert_ne!(
+            no_bytes.to_string(),
+            prefix.to_string(),
+            "an untouched write and a partial PDU require different recovery"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_switch_cancels_an_unstarted_display_write_without_closing_stream() {
+        use tokio::io::AsyncReadExt;
+        let (mut stream, mut peer) = tokio::io::duplex(1);
+        stream.write_all(&[99]).await.unwrap();
+        let timed = IdleWrite::new(stream);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(timed);
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel();
+        tx.send(SessionCmd::Input {
+            epoch: 0,
+            event: InputEvent::MonitorLayout {
+                request_id: 2,
+                monitors: vec![monitor()],
+            },
+        })
+        .unwrap();
+        assert!(matches!(
+            write_display_frame(
+                &mut writer,
+                &[1, 2],
+                Some(&mut rx),
+                &generation,
+                &progress,
+                0,
+                Some(1)
+            )
+            .await
+            .unwrap(),
+            DisplayWrite::Superseded(SessionCmd::Input {
+                event: InputEvent::MonitorLayout { request_id: 2, .. },
+                ..
+            })
+        ));
+        let mut first = [0];
+        peer.read_exact(&mut first).await.unwrap();
+        assert_eq!(first, [99]);
+        write_frame(&mut writer, &[7]).await.unwrap();
+        peer.read_exact(&mut first).await.unwrap();
+        assert_eq!(
+            first,
+            [7],
+            "no part of the cancelled layout reached the peer"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_unstarted_display_timeout_preserves_the_stream() {
+        use tokio::io::AsyncReadExt;
+        let (mut stream, mut peer) = tokio::io::duplex(1);
+        stream.write_all(&[99]).await.unwrap();
+        let timed = IdleWrite::new(stream);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(timed);
+        let (_tx, mut rx) = tokio_mpsc::unbounded_channel();
+        assert!(matches!(
+            write_display_frame(
+                &mut writer,
+                &[1, 2],
+                Some(&mut rx),
+                &generation,
+                &progress,
+                0,
+                Some(1)
+            )
+            .await
+            .unwrap(),
+            DisplayWrite::UnstartedTimeout
+        ));
+        let mut byte = [0];
+        peer.read_exact(&mut byte).await.unwrap();
+        write_frame(&mut writer, &[7]).await.unwrap();
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, [7]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_pointer_release_waits_for_an_idle_socket_without_disconnect() {
+        use tokio::io::AsyncReadExt;
+        let (mut socket, mut peer) = tokio::io::duplex(1);
+        socket.write_all(&[99]).await.unwrap();
+        let timed = IdleWrite::new(socket);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(timed);
+        let write = write_required_frame(&mut writer, &[7], &generation, &progress);
+        tokio::pin!(write);
+        tokio::select! {
+            result = &mut write => panic!("idle pointer release ended: {result:?}"),
+            _ = tokio::time::sleep(WRITE_TIMEOUT + std::time::Duration::from_secs(1)) => {}
+        }
+        let mut byte = [0];
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, [99]);
+        write.await.unwrap();
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, [7]);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_explicit_close_interrupts_an_idle_required_write() {
+        let (mut socket, _peer) = tokio::io::duplex(1);
+        socket.write_all(&[99]).await.unwrap();
+        let timed = IdleWrite::new(socket);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(timed);
+        let (tx, rx) = tokio_mpsc::unbounded_channel();
+        drop(tx);
+        let result = while_control_open(
+            write_required_frame(&mut writer, &[7], &generation, &progress),
+            &rx,
+        )
+        .await;
+        assert_eq!(
+            result.unwrap_err().kind(),
+            std::io::ErrorKind::ConnectionAborted
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_buffered_display_write_survives_idle_socket_timeout() {
+        use tokio::io::AsyncReadExt;
+        struct Buffered {
+            inner: IdleWrite<tokio::io::DuplexStream>,
+            bytes: Vec<u8>,
+            offset: usize,
+        }
+        impl AsyncWrite for Buffered {
+            fn poll_write(
+                mut self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+                bytes: &[u8],
+            ) -> Poll<std::io::Result<usize>> {
+                self.bytes.extend_from_slice(bytes);
+                Poll::Ready(Ok(bytes.len()))
+            }
+            fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+                let this = self.get_mut();
+                while this.offset < this.bytes.len() {
+                    match Pin::new(&mut this.inner).poll_write(cx, &this.bytes[this.offset..]) {
+                        Poll::Ready(Ok(0)) => {
+                            return Poll::Ready(Err(std::io::ErrorKind::WriteZero.into()))
+                        }
+                        Poll::Ready(Ok(n)) => this.offset += n,
+                        Poll::Ready(Err(error)) => return Poll::Ready(Err(error)),
+                        Poll::Pending => return Poll::Pending,
+                    }
+                }
+                Poll::Ready(Ok(()))
+            }
+            fn poll_shutdown(
+                self: Pin<&mut Self>,
+                cx: &mut Context<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                Pin::new(&mut self.get_mut().inner).poll_shutdown(cx)
+            }
+        }
+        let (mut socket, mut peer) = tokio::io::duplex(1);
+        socket.write_all(&[99]).await.unwrap();
+        let timed = IdleWrite::new(socket);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(Buffered {
+            inner: timed,
+            bytes: Vec::new(),
+            offset: 0,
+        });
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel();
+        let write = write_display_frame(
+            &mut writer,
+            &[7],
+            Some(&mut rx),
+            &generation,
+            &progress,
+            0,
+            Some(1),
+        );
+        tokio::pin!(write);
+        tokio::select! {
+            result = &mut write => panic!("idle buffered write closed the connection: {}", result.is_err()),
+            _ = tokio::time::sleep(WRITE_TIMEOUT + std::time::Duration::from_secs(1)) => {}
+        }
+        tx.send(SessionCmd::Input {
+            epoch: 0,
+            event: InputEvent::MonitorLayout {
+                request_id: 2,
+                monitors: vec![monitor()],
+            },
+        })
+        .unwrap();
+        let mut byte = [0];
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, [99]);
+        assert!(matches!(write.await.unwrap(), DisplayWrite::Sent));
+        peer.read_exact(&mut byte).await.unwrap();
+        assert_eq!(byte, [7]);
+    }
+
+    #[tokio::test]
+    async fn issue97_switch_waits_for_a_partially_written_pdu() {
+        use tokio::io::AsyncReadExt;
+        let (stream, mut peer) = tokio::io::duplex(1);
+        let timed = IdleWrite::new(stream);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(timed);
+        let (tx, mut rx) = tokio_mpsc::unbounded_channel();
+        let mut bytes = [0; 2];
+        {
+            let write = write_display_frame(
+                &mut writer,
+                &[1, 2],
+                Some(&mut rx),
+                &generation,
+                &progress,
+                0,
+                Some(1),
+            );
+            tokio::pin!(write);
+            tokio::select! {
+                result = &mut write => panic!("partial write ended early: {}", result.is_ok()),
+                _ = tokio::task::yield_now() => {}
+            }
+            tx.send(SessionCmd::Input {
+                epoch: 0,
+                event: InputEvent::MonitorLayout {
+                    request_id: 2,
+                    monitors: vec![monitor()],
+                },
+            })
+            .unwrap();
+            peer.read_exact(&mut bytes[..1]).await.unwrap();
+            assert!(matches!(write.await.unwrap(), DisplayWrite::Sent));
+        }
+        peer.read_exact(&mut bytes[1..]).await.unwrap();
+        assert_eq!(bytes, [1, 2]);
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(SessionCmd::Input {
+                event: InputEvent::MonitorLayout { request_id: 2, .. },
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn issue97_partial_display_write_timeout_is_fatal() {
+        use tokio::io::AsyncReadExt;
+        let (socket, mut peer) = tokio::io::duplex(1);
+        let timed = IdleWrite::new(socket);
+        let generation = Arc::clone(&timed.generation);
+        let progress = Arc::clone(&timed.progress);
+        let mut writer = TokioFramed::new(timed);
+        let (_tx, mut rx) = tokio_mpsc::unbounded_channel();
+        let error = match write_display_frame(
+            &mut writer,
+            &[1, 2],
+            Some(&mut rx),
+            &generation,
+            &progress,
+            0,
+            Some(1),
+        )
+        .await
+        {
+            Err(error) => error,
+            Ok(_) => panic!("a partial stalled PDU cannot be abandoned safely"),
+        };
+        assert_eq!(error.kind(), std::io::ErrorKind::TimedOut);
+        assert_eq!(progress.load(Ordering::Relaxed), 1);
+        let mut first = [0];
+        peer.read_exact(&mut first).await.unwrap();
+        assert_eq!(first, [1]);
     }
 
     #[tokio::test(start_paused = true)]
@@ -1935,6 +2635,8 @@ mod display_deadline_tests {
                 routing: &routing,
                 epoch: 1,
                 deferred: &mut deferred,
+                idle_generation: &TEST_IDLE_GENERATION,
+                network_progress: &TEST_NETWORK_PROGRESS,
             },
             &host_tx,
             &egfx,
@@ -2260,6 +2962,8 @@ mod display_deadline_tests {
                 routing: &routing,
                 epoch: 1,
                 deferred: &mut deferred,
+                idle_generation: &TEST_IDLE_GENERATION,
+                network_progress: &TEST_NETWORK_PROGRESS,
             },
             &host_tx,
             &egfx,
@@ -2431,6 +3135,8 @@ mod display_deadline_tests {
                 routing: &routing,
                 epoch: 0,
                 deferred: &mut deferred,
+                idle_generation: &TEST_IDLE_GENERATION,
+                network_progress: &TEST_NETWORK_PROGRESS,
             },
             &host_tx,
             &egfx,

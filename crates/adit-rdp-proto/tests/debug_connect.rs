@@ -179,6 +179,14 @@ fn debug_connect_real_host() {
                     width,
                     height,
                     rgba,
+                }))
+                | Ok(Some(HostMsg::MaskedTile {
+                    x,
+                    y,
+                    width,
+                    height,
+                    rgba,
+                    painted: _,
                 })) => {
                     frames += 1;
                     let ratio = nonblack_ratio(&rgba);

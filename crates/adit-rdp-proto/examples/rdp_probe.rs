@@ -119,6 +119,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     width,
                     height,
                     rgba,
+                })
+                | Ok(HostMsg::MaskedTile {
+                    x,
+                    y,
+                    width,
+                    height,
+                    rgba,
+                    painted: _,
                 }) => {
                     if usize::from(width) * usize::from(height) * 4 != rgba.len()
                         || u32::from(x) + u32::from(width) > u32::from(size.0)

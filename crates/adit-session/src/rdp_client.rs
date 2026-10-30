@@ -6,6 +6,7 @@
 //! using [`adit_rdp_proto`], keeps the decoded framebuffer, and presents a small
 //! handle to the session layer that mirrors [`adit_ssh::LiveShellHandle`].
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -14,7 +15,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use adit_rdp_proto::{monitor_bounds, DisplayControlState, Monitor, PointerUpdate};
+use adit_rdp_proto::{
+    monitor_bounds, DisplayControlState, Monitor, MonitorGeometry, PointerUpdate,
+};
 use adit_rdp_proto::{
     read_msg, write_msg, ClientMsg, ClipFile, ConnectRequest, HostMsg, InputEvent,
 };
@@ -44,6 +47,7 @@ fn to_profile_monitor(m: &Monitor) -> adit_domain::DesktopMonitor {
 fn display_error(error: &str) -> &str {
     match error {
         "DisplayControl capabilities timed out" => "等待服务端显示能力超时",
+        "DisplayControl write timed out before starting" => "显示器布局请求发送超时",
         "DisplayControl channel closed"
         | "DisplayControl channel disappeared"
         | "DisplayControl channel not connected" => "显示控制通道已关闭",
@@ -54,6 +58,41 @@ fn display_error(error: &str) -> &str {
         }
         _ => error,
     }
+}
+
+fn matching_monitor_geometry(requested: &[Monitor], observed: &[MonitorGeometry]) -> bool {
+    !requested.is_empty()
+        && requested.len() == observed.len()
+        && requested.iter().all(|expected| {
+            observed.iter().any(|actual| {
+                (
+                    actual.left,
+                    actual.top,
+                    actual.width,
+                    actual.height,
+                    actual.primary,
+                ) == (
+                    expected.left,
+                    expected.top,
+                    expected.width,
+                    expected.height,
+                    expected.primary,
+                )
+            })
+        })
+}
+
+fn monitor_geometry(monitors: &[Monitor]) -> Vec<MonitorGeometry> {
+    monitors
+        .iter()
+        .map(|m| MonitorGeometry {
+            left: m.left,
+            top: m.top,
+            width: m.width,
+            height: m.height,
+            primary: m.primary,
+        })
+        .collect()
 }
 
 /// Environment override for the helper path (mainly for development/tests).
@@ -144,7 +183,11 @@ pub(super) struct Surface {
     latest_resize: Option<(u16, u16)>,
     resize_revision: u64,
     resize_pending: Option<PendingResize>,
+    resize_requests: VecDeque<(u64, (u16, u16))>,
+    resize_history_uncertain: bool,
     desired_layout: Option<(Vec<Monitor>, Option<usize>)>,
+    uncertain_multimonitor: bool,
+    layout_needs_server_confirmation: bool,
     input_epoch: u64,
     pointer_epoch: Option<u64>,
     pressed_buttons: Vec<(adit_rdp_proto::MouseButton, u64, u64)>,
@@ -178,6 +221,43 @@ impl PaintedPixels {
             bits: vec![0; pixels.div_ceil(64)],
             remaining: pixels,
         }
+    }
+
+    fn for_layout(width: usize, height: usize, display: &DisplayControlState) -> Self {
+        let Ok((left, top, layout_width, layout_height)) = monitor_bounds(&display.sent_layout)
+        else {
+            return Self::new(width, height);
+        };
+        if !display.size_matches
+            || (usize::from(layout_width), usize::from(layout_height)) != (width, height)
+        {
+            return Self::new(width, height);
+        }
+        // Gaps in an irregular desktop are never painted by the server and do
+        // not participate in recovery. Actual input still has to hit a monitor.
+        let mut result = Self {
+            width,
+            bits: vec![u64::MAX; (width * height).div_ceil(64)],
+            remaining: 0,
+        };
+        for monitor in &display.sent_layout {
+            let x = (monitor.left - left) as usize;
+            let y = (monitor.top - top) as usize;
+            for row in y..y + usize::from(monitor.height) {
+                let mut start = row * width + x;
+                let end = start + usize::from(monitor.width);
+                while start < end {
+                    let offset = start % 64;
+                    let count = (64 - offset).min(end - start);
+                    let mask = (u64::MAX >> (64 - count)) << offset;
+                    let word = &mut result.bits[start / 64];
+                    result.remaining += (mask & *word).count_ones() as usize;
+                    *word &= !mask;
+                    start += count;
+                }
+            }
+        }
+        result
     }
 
     fn mark(&mut self, x: usize, y: usize, width: usize, height: usize) {
@@ -228,6 +308,7 @@ struct PendingResize {
     sent: bool,
     requires_transition: bool,
     saw_other_size: bool,
+    previous_mapping_safe: bool,
 }
 
 struct PendingLayout {
@@ -271,7 +352,11 @@ impl Surface {
             latest_resize: None,
             resize_revision: 0,
             resize_pending: None,
+            resize_requests: VecDeque::new(),
+            resize_history_uncertain: false,
             desired_layout: None,
+            uncertain_multimonitor: false,
+            layout_needs_server_confirmation: false,
             input_epoch: next_input_epoch(),
             pointer_epoch: None,
             pressed_buttons: Vec::new(),
@@ -292,6 +377,28 @@ impl Surface {
         self.pointer_epoch = None;
         self.last_pointer = None;
         self.generation = self.generation.wrapping_add(1);
+    }
+
+    fn blocks_window_resize(&self) -> bool {
+        self.layout_pending.is_some()
+            || self.uncertain_multimonitor
+            || self.display.sent_layout.len() > 1
+    }
+
+    fn point_on_monitor(&self, x: u16, y: u16) -> bool {
+        if !self.display.size_matches || self.display.sent_layout.is_empty() {
+            return true;
+        }
+        let Ok((left, top, _, _)) = monitor_bounds(&self.display.sent_layout) else {
+            return false;
+        };
+        let (x, y) = (i32::from(x) + left, i32::from(y) + top);
+        self.display.sent_layout.iter().any(|m| {
+            x >= m.left
+                && x < m.left + i32::from(m.width)
+                && y >= m.top
+                && y < m.top + i32::from(m.height)
+        })
     }
 
     fn viewport(&self) -> Viewport {
@@ -382,12 +489,16 @@ impl Surface {
         next.latest_resize = self.latest_resize;
         next.resize_revision = self.resize_revision;
         next.resize_pending = self.resize_pending;
+        next.resize_requests = std::mem::take(&mut self.resize_requests);
+        next.resize_history_uncertain = self.resize_history_uncertain;
         if let Some(resize) = next.resize_pending.as_mut() {
-            if resize.sent && resize.expected != (next.width, next.height) {
+            if resize.expected != (next.width, next.height) {
                 resize.saw_other_size = true;
             }
         }
         next.desired_layout = self.desired_layout.take();
+        next.uncertain_multimonitor = self.uncertain_multimonitor;
+        next.layout_needs_server_confirmation = self.layout_needs_server_confirmation;
         next.awaiting_layout_pixels = self.awaiting_layout_pixels;
         next.early_presentable_frame = self.early_presentable_frame;
         next.clear_before_layout_pixels = self.clear_before_layout_pixels;
@@ -406,9 +517,10 @@ impl Surface {
             if next.pointer_paused && next.layout_pending.is_none() {
                 next.awaiting_layout_pixels = false;
                 next.clear_before_layout_pixels = false;
-                next.painted_layout_pixels = Some(PaintedPixels::new(
+                next.painted_layout_pixels = Some(PaintedPixels::for_layout(
                     usize::from(next.width),
                     usize::from(next.height),
+                    &next.display,
                 ));
             }
         }
@@ -427,13 +539,56 @@ impl Surface {
             .is_ok_and(|(_, _, w, h)| (w, h) == (self.width, self.height));
     }
 
+    fn observe_monitor_layout(&mut self, observed: &[MonitorGeometry]) {
+        let matches_pending_resize = self.resize_pending.is_some_and(|resize| {
+            resize.sent
+                && observed.len() == 1
+                && observed[0].primary
+                && (observed[0].left, observed[0].top) == (0, 0)
+                && (observed[0].width, observed[0].height) == resize.expected
+        });
+        if !observed.is_empty()
+            && (observed.len() > 1 || !self.display.sent_layout.is_empty())
+            && !matching_monitor_geometry(&self.display.sent_layout, observed)
+            && (self.resize_pending.is_none() || observed.len() > 1)
+            && self
+                .layout_pending
+                .as_ref()
+                .is_none_or(|p| p.phase == LayoutPhase::WaitingForHelper)
+        {
+            self.uncertain_multimonitor |= observed.len() > 1 || self.display.sent_layout.len() > 1;
+            self.may_resume_pointer &= observed.len() == 1 && self.display.sent_layout.len() == 1;
+            if let Some(pending) = self.layout_pending.as_mut() {
+                pending.previous_layout_safe = false;
+            }
+            self.pause_pointer("服务端显示器布局发生变化");
+        }
+        if let Some(pending) = self
+            .layout_pending
+            .as_ref()
+            .filter(|p| p.phase == LayoutPhase::WaitingForSize)
+        {
+            self.layout_needs_server_confirmation =
+                !matching_monitor_geometry(&pending.monitors, observed);
+        }
+        if let Some(resize) = self
+            .resize_pending
+            .as_mut()
+            .filter(|_| matches_pending_resize)
+        {
+            resize.saw_other_size = true;
+        }
+    }
+
     fn finish_matching_layout(&mut self) -> Option<(u16, u16)> {
         if self.display.size_matches
             && self.layout_pending.as_ref().is_some_and(|pending| {
                 pending.phase == LayoutPhase::WaitingForSize && pending.has_fresh_pixels
             })
+            && !self.layout_needs_server_confirmation
         {
             let pending = self.layout_pending.take().expect("checked above");
+            self.uncertain_multimonitor = false;
             self.selected_monitor = pending.selected;
             if self.painted_layout_pixels.is_none() && self.may_resume_pointer {
                 self.pointer_paused = false;
@@ -460,11 +615,18 @@ impl Surface {
                 .previous_may_resume_pointer;
         }
         if pending.is_some() && !unsent {
+            self.uncertain_multimonitor |= self.display.sent_layout.len() > 1
+                || pending.as_ref().is_some_and(|p| p.monitors.len() > 1);
             self.may_resume_pointer = false;
             self.pause_pointer(error);
         }
-        let old_layout_usable =
-            unsent && self.display.size_matches && !self.display.sent_layout.is_empty();
+        self.layout_needs_server_confirmation = false;
+        let old_layout_usable = (unsent || pending.is_none())
+            && self.display.size_matches
+            && !self.display.sent_layout.is_empty();
+        if !old_layout_usable && self.display.sent_layout.len() > 1 {
+            self.uncertain_multimonitor = true;
+        }
         if !old_layout_usable {
             self.display.sent_layout.clear();
             self.display.size_matches = false;
@@ -474,7 +636,7 @@ impl Surface {
             self.display.error = Some(error.to_owned());
         }
         self.invalidate_pointer_mapping();
-        if old_layout_usable && self.display.sent_layout.len() > 1 {
+        if self.blocks_window_resize() {
             None
         } else {
             self.blocked_resize.take()
@@ -498,6 +660,7 @@ impl Surface {
         self.closed = true;
         self.paint_deadline = None;
         self.layout_pending = None;
+        self.layout_needs_server_confirmation = false;
         self.display.sent_layout.clear();
         self.display.size_matches = false;
         self.selected_monitor = None;
@@ -507,9 +670,10 @@ impl Surface {
 
     fn pause_pointer(&mut self, error: &str) {
         if self.painted_layout_pixels.is_none() {
-            self.painted_layout_pixels = Some(PaintedPixels::new(
+            self.painted_layout_pixels = Some(PaintedPixels::for_layout(
                 usize::from(self.width),
                 usize::from(self.height),
+                &self.display,
             ));
         }
         self.awaiting_layout_pixels = false;
@@ -558,6 +722,10 @@ impl Surface {
         if let Err(error) = result {
             return self.fail_layout(display_error(&error), true);
         }
+        self.layout_needs_server_confirmation = !matching_monitor_geometry(
+            &pending.monitors,
+            &monitor_geometry(&self.display.sent_layout),
+        );
         self.display.sent_layout = pending.monitors.clone();
         self.may_resume_pointer = true;
         if !self.pointer_paused {
@@ -576,6 +744,10 @@ impl Surface {
     /// Blit a tile into the surface, ignoring anything out of bounds (defensive
     /// against a malformed message).
     pub(super) fn blit(&mut self, x: u16, y: u16, tw: u16, th: u16, rgba: &[u8]) {
+        self.blit_masked(x, y, tw, th, rgba, None);
+    }
+
+    fn blit_masked(&mut self, x: u16, y: u16, tw: u16, th: u16, rgba: &[u8], mask: Option<&[u8]>) {
         let (sw, sh) = (usize::from(self.width), usize::from(self.height));
         let (x, y, tw, th) = (
             usize::from(x),
@@ -586,32 +758,48 @@ impl Surface {
         if tw == 0 || th == 0 || x + tw > sw || y + th > sh || rgba.len() < tw * th * 4 {
             return;
         }
-        if let Some(resize) = self.resize_pending {
-            if !resize.sent
-                || resize.expected != (self.width, self.height)
-                || (resize.requires_transition && !resize.saw_other_size)
+        if let Some(bits) = mask {
+            let pixels = tw * th;
+            let valid_last = if pixels % 8 == 0 {
+                u8::MAX
+            } else {
+                (1 << (pixels % 8)) - 1
+            };
+            if bits.len() != pixels.div_ceil(8)
+                || !bits.iter().any(|b| *b != 0)
+                || bits.last().is_some_and(|last| *last & !valid_last != 0)
             {
                 return;
             }
+        }
+        let resize_waiting = self.resize_pending.is_some_and(|resize| {
+            !resize.sent
+                || resize.expected != (self.width, self.height)
+                || (resize.requires_transition && !resize.saw_other_size)
+        });
+        if self.resize_pending.is_some() && !resize_waiting {
             // Only pixels received after the matching helper write confirmation
             // can start the new resize's coverage.
             self.resize_pending = None;
+            self.resize_history_uncertain = false;
         }
-        let layout_pixels = self.layout_pending.as_ref().map_or(
-            self.awaiting_layout_pixels,
-            |pending| match pending.phase {
-                // On redirect the first frame can arrive while the saved layout
-                // is still waiting for the helper. Track it for an unsent
-                // failure, but do not treat it as proof of a sent layout.
-                LayoutPhase::WaitingForHelper => self.awaiting_layout_pixels,
-                LayoutPhase::WaitingForSize => self.display.size_matches,
-            },
-        );
+        let layout_pixels = !resize_waiting
+            && !self.layout_needs_server_confirmation
+            && self
+                .layout_pending
+                .as_ref()
+                .map_or(self.awaiting_layout_pixels, |pending| match pending.phase {
+                    // On redirect the first frame can arrive while the saved layout
+                    // is still waiting for the helper. Track it for an unsent
+                    // failure, but do not treat it as proof of a sent layout.
+                    LayoutPhase::WaitingForHelper => self.awaiting_layout_pixels,
+                    LayoutPhase::WaitingForSize => self.display.size_matches,
+                });
         if layout_pixels {
             // Preserve the previous picture while tracking which pixels are
             // fresh. Unpainted areas cannot receive pointer input.
             if self.clear_before_layout_pixels {
-                self.painted_layout_pixels = Some(PaintedPixels::new(sw, sh));
+                self.painted_layout_pixels = Some(PaintedPixels::for_layout(sw, sh, &self.display));
                 self.clear_before_layout_pixels = false;
             }
             self.awaiting_layout_pixels = false;
@@ -628,10 +816,39 @@ impl Surface {
             let src = row * tw * 4;
             self.rgba[dst..dst + tw * 4].copy_from_slice(&rgba[src..src + tw * 4]);
         }
+        if resize_waiting || self.layout_needs_server_confirmation {
+            // A live picture is still useful while the server's mapping is
+            // uncertain, but it cannot grant a pointer lease.
+            self.early_presentable_frame = true;
+            self.generation = self.generation.wrapping_add(1);
+            return;
+        }
         let mut coverage_changed = false;
         if let Some(painted) = &mut self.painted_layout_pixels {
             let remaining = painted.remaining;
-            painted.mark(x, y, tw, th);
+            if let Some(mask) = mask {
+                for row in 0..th {
+                    let mut col = 0;
+                    while col < tw {
+                        let bit = row * tw + col;
+                        if mask[bit / 8] & (1 << (bit % 8)) == 0 {
+                            col += 1;
+                            continue;
+                        }
+                        let start = col;
+                        while col < tw {
+                            let bit = row * tw + col;
+                            if mask[bit / 8] & (1 << (bit % 8)) == 0 {
+                                break;
+                            }
+                            col += 1;
+                        }
+                        painted.mark(x + start, y + row, col - start, 1);
+                    }
+                }
+            } else {
+                painted.mark(x, y, tw, th);
+            }
             coverage_changed = painted.remaining != remaining;
             if painted.remaining == 0 {
                 if self
@@ -790,8 +1007,20 @@ fn send_deferred_resize(
         {
             return;
         }
-        let requires_transition =
-            surface.resize_pending.is_some() && expected == (surface.width, surface.height);
+        let previous_mapping_safe = surface.resize_pending.map_or(
+            !surface.pointer_paused
+                && !surface.awaiting_layout_pixels
+                && !surface.uncertain_multimonitor,
+            |previous| {
+                previous.previous_mapping_safe && !previous.sent && !previous.requires_transition
+            },
+        );
+        let requires_transition = surface.resize_history_uncertain
+            || surface.resize_pending.is_some_and(|previous| {
+                previous.sent
+                    && previous.expected != expected
+                    && expected == (surface.width, surface.height)
+            });
         let Some(revision) = surface.resize_revision.checked_add(1) else {
             surface.pause_pointer("RDP 桌面尺寸请求编号已耗尽");
             return;
@@ -804,12 +1033,19 @@ fn send_deferred_resize(
             .is_ok()
         {
             surface.resize_revision = revision;
+            const MAX_RESIZE_HISTORY: usize = 1024;
+            if surface.resize_requests.len() == MAX_RESIZE_HISTORY {
+                surface.resize_requests.pop_front();
+                surface.resize_history_uncertain = true;
+            }
+            surface.resize_requests.push_back((revision, expected));
             surface.resize_pending = Some(PendingResize {
                 revision,
                 expected,
                 sent: false,
-                requires_transition,
+                requires_transition: requires_transition || surface.resize_history_uncertain,
                 saw_other_size: false,
+                previous_mapping_safe,
             });
             surface.awaiting_layout_pixels = true;
             surface.early_presentable_frame = false;
@@ -977,6 +1213,8 @@ fn queue_monitor_layout(
         has_fresh_pixels: false,
     });
     surface.resize_pending = None;
+    surface.resize_requests.clear();
+    surface.resize_history_uncertain = false;
     surface.paint_deadline = None;
     surface.may_resume_pointer = false;
     surface.desired_layout = Some((monitors.clone(), selected));
@@ -1107,10 +1345,7 @@ impl RdpClientHandle {
         match &event {
             // Window resize must not replace a multi-monitor layout with
             // ActiveStage's single-primary resize message.
-            InputEvent::Resize { width, height }
-                if surface.layout_pending.is_some()
-                    || (surface.display.size_matches && surface.display.sent_layout.len() > 1) =>
-            {
+            InputEvent::Resize { width, height } if surface.blocks_window_resize() => {
                 surface.blocked_resize = Some((*width, *height));
                 return;
             }
@@ -1183,10 +1418,11 @@ impl RdpClientHandle {
                 *x = (*x).min(width - 1).saturating_add(left);
                 *y = (*y).min(height - 1).saturating_add(top);
                 surface.last_pointer = Some((*x, *y, (left, top, width, height)));
-                if surface
-                    .painted_layout_pixels
-                    .as_ref()
-                    .is_some_and(|painted| !painted.contains(*x, *y))
+                if !surface.point_on_monitor(*x, *y)
+                    || surface
+                        .painted_layout_pixels
+                        .as_ref()
+                        .is_some_and(|painted| !painted.contains(*x, *y))
                 {
                     surface.pointer_epoch = None;
                     return;
@@ -1200,6 +1436,7 @@ impl RdpClientHandle {
                     return;
                 };
                 if viewport != surface.viewport()
+                    || !surface.point_on_monitor(x, y)
                     || surface
                         .painted_layout_pixels
                         .as_ref()
@@ -1817,6 +2054,10 @@ fn read_helper_messages<R: std::io::Read>(
                         .store(epoch, Ordering::Release);
                     s.resize_revision = 0;
                     s.resize_pending = None;
+                    s.resize_requests.clear();
+                    s.resize_history_uncertain = false;
+                    s.uncertain_multimonitor = false;
+                    s.layout_needs_server_confirmation = false;
                     remote_offer.generation.store(0, Ordering::Release);
                     s.pressed_buttons.clear();
                     // Coverage and its deadline belong to the old framebuffer.
@@ -1885,6 +2126,25 @@ fn read_helper_messages<R: std::io::Read>(
                     layout_wake.notify_all();
                 }
             }
+            Ok(Some(HostMsg::MaskedTile {
+                x,
+                y,
+                width,
+                height,
+                rgba,
+                painted,
+            })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    if s.closed {
+                        continue;
+                    }
+                    s.blit_masked(x, y, width, height, &rgba, Some(&painted));
+                    let resize = s.finish_matching_layout();
+                    send_deferred_resize(&mut s, &refuse_tx, resize);
+                    ensure_paint_watchdog(&mut s, &reader_surface, &event_tx, &layout_wake);
+                    layout_wake.notify_all();
+                }
+            }
             Ok(Some(HostMsg::EpochClipboardText { epoch, text })) => {
                 let owner = RdpClipboardToken {
                     current: Arc::clone(&remote_offer),
@@ -1909,12 +2169,59 @@ fn read_helper_messages<R: std::io::Read>(
                 if let Ok(mut s) = reader_surface.lock() {
                     if !s.closed && epoch == s.redirect_epoch {
                         let current_size = (s.width, s.height);
-                        if let Some(resize) =
-                            s.resize_pending.as_mut().filter(|r| r.revision == revision)
+                        let sent_size = s
+                            .resize_requests
+                            .iter()
+                            .find_map(|(r, size)| (*r == revision).then_some(*size));
+                        while s
+                            .resize_requests
+                            .front()
+                            .is_some_and(|(r, _)| *r <= revision)
                         {
-                            resize.sent = true;
-                            resize.saw_other_size |= resize.expected != current_size;
+                            s.resize_requests.pop_front();
                         }
+                        if let Some(resize) = s.resize_pending.as_mut() {
+                            if revision == resize.revision {
+                                resize.sent = true;
+                                resize.saw_other_size |= resize.expected != current_size;
+                            } else if revision < resize.revision
+                                && sent_size.is_none_or(|size| size != resize.expected)
+                            {
+                                resize.requires_transition = true;
+                                resize.previous_mapping_safe = false;
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(Some(HostMsg::ResizeRejected { epoch, revision })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    if s.closed || epoch != s.redirect_epoch {
+                        continue;
+                    }
+                    if let Some(resize) = s.resize_pending.filter(|r| r.revision == revision) {
+                        s.resize_pending = None;
+                        s.resize_requests.retain(|(r, _)| *r > revision);
+                        s.resize_history_uncertain = false;
+                        if resize.previous_mapping_safe && !resize.requires_transition {
+                            s.awaiting_layout_pixels = false;
+                            s.clear_before_layout_pixels = false;
+                            s.painted_layout_pixels = None;
+                            s.paint_deadline = None;
+                            s.invalidate_pointer_mapping();
+                            s.display.error = Some("桌面尺寸请求发送超时".into());
+                        } else {
+                            s.may_resume_pointer = false;
+                            s.pause_pointer("桌面尺寸请求发送超时");
+                        }
+                        layout_wake.notify_all();
+                    }
+                }
+            }
+            Ok(Some(HostMsg::MonitorLayoutObserved { epoch, monitors })) => {
+                if let Ok(mut s) = reader_surface.lock() {
+                    if !s.closed && epoch == s.redirect_epoch {
+                        s.observe_monitor_layout(&monitors);
                     }
                 }
             }
@@ -2108,6 +2415,563 @@ impl super::SessionManager {
 #[cfg(test)]
 mod rdp_presentation_tests {
     use super::*;
+
+    #[test]
+    fn issue97_unsolicited_same_size_single_monitor_revokes_old_multimonitor_mapping() {
+        let mut surface = Surface::new(400, 200);
+        surface.display.sent_layout = monitors();
+        surface.match_layout_size();
+        surface.selected_monitor = Some(1);
+        surface.observe_monitor_layout(&[MonitorGeometry {
+            left: 0,
+            top: 0,
+            width: 400,
+            height: 200,
+            primary: true,
+        }]);
+        assert!(
+            surface.pointer_paused && surface.uncertain_multimonitor,
+            "same-size unsolicited topology change retained the old input mapping"
+        );
+    }
+
+    #[test]
+    fn issue97_observed_single_monitor_resize_still_recovers_input() {
+        let mut surface = Surface::new(400, 200);
+        let mut primary = monitors()[1].clone();
+        primary.width = 400;
+        surface.display.sent_layout = vec![primary];
+        surface.match_layout_size();
+        surface.generation = 1;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        handle.send_input(InputEvent::Resize {
+            width: 600,
+            height: 200,
+        });
+        commands.recv_timeout(Duration::from_secs(2)).unwrap();
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 1,
+            },
+        );
+        helper_resize(&host, &handle, 600, 200);
+        let frame = handle.frame_if_newer(1).unwrap();
+        assert!(frame.rdp_input_epoch.is_some());
+        assert!(!handle.surface.lock().unwrap().pointer_paused);
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_framed_wrong_same_size_topology_never_grants_input() {
+        let mut old = monitors();
+        old[1].width = 400;
+        let mut requested = monitors();
+        requested[0].left = -400;
+        requested[0].width = 400;
+        let mut surface = Surface::new(600, 200);
+        surface.display.sent_layout = old.clone();
+        surface.match_layout_size();
+        surface.generation = 1;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        handle
+            .configure_monitors(requested.clone(), Some(1))
+            .unwrap();
+        let (request_id, _) = helper_request(&commands);
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutResult {
+                epoch: 0,
+                request_id,
+                result: Ok(()),
+            },
+        );
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutObserved {
+                epoch: 0,
+                monitors: monitor_geometry(&old),
+            },
+        );
+        helper_send(
+            &host,
+            HostMsg::Resized {
+                width: 600,
+                height: 200,
+            },
+        );
+        assert!(matches!(
+            handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            RdpClientEvent::Resized { .. }
+        ));
+        helper_send(
+            &host,
+            HostMsg::Tile {
+                x: 0,
+                y: 0,
+                width: 600,
+                height: 200,
+                rgba: [1, 2, 3, 255].repeat(600 * 200),
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        handle
+            .event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let old_frame = handle.frame_if_newer(0).unwrap();
+        assert_eq!(old_frame.rdp_input_epoch, None);
+        assert!(handle.surface.lock().unwrap().layout_pending.is_some());
+        helper_send(
+            &host,
+            HostMsg::MonitorLayoutObserved {
+                epoch: 0,
+                monitors: monitor_geometry(&requested),
+            },
+        );
+        helper_resize(&host, &handle, 600, 200);
+        assert!(handle
+            .frame_if_newer(old_frame.generation)
+            .unwrap()
+            .rdp_input_epoch
+            .is_some());
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_unexpected_multimonitor_observation_blocks_window_resize() {
+        let mut surface = Surface::new(400, 200);
+        surface.observe_monitor_layout(&monitor_geometry(&monitors()));
+        let (handle, commands) = handle(surface);
+        handle.send_input(InputEvent::Resize {
+            width: 800,
+            height: 600,
+        });
+        assert!(
+            commands.try_recv().is_err(),
+            "server-reported multi-monitor geometry must suppress single-monitor resize"
+        );
+    }
+
+    #[test]
+    fn issue97_corner_touching_monitors_recover_without_painting_empty_quadrants() {
+        let mut surface = Surface::new(400, 400);
+        let mut layout = monitors();
+        layout[0].left = 200;
+        layout[0].top = 200;
+        layout[1].left = 0;
+        layout[1].top = 0;
+        assert!(monitor_bounds(&layout).is_ok());
+        surface.display.sent_layout = layout;
+        surface.match_layout_size();
+        surface.awaiting_layout_pixels = true;
+        surface.clear_before_layout_pixels = true;
+        surface.blit(0, 0, 200, 200, &[1, 2, 3, 255].repeat(200 * 200));
+        surface.blit(200, 200, 200, 200, &[4, 5, 6, 255].repeat(200 * 200));
+        assert!(surface.painted_layout_pixels.is_none());
+        assert!(!surface.point_on_monitor(300, 10));
+        assert!(surface.point_on_monitor(300, 300));
+    }
+
+    #[test]
+    fn issue97_same_size_old_graphics_reset_cannot_confirm_new_topology() {
+        let mut old = monitors();
+        old[1].width = 400;
+        let mut requested = monitors();
+        requested[0].left = -400;
+        requested[0].width = 400;
+        assert_eq!(monitor_bounds(&old).unwrap().2, 600);
+        assert_eq!(monitor_bounds(&requested).unwrap().2, 600);
+        let mut surface = Surface::new(600, 200);
+        surface.display.sent_layout = old.clone();
+        surface.match_layout_size();
+        surface.layout_pending = Some(PendingLayout {
+            id: 1,
+            monitors: requested.clone(),
+            selected: Some(1),
+            phase: LayoutPhase::WaitingForHelper,
+            deadline: Instant::now() + LAYOUT_HELPER_TIMEOUT,
+            previous_layout_safe: true,
+            previous_may_resume_pointer: true,
+            has_fresh_pixels: false,
+        });
+        surface.layout_result(1, Ok(()), Instant::now());
+        // Same dimensions alone cannot distinguish the old server topology.
+        surface.observe_monitor_layout(&monitor_geometry(&old));
+        surface.resize(600, 200);
+        surface.blit(0, 0, 600, 200, &[1, 2, 3, 255].repeat(600 * 200));
+        surface.finish_matching_layout();
+        assert!(
+            surface.layout_pending.is_some(),
+            "a same-size reset with no topology proof granted input"
+        );
+        surface.observe_monitor_layout(&[]);
+        assert!(
+            surface.layout_needs_server_confirmation,
+            "an omitted monitor list is not proof"
+        );
+        surface.observe_monitor_layout(&monitor_geometry(&requested));
+        surface.resize(600, 200);
+        surface.blit(0, 0, 600, 200, &[4, 5, 6, 255].repeat(600 * 200));
+        surface.finish_matching_layout();
+        assert!(
+            surface.layout_pending.is_none(),
+            "the matching topology and fresh pixels must recover input"
+        );
+    }
+
+    #[test]
+    fn issue97_server_coalesced_resize_recovers_after_same_size_reset() {
+        let mut surface = Surface::new(400, 200);
+        surface.generation = 1;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        handle.send_input(InputEvent::Resize {
+            width: 600,
+            height: 200,
+        });
+        commands.recv_timeout(Duration::from_secs(2)).unwrap();
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 1,
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        handle
+            .event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        handle.send_input(InputEvent::Resize {
+            width: 400,
+            height: 200,
+        });
+        commands.recv_timeout(Duration::from_secs(2)).unwrap();
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 2,
+            },
+        );
+        helper_resize(&host, &handle, 400, 200);
+        assert!(handle.frame_if_newer(1).unwrap().rdp_input_epoch.is_some());
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_masked_tile_crosses_framed_ipc_without_granting_gap_input() {
+        let mut surface = Surface::new(2, 1);
+        surface.awaiting_layout_pixels = true;
+        surface.clear_before_layout_pixels = true;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        helper_send(
+            &host,
+            HostMsg::MaskedTile {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 1,
+                rgba: vec![1, 2, 3, 255, 9, 9, 9, 255],
+                painted: vec![0b01],
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        handle
+            .event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let frame = handle.frame_if_newer(0).unwrap();
+        handle.send_pointer_input(InputEvent::MouseMove { x: 0, y: 0 }, frame.rdp_input_epoch);
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_secs(2)).unwrap(),
+            ClientMsg::EpochInput {
+                event: InputEvent::MouseMove { x: 0, y: 0 },
+                ..
+            }
+        ));
+        handle.send_pointer_input(InputEvent::MouseMove { x: 1, y: 0 }, frame.rdp_input_epoch);
+        assert!(commands.try_recv().is_err());
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_unsent_resize_timeout_restores_the_known_mapping() {
+        let mut surface = Surface::new(400, 200);
+        surface.generation = 1;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        handle.send_input(InputEvent::Resize {
+            width: 600,
+            height: 200,
+        });
+        commands.recv_timeout(Duration::from_secs(2)).unwrap();
+        helper_send(
+            &host,
+            HostMsg::ResizeRejected {
+                epoch: 0,
+                revision: 1,
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        handle
+            .event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let frame = handle.frame_if_newer(1).unwrap();
+        assert!(frame.rdp_input_epoch.is_some());
+        assert!(!handle.surface.lock().unwrap().closed);
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_masked_tile_never_authorizes_unpainted_pixels() {
+        let mut surface = Surface::new(2, 1);
+        surface.awaiting_layout_pixels = true;
+        surface.clear_before_layout_pixels = true;
+        surface.blit_masked(0, 0, 2, 1, &[1, 2, 3, 255, 9, 9, 9, 255], Some(&[0b01]));
+        let coverage = surface.painted_layout_pixels.as_ref().unwrap();
+        assert!(coverage.contains(0, 0));
+        assert!(!coverage.contains(1, 0));
+        let generation = surface.generation;
+        surface.blit_masked(0, 0, 2, 1, &[0; 8], Some(&[0b1000_0000]));
+        assert_eq!(
+            surface.generation, generation,
+            "out-of-range bits are malformed"
+        );
+    }
+
+    #[test]
+    fn issue97_coalesced_resize_back_to_original_recovers() {
+        let mut surface = Surface::new(400, 200);
+        surface.generation = 1;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        for width in [600, 400] {
+            handle.send_input(InputEvent::Resize { width, height: 200 });
+            assert!(
+                matches!(commands.recv_timeout(Duration::from_secs(2)).unwrap(),
+                ClientMsg::EpochInput { event: InputEvent::Resize { width: w, .. }, .. } if w == width)
+            );
+        }
+        // The helper coalesced revision 1 before writing; only revision 2 reached the wire.
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 2,
+            },
+        );
+        helper_send(
+            &host,
+            HostMsg::Tile {
+                x: 0,
+                y: 0,
+                width: 400,
+                height: 200,
+                rgba: [11, 12, 13, 255].repeat(400 * 200),
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        assert!(matches!(
+            handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap(),
+            RdpClientEvent::Notice(_)
+        ));
+        let frame = handle
+            .frame_if_newer(1)
+            .expect("coalesced resize froze the picture");
+        assert_eq!(&frame.rgba[..4], &[11, 12, 13, 255]);
+        assert!(
+            frame.rdp_input_epoch.is_some(),
+            "an unsent intermediate resize cannot change the mapping"
+        );
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_rejected_intermediate_resize_keeps_video_live_without_input() {
+        let mut surface = Surface::new(400, 200);
+        surface.generation = 1;
+        let (handle, commands) = handle(surface);
+        let (host, reader) = synthetic_helper(&handle);
+        handle.send_input(InputEvent::Resize {
+            width: 600,
+            height: 200,
+        });
+        commands.recv_timeout(Duration::from_secs(2)).unwrap();
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 1,
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        handle
+            .event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        handle.send_input(InputEvent::Resize {
+            width: 400,
+            height: 200,
+        });
+        commands.recv_timeout(Duration::from_secs(2)).unwrap();
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 2,
+            },
+        );
+        helper_send(
+            &host,
+            HostMsg::Tile {
+                x: 0,
+                y: 0,
+                width: 400,
+                height: 200,
+                rgba: [21, 22, 23, 255].repeat(400 * 200),
+            },
+        );
+        helper_send(&host, HostMsg::InputDiscarded);
+        handle
+            .event_rx
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let frame = handle
+            .frame_if_newer(1)
+            .expect("unconfirmed resize froze the picture");
+        assert_eq!(&frame.rgba[..4], &[21, 22, 23, 255]);
+        assert_eq!(
+            frame.rdp_input_epoch, None,
+            "a delayed intermediate resize may still arrive"
+        );
+        close_synthetic_helper(host, reader, &handle);
+    }
+
+    #[test]
+    fn issue97_same_size_layout_cannot_authorize_a_stale_tile() {
+        let mut surface = Surface::new(600, 200);
+        let mut old = monitors();
+        old[1].width = 400;
+        surface.display.sent_layout = old;
+        surface.match_layout_size();
+        let mut changed = monitors();
+        changed[0].left = -400;
+        changed[0].width = 400;
+        surface.layout_pending = Some(PendingLayout {
+            id: 1,
+            monitors: changed.clone(),
+            selected: Some(0),
+            phase: LayoutPhase::WaitingForHelper,
+            deadline: Instant::now() + LAYOUT_HELPER_TIMEOUT,
+            previous_layout_safe: true,
+            previous_may_resume_pointer: true,
+            has_fresh_pixels: false,
+        });
+        surface.layout_result(1, Ok(()), Instant::now());
+        surface.blit(0, 0, 600, 200, &[31, 32, 33, 255].repeat(600 * 200));
+        surface.finish_matching_layout();
+        assert!(
+            surface.layout_pending.is_some(),
+            "same-sized old tile granted a new layout lease"
+        );
+        surface.observe_monitor_layout(&monitor_geometry(&changed));
+        surface.resize(600, 200);
+        surface.blit(0, 0, 600, 200, &[41, 42, 43, 255].repeat(600 * 200));
+        surface.finish_matching_layout();
+        assert!(
+            surface.layout_pending.is_none(),
+            "fresh pixels after reset must recover the layout"
+        );
+    }
+
+    #[test]
+    fn issue97_nonrectangular_monitors_complete_without_painting_gaps() {
+        let mut surface = Surface::new(400, 300);
+        let mut layout = monitors();
+        layout[0].left = 200;
+        layout[0].top = 100;
+        layout[1].left = 0;
+        layout[1].top = 0;
+        assert!(monitor_bounds(&layout).is_ok());
+        surface.display.sent_layout = layout;
+        surface.match_layout_size();
+        surface.awaiting_layout_pixels = true;
+        surface.clear_before_layout_pixels = true;
+        surface.blit(0, 0, 200, 200, &[1, 2, 3, 255].repeat(200 * 200));
+        surface.blit(200, 100, 200, 200, &[4, 5, 6, 255].repeat(200 * 200));
+        assert!(
+            surface.painted_layout_pixels.is_none(),
+            "empty monitor gaps cannot be repainted"
+        );
+        assert!(
+            !surface.point_on_monitor(300, 10),
+            "the gap must not receive pointer input"
+        );
+        let (handle, commands) = handle(surface);
+        let frame = handle.frame_if_newer(0).unwrap();
+        handle.send_pointer_input(
+            InputEvent::MouseMove { x: 300, y: 10 },
+            frame.rdp_input_epoch,
+        );
+        assert!(commands.try_recv().is_err());
+        handle.send_pointer_input(
+            InputEvent::MouseMove { x: 10, y: 10 },
+            frame.rdp_input_epoch,
+        );
+        assert!(matches!(
+            commands.recv_timeout(Duration::from_secs(2)).unwrap(),
+            ClientMsg::EpochInput {
+                event: InputEvent::MouseMove { x: 10, y: 10 },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn issue97_uncertain_multimonitor_failure_never_releases_window_resize() {
+        let mut surface = Surface::new(400, 200);
+        surface.display.sent_layout = monitors();
+        surface.match_layout_size();
+        surface.desired_layout = Some((monitors(), Some(1)));
+        surface.blocked_resize = Some((800, 600));
+        surface.layout_pending = Some(PendingLayout {
+            id: 1,
+            monitors: monitors(),
+            selected: Some(1),
+            phase: LayoutPhase::WaitingForSize,
+            deadline: Instant::now(),
+            previous_layout_safe: false,
+            previous_may_resume_pointer: false,
+            has_fresh_pixels: false,
+        });
+        assert_eq!(
+            surface.fail_layout("timeout", false),
+            None,
+            "an unknown multimonitor layout must not emit a single-monitor resize"
+        );
+        let (handle, commands) = handle(surface);
+        handle.send_input(InputEvent::Resize {
+            width: 900,
+            height: 700,
+        });
+        assert!(
+            commands.try_recv().is_err(),
+            "later window resize escaped the uncertain-layout guard"
+        );
+    }
 
     #[test]
     fn painted_pixel_coverage_handles_rows_and_word_boundaries() {
@@ -2787,6 +3651,36 @@ mod rdp_presentation_tests {
         width: u16,
         height: u16,
     ) {
+        let (epoch, monitors) = {
+            let surface = handle.surface.lock().unwrap();
+            let layout = surface
+                .layout_pending
+                .as_ref()
+                .map(|p| &p.monitors)
+                .filter(|layout| {
+                    monitor_bounds(layout).is_ok_and(|(_, _, w, h)| (w, h) == (width, height))
+                })
+                .or_else(|| {
+                    (surface.display.size_matches
+                        && (surface.width, surface.height) == (width, height)
+                        && !surface.display.sent_layout.is_empty())
+                    .then_some(&surface.display.sent_layout)
+                });
+            let monitors = layout.map_or_else(
+                || {
+                    vec![MonitorGeometry {
+                        left: 0,
+                        top: 0,
+                        width,
+                        height,
+                        primary: true,
+                    }]
+                },
+                |layout| monitor_geometry(layout),
+            );
+            (surface.redirect_epoch, monitors)
+        };
+        helper_send(tx, HostMsg::MonitorLayoutObserved { epoch, monitors });
         helper_send(tx, HostMsg::Resized { width, height });
         assert!(matches!(
             handle.event_rx.recv_timeout(Duration::from_secs(2)).unwrap(),
@@ -3083,16 +3977,7 @@ mod rdp_presentation_tests {
             },
         );
         helper_resize(&host, &handle, 200, 200);
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 900,
-                    height: 700
-                }
-            }
-        ));
+        assert!(commands.try_recv().is_err());
         assert!(handle
             .surface
             .lock()
@@ -3137,8 +4022,7 @@ mod rdp_presentation_tests {
             (200, 0, 200, 200)
         );
 
-        // Channel closure after a usable multi-screen layout also releases the
-        // resize most recently suppressed while the layout was active.
+        // Losing DisplayControl does not mean the server abandoned its layout.
         handle.send_input(InputEvent::Resize {
             width: 1000,
             height: 800,
@@ -3151,17 +4035,11 @@ mod rdp_presentation_tests {
             },
         );
         helper_resize(&host, &handle, 400, 200);
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 1000,
-                    height: 800
-                }
-            }
-        ));
-        assert_eq!(handle.surface.lock().unwrap().viewport(), (0, 0, 400, 200));
+        assert!(commands.try_recv().is_err());
+        assert_eq!(
+            handle.surface.lock().unwrap().viewport(),
+            (200, 0, 200, 200)
+        );
         close_synthetic_helper(host, reader, &handle);
     }
 
@@ -3229,13 +4107,13 @@ mod rdp_presentation_tests {
         );
         helper_resize(&host, &handle, 200, 200);
         assert!(matches!(
-            commands.recv().unwrap(),
+            commands.recv_timeout(Duration::from_secs(2)).unwrap(),
             ClientMsg::EpochInput {
-                epoch: _,
                 event: InputEvent::Resize {
                     width: 900,
                     height: 700
-                }
+                },
+                ..
             }
         ));
         close_synthetic_helper(host, reader, &handle);
@@ -3520,9 +4398,17 @@ mod rdp_presentation_tests {
                 .unwrap(),
             RdpClientEvent::Notice(_)
         ));
-        assert!(handle.frame_if_newer(1).is_none());
+        assert_eq!(handle.frame_if_newer(1).unwrap().rdp_input_epoch, None);
         handle.send_pointer_input(InputEvent::MouseMove { x: 10, y: 10 }, old);
         assert!(commands.try_recv().is_err());
+        // Revision 2 actually reached the server, unlike a coalesced request.
+        helper_send(
+            &host,
+            HostMsg::ResizeSent {
+                epoch: 0,
+                revision: 2,
+            },
+        );
         helper_send(
             &host,
             HostMsg::ResizeSent {
@@ -3539,8 +4425,9 @@ mod rdp_presentation_tests {
                 .unwrap(),
             RdpClientEvent::Notice(_)
         ));
-        assert!(
-            handle.frame_if_newer(1).is_none(),
+        assert_eq!(
+            handle.frame_if_newer(1).unwrap().rdp_input_epoch,
+            None,
             "an old same-size tile after the write cannot prove A→B→A completed"
         );
         for width in [600, 400] {
@@ -3582,7 +4469,7 @@ mod rdp_presentation_tests {
             let (handle, commands) = handle(surface);
             let (host, reader) = synthetic_helper(&handle);
             helper_send(&host, HostMsg::DisplayControlReset { epoch: 1 });
-            let (request_id, _) = helper_request(&commands);
+            let (request_id, requested) = helper_request(&commands);
             helper_send(
                 &host,
                 HostMsg::Resized {
@@ -3633,6 +4520,27 @@ mod rdp_presentation_tests {
                     frame.rdp_input_epoch.is_none(),
                     "a pre-send frame cannot authorize the new layout"
                 );
+                helper_send(
+                    &host,
+                    HostMsg::MonitorLayoutObserved {
+                        epoch: 1,
+                        monitors: monitor_geometry(&requested),
+                    },
+                );
+                helper_send(
+                    &host,
+                    HostMsg::Resized {
+                        width: 200,
+                        height: 200,
+                    },
+                );
+                assert!(matches!(
+                    handle
+                        .event_rx
+                        .recv_timeout(Duration::from_secs(2))
+                        .unwrap(),
+                    RdpClientEvent::Resized { .. }
+                ));
                 helper_send(
                     &host,
                     HostMsg::Tile {
@@ -4166,16 +5074,10 @@ mod rdp_presentation_tests {
             .display
             .sent_layout
             .is_empty());
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 900,
-                    height: 700
-                }
-            }
-        ));
+        assert!(
+            commands.try_recv().is_err(),
+            "uncertain multi-monitor layout must retain the resize"
+        );
         close_synthetic_helper(host, reader, &handle);
     }
 
@@ -4246,7 +5148,7 @@ mod rdp_presentation_tests {
     }
 
     #[test]
-    fn synthetic_helper_deadlines_cancel_and_release_both_waiting_phases() {
+    fn synthetic_helper_deadlines_cancel_and_keep_resize_for_uncertain_layouts() {
         let (handle, commands) = handle(Surface::new(200, 200));
         let (host, reader) = synthetic_helper(&handle);
         handle.configure_monitors(monitors(), Some(1)).unwrap();
@@ -4267,16 +5169,7 @@ mod rdp_presentation_tests {
         assert!(
             matches!(commands.recv_timeout(Duration::from_secs(2)).unwrap(), ClientMsg::EpochInput { epoch: _, event: InputEvent::CancelMonitorLayout { request_id } } if request_id == first)
         );
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 640,
-                    height: 480
-                }
-            }
-        ));
+        assert!(commands.try_recv().is_err());
         assert!(matches!(
             handle
                 .event_rx
@@ -4336,16 +5229,7 @@ mod rdp_presentation_tests {
         assert!(
             matches!(commands.recv_timeout(Duration::from_secs(2)).unwrap(), ClientMsg::EpochInput { epoch: _, event: InputEvent::CancelMonitorLayout { request_id } } if request_id == retry)
         );
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 800,
-                    height: 600
-                }
-            }
-        ));
+        assert!(commands.try_recv().is_err());
         assert!(matches!(
             handle
                 .event_rx
@@ -4395,16 +5279,7 @@ mod rdp_presentation_tests {
         assert!(
             matches!(commands.recv().unwrap(), ClientMsg::EpochInput { epoch: _, event: InputEvent::CancelMonitorLayout { request_id } } if request_id == id)
         );
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 640,
-                    height: 480
-                }
-            }
-        ));
+        assert!(commands.try_recv().is_err());
         let surface = handle.surface.lock().unwrap();
         assert!(surface.layout_pending.is_none());
         assert!(surface.display.sent_layout.is_empty());
@@ -4454,7 +5329,7 @@ mod rdp_presentation_tests {
     }
 
     #[test]
-    fn channel_close_after_send_releases_resize_without_waiting_for_size_timeout() {
+    fn channel_close_after_send_keeps_resize_when_layout_is_uncertain() {
         let (handle, commands) = handle(Surface::new(200, 200));
         let (host, reader) = synthetic_helper(&handle);
         helper_send(
@@ -4499,16 +5374,7 @@ mod rdp_presentation_tests {
             },
         );
         helper_resize(&host, &handle, 200, 200);
-        assert!(matches!(
-            commands.recv().unwrap(),
-            ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 640,
-                    height: 480
-                }
-            }
-        ));
+        assert!(commands.try_recv().is_err());
         assert!(handle.surface.lock().unwrap().layout_pending.is_none());
         close_synthetic_helper(host, reader, &handle);
     }
@@ -4793,7 +5659,7 @@ mod rdp_presentation_tests {
         assert_eq!(restored.session_options.rdp_monitors.unwrap().len(), 2);
     }
     #[test]
-    fn failed_layout_does_not_keep_suppressing_window_resize() {
+    fn unmatched_multimonitor_layout_still_suppresses_window_resize() {
         let mut surface = Surface::new(400, 200);
         surface.display.sent_layout = monitors();
         surface.display.error = Some("DisplayControl channel disappeared".into());
@@ -4803,16 +5669,7 @@ mod rdp_presentation_tests {
             width: 800,
             height: 600,
         });
-        assert!(matches!(
-            rx.try_recv(),
-            Ok(ClientMsg::EpochInput {
-                epoch: _,
-                event: InputEvent::Resize {
-                    width: 800,
-                    height: 600
-                }
-            })
-        ));
+        assert!(rx.try_recv().is_err());
     }
 
     #[test]
