@@ -21,6 +21,7 @@ struct Shield<'a> {
     escape: Option<Message>,
     mission_input: bool,
     mission_scope: String,
+    form_group: Option<FocusGroup>,
 }
 
 #[derive(Default)]
@@ -38,6 +39,7 @@ pub(crate) fn shield(child: Element<'_, Message>, escape: Option<Message>) -> El
         escape,
         mission_input: false,
         mission_scope: String::new(),
+        form_group: None,
     })
 }
 
@@ -49,6 +51,7 @@ pub(crate) fn background(child: Element<'_, Message>, blocked: bool) -> Element<
         escape: None,
         mission_input: false,
         mission_scope: String::new(),
+        form_group: None,
     })
 }
 
@@ -60,6 +63,22 @@ pub(crate) fn mission_name_input(child: Element<'_, Message>) -> Element<'_, Mes
         escape: None,
         mission_input: true,
         mission_scope: accessibility::current_build_scope(),
+        form_group: None,
+    })
+}
+
+pub(crate) fn form_input<'a>(
+    child: Element<'a, Message>,
+    group: &FocusGroup,
+) -> Element<'a, Message> {
+    Element::new(Shield {
+        child,
+        capture_input: false,
+        block_operations: false,
+        escape: None,
+        mission_input: false,
+        mission_scope: String::new(),
+        form_group: Some(group.clone()),
     })
 }
 
@@ -184,16 +203,48 @@ impl Widget<Message, Theme, iced::Renderer> for Shield<'_> {
         {
             return;
         }
-        self.child.as_widget_mut().update(
-            &mut tree.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        );
+        if let Some(group) = &self.form_group {
+            let activation = group.form_activation();
+            let mut messages = Vec::new();
+            let mut child_shell = Shell::new(&mut messages);
+            self.child.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                layout,
+                cursor,
+                renderer,
+                clipboard,
+                &mut child_shell,
+                viewport,
+            );
+            shell.merge(child_shell, |message| {
+                if matches!(
+                    &message,
+                    Message::SubmitAuthPrompt { .. }
+                        | Message::ConfirmConnection
+                        | Message::ConfirmConnectionFor(_)
+                ) {
+                    Message::DialogFocusActivate {
+                        activation: activation.clone(),
+                        action: Box::new(message),
+                        lease: None,
+                    }
+                } else {
+                    message
+                }
+            });
+        } else {
+            self.child.as_widget_mut().update(
+                &mut tree.children[0],
+                event,
+                layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
         // iced::stack otherwise forwards uncaptured keyboard and IME events to
         // a focused input underneath the scrim, including in another HWND.
         if self.capture_input {
@@ -302,6 +353,9 @@ pub(crate) fn is_refusal(action: &Message) -> bool {
                 | adit_session::HostKeyDecision::RejectAndRecord,
             ..
         } | Message::CancelOpenHyperlink(_)
+            | Message::CancelAuthPrompt { .. }
+            | Message::CancelConnection
+            | Message::CancelConnectionFor(_)
     )
 }
 
@@ -608,6 +662,20 @@ impl FocusGroup {
         })
     }
 
+    fn form_activation(&self) -> Option<FocusActivation> {
+        let revision = self.revision();
+        let state = revision.0.lock().ok()?;
+        if state.pending || state.blocked {
+            return None;
+        }
+        Some(FocusActivation {
+            revision: revision.clone(),
+            value: state.revision,
+            index: None,
+            pending_target: None,
+        })
+    }
+
     fn inherit(&self, old: &Self) {
         // Keep outstanding tickets tied to the same window and dialog through
         // view rebuilds; a new scope instead gets a fresh revision.
@@ -697,10 +765,25 @@ pub(crate) struct ButtonFocus {
 struct FocusButton<'a> {
     child: Element<'a, Message>,
     focus: ButtonFocus,
+    capture_keyboard: bool,
 }
 
 pub(crate) fn button(child: Element<'_, Message>, focus: ButtonFocus) -> Element<'_, Message> {
-    Element::new(FocusButton { child, focus })
+    Element::new(FocusButton {
+        child,
+        focus,
+        capture_keyboard: true,
+    })
+}
+
+/// Form fields own their keyboard input, while their actions still need the
+/// same ordered, window-scoped activation lease as other confirmations.
+pub(crate) fn form_action(child: Element<'_, Message>, focus: ButtonFocus) -> Element<'_, Message> {
+    Element::new(FocusButton {
+        child,
+        focus,
+        capture_keyboard: false,
+    })
 }
 
 fn confirmation_key(
@@ -871,12 +954,14 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        if confirmation_key(
-            &self.focus,
-            tree.state.downcast_ref::<FocusState>(),
-            event,
-            shell,
-        ) {
+        if self.capture_keyboard
+            && confirmation_key(
+                &self.focus,
+                tree.state.downcast_ref::<FocusState>(),
+                event,
+                shell,
+            )
+        {
             return;
         }
         match event {
@@ -992,6 +1077,34 @@ impl Widget<Message, Theme, iced::Renderer> for FocusButton<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn mfa_cancel_is_a_security_refusal() {
+        assert!(is_refusal(&Message::CancelAuthPrompt {
+            session_id: SessionId::new(),
+            challenge_id: 1
+        }));
+        assert!(!is_refusal(&Message::SubmitAuthPrompt {
+            session_id: SessionId::new(),
+            challenge_id: 1
+        }));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn queued_form_submit_and_later_refusal_do_not_send_answers() {
+        let group = FocusGroup::new();
+        let old_submit = group.form_activation().unwrap();
+        let mut cancel = None;
+        assert!(group.revision().enqueue_activation(Some(0), true, |value| {
+            cancel = Some(value);
+            true
+        }));
+        assert!(old_submit.commit(|| true, || ()).is_none());
+        assert!(group.form_activation().is_none());
+        assert!(cancel.unwrap().commit(|| true, || ()).is_some());
+    }
 
     fn focused_action(message: &Message) -> &Message {
         match message {

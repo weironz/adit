@@ -156,6 +156,8 @@ fn input_message(message: &Message) -> bool {
             | Message::AuthPromptInput { .. }
             | Message::SubmitAuthPrompt { .. }
             | Message::CancelAuthPrompt { .. }
+            | Message::ConfirmConnectionFor(_)
+            | Message::CancelConnectionFor(_)
             | Message::TerminalInputChanged(_)
             | Message::CommandHistoryPrev
             | Message::CommandHistoryNext
@@ -471,6 +473,8 @@ impl DesktopApplication {
                         | Message::RespondHostKey { .. }
                         | Message::ConfirmConnection
                         | Message::CancelConnection
+                        | Message::ConfirmConnectionFor(_)
+                        | Message::CancelConnectionFor(_)
                         | Message::ConnectionPasswordChanged(_)
                         | Message::RememberConnectionPasswordChanged(_)
                 ))
@@ -516,6 +520,8 @@ impl DesktopApplication {
             }
             Message::ConfirmConnection
             | Message::CancelConnection
+            | Message::ConfirmConnectionFor(_)
+            | Message::CancelConnectionFor(_)
             | Message::ConnectionPasswordChanged(_)
             | Message::RememberConnectionPasswordChanged(_)
                 if self.app.native_dialog_window.unwrap_or(self.primary) != id =>
@@ -1421,6 +1427,7 @@ mod tests {
             .unwrap()
             .profile_id;
         desktop.app.connection_dialog = Some(ConnectionDialog {
+            id: next_connection_dialog_id(),
             profile_id: profile,
             retry_session: Some(ids[0]),
             title: "synthetic".into(),
@@ -1946,6 +1953,7 @@ mod tests {
             let epoch = accessibility::test_scope_epoch(desktop.primary);
             let scheduled = epoch.load(std::sync::atomic::Ordering::SeqCst);
             desktop.app.connection_dialog = Some(ConnectionDialog {
+                id: next_connection_dialog_id(),
                 profile_id: desktop
                     .app
                     .manager

@@ -1619,7 +1619,29 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RememberConnectionPasswordChanged(remember) => {
             app.remember_connection_password = remember;
         }
+        Message::ConfirmConnectionFor(id) => {
+            if app
+                .connection_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                return update_message(app, Message::ConfirmConnection);
+            }
+        }
+        Message::CancelConnectionFor(id) => {
+            if app
+                .connection_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                return update_message(app, Message::CancelConnection);
+            }
+        }
         Message::ConfirmConnection => {
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            if accessibility::acceptance_confirm_connection(app) {
+                return Task::none();
+            }
             confirm_connection(app);
         }
         Message::CancelConnection => {

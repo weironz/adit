@@ -179,6 +179,10 @@ struct Shared {
     #[cfg(feature = "native-accessibility-acceptance")]
     invoke_enqueued: std::sync::atomic::AtomicU64,
     #[cfg(feature = "native-accessibility-acceptance")]
+    plain_click_enqueued: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "native-accessibility-acceptance")]
+    plain_click_drained: std::sync::atomic::AtomicU64,
+    #[cfg(feature = "native-accessibility-acceptance")]
     stale_focus_rejected: std::sync::atomic::AtomicU64,
 }
 
@@ -340,6 +344,7 @@ impl accesskit::ActionHandler for Actions {
                     if queued {
                         if let Ok(state) = self.state.lock() {
                             state.invoke_enqueued.fetch_add(1, Ordering::Relaxed);
+                            state.plain_click_enqueued.fetch_add(1, Ordering::Relaxed);
                         }
                     }
                     let _ = queued;
@@ -358,6 +363,8 @@ impl accesskit::ActionHandler for Actions {
         }
         #[cfg(feature = "native-accessibility-acceptance")]
         let focus_request = out.action == Action::Focus;
+        #[cfg(feature = "native-accessibility-acceptance")]
+        let click_request = out.action == Action::Click;
         let queued = self.tx.try_send(out);
         #[cfg(feature = "native-accessibility-acceptance")]
         if focus_request && queued.is_ok() {
@@ -365,6 +372,12 @@ impl accesskit::ActionHandler for Actions {
                 state
                     .focus_enqueued
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        #[cfg(feature = "native-accessibility-acceptance")]
+        if click_request && queued.is_ok() {
+            if let Ok(state) = self.state.lock() {
+                state.plain_click_enqueued.fetch_add(1, Ordering::Relaxed);
             }
         }
         let _ = queued;
@@ -506,6 +519,10 @@ pub(super) fn register(id: window::Id, raw: isize) -> bool {
             #[cfg(feature = "native-accessibility-acceptance")]
             invoke_enqueued: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
+            plain_click_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
+            plain_click_drained: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
             stale_focus_rejected: std::sync::atomic::AtomicU64::new(0),
         }));
         let (tx, rx) = mpsc::sync_channel(64);
@@ -628,10 +645,16 @@ pub(super) fn publish(
         let mut live_ids: HashSet<_> = rendered.iter().map(|r| r.id).collect();
         let visible: Vec<_> = rendered.into_iter().filter(|r| r.layer == layer).collect();
         let valid: HashSet<_> = visible.iter().map(|r| r.id).collect();
+        let labels: HashMap<_, _> = visible
+            .iter()
+            .filter(|item| matches!(item.control.kind, Kind::Label))
+            .map(|item| (item.control.key.clone(), item.id))
+            .collect();
         let mut nodes = HashMap::new();
         let mut children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
         let mut routes = HashMap::new();
         let mut focused = ROOT;
+        let mut focused_input = false;
         for item in visible {
             let control = item.control;
             let role = match control.kind {
@@ -654,12 +677,17 @@ pub(super) fn publish(
                 node.set_modal();
             }
             node.set_author_id(format!("{namespace}/{}", control.key));
+            if let Some(label) = control.labelled_by.as_ref().and_then(|key| labels.get(key)) {
+                node.set_labelled_by(vec![*label]);
+            }
             node.set_bounds(rect(item.bounds));
             if control.focus.is_some() {
                 node.add_action(Action::Focus);
             }
-            if item.focused {
+            let input = matches!(control.kind, Kind::Edit | Kind::Protected);
+            if item.focused && (input || !focused_input) {
                 focused = item.id;
+                focused_input = input;
             }
             if matches!(
                 control.kind,
@@ -850,6 +878,24 @@ pub(super) fn invoke_statistics(id: window::Id) -> u64 {
     })
 }
 
+#[cfg(feature = "native-accessibility-acceptance")]
+pub(super) fn plain_click_statistics(id: window::Id) -> (u64, u64) {
+    WINDOWS.with(|windows| {
+        windows
+            .borrow()
+            .get(&id)
+            .and_then(|window| {
+                window.shared.lock().ok().map(|state| {
+                    (
+                        state.plain_click_enqueued.load(Ordering::Relaxed),
+                        state.plain_click_drained.load(Ordering::Relaxed),
+                    )
+                })
+            })
+            .unwrap_or_default()
+    })
+}
+
 fn current(state: &Shared, request: &Request, namespace: &str) -> bool {
     !state.revoked
         && request.namespace == namespace
@@ -911,6 +957,10 @@ pub(super) fn drain(
                 let Ok(state) = window.shared.lock() else {
                     continue;
                 };
+                #[cfg(feature = "native-accessibility-acceptance")]
+                if request.action == Action::Click {
+                    state.plain_click_drained.fetch_add(1, Ordering::Relaxed);
+                }
                 #[cfg(feature = "native-accessibility-acceptance")]
                 {
                     let challenge = request
@@ -1017,6 +1067,10 @@ mod tests {
             focus_enqueued: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
             invoke_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
+            plain_click_enqueued: std::sync::atomic::AtomicU64::new(0),
+            #[cfg(feature = "native-accessibility-acceptance")]
+            plain_click_drained: std::sync::atomic::AtomicU64::new(0),
             #[cfg(feature = "native-accessibility-acceptance")]
             stale_focus_rejected: std::sync::atomic::AtomicU64::new(0),
         };
@@ -1224,6 +1278,39 @@ mod tests {
         let rejection = rx.try_recv().unwrap();
         assert!(!trust.activation.as_ref().unwrap().current());
         assert!(rejection.activation.as_ref().unwrap().current());
+    }
+
+    #[test]
+    fn mfa_cancel_supersedes_queued_submit_in_the_same_challenge() {
+        use accesskit::ActionHandler;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let session = SessionId::new();
+        let (mut handler, rx) = handler(Route {
+            invoke: Some(Message::SubmitAuthPrompt {
+                session_id: session,
+                challenge_id: 42,
+            }),
+            set_value: None,
+            range: None,
+            focus: Some(iced::advanced::widget::Id::new("submit")),
+            focus_revision: Some(revision),
+            focus_index: Some(1),
+        });
+        handler.do_action(request(Action::Click, None));
+        let submit = rx.try_recv().unwrap();
+        {
+            let mut state = handler.state.lock().unwrap();
+            let route = state.routes.get_mut(&NodeId(2)).unwrap();
+            route.focus_index = Some(0);
+            route.invoke = Some(Message::CancelAuthPrompt {
+                session_id: session,
+                challenge_id: 42,
+            });
+        }
+        handler.do_action(request(Action::Click, None));
+        let cancel = rx.try_recv().unwrap();
+        assert!(!submit.activation.unwrap().current());
+        assert!(cancel.activation.unwrap().commit(|| true, || ()).is_some());
     }
 
     fn host_action(decision: adit_session::HostKeyDecision) -> Message {

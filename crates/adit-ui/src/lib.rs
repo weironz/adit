@@ -969,6 +969,8 @@ pub enum Message {
     RememberConnectionPasswordChanged(bool),
     ConfirmConnection,
     CancelConnection,
+    ConfirmConnectionFor(u64),
+    CancelConnectionFor(u64),
     RespondHostKey {
         session_id: SessionId,
         challenge_id: u64,
@@ -1322,6 +1324,7 @@ struct TerminalSelection {
 
 #[derive(Debug, Clone)]
 struct ConnectionDialog {
+    id: u64,
     profile_id: ProfileId,
     /// The session this dialog is re-asking for, when it came from an auth
     /// rejection. Some means retry that session in place; None means the user
@@ -1331,6 +1334,11 @@ struct ConnectionDialog {
     endpoint: String,
     auth_method: AuthMethod,
     identity_file: String,
+}
+
+fn next_connection_dialog_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

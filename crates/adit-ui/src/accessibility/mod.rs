@@ -137,8 +137,20 @@ pub(crate) fn synthetic_conflicting_prompts(
         "SYNTHETIC".into(),
         None,
     );
-    let (auth, auth_receiver) =
-        AuthPromptInfo::channel("SYNTHETIC authentication".into(), "".into(), Vec::new());
+    let (auth, auth_receiver) = AuthPromptInfo::channel(
+        "SYNTHETIC authentication".into(),
+        "".into(),
+        vec![
+            adit_session::AuthPromptField {
+                prompt: "SYNTHETIC field 1".into(),
+                echo: true,
+            },
+            adit_session::AuthPromptField {
+                prompt: "SYNTHETIC field 2".into(),
+                echo: false,
+            },
+        ],
+    );
     let ids = (host.id, auth.id);
     let fixture = app
         .accessibility
@@ -150,7 +162,10 @@ pub(crate) fn synthetic_conflicting_prompts(
     fixture.auth_prompt = Some((auth_session, auth.clone()));
     fixture.auth_receiver = Some(auth_receiver);
     app.auth_prompt = Some((auth_session, auth));
-    app.auth_prompt_answers.clear();
+    app.auth_prompt_answers = vec![
+        "SYNTHETIC-UIA-AUTH-FIRST".into(),
+        "SYNTHETIC-UIA-AUTH-SECRET".into(),
+    ];
     ids
 }
 
@@ -171,6 +186,11 @@ pub(crate) fn hold_native_actions(window: window::Id, hold: bool) {
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn native_focus_statistics(window: window::Id) -> (u64, u64) {
     native::focus_statistics(window)
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn native_plain_click_statistics(window: window::Id) -> (u64, u64) {
+    native::plain_click_statistics(window)
 }
 
 /// Captured when UIA asks for focus; revoked by a subsequent window switch.
@@ -260,7 +280,7 @@ fn restorable_confirmation(scope: &str) -> bool {
     scope.starts_with("host-key-dialog:")
         || scope.starts_with("hyperlink:")
         || scope.starts_with("challenge:")
-        || scope == "connection-dialog"
+        || scope.starts_with("connection-dialog:")
         || scope == "native-modal-blocked"
 }
 
@@ -315,6 +335,16 @@ pub(crate) fn suspend_for_confirmation_action(app: &mut AditApp, action: &Messag
         } => scope == format!("host-key-dialog:{session_id}:{challenge_id}"),
         Message::ConfirmOpenHyperlink(generation) | Message::CancelOpenHyperlink(generation) => {
             scope == format!("hyperlink:{generation}")
+        }
+        Message::SubmitAuthPrompt { challenge_id, .. }
+        | Message::CancelAuthPrompt { challenge_id, .. } => {
+            scope == format!("challenge:{challenge_id}")
+        }
+        Message::ConfirmConnection | Message::CancelConnection => {
+            scope.starts_with("connection-dialog:")
+        }
+        Message::ConfirmConnectionFor(id) | Message::CancelConnectionFor(id) => {
+            scope == format!("connection-dialog:{id}")
         }
         _ => false,
     };
@@ -377,6 +407,7 @@ pub(crate) struct Control {
     focus: Option<iced::advanced::widget::Id>,
     focus_revision: Option<dialog_focus::FocusRevision>,
     focus_index: Option<usize>,
+    labelled_by: Option<String>,
 }
 
 impl Control {
@@ -392,6 +423,7 @@ impl Control {
             focus: None,
             focus_revision: None,
             focus_index: None,
+            labelled_by: None,
         }
     }
 
@@ -414,6 +446,7 @@ impl Control {
             focus: None,
             focus_revision: None,
             focus_index: None,
+            labelled_by: None,
         }
     }
 
@@ -450,6 +483,7 @@ impl Control {
             focus: None,
             focus_revision: None,
             focus_index: None,
+            labelled_by: None,
         }
     }
 
@@ -470,6 +504,7 @@ impl Control {
             focus: None,
             focus_revision: None,
             focus_index: None,
+            labelled_by: None,
         }
     }
 
@@ -485,6 +520,7 @@ impl Control {
             focus: None,
             focus_revision: None,
             focus_index: None,
+            labelled_by: None,
         }
     }
 
@@ -500,6 +536,7 @@ impl Control {
             focus: None,
             focus_revision: None,
             focus_index: None,
+            labelled_by: None,
         }
     }
 }
@@ -558,6 +595,34 @@ pub(crate) fn confirmation_button<'a>(
     )
 }
 
+pub(crate) fn form_action_button<'a>(
+    keys: &[&str],
+    index: usize,
+    group: &dialog_focus::FocusGroup,
+    label: &str,
+    message: Message,
+    child: impl Into<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let scope = BUILD.with(|scope| scope.borrow().clone().unwrap_or_default());
+    let id = input_id(keys[index]);
+    let mut metadata = Control::button(keys[index], label, message.clone());
+    metadata.focus = Some(id.clone());
+    control(
+        dialog_focus::form_action(
+            child.into(),
+            dialog_focus::ButtonFocus {
+                scope,
+                id,
+                index,
+                count: keys.len(),
+                group: group.clone(),
+                action: message,
+            },
+        ),
+        metadata,
+    )
+}
+
 #[cfg(windows)]
 fn window_scope_id(window: window::Id) -> iced::advanced::widget::Id {
     iced::advanced::widget::Id::from(format!("adit-window:{window:?}"))
@@ -599,6 +664,14 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
 
     fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
         use iced::advanced::widget::operation::Outcome;
+        #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+        diagnostics::event(format_args!(
+            "focus-operation found={} confirmation={} ticket={} lease_current={}",
+            self.found,
+            self.confirmation,
+            self.ticket.is_some(),
+            self.lease.as_ref().is_none_or(WindowFocusLease::current)
+        ));
         if self.ticket.as_ref().is_some_and(|ticket| !ticket.current())
             || self.lease.as_ref().is_some_and(|lease| !lease.current())
         {
@@ -690,6 +763,8 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for GuardedFocus {
     ) {
         if self.lease.as_ref().is_none_or(WindowFocusLease::current) {
             if id == Some(&self.target) {
+                #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                diagnostics::event(format_args!("focus-operation applied=true"));
                 state.focus();
             } else {
                 state.unfocus();
@@ -776,6 +851,21 @@ pub(crate) fn protected<'a>(
 ) -> Element<'a, Message> {
     let id = input_id(label);
     let mut metadata = Control::protected(label, occupied);
+    metadata.focus = Some(id.clone());
+    control(child.id(id), metadata)
+}
+
+pub(crate) fn protected_with_label<'a>(
+    key: &str,
+    label: &str,
+    label_key: &str,
+    occupied: bool,
+    child: iced::widget::TextInput<'a, Message>,
+) -> Element<'a, Message> {
+    let id = input_id(key);
+    let mut metadata = Control::protected(key, occupied);
+    metadata.label = label.to_owned();
+    metadata.labelled_by = Some(label_key.to_owned());
     metadata.focus = Some(id.clone());
     control(child.id(id), metadata)
 }
@@ -1050,6 +1140,19 @@ pub(crate) fn capture_auth_response(app: &mut AditApp, challenge: u64) {
 }
 
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn acceptance_confirm_connection(app: &mut AditApp) -> bool {
+    let Some(fixture) = app.accessibility.fixture.as_mut() else {
+        return false;
+    };
+    if app.connection_dialog.is_some() {
+        fixture.connection_confirms += 1;
+        app.connection_dialog = None;
+        app.password.clear();
+    }
+    true
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn acceptance_host_key_reply(
     app: &mut AditApp,
     session: SessionId,
@@ -1147,7 +1250,10 @@ pub(crate) fn namespace(app: &AditApp) -> String {
         }
     }
     if global == Some(native_windows::GlobalModal::Connection) {
-        return "connection-dialog".into();
+        return format!(
+            "connection-dialog:{}",
+            app.connection_dialog.as_ref().unwrap().id
+        );
     }
     if let Some(owner) = app.profile_editor {
         return format!("editor:{owner}");
@@ -1197,7 +1303,10 @@ pub(crate) fn detached_namespace(
         }
     }
     if global == Some(native_windows::GlobalModal::Connection) {
-        return "connection-dialog".into();
+        return format!(
+            "connection-dialog:{}",
+            app.connection_dialog.as_ref().unwrap().id
+        );
     }
     if global == Some(native_windows::GlobalModal::Sftp) {
         return "sftp".into();
@@ -1466,6 +1575,7 @@ mod tests {
         let profile = app.manager.session_summary(session).unwrap().profile_id;
         app.native_dialog_window = Some(window::Id::unique());
         app.connection_dialog = Some(ConnectionDialog {
+            id: next_connection_dialog_id(),
             profile_id: profile,
             retry_session: None,
             title: "synthetic".into(),
@@ -1480,6 +1590,31 @@ mod tests {
         let _ = update_loop::update(&mut app, Message::CancelOpenHyperlink(generation));
         assert!(app.terminal_focused);
         assert_eq!(app.manager.active_session(), Some(session));
+    }
+
+    #[test]
+    fn old_connection_actions_cannot_operate_on_a_replacement_dialog() {
+        let (mut app, _, session, _) = focus_fixture();
+        let profile_id = app.manager.session_summary(session).unwrap().profile_id;
+        let old_id = next_connection_dialog_id();
+        let new_id = next_connection_dialog_id();
+        app.connection_dialog = Some(ConnectionDialog {
+            id: new_id,
+            profile_id,
+            retry_session: None,
+            title: "SYNTHETIC".into(),
+            endpoint: "fixture.invalid".into(),
+            auth_method: AuthMethod::Password,
+            identity_file: String::new(),
+        });
+        app.password = "SYNTHETIC-PASSWORD".into();
+        let _ = update_loop::update(&mut app, Message::CancelConnectionFor(old_id));
+        let _ = update_loop::update(&mut app, Message::ConfirmConnectionFor(old_id));
+        assert_eq!(
+            app.connection_dialog.as_ref().map(|dialog| dialog.id),
+            Some(new_id)
+        );
+        assert_eq!(app.password, "SYNTHETIC-PASSWORD");
     }
 
     #[test]
@@ -1517,7 +1652,13 @@ mod tests {
         select_profile(&mut app, profile);
         app.terminal_focused = true;
         open_connection_dialog(&mut app);
-        assert_eq!(namespace(&app), "connection-dialog");
+        assert_eq!(
+            namespace(&app),
+            format!(
+                "connection-dialog:{}",
+                app.connection_dialog.as_ref().unwrap().id
+            )
+        );
         assert!(!app.terminal_focused);
         let _ = update_loop::update(
             &mut app,

@@ -33,6 +33,8 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     } else {
         "连接 SSH"
     };
+    let group = dialog_focus::FocusGroup::new();
+    let keys = ["connection:cancel", "connection:confirm"];
 
     let mut details = column![
         row![
@@ -43,12 +45,21 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .height(Length::Fixed(24.0))
                 .padding(0)
                 .style(|_theme, status| close_button_style(status))
-                .on_press(Message::CancelConnection),
+                .on_press(Message::CancelConnectionFor(dialog.id)),
         ]
         .align_y(Alignment::Center),
-        text(dialog.title.clone()).size(13).color(primary_text()),
-        text(dialog.endpoint.clone()).size(12).color(muted_text()),
-        text(t(auth_hint)).size(11).color(muted_text()),
+        accessibility::control(
+            text(dialog.title.clone()).size(13).color(primary_text()),
+            accessibility::Control::label("connection:profile", dialog.title.clone())
+        ),
+        accessibility::control(
+            text(dialog.endpoint.clone()).size(12).color(muted_text()),
+            accessibility::Control::label("connection:target", dialog.endpoint.clone())
+        ),
+        accessibility::control(
+            text(t(auth_hint)).size(11).color(muted_text()),
+            accessibility::Control::label("connection:hint", t(auth_hint))
+        ),
     ]
     .spacing(6);
 
@@ -63,15 +74,18 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     let panel = container(
         column![
             details,
-            accessibility::protected(
-                "Password / passphrase",
-                !app.password.is_empty(),
-                text_input("Password / passphrase", &app.password)
-                    .secure(true)
-                    .on_input(Message::ConnectionPasswordChanged)
-                    .on_submit(Message::ConfirmConnection)
-                    .padding([6, 8])
-                    .style(text_input_style)
+            dialog_focus::form_input(
+                accessibility::protected(
+                    "Password / passphrase",
+                    !app.password.is_empty(),
+                    text_input("Password / passphrase", &app.password)
+                        .secure(true)
+                        .on_input(Message::ConnectionPasswordChanged)
+                        .on_submit(Message::ConfirmConnectionFor(dialog.id))
+                        .padding([6, 8])
+                        .style(text_input_style)
+                ),
+                &group
             ),
             checkbox(app.remember_connection_password)
                 .label(t("保存密码"))
@@ -83,16 +97,30 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 .size(10)
                 .color(muted_text()),
             row![
-                button(t("取消"))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::CancelConnection),
-                button(t("连接"))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::ConfirmConnection),
+                accessibility::form_action_button(
+                    &keys,
+                    0,
+                    &group,
+                    t("取消"),
+                    Message::CancelConnectionFor(dialog.id),
+                    button(t("取消"))
+                        .width(Fill)
+                        .padding([6, 10])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::CancelConnectionFor(dialog.id))
+                ),
+                accessibility::form_action_button(
+                    &keys,
+                    1,
+                    &group,
+                    t("连接"),
+                    Message::ConfirmConnectionFor(dialog.id),
+                    button(t("连接"))
+                        .width(Fill)
+                        .padding([6, 10])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::ConfirmConnectionFor(dialog.id))
+                ),
             ]
             .spacing(8),
         ]
@@ -102,12 +130,15 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
     .padding(14)
     .style(|_theme| connection_dialog_style());
 
-    container(panel)
-        .width(Fill)
-        .height(Fill)
-        .center(Fill)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    container(accessibility::control(
+        panel,
+        accessibility::Control::dialog("connection:dialog", t(dialog_title)),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .center(Fill)
+    .style(|_theme| dialog_scrim_style())
+    .into()
 }
 
 pub(crate) fn host_key_dialog_overlay(
@@ -289,6 +320,8 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
     prompt: &'a AuthPromptInfo,
     answers: &'a [String],
 ) -> Element<'a, Message> {
+    let group = dialog_focus::FocusGroup::new();
+    let keys = ["auth:cancel", "auth:submit"];
     let mut body = column![accessibility::control(
         text(t("需要交互式验证")).size(16).color(primary_text()),
         accessibility::Control::label("auth:title", t("需要交互式验证")),
@@ -343,12 +376,20 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
             column![
                 accessibility::control(
                     text(label.clone()).size(11).color(muted_text()),
-                    accessibility::Control::label(&format!("auth:field-label:{index}"), label)
+                    accessibility::Control::label(
+                        &format!("auth:field-label:{index}"),
+                        label.clone()
+                    )
                 ),
-                accessibility::protected(
-                    &tf("验证字段 {}", &[&(index + 1)]),
-                    !value.is_empty(),
-                    input
+                dialog_focus::form_input(
+                    accessibility::protected_with_label(
+                        &tf("验证字段 {}", &[&(index + 1)]),
+                        &format!("{}：{}", tf("验证字段 {}", &[&(index + 1)]), label),
+                        &format!("auth:field-label:{index}"),
+                        !value.is_empty(),
+                        input
+                    ),
+                    &group
                 )
             ]
             .spacing(4),
@@ -359,8 +400,10 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
         column![
             body,
             row![
-                accessibility::button(
-                    "auth:cancel",
+                accessibility::form_action_button(
+                    &keys,
+                    0,
+                    &group,
                     t("取消"),
                     Message::CancelAuthPrompt {
                         session_id,
@@ -375,8 +418,10 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
                             challenge_id
                         })
                 ),
-                accessibility::button(
-                    "auth:submit",
+                accessibility::form_action_button(
+                    &keys,
+                    1,
+                    &group,
                     t("确定"),
                     Message::SubmitAuthPrompt {
                         session_id,

@@ -788,9 +788,37 @@ fn dialog_acceptance(
     if !connection.connection_open || connection.terminal_focused {
         return Err("synthetic password dialog did not suspend remote input".into());
     }
+    let dialog = client.wait("connection dialog UIA", || {
+        client.by_id("connection:dialog")
+    })?;
+    client.assert_modal_dialog(&dialog)?;
+    let target = client
+        .by_id("connection:target")
+        .ok_or("connection target missing")?;
+    let target_name = unsafe { target.CurrentName() }
+        .map_err(|e| e.to_string())?
+        .to_string();
+    if target_name != "fixture@edited.invalid:22" {
+        return Err(format!(
+            "connection target does not identify the fixture endpoint: {target_name:?}"
+        ));
+    }
+    client.named("连接", "connection:confirm")?;
     let password = client.wait("connection password input", || {
         client.by_id("protected:Password / passphrase")
     })?;
+    if !unsafe { password.CurrentIsPassword() }
+        .map_err(|e| e.to_string())?
+        .as_bool()
+    {
+        return Err("connection password is not protected".into());
+    }
+    let before_value = client.value(&password);
+    let _ = client.set_value(&password, "MUST-NOT-BE-SET");
+    command(commands, Command::Barrier)?;
+    if client.value(&password) != before_value {
+        return Err("connection password accepted a UIA value write".into());
+    }
     unsafe { password.SetFocus() }
         .map_err(|e| format!("connection password UIA focus failed: {e}"))?;
     client.wait("UIA focused connection password", || {
@@ -799,9 +827,24 @@ fn dialog_acceptance(
             .as_bool()
             .then_some(())
     })?;
-    let cancelled = command(commands, Command::CancelConnection)?;
+    client.invoke(&client.named("取消", "connection:cancel")?)?;
+    let cancelled = command(commands, Command::Barrier)?;
     if cancelled.connection_open || !cancelled.terminal_focused {
         return Err("connection cancellation did not restore the pre-dialog focus".into());
+    }
+    client.wait("cancelled connection dialog closed", || {
+        client.by_id("connection:dialog").is_none().then_some(())
+    })?;
+    let reopened = command(commands, Command::Connection)?;
+    client.wait("connection confirmation button", || {
+        client.by_id("connection:confirm")
+    })?;
+    client.invoke(&client.named("连接", "connection:confirm")?)?;
+    let confirmed = command(commands, Command::Barrier)?;
+    if confirmed.connection_open
+        || confirmed.connection_confirms != reopened.connection_confirms + 1
+    {
+        return Err("connection UIA confirm did not reach the isolated sink".into());
     }
 
     let rename = command(commands, Command::Rename)?;
@@ -853,6 +896,31 @@ fn dialog_acceptance(
 }
 
 fn auth_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Result<(), String> {
+    let installed = command(commands, |ack| Command::Auth(2, ack))?;
+    let id = installed
+        .auth_challenge
+        .ok_or("queued MFA challenge missing")?;
+    client.wait("queued MFA dialog", || {
+        client.by_id(&format!("challenge:{id}/auth:dialog"))
+    })?;
+    command(commands, Command::SeedAuth)?;
+    let before = command(commands, Command::Hold)?;
+    client.invoke(&client.named("确定", "auth:submit")?)?;
+    client.invoke(&client.named("取消", "auth:cancel")?)?;
+    let queued = command(commands, Command::InspectHeld)?;
+    if queued.plain_click_enqueued < before.plain_click_enqueued + 2 {
+        return Err("MFA submit and cancel were not both enqueued".into());
+    }
+    let result = command(commands, Command::Barrier)?;
+    if result.auth_results.last() != Some(&(id, 0, false)) {
+        return Err(format!(
+            "queued MFA submit then cancel produced {:?}",
+            result.auth_results.last()
+        ));
+    }
+    client.wait("queued MFA dialog closed", || {
+        client.by_id("auth:dialog").is_none().then_some(())
+    })?;
     for cancel in [true, false] {
         let installed = command(commands, |ack| Command::Auth(0, ack))?;
         let id = installed
@@ -905,8 +973,19 @@ fn auth_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Result<
                 && client.value(&second).as_deref() == Some("••••"))
             .then_some(())
         })?;
-        for label in ["验证字段 1", "验证字段 2"] {
-            let field = client.named(label, &format!("protected:{label}"))?;
+        for (index, label) in ["验证字段 1", "验证字段 2"].into_iter().enumerate() {
+            let field = client
+                .by_id(&format!("protected:{label}"))
+                .ok_or("authentication field missing")?;
+            let name = unsafe { field.CurrentName() }
+                .map_err(|e| e.to_string())?
+                .to_string();
+            if !name.contains(&format!("SYNTHETIC field {}", index + 1)) {
+                return Err(format!(
+                    "authentication field {} lacks its prompt in UIA name",
+                    index + 1
+                ));
+            }
             if !unsafe { field.CurrentIsPassword() }
                 .map_err(|e| e.to_string())?
                 .as_bool()

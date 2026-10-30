@@ -29,6 +29,7 @@ pub(super) struct Fixture {
     pub auth_prompt: Option<(SessionId, AuthPromptInfo)>,
     pub auth_receiver: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
     pub auth_results: Vec<(u64, Vec<String>)>,
+    pub connection_confirms: usize,
 }
 
 #[derive(Clone)]
@@ -47,11 +48,13 @@ struct Snapshot {
     sidebar_visible: bool,
     focus_enqueued: u64,
     invoke_enqueued: u64,
+    plain_click_enqueued: u64,
     keyboard_attempts: u64,
     stale_focus_rejected: u64,
     held_host_actions: usize,
     auth_challenge: Option<u64>,
     auth_results: Vec<(u64, usize, bool)>,
+    connection_confirms: usize,
 }
 
 enum Command {
@@ -67,7 +70,6 @@ enum Command {
     Rename(mpsc::Sender<Snapshot>),
     Menu(mpsc::Sender<Snapshot>),
     Connection(mpsc::Sender<Snapshot>),
-    CancelConnection(mpsc::Sender<Snapshot>),
     ToggleSidebar(mpsc::Sender<Snapshot>),
 }
 
@@ -130,6 +132,9 @@ fn allowed(message: &Message) -> bool {
             | Message::FinishMissionName(_)
             | Message::ToggleSidebar
             | Message::CancelConnection
+            | Message::ConfirmConnection
+            | Message::CancelConnectionFor(_)
+            | Message::ConfirmConnectionFor(_)
             | Message::EditProfileFromContext(_)
             | Message::CloseProfileEditor
             | Message::SaveProfile
@@ -171,6 +176,11 @@ fn snapshot(state: &Harness) -> Snapshot {
             .window
             .map(native::invoke_statistics)
             .unwrap_or_default(),
+        plain_click_enqueued: state
+            .window
+            .map(native::plain_click_statistics)
+            .unwrap_or_default()
+            .0,
         keyboard_attempts: diagnostics::keyboard_attempts(),
         stale_focus_rejected,
         held_host_actions: state.held_host_actions,
@@ -186,6 +196,7 @@ fn snapshot(state: &Harness) -> Snapshot {
                 )
             })
             .collect(),
+        connection_confirms: fixture.connection_confirms,
     }
 }
 
@@ -293,10 +304,6 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         state.hold_actions = false;
                         open_connection_dialog(&mut state.app);
                         (ack, Some(Message::Tick))
-                    }
-                    Command::CancelConnection(ack) => {
-                        state.hold_actions = false;
-                        (ack, Some(Message::CancelConnection))
                     }
                     Command::ToggleSidebar(ack) => {
                         state.hold_actions = false;

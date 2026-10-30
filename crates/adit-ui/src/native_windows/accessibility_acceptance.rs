@@ -38,6 +38,9 @@ struct Snapshot {
     child_focus_rejected: u64,
     cross_window_lease: Option<bool>,
     foreground_attempts: u64,
+    child_plain_clicks: u64,
+    child_plain_drained: u64,
+    auth_pending: bool,
     conflict: Option<(u64, u64)>,
 }
 
@@ -161,6 +164,14 @@ fn snapshot(state: &Harness) -> Snapshot {
         child_focus_rejected,
         cross_window_lease: None,
         foreground_attempts: accessibility::diagnostics::foreground_attempts(),
+        child_plain_clicks: accessibility::native_plain_click_statistics(state.child).0,
+        child_plain_drained: accessibility::native_plain_click_statistics(state.child).1,
+        auth_pending: state
+            .desktop
+            .app
+            .auth_prompt
+            .as_ref()
+            .is_some_and(|(_, prompt)| prompt.is_pending()),
         conflict: state.conflict,
     }
 }
@@ -264,6 +275,7 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         .unwrap()
                         .profile_id;
                     state.desktop.app.connection_dialog = Some(ConnectionDialog {
+                        id: next_connection_dialog_id(),
                         profile_id: profile,
                         retry_session: Some(state.child_session),
                         title: "SYNTHETIC".into(),
@@ -312,6 +324,7 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         .unwrap()
                         .profile_id;
                     state.desktop.app.connection_dialog = Some(ConnectionDialog {
+                        id: next_connection_dialog_id(),
                         profile_id: profile,
                         retry_session: Some(state.child_session),
                         title: "SYNTHETIC".into(),
@@ -640,9 +653,9 @@ fn client(
     {
         return Err("stale request changed the background child's selection".into());
     }
-    command(&sender, |ack| Command::Switch(false, ack))?;
-    wait("return to primary for fresh UIA focus", || {
-        (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(())
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("child foreground for fresh UIA focus", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
     })?;
     unsafe { password.SetFocus() }.map_err(|e| format!("detached UIA SetFocus failed: {e}"))?;
     wait("detached UIA SetFocus reached iced", || {
@@ -749,6 +762,36 @@ fn client(
     })?;
     command(&sender, |ack| Command::Switch(true, ack))?;
     wait("MFA window foreground", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
+    })?;
+    let submit = element(
+        &automation,
+        &root,
+        &format!("challenge:{auth_id}/auth:submit"),
+    )
+    .ok_or("MFA submit button missing")?;
+    let before = command(&sender, |ack| Command::HoldChild(true, ack))?;
+    let submit_invoke: IUIAutomationInvokePattern =
+        unsafe { submit.GetCurrentPatternAs(UIA_InvokePatternId) }.map_err(|e| e.to_string())?;
+    unsafe { submit_invoke.Invoke() }.map_err(|e| e.to_string())?;
+    let queued = command(&sender, Command::Snapshot)?;
+    if queued.child_plain_clicks <= before.child_plain_clicks {
+        return Err("MFA submit was not enqueued before window switch".into());
+    }
+    command(&sender, |ack| Command::Switch(false, ack))?;
+    wait("primary foreground before MFA dispatch", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(())
+    })?;
+    command(&sender, |ack| Command::HoldChild(false, ack))?;
+    let after = wait("queued MFA action drained after window switch", || {
+        let state = command(&sender, Command::Snapshot).ok()?;
+        (state.child_plain_drained > before.child_plain_drained).then_some(state)
+    })?;
+    if !after.auth_pending {
+        return Err("queued MFA submit survived a foreground-window switch".into());
+    }
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("MFA foreground restored for cancellation", || {
         (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
     })?;
     let invoke: IUIAutomationInvokePattern =

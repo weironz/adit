@@ -254,6 +254,7 @@ pub(crate) fn open_password_reprompt(
 
     let endpoint = profile.endpoint();
     app.connection_dialog = Some(ConnectionDialog {
+        id: next_connection_dialog_id(),
         profile_id,
         retry_session: Some(session_id),
         title: profile.name,
@@ -309,6 +310,7 @@ pub(crate) fn open_connection_dialog(app: &mut AditApp) {
 
     let endpoint = profile.endpoint();
     app.connection_dialog = Some(ConnectionDialog {
+        id: next_connection_dialog_id(),
         profile_id,
         // A fresh connect, not a retry of anything.
         retry_session: None,
