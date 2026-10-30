@@ -1307,6 +1307,44 @@ Host db
             .join(file)
     }
 
+    #[test]
+    fn review97_corner_monitor_profile_persists_and_revalidates() {
+        use adit_domain::DesktopMonitor;
+        let path = temp_config_path("corner-monitors", "profiles.json");
+        let store = ProfileStore::new(&path);
+        let mut profile = ConnectionProfile::new("synthetic", "127.0.0.1", 3389, "synthetic");
+        profile.session_options.rdp_monitors = Some(vec![
+            DesktopMonitor {
+                left: 0,
+                top: 0,
+                width: 200,
+                height: 200,
+                primary: true,
+                scale_percent: 100,
+            },
+            DesktopMonitor {
+                left: 200,
+                top: 200,
+                width: 200,
+                height: 200,
+                primary: false,
+                scale_percent: 100,
+            },
+        ]);
+        profile.session_options.rdp_selected_monitor = Some(1);
+        profile.session_options.validate().unwrap();
+        store.save_profiles(&[profile.clone()]).unwrap();
+        let loaded = store.load_profiles().unwrap();
+        assert_eq!(
+            loaded[0].session_options.rdp_monitors,
+            profile.session_options.rdp_monitors
+        );
+        assert_eq!(loaded[0].session_options.rdp_selected_monitor, Some(1));
+        loaded[0].session_options.validate().unwrap();
+        fs::remove_file(&path).unwrap();
+        fs::remove_dir(path.parent().unwrap()).unwrap();
+    }
+
     /// A file from a newer Adit must be refused, not parsed and written back
     /// downgraded — that would silently drop fields the new version added.
     #[test]

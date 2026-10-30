@@ -240,12 +240,12 @@ impl SessionOptions {
                         connected[other_index]
                             && (((a.left + i32::from(a.width) == b.left
                                 || b.left + i32::from(b.width) == a.left)
-                                && a.top < b.top + i32::from(b.height)
-                                && b.top < a.top + i32::from(a.height))
+                                && a.top <= b.top + i32::from(b.height)
+                                && b.top <= a.top + i32::from(a.height))
                                 || ((a.top + i32::from(a.height) == b.top
                                     || b.top + i32::from(b.height) == a.top)
-                                    && a.left < b.left + i32::from(b.width)
-                                    && b.left < a.left + i32::from(a.width)))
+                                    && a.left <= b.left + i32::from(b.width)
+                                    && b.left <= a.left + i32::from(a.width)))
                     }) {
                         connected[index] = true;
                         changed = true;
@@ -393,5 +393,40 @@ mod tests {
         assert!(options.validate().is_err());
         options.rdp_monitors.as_mut().unwrap()[1].left = 801;
         assert!(options.validate().is_err());
+    }
+
+    #[test]
+    fn review97_corner_touching_layout_validates_and_round_trips() {
+        let monitors = vec![
+            DesktopMonitor {
+                left: 0,
+                top: 0,
+                width: 200,
+                height: 200,
+                primary: true,
+                scale_percent: 100,
+            },
+            DesktopMonitor {
+                left: 200,
+                top: 200,
+                width: 200,
+                height: 200,
+                primary: false,
+                scale_percent: 100,
+            },
+        ];
+        let options = SessionOptions {
+            rdp_monitors: Some(monitors.clone()),
+            rdp_selected_monitor: Some(1),
+            ..Default::default()
+        };
+        assert!(
+            options.validate().is_ok(),
+            "corner-adjacent topology rejected before persistence"
+        );
+        let json = serde_json::to_string(&options).unwrap();
+        let restored: SessionOptions = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.rdp_monitors, Some(monitors));
+        assert!(restored.validate().is_ok());
     }
 }
