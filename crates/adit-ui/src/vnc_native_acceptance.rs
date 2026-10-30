@@ -573,7 +573,7 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                     state.os_scale = *scale;
                     *scale *= state.scale;
                 }
-                Message::RdpPointerMoved(point) => log(
+                Message::RdpPointerMoved(point, _) => log(
                     state,
                     serde_json::json!({
                         "event":"pointer", "remote_x":point.x, "remote_y":point.y,
@@ -581,7 +581,7 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                         "surface":state.app.rdp_surface_size,
                     }),
                 ),
-                Message::RdpPressed(button) => log(
+                Message::RdpPressed(button, _) => log(
                     state,
                     serde_json::json!({"event":"button", "button":format!("{button:?}"), "app_scale":state.scale}),
                 ),

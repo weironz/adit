@@ -113,7 +113,8 @@ pub(crate) struct EgfxFrame {
     /// unioned. Lets the session loop ship only what changed instead of cloning
     /// and piping the whole framebuffer (~9 MB per frame at 2560-class sizes)
     /// on every present.
-    dirty_rects: Vec<Rect>,
+    dirty_rects: DirtyRects,
+    reset_pending: Option<(u16, u16, Vec<adit_rdp_proto::MonitorGeometry>)>,
     /// Trait callbacks cannot return errors to ActiveStage. Keep the first
     /// stateful codec failure until the session loop can close with Error/Closed.
     decode_error: Option<String>,
@@ -122,17 +123,126 @@ pub(crate) struct EgfxFrame {
 /// A dirty region: `(x, y, w, h)` in pixels.
 pub(crate) type Rect = (usize, usize, usize, usize);
 
-/// How many separate dirty rects to carry before coalescing.
-///
-/// One rect was the original behaviour, and it degrades in exactly the case
-/// that matters: a blinking cursor in one corner and a clock in another grow
-/// the single rect to span both, so a few hundred changed pixels ship as most
-/// of the screen. An unbounded list is the opposite failure — a full repaint
-/// arrives as ~900 tiles at 2560-class sizes, and one IPC message each costs
-/// more than the pixels saved. Sixteen keeps unrelated activity apart while a
-/// genuine full-surface paint still collapses to roughly one rect, because
-/// adjacent tiles merge for free (see [`merge_cost`]).
-const MAX_DIRTY_RECTS: usize = 16;
+// The common case retains a few exact rectangles. A hostile or very fragmented
+// frame switches to one bit per framebuffer pixel instead of an unbounded list
+// with a quadratic insertion scan.
+const MAX_DIRTY_RECTS: usize = 256;
+
+pub(crate) struct DirtyRects {
+    width: usize,
+    height: usize,
+    rects: Vec<Rect>,
+    bits: Option<Vec<u64>>,
+}
+
+impl DirtyRects {
+    pub(crate) fn new(width: usize, height: usize) -> Self {
+        Self {
+            width,
+            height,
+            rects: Vec::new(),
+            bits: None,
+        }
+    }
+
+    fn clear(&mut self) {
+        self.rects.clear();
+        self.bits = None;
+    }
+
+    fn mark_bits(bits: &mut [u64], stride: usize, (x, y, w, h): Rect) {
+        for row in y..y + h {
+            let mut start = row * stride + x;
+            let end = start + w;
+            while start < end {
+                let offset = start % 64;
+                let count = (64 - offset).min(end - start);
+                bits[start / 64] |= (u64::MAX >> (64 - count)) << offset;
+                start += count;
+            }
+        }
+    }
+
+    pub(crate) fn insert(&mut self, (x, y, w, h): Rect) {
+        if x >= self.width || y >= self.height {
+            return;
+        }
+        let rect = (x, y, w.min(self.width - x), h.min(self.height - y));
+        if rect.2 == 0 || rect.3 == 0 {
+            return;
+        }
+        if let Some(bits) = &mut self.bits {
+            Self::mark_bits(bits, self.width, rect);
+        } else if self.rects.len() < MAX_DIRTY_RECTS {
+            add_dirty_rect(&mut self.rects, rect);
+        } else {
+            let mut bits = vec![0; (self.width * self.height).div_ceil(64)];
+            for previous in self.rects.drain(..) {
+                Self::mark_bits(&mut bits, self.width, previous);
+            }
+            Self::mark_bits(&mut bits, self.width, rect);
+            self.bits = Some(bits);
+        }
+    }
+
+    /// Convert the bounded bitset to at most one masked tile per 64x64 area.
+    /// Masks preserve the distinction between copied pixels and fresh paints.
+    pub(crate) fn into_regions(mut self) -> Vec<(Rect, Option<Vec<u8>>)> {
+        let Some(bits) = self.bits.take() else {
+            prefer_full_frame(&mut self.rects, self.width, self.height);
+            return self.rects.into_iter().map(|r| (r, None)).collect();
+        };
+        let mut regions = Vec::new();
+        for y in (0..self.height).step_by(TILE) {
+            for x in (0..self.width).step_by(TILE) {
+                let w = TILE.min(self.width - x);
+                let h = TILE.min(self.height - y);
+                let mut rows = [0u64; TILE];
+                let (mut min_x, mut min_y, mut max_x, mut max_y) = (TILE, TILE, 0, 0);
+                let row_mask = u64::MAX >> (64 - w);
+                for (dy, row) in rows.iter_mut().enumerate().take(h) {
+                    let start = (y + dy) * self.width + x;
+                    let word = start / 64;
+                    let shift = start % 64;
+                    *row = bits[word] >> shift;
+                    if shift != 0 && word + 1 < bits.len() {
+                        *row |= bits[word + 1] << (64 - shift);
+                    }
+                    *row &= row_mask;
+                    if *row != 0 {
+                        min_x = min_x.min(row.trailing_zeros() as usize);
+                        max_x = max_x.max(63 - row.leading_zeros() as usize);
+                        min_y = min_y.min(dy);
+                        max_y = dy;
+                    }
+                }
+                if min_y == TILE {
+                    continue;
+                }
+                let (rw, rh) = (max_x - min_x + 1, max_y - min_y + 1);
+                let expected = u64::MAX >> (64 - rw);
+                let complete = rows[min_y..=max_y]
+                    .iter()
+                    .all(|row| (row >> min_x) & expected == expected);
+                let mask = (!complete).then(|| {
+                    let mut mask = vec![0u8; (rw * rh).div_ceil(8)];
+                    for (dy, row) in rows[min_y..=max_y].iter().enumerate() {
+                        let mut set = (row >> min_x) & expected;
+                        while set != 0 {
+                            let dx = set.trailing_zeros() as usize;
+                            let i = dy * rw + dx;
+                            mask[i / 8] |= 1 << (i % 8);
+                            set &= set - 1;
+                        }
+                    }
+                    mask
+                });
+                regions.push(((x + min_x, y + min_y, rw, rh), mask));
+            }
+        }
+        regions
+    }
+}
 
 fn area(rect: Rect) -> usize {
     rect.2 * rect.3
@@ -156,14 +266,17 @@ fn merge_cost(a: Rect, b: Rect) -> i64 {
 }
 
 pub(crate) fn prefer_full_frame(rects: &mut Vec<Rect>, width: usize, height: usize) {
-    if rects
-        .iter()
-        .map(|r| area(*r) as i64 * 4 + MESSAGE_COST)
-        .sum::<i64>()
-        > (width * height) as i64 * 4 + MESSAGE_COST
-    {
+    // The receiver treats every pixel of a tile as freshly painted. A cheaper
+    // full-frame copy is safe only if a paint actually covered the surface.
+    if rects.contains(&(0, 0, width, height)) {
         *rects = vec![(0, 0, width, height)];
     }
+}
+
+fn union_is_exact(a: Rect, b: Rect) -> bool {
+    let overlap_width = (a.0 + a.2).min(b.0 + b.2).saturating_sub(a.0.max(b.0));
+    let overlap_height = (a.1 + a.3).min(b.1 + b.3).saturating_sub(a.1.max(b.1));
+    area(union(a, b)) == area(a) + area(b) - overlap_width * overlap_height
 }
 
 impl EgfxFrame {
@@ -171,7 +284,7 @@ impl EgfxFrame {
         self.width = width;
         self.height = height;
         self.rgba = vec![0u8; usize::from(width) * usize::from(height) * 4];
-        self.dirty_rects.clear();
+        self.dirty_rects = DirtyRects::new(usize::from(width), usize::from(height));
         // Deliberately NOT dirty: this buffer is all black until content
         // lands. Publishing it at allocation time flashed a full black frame
         // on every graphics reset; the first composited EndFrame after the
@@ -188,9 +301,37 @@ pub(crate) fn new_shared() -> SharedEgfx {
         width: 0,
         height: 0,
         dirty: false,
-        dirty_rects: Vec::new(),
+        dirty_rects: DirtyRects::new(0, 0),
+        reset_pending: None,
         decode_error: None,
     }))
+}
+
+/// A server graphics reset is a geometry boundary, even when dimensions agree.
+pub(crate) fn take_reset(
+    shared: &SharedEgfx,
+) -> Option<(u16, u16, Vec<adit_rdp_proto::MonitorGeometry>)> {
+    shared.lock().ok()?.reset_pending.take()
+}
+
+pub(crate) fn monitor_geometries(
+    monitors: &[ironrdp_pdu::gcc::Monitor],
+) -> Vec<adit_rdp_proto::MonitorGeometry> {
+    monitors
+        .iter()
+        .map(|m| {
+            let width = u16::try_from(i64::from(m.right) - i64::from(m.left) + 1).ok()?;
+            let height = u16::try_from(i64::from(m.bottom) - i64::from(m.top) + 1).ok()?;
+            Some(adit_rdp_proto::MonitorGeometry {
+                left: m.left,
+                top: m.top,
+                width,
+                height,
+                primary: m.flags.contains(ironrdp_pdu::gcc::MonitorFlags::PRIMARY),
+            })
+        })
+        .collect::<Option<Vec<_>>>()
+        .unwrap_or_default()
 }
 
 pub(crate) fn take_decode_error(shared: &SharedEgfx) -> Option<String> {
@@ -212,6 +353,7 @@ pub(crate) struct FrameUpdate {
     pub width: u16,
     pub height: u16,
     pub rgba: Vec<u8>,
+    pub painted: Option<Vec<u8>>,
 }
 
 /// Every region changed since the last call, clearing the dirty flag. Empty
@@ -227,15 +369,15 @@ pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
     let (fw, fh) = (usize::from(frame.width), usize::from(frame.height));
     let (surface_width, surface_height) = (frame.width, frame.height);
 
-    let mut rects = std::mem::take(&mut frame.dirty_rects);
-    // No recorded rect (defensive) -> whole surface.
+    let dirty = std::mem::replace(&mut frame.dirty_rects, DirtyRects::new(fw, fh));
+    let rects = dirty.into_regions();
+    // Without a recorded paint there is no evidence that any pixel is fresh.
     if rects.is_empty() {
-        rects.push((0, 0, fw, fh));
+        return Vec::new();
     }
 
-    prefer_full_frame(&mut rects, fw, fh);
     let mut out = Vec::with_capacity(rects.len());
-    for (x, y, w, h) in rects {
+    for ((x, y, w, h), painted) in rects {
         let (x, y) = (x.min(fw), y.min(fh));
         let (w, h) = (w.min(fw - x), h.min(fh - y));
         if w == 0 || h == 0 {
@@ -254,6 +396,7 @@ pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
             width: w as u16,
             height: h as u16,
             rgba,
+            painted,
         });
     }
     out
@@ -292,11 +435,10 @@ fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
     if w == 0 || h == 0 {
         return;
     }
-    add_dirty_rect(&mut frame.dirty_rects, (x, y, w, h));
+    frame.dirty_rects.insert((x, y, w, h));
 }
 
-/// Add one changed rect, merging when total cost decreases and coalescing only
-/// once the list is full.
+/// Add one changed rect, merging only when its union contains no unpainted pixels.
 ///
 /// The beneficial merges keep this cheap on the hot path: a progressive
 /// frame arrives as hundreds of adjacent 64x64 tiles, and each folds into the
@@ -314,7 +456,7 @@ pub(crate) fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
         again = false;
         let mut index = 0;
         while index < rects.len() {
-            if merge_cost(rects[index], merged) <= 0 {
+            if union_is_exact(rects[index], merged) && merge_cost(rects[index], merged) <= 0 {
                 merged = union(rects.swap_remove(index), merged);
                 again = true;
             } else {
@@ -323,24 +465,6 @@ pub(crate) fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
         }
     }
     rects.push(merged);
-
-    // Full: give up the pair that costs least to join. Shrinking by one each
-    // time means the list cannot grow past the cap, however scattered the
-    // paints are.
-    while rects.len() > MAX_DIRTY_RECTS {
-        let mut best = (0, 1, i64::MAX);
-        for i in 0..rects.len() {
-            for j in (i + 1)..rects.len() {
-                let cost = merge_cost(rects[i], rects[j]);
-                if cost < best.2 {
-                    best = (i, j, cost);
-                }
-            }
-        }
-        let (i, j, _) = best;
-        let other = rects.swap_remove(j);
-        rects[i] = union(rects[i], other);
-    }
 }
 
 /// One entry of the EGFX bitmap cache.
@@ -857,6 +981,28 @@ impl GraphicsPipelineHandler for EgfxHandler {
             // flash the surface black in the gap before the first new tile lands.
             if frame.width != w || frame.height != h || frame.rgba.is_empty() {
                 frame.resize(w, h);
+            } else {
+                // Pixels not emitted before the reset belong to the retired
+                // graphics state and must not become fresh in the new one.
+                frame.dirty_rects.clear();
+                frame.dirty = false;
+            }
+            frame.reset_pending = Some((w, h, Vec::new()));
+        }
+    }
+
+    fn on_reset_graphics_monitors(
+        &mut self,
+        width: u32,
+        height: u32,
+        monitors: &[ironrdp_pdu::gcc::Monitor],
+    ) {
+        self.on_reset_graphics(width, height);
+        if !self.decode_failed {
+            if let Ok(mut frame) = self.shared.lock() {
+                if let Some((_, _, observed)) = &mut frame.reset_pending {
+                    *observed = monitor_geometries(monitors);
+                }
             }
         }
     }
@@ -1390,7 +1536,7 @@ mod decode_error_tests {
                 frame.resize(2, 2);
                 frame.rgba.fill(7);
                 frame.dirty = true;
-                frame.dirty_rects.push((0, 0, 2, 2));
+                frame.dirty_rects.insert((0, 0, 2, 2));
             }
             let mut pdu = WireToSurface1Pdu {
                 surface_id: 1,
@@ -1523,6 +1669,195 @@ mod clear_dump_tests {
 mod dirty_rect_tests {
     use super::*;
 
+    #[test]
+    fn issue97_real_egfx_reset_pdu_preserves_reported_monitor_geometry() {
+        use ironrdp_dvc::DvcProcessor;
+        use ironrdp_egfx::client::GraphicsPipelineClient;
+        use ironrdp_egfx::pdu::{GfxPdu, ResetGraphicsPdu};
+        use ironrdp_pdu::gcc::{Monitor, MonitorFlags};
+        let shared = new_shared();
+        let mut client =
+            GraphicsPipelineClient::new(Box::new(EgfxHandler::new(shared.clone())), None);
+        let pdu = GfxPdu::ResetGraphics(ResetGraphicsPdu {
+            width: 600,
+            height: 200,
+            monitors: vec![
+                Monitor {
+                    left: -400,
+                    top: 0,
+                    right: -1,
+                    bottom: 199,
+                    flags: MonitorFlags::empty(),
+                },
+                Monitor {
+                    left: 0,
+                    top: 0,
+                    right: 199,
+                    bottom: 199,
+                    flags: MonitorFlags::PRIMARY,
+                },
+            ],
+        });
+        let bytes = ironrdp_core::encode_vec(&pdu).unwrap();
+        let payload = ironrdp_graphics::zgfx::wrap_uncompressed(&bytes);
+        client.process(1, &payload).unwrap();
+        let (width, height, monitors) = take_reset(&shared).unwrap();
+        assert_eq!((width, height), (600, 200));
+        assert_eq!(
+            monitors,
+            vec![
+                adit_rdp_proto::MonitorGeometry {
+                    left: -400,
+                    top: 0,
+                    width: 400,
+                    height: 200,
+                    primary: false
+                },
+                adit_rdp_proto::MonitorGeometry {
+                    left: 0,
+                    top: 0,
+                    width: 200,
+                    height: 200,
+                    primary: true
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn issue97_same_size_reset_discards_retired_connection_dirt() {
+        let shared = new_shared();
+        {
+            let mut frame = shared.lock().unwrap();
+            frame.resize(2, 1);
+            frame.rgba[..4].copy_from_slice(&[90, 91, 92, 255]);
+            grow_dirty(&mut frame, 0, 0, 1, 1);
+            frame.dirty = true;
+        }
+        let mut handler = EgfxHandler::new(shared.clone());
+        handler.on_reset_graphics(2, 1);
+        {
+            let mut frame = shared.lock().unwrap();
+            frame.rgba[4..8].copy_from_slice(&[10, 11, 12, 255]);
+            grow_dirty(&mut frame, 1, 0, 1, 1);
+            frame.dirty = true;
+        }
+        let updates = take_frames(&shared);
+        assert_eq!(
+            updates.len(),
+            1,
+            "old dirt must not merge with a new connection"
+        );
+        assert_eq!((updates[0].x, updates[0].width), (1, 1));
+        assert_eq!(updates[0].rgba, [10, 11, 12, 255]);
+    }
+
+    #[test]
+    fn issue97_scattered_damage_has_bounded_tracking() {
+        let shared = new_shared();
+        let mut frame = shared.lock().unwrap();
+        frame.resize(4096, 1);
+        for x in (0..4096).step_by(2) {
+            grow_dirty(&mut frame, x, 0, 1, 1);
+        }
+        assert!(frame.dirty_rects.rects.len() <= MAX_DIRTY_RECTS);
+        assert_eq!(frame.dirty_rects.bits.as_ref().unwrap().len(), 4096 / 64);
+        frame.dirty = true;
+        drop(frame);
+        let updates = take_frames(&shared);
+        assert!(updates.len() <= 64);
+        for update in updates {
+            let mask = update.painted.expect("every checkerboard tile has gaps");
+            for col in 0..usize::from(update.width) {
+                let actual = mask[col / 8] & (1 << (col % 8)) != 0;
+                assert_eq!(actual, (usize::from(update.x) + col) % 2 == 0);
+            }
+        }
+    }
+
+    #[test]
+    fn issue97_damage_mask_preserves_checkerboard_across_row_and_word_boundaries() {
+        let (width, height) = (130usize, 8usize);
+        let mut dirty = DirtyRects::new(width, height);
+        for y in 0..height {
+            for x in 0..width {
+                if (x + y) % 2 == 0 {
+                    dirty.insert((x, y, 1, 1));
+                }
+            }
+        }
+        assert!(dirty.bits.is_some());
+        let mut covered = vec![false; width * height];
+        for ((x, y, w, h), mask) in dirty.into_regions() {
+            for dy in 0..h {
+                for dx in 0..w {
+                    let index = dy * w + dx;
+                    let painted = mask
+                        .as_ref()
+                        .is_none_or(|mask| mask[index / 8] & (1 << (index % 8)) != 0);
+                    if painted {
+                        covered[(y + dy) * width + x + dx] = true;
+                    }
+                }
+            }
+        }
+        for y in 0..height {
+            for x in 0..width {
+                assert_eq!(covered[y * width + x], (x + y) % 2 == 0, "pixel {x},{y}");
+            }
+        }
+    }
+
+    #[test]
+    fn issue97_maximum_framebuffer_damage_storage_is_bounded() {
+        let mut dirty = DirtyRects::new(8192, 8192);
+        for x in (0..600).step_by(2) {
+            dirty.insert((x, 0, 1, 1));
+        }
+        assert!(dirty.rects.len() <= MAX_DIRTY_RECTS);
+        assert_eq!(dirty.bits.as_ref().unwrap().len() * 8, 8192 * 8192 / 8);
+        assert!(dirty.into_regions().len() <= 128 * 128);
+    }
+
+    #[test]
+    fn nearby_dirty_rectangles_do_not_claim_the_unpainted_gap() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 8, 8));
+        add_dirty_rect(&mut rects, (9, 0, 8, 8));
+        assert!(!rects.iter().any(|r| r.0 <= 8 && 8 < r.0 + r.2));
+    }
+
+    #[test]
+    fn emitted_frame_updates_never_mark_the_gap_between_fresh_paints() {
+        let shared = new_shared();
+        {
+            let mut frame = shared.lock().unwrap();
+            frame.resize(17, 8);
+            frame.rgba.fill(7); // pixels retained from the previous connection
+            grow_dirty(&mut frame, 0, 0, 8, 8);
+            grow_dirty(&mut frame, 9, 0, 8, 8);
+            frame.dirty = true;
+        }
+        let updates = take_frames(&shared);
+        assert_eq!(updates.len(), 2);
+        assert!(updates.iter().all(|tile| {
+            let left = usize::from(tile.x);
+            let right = left + usize::from(tile.width);
+            !(left <= 8 && 8 < right)
+        }));
+    }
+
+    #[test]
+    fn scattered_dirty_rectangles_do_not_claim_unpainted_pixels_after_the_cap() {
+        let mut rects = Vec::new();
+        for x in (0..40).step_by(2) {
+            add_dirty_rect(&mut rects, (x, 0, 1, 1));
+        }
+        for x in (1..40).step_by(2) {
+            assert!(!rects.iter().any(|r| r.0 <= x && x < r.0 + r.2));
+        }
+    }
+
     /// Every pixel that was marked must still be covered afterwards. Anything
     /// less is a region that changed on the server and never reaches the
     /// screen — the failure mode this whole mechanism can produce.
@@ -1575,17 +1910,15 @@ mod dirty_rect_tests {
         assert_eq!(rects, vec![(0, 0, 30, 10)]);
     }
 
-    /// Scattered paints must never grow the list past the cap, and must never
-    /// drop coverage while shrinking it.
+    /// Scattered paints retain coverage without claiming intervening pixels.
     #[test]
-    fn the_list_is_capped_and_loses_nothing() {
+    fn scattered_paints_lose_no_coverage() {
         let mut rects = Vec::new();
         let marked: Vec<Rect> = (0..200)
             .map(|i| ((i * 37) % 1900, (i * 61) % 1000, 8, 8))
             .collect();
         for rect in &marked {
             add_dirty_rect(&mut rects, *rect);
-            assert!(rects.len() <= MAX_DIRTY_RECTS, "{} rects", rects.len());
         }
         for rect in &marked {
             assert!(covers(&rects, *rect), "lost {rect:?}");
@@ -1607,11 +1940,11 @@ mod dirty_rect_tests {
 mod cost_merge_tests {
     use super::*;
     #[test]
-    fn small_gap_merges_when_one_message_costs_more_than_the_gap_pixels() {
+    fn small_gap_stays_unpainted_even_when_merging_would_be_cheaper() {
         let mut rects = Vec::new();
         add_dirty_rect(&mut rects, (0, 0, 8, 8));
         add_dirty_rect(&mut rects, (9, 0, 8, 8));
-        assert_eq!(rects, vec![(0, 0, 17, 8)]);
+        assert_eq!(rects, vec![(0, 0, 8, 8), (9, 0, 8, 8)]);
         assert!(merge_cost((0, 0, 8, 8), (9, 0, 8, 8)) < 0);
         assert!(merge_cost((0, 0, 8, 8), (100, 0, 8, 8)) > 0);
     }
@@ -1658,7 +1991,6 @@ mod cost_merge_tests {
         }
         let updates = take_frames(&shared);
         assert!(!updates.is_empty());
-        assert!(updates.len() <= MAX_DIRTY_RECTS);
         for update in updates {
             for row in 0..usize::from(update.height) {
                 let src = row * usize::from(update.width) * 4;

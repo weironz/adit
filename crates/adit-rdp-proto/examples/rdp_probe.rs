@@ -84,6 +84,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     let start = Instant::now();
     let mut ready = false;
+    let mut input_epoch = 0u64;
     let mut size = (0u16, 0u16);
     let mut pixels = Vec::new();
     let mut tiles = 0u64;
@@ -93,8 +94,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result: Result<(), Box<dyn std::error::Error>> = (|| {
         while start.elapsed() < Duration::from_secs(timeout) {
             match received.recv_timeout(Duration::from_millis(20)) {
+                Ok(HostMsg::GraphicsReset { epoch, .. }) if epoch != input_epoch => {
+                    return Err("invalid graphics reset epoch".into());
+                }
                 Ok(HostMsg::Connected { width, height })
-                | Ok(HostMsg::Resized { width, height }) => {
+                | Ok(HostMsg::Resized { width, height })
+                | Ok(HostMsg::GraphicsReset { width, height, .. }) => {
                     let bytes = usize::from(width)
                         .checked_mul(usize::from(height))
                         .and_then(|n| n.checked_mul(4))
@@ -118,6 +123,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     width,
                     height,
                     rgba,
+                })
+                | Ok(HostMsg::MaskedTile {
+                    x,
+                    y,
+                    width,
+                    height,
+                    rgba,
+                    painted: _,
                 }) => {
                     if usize::from(width) * usize::from(height) * 4 != rgba.len()
                         || u32::from(x) + u32::from(width) > u32::from(size.0)
@@ -137,11 +150,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("first_tile_ms={}", start.elapsed().as_millis());
                     }
                 }
-                Ok(HostMsg::ClipboardText(text))
-                    if text.starts_with("ADIT_VNC_TEST:")
+                Ok(HostMsg::EpochClipboardText { epoch, text })
+                    if epoch == input_epoch
+                        && text.starts_with("ADIT_VNC_TEST:")
                         && args.iter().any(|s| s == "--fixture-report") =>
                 {
                     println!("{text}")
+                }
+                Ok(HostMsg::DisplayControlReset { epoch }) => {
+                    if input_epoch.checked_add(1) != Some(epoch) {
+                        return Err("invalid redirect epoch".into());
+                    }
+                    input_epoch = epoch;
                 }
                 Ok(HostMsg::Error(error)) => return Err(error.into()),
                 Ok(HostMsg::Closed) => return Err("helper closed".into()),
@@ -164,38 +184,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if shifted {
                             write_msg(
                                 &mut wire,
-                                &ClientMsg::Input(InputEvent::Key {
-                                    scancode: 0x2a,
-                                    extended: false,
-                                    pressed: true,
-                                }),
+                                &ClientMsg::input_at(
+                                    input_epoch,
+                                    InputEvent::Key {
+                                        scancode: 0x2a,
+                                        extended: false,
+                                        pressed: true,
+                                    },
+                                ),
                             )?;
                         }
                         for pressed in [true, false] {
                             write_msg(
                                 &mut wire,
-                                &ClientMsg::Input(InputEvent::Key {
-                                    scancode: code,
-                                    extended: false,
-                                    pressed,
-                                }),
+                                &ClientMsg::input_at(
+                                    input_epoch,
+                                    InputEvent::Key {
+                                        scancode: code,
+                                        extended: false,
+                                        pressed,
+                                    },
+                                ),
                             )?;
                         }
                         if shifted {
                             write_msg(
                                 &mut wire,
-                                &ClientMsg::Input(InputEvent::Key {
-                                    scancode: 0x2a,
-                                    extended: false,
-                                    pressed: false,
-                                }),
+                                &ClientMsg::input_at(
+                                    input_epoch,
+                                    InputEvent::Key {
+                                        scancode: 0x2a,
+                                        extended: false,
+                                        pressed: false,
+                                    },
+                                ),
                             )?;
                         }
                     } else {
                         for pressed in [true, false] {
                             write_msg(
                                 &mut wire,
-                                &ClientMsg::Input(InputEvent::Unicode { ch, pressed }),
+                                &ClientMsg::input_at(
+                                    input_epoch,
+                                    InputEvent::Unicode { ch, pressed },
+                                ),
                             )?;
                         }
                     }
@@ -219,7 +251,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     write_msg(
                         &mut wire,
-                        &ClientMsg::Input(InputEvent::ClipboardText(text.to_owned())),
+                        &ClientMsg::input_at(
+                            input_epoch,
+                            InputEvent::ClipboardText(text.to_owned()),
+                        ),
                     )?;
                 } else if let Some(key) = command.strip_prefix("KEY ") {
                     let parts: Vec<_> = key.split_whitespace().collect();
@@ -230,11 +265,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     write_msg(
                         &mut wire,
-                        &ClientMsg::Input(InputEvent::Key {
-                            scancode: u8::from_str_radix(parts[0], 16)?,
-                            extended: parse_key_flag(parts[1])?,
-                            pressed: parse_key_flag(parts[2])?,
-                        }),
+                        &ClientMsg::input_at(
+                            input_epoch,
+                            InputEvent::Key {
+                                scancode: u8::from_str_radix(parts[0], 16)?,
+                                extended: parse_key_flag(parts[1])?,
+                                pressed: parse_key_flag(parts[2])?,
+                            },
+                        ),
                     )?;
                 } else if let Some(token) = command.strip_prefix("ACK ") {
                     if token.is_empty()
@@ -256,10 +294,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     write_msg(
                         &mut wire,
-                        &ClientMsg::Input(InputEvent::MouseMove {
-                            x: parts[0].parse()?,
-                            y: parts[1].parse()?,
-                        }),
+                        &ClientMsg::input_at(
+                            input_epoch,
+                            InputEvent::MouseMove {
+                                x: parts[0].parse()?,
+                                y: parts[1].parse()?,
+                            },
+                        ),
                     )?;
                     for pressed in [true, false]
                         .into_iter()
@@ -267,10 +308,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     {
                         write_msg(
                             &mut wire,
-                            &ClientMsg::Input(InputEvent::MouseButton {
-                                button: adit_rdp_proto::MouseButton::Left,
-                                pressed,
-                            }),
+                            &ClientMsg::input_at(
+                                input_epoch,
+                                InputEvent::MouseButton {
+                                    button: adit_rdp_proto::MouseButton::Left,
+                                    pressed,
+                                },
+                            ),
                         )?;
                     }
                 } else if let Some(path) = command.strip_prefix("SNAP ") {

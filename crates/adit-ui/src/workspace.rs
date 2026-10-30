@@ -273,6 +273,11 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         .into()
     };
 
+    let input_epoch = app
+        .rdp_tiles_prev
+        .is_empty()
+        .then_some(app.rdp_input_epoch)
+        .flatten();
     let content: Element<'_, Message> = if app.manager.active_is_vnc() {
         stack(vec![
             content,
@@ -311,6 +316,13 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
                 app.native_preedit.clone(),
                 iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y),
             ),
+            desktop_panes::pointer_sync_layer(
+                iced::Size::new(f32::from(sw) / scale_x, f32::from(sh) / scale_y),
+                scale_x,
+                scale_y,
+                (sw, sh),
+                input_epoch,
+            ),
         ])
         .into()
     };
@@ -318,15 +330,15 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         .on_move(move |p| {
             let x = (p.x * scale_x).clamp(0.0, f32::from(sw) - 1.0);
             let y = (p.y * scale_y).clamp(0.0, f32::from(sh) - 1.0);
-            Message::RdpPointerMoved(Point::new(x, y))
+            Message::RdpPointerMoved(Point::new(x, y), input_epoch)
         })
-        .on_press(Message::RdpPressed(mouse::Button::Left))
-        .on_release(Message::RdpReleased(mouse::Button::Left))
-        .on_right_press(Message::RdpPressed(mouse::Button::Right))
-        .on_right_release(Message::RdpReleased(mouse::Button::Right))
-        .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
-        .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
-        .on_scroll(Message::RdpScrolled);
+        .on_press(Message::RdpPressed(mouse::Button::Left, input_epoch))
+        .on_release(Message::RdpReleased(mouse::Button::Left, input_epoch))
+        .on_right_press(Message::RdpPressed(mouse::Button::Right, input_epoch))
+        .on_right_release(Message::RdpReleased(mouse::Button::Right, input_epoch))
+        .on_middle_press(Message::RdpPressed(mouse::Button::Middle, input_epoch))
+        .on_middle_release(Message::RdpReleased(mouse::Button::Middle, input_epoch))
+        .on_scroll(move |delta| Message::RdpScrolled(delta, input_epoch));
 
     // Scrolling exists for exactly one case: a steady 1:1 surface larger than
     // the pane — a server that refused the resize — where the content must stay
@@ -1789,6 +1801,11 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         return row![];
     };
     if state.max_monitors == 0 {
+        if let Some(error) = state.error {
+            return row![text(tf("显示器布局失败：{}", &[&runtime(&error)]))
+                .size(10)
+                .color(muted_text())];
+        }
         return row![text(t("显示器：等待服务端能力"))
             .size(10)
             .color(muted_text())];
@@ -1808,7 +1825,7 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         ),
     ]
     .spacing(2);
-    if state.sent_layout.len() > 1 && state.applied {
+    if state.sent_layout.len() > 1 && state.size_matches {
         controls = controls.push(rdp_toolbar_button(
             "全部",
             "查看整个远程桌面",
@@ -1825,12 +1842,15 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
                     .on_press(Message::RdpMonitorSelected(Some(i))),
             );
         }
-    } else if !state.sent_layout.is_empty() && !state.applied {
+    } else if !state.sent_layout.is_empty() && !state.size_matches {
         controls = controls.push(
             text(t("布局已发送，等待桌面尺寸"))
                 .size(10)
                 .color(muted_text()),
         );
+    }
+    if !state.sent_layout.is_empty() && state.size_matches {
+        controls = controls.push(text(t("尺寸匹配，排列未确认")).size(10).color(muted_text()));
     }
     if let Some(error) = state.error {
         controls = controls.push(

@@ -10,8 +10,88 @@ use ironrdp_displaycontrol::pdu::{
 use ironrdp_dvc::encode_dvc_messages;
 use ironrdp_session::ActiveStage;
 use ironrdp_svc::ChannelFlags;
+use tokio::time::{Duration, Instant};
 
 pub(crate) type SharedDisplay = Arc<Mutex<DisplayControlState>>;
+
+/// The server opens the dynamic channel asynchronously. Do not retain an
+/// unusable request forever if it never opens or never advertises capabilities.
+pub(crate) const CAPABILITIES_TIMEOUT: Duration = Duration::from_secs(5);
+
+pub(crate) struct PendingLayout {
+    pub(crate) request_id: u64,
+    pub(crate) monitors: Vec<Monitor>,
+    pub(crate) deadline: Option<Instant>,
+}
+
+impl PendingLayout {
+    pub(crate) fn new(request_id: u64, monitors: Vec<Monitor>) -> Self {
+        Self {
+            request_id,
+            monitors,
+            deadline: None,
+        }
+    }
+
+    pub(crate) fn start_waiting(&mut self, now: Instant) {
+        self.deadline = Some(now + CAPABILITIES_TIMEOUT);
+    }
+}
+
+pub(crate) fn cancel_pending(pending: &mut Option<PendingLayout>, request_id: u64) {
+    if pending
+        .as_ref()
+        .is_some_and(|request| request.request_id == request_id)
+    {
+        *pending = None;
+    }
+}
+
+pub(crate) fn poll_layout(
+    request: &PendingLayout,
+    now: Instant,
+    channel_closed: bool,
+    encode: impl FnOnce(&[Monitor]) -> Option<Result<Vec<u8>, String>>,
+) -> Option<Result<Vec<u8>, String>> {
+    if channel_closed {
+        Some(Err("DisplayControl channel closed".to_owned()))
+    } else if request.deadline.is_some_and(|deadline| now >= deadline) {
+        Some(Err("DisplayControl capabilities timed out".to_owned()))
+    } else {
+        encode(&request.monitors)
+    }
+}
+
+/// Detect closing even when the channel had opened but never advertised caps.
+#[derive(Default)]
+pub(crate) struct ChannelWatch(bool);
+
+impl ChannelWatch {
+    pub(crate) fn observe(&mut self, open: bool) -> bool {
+        let closed = self.0 && !open;
+        self.0 = open;
+        closed
+    }
+}
+
+pub(crate) fn channel_open(stage: &mut ActiveStage) -> bool {
+    stage
+        .get_dvc::<DisplayControlClient>()
+        .is_some_and(|channel| channel.channel_id().is_some())
+}
+
+pub(crate) fn ready(stage: &mut ActiveStage, state: &SharedDisplay) -> bool {
+    let has_caps = state.lock().unwrap_or_else(|e| e.into_inner()).max_monitors > 0;
+    has_caps
+        && stage
+            .get_dvc::<DisplayControlClient>()
+            .is_some_and(|channel| {
+                channel.channel_id().is_some()
+                    && channel
+                        .channel_processor_downcast_ref::<DisplayControlClient>()
+                        .is_some_and(DisplayControlClient::ready)
+            })
+}
 
 pub(crate) fn capabilities(state: &SharedDisplay, caps: &DisplayControlCapabilities) {
     // 0.8 exposes area but not MaxNumMonitors. Read the public encoder's first
@@ -136,5 +216,88 @@ mod tests {
         let caps = state.lock().unwrap();
         assert_eq!(caps.max_monitors, 2);
         assert_eq!(caps.max_area, 2 * 4096 * 2048);
+    }
+
+    #[test]
+    fn a_missing_channel_never_encodes_resize_and_reports_layout_failure() {
+        let mut stage = ironrdp_session::ActiveStageBuilder {
+            static_channels: Default::default(),
+            user_channel_id: 1001,
+            io_channel_id: 1003,
+            message_channel_id: None,
+            share_id: 1,
+            compression_type: None,
+            enable_server_pointer: false,
+            pointer_software_rendering: false,
+        }
+        .build();
+        let state = SharedDisplay::default();
+        let monitors = vec![monitor(0, true)];
+        assert!(!ready(&mut stage, &state));
+        assert!(encode_layout(&mut stage, &monitors, &state).is_none());
+        capabilities(
+            &state,
+            &DisplayControlCapabilities::new(2, 4096, 2048).unwrap(),
+        );
+        assert!(!ready(&mut stage, &state));
+        assert_eq!(
+            encode_layout(&mut stage, &monitors, &state),
+            Some(Err("DisplayControl channel disappeared".to_owned()))
+        );
+    }
+
+    #[test]
+    fn parked_layout_times_out_or_sends_when_capabilities_arrive() {
+        let now = Instant::now();
+        let mut request = PendingLayout::new(7, vec![monitor(0, true)]);
+        request.start_waiting(now);
+        assert!(poll_layout(&request, now, false, |_| None).is_none());
+        assert_eq!(
+            poll_layout(&request, now + Duration::from_secs(4), false, |_| Some(Ok(
+                vec![7]
+            ))),
+            Some(Ok(vec![7]))
+        );
+        assert_eq!(
+            poll_layout(&request, now + CAPABILITIES_TIMEOUT, false, |_| panic!(
+                "expired requests must not be encoded"
+            )),
+            Some(Err("DisplayControl capabilities timed out".to_owned()))
+        );
+        assert_eq!(
+            poll_layout(&request, now, false, |_| Some(Err(
+                "encoding failed".to_owned()
+            ))),
+            Some(Err("encoding failed".to_owned()))
+        );
+    }
+
+    #[test]
+    fn closing_before_capabilities_and_stale_cancellation_are_distinct() {
+        let now = Instant::now();
+        let mut channels = ChannelWatch::default();
+        assert!(!channels.observe(false));
+        assert!(!channels.observe(true));
+        assert!(channels.observe(false));
+        assert!(!channels.observe(false));
+        let mut request = PendingLayout::new(8, vec![monitor(0, true)]);
+        request.start_waiting(now);
+        assert_eq!(
+            poll_layout(&request, now, true, |_| panic!(
+                "closed channel must not encode"
+            )),
+            Some(Err("DisplayControl channel closed".to_owned()))
+        );
+        let mut pending = Some(request);
+        cancel_pending(&mut pending, 7);
+        assert_eq!(pending.as_ref().unwrap().request_id, 8);
+        cancel_pending(&mut pending, 8);
+        assert!(pending.is_none());
+        let mut retry = PendingLayout::new(9, vec![monitor(0, true)]);
+        retry.start_waiting(now);
+        assert_eq!(
+            poll_layout(&retry, now, false, |_| Some(Ok(vec![9]))),
+            Some(Ok(vec![9]))
+        );
     }
 }

@@ -13,7 +13,9 @@
 //! up directly in the log.
 
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg};
@@ -90,10 +92,15 @@ fn debug_connect_real_host() {
     // the initial (dark) frames. Drive input to generate real content: open the
     // right-click context menu (a big opaque region, like the user's repro) and
     // sweep the pointer over its items to force hover redraws.
+    let epoch = Arc::new(AtomicU64::new(0));
+    let writer_epoch = Arc::clone(&epoch);
     let _input = std::thread::spawn(move || {
         use adit_rdp_proto::{InputEvent, MouseButton};
         let send = |stdin: &mut std::process::ChildStdin, ev| {
-            let _ = write_msg(stdin, &ClientMsg::Input(ev));
+            let _ = write_msg(
+                stdin,
+                &ClientMsg::input_at(writer_epoch.load(Ordering::Acquire), ev),
+            );
         };
         std::thread::sleep(Duration::from_millis(1500)); // let the handover settle
         send(&mut stdin, InputEvent::MouseMove { x: 650, y: 360 });
@@ -159,12 +166,27 @@ fn debug_connect_real_host() {
         let mut frames = 0u64;
         loop {
             match read_msg::<_, HostMsg>(&mut stdout) {
+                Ok(Some(HostMsg::DisplayControlReset { epoch: next })) => {
+                    if epoch.load(Ordering::Acquire).checked_add(1) != Some(next) {
+                        let _ = tx.send("invalid redirect epoch".to_owned());
+                        break;
+                    }
+                    epoch.store(next, Ordering::Release);
+                }
                 Ok(Some(HostMsg::Tile {
                     x,
                     y,
                     width,
                     height,
                     rgba,
+                }))
+                | Ok(Some(HostMsg::MaskedTile {
+                    x,
+                    y,
+                    width,
+                    height,
+                    rgba,
+                    painted: _,
                 })) => {
                     frames += 1;
                     let ratio = nonblack_ratio(&rgba);

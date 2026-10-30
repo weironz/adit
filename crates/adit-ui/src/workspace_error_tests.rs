@@ -71,6 +71,70 @@ fn run_worker() {
     );
     assert_eq!(app.rdp_surface_size, Some((2, 2)));
     assert!(app.manager.active_desktop_error().is_none());
+    if mode == "lease" {
+        let old = app.rdp_input_epoch.expect("initial frame lease");
+        let _ = update(
+            &mut app,
+            Message::RdpPointerMoved(Point::new(1.0, 1.0), Some(old)),
+        );
+        let _ = update(
+            &mut app,
+            Message::RdpPressed(mouse::Button::Left, Some(old)),
+        );
+        app.manager.send_rdp_input_to_active(RdpInput::Key {
+            scancode: 0x7e,
+            extended: false,
+            pressed: true,
+        });
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while app.rdp_input_epoch.is_none_or(|epoch| epoch == old) {
+            app.manager.poll_events();
+            let _ = update(&mut app, Message::RdpTick);
+            assert!(
+                Instant::now() < deadline,
+                "redirect frame must reach the production UI"
+            );
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let new = app.rdp_input_epoch.unwrap();
+        let _ = update(
+            &mut app,
+            Message::RdpPointerMoved(Point::new(1.0, 1.0), Some(new)),
+        );
+        let _ = update(
+            &mut app,
+            Message::RdpPressed(mouse::Button::Left, Some(new)),
+        );
+        let _ = update(
+            &mut app,
+            Message::GlobalPointerReleased(mouse::Button::Left, true),
+        );
+        let _ = update(
+            &mut app,
+            Message::RdpReleased(mouse::Button::Left, Some(old)),
+        );
+        let _ = update(
+            &mut app,
+            Message::RdpReleased(mouse::Button::Left, Some(new)),
+        );
+        app.manager.send_rdp_input_to_active(RdpInput::Key {
+            scancode: 0x7d,
+            extended: false,
+            pressed: true,
+        });
+        let deadline = Instant::now() + Duration::from_secs(8);
+        while !report.is_file() {
+            assert!(Instant::now() < deadline, "lease peer FIFO barrier");
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(
+            std::fs::read_to_string(&report).unwrap(),
+            "0:down,1:down,1:up"
+        );
+        app.manager.close(session);
+        println!("synthetic_ipc mode=lease old_release_cannot_consume_new_press=true");
+        return;
+    }
     let healthy_view = view_signature(&app);
     let stale_count = app.rdp_tiles.len();
     let _release = ReleaseHold(report.with_extension("release"));
@@ -135,12 +199,15 @@ fn run_worker() {
         };
         let _ = update(&mut app, Message::KeyboardInput(event));
     }
-    let _ = update(&mut app, Message::RdpPointerMoved(Point::new(1.0, 1.0)));
-    let _ = update(&mut app, Message::RdpPressed(mouse::Button::Left));
-    let _ = update(&mut app, Message::RdpReleased(mouse::Button::Left));
     let _ = update(
         &mut app,
-        Message::RdpScrolled(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+        Message::RdpPointerMoved(Point::new(1.0, 1.0), None),
+    );
+    let _ = update(&mut app, Message::RdpPressed(mouse::Button::Left, None));
+    let _ = update(&mut app, Message::RdpReleased(mouse::Button::Left, None));
+    let _ = update(
+        &mut app,
+        Message::RdpScrolled(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }, None),
     );
     for pressed in [true, false] {
         app.manager
@@ -230,7 +297,7 @@ fn connected_rdp_error_replaces_cached_interactive_surface() {
         std::path::Path::new(&helper).is_file(),
         "IPC peer must be built first"
     );
-    for mode in ["closed", "eof"] {
+    for mode in ["closed", "eof", "lease"] {
         let scratch = std::env::temp_dir().join(format!("adit-rdp-error-ui-{}", SessionId::new()));
         std::fs::create_dir_all(&scratch).unwrap();
         let mut child = Command::new(std::env::current_exe().unwrap())

@@ -82,8 +82,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [dev-dependencies]
 # Only for the offline progressive replay: a decoded frame has to be LOOKED at.
 image = { version = "0.25", default-features = false, features = ["png"] }
+tokio = { version = "1", features = ["test-util"] }
 
 [patch.crates-io]
+# Preserve server monitor definitions in ResetGraphics callbacks; see IRONRDP-PATCHES.md.
+ironrdp-egfx = { path = "vendor/ironrdp-egfx" }
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
 # Vendored + patched ironrdp-graphics (crates.io 0.9.0 + one marked hunk):
 # RemoteFX Progressive treats a tile `quality` of 0xFF as an index into

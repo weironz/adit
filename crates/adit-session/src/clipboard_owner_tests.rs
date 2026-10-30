@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn switching_active_desktop_keeps_both_rdp_connections_open() {
+    let profiles = vec![
+        ConnectionProfile::new("a", "a.invalid", 22, "fixture"),
+        ConnectionProfile::new("b", "b.invalid", 22, "fixture"),
+    ];
+    let ids = [profiles[0].id, profiles[1].id];
+    let mut manager = SessionManager::with_profiles(profiles);
+    let a = manager.open_mock_session(ids[0]).unwrap();
+    let b = manager.open_mock_session(ids[1]).unwrap();
+    let (handle_a, commands_a, _) = RdpClientHandle::test_fixture_with_channels();
+    let (handle_b, commands_b, _) = RdpClientHandle::test_fixture_with_channels();
+    manager.sessions.get_mut(&a).unwrap().rdp = Some(handle_a);
+    manager.sessions.get_mut(&b).unwrap().rdp = Some(handle_b);
+    manager.activate(a).unwrap();
+    manager.activate(b).unwrap();
+    manager.activate(a).unwrap();
+    assert!(commands_a.try_recv().is_err());
+    assert!(commands_b.try_recv().is_err());
+    assert!(manager.sessions[&a].rdp.is_some());
+    assert!(manager.sessions[&b].rdp.is_some());
+}
+
+#[test]
 fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
     let profiles = vec![
         ConnectionProfile::new("a", "a.invalid", 22, "fixture"),
@@ -16,6 +39,7 @@ fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
     manager.sessions.get_mut(&b).unwrap().rdp = Some(handle_b);
     manager.activate(b).unwrap();
     let read = RdpFileRead {
+        epoch: 0,
         stream_id: 7,
         index: 0,
         offset: 0,
@@ -27,6 +51,7 @@ fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
         assert!(matches!(
             rx.try_recv(),
             Ok(adit_rdp_proto::ClientMsg::FileContents {
+                epoch: 0,
                 stream_id: 7,
                 data: None
             })
@@ -35,6 +60,7 @@ fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
     assert!(manager.pending_rdp_file_reads.is_empty());
     for tx in [events_a, events_b] {
         tx.send(RdpClientEvent::FileContentsNeeded {
+            epoch: 0,
             stream_id: 7,
             index: 0,
             offset: 0,
@@ -47,6 +73,7 @@ fn disabling_clipboard_rejects_each_sessions_queued_and_late_reads() {
         assert!(matches!(
             rx.try_recv(),
             Ok(adit_rdp_proto::ClientMsg::FileContents {
+                epoch: 0,
                 stream_id: 7,
                 data: None
             })
@@ -167,6 +194,25 @@ fn attach_test_rdp(manager: &mut SessionManager, session: SessionId) -> RdpFileR
 }
 
 #[test]
+fn queued_text_and_image_are_rejected_after_the_helper_is_replaced() {
+    let profile = ConnectionProfile::new("a", "a.invalid", 22, "fixture");
+    let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+    let session = manager.open_mock_session(profile.id).unwrap();
+    manager.activate(session).unwrap();
+    let old = RdpClientHandle::test_fixture();
+    let owner = old.clipboard_token(0);
+    manager.sessions.get_mut(&session).unwrap().rdp = Some(old);
+    manager.pending_rdp_clipboard = Some((
+        session,
+        PendingDesktopClipboard::Rdp("old".into(), owner.clone()),
+    ));
+    manager.pending_rdp_clipboard_image = Some((session, vec![1, 2], owner));
+    manager.sessions.get_mut(&session).unwrap().rdp = Some(RdpClientHandle::test_fixture());
+    assert!(manager.take_rdp_clipboard().is_none());
+    assert!(manager.take_rdp_clipboard_image().is_none());
+}
+
+#[test]
 fn clipboard_stream_ids_and_payloads_cannot_cross_native_window_sessions() {
     let a = ConnectionProfile::new("a", "a.invalid", 22, "fixture");
     let b = ConnectionProfile::new("b", "b.invalid", 22, "fixture");
@@ -194,13 +240,19 @@ fn clipboard_stream_ids_and_payloads_cannot_cross_native_window_sessions() {
         },
     ];
     let read = RdpFileRead {
+        epoch: 0,
         stream_id: 1,
         index: 0,
         offset: 0,
         length: 1,
     };
     manager.pending_rdp_file_reads = vec![(a, read), (b, read)];
-    manager.pending_rdp_clipboard_image = Some((a, vec![30]));
+    let token = manager.sessions[&a]
+        .rdp
+        .as_ref()
+        .unwrap()
+        .clipboard_token(0);
+    manager.pending_rdp_clipboard_image = Some((a, vec![30], token));
     manager.pending_rdp_clipboard_files = Some(RdpClipboardFileOffer {
         session: a,
         generation: 1,
@@ -237,12 +289,21 @@ fn temporary_window_projection_preserves_pending_offers_and_focus_retirement_kee
     let a = manager.open_mock_session(a_id).unwrap();
     let b = manager.open_mock_session(b_id).unwrap();
     let requester = attach_test_rdp(&mut manager, a);
-    manager.pending_rdp_clipboard = Some((a, PendingDesktopClipboard::Rdp("fixture-a".into())));
+    let token = manager.sessions[&a]
+        .rdp
+        .as_ref()
+        .unwrap()
+        .clipboard_token(0);
+    manager.pending_rdp_clipboard = Some((
+        a,
+        PendingDesktopClipboard::Rdp("fixture-a".into(), token.clone()),
+    ));
     manager.select_session_context(b).unwrap();
     assert!(manager.take_rdp_clipboard().is_none());
     manager.select_session_context(a).unwrap();
     assert_eq!(manager.take_rdp_clipboard().as_deref(), Some("fixture-a"));
-    manager.pending_rdp_clipboard = Some((a, PendingDesktopClipboard::Rdp("retired".into())));
+    manager.pending_rdp_clipboard =
+        Some((a, PendingDesktopClipboard::Rdp("retired".into(), token)));
     manager.pending_rdp_file_chunks.push(RdpFileChunk {
         session: a,
         generation: 1,

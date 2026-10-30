@@ -13,7 +13,7 @@ pub(crate) struct DesktopPanes {
     sampled_at: Option<Instant>,
     // Input leases outlive textures: hiding/pruning a pane must not erase the
     // information needed to release its remote buttons.
-    owned_buttons: Vec<(SessionId, mouse::Button)>,
+    owned_buttons: Vec<(SessionId, mouse::Button, Option<u64>)>,
     cursors: HashMap<SessionId, RdpCursorVisual>,
 }
 
@@ -28,6 +28,7 @@ pub(crate) struct RdpCursorVisual {
 #[derive(Default)]
 struct DesktopPane {
     generation: u64,
+    input_epoch: Option<u64>,
     size: Option<(u16, u16)>,
     tiles: Vec<RdpTile>,
     error: Option<String>,
@@ -36,11 +37,16 @@ struct DesktopPane {
 }
 
 impl DesktopPanes {
-    fn take_button(&mut self, owner: Option<SessionId>, button: mouse::Button) -> Vec<SessionId> {
+    #[cfg(test)]
+    fn take_button(
+        &mut self,
+        owner: Option<SessionId>,
+        button: mouse::Button,
+    ) -> Vec<(SessionId, Option<u64>)> {
         let mut owners = Vec::new();
-        self.owned_buttons.retain(|(id, held)| {
+        self.owned_buttons.retain(|(id, held, epoch)| {
             if *held == button && owner.is_none_or(|owner| owner == *id) {
-                owners.push(*id);
+                owners.push((*id, *epoch));
                 false
             } else {
                 true
@@ -62,6 +68,7 @@ impl DesktopPanes {
             return;
         }
         pane.generation = frame.generation;
+        pane.input_epoch = frame.rdp_input_epoch;
         let size = (frame.width, frame.height);
         let expected = usize::from(frame.width)
             .checked_mul(usize::from(frame.height))
@@ -76,9 +83,8 @@ impl DesktopPanes {
             ));
             return;
         }
-        if pane.size != Some(size) {
-            pane.pointer = None;
-        }
+        // The pointer is body-local, so the current transform can remap it
+        // after a resize without requiring the user to move the mouse first.
         pane.size = Some(size);
         pane.error = None;
         // Use the existing synchronous-upload tile size. A VNC snapshot may
@@ -174,7 +180,7 @@ pub(crate) fn refresh(app: &mut AditApp) {
     } else {
         Vec::new()
     };
-    if app.desktop_panes.owned_buttons.iter().any(|(id, _)| {
+    if app.desktop_panes.owned_buttons.iter().any(|(id, _, _)| {
         !visible.contains(id)
             || app.manager.active_session() != Some(*id)
             || app.manager.session_desktop_read_only(*id)
@@ -415,6 +421,7 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
     {
         // Mouse coordinates include the black bars. Testing the inverse
         // transform rejects those bars instead of clicking the remote edge.
+        let input_epoch = pane.input_epoch;
         mouse_area(
             container(iced::widget::stack![
                 tile_grid(&pane.tiles, fit),
@@ -430,18 +437,43 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
             .center_y(Fill)
             .style(|_| desktop_background()),
         )
-        .on_move(move |point| Message::DesktopPaneMoved(id, point))
+        .on_move(move |point| Message::DesktopPaneMoved(id, point, input_epoch))
         .on_exit(Message::DesktopPaneMoved(
             id,
             Point::new(f32::NAN, f32::NAN),
+            input_epoch,
         ))
-        .on_press(Message::DesktopPanePressed(id, mouse::Button::Left))
-        .on_release(Message::DesktopPaneReleased(id, mouse::Button::Left))
-        .on_right_press(Message::DesktopPanePressed(id, mouse::Button::Right))
-        .on_right_release(Message::DesktopPaneReleased(id, mouse::Button::Right))
-        .on_middle_press(Message::DesktopPanePressed(id, mouse::Button::Middle))
-        .on_middle_release(Message::DesktopPaneReleased(id, mouse::Button::Middle))
-        .on_scroll(move |delta| Message::DesktopPaneScrolled(id, delta))
+        .on_press(Message::DesktopPanePressed(
+            id,
+            mouse::Button::Left,
+            input_epoch,
+        ))
+        .on_release(Message::DesktopPaneReleased(
+            id,
+            mouse::Button::Left,
+            input_epoch,
+        ))
+        .on_right_press(Message::DesktopPanePressed(
+            id,
+            mouse::Button::Right,
+            input_epoch,
+        ))
+        .on_right_release(Message::DesktopPaneReleased(
+            id,
+            mouse::Button::Right,
+            input_epoch,
+        ))
+        .on_middle_press(Message::DesktopPanePressed(
+            id,
+            mouse::Button::Middle,
+            input_epoch,
+        ))
+        .on_middle_release(Message::DesktopPaneReleased(
+            id,
+            mouse::Button::Middle,
+            input_epoch,
+        ))
+        .on_scroll(move |delta| Message::DesktopPaneScrolled(id, delta, input_epoch))
         .into()
     } else {
         container(text(t("等待远程桌面画面…")))
@@ -512,6 +544,13 @@ fn pointer_pixels(app: &AditApp, id: SessionId) -> Option<(u16, u16)> {
     transform(app, id)?.remote_point(app.desktop_panes.surfaces.get(&id)?.pointer?)
 }
 
+pub(crate) fn frame_epoch_matches(app: &AditApp, id: SessionId, epoch: Option<u64>) -> bool {
+    app.desktop_panes
+        .surfaces
+        .get(&id)
+        .is_some_and(|pane| pane.input_epoch == epoch)
+}
+
 fn focus_target(app: &mut AditApp, id: SessionId, index: usize) -> bool {
     if app.manager.active_session() != Some(id) {
         // Release while the outgoing transport is still active. Clearing the
@@ -533,8 +572,10 @@ pub(crate) fn moved(app: &mut AditApp, id: SessionId, point: Point) {
         return;
     }
     if let Some((x, y)) = pointer_pixels(app, id) {
-        app.manager
-            .send_rdp_input_to_active(RdpInput::MouseMove { x, y });
+        app.manager.send_desktop_pointer_to_active(
+            RdpInput::MouseMove { x, y },
+            app.desktop_panes.surfaces[&id].input_epoch,
+        );
     }
 }
 
@@ -553,28 +594,41 @@ pub(crate) fn pressed(app: &mut AditApp, id: SessionId, button: mouse::Button) {
     }
     // A newly focused VNC session still has its own old pointer position until
     // the first move. Deliver the position before its button mask changes.
-    app.manager
-        .send_rdp_input_to_active(RdpInput::MouseMove { x, y });
-    app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
-        button: button_remote,
-        pressed: true,
-    });
-    if !app.desktop_panes.owned_buttons.contains(&(id, button)) {
-        app.desktop_panes.owned_buttons.push((id, button));
+    app.manager.send_desktop_pointer_to_active(
+        RdpInput::MouseMove { x, y },
+        app.desktop_panes.surfaces[&id].input_epoch,
+    );
+    app.manager.send_desktop_pointer_to_active(
+        RdpInput::MouseButton {
+            button: button_remote,
+            pressed: true,
+        },
+        app.desktop_panes.surfaces[&id].input_epoch,
+    );
+    let epoch = app.desktop_panes.surfaces[&id].input_epoch;
+    if !app
+        .desktop_panes
+        .owned_buttons
+        .contains(&(id, button, epoch))
+    {
+        app.desktop_panes.owned_buttons.push((id, button, epoch));
     }
 }
 
-fn send_owned_release(app: &AditApp, id: SessionId, button: mouse::Button) {
+fn send_owned_release(app: &AditApp, id: SessionId, button: mouse::Button, epoch: Option<u64>) {
     // Never reactivate a hidden/outgoing session or release a different host's
     // button. The parent must call release_owned BEFORE changing activation.
     if app.manager.active_session() != Some(id) {
         return;
     }
     if let Some(button) = rdp_mouse_button(button) {
-        app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
-            button,
-            pressed: false,
-        });
+        app.manager.send_desktop_pointer_to_active(
+            RdpInput::MouseButton {
+                button,
+                pressed: false,
+            },
+            epoch,
+        );
     }
 }
 
@@ -582,8 +636,8 @@ fn send_owned_release(app: &AditApp, id: SessionId, button: mouse::Button) {
 /// modal, or losing window focus. Cleanup deliberately bypasses input_pane:
 /// the pane may already be hidden or covered. No keys or activation are changed.
 pub(crate) fn release_owned(app: &mut AditApp) {
-    for (id, button) in std::mem::take(&mut app.desktop_panes.owned_buttons) {
-        send_owned_release(app, id, button);
+    for (id, button, epoch) in std::mem::take(&mut app.desktop_panes.owned_buttons) {
+        send_owned_release(app, id, button, epoch);
     }
 }
 
@@ -592,16 +646,37 @@ pub(crate) fn release_owned(app: &mut AditApp) {
 /// the up; fallback is only appropriate for false in the single-desktop view.
 /// This and released are idempotent in either delivery order.
 pub(crate) fn global_button_released(app: &mut AditApp, button: mouse::Button) -> bool {
-    let owners = app.desktop_panes.take_button(None, button);
-    for &id in &owners {
-        send_owned_release(app, id, button);
-    }
-    !owners.is_empty()
+    let Some(id) = app.manager.active_session() else {
+        return false;
+    };
+    let Some(epoch) =
+        take_single_button_lease(&mut app.desktop_panes.owned_buttons, id, button, None, None)
+    else {
+        return false;
+    };
+    send_owned_release(app, id, button, epoch);
+    true
 }
 
-pub(crate) fn released(app: &mut AditApp, id: SessionId, button: mouse::Button) {
-    for owner in app.desktop_panes.take_button(Some(id), button) {
-        send_owned_release(app, owner, button);
+pub(crate) fn released(
+    app: &mut AditApp,
+    id: SessionId,
+    button: mouse::Button,
+    event_epoch: Option<u64>,
+) {
+    let current_epoch = app
+        .desktop_panes
+        .surfaces
+        .get(&id)
+        .and_then(|pane| pane.input_epoch);
+    if let Some(epoch) = take_single_button_lease(
+        &mut app.desktop_panes.owned_buttons,
+        id,
+        button,
+        Some(event_epoch),
+        current_epoch,
+    ) {
+        send_owned_release(app, id, button, epoch);
     }
 }
 
@@ -633,10 +708,14 @@ pub(crate) fn scrolled(app: &mut AditApp, id: SessionId, delta: mouse::ScrollDel
         return;
     };
     if focus_target(app, id, index) {
-        app.manager
-            .send_rdp_input_to_active(RdpInput::MouseMove { x, y });
-        app.manager
-            .send_rdp_input_to_active(RdpInput::Wheel { vertical, delta });
+        app.manager.send_desktop_pointer_to_active(
+            RdpInput::MouseMove { x, y },
+            app.desktop_panes.surfaces[&id].input_epoch,
+        );
+        app.manager.send_desktop_pointer_to_active(
+            RdpInput::Wheel { vertical, delta },
+            app.desktop_panes.surfaces[&id].input_epoch,
+        );
     }
 }
 
@@ -650,6 +729,7 @@ mod tests {
             height: 1,
             rgba: rgba.repeat(2),
             generation,
+            rdp_input_epoch: None,
         }
     }
 
@@ -756,20 +836,52 @@ mod tests {
     }
 
     #[test]
+    fn pane_keeps_the_epoch_of_the_pixels_it_sampled() {
+        let id = SessionId::new();
+        let mut cache = DesktopPanes::default();
+        let mut old = frame(1, [10, 20, 30, 255]);
+        old.rdp_input_epoch = Some(11);
+        cache.observe(id, &old);
+        assert_eq!(cache.surfaces[&id].input_epoch, Some(11));
+        let mut newer = frame(2, [40, 50, 60, 255]);
+        newer.rdp_input_epoch = Some(12);
+        cache.observe(id, &newer);
+        assert_eq!(cache.surfaces[&id].input_epoch, Some(12));
+        assert_eq!(pixels(&cache.surfaces[&id]), &[40, 50, 60, 255].repeat(2));
+    }
+
+    #[test]
+    fn resizing_a_pane_keeps_its_local_pointer_for_the_next_click() {
+        let id = SessionId::new();
+        let mut cache = DesktopPanes::default();
+        cache.observe(id, &frame(1, [1, 2, 3, 255]));
+        cache.surfaces.get_mut(&id).unwrap().pointer = Some(Point::new(30.0, 20.0));
+        let mut resized = frame(2, [4, 5, 6, 255]);
+        resized.width = 4;
+        resized.height = 2;
+        resized.rgba = [4, 5, 6, 255].repeat(8);
+        cache.observe(id, &resized);
+        assert_eq!(cache.surfaces[&id].pointer, Some(Point::new(30.0, 20.0)));
+    }
+
+    #[test]
     fn invalid_frame_retires_old_pixels_and_a_new_frame_recovers() {
         let id = SessionId::new();
         let mut cache = DesktopPanes::default();
         cache.observe(id, &frame(1, [1, 2, 3, 255]));
         let pane = cache.surfaces.get_mut(&id).unwrap();
         pane.pointer = Some(Point::new(1.0, 1.0));
-        cache.owned_buttons.push((id, mouse::Button::Left));
+        cache.owned_buttons.push((id, mouse::Button::Left, Some(7)));
         let mut invalid = frame(2, [1, 2, 3, 255]);
         invalid.rgba.pop();
         cache.observe(id, &invalid);
         let pane = &cache.surfaces[&id];
         assert!(pane.error.as_ref().unwrap().contains("7"));
         assert!(pane.tiles.is_empty() && pane.size.is_none() && pane.pointer.is_none());
-        assert_eq!(cache.owned_buttons, vec![(id, mouse::Button::Left)]);
+        assert_eq!(
+            cache.owned_buttons,
+            vec![(id, mouse::Button::Left, Some(7))]
+        );
         cache.observe(id, &frame(3, [4, 5, 6, 255]));
         assert!(cache.surfaces[&id].error.is_none());
         assert_eq!(pixels(&cache.surfaces[&id]), &[4, 5, 6, 255].repeat(2));
@@ -797,17 +909,26 @@ mod tests {
         let (a, b) = (SessionId::new(), SessionId::new());
         let mut cache = DesktopPanes {
             owned_buttons: vec![
-                (a, mouse::Button::Left),
-                (b, mouse::Button::Left),
-                (a, mouse::Button::Right),
+                (a, mouse::Button::Left, Some(1)),
+                (b, mouse::Button::Left, Some(2)),
+                (a, mouse::Button::Right, Some(3)),
             ],
             ..DesktopPanes::default()
         };
         cache.retain(&[]);
-        assert_eq!(cache.take_button(Some(b), mouse::Button::Left), vec![b]);
-        assert_eq!(cache.take_button(None, mouse::Button::Left), vec![a]);
+        assert_eq!(
+            cache.take_button(Some(b), mouse::Button::Left),
+            vec![(b, Some(2))]
+        );
+        assert_eq!(
+            cache.take_button(None, mouse::Button::Left),
+            vec![(a, Some(1))]
+        );
         assert!(cache.take_button(Some(a), mouse::Button::Left).is_empty());
-        assert_eq!(cache.owned_buttons, vec![(a, mouse::Button::Right)]);
+        assert_eq!(
+            cache.owned_buttons,
+            vec![(a, mouse::Button::Right, Some(3))]
+        );
     }
 
     // An actual RFB peer proves that sampling and input reach independent
@@ -1019,7 +1140,7 @@ mod tests {
             (0, 1, 0)
         );
         assert!(!global_button_released(&mut app, mouse::Button::Left));
-        released(&mut app, a, mouse::Button::Left);
+        released(&mut app, a, mouse::Button::Left, None);
         moved(&mut app, a, center);
         pressed(&mut app, a, mouse::Button::Left);
         app.settings_open = true;
@@ -1100,6 +1221,91 @@ pub(crate) fn cursor_visual(app: &AditApp, id: SessionId) -> Option<RdpCursorVis
     app.desktop_panes.cursors.get(&id).cloned()
 }
 
+/// Synchronize the current widget-local position on a click even when the OS
+/// cursor has not moved since a new frame or connection was presented.
+pub(crate) fn pointer_sync_layer(
+    size: iced::Size,
+    scale_x: f32,
+    scale_y: f32,
+    remote: (u16, u16),
+    epoch: Option<u64>,
+) -> Element<'static, Message> {
+    Element::new(PointerSyncLayer {
+        size,
+        scale_x,
+        scale_y,
+        remote,
+        epoch,
+    })
+}
+
+struct PointerSyncLayer {
+    size: iced::Size,
+    scale_x: f32,
+    scale_y: f32,
+    remote: (u16, u16),
+    epoch: Option<u64>,
+}
+
+impl iced::advanced::Widget<Message, Theme, iced::Renderer> for PointerSyncLayer {
+    fn size(&self) -> iced::Size<Length> {
+        iced::Size::new(
+            Length::Fixed(self.size.width),
+            Length::Fixed(self.size.height),
+        )
+    }
+    fn layout(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        _renderer: &iced::Renderer,
+        limits: &iced::advanced::layout::Limits,
+    ) -> iced::advanced::layout::Node {
+        iced::advanced::layout::Node::new(limits.resolve(
+            Length::Fixed(self.size.width),
+            Length::Fixed(self.size.height),
+            self.size,
+        ))
+    }
+    fn update(
+        &mut self,
+        _tree: &mut iced::advanced::widget::Tree,
+        event: &iced::Event,
+        layout: iced::advanced::Layout<'_>,
+        cursor: mouse::Cursor,
+        _renderer: &iced::Renderer,
+        _clipboard: &mut dyn iced::advanced::Clipboard,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        _viewport: &iced::Rectangle,
+    ) {
+        if !matches!(
+            event,
+            iced::Event::Mouse(mouse::Event::ButtonPressed(_) | mouse::Event::WheelScrolled { .. })
+        ) {
+            return;
+        }
+        if let Some(point) = cursor.position_in(layout.bounds()) {
+            shell.publish(Message::RdpPointerMoved(
+                Point::new(
+                    (point.x * self.scale_x).clamp(0.0, f32::from(self.remote.0) - 1.0),
+                    (point.y * self.scale_y).clamp(0.0, f32::from(self.remote.1) - 1.0),
+                ),
+                self.epoch,
+            ));
+        }
+    }
+    fn draw(
+        &self,
+        _tree: &iced::advanced::widget::Tree,
+        _renderer: &mut iced::Renderer,
+        _theme: &Theme,
+        _style: &iced::advanced::renderer::Style,
+        _layout: iced::advanced::Layout<'_>,
+        _cursor: mouse::Cursor,
+        _viewport: &iced::Rectangle,
+    ) {
+    }
+}
+
 pub(crate) fn cursor_visual_layer(
     visual: Option<RdpCursorVisual>,
     id: SessionId,
@@ -1147,6 +1353,25 @@ fn rdp_cursor_bounds(
         width: f32::from(shape.width) / scale,
         height: f32::from(shape.height) / scale,
     }
+}
+
+fn rdp_cursor_anchor(
+    local: Option<Point>,
+    server: Option<(u16, u16)>,
+    bounds: iced::Rectangle,
+    scale_x: f32,
+    scale_y: f32,
+) -> Option<Point> {
+    // A click is mapped from the system pointer. When it is over the desktop,
+    // the drawn hotspot must name that same point even after a server warp.
+    local.or_else(|| {
+        server.map(|(x, y)| {
+            Point::new(
+                bounds.x + f32::from(x) / scale_x,
+                bounds.y + f32::from(y) / scale_y,
+            )
+        })
+    })
 }
 
 impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
@@ -1221,16 +1446,13 @@ impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
         };
         let bounds = layout.bounds();
         let motion = tree.state.downcast_ref::<RdpCursorMotion>();
-        let point = if motion.use_server {
-            visual.position.map(|(x, y)| {
-                Point::new(
-                    bounds.x + f32::from(x) / self.scale_x,
-                    bounds.y + f32::from(y) / self.scale_y,
-                )
-            })
-        } else {
-            cursor.position_over(bounds)
-        };
+        let point = rdp_cursor_anchor(
+            cursor.position_over(bounds),
+            motion.use_server.then_some(visual.position).flatten(),
+            bounds,
+            self.scale_x,
+            self.scale_y,
+        );
         let Some(point) = point else {
             return;
         };
@@ -1264,6 +1486,25 @@ impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
 #[cfg(test)]
 mod rdp_cursor_tests {
     use super::*;
+
+    #[test]
+    fn visible_cursor_uses_the_click_position_after_a_server_warp() {
+        let bounds = iced::Rectangle {
+            x: 10.0,
+            y: 20.0,
+            width: 400.0,
+            height: 300.0,
+        };
+        let local = Point::new(35.0, 55.0);
+        assert_eq!(
+            rdp_cursor_anchor(Some(local), Some((300, 200)), bounds, 1.0, 1.0),
+            Some(local)
+        );
+        assert_eq!(
+            rdp_cursor_anchor(None, Some((300, 200)), bounds, 1.0, 1.0),
+            Some(Point::new(310.0, 220.0))
+        );
+    }
     #[test]
     fn server_hotspot_tracks_scaled_surface_in_both_renderers() {
         let shape = adit_session::VncCursor {

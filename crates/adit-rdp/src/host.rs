@@ -3,7 +3,7 @@
 //! Two dedicated threads own the binary stdio so it never mixes with the async
 //! RDP socket loop:
 //! * the **stdin reader** decodes [`ClientMsg`]s — the first `Connect` starts the
-//!   session, subsequent `Input`s feed the session, and `Close`/EOF ends it;
+//!   session, epoch-tagged input feeds the session, and `Close`/EOF ends it;
 //! * the **stdout writer** serialises [`HostMsg`]s from the session.
 //!
 //! Anything the helper prints to stdout that isn't a framed [`HostMsg`] would
@@ -11,13 +11,101 @@
 
 use std::io::{self, Write};
 use std::sync::mpsc as std_mpsc;
+use std::sync::Arc;
 use std::thread;
 
 use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg};
 use tokio::sync::mpsc as tokio_mpsc;
 
-use crate::session::{run_session, SessionCmd};
+use crate::session::{run_session, InputRouting, SessionCmd};
 use crate::RdpError;
+
+fn read_app_messages<R: io::Read>(
+    mut input: R,
+    request_tx: std_mpsc::Sender<ConnectRequest>,
+    input_tx: tokio_mpsc::UnboundedSender<SessionCmd>,
+    display_tx: tokio_mpsc::UnboundedSender<SessionCmd>,
+    routing: Arc<InputRouting>,
+) {
+    let mut request_tx = Some(request_tx);
+    loop {
+        match read_msg::<_, ClientMsg>(&mut input) {
+            Ok(Some(ClientMsg::Connect(request))) => {
+                if let Some(tx) = request_tx.take() {
+                    let _ = tx.send(request);
+                }
+            }
+            // Untagged input must not cross a redirection.
+            Ok(Some(ClientMsg::Input(_))) => {}
+            Ok(Some(ClientMsg::EpochInput { epoch, event })) => {
+                let key = matches!(
+                    &event,
+                    adit_rdp_proto::InputEvent::Key { .. }
+                        | adit_rdp_proto::InputEvent::Unicode { .. }
+                );
+                if let Some((priority, command)) = routing.route(epoch, event) {
+                    let tx = if priority { &display_tx } else { &input_tx };
+                    if tx.send(command).is_err() {
+                        break;
+                    }
+                } else if key && input_tx.send(SessionCmd::RejectedKeyboard).is_err() {
+                    break;
+                }
+            }
+            Ok(Some(ClientMsg::ClipboardImage(_))) | Ok(Some(ClientMsg::ClipboardFiles(_))) => {}
+            Ok(Some(ClientMsg::EpochClipboardImage { epoch, image })) => {
+                if routing.accepts_epoch(epoch)
+                    && input_tx
+                        .send(SessionCmd::ClipboardImage { epoch, image })
+                        .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Some(ClientMsg::EpochClipboardFiles { epoch, files })) => {
+                if routing.accepts_epoch(epoch)
+                    && input_tx
+                        .send(SessionCmd::ClipboardFiles { epoch, files })
+                        .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Some(ClientMsg::FileContents {
+                epoch,
+                stream_id,
+                data,
+            })) => {
+                if let Some(command) = routing.file_contents(epoch, stream_id, data) {
+                    if input_tx.send(command).is_err() {
+                        break;
+                    }
+                }
+            }
+            Ok(Some(ClientMsg::RequestFileContents {
+                generation,
+                stream_id,
+                index,
+                offset,
+                length,
+            })) => {
+                if input_tx
+                    .send(SessionCmd::RequestFileContents {
+                        generation,
+                        stream_id,
+                        index,
+                        offset,
+                        length,
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            Ok(Some(ClientMsg::Close)) | Ok(None) | Err(_) => break,
+        }
+    }
+}
 
 /// Entry point for the `adit-rdp-host` binary. Blocks until the session ends.
 pub fn run_host() -> Result<(), RdpError> {
@@ -82,6 +170,9 @@ pub fn run_host() -> Result<(), RdpError> {
 
     let (req_tx, req_rx) = std_mpsc::channel::<ConnectRequest>();
     let (input_tx, input_rx) = tokio_mpsc::unbounded_channel();
+    let (display_tx, display_rx) = tokio_mpsc::unbounded_channel();
+    let routing = Arc::new(InputRouting::default());
+    let reader_routing = Arc::clone(&routing);
     let (host_tx, host_rx) = std_mpsc::channel::<HostMsg>();
 
     // ── stdin reader ─────────────────────────────────────────────────────────
@@ -91,29 +182,7 @@ pub fn run_host() -> Result<(), RdpError> {
         .name("adit-rdp-stdin".into())
         .spawn(move || {
             let stdin = io::stdin();
-            let mut lock = stdin.lock();
-            let mut req_tx = Some(req_tx);
-            loop {
-                match read_msg::<_, ClientMsg>(&mut lock) {
-                    Ok(Some(ClientMsg::Connect(request))) => {
-                        // Only the first Connect matters; ignore any extras.
-                        if let Some(tx) = req_tx.take() {
-                            let _ = tx.send(request);
-                        }
-                    }
-                    // Close or a clean EOF ends the session. Legacy file
-                    // offers only clear cached text/image; their metadata is dropped.
-                    Ok(Some(ClientMsg::Close)) | Ok(None) => break,
-                    Ok(Some(message)) => {
-                        if let Some(command) = session_command(message) {
-                            if input_tx.send(command).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    Err(_) => break,
-                }
-            }
+            read_app_messages(stdin.lock(), req_tx, input_tx, display_tx, reader_routing);
         })
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
@@ -144,7 +213,13 @@ pub fn run_host() -> Result<(), RdpError> {
         .build()
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
-    let result = runtime.block_on(run_session(request, input_rx, host_tx.clone()));
+    let result = runtime.block_on(run_session(
+        request,
+        input_rx,
+        display_rx,
+        routing,
+        host_tx.clone(),
+    ));
 
     // Announce the outcome, then let the writer flush and exit.
     match &result {
@@ -162,89 +237,246 @@ pub fn run_host() -> Result<(), RdpError> {
     result
 }
 
-/// Only commands safe for this helper reach the RDP session. An older app
-/// cannot inject file metadata or pre-read bytes.
-fn session_command(message: ClientMsg) -> Option<SessionCmd> {
-    match message {
-        ClientMsg::Input(event) => Some(SessionCmd::Input(event)),
-        ClientMsg::ClipboardImage(image) => Some(SessionCmd::ClipboardImage(image)),
-        ClientMsg::RequestFileContents {
-            generation,
-            stream_id,
-            index,
-            offset,
-            length,
-        } => Some(SessionCmd::RequestFileContents {
-            generation,
-            stream_id,
-            index,
-            offset,
-            length,
-        }),
-        // Old apps may still send nonempty file selections. Discard their
-        // metadata but also retire any older local text/image offer.
-        ClientMsg::ClipboardFiles(_) => Some(SessionCmd::ClearLocalClipboard),
-        ClientMsg::FileContents { .. } | ClientMsg::Connect(_) | ClientMsg::Close => None,
-    }
-}
-
 #[cfg(test)]
-mod tests {
+mod redirect_epoch_tests {
     use super::*;
-    use adit_rdp_proto::{ClipFile, InputEvent};
+    use adit_rdp_proto::{InputEvent, Monitor, MouseButton};
+    use std::io::Read;
+    use std::time::Duration;
+
+    struct FragmentedInput {
+        fragments: std_mpsc::Receiver<Vec<u8>>,
+        loaded: std_mpsc::Sender<()>,
+        current: io::Cursor<Vec<u8>>,
+    }
+
+    impl Read for FragmentedInput {
+        fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+            loop {
+                let n = self.current.read(out)?;
+                if n > 0 || out.is_empty() {
+                    return Ok(n);
+                }
+                match self.fragments.recv() {
+                    Ok(fragment) => {
+                        self.current = io::Cursor::new(fragment);
+                        let _ = self.loaded.send(());
+                    }
+                    Err(_) => return Ok(0),
+                }
+            }
+        }
+    }
+
+    fn frame(message: ClientMsg) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        write_msg(&mut bytes, &message).unwrap();
+        bytes
+    }
+
+    fn layout(request_id: u64) -> InputEvent {
+        InputEvent::MonitorLayout {
+            request_id,
+            monitors: vec![Monitor {
+                left: 0,
+                top: 0,
+                width: 800,
+                height: 600,
+                primary: true,
+                scale_percent: 100,
+            }],
+        }
+    }
 
     #[test]
-    fn old_file_messages_are_dropped_at_the_helper_ipc_boundary() {
-        let messages = [
-            ClientMsg::ClipboardFiles(vec![ClipFile {
-                name: "private.txt".into(),
-                size: 7,
-                is_dir: false,
-            }]),
-            ClientMsg::FileContents {
-                stream_id: 11,
-                data: Some(b"private".to_vec()),
+    fn old_framed_inputs_arriving_after_redirect_never_reach_session_queues() {
+        let routing = Arc::new(InputRouting::default());
+        let (fragments_tx, fragments_rx) = std_mpsc::channel();
+        let (loaded_tx, loaded_rx) = std_mpsc::channel();
+        let (request_tx, _request_rx) = std_mpsc::channel();
+        let (input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
+        let (display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
+        let reader = FragmentedInput {
+            fragments: fragments_rx,
+            loaded: loaded_tx,
+            current: io::Cursor::new(Vec::new()),
+        };
+        let worker_routing = Arc::clone(&routing);
+        let worker = thread::spawn(move || {
+            read_app_messages(reader, request_tx, input_tx, display_tx, worker_routing)
+        });
+        let old = frame(ClientMsg::EpochInput {
+            epoch: 0,
+            event: InputEvent::Resize {
+                width: 640,
+                height: 480,
             },
-            ClientMsg::FileContents {
-                stream_id: 11,
-                data: None,
+        });
+        fragments_tx.send(old[..4].to_vec()).unwrap();
+        loaded_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(routing.advance(), Some(1));
+        fragments_tx.send(old[4..].to_vec()).unwrap();
+        for event in [
+            InputEvent::MouseMove { x: 1, y: 2 },
+            InputEvent::MouseButton {
+                button: MouseButton::Left,
+                pressed: false,
             },
-        ];
-        let mut bytes = Vec::new();
-        for msg in &messages {
-            write_msg(&mut bytes, msg).unwrap();
+            InputEvent::Wheel {
+                vertical: true,
+                delta: 120,
+            },
+            layout(1),
+            InputEvent::CancelMonitorLayout { request_id: 1 },
+            InputEvent::Key {
+                scancode: 30,
+                extended: false,
+                pressed: true,
+            },
+        ] {
+            fragments_tx
+                .send(frame(ClientMsg::EpochInput { epoch: 0, event }))
+                .unwrap();
         }
-        let mut input = bytes.as_slice();
-        let file_offer = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
-        assert!(matches!(
-            session_command(file_offer),
-            Some(SessionCmd::ClearLocalClipboard)
-        ));
-        for _ in 1..messages.len() {
-            let decoded = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
-            assert!(session_command(decoded).is_none());
+        fragments_tx
+            .send(frame(ClientMsg::Input(InputEvent::Resize {
+                width: 111,
+                height: 222,
+            })))
+            .unwrap();
+        fragments_tx
+            .send(frame(ClientMsg::EpochInput {
+                epoch: 2,
+                event: layout(99),
+            }))
+            .unwrap();
+        for event in [
+            InputEvent::Resize {
+                width: 900,
+                height: 700,
+            },
+            layout(2),
+            InputEvent::CancelMonitorLayout { request_id: 2 },
+        ] {
+            fragments_tx
+                .send(frame(ClientMsg::EpochInput { epoch: 1, event }))
+                .unwrap();
         }
+        for event in [
+            InputEvent::MouseMove { x: 12, y: 34 },
+            InputEvent::MouseButton {
+                button: MouseButton::Left,
+                pressed: true,
+            },
+            InputEvent::Wheel {
+                vertical: true,
+                delta: 120,
+            },
+            InputEvent::Key {
+                scancode: 30,
+                extended: false,
+                pressed: true,
+            },
+        ] {
+            fragments_tx
+                .send(frame(ClientMsg::EpochInput { epoch: 1, event }))
+                .unwrap();
+        }
+        // Old frames can arrive even after the new epoch has started flowing.
+        fragments_tx
+            .send(frame(ClientMsg::EpochInput {
+                epoch: 0,
+                event: layout(3),
+            }))
+            .unwrap();
+        fragments_tx
+            .send(frame(ClientMsg::EpochInput {
+                epoch: 0,
+                event: InputEvent::MouseButton {
+                    button: MouseButton::Left,
+                    pressed: false,
+                },
+            }))
+            .unwrap();
+        // The same stream id may be reused by the new CLIPRDR channel.
+        fragments_tx
+            .send(frame(ClientMsg::FileContents {
+                epoch: 0,
+                stream_id: 7,
+                data: Some(vec![1]),
+            }))
+            .unwrap();
+        fragments_tx
+            .send(frame(ClientMsg::FileContents {
+                epoch: 1,
+                stream_id: 7,
+                data: Some(vec![2]),
+            }))
+            .unwrap();
+        fragments_tx.send(frame(ClientMsg::Close)).unwrap();
+        worker.join().unwrap();
         assert!(matches!(
-            session_command(ClientMsg::ClipboardFiles(Vec::new())),
-            Some(SessionCmd::ClearLocalClipboard)
+            display_rx.try_recv(),
+            Ok(SessionCmd::Resize {
+                epoch: 1,
+                revision: 1,
+                width: 900,
+                height: 700
+            })
         ));
         assert!(matches!(
-            session_command(ClientMsg::Input(InputEvent::ClipboardText("text".into()))),
-            Some(SessionCmd::Input(InputEvent::ClipboardText(text))) if text == "text"
+            display_rx.try_recv(),
+            Ok(SessionCmd::Input {
+                epoch: 1,
+                event: InputEvent::MonitorLayout { request_id: 2, .. }
+            })
         ));
         assert!(matches!(
-            session_command(ClientMsg::ClipboardImage(vec![1, 2])),
-            Some(SessionCmd::ClipboardImage(image)) if image == [1, 2]
+            display_rx.try_recv(),
+            Ok(SessionCmd::Input {
+                epoch: 1,
+                event: InputEvent::CancelMonitorLayout { request_id: 2 }
+            })
+        ));
+        assert!(display_rx.try_recv().is_err());
+        assert!(matches!(
+            input_rx.try_recv(),
+            Ok(SessionCmd::RejectedKeyboard)
         ));
         assert!(matches!(
-            session_command(ClientMsg::RequestFileContents {
-                generation: 1,
-                stream_id: 2,
-                index: 0,
-                offset: 0,
-                length: 1
-            }),
-            Some(SessionCmd::RequestFileContents { generation: 1, .. })
+            input_rx.try_recv(),
+            Ok(SessionCmd::Pointer {
+                epoch: 1,
+                event: InputEvent::MouseMove { x: 12, y: 34 },
+                ..
+            })
         ));
+        assert!(matches!(
+            input_rx.try_recv(),
+            Ok(SessionCmd::Pointer {
+                epoch: 1,
+                event: InputEvent::MouseButton { pressed: true, .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            input_rx.try_recv(),
+            Ok(SessionCmd::Pointer {
+                epoch: 1,
+                event: InputEvent::Wheel { delta: 120, .. },
+                ..
+            })
+        ));
+        assert!(matches!(
+            input_rx.try_recv(),
+            Ok(SessionCmd::Input {
+                epoch: 1,
+                event: InputEvent::Key { scancode: 30, .. }
+            })
+        ));
+        assert!(matches!(input_rx.try_recv(), Ok(SessionCmd::FileContents {
+            epoch: 1, stream_id: 7, data: Some(bytes)
+        }) if bytes == vec![2]));
+        assert!(input_rx.try_recv().is_err());
     }
 }

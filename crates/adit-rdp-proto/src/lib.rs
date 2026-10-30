@@ -54,6 +54,17 @@ pub struct Monitor {
     pub scale_percent: u32,
 }
 
+/// The geometry actually reported by the server; scale is not part of the
+/// RDP monitor definition and does not change framebuffer input coordinates.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct MonitorGeometry {
+    pub left: i32,
+    pub top: i32,
+    pub width: u16,
+    pub height: u16,
+    pub primary: bool,
+}
+
 /// Shared validation keeps helper allocations and GUI input coordinates bounded.
 pub fn monitor_bounds(monitors: &[Monitor]) -> Result<(i32, i32, u16, u16), &'static str> {
     if monitors.is_empty()
@@ -111,12 +122,12 @@ pub fn monitor_bounds(monitors: &[Monitor]) -> Result<(i32, i32, u16, u16), &'st
                 connected[j]
                     && (((a.left + i32::from(a.width) == b.left
                         || b.left + i32::from(b.width) == a.left)
-                        && a.top < b.top + i32::from(b.height)
-                        && b.top < a.top + i32::from(a.height))
+                        && a.top <= b.top + i32::from(b.height)
+                        && b.top <= a.top + i32::from(a.height))
                         || ((a.top + i32::from(a.height) == b.top
                             || b.top + i32::from(b.height) == a.top)
-                            && a.left < b.left + i32::from(b.width)
-                            && b.left < a.left + i32::from(a.width)))
+                            && a.left <= b.left + i32::from(b.width)
+                            && b.left <= a.left + i32::from(a.width)))
             }) {
                 connected[i] = true;
                 changed = true;
@@ -127,7 +138,7 @@ pub fn monitor_bounds(monitors: &[Monitor]) -> Result<(i32, i32, u16, u16), &'st
         }
     }
     if connected.contains(&false) {
-        return Err("monitors must share connected edges");
+        return Err("monitors must form a connected layout");
     }
     Ok((left, top, (right - left) as u16, (bottom - top) as u16))
 }
@@ -138,8 +149,9 @@ pub struct DisplayControlState {
     pub max_area: u64,
     /// Last layout actually encoded onto the DisplayControl channel.
     pub sent_layout: Vec<Monitor>,
-    /// Selection opens only after the corresponding desktop size arrives.
-    pub applied: bool,
+    /// The framebuffer bounds match the sent layout. This does not confirm the
+    /// server accepted the monitor arrangement: DisplayControl has no layout ack.
+    pub size_matches: bool,
     pub error: Option<String>,
 }
 
@@ -229,7 +241,14 @@ pub enum InputEvent {
     /// Offer freshly-copied local text to the remote clipboard.
     ClipboardText(String),
     /// Send a complete MS-RDPEDISP monitor layout.
-    MonitorLayout(Vec<Monitor>),
+    MonitorLayout {
+        request_id: u64,
+        monitors: Vec<Monitor>,
+    },
+    /// Discard a still-parked request after the app's deadline expires.
+    CancelMonitorLayout {
+        request_id: u64,
+    },
 }
 
 /// How many bytes one file-transfer chunk carries.
@@ -264,10 +283,15 @@ pub use file_safety::{
 };
 
 /// App → helper (over the helper's stdin).
+///
+/// Merge blocker: these epoch-bearing messages change the bincode schema.
+/// The handshake integrated from #94 must use a version newer than its v8; this
+/// branch deliberately does not implement a separate startup handshake.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
     /// Must be the first message; opens the session.
     Connect(ConnectRequest),
+    /// Legacy untagged input. An epoch-aware helper rejects it.
     Input(InputEvent),
     /// Offer a locally-copied image to the remote clipboard, as raw `CF_DIB`
     /// bytes (a BITMAPINFOHEADER, any palette, then the pixels).
@@ -283,6 +307,8 @@ pub enum ClientMsg {
     /// Legacy local-file response. The helper ignores it; the app answers
     /// requests from an older helper with `None`, never file bytes.
     FileContents {
+        /// Connection that issued the request, even if the reply is delayed.
+        epoch: u64,
         stream_id: u32,
         data: Option<Vec<u8>>,
     },
@@ -298,6 +324,27 @@ pub enum ClientMsg {
     },
     /// Ask for a graceful disconnect. Dropping stdin has the same effect.
     Close,
+    /// Input belongs to the helper connection epoch announced after redirect.
+    /// Epoch 0 is the initial connection. The old `Input` variant is legacy
+    /// and must not be forwarded by an epoch-aware helper.
+    EpochInput {
+        epoch: u64,
+        event: InputEvent,
+    },
+    EpochClipboardImage {
+        epoch: u64,
+        image: Vec<u8>,
+    },
+    EpochClipboardFiles {
+        epoch: u64,
+        files: Vec<ClipFile>,
+    },
+}
+
+impl ClientMsg {
+    pub fn input_at(epoch: u64, event: InputEvent) -> Self {
+        Self::EpochInput { epoch, event }
+    }
 }
 
 /// Helper → app (over the helper's stdout).
@@ -338,6 +385,8 @@ pub enum HostMsg {
     /// Legacy request from an older helper for a local file range. The app
     /// answers with [`ClientMsg::FileContents`] containing `None`.
     FileContentsNeeded {
+        /// Connection whose CLIPRDR channel issued this request.
+        epoch: u64,
         stream_id: u32,
         index: u32,
         offset: u64,
@@ -355,7 +404,64 @@ pub enum HostMsg {
     /// The session ended.
     Closed,
     Pointer(PointerUpdate),
-    DisplayControl(DisplayControlState),
+    DisplayControl {
+        epoch: u64,
+        state: DisplayControlState,
+    },
+    /// Reports local encoding/writing only, not acceptance by the server.
+    MonitorLayoutResult {
+        epoch: u64,
+        request_id: u64,
+        result: Result<(), String>,
+    },
+    /// The helper is reconnecting after server redirection; the app may reissue
+    /// the current layout with a fresh request ID.
+    DisplayControlReset {
+        epoch: u64,
+    },
+    /// A key from an obsolete connection could not safely be replayed.
+    InputDiscarded,
+    /// The numbered ordinary resize was written to the RDP connection.
+    /// This is a local write confirmation, not server acceptance.
+    ResizeSent {
+        epoch: u64,
+        revision: u64,
+    },
+    EpochClipboardText {
+        epoch: u64,
+        text: String,
+    },
+    EpochClipboardImage {
+        epoch: u64,
+        image: Vec<u8>,
+    },
+    /// Dense framebuffer pixels with a row-major, least-significant-bit-first
+    /// mask identifying which pixels were actually painted in this update.
+    /// This variant is part of the #97 IPC schema that must be negotiated by #94.
+    MaskedTile {
+        x: u16,
+        y: u16,
+        width: u16,
+        height: u16,
+        rgba: Vec<u8>,
+        painted: Vec<u8>,
+    },
+    /// The ordinary resize was abandoned before any bytes were accepted.
+    ResizeRejected {
+        epoch: u64,
+        revision: u64,
+    },
+    /// Server-reported monitor topology; an empty list means unavailable.
+    MonitorLayoutObserved {
+        epoch: u64,
+        monitors: Vec<MonitorGeometry>,
+    },
+    /// A server reset invalidates prior paint coverage even at the same size.
+    GraphicsReset {
+        epoch: u64,
+        width: u16,
+        height: u16,
+    },
 }
 
 /// Write a length-prefixed, bincode-encoded message and flush. Fails if the
@@ -531,6 +637,7 @@ mod tests {
         write_msg(
             &mut pipe,
             &ClientMsg::FileContents {
+                epoch: 3,
                 stream_id: 7,
                 data: None,
             },
@@ -539,6 +646,7 @@ mod tests {
         write_msg(
             &mut pipe,
             &ClientMsg::FileContents {
+                epoch: 4,
                 stream_id: 8,
                 data: Some(Vec::new()),
             },
@@ -552,13 +660,14 @@ mod tests {
         assert!(matches!(
             failure,
             ClientMsg::FileContents {
+                epoch: 3,
                 stream_id: 7,
                 data: None
             }
         ));
         assert!(matches!(
             empty,
-            ClientMsg::FileContents { stream_id: 8, data: Some(ref bytes) } if bytes.is_empty()
+            ClientMsg::FileContents { epoch: 4, stream_id: 8, data: Some(ref bytes) } if bytes.is_empty()
         ));
     }
 
@@ -576,6 +685,134 @@ mod tests {
 #[cfg(test)]
 mod desktop_protocol_tests {
     use super::*;
+
+    #[test]
+    fn issue97_corner_touching_monitors_are_valid() {
+        let monitors = vec![
+            Monitor {
+                left: 0,
+                top: 0,
+                width: 200,
+                height: 200,
+                primary: true,
+                scale_percent: 100,
+            },
+            Monitor {
+                left: 200,
+                top: 200,
+                width: 200,
+                height: 200,
+                primary: false,
+                scale_percent: 100,
+            },
+        ];
+        assert_eq!(monitor_bounds(&monitors), Ok((0, 0, 400, 400)));
+    }
+
+    #[test]
+    fn issue97_legacy_file_reply_can_be_silently_misdecoded_without_handshake() {
+        #[derive(Debug, Deserialize)]
+        #[allow(dead_code)]
+        enum LegacyClientMsg {
+            Connect,
+            Input,
+            ClipboardImage,
+            ClipboardFiles,
+            FileContents {
+                stream_id: u32,
+                data: Option<Vec<u8>>,
+            },
+        }
+        let mut bytes = Vec::new();
+        write_msg(
+            &mut bytes,
+            &ClientMsg::FileContents {
+                epoch: 1,
+                stream_id: 7,
+                data: Some(vec![42]),
+            },
+        )
+        .unwrap();
+        let decoded = read_msg::<_, LegacyClientMsg>(&mut std::io::Cursor::new(bytes)).unwrap();
+        assert!(
+            matches!(
+                decoded,
+                Some(LegacyClientMsg::FileContents {
+                    stream_id: 1,
+                    data: None
+                })
+            ),
+            "this incompatibility must be rejected by the #94 version handshake"
+        );
+    }
+
+    #[test]
+    fn issue97_masked_tile_and_unsent_resize_round_trip() {
+        let mut bytes = Vec::new();
+        write_msg(
+            &mut bytes,
+            &HostMsg::MaskedTile {
+                x: 3,
+                y: 4,
+                width: 2,
+                height: 1,
+                rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
+                painted: vec![1],
+            },
+        )
+        .unwrap();
+        write_msg(
+            &mut bytes,
+            &HostMsg::ResizeRejected {
+                epoch: 7,
+                revision: 9,
+            },
+        )
+        .unwrap();
+        write_msg(
+            &mut bytes,
+            &HostMsg::MonitorLayoutObserved {
+                epoch: 7,
+                monitors: vec![MonitorGeometry {
+                    left: -200,
+                    top: 0,
+                    width: 200,
+                    height: 200,
+                    primary: false,
+                }],
+            },
+        )
+        .unwrap();
+        write_msg(
+            &mut bytes,
+            &HostMsg::GraphicsReset {
+                epoch: 7,
+                width: 400,
+                height: 200,
+            },
+        )
+        .unwrap();
+        let mut input = std::io::Cursor::new(bytes);
+        assert!(matches!(read_msg::<_, HostMsg>(&mut input).unwrap(),
+            Some(HostMsg::MaskedTile { x: 3, y: 4, width: 2, height: 1, painted, .. }) if painted == [1]));
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut input).unwrap(),
+            Some(HostMsg::ResizeRejected {
+                epoch: 7,
+                revision: 9
+            })
+        ));
+        assert!(matches!(read_msg::<_, HostMsg>(&mut input).unwrap(),
+            Some(HostMsg::MonitorLayoutObserved { epoch: 7, monitors }) if monitors[0].left == -200));
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut input).unwrap(),
+            Some(HostMsg::GraphicsReset {
+                epoch: 7,
+                width: 400,
+                height: 200
+            })
+        ));
+    }
     fn screen(left: i32, top: i32, primary: bool) -> Monitor {
         Monitor {
             left,
@@ -593,7 +830,13 @@ mod desktop_protocol_tests {
         let mut pipe = Vec::new();
         write_msg(
             &mut pipe,
-            &ClientMsg::Input(InputEvent::MonitorLayout(layout.clone())),
+            &ClientMsg::EpochInput {
+                epoch: 3,
+                event: InputEvent::MonitorLayout {
+                    request_id: 42,
+                    monitors: layout.clone(),
+                },
+            },
         )
         .unwrap();
         let pointer = PointerUpdate::Bitmap {
@@ -606,10 +849,59 @@ mod desktop_protocol_tests {
         write_msg(&mut pipe, &HostMsg::Pointer(pointer.clone())).unwrap();
         let mut input = io::Cursor::new(pipe);
         assert!(matches!(read_msg::<_, ClientMsg>(&mut input).unwrap(),
-            Some(ClientMsg::Input(InputEvent::MonitorLayout(got))) if got == layout));
+            Some(ClientMsg::EpochInput { epoch: 3, event: InputEvent::MonitorLayout { request_id: 42, monitors: got } }) if got == layout));
         assert!(
             matches!(read_msg::<_, HostMsg>(&mut input).unwrap(), Some(HostMsg::Pointer(got)) if got == pointer)
         );
+    }
+
+    #[test]
+    fn redirect_epoch_and_layout_result_survive_framed_ipc() {
+        let mut bytes = Vec::new();
+        write_msg(&mut bytes, &HostMsg::DisplayControlReset { epoch: 7 }).unwrap();
+        write_msg(
+            &mut bytes,
+            &HostMsg::MonitorLayoutResult {
+                epoch: 7,
+                request_id: 42,
+                result: Ok(()),
+            },
+        )
+        .unwrap();
+        write_msg(
+            &mut bytes,
+            &ClientMsg::EpochInput {
+                epoch: 7,
+                event: InputEvent::Resize {
+                    width: 900,
+                    height: 700,
+                },
+            },
+        )
+        .unwrap();
+        let mut reader = io::Cursor::new(bytes);
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut reader).unwrap(),
+            Some(HostMsg::DisplayControlReset { epoch: 7 })
+        ));
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut reader).unwrap(),
+            Some(HostMsg::MonitorLayoutResult {
+                epoch: 7,
+                request_id: 42,
+                result: Ok(())
+            })
+        ));
+        assert!(matches!(
+            read_msg::<_, ClientMsg>(&mut reader).unwrap(),
+            Some(ClientMsg::EpochInput {
+                epoch: 7,
+                event: InputEvent::Resize {
+                    width: 900,
+                    height: 700
+                }
+            })
+        ));
     }
     #[test]
     fn invalid_layouts_are_rejected_before_allocation() {

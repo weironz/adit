@@ -53,6 +53,7 @@ presentation! {
     terminal_context_menu: bool = false,
     terminal_scroll_offset: usize = 0,
     rdp_frame_generation: u64 = 0,
+    rdp_input_epoch: Option<u64> = None,
     rdp_surface_size: Option<(u16, u16)> = None,
     rdp_target_size: Option<(u16, u16)> = None,
     rdp_frame_session: Option<SessionId> = None,
@@ -167,7 +168,14 @@ impl ClipboardLease {
             }
         }
         for read in manager.take_rdp_file_reads() {
-            manager.answer_rdp_file_read(read.stream_id, None);
+            let data = clipboard_files::read_offered_range(
+                enabled,
+                &self.rdp_offered_files,
+                read.index,
+                read.offset,
+                read.length,
+            );
+            manager.answer_rdp_file_read(read, data);
         }
     }
 }
@@ -305,6 +313,11 @@ pub(crate) fn surface_view(
     }
     let (sx, sy) = scene.scale;
     let logical = iced::Size::new(f32::from(sw) / sx, f32::from(sh) / sy);
+    let input_epoch = state
+        .rdp_tiles_prev
+        .is_empty()
+        .then_some(state.rdp_input_epoch)
+        .flatten();
     let mut layers = Vec::new();
     if !state.rdp_tiles_prev.is_empty() {
         layers.push(rdp_tile_grid(
@@ -341,21 +354,31 @@ pub(crate) fn surface_view(
             state.native_preedit.clone(),
             logical,
         ));
+        layers.push(desktop_panes::pointer_sync_layer(
+            logical,
+            sx,
+            sy,
+            (sw, sh),
+            input_epoch,
+        ));
     }
     let surface = mouse_area(stack(layers))
         .on_move(move |p| {
-            Message::RdpPointerMoved(Point::new(
-                (p.x * sx).clamp(0.0, f32::from(sw) - 1.0),
-                (p.y * sy).clamp(0.0, f32::from(sh) - 1.0),
-            ))
+            Message::RdpPointerMoved(
+                Point::new(
+                    (p.x * sx).clamp(0.0, f32::from(sw) - 1.0),
+                    (p.y * sy).clamp(0.0, f32::from(sh) - 1.0),
+                ),
+                input_epoch,
+            )
         })
-        .on_press(Message::RdpPressed(mouse::Button::Left))
-        .on_release(Message::RdpReleased(mouse::Button::Left))
-        .on_right_press(Message::RdpPressed(mouse::Button::Right))
-        .on_right_release(Message::RdpReleased(mouse::Button::Right))
-        .on_middle_press(Message::RdpPressed(mouse::Button::Middle))
-        .on_middle_release(Message::RdpReleased(mouse::Button::Middle))
-        .on_scroll(Message::RdpScrolled);
+        .on_press(Message::RdpPressed(mouse::Button::Left, input_epoch))
+        .on_release(Message::RdpReleased(mouse::Button::Left, input_epoch))
+        .on_right_press(Message::RdpPressed(mouse::Button::Right, input_epoch))
+        .on_right_release(Message::RdpReleased(mouse::Button::Right, input_epoch))
+        .on_middle_press(Message::RdpPressed(mouse::Button::Middle, input_epoch))
+        .on_middle_release(Message::RdpReleased(mouse::Button::Middle, input_epoch))
+        .on_scroll(move |delta| Message::RdpScrolled(delta, input_epoch));
     let body: Element<'static, Message> =
         if logical.width > scene.region.0 + 1.0 || logical.height > scene.region.1 + 1.0 {
             scrollable(surface)

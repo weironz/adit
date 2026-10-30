@@ -312,7 +312,14 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
 
                 // Defend against requests already queued by an older helper.
                 for read in app.manager.take_rdp_file_reads() {
-                    app.manager.answer_rdp_file_read(read.stream_id, None);
+                    let data = clipboard_files::read_offered_range(
+                        app.rdp_clipboard,
+                        &app.rdp_offered_files,
+                        read.index,
+                        read.offset,
+                        read.length,
+                    );
+                    app.manager.answer_rdp_file_read(read, data);
                 }
 
                 let clipboard_ready = !app.manager.active_is_vnc()
@@ -435,6 +442,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if active != app.rdp_frame_session {
                 app.rdp_frame_session = active;
                 app.rdp_frame_generation = 0;
+                app.rdp_input_epoch = None;
                 app.rdp_tiles.clear();
                 app.rdp_tiles_prev.clear();
                 app.rdp_surface_size = None;
@@ -499,6 +507,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 };
                 if let Some((frame, vnc_epoch)) = sampled {
                     app.rdp_frame_generation = frame.generation;
+                    app.rdp_input_epoch = frame.rdp_input_epoch;
                     app.rdp_frame_uploaded = Some(Instant::now());
                     let new_size = (frame.width, frame.height);
                     // Across a size change, keep the outgoing tiles as a layer
@@ -537,37 +546,43 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
         }
-        Message::RdpPointerMoved(point) => {
+        Message::RdpPointerMoved(point, epoch) => {
             if app.main_view == MainView::Hosts || desktop_panes::local_input_blocked(app) {
                 return Task::none();
             }
             // `point` already carries surface pixel coords (mapped in the view).
-            app.manager.send_rdp_input_to_active(RdpInput::MouseMove {
-                x: point.x.max(0.0) as u16,
-                y: point.y.max(0.0) as u16,
-            });
+            app.manager.send_desktop_pointer_to_active(
+                RdpInput::MouseMove {
+                    x: point.x.max(0.0) as u16,
+                    y: point.y.max(0.0) as u16,
+                },
+                epoch,
+            );
         }
-        Message::RdpPressed(button) => {
+        Message::RdpPressed(button, epoch) => {
             if app.main_view == MainView::Hosts || desktop_panes::local_input_blocked(app) {
                 return Task::none();
             }
             if let Some(b) = rdp_mouse_button(button) {
                 app.terminal_focused = true;
-                app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
-                    button: b,
-                    pressed: true,
-                });
+                if let Some(id) = app.manager.active_session() {
+                    if !app.rdp_owned_buttons.contains(&(id, button, epoch)) {
+                        app.rdp_owned_buttons.push((id, button, epoch));
+                    }
+                }
+                app.manager.send_desktop_pointer_to_active(
+                    RdpInput::MouseButton {
+                        button: b,
+                        pressed: true,
+                    },
+                    epoch,
+                );
             }
         }
-        Message::RdpReleased(button) => {
-            if let Some(b) = rdp_mouse_button(button) {
-                app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
-                    button: b,
-                    pressed: false,
-                });
-            }
+        Message::RdpReleased(button, epoch) => {
+            release_single_button(app, button, Some(epoch));
         }
-        Message::RdpScrolled(delta) => {
+        Message::RdpScrolled(delta, epoch) => {
             if app.main_view == MainView::Hosts || desktop_panes::local_input_blocked(app) {
                 return Task::none();
             }
@@ -590,10 +605,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if amount != 0.0 {
                 // RDP wheel units: 120 per notch, sign = scroll direction.
                 let units = (amount * 120.0).clamp(-32768.0, 32767.0) as i16;
-                app.manager.send_rdp_input_to_active(RdpInput::Wheel {
-                    vertical,
-                    delta: units,
-                });
+                app.manager.send_desktop_pointer_to_active(
+                    RdpInput::Wheel {
+                        vertical,
+                        delta: units,
+                    },
+                    epoch,
+                );
             }
         }
         Message::ToggleMenu(menu) => {
@@ -698,12 +716,29 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 Err(error) => app.last_error = Some(runtime(&error)),
             }
         }
-        Message::DesktopPaneMoved(id, point) => desktop_panes::moved(app, id, point),
-        Message::DesktopPanePressed(id, button) => desktop_panes::pressed(app, id, button),
-        Message::DesktopPaneReleased(id, button) => desktop_panes::released(app, id, button),
-        Message::DesktopPaneScrolled(id, delta) => desktop_panes::scrolled(app, id, delta),
+        Message::DesktopPaneMoved(id, point, epoch) => {
+            if desktop_panes::frame_epoch_matches(app, id, epoch) {
+                desktop_panes::moved(app, id, point);
+            }
+        }
+        Message::DesktopPanePressed(id, button, epoch) => {
+            if desktop_panes::frame_epoch_matches(app, id, epoch) {
+                desktop_panes::pressed(app, id, button);
+            }
+        }
+        Message::DesktopPaneReleased(id, button, epoch) => {
+            desktop_panes::released(app, id, button, epoch)
+        }
+        Message::DesktopPaneScrolled(id, delta, epoch) => {
+            if desktop_panes::frame_epoch_matches(app, id, epoch) {
+                desktop_panes::scrolled(app, id, delta);
+            }
+        }
         Message::GlobalPointerReleased(button, ignored) => {
-            desktop_panes::global_button_released(app, button);
+            let split_consumed = desktop_panes::global_button_released(app, button);
+            if ignored && !split_consumed {
+                release_single_button(app, button, None);
+            }
             if button == mouse::Button::Left && ignored {
                 return Task::done(Message::CancelProfileDrag);
             }
@@ -3747,6 +3782,69 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
     Task::none()
 }
 
+pub(crate) fn take_single_button_lease(
+    leases: &mut Vec<(SessionId, mouse::Button, Option<u64>)>,
+    owner: SessionId,
+    button: mouse::Button,
+    event_epoch: Option<Option<u64>>,
+    current_epoch: Option<u64>,
+) -> Option<Option<u64>> {
+    let matching_owner =
+        |(id, held, _): &(SessionId, mouse::Button, Option<u64>)| *id == owner && *held == button;
+    let exact = event_epoch.and_then(|epoch| {
+        leases
+            .iter()
+            .position(|entry| matching_owner(entry) && entry.2 == epoch)
+    });
+    let fallback = (event_epoch.is_none() || event_epoch == Some(current_epoch))
+        .then(|| leases.iter().position(matching_owner))
+        .flatten();
+    exact.or(fallback).map(|index| leases.remove(index).2)
+}
+
+fn release_single_button(
+    app: &mut AditApp,
+    button: mouse::Button,
+    event_epoch: Option<Option<u64>>,
+) {
+    let (Some(owner), Some(remote)) = (app.manager.active_session(), rdp_mouse_button(button))
+    else {
+        return;
+    };
+    if let Some(epoch) = take_single_button_lease(
+        &mut app.rdp_owned_buttons,
+        owner,
+        button,
+        event_epoch,
+        app.rdp_input_epoch,
+    ) {
+        app.manager.send_desktop_pointer_to_active(
+            RdpInput::MouseButton {
+                button: remote,
+                pressed: false,
+            },
+            epoch,
+        );
+    }
+}
+
+pub(crate) fn release_single_owned(app: &mut AditApp) {
+    let active = app.manager.active_session();
+    for (owner, button, epoch) in std::mem::take(&mut app.rdp_owned_buttons) {
+        if Some(owner) == active {
+            if let Some(button) = rdp_mouse_button(button) {
+                app.manager.send_desktop_pointer_to_active(
+                    RdpInput::MouseButton {
+                        button,
+                        pressed: false,
+                    },
+                    epoch,
+                );
+            }
+        }
+    }
+}
+
 /// Cut a decoded desktop frame into tiles small enough that iced_wgpu uploads
 /// each one synchronously.
 ///
@@ -3929,6 +4027,7 @@ mod vnc_resize_tests {
                 height,
                 rgba,
                 generation: i as u64,
+                rdp_input_epoch: None,
             };
             let action = state.observe(41, || vnc_frame_covered(&frame));
             assert_eq!(
@@ -3985,6 +4084,7 @@ mod vnc_resize_tests {
             height: 2,
             rgba: vec![255; 16],
             generation: 0,
+            rdp_input_epoch: None,
         };
         assert!(vnc_frame_covered(&frame));
         frame.rgba[15] = 0;
@@ -4004,6 +4104,7 @@ mod vnc_resize_tests {
             height: 2160,
             rgba: vec![255; 3840 * 2160 * 4],
             generation: 1,
+            rdp_input_epoch: None,
         };
         let mut state = VncFrameCoverage::default();
         let started = Instant::now();
@@ -4019,5 +4120,30 @@ mod vnc_resize_tests {
                 panic!("steady frames must not scan the maximum surface")
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod rdp_release_tests {
+    use super::*;
+
+    #[test]
+    fn release_uses_the_press_lease_and_cannot_consume_a_newer_press() {
+        let id = SessionId::new();
+        let button = mouse::Button::Left;
+        let mut leases = vec![(id, button, Some(11)), (id, button, Some(12))];
+        assert_eq!(
+            take_single_button_lease(&mut leases, id, button, Some(Some(11)), Some(12)),
+            Some(Some(11))
+        );
+        assert_eq!(
+            take_single_button_lease(&mut leases, id, button, Some(Some(11)), Some(12)),
+            None
+        );
+        assert_eq!(leases, vec![(id, button, Some(12))]);
+        assert_eq!(
+            take_single_button_lease(&mut leases, id, button, Some(Some(13)), Some(13)),
+            Some(Some(12))
+        );
     }
 }

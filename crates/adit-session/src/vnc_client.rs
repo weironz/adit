@@ -63,6 +63,7 @@ impl VncSurface {
                 width: self.width,
                 height: self.height,
                 generation: self.generation,
+                rdp_input_epoch: None,
             },
             resize_epoch: self.resize_epoch,
         })

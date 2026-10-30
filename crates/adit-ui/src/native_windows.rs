@@ -115,10 +115,10 @@ fn input_message(message: &Message) -> bool {
             | Message::PasteIntoTerminal
             | Message::ConfirmPaste
             | Message::SendTerminalInput
-            | Message::RdpPointerMoved(_)
-            | Message::RdpPressed(_)
-            | Message::RdpReleased(_)
-            | Message::RdpScrolled(_)
+            | Message::RdpPointerMoved(..)
+            | Message::RdpPressed(..)
+            | Message::RdpReleased(..)
+            | Message::RdpScrolled(..)
             | Message::TerminalPointerMoved(_)
             | Message::TerminalScrolled(_)
             | Message::PaneScrolled(..)
