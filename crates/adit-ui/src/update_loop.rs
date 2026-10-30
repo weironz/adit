@@ -1619,6 +1619,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RememberConnectionPasswordChanged(remember) => {
             app.remember_connection_password = remember;
         }
+        Message::ToggleConnectionRememberFor(id) => {
+            if app
+                .connection_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                app.remember_connection_password = !app.remember_connection_password;
+            }
+        }
         Message::ConfirmConnectionFor(id) => {
             if app
                 .connection_dialog

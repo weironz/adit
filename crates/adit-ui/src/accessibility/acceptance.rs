@@ -30,6 +30,7 @@ pub(super) struct Fixture {
     pub auth_receiver: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
     pub auth_results: Vec<(u64, Vec<String>)>,
     pub connection_confirms: usize,
+    pub connection_saved: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -55,6 +56,7 @@ struct Snapshot {
     auth_challenge: Option<u64>,
     auth_results: Vec<(u64, usize, bool)>,
     connection_confirms: usize,
+    connection_saved: Option<bool>,
 }
 
 enum Command {
@@ -135,6 +137,8 @@ fn allowed(message: &Message) -> bool {
             | Message::ConfirmConnection
             | Message::CancelConnectionFor(_)
             | Message::ConfirmConnectionFor(_)
+            | Message::RememberConnectionPasswordChanged(_)
+            | Message::ToggleConnectionRememberFor(_)
             | Message::EditProfileFromContext(_)
             | Message::CloseProfileEditor
             | Message::SaveProfile
@@ -197,6 +201,7 @@ fn snapshot(state: &Harness) -> Snapshot {
             })
             .collect(),
         connection_confirms: fixture.connection_confirms,
+        connection_saved: fixture.connection_saved,
     }
 }
 
@@ -303,6 +308,7 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                     Command::Connection(ack) => {
                         state.hold_actions = false;
                         open_connection_dialog(&mut state.app);
+                        state.app.password = PASSWORD.into();
                         (ack, Some(Message::Tick))
                     }
                     Command::ToggleSidebar(ack) => {
@@ -510,12 +516,15 @@ pub(crate) fn run() -> Result<(), Box<dyn Error>> {
     })?;
     let outcome: Outcome = Arc::new(Mutex::new(None));
     let boot_outcome = Arc::clone(&outcome);
+    let fixture_credentials = path.join("synthetic-credentials.json");
     let boot = move || {
         let mut app = AditApp {
             startup_maximize_pending: false,
             host_details_open: true,
             ..AditApp::default()
         };
+        app.credential_store =
+            adit_storage::CredentialStore::with_path("SYNTHETIC-UIA", fixture_credentials.clone());
         app.accessibility.action_filter = Some(allowed);
         app.accessibility.fixture = Some(Fixture::default());
         app.manager.set_auto_reconnect(false);

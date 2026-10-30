@@ -158,6 +158,7 @@ fn input_message(message: &Message) -> bool {
             | Message::CancelAuthPrompt { .. }
             | Message::ConfirmConnectionFor(_)
             | Message::CancelConnectionFor(_)
+            | Message::ToggleConnectionRememberFor(_)
             | Message::TerminalInputChanged(_)
             | Message::CommandHistoryPrev
             | Message::CommandHistoryNext
@@ -477,6 +478,7 @@ impl DesktopApplication {
                         | Message::CancelConnectionFor(_)
                         | Message::ConnectionPasswordChanged(_)
                         | Message::RememberConnectionPasswordChanged(_)
+                        | Message::ToggleConnectionRememberFor(_)
                 ))
         {
             if let Some(window) = self.windows.get(&id) {
@@ -524,6 +526,7 @@ impl DesktopApplication {
             | Message::CancelConnectionFor(_)
             | Message::ConnectionPasswordChanged(_)
             | Message::RememberConnectionPasswordChanged(_)
+            | Message::ToggleConnectionRememberFor(_)
                 if self.app.native_dialog_window.unwrap_or(self.primary) != id =>
             {
                 return Task::none();

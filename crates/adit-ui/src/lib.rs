@@ -967,6 +967,7 @@ pub enum Message {
     ClearProfileSelection,
     ConnectionPasswordChanged(String),
     RememberConnectionPasswordChanged(bool),
+    ToggleConnectionRememberFor(u64),
     ConfirmConnection,
     CancelConnection,
     ConfirmConnectionFor(u64),

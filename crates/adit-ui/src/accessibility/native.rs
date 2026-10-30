@@ -659,6 +659,7 @@ pub(super) fn publish(
             let control = item.control;
             let role = match control.kind {
                 Kind::Button => Role::Button,
+                Kind::Checkbox => Role::CheckBox,
                 Kind::Dialog => Role::Dialog,
                 Kind::Label => Role::Label,
                 Kind::Item => Role::ListItem,
@@ -681,6 +682,13 @@ pub(super) fn publish(
                 node.set_labelled_by(vec![*label]);
             }
             node.set_bounds(rect(item.bounds));
+            if matches!(control.kind, Kind::Checkbox) {
+                node.set_toggled(if control.value == "true" {
+                    accesskit::Toggled::True
+                } else {
+                    accesskit::Toggled::False
+                });
+            }
             if control.focus.is_some() {
                 node.add_action(Action::Focus);
             }

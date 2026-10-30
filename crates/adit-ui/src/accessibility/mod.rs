@@ -384,6 +384,7 @@ pub(crate) fn reconcile_remote_focus(app: &mut AditApp) {
 #[derive(Clone, Copy)]
 pub(crate) enum Kind {
     Button,
+    Checkbox,
     Dialog,
     Label,
     Item,
@@ -411,6 +412,13 @@ pub(crate) struct Control {
 }
 
 impl Control {
+    pub fn checkbox(key: &str, label: &str, checked: bool, message: Message) -> Self {
+        Self {
+            kind: Kind::Checkbox,
+            value: checked.to_string(),
+            ..Self::button(key, label, message)
+        }
+    }
     pub fn button(key: impl Into<String>, label: impl Into<String>, message: Message) -> Self {
         Self {
             key: key.into(),
@@ -685,11 +693,13 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusIfPresent {
                 ticket: self.ticket.clone(),
                 lease: self.lease.clone(),
                 applied: false,
+                activation: None,
             }))
         } else if self.found && self.ticket.is_none() {
             Outcome::Chain(Box::new(GuardedFocus {
                 target: self.target.clone(),
                 lease: self.lease.clone(),
+                activation: None,
             }))
         } else {
             if let Some(ticket) = &self.ticket {
@@ -707,6 +717,7 @@ struct FocusConfirmation {
     ticket: Option<dialog_focus::FocusTicket>,
     lease: Option<WindowFocusLease>,
     applied: bool,
+    activation: Option<dialog_focus::FocusActivation>,
 }
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
@@ -724,9 +735,13 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
             id == Some(&self.target),
             state.downcast_mut::<dialog_focus::FocusState>(),
         ) {
-            self.applied |= button.focus_if_current(self.ticket.as_ref(), || {
+            let applied = button.focus_if_current(self.ticket.as_ref(), || {
                 self.lease.as_ref().is_none_or(WindowFocusLease::current)
             });
+            self.applied |= applied;
+            if applied {
+                self.activation = button.activation();
+            }
             if self.lease.as_ref().is_some_and(|lease| !lease.current()) {
                 if let Some(ticket) = &self.ticket {
                     ticket.cancel();
@@ -736,18 +751,24 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for FocusConfirmation {
     }
 
     fn finish(&self) -> iced::advanced::widget::operation::Outcome<T> {
-        if !self.applied {
+        if !self.applied || self.activation.is_none() {
             if let Some(ticket) = &self.ticket {
                 ticket.cancel();
             }
+            return iced::advanced::widget::operation::Outcome::None;
         }
-        iced::advanced::widget::operation::Outcome::None
+        iced::advanced::widget::operation::Outcome::Chain(Box::new(GuardedFocus {
+            target: self.target.clone(),
+            lease: self.lease.clone(),
+            activation: self.activation.clone(),
+        }))
     }
 }
 
 struct GuardedFocus {
     target: iced::advanced::widget::Id,
     lease: Option<WindowFocusLease>,
+    activation: Option<dialog_focus::FocusActivation>,
 }
 
 impl<T: 'static> iced::advanced::widget::Operation<T> for GuardedFocus {
@@ -761,7 +782,12 @@ impl<T: 'static> iced::advanced::widget::Operation<T> for GuardedFocus {
         _bounds: iced::Rectangle,
         state: &mut dyn iced::advanced::widget::operation::Focusable,
     ) {
-        if self.lease.as_ref().is_none_or(WindowFocusLease::current) {
+        if self.lease.as_ref().is_none_or(WindowFocusLease::current)
+            && self
+                .activation
+                .as_ref()
+                .is_none_or(dialog_focus::FocusActivation::current)
+        {
             if id == Some(&self.target) {
                 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
                 diagnostics::event(format_args!("focus-operation applied=true"));
@@ -1141,10 +1167,19 @@ pub(crate) fn capture_auth_response(app: &mut AditApp, challenge: u64) {
 
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn acceptance_confirm_connection(app: &mut AditApp) -> bool {
-    let Some(fixture) = app.accessibility.fixture.as_mut() else {
+    if app.accessibility.fixture.is_none() {
         return false;
-    };
-    if app.connection_dialog.is_some() {
+    }
+    if let Some(profile) = app
+        .connection_dialog
+        .as_ref()
+        .map(|dialog| dialog.profile_id)
+    {
+        let saved = sync_connection_password(app, profile)
+            .and_then(|()| app.credential_store.load_profile_password(profile))
+            .map(|value| value.is_some());
+        let fixture = app.accessibility.fixture.as_mut().unwrap();
+        fixture.connection_saved = saved.ok();
         fixture.connection_confirms += 1;
         app.connection_dialog = None;
         app.password.clear();
@@ -1891,6 +1926,7 @@ mod tests {
                 ticket: None,
                 lease: None,
                 applied: false,
+                activation: None,
             },
         );
         let ticket = group.revision().issue();

@@ -87,12 +87,20 @@ pub(crate) fn connection_dialog_overlay(app: &AditApp) -> Element<'_, Message> {
                 ),
                 &group
             ),
-            checkbox(app.remember_connection_password)
-                .label(t("保存密码"))
-                .on_toggle(Message::RememberConnectionPasswordChanged)
-                .size(14)
-                .text_size(12)
-                .spacing(8),
+            accessibility::control(
+                checkbox(app.remember_connection_password)
+                    .label(t("保存密码"))
+                    .on_toggle(Message::RememberConnectionPasswordChanged)
+                    .size(14)
+                    .text_size(12)
+                    .spacing(8),
+                accessibility::Control::checkbox(
+                    "connection:remember",
+                    t("保存密码"),
+                    app.remember_connection_password,
+                    Message::ToggleConnectionRememberFor(dialog.id),
+                )
+            ),
             text(t("加密保存在配置目录，可随 Dropbox 等同步到其他电脑"))
                 .size(10)
                 .color(muted_text()),

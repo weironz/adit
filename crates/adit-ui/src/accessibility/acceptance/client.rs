@@ -827,22 +827,89 @@ fn dialog_acceptance(
             .as_bool()
             .then_some(())
     })?;
-    client.invoke(&client.named("取消", "connection:cancel")?)?;
-    let cancelled = command(commands, Command::Barrier)?;
-    if cancelled.connection_open || !cancelled.terminal_focused {
-        return Err("connection cancellation did not restore the pre-dialog focus".into());
+    let cancel = client.named("取消", "connection:cancel")?;
+    unsafe { cancel.SetFocus() }.map_err(|e| format!("cancel SetFocus failed: {e}"))?;
+    client.wait("connection cancel focused for Enter", || {
+        unsafe { cancel.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x0d, 0x1c)?;
+    let cancelled = client.wait("connection Enter handled", || {
+        let state = command(commands, Command::Barrier).ok()?;
+        (!state.connection_open).then_some(state)
+    })?;
+    if cancelled.connection_open
+        || !cancelled.terminal_focused
+        || cancelled.connection_confirms != connection.connection_confirms
+    {
+        return Err(format!(
+            "UIA cancel focus then Enter did not cancel safely: open={} confirms_delta={}",
+            cancelled.connection_open,
+            cancelled
+                .connection_confirms
+                .saturating_sub(connection.connection_confirms)
+        ));
     }
     client.wait("cancelled connection dialog closed", || {
+        client.by_id("connection:dialog").is_none().then_some(())
+    })?;
+    let space_before = command(commands, Command::Connection)?;
+    let password = client.wait("connection password input reopened", || {
+        client.by_id("protected:Password / passphrase")
+    })?;
+    unsafe { password.SetFocus() }.map_err(|e| e.to_string())?;
+    client.wait("connection password focus reopened", || {
+        unsafe { password.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    let cancel = client.named("取消", "connection:cancel")?;
+    unsafe { cancel.SetFocus() }.map_err(|e| e.to_string())?;
+    client.wait("connection cancel focus", || {
+        unsafe { cancel.CurrentHasKeyboardFocus() }
+            .ok()?
+            .as_bool()
+            .then_some(())
+    })?;
+    post_key(hwnd, 0x20, 0x39)?;
+    let space_after = client.wait("connection Space handled", || {
+        let state = command(commands, Command::Barrier).ok()?;
+        (!state.connection_open).then_some(state)
+    })?;
+    if space_after.connection_open
+        || space_after.connection_confirms != space_before.connection_confirms
+    {
+        return Err("connection cancel focus then Space did not cancel safely".into());
+    }
+    client.wait("space cancelled connection dialog", || {
         client.by_id("connection:dialog").is_none().then_some(())
     })?;
     let reopened = command(commands, Command::Connection)?;
     client.wait("connection confirmation button", || {
         client.by_id("connection:confirm")
     })?;
+    let remember = client.named("保存密码", "connection:remember")?;
+    let toggle: IUIAutomationTogglePattern =
+        unsafe { remember.GetCurrentPatternAs(UIA_TogglePatternId) }
+            .map_err(|error| format!("remember checkbox has no Toggle pattern: {error}"))?;
+    if unsafe { toggle.CurrentToggleState() }.map_err(|e| e.to_string())? != ToggleState_On {
+        return Err("remember checkbox did not expose its default checked state".into());
+    }
+    unsafe { toggle.Toggle() }.map_err(|e| e.to_string())?;
+    client.wait("remember checkbox unchecked", || {
+        (unsafe { toggle.CurrentToggleState() }.ok()? == ToggleState_Off).then_some(())
+    })?;
     client.invoke(&client.named("连接", "connection:confirm")?)?;
-    let confirmed = command(commands, Command::Barrier)?;
+    let confirmed = client.wait("connection confirmation handled", || {
+        let state = command(commands, Command::Barrier).ok()?;
+        (!state.connection_open).then_some(state)
+    })?;
     if confirmed.connection_open
         || confirmed.connection_confirms != reopened.connection_confirms + 1
+        || confirmed.connection_saved != Some(false)
     {
         return Err("connection UIA confirm did not reach the isolated sink".into());
     }
@@ -895,7 +962,72 @@ fn dialog_acceptance(
     Ok(())
 }
 
-fn auth_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Result<(), String> {
+fn auth_acceptance(
+    client: &Client,
+    commands: &mpsc::Sender<Command>,
+    hwnd: isize,
+) -> Result<(), String> {
+    let installed = command(commands, |ack| Command::Auth(2, ack))?;
+    let id = installed.auth_challenge.ok_or("MFA challenge missing")?;
+    client.wait("MFA field", || client.by_id("protected:验证字段 1"))?;
+    command(commands, Command::SeedAuth)?;
+    for (index, should_submit) in [(1, false), (2, true)] {
+        let field = client
+            .by_id(&format!("protected:验证字段 {index}"))
+            .ok_or("MFA field missing")?;
+        unsafe { field.SetFocus() }.map_err(|e| e.to_string())?;
+        client.wait("MFA input focus", || {
+            unsafe { field.CurrentHasKeyboardFocus() }
+                .ok()?
+                .as_bool()
+                .then_some(())
+        })?;
+        post_key(hwnd, 0x0d, 0x1c)?;
+        std::thread::sleep(Duration::from_millis(150));
+        let state = command(commands, Command::Barrier)?;
+        if !should_submit && state.auth_challenge != Some(id) {
+            return Err("Enter in first MFA field changed the challenge".into());
+        }
+        if should_submit && state.auth_results.last() != Some(&(id, 2, true)) {
+            return Err("Enter in final MFA field did not submit its answers".into());
+        }
+    }
+    for (key, scan) in [(0x0d, 0x1c), (0x20, 0x39)] {
+        let installed = command(commands, |ack| Command::Auth(2, ack))?;
+        let id = installed.auth_challenge.ok_or("MFA challenge missing")?;
+        client.wait("MFA field", || client.by_id("protected:验证字段 1"))?;
+        command(commands, Command::SeedAuth)?;
+        let field = client
+            .by_id("protected:验证字段 1")
+            .ok_or("MFA field missing")?;
+        unsafe { field.SetFocus() }.map_err(|e| e.to_string())?;
+        client.wait("MFA input focus", || {
+            unsafe { field.CurrentHasKeyboardFocus() }
+                .ok()?
+                .as_bool()
+                .then_some(())
+        })?;
+        let cancel = client.named("取消", "auth:cancel")?;
+        unsafe { cancel.SetFocus() }.map_err(|e| e.to_string())?;
+        client.wait("MFA cancel focus", || {
+            unsafe { cancel.CurrentHasKeyboardFocus() }
+                .ok()?
+                .as_bool()
+                .then_some(())
+        })?;
+        post_key(hwnd, key, scan)?;
+        let result = client.wait("MFA keyboard cancel", || {
+            let state = command(commands, Command::Barrier).ok()?;
+            (state
+                .auth_results
+                .last()
+                .is_some_and(|result| result.0 == id))
+            .then_some(state)
+        })?;
+        if result.auth_results.last() != Some(&(id, 0, false)) {
+            return Err("MFA cancel focus activated a submission".into());
+        }
+    }
     let installed = command(commands, |ack| Command::Auth(2, ack))?;
     let id = installed
         .auth_challenge
@@ -1138,7 +1270,7 @@ pub(super) fn run(
         },
     )?;
     dialog_acceptance(&client, &commands, hwnd)?;
-    auth_acceptance(&client, &commands)?;
+    auth_acceptance(&client, &commands, hwnd)?;
     let focus_statistics = command(&commands, Command::Barrier)?;
     Ok(json!({
         "hwnd": hwnd, "native_uia": true, "production_iced_widgets": true,

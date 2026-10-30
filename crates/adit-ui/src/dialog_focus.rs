@@ -204,6 +204,16 @@ impl Widget<Message, Theme, iced::Renderer> for Shield<'_> {
             return;
         }
         if let Some(group) = &self.form_group {
+            type InputState = iced::widget::text_input::State<
+                <iced::Renderer as iced::advanced::text::Renderer>::Paragraph,
+            >;
+            let child = &tree.children[0];
+            let input_focused = std::iter::once(child)
+                .chain(child.children.first())
+                .any(|input| {
+                    input.tag == widget::tree::Tag::of::<InputState>()
+                        && input.state.downcast_ref::<InputState>().is_focused()
+                });
             let activation = group.form_activation();
             let mut messages = Vec::new();
             let mut child_shell = Shell::new(&mut messages);
@@ -233,6 +243,20 @@ impl Widget<Message, Theme, iced::Renderer> for Shield<'_> {
                     message
                 }
             });
+            let activation_key = match event {
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Named(Named::Enter | Named::Space),
+                    ..
+                }) => true,
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(value),
+                    ..
+                }) => value.as_str() == " ",
+                _ => false,
+            };
+            if input_focused && activation_key {
+                shell.capture_event();
+            }
         } else {
             self.child.as_widget_mut().update(
                 &mut tree.children[0],
@@ -699,6 +723,10 @@ impl Default for FocusGroup {
 }
 
 impl FocusState {
+    pub(crate) fn activation(&self) -> Option<FocusActivation> {
+        self.group.form_activation()
+    }
+
     pub(crate) fn focused(&self) -> bool {
         self.group
             .revision()
@@ -782,7 +810,7 @@ pub(crate) fn form_action(child: Element<'_, Message>, focus: ButtonFocus) -> El
     Element::new(FocusButton {
         child,
         focus,
-        capture_keyboard: false,
+        capture_keyboard: true,
     })
 }
 
