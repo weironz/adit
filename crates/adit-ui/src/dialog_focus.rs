@@ -272,6 +272,7 @@ struct FocusSelection {
     selected: Option<usize>,
     pending: bool,
     pending_target: Option<usize>,
+    pending_invoke: bool,
     #[cfg_attr(not(windows), allow(dead_code))]
     pending_refusal: bool,
     blocked: bool,
@@ -284,6 +285,7 @@ impl FocusSelection {
         self.blocked = self.selected != Some(0);
         self.pending = false;
         self.pending_target = None;
+        self.pending_invoke = false;
         self.pending_refusal = false;
         self.revision = self.revision.wrapping_add(1);
     }
@@ -306,8 +308,8 @@ pub(crate) fn is_refusal(action: &Message) -> bool {
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 fn trace_selection(event: &'static str, target: Option<usize>, state: &FocusSelection) {
     accessibility::diagnostics::event(format_args!(
-        "{event} group={} revision={} selected={:?} pending={} pending_target={:?} pending_refusal={} blocked={} target={target:?}",
-        state.diagnostic_id, state.revision, state.selected, state.pending, state.pending_target, state.pending_refusal, state.blocked,
+        "{event} group={} revision={} selected={:?} pending={} pending_target={:?} pending_invoke={} pending_refusal={} blocked={} target={target:?}",
+        state.diagnostic_id, state.revision, state.selected, state.pending, state.pending_target, state.pending_invoke, state.pending_refusal, state.blocked,
     ));
 }
 
@@ -344,6 +346,7 @@ impl FocusActivation {
             && !state.blocked
             && self.index.is_none_or(|index| state.selected == Some(index));
         let requested = state.pending
+            && state.pending_invoke
             && self.index.is_none()
             && self.pending_target.is_some()
             && self.pending_target == state.pending_target;
@@ -370,6 +373,7 @@ impl FocusActivation {
         state.revision = state.revision.wrapping_add(1);
         state.pending = false;
         state.pending_target = None;
+        state.pending_invoke = false;
         state.pending_refusal = false;
         state.blocked = false;
         #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
@@ -425,6 +429,7 @@ impl FocusRevision {
             state.revision = activation.value;
             state.pending = true;
             state.pending_target = Some(target);
+            state.pending_invoke = true;
             state.pending_refusal = refusal;
             #[cfg(feature = "native-accessibility-acceptance")]
             trace_selection("invoke-enqueued", Some(target), &state);
@@ -463,7 +468,7 @@ impl FocusRevision {
         trace_selection("focus-attempt", target, &state);
         // UIA's Invoke emits Focus first. It must not turn a pending refusal
         // into a pending trust before the corresponding Click arrives.
-        if state.pending && state.pending_refusal && !refusal {
+        if state.pending && state.pending_refusal && (state.pending_invoke || !refusal) {
             #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
             trace_selection("focus-denied", target, &state);
             return false;
@@ -476,6 +481,7 @@ impl FocusRevision {
             state.revision = ticket.value;
             state.pending = true;
             state.pending_target = target;
+            state.pending_invoke = false;
             state.pending_refusal = refusal;
             #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
             trace_selection("focus-enqueued", target, &state);
@@ -500,6 +506,7 @@ impl FocusRevision {
             state.revision = state.revision.wrapping_add(1);
             state.pending = false;
             state.pending_target = None;
+            state.pending_invoke = false;
             state.pending_refusal = false;
         }
     }
@@ -555,6 +562,7 @@ impl FocusGroup {
                     selected: Some(0),
                     pending: false,
                     pending_target: None,
+                    pending_invoke: false,
                     pending_refusal: false,
                     blocked: false,
                 },
@@ -564,10 +572,14 @@ impl FocusGroup {
 
     fn select(&self, index: usize) {
         if let Ok(mut state) = self.revision.borrow().0.lock() {
+            if state.pending && state.pending_invoke && state.pending_refusal {
+                return;
+            }
             state.revision = state.revision.wrapping_add(1);
             state.selected = Some(index);
             state.pending = false;
             state.pending_target = None;
+            state.pending_invoke = false;
             state.pending_refusal = false;
             state.blocked = false;
             #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
@@ -578,10 +590,14 @@ impl FocusGroup {
     fn press(&self, index: usize) -> Option<FocusActivation> {
         let revision = self.revision();
         let mut state = revision.0.lock().ok()?;
+        if state.pending && state.pending_invoke && state.pending_refusal {
+            return None;
+        }
         state.revision = state.revision.wrapping_add(1);
         state.selected = Some(index);
         state.pending = false;
         state.pending_target = None;
+        state.pending_invoke = false;
         state.pending_refusal = false;
         state.blocked = false;
         Some(FocusActivation {
@@ -646,6 +662,7 @@ impl FocusState {
                     state.selected = Some(self.index);
                     state.pending = false;
                     state.pending_target = None;
+                    state.pending_invoke = false;
                     state.pending_refusal = false;
                     state.blocked = false;
                     #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
@@ -712,6 +729,10 @@ fn confirmation_key(
     }
     match key {
         Key::Named(Named::Tab) => {
+            if selection.pending && selection.pending_invoke && selection.pending_refusal {
+                shell.capture_event();
+                return true;
+            }
             let next = if selection.blocked {
                 0
             } else if modifiers.shift() {
@@ -727,6 +748,7 @@ fn confirmation_key(
             selection.selected = Some(next);
             selection.pending = false;
             selection.pending_target = None;
+            selection.pending_invoke = false;
             selection.pending_refusal = false;
             selection.blocked = false;
             #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
@@ -1092,6 +1114,122 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn queued_reject_invoke_cannot_be_overridden_by_tab_and_enter() {
+        use adit_session::HostKeyDecision;
+        let group = FocusGroup::new();
+        let session_id = SessionId::new();
+        let decisions = [
+            HostKeyDecision::Reject,
+            HostKeyDecision::RejectAndRecord,
+            HostKeyDecision::TrustOnce,
+            HostKeyDecision::TrustAndRecord,
+        ];
+        let buttons: Vec<_> = decisions
+            .iter()
+            .enumerate()
+            .map(|(index, decision)| ButtonFocus {
+                scope: "challenge:fixture".into(),
+                id: widget::Id::from(format!("button-{index}")),
+                index,
+                count: 4,
+                group: group.clone(),
+                action: Message::RespondHostKey {
+                    session_id,
+                    challenge_id: 116,
+                    decision: *decision,
+                },
+            })
+            .collect();
+        let states: Vec<_> = (0..4)
+            .map(|index| FocusState {
+                scope: "challenge:fixture".into(),
+                index,
+                group: group.clone(),
+                pointer_activation: None,
+            })
+            .collect();
+        let mut rejection = None;
+        assert!(group.revision().enqueue_activation(Some(0), true, |value| {
+            rejection = Some(value);
+            true
+        }));
+        let mut messages = Vec::new();
+        for event in [
+            pressed(Named::Tab, keyboard::Modifiers::empty()),
+            pressed(Named::Tab, keyboard::Modifiers::empty()),
+            pressed(Named::Tab, keyboard::Modifiers::empty()),
+            pressed(Named::Enter, keyboard::Modifiers::empty()),
+        ] {
+            let mut shell = Shell::new(&mut messages);
+            for (button, state) in buttons.iter().zip(&states) {
+                confirmation_key(button, state, &event, &mut shell);
+            }
+        }
+        assert!(
+            rejection.unwrap().current(),
+            "queued rejection lost to keyboard navigation"
+        );
+        assert!(
+            messages.is_empty(),
+            "keyboard activated a decision before the queued refusal"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn queued_reject_invoke_cannot_be_overridden_by_pointer_or_unscoped_focus() {
+        let group = FocusGroup::new();
+        let mut rejection = None;
+        assert!(group.revision().enqueue_activation(Some(1), true, |value| {
+            rejection = Some(value);
+            true
+        }));
+        assert!(group.press(3).is_none());
+        group.select(3);
+        assert!(!group.revision().enqueue(Some(0), true, |_| true));
+        assert!(rejection.unwrap().current());
+        let selected = group.revision();
+        assert_eq!(selected.0.lock().unwrap().selected, Some(0));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn queued_refusal_focus_does_not_block_later_keyboard_navigation() {
+        let group = FocusGroup::new();
+        let mut ticket = None;
+        assert!(group.revision().enqueue(Some(0), true, |value| {
+            ticket = Some(value);
+            true
+        }));
+        let button = ButtonFocus {
+            scope: "fixture".into(),
+            id: widget::Id::from("reject"),
+            index: 0,
+            count: 4,
+            group: group.clone(),
+            action: Message::ClearError,
+        };
+        let state = FocusState {
+            scope: "fixture".into(),
+            index: 0,
+            group: group.clone(),
+            pointer_activation: None,
+        };
+        let mut messages = Vec::new();
+        let mut shell = Shell::new(&mut messages);
+        assert!(confirmation_key(
+            &button,
+            &state,
+            &pressed(Named::Tab, keyboard::Modifiers::empty()),
+            &mut shell
+        ));
+        assert!(!ticket.unwrap().current());
+        let selected = group.revision();
+        assert_eq!(selected.0.lock().unwrap().selected, Some(1));
     }
 
     #[test]

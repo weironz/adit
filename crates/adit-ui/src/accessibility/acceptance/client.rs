@@ -323,6 +323,39 @@ fn dialog_acceptance(
         })?;
     }
 
+    // An accepted UIA refusal must remain authoritative while real keyboard
+    // events arrive before its queued action can be drained.
+    let installed = command(commands, |ack| Command::Host(false, ack))?;
+    let id = installed
+        .challenge
+        .ok_or("queued-refusal challenge missing")?;
+    client.wait("queued-refusal challenge", || {
+        client.by_id(&format!(":{id}/host-key:dialog"))
+    })?;
+    let reject = client.named("拒绝", "host-key:reject")?;
+    let before = command(commands, Command::Hold)?;
+    client.invoke(&reject)?;
+    if command(commands, Command::InspectHeld)?.invoke_enqueued <= before.invoke_enqueued {
+        return Err("queued refusal Invoke was not accepted".into());
+    }
+    for _ in 0..3 {
+        post_key(hwnd, 0x09, 0x0f)?;
+    }
+    post_key(hwnd, 0x0d, 0x1c)?;
+    client.wait("Enter reached queued-refusal dialog", || {
+        (command(commands, Command::InspectHeld)
+            .ok()?
+            .keyboard_attempts
+            > before.keyboard_attempts)
+            .then_some(())
+    })?;
+    let replayed = command(commands, Command::ReplayHeld)?;
+    let result = command(commands, Command::Barrier)?;
+    let delta = result.decisions.get(before.decisions.len()..);
+    if delta != Some(&[(id, HostKeyDecision::Reject)][..]) {
+        return Err(format!("queued refusal followed by Tab and Enter: challenge={id} delta={delta:?} held_actions={}", replayed.held_host_actions));
+    }
+
     // Post both keys without an intervening application update or UIA wait.
     let installed = command(commands, |ack| Command::Host(false, ack))?;
     let id = installed.challenge.ok_or("batched challenge missing")?;
@@ -946,6 +979,7 @@ pub(super) fn run(
         "same_challenge_queued_uia_focus_cannot_override_keyboard": true,
         "pending_uia_rejection_blocks_enter_on_old_trust": true,
         "pending_uia_rejection_blocks_invoke_on_old_trust": true,
+        "queued_uia_reject_blocks_tab_enter_trust": true,
         "reject_and_record_supersedes_pending_uia_trust": true,
         "queued_enter_cannot_commit_after_new_uia_rejection": true,
         "confirmation_uia_focus_requests_enqueued": focus_statistics.focus_enqueued,
