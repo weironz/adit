@@ -9,6 +9,7 @@ pub(crate) fn view(app: &AditApp) -> Element<'_, Message> {
 /// inferred from the foreground window or whichever session happens to be active.
 pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_, Message> {
     let a11y_namespace = accessibility::namespace(app);
+    let global_modal = native_windows::global_modal(app);
     let _building = accessibility::building(window, &a11y_namespace);
     DARK_MODE.store(app.dark_mode, Ordering::Relaxed);
 
@@ -81,21 +82,21 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
     if app.profile_editor.is_some() {
         layers.push(opaque(profile_editor_overlay(app)));
     }
-    if app.connection_dialog.is_some() && native_windows::dialog_visible(app) {
+    if global_modal == Some(native_windows::GlobalModal::Connection)
+        && native_windows::dialog_visible(app)
+    {
         layers.push(opaque(connection_dialog_overlay(app)));
     }
-    if let Some((session_id, prompt)) = app
-        .manager
-        .pending_host_key()
-        .filter(|(sid, _)| native_windows::prompt_visible(app, *sid))
-    {
+    if let Some((session_id, prompt)) = accessibility::pending_host_key(app).filter(|(sid, _)| {
+        global_modal == Some(native_windows::GlobalModal::HostKey(*sid))
+            && native_windows::prompt_visible(app, *sid)
+    }) {
         layers.push(opaque(host_key_dialog_overlay(session_id, &prompt)));
     }
-    if let Some((session_id, prompt)) = app
-        .auth_prompt
-        .as_ref()
-        .filter(|(sid, _)| native_windows::prompt_visible(app, *sid))
-    {
+    if let Some((session_id, prompt)) = app.auth_prompt.as_ref().filter(|(sid, _)| {
+        global_modal == Some(native_windows::GlobalModal::Authentication(*sid))
+            && native_windows::prompt_visible(app, *sid)
+    }) {
         layers.push(opaque(auth_prompt_dialog_overlay(
             *session_id,
             prompt,
@@ -103,9 +104,13 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         )));
     }
     if let Some(url) = &app.pending_hyperlink {
-        layers.push(opaque(hyperlink_confirm_overlay(url)));
+        layers.push(opaque(hyperlink_confirm_overlay(
+            url,
+            app.hyperlink_prompt_generation,
+        )));
     }
-    if app.manager.sftp_is_open() && native_windows::sftp_visible(app) {
+    if global_modal == Some(native_windows::GlobalModal::Sftp) && native_windows::sftp_visible(app)
+    {
         layers.push(opaque(sftp_panel_overlay(app)));
         if let Some((pane, name, is_dir)) = app.sftp_context_menu.clone() {
             layers.push(opaque(sftp_context_overlay(app, pane, name, is_dir)));
@@ -136,17 +141,11 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         layers.push(opaque(known_hosts_overlay(app)));
     }
 
-    let another_window_modal = app.native_window_id.is_some()
-        && (app
-            .manager
-            .pending_host_key()
-            .is_some_and(|(sid, _)| !native_windows::prompt_visible(app, sid))
-            || app
-                .auth_prompt
-                .as_ref()
-                .is_some_and(|(sid, _)| !native_windows::prompt_visible(app, *sid))
-            || (app.connection_dialog.is_some() && !native_windows::dialog_visible(app))
-            || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app)));
+    let another_window_modal = app.native_window_id.is_some_and(|window| {
+        global_modal
+            .and_then(|modal| native_windows::global_modal_owner(app, modal))
+            .is_some_and(|owner| owner != window)
+    });
     if another_window_modal {
         layers.push(opaque(
             container(text(t("请在另一窗口完成验证或文件操作")))
@@ -158,7 +157,19 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
     }
     if layers.len() > 1 {
         let top = layers.pop().unwrap();
-        layers.push(accessibility::modal(top));
+        layers = layers
+            .into_iter()
+            .map(|layer| dialog_focus::background(layer, true))
+            .collect();
+        let escape = if a11y_namespace == "menu" {
+            top_menu_escape(app).map(Message::DismissMenu)
+        } else {
+            None
+        };
+        layers.push(accessibility::modal(top, escape));
+    } else {
+        let base = layers.pop().unwrap();
+        layers.push(dialog_focus::background(base, false));
     }
     let content = if layers.len() == 1 {
         layers.pop().unwrap()
@@ -166,6 +177,22 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         stack(layers).into()
     };
     accessibility::scope(window, a11y_namespace, content)
+}
+
+pub(crate) fn top_menu_escape(app: &AditApp) -> Option<MenuEscapeTarget> {
+    if app.terminal_context_menu {
+        Some(MenuEscapeTarget::Terminal)
+    } else if app.move_to_group_menu && !app.selected_profiles.is_empty() {
+        Some(MenuEscapeTarget::MoveGroup)
+    } else if let Some(group) = &app.group_context_menu {
+        Some(MenuEscapeTarget::Group(group.clone()))
+    } else if let Some(session) = app.tab_context_menu {
+        Some(MenuEscapeTarget::Tab(session))
+    } else if let Some(profile) = app.profile_context_menu {
+        Some(MenuEscapeTarget::Profile(profile))
+    } else {
+        app.active_menu.map(MenuEscapeTarget::Active)
+    }
 }
 
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {

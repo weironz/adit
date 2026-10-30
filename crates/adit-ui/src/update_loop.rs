@@ -72,8 +72,12 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         // here so the detached-window router can route instead of guessing.
         if accessibility::action_current(app, window, &scope) {
             tasks.push(update_message(app, message));
+        } else {
+            accessibility::cancel_discarded_message(&message);
         }
     }
+    accessibility::retire_changed_scope(app);
+    accessibility::reconcile_remote_focus(app);
     // Focus can move locally without a WindowUnfocused event (settings, menus,
     // sidebar fields). Release keys before returning even from early Task paths.
     if app.manager.active_is_vnc() && !vnc_accepts_text_input(app) {
@@ -89,6 +93,18 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
 }
 
 fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
+    // A text input can have queued a message immediately before a modal was
+    // installed. Never let that message edit or send the covered command bar.
+    if matches!(
+        &message,
+        Message::TerminalInputChanged(_)
+            | Message::SendTerminalInput
+            | Message::CommandHistoryPrev
+            | Message::CommandHistoryNext
+    ) && accessibility::namespace(app) != "main"
+    {
+        return Task::none();
+    }
     match message {
         Message::DetachSession(_) | Message::MergeNativeWindow => {
             app.notice = "请通过原生主窗口拆出或合回会话".into();
@@ -104,7 +120,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::AccessibilityReady { window, attached } => {
             if !attached {
-                app.accessibility.closed(window);
+                app.accessibility.registration_failed(window);
             }
         }
         Message::AccessibilityClosed(window) => app.accessibility.closed(window),
@@ -128,20 +144,78 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             owner,
             lines,
         } => accessibility::scroll_lines(app, window, owner, lines),
-        Message::AccessibilityFocus { window, id } => {
+        Message::DialogFocusActivate {
+            activation,
+            action,
+            lease,
+        } => {
+            let Some(activation) = activation else {
+                return Task::none();
+            };
+            if let Message::ConfirmOpenHyperlink(generation) = action.as_ref() {
+                let generation = *generation;
+                let url = activation
+                    .commit(
+                        || lease.as_ref().is_none_or(|lease| lease.current()),
+                        || {
+                            accessibility::suspend_for_confirmation_action(app, action.as_ref());
+                            (generation == app.hyperlink_prompt_generation)
+                                .then(|| app.pending_hyperlink.take())
+                                .flatten()
+                        },
+                    )
+                    .flatten();
+                if let Some(url) = url {
+                    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                    if accessibility::acceptance_open_link(app, &url) {
+                        return Task::none();
+                    }
+                    open_external_link(app, &url);
+                }
+                return Task::none();
+            }
+            return activation
+                .commit(
+                    || lease.as_ref().is_none_or(|lease| lease.current()),
+                    || {
+                        accessibility::suspend_for_confirmation_action(app, action.as_ref());
+                        update_message(app, *action)
+                    },
+                )
+                .unwrap_or_else(Task::none);
+        }
+        Message::AccessibilityFocus {
+            window,
+            id,
+            ticket,
+            lease,
+        } => {
             if app.accessibility.windows.contains(&window)
-                && app.accessibility.primary == Some(window)
+                && app.native_window_id.or(app.accessibility.primary) == Some(window)
+                && accessibility::namespace(app) != "native-modal-blocked"
+                && ticket.as_ref().is_none_or(|ticket| ticket.current())
+                && lease.as_ref().is_none_or(|lease| lease.current())
             {
-                app.terminal_focused = false;
+                accessibility::suspend_remote_focus(app, window);
                 release_rdp_modifiers(app);
-                // Only an explicit UIA SetFocus requests native focus. Tick,
-                // tree publication and terminal output never do this.
-                return Task::batch([
-                    window::gain_focus(window),
-                    iced::advanced::widget::operate(
-                        iced::advanced::widget::operation::focusable::focus(id),
-                    ),
-                ]);
+                return accessibility::request_focus(window, id, ticket, lease);
+            }
+            if let Some(ticket) = ticket {
+                ticket.cancel();
+            }
+        }
+        Message::DismissMenu(target) => {
+            if accessibility::namespace(app) == "menu"
+                && chrome::top_menu_escape(app) == Some(target.clone())
+            {
+                match target {
+                    MenuEscapeTarget::Active(_) => app.active_menu = None,
+                    MenuEscapeTarget::Profile(_) => app.profile_context_menu = None,
+                    MenuEscapeTarget::Tab(_) => app.tab_context_menu = None,
+                    MenuEscapeTarget::Group(_) => app.group_context_menu = None,
+                    MenuEscapeTarget::MoveGroup => app.move_to_group_menu = false,
+                    MenuEscapeTarget::Terminal => app.terminal_context_menu = false,
+                }
             }
         }
         Message::Vault(message) => return vault_ui::update(app, message),
@@ -695,7 +769,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::PickMission(id) => pick_mission(app, id),
         Message::MissionNameChanged(name) => rename_mission(app, name),
         Message::BeginMissionName => return begin_mission_name(app),
-        Message::FinishMissionName(commit) => finish_mission_name(app, commit),
+        Message::FinishMissionName(commit) => {
+            if accessibility::namespace(app) == "main" {
+                finish_mission_name(app, commit);
+            }
+        }
         Message::MissionPickerToggled => toggle_mission_picker(app),
         Message::AddMissionSession(id) => add_mission_session(app, id),
         Message::ActivateMissionSession(id) => activate_mission_session(app, id),
@@ -1587,7 +1665,38 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::RememberConnectionPasswordChanged(remember) => {
             app.remember_connection_password = remember;
         }
+        Message::ToggleConnectionRememberFor(id) => {
+            if app
+                .connection_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                app.remember_connection_password = !app.remember_connection_password;
+            }
+        }
+        Message::ConfirmConnectionFor(id) => {
+            if app
+                .connection_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                return update_message(app, Message::ConfirmConnection);
+            }
+        }
+        Message::CancelConnectionFor(id) => {
+            if app
+                .connection_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.id == id)
+            {
+                return update_message(app, Message::CancelConnection);
+            }
+        }
         Message::ConfirmConnection => {
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            if accessibility::acceptance_confirm_connection(app) {
+                return Task::none();
+            }
             confirm_connection(app);
         }
         Message::CancelConnection => {
@@ -1600,6 +1709,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             challenge_id,
             decision,
         } => {
+            if accessibility::namespace(app)
+                != format!("host-key-dialog:{session_id}:{challenge_id}")
+            {
+                return Task::none();
+            }
+            #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+            if accessibility::acceptance_host_key_reply(app, session_id, challenge_id, decision) {
+                return Task::none();
+            }
             if let Err(error) = app
                 .manager
                 .respond_host_key(session_id, challenge_id, decision)
@@ -1618,6 +1736,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 .auth_prompt
                 .as_ref()
                 .is_some_and(|(_, p)| p.id == challenge_id && p.is_pending())
+                && accessibility::namespace(app) == format!("challenge:{challenge_id}")
             {
                 if let Some(slot) = app.auth_prompt_answers.get_mut(index) {
                     *slot = value.0;
@@ -1628,31 +1747,45 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             session_id,
             challenge_id,
         } => {
-            jump_auth_ui::respond(app, session_id, challenge_id, false);
+            if accessibility::namespace(app) == format!("challenge:{challenge_id}") {
+                jump_auth_ui::respond(app, session_id, challenge_id, false);
+            }
         }
         Message::CancelAuthPrompt {
             session_id,
             challenge_id,
         } => {
-            jump_auth_ui::respond(app, session_id, challenge_id, true);
+            if accessibility::namespace(app) == format!("challenge:{challenge_id}") {
+                jump_auth_ui::respond(app, session_id, challenge_id, true);
+            }
         }
         Message::OpenHyperlink(url) => {
             // Terminal output is remote-controlled: confirm the real destination
             // before opening, and only offer http(s).
             if is_openable_http_url(&url) {
+                app.hyperlink_prompt_generation = app.hyperlink_prompt_generation.wrapping_add(1);
                 app.pending_hyperlink = Some(url);
             } else {
                 app.last_error = Some(String::from(t("仅支持打开 http/https 链接")));
             }
         }
-        Message::ConfirmOpenHyperlink => {
+        Message::ConfirmOpenHyperlink(generation)
+            if generation == app.hyperlink_prompt_generation =>
+        {
             if let Some(url) = app.pending_hyperlink.take() {
+                #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+                if accessibility::acceptance_open_link(app, &url) {
+                    return Task::none();
+                }
                 open_external_link(app, &url);
             }
         }
-        Message::CancelOpenHyperlink => {
+        Message::CancelOpenHyperlink(generation)
+            if generation == app.hyperlink_prompt_generation =>
+        {
             app.pending_hyperlink = None;
         }
+        Message::ConfirmOpenHyperlink(_) | Message::CancelOpenHyperlink(_) => {}
         Message::CloseSftp => {
             app.manager.close_sftp();
             app.sftp_overwrite = None;
@@ -2611,7 +2744,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 return Task::none();
             }
             if mission_name_editing(app) {
-                if is_escape_key(&event) {
+                if matches!(
+                    event,
+                    keyboard::Event::KeyPressed {
+                        key: Key::Named(Named::Escape),
+                        repeat: false,
+                        ..
+                    }
+                ) && accessibility::namespace(app) == "main"
+                    && app.main_view == MainView::Missions
+                    && (!app.sidebar_visible || app.fullscreen)
+                {
                     finish_mission_name(app, false);
                 }
                 return Task::none();

@@ -365,15 +365,16 @@ pub(crate) fn mission_sidebar(app: &AditApp) -> Element<'_, Message> {
     {
         if let Some(draft) = &app.missions.name_draft {
             content = content
-                .push(
+                .push(dialog_focus::mission_name_input(
                     text_input(t("任务名称"), draft)
                         .id(mission_name_id())
                         .size(12)
                         .on_input(Message::MissionNameChanged)
                         .on_submit(Message::FinishMissionName(true))
                         .padding(8)
-                        .style(text_input_style),
-                )
+                        .style(text_input_style)
+                        .into(),
+                ))
                 .push(
                     row![
                         button(text(t("保存")).size(12))
@@ -819,13 +820,138 @@ mod tests {
         )
         .is_none());
         assert!(mission_name_editing(&app));
-        let message =
-            mission_name_runtime_event(event::Event::Keyboard(up), event::Status::Captured, window)
-                .expect("captured Escape-up must cancel locally");
+        assert!(mission_name_runtime_event(
+            event::Event::Keyboard(up.clone()),
+            event::Status::Captured,
+            window
+        )
+        .is_none());
+        let mut armed = true;
+        let mut messages = Vec::new();
+        let mut shell = iced::advanced::Shell::new(&mut messages);
+        assert!(dialog_focus::mission_escape_event(
+            &event::Event::Keyboard(up),
+            true,
+            &mut armed,
+            &mut shell
+        ));
+        assert!(shell.is_event_captured());
+        let message = messages.pop().expect("focused rename handles Escape-up");
         assert!(matches!(message, Message::FinishMissionName(false)));
         let _ = update_loop::update(&mut app, message);
         assert!(!mission_name_editing(&app));
         assert_eq!(mission_title(&app), original);
         assert!(remote_workspace_accepts_input(&app));
+    }
+
+    #[test]
+    fn modal_escape_does_not_cancel_background_mission_rename() {
+        let (mut app, ids) = fixture();
+        create_mission(&mut app, vec![ids[0]]);
+        let _ = begin_mission_name(&mut app);
+        rename_mission(&mut app, "uncommitted".into());
+        app.active_menu = Some(MenuKind::File);
+        let escape = Key::Named(Named::Escape);
+        let up = keyboard::Event::KeyReleased {
+            key: escape.clone(),
+            modified_key: escape,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+        };
+        let _ = update_loop::update(&mut app, Message::FinishMissionName(false));
+        assert!(mission_name_editing(&app));
+        let _ = update_loop::update(
+            &mut app,
+            Message::DismissMenu(MenuEscapeTarget::Active(MenuKind::File)),
+        );
+        assert!(app.active_menu.is_none());
+        assert!(mission_name_runtime_event(
+            event::Event::Keyboard(up),
+            event::Status::Ignored,
+            window::Id::unique()
+        )
+        .is_none());
+        assert!(mission_name_editing(&app));
+    }
+
+    #[test]
+    fn escape_repeats_after_menu_dismissal_do_not_cancel_the_rename() {
+        let (mut app, ids) = fixture();
+        create_mission(&mut app, vec![ids[0]]);
+        let _ = begin_mission_name(&mut app);
+        rename_mission(&mut app, "uncommitted".into());
+        app.active_menu = Some(MenuKind::File);
+        let _ = update_loop::update(
+            &mut app,
+            Message::DismissMenu(MenuEscapeTarget::Active(MenuKind::File)),
+        );
+        let key = Key::Named(Named::Escape);
+        let repeat = keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key.clone(),
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: true,
+        };
+        let release = keyboard::Event::KeyReleased {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+        };
+        let mut armed = false;
+        let mut messages = Vec::new();
+        let mut shell = iced::advanced::Shell::new(&mut messages);
+        assert!(!dialog_focus::mission_escape_event(
+            &event::Event::Keyboard(repeat.clone()),
+            true,
+            &mut armed,
+            &mut shell,
+        ));
+        assert!(!dialog_focus::mission_escape_event(
+            &event::Event::Keyboard(release),
+            true,
+            &mut armed,
+            &mut shell,
+        ));
+        assert!(messages.is_empty());
+        let _ = update_loop::update(&mut app, Message::KeyboardInput(repeat));
+        assert!(mission_name_editing(&app));
+    }
+
+    #[test]
+    fn hidden_mission_sidebar_can_cancel_the_preserved_rename_draft() {
+        let (mut app, ids) = fixture();
+        create_mission(&mut app, vec![ids[0]]);
+        let original = mission_title(&app);
+        app.sidebar_visible = true;
+        let _ = begin_mission_name(&mut app);
+        rename_mission(&mut app, "uncommitted".into());
+        let _ = update_loop::update(&mut app, Message::ToggleSidebar);
+        assert!(mission_name_editing(&app));
+        assert!(!app.sidebar_visible);
+        let key = Key::Named(Named::Escape);
+        let down = keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::Escape),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::empty(),
+            text: None,
+            repeat: false,
+        };
+        let message = mission_name_runtime_event(
+            event::Event::Keyboard(down),
+            event::Status::Ignored,
+            window::Id::unique(),
+        )
+        .expect("the hidden rename has no widget to capture Escape");
+        let _ = update_loop::update(&mut app, message);
+        assert!(!mission_name_editing(&app));
+        assert_eq!(mission_title(&app), original);
     }
 }

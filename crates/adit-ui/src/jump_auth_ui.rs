@@ -180,11 +180,46 @@ pub(crate) fn respond(app: &mut AditApp, session: SessionId, challenge_id: u64, 
     if !prompt.respond(if cancel { Vec::new() } else { answers }) {
         app.notice = t("该认证请求已结束，请等待新的验证请求").to_owned();
     }
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    accessibility::capture_auth_response(app, challenge_id);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_and_multiple_field_replies_are_scoped_and_cancel_sends_no_answers() {
+        let mut app = AditApp::default();
+        let session = SessionId::new();
+        for (fields, cancel) in [(0, false), (0, true), (2, false), (2, true)] {
+            let prompts = (0..fields)
+                .map(|index| adit_session::AuthPromptField {
+                    prompt: format!("SYNTHETIC field {index}"),
+                    echo: index == 0,
+                })
+                .collect();
+            let (prompt, mut receiver) =
+                AuthPromptInfo::channel("SYNTHETIC".into(), "".into(), prompts);
+            let id = prompt.id;
+            app.auth_prompt = Some((session, prompt));
+            app.auth_prompt_answers = (0..fields)
+                .map(|index| format!("SYNTHETIC answer {index}"))
+                .collect();
+            respond(&mut app, SessionId::new(), id, false);
+            respond(&mut app, session, id.wrapping_add(1), false);
+            assert!(app.auth_prompt.is_some());
+            assert!(receiver.try_recv().is_err());
+            respond(&mut app, session, id, cancel);
+            let answers = receiver.try_recv().unwrap();
+            assert_eq!(answers.len(), if cancel { 0 } else { fields });
+            if !cancel && fields == 2 {
+                assert_eq!(answers, ["SYNTHETIC answer 0", "SYNTHETIC answer 1"]);
+            }
+            assert!(app.auth_prompt.is_none());
+            assert!(app.auth_prompt_answers.is_empty());
+        }
+    }
 
     #[test]
     fn independent_profile_secrets_use_the_encrypted_store_and_debug_redacts_answers() {

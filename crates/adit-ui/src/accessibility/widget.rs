@@ -99,9 +99,21 @@ impl Widget<Message, Theme, iced::Renderer> for Accessible<'_> {
         renderer: &iced::Renderer,
         operation: &mut dyn widget::Operation,
     ) {
-        self.child
-            .as_widget_mut()
-            .operate(&mut tree.children[0], layout, renderer, operation);
+        if let Some((Some(window), _)) = &self.scope {
+            operation.container(Some(&window_scope_id(*window)), layout.bounds());
+            operation.traverse(&mut |operation| {
+                self.child.as_widget_mut().operate(
+                    &mut tree.children[0],
+                    layout,
+                    renderer,
+                    operation,
+                );
+            });
+        } else {
+            self.child
+                .as_widget_mut()
+                .operate(&mut tree.children[0], layout, renderer, operation);
+        }
     }
     fn update(
         &mut self,
@@ -213,11 +225,24 @@ impl Widget<Message, Theme, iced::Renderer> for Accessible<'_> {
                 <iced::Renderer as iced::advanced::text::Renderer>::Paragraph,
             >;
             let focused = control.focus.is_some()
-                && tree.children[0].tag == widget::tree::Tag::of::<InputState>()
-                && tree.children[0]
+                && ((tree.children[0].tag == widget::tree::Tag::of::<InputState>()
+                    && tree.children[0]
+                        .state
+                        .downcast_ref::<InputState>()
+                        .is_focused())
+                    || (tree.children[0].tag
+                        == widget::tree::Tag::of::<dialog_focus::FocusState>()
+                        && tree.children[0]
+                            .state
+                            .downcast_ref::<dialog_focus::FocusState>()
+                            .focused()));
+            if tree.children[0].tag == widget::tree::Tag::of::<dialog_focus::FocusState>() {
+                let focus = tree.children[0]
                     .state
-                    .downcast_ref::<InputState>()
-                    .is_focused();
+                    .downcast_ref::<dialog_focus::FocusState>();
+                control.focus_revision = Some(focus.revision());
+                control.focus_index = Some(focus.index());
+            }
             frame.nodes.push(native::Rendered {
                 id,
                 parent: *frame.parents.last().unwrap(),

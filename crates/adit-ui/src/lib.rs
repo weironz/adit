@@ -133,6 +133,7 @@ mod session_ops;
 use session_ops::*;
 mod chrome;
 use chrome::*;
+mod dialog_focus;
 mod dialogs;
 use dialogs::*;
 mod sftp;
@@ -142,6 +143,8 @@ mod input;
 mod native_windows;
 #[cfg(feature = "native-workbench-acceptance")]
 pub use native_windows::run_acceptance as run_native_windows_acceptance;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub use native_windows::run_accessibility_acceptance as run_accessibility_detached_acceptance;
 mod native_ime;
 mod terminal_appearance;
 mod window_presentation;
@@ -332,6 +335,8 @@ pub struct AditApp {
     auth_prompt_answers: Vec<String>,
     /// A terminal hyperlink awaiting the user's confirm-before-open decision.
     pending_hyperlink: Option<String>,
+    /// Distinguishes consecutive confirmations, including for the same URL.
+    hyperlink_prompt_generation: u64,
     password: String,
     remember_connection_password: bool,
     session_filter: String,
@@ -379,6 +384,7 @@ pub struct AditApp {
     tunnel_save: bool,
     terminal_input: String,
     terminal_focused: bool,
+    accessibility_focus_restore: Option<accessibility::RemoteFocusLease>,
     terminal_size: TerminalSize,
     terminal_pointer: Option<TerminalPoint>,
     // Anchored in ABSOLUTE scrollback rows (not viewport rows) so it stays correct
@@ -663,6 +669,16 @@ pub enum MenuKind {
     Transfer,
     Script,
     Help,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MenuEscapeTarget {
+    Active(MenuKind),
+    Profile(ProfileId),
+    Tab(SessionId),
+    Group(String),
+    MoveGroup,
+    Terminal,
 }
 
 /// Which text box in the sync panel changed. One message with a field tag
@@ -954,8 +970,11 @@ pub enum Message {
     ClearProfileSelection,
     ConnectionPasswordChanged(String),
     RememberConnectionPasswordChanged(bool),
+    ToggleConnectionRememberFor(u64),
     ConfirmConnection,
     CancelConnection,
+    ConfirmConnectionFor(u64),
+    CancelConnectionFor(u64),
     RespondHostKey {
         session_id: SessionId,
         challenge_id: u64,
@@ -975,8 +994,8 @@ pub enum Message {
         challenge_id: u64,
     },
     OpenHyperlink(String),
-    ConfirmOpenHyperlink,
-    CancelOpenHyperlink,
+    ConfirmOpenHyperlink(u64),
+    CancelOpenHyperlink(u64),
     CloseSftp,
     OpenTunnels,
     CloseTunnels,
@@ -1119,7 +1138,15 @@ pub enum Message {
     AccessibilityFocus {
         window: window::Id,
         id: iced::advanced::widget::Id,
+        ticket: Option<dialog_focus::FocusTicket>,
+        lease: Option<accessibility::WindowFocusLease>,
     },
+    DialogFocusActivate {
+        activation: Option<dialog_focus::FocusActivation>,
+        action: Box<Message>,
+        lease: Option<accessibility::WindowFocusLease>,
+    },
+    DismissMenu(MenuEscapeTarget),
     ToggleFullscreen,
     CloseSyncPanel,
     SyncProviderChanged(adit_storage::SyncProvider),
@@ -1301,6 +1328,7 @@ struct TerminalSelection {
 
 #[derive(Debug, Clone)]
 struct ConnectionDialog {
+    id: u64,
     profile_id: ProfileId,
     /// The session this dialog is re-asking for, when it came from an auth
     /// rejection. Some means retry that session in place; None means the user
@@ -1310,6 +1338,11 @@ struct ConnectionDialog {
     endpoint: String,
     auth_method: AuthMethod,
     identity_file: String,
+}
+
+fn next_connection_dialog_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1733,6 +1766,7 @@ impl AditApp {
             auth_prompt: None,
             auth_prompt_answers: Vec::new(),
             pending_hyperlink: None,
+            hyperlink_prompt_generation: 0,
             password: String::new(),
             remember_connection_password: false,
             session_filter: String::new(),
@@ -1766,6 +1800,7 @@ impl AditApp {
             tunnel_save: true,
             terminal_input: String::new(),
             terminal_focused: false,
+            accessibility_focus_restore: None,
             // Startup is never fullscreen (the flag is deliberately not
             // persisted, see `AditApp::fullscreen`).
             terminal_size: estimated_terminal_size(
@@ -2176,8 +2211,13 @@ fn mission_name_runtime_event(
     window: window::Id,
 ) -> Option<Message> {
     match &event {
-        // text_input consumes Escape to blur itself. Retain the local lease
-        // through key-up, then cancel, so neither half reaches the desktop.
+        // The visible rename widget owns both edges. An ignored first press can
+        // still cancel a hidden draft; repeats and modal-captured keys cannot.
+        event::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(Named::Escape),
+            repeat: false,
+            ..
+        }) if status == event::Status::Ignored => runtime_event(event, status, window),
         event::Event::Keyboard(keyboard::Event::KeyPressed {
             key: Key::Named(Named::Escape),
             ..
@@ -2185,7 +2225,7 @@ fn mission_name_runtime_event(
         event::Event::Keyboard(keyboard::Event::KeyReleased {
             key: Key::Named(Named::Escape),
             ..
-        }) => Some(Message::FinishMissionName(false)),
+        }) => None,
         _ => runtime_event(event, status, window),
     }
 }

@@ -6,6 +6,11 @@ use iced::widget::column;
 use std::collections::HashMap;
 use window_presentation::{ClipboardLease, WindowPresentation, WindowScene};
 
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+mod accessibility_acceptance;
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub use accessibility_acceptance::run as run_accessibility_acceptance;
+
 pub(crate) const HEADER_HEIGHT: f32 = 36.0;
 
 #[derive(Debug, Clone)]
@@ -81,6 +86,45 @@ pub(crate) fn prompt_visible(app: &AditApp, session: SessionId) -> bool {
     })
 }
 
+/// A single arbitration order is shared by routing, painting and UIA scopes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GlobalModal {
+    HostKey(SessionId),
+    Authentication(SessionId),
+    Connection,
+    Sftp,
+}
+
+pub(crate) fn global_modal(app: &AditApp) -> Option<GlobalModal> {
+    accessibility::pending_host_key(app)
+        .map(|(session, _)| GlobalModal::HostKey(session))
+        .or_else(|| {
+            app.auth_prompt
+                .as_ref()
+                .filter(|(_, prompt)| prompt.is_pending())
+                .map(|(session, _)| GlobalModal::Authentication(*session))
+        })
+        .or_else(|| {
+            app.connection_dialog
+                .is_some()
+                .then_some(GlobalModal::Connection)
+        })
+        .or_else(|| app.manager.sftp_is_open().then_some(GlobalModal::Sftp))
+}
+
+pub(crate) fn global_modal_owner(app: &AditApp, modal: GlobalModal) -> Option<window::Id> {
+    let primary = app.native_main_window.or(app.accessibility.primary);
+    match modal {
+        GlobalModal::HostKey(session) | GlobalModal::Authentication(session) => app
+            .native_session_windows
+            .get(&session)
+            .copied()
+            .or(primary),
+        GlobalModal::Connection => app.native_dialog_window.or(primary),
+        GlobalModal::Sftp => app.native_sftp_window.or(primary),
+    }
+}
+
 pub(crate) fn sftp_visible(app: &AditApp) -> bool {
     app.native_window_id
         .is_none_or(|window| app.native_sftp_window.or(app.native_main_window) == Some(window))
@@ -107,6 +151,17 @@ fn input_message(message: &Message) -> bool {
     matches!(
         message,
         Message::KeyboardInput(_)
+            | Message::DialogFocusActivate { .. }
+            | Message::RespondHostKey { .. }
+            | Message::AuthPromptInput { .. }
+            | Message::SubmitAuthPrompt { .. }
+            | Message::CancelAuthPrompt { .. }
+            | Message::ConfirmConnectionFor(_)
+            | Message::CancelConnectionFor(_)
+            | Message::ToggleConnectionRememberFor(_)
+            | Message::TerminalInputChanged(_)
+            | Message::CommandHistoryPrev
+            | Message::CommandHistoryNext
             | Message::ModifiersChanged(_)
             | Message::NativeImeEvent(..)
             | Message::VncImeEvent(..)
@@ -337,6 +392,7 @@ impl DesktopApplication {
         let Some(mut window) = self.windows.remove(&id) else {
             return Task::none();
         };
+        self.app.accessibility.closed(id);
         self.app.native_session_windows.remove(&window.session);
         if self.focused == Some(id) {
             self.focused = None;
@@ -386,11 +442,21 @@ impl DesktopApplication {
 
     fn dispatch(&mut self, id: window::Id, message: Message) -> Task<NativeMessage> {
         if !self.known(id) {
+            accessibility::cancel_discarded_message(&message);
             return Task::none();
         } // drop late commits/tasks from a closed window
         if input_message(&message) && self.focused != Some(id) {
+            accessibility::cancel_discarded_message(&message);
             return Task::none();
         }
+        if input_message(&message) && self.modal_owner.is_some_and(|owner| owner != id) {
+            accessibility::cancel_discarded_message(&message);
+            return Task::none();
+        }
+        let routed_message = match &message {
+            Message::DialogFocusActivate { action, .. } => action.as_ref(),
+            _ => &message,
+        };
         // Global SFTP/credential services can outlive an explicitly closed tab.
         // Move their modal back to primary instead of borrowing its live host
         // as the stale window's input target or trapping an unclosable modal.
@@ -401,15 +467,18 @@ impl DesktopApplication {
                 .is_some_and(|window| self.app.manager.session_summary(window.session).is_none())
             && (is_sftp(&message)
                 || matches!(
-                    &message,
+                    routed_message,
                     Message::AuthPromptInput { .. }
                         | Message::SubmitAuthPrompt { .. }
                         | Message::CancelAuthPrompt { .. }
                         | Message::RespondHostKey { .. }
                         | Message::ConfirmConnection
                         | Message::CancelConnection
+                        | Message::ConfirmConnectionFor(_)
+                        | Message::CancelConnectionFor(_)
                         | Message::ConnectionPasswordChanged(_)
                         | Message::RememberConnectionPasswordChanged(_)
+                        | Message::ToggleConnectionRememberFor(_)
                 ))
         {
             if let Some(window) = self.windows.get(&id) {
@@ -424,7 +493,7 @@ impl DesktopApplication {
             let task = self.dispatch(self.primary, message);
             return Task::batch([task, window::gain_focus(self.primary)]);
         }
-        match &message {
+        match routed_message {
             Message::DetachSession(session) => return self.detach(*session),
             Message::MergeNativeWindow => return self.merge(id, true),
             Message::TabClicked(session) | Message::ShowTabContextMenu(session) => {
@@ -437,6 +506,7 @@ impl DesktopApplication {
             | Message::SubmitAuthPrompt { session_id, .. }
             | Message::CancelAuthPrompt { session_id, .. } => {
                 if self.owner(*session_id) != id {
+                    accessibility::cancel_discarded_message(&message);
                     return Task::none();
                 }
             }
@@ -452,8 +522,11 @@ impl DesktopApplication {
             }
             Message::ConfirmConnection
             | Message::CancelConnection
+            | Message::ConfirmConnectionFor(_)
+            | Message::CancelConnectionFor(_)
             | Message::ConnectionPasswordChanged(_)
             | Message::RememberConnectionPasswordChanged(_)
+            | Message::ToggleConnectionRememberFor(_)
                 if self.app.native_dialog_window.unwrap_or(self.primary) != id =>
             {
                 return Task::none();
@@ -564,29 +637,8 @@ impl DesktopApplication {
         {
             self.app.native_dialog_window = Some(self.owner(session));
         }
-        let owner = self
-            .app
-            .manager
-            .pending_host_key()
-            .map(|(sid, _)| self.owner(sid))
-            .or_else(|| {
-                self.app
-                    .auth_prompt
-                    .as_ref()
-                    .map(|(sid, _)| self.owner(*sid))
-            })
-            .or_else(|| {
-                self.app
-                    .connection_dialog
-                    .as_ref()
-                    .map(|_| self.app.native_dialog_window.unwrap_or(self.primary))
-            })
-            .or_else(|| {
-                self.app
-                    .manager
-                    .sftp_is_open()
-                    .then(|| self.app.native_sftp_window.unwrap_or(self.primary))
-            });
+        let owner = global_modal(&self.app)
+            .map(|modal| global_modal_owner(&self.app, modal).unwrap_or(self.primary));
         if owner != self.modal_owner {
             self.modal_owner = owner;
             if owner.is_some() {
@@ -594,6 +646,9 @@ impl DesktopApplication {
                     .chain(self.windows.keys().copied())
                     .collect();
                 for id in ids {
+                    if owner != Some(id) {
+                        accessibility::block_background_window(id);
+                    }
                     let focused = self.focused == Some(id);
                     self.release(id);
                     let _ = self.in_window(id, |app| {
@@ -609,15 +664,33 @@ impl DesktopApplication {
         let task = match message {
             NativeMessage::Window(id, message) => self.dispatch(id, message),
             NativeMessage::View(id, session, epoch, message) => {
-                let valid = if id == self.primary {
-                    self.app.manager.active_session() == session
-                        && self.app.vnc_input_epoch == epoch
+                let (same_session, same_epoch) = if id == self.primary {
+                    (
+                        self.app.manager.active_session() == session,
+                        self.app.vnc_input_epoch == epoch,
+                    )
                 } else {
-                    self.windows.get(&id).is_some_and(|window| {
-                        Some(window.session) == session && window.state.vnc_input_epoch == epoch
+                    self.windows.get(&id).map_or((false, false), |window| {
+                        (
+                            Some(window.session) == session,
+                            window.state.vnc_input_epoch == epoch,
+                        )
                     })
                 };
-                if input_message(&message) && !valid {
+                // Confirmation activations have their own dialog revision and
+                // lease. VNC input revocation during the same event batch must
+                // not discard them, while session and foreground checks remain.
+                let needs_input_epoch = !matches!(
+                    &message,
+                    Message::DialogFocusActivate { .. }
+                        | Message::RespondHostKey { .. }
+                        | Message::AuthPromptInput { .. }
+                        | Message::SubmitAuthPrompt { .. }
+                        | Message::CancelAuthPrompt { .. }
+                );
+                if input_message(&message) && (!same_session || (needs_input_epoch && !same_epoch))
+                {
+                    accessibility::cancel_discarded_message(&message);
                     return Task::none();
                 }
                 self.dispatch(id, message)
@@ -804,6 +877,15 @@ impl DesktopApplication {
             return Space::new().into();
         };
         let state = &window.state;
+        let namespace = accessibility::detached_namespace(
+            &self.app,
+            id,
+            state.pending_hyperlink.is_some(),
+            state.hyperlink_prompt_generation,
+            state.paste_confirm_open,
+            state.terminal_context_menu,
+        );
+        let _building = accessibility::building(Some(id), &namespace);
         let title = self
             .app
             .manager
@@ -941,23 +1023,22 @@ impl DesktopApplication {
                 )));
             }
         }
-        if self.app.native_dialog_window == Some(id) && self.app.connection_dialog.is_some() {
+        let global_modal = global_modal(&self.app);
+        if self.app.native_dialog_window == Some(id)
+            && global_modal == Some(GlobalModal::Connection)
+        {
             layers.push(opaque(connection_dialog_overlay(&self.app)));
         }
-        if let Some((sid, prompt)) = self
-            .app
-            .manager
-            .pending_host_key()
-            .filter(|(sid, _)| self.owner(*sid) == id)
+        if let Some((sid, prompt)) =
+            accessibility::pending_host_key(&self.app).filter(|(sid, _)| {
+                global_modal == Some(GlobalModal::HostKey(*sid)) && self.owner(*sid) == id
+            })
         {
             layers.push(opaque(host_key_dialog_overlay(sid, &prompt)));
         }
-        if let Some((sid, prompt)) = self
-            .app
-            .auth_prompt
-            .as_ref()
-            .filter(|(sid, _)| self.owner(*sid) == id)
-        {
+        if let Some((sid, prompt)) = self.app.auth_prompt.as_ref().filter(|(sid, _)| {
+            global_modal == Some(GlobalModal::Authentication(*sid)) && self.owner(*sid) == id
+        }) {
             layers.push(opaque(auth_prompt_dialog_overlay(
                 *sid,
                 prompt,
@@ -965,7 +1046,10 @@ impl DesktopApplication {
             )));
         }
         if let Some(url) = &state.pending_hyperlink {
-            layers.push(opaque(hyperlink_confirm_overlay(url)));
+            layers.push(opaque(hyperlink_confirm_overlay(
+                url,
+                state.hyperlink_prompt_generation,
+            )));
         }
         if state.paste_confirm_open {
             layers.push(opaque(
@@ -995,7 +1079,21 @@ impl DesktopApplication {
                     .style(|_| dialog_scrim_style()),
             ));
         }
-        let view: Element<'_, Message> = stack(layers).into();
+        if layers.len() > 1 {
+            let top = layers.pop().unwrap();
+            layers = layers
+                .into_iter()
+                .map(|layer| dialog_focus::background(layer, true))
+                .collect();
+            let escape = (namespace == "menu" && state.terminal_context_menu)
+                .then_some(Message::DismissMenu(MenuEscapeTarget::Terminal));
+            layers.push(accessibility::modal(top, escape));
+        } else {
+            let base = layers.pop().unwrap();
+            layers.push(dialog_focus::background(base, false));
+        }
+        let view: Element<'_, Message> =
+            accessibility::scope(Some(id), namespace, stack(layers).into());
         let session = Some(window.session);
         let epoch = state.vnc_input_epoch;
         view.map(move |m| NativeMessage::View(id, session, epoch, m))
@@ -1213,12 +1311,248 @@ mod tests {
         )
     }
 
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    #[test]
+    fn host_key_and_mfa_share_the_same_global_owner_order() {
+        for host_on_child in [false, true] {
+            let (mut desktop, ids) = fixture();
+            let _ = desktop.detach(ids[0]);
+            let child = desktop.owner(ids[0]);
+            let (host_session, auth_session, host_window, auth_window) = if host_on_child {
+                (ids[0], ids[2], child, desktop.primary)
+            } else {
+                (ids[2], ids[0], desktop.primary, child)
+            };
+            accessibility::use_synthetic_fixture(&mut desktop.app);
+            let (host_id, auth_id) = accessibility::synthetic_conflicting_prompts(
+                &mut desktop.app,
+                host_session,
+                auth_session,
+            );
+            desktop.sync_modal_owner();
+            assert_eq!(desktop.modal_owner, Some(host_window));
+            desktop.focus(auth_window);
+            let _ = desktop.dispatch(
+                auth_window,
+                Message::CancelAuthPrompt {
+                    session_id: auth_session,
+                    challenge_id: auth_id,
+                },
+            );
+            assert!(
+                desktop
+                    .app
+                    .auth_prompt
+                    .as_ref()
+                    .is_some_and(|(_, prompt)| prompt.id == auth_id && prompt.is_pending()),
+                "a hidden MFA cancellation bypassed the selected host-key modal"
+            );
+            assert!(accessibility::acceptance_host_key_reply(
+                &mut desktop.app,
+                host_session,
+                host_id,
+                adit_session::HostKeyDecision::Reject
+            ));
+            desktop.sync_modal_owner();
+            assert_eq!(desktop.modal_owner, Some(auth_window));
+            desktop.focus(auth_window);
+            let _ = desktop.dispatch(
+                auth_window,
+                Message::CancelAuthPrompt {
+                    session_id: auth_session,
+                    challenge_id: auth_id,
+                },
+            );
+            assert!(desktop.app.auth_prompt.is_none());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn auth_input_survives_input_epoch_change_but_not_session_change() {
+        let (mut desktop, ids) = fixture();
+        let primary = desktop.primary;
+        let (prompt, _receiver) = AuthPromptInfo::channel(
+            "SYNTHETIC".into(),
+            "".into(),
+            vec![adit_session::AuthPromptField {
+                prompt: "SYNTHETIC".into(),
+                echo: false,
+            }],
+        );
+        let id = prompt.id;
+        desktop.app.auth_prompt = Some((ids[2], prompt));
+        desktop.app.auth_prompt_answers = vec![String::new()];
+        let epoch = desktop.app.vnc_input_epoch;
+        desktop.app.vnc_input_epoch = epoch.wrapping_add(1);
+        let input = |value: &str| Message::AuthPromptInput {
+            challenge_id: id,
+            index: 0,
+            value: jump_auth_ui::SecretAnswer(value.into()),
+        };
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[1]),
+            epoch,
+            input("wrong-session"),
+        ));
+        assert!(desktop.app.auth_prompt_answers[0].is_empty());
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[2]),
+            epoch,
+            input("SYNTHETIC"),
+        ));
+        assert_eq!(desktop.app.auth_prompt_answers[0], "SYNTHETIC");
+    }
+
     fn text(app: &DesktopApplication, session: SessionId) -> String {
         snapshot_to_text(
             &app.app
                 .manager
                 .snapshot_for(session, Viewport::visible(200)),
         )
+    }
+
+    #[test]
+    fn another_windows_modal_rejects_queued_command_edits_and_sends() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.focus(desktop.primary);
+        desktop.app.command_window_open = true;
+        desktop.app.command_send_immediately = true;
+        desktop.app.terminal_input = "original".into();
+        let profile = desktop
+            .app
+            .manager
+            .session_summary(ids[0])
+            .unwrap()
+            .profile_id;
+        desktop.app.connection_dialog = Some(ConnectionDialog {
+            id: next_connection_dialog_id(),
+            profile_id: profile,
+            retry_session: Some(ids[0]),
+            title: "synthetic".into(),
+            endpoint: "fixture.invalid".into(),
+            auth_method: AuthMethod::Password,
+            identity_file: String::new(),
+        });
+        desktop.app.native_dialog_window = Some(child);
+        desktop.sync_modal_owner();
+        assert_eq!(desktop.modal_owner, Some(child));
+        let before = text(&desktop, ids[2]);
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::TerminalInputChanged("original LEAK".into()),
+        );
+        let _ = desktop.dispatch(desktop.primary, Message::SendTerminalInput);
+        let _ = desktop.dispatch(desktop.primary, Message::CommandHistoryPrev);
+        let epoch = desktop.app.vnc_input_epoch;
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::NativeImeEvent(
+                ids[2],
+                epoch,
+                iced::advanced::input_method::Event::Commit("SYNTHETIC-IME".into()),
+            ),
+        );
+        assert_eq!(desktop.app.terminal_input, "original");
+        assert_eq!(text(&desktop, ids[2]), before);
+        desktop.app.connection_dialog = None;
+        desktop.sync_modal_owner();
+        let _ = desktop.dispatch(
+            desktop.primary,
+            Message::TerminalInputChanged("original ok".into()),
+        );
+        assert_eq!(desktop.app.terminal_input, "original ok");
+        assert!(text(&desktop, ids[2]).contains(" ok"));
+    }
+
+    #[test]
+    fn detached_uia_scroll_step_uses_current_window_position_after_mouse_scroll() {
+        let (mut desktop, ids) = fixture();
+        desktop.app.manager.activate(ids[0]).unwrap();
+        desktop
+            .app
+            .manager
+            .send_input_to_active(
+                (0..150)
+                    .map(|n| format!("line {n}\r\n"))
+                    .collect::<String>(),
+            )
+            .unwrap();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.app.accessibility.opening(desktop.primary);
+        desktop.app.accessibility.opening(child);
+        let _ = desktop.in_window(child, |app| {
+            accessibility::scroll(app, child, ids[0], 20);
+            assert_eq!(app.terminal_scroll_offset, 20);
+            // A regular wheel or drag updates presentation without touching the UIA cache.
+            app.terminal_scroll_offset = 7;
+            accessibility::scroll_lines(app, child, ids[0], 3);
+            assert_eq!(app.terminal_scroll_offset, 10);
+            Task::none()
+        });
+        assert_eq!(desktop.windows[&child].state.terminal_scroll_offset, 10);
+    }
+
+    #[test]
+    fn accessibility_detached_link_generations_stay_with_their_window() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        let url = "https://fixture.invalid/same";
+        let _ = desktop.dispatch(child, Message::OpenHyperlink(url.into()));
+        let first = desktop.windows[&child].state.hyperlink_prompt_generation;
+        let _ = desktop.dispatch(child, Message::OpenHyperlink(url.into()));
+        let second = desktop.windows[&child].state.hyperlink_prompt_generation;
+        assert_ne!(first, second);
+        let _ = desktop.dispatch(child, Message::CancelOpenHyperlink(first));
+        assert_eq!(
+            desktop.windows[&child].state.pending_hyperlink.as_deref(),
+            Some(url)
+        );
+        assert!(desktop.app.pending_hyperlink.is_none());
+        let _ = desktop.dispatch(child, Message::CancelOpenHyperlink(second));
+        assert!(desktop.windows[&child].state.pending_hyperlink.is_none());
+    }
+
+    #[test]
+    fn uia_focus_restores_only_the_detached_windows_original_session() {
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        desktop.app.accessibility.opening(desktop.primary);
+        desktop.app.accessibility.opening(child);
+        desktop.app.terminal_focused = false;
+        let _ = desktop.in_window(child, |app| {
+            app.terminal_focused = true;
+            app.desktop_window_focused = true;
+            let _ = update(
+                app,
+                Message::OpenHyperlink("https://fixture.invalid".into()),
+            );
+            let generation = app.hyperlink_prompt_generation;
+            let _ = update(
+                app,
+                Message::AccessibilityFocus {
+                    window: child,
+                    id: iced::advanced::widget::Id::from("synthetic-link"),
+                    ticket: None,
+                    lease: None,
+                },
+            );
+            assert!(!app.terminal_focused);
+            let _ = update(app, Message::CancelOpenHyperlink(generation));
+            assert!(app.terminal_focused);
+            assert_eq!(app.manager.active_session(), Some(ids[0]));
+            Task::none()
+        });
+        assert!(desktop.windows[&child].state.terminal_focused);
+        assert!(!desktop.app.terminal_focused);
+        assert_ne!(desktop.app.manager.active_session(), Some(ids[0]));
     }
 
     #[test]
@@ -1482,6 +1816,170 @@ mod tests {
         ));
         assert!(desktop.windows[&child].state.terminal_pointer.is_some());
         assert_eq!(desktop.app.manager.sessions().len(), 3);
+    }
+
+    #[test]
+    fn confirmation_activation_survives_an_unrelated_vnc_epoch_change() {
+        let (mut desktop, ids) = fixture();
+        let primary = desktop.primary;
+        let _ = desktop.dispatch(
+            primary,
+            Message::OpenHyperlink("https://fixture.invalid".into()),
+        );
+        let generation = desktop.app.hyperlink_prompt_generation;
+        let epoch = desktop.app.vnc_input_epoch;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut activation = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            activation = Some(value);
+            true
+        }));
+        desktop.app.vnc_input_epoch = epoch.wrapping_add(1);
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[2]),
+            epoch,
+            Message::DialogFocusActivate {
+                activation,
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        ));
+        assert!(
+            desktop.app.pending_hyperlink.is_none(),
+            "an unrelated VNC input epoch invalidated the confirmation"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn confirmation_from_a_different_session_is_cancelled_and_can_be_retried() {
+        let (mut desktop, ids) = fixture();
+        let primary = desktop.primary;
+        let _ = desktop.dispatch(
+            primary,
+            Message::OpenHyperlink("https://fixture.invalid".into()),
+        );
+        let generation = desktop.app.hyperlink_prompt_generation;
+        let epoch = desktop.app.vnc_input_epoch;
+        let revision = dialog_focus::FocusGroup::new().revision();
+        let mut stale = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            stale = Some(value);
+            true
+        }));
+        let stale = stale.unwrap();
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[1]),
+            epoch,
+            Message::DialogFocusActivate {
+                activation: Some(stale.clone()),
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        ));
+        assert!(desktop.app.pending_hyperlink.is_some());
+        assert!(!stale.current());
+        let mut fresh = None;
+        assert!(revision.enqueue_activation(Some(0), true, |value| {
+            fresh = Some(value);
+            true
+        }));
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[2]),
+            epoch,
+            Message::DialogFocusActivate {
+                activation: fresh,
+                action: Box::new(Message::CancelOpenHyperlink(generation)),
+                lease: None,
+            },
+        ));
+        assert!(desktop.app.pending_hyperlink.is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn modal_in_another_window_revokes_already_scheduled_focus() {
+        use windows::{
+            core::HSTRING,
+            Win32::{
+                Foundation::HINSTANCE,
+                System::{LibraryLoader::GetModuleHandleW, Threading::GetCurrentThreadId},
+                UI::WindowsAndMessaging::{
+                    CreateWindowExW, DefWindowProcW, DestroyWindow, RegisterClassW,
+                    UnregisterClassW, WINDOW_EX_STYLE, WNDCLASSW, WS_OVERLAPPEDWINDOW,
+                },
+            },
+        };
+        unsafe extern "system" fn proc(
+            hwnd: windows::Win32::Foundation::HWND,
+            msg: u32,
+            w: windows::Win32::Foundation::WPARAM,
+            l: windows::Win32::Foundation::LPARAM,
+        ) -> windows::Win32::Foundation::LRESULT {
+            unsafe { DefWindowProcW(hwnd, msg, w, l) }
+        }
+        let (mut desktop, ids) = fixture();
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        unsafe {
+            let instance = HINSTANCE(GetModuleHandleW(None).unwrap().0);
+            let name = HSTRING::from(format!("Adit-SYNTHETIC-modal-{}", GetCurrentThreadId()));
+            let class = WNDCLASSW {
+                hInstance: instance,
+                lpfnWndProc: Some(proc),
+                lpszClassName: windows::core::PCWSTR(name.as_ptr()),
+                ..Default::default()
+            };
+            assert_ne!(RegisterClassW(&class), 0);
+            let hwnd = CreateWindowExW(
+                WINDOW_EX_STYLE::default(),
+                &name,
+                windows::core::w!("SYNTHETIC"),
+                WS_OVERLAPPEDWINDOW,
+                0,
+                0,
+                200,
+                100,
+                None,
+                None,
+                Some(instance),
+                None,
+            )
+            .unwrap();
+            assert!(accessibility::test_register_window(
+                desktop.primary,
+                hwnd.0 as isize
+            ));
+            let epoch = accessibility::test_scope_epoch(desktop.primary);
+            let scheduled = epoch.load(std::sync::atomic::Ordering::SeqCst);
+            desktop.app.connection_dialog = Some(ConnectionDialog {
+                id: next_connection_dialog_id(),
+                profile_id: desktop
+                    .app
+                    .manager
+                    .session_summary(ids[0])
+                    .unwrap()
+                    .profile_id,
+                retry_session: Some(ids[0]),
+                title: "SYNTHETIC".into(),
+                endpoint: "fixture.invalid".into(),
+                auth_method: AuthMethod::Password,
+                identity_file: String::new(),
+            });
+            desktop.app.native_dialog_window = Some(child);
+            desktop.sync_modal_owner();
+            let revoked = epoch.load(std::sync::atomic::Ordering::SeqCst) != scheduled;
+            accessibility::test_unregister_window(desktop.primary);
+            DestroyWindow(hwnd).unwrap();
+            UnregisterClassW(&name, Some(instance)).unwrap();
+            assert!(
+                revoked,
+                "a focus task retained its lease after another window opened a modal"
+            );
+        }
     }
 
     #[test]

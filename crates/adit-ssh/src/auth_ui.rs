@@ -6,7 +6,9 @@ static NEXT_CHALLENGE: AtomicU64 = AtomicU64::new(1);
 pub(super) type Reply = Arc<Mutex<Option<oneshot::Sender<Vec<String>>>>>;
 
 impl AuthPromptRequest {
-    fn channel(
+    /// Create a scoped interactive-authentication challenge and its reply receiver.
+    #[must_use]
+    pub fn channel(
         name: String,
         instructions: String,
         prompts: Vec<AuthPromptField>,
