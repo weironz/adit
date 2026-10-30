@@ -130,6 +130,13 @@ pub(crate) enum ClipboardAction {
     InboundImage(Vec<u8>),
     /// Refuse a request for a local file without carrying metadata or bytes.
     RefuseFileContents { stream_id: u32 },
+    /// The remote is pasting and needs bytes from a local file; ask the app.
+    NeedFileContents {
+        stream_id: u32,
+        index: u32,
+        offset: u64,
+        length: u32,
+    },
     /// Pull a byte range of a remote file (`request_file_contents`).
     RequestFileContents(BoundRead),
     /// The remote copied files; hand the list to the app to offer locally.
@@ -151,6 +158,7 @@ impl ClipboardAction {
             Self::Inbound(text) => ("inbound_text", text.len()),
             Self::InboundImage(image) => ("inbound_image", image.len()),
             Self::RefuseFileContents { .. } => ("refuse_file", 0),
+            Self::NeedFileContents { length, .. } => ("need_file", *length as usize),
             Self::RequestFileContents(_) => ("request_file", 0),
             Self::InboundFiles { files, .. } => ("inbound_files", files.len()),
             Self::InboundFileContents(reply) => {
@@ -378,16 +386,22 @@ pub(crate) fn offer_local_image(state: &SharedClipboard, image: Vec<u8>) {
     }
 }
 
-/// Clear cached local text/image without touching the remote file offer.
-pub(crate) fn clear_local_offer(state: &SharedClipboard) {
-    if let Ok(mut state) = state.lock() {
-        state.clear_local_offer(true);
-    }
-}
-
 #[cfg(test)]
 pub(crate) fn test_local_image(state: &SharedClipboard) -> Option<Vec<u8>> {
     state.lock().unwrap().local_image.clone()
+}
+
+/// Queue the app's answer to a [`HostMsg::FileContentsNeeded`].
+pub(crate) fn submit_file_contents(
+    state: &SharedClipboard,
+    stream_id: u32,
+    _data: Option<Vec<u8>>,
+) {
+    if let Ok(mut guard) = state.lock() {
+        guard
+            .actions
+            .push_back(ClipboardAction::RefuseFileContents { stream_id });
+    }
 }
 
 /// Request a range from the captured remote file offer.
@@ -455,16 +469,6 @@ impl AditCliprdrBackend {
         self.state.lock().ok().map(|mut guard| f(&mut guard))
     }
 
-    /// Answer a file request with the protocol error response. Every refusal
-    /// goes through here so a request is never simply dropped: the remote paste
-    /// would otherwise hang waiting for a stream that never comes.
-    fn refuse(&self, stream_id: u32) {
-        self.with_state(|state| {
-            state
-                .actions
-                .push_back(ClipboardAction::RefuseFileContents { stream_id });
-        });
-    }
 }
 
 ironrdp_core::impl_as_any!(AditCliprdrBackend);
@@ -673,7 +677,18 @@ impl CliprdrBackend for AditCliprdrBackend {
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
         // Reject SIZE and RANGE alike. Never ask the app to read a local file,
         // even when a peer sends a stale or unsolicited request.
-        self.refuse(request.stream_id);
+        let stream_id = request.stream_id;
+        let length = request.requested_size.min(adit_rdp_proto::FILE_CHUNK_BYTES);
+        self.with_state(|state| {
+            state
+                .actions
+                .push_back(ClipboardAction::NeedFileContents {
+                    stream_id,
+                    index: request.index.max(0) as u32,
+                    offset: request.position,
+                    length,
+                });
+        });
     }
 
     /// Bytes (or a size) arriving for a local paste we started.
@@ -847,6 +862,7 @@ pub(crate) fn pump(
             ClipboardAction::Inbound(_)
             | ClipboardAction::InboundImage(_)
             | ClipboardAction::InboundFiles { .. }
+            | ClipboardAction::NeedFileContents { .. }
             | ClipboardAction::InboundFileContents(_) => {
                 unreachable!("app-addressed actions are handled above")
             }
@@ -879,6 +895,12 @@ mod tests {
     use ironrdp_core::{decode, Encode as _, WriteCursor};
 
     use super::*;
+
+    fn clear_local_offer(state: &SharedClipboard) {
+        if let Ok(mut guard) = state.lock() {
+            guard.clear_local_offer(true);
+        }
+    }
 
     #[test]
     fn repro_action_debug_must_not_expose_clipboard_payloads() {

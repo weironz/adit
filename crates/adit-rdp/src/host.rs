@@ -53,15 +53,7 @@ fn read_app_messages<R: io::Read>(
                 }
             }
             Ok(Some(ClientMsg::ClipboardImage(_))) => {}
-            Ok(Some(ClientMsg::ClipboardFiles(files))) => {
-                if files.is_empty()
-                    && input_tx
-                        .send(SessionCmd::ClearLocalClipboard)
-                        .is_err()
-                {
-                    break;
-                }
-            }
+            Ok(Some(ClientMsg::ClipboardFiles(_))) => {}
             Ok(Some(ClientMsg::EpochClipboardImage { epoch, image })) => {
                 if routing.accepts_epoch(epoch)
                     && input_tx
@@ -71,16 +63,7 @@ fn read_app_messages<R: io::Read>(
                     break;
                 }
             }
-            Ok(Some(ClientMsg::EpochClipboardFiles { epoch, files })) => {
-                if routing.accepts_epoch(epoch) && files.is_empty() {
-                    if input_tx
-                        .send(SessionCmd::ClearLocalClipboard)
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-            }
+            Ok(Some(ClientMsg::EpochClipboardFiles { .. })) => {}
             Ok(Some(ClientMsg::FileContents {
                 epoch,
                 stream_id,

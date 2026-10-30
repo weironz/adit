@@ -64,13 +64,6 @@ pub(crate) enum SessionCmd {
         epoch: u64,
         image: Vec<u8>,
     },
-    /// A local clipboard change retires cached text/image without sending files.
-    ClearLocalClipboard,
-    /// Offer a local file selection to the remote clipboard (metadata only).
-    ClipboardFiles {
-        epoch: u64,
-        files: Vec<ClipFile>,
-    },
     /// The app read the bytes the remote asked for, or failed to.
     FileContents {
         epoch: u64,
@@ -94,7 +87,6 @@ impl SessionCmd {
             | Self::Pointer { epoch, .. }
             | Self::Resize { epoch, .. }
             | Self::ClipboardImage { epoch, .. }
-            | Self::ClipboardFiles { epoch, .. }
             | Self::FileContents { epoch, .. } => *epoch == current,
             _ => true,
         }
@@ -1323,22 +1315,8 @@ async fn active_session(
                         Vec::new()
                     }
                     // File transfer: all three are metadata-or-bytes bookkeeping
-                    // for the CLIPRDR pump below rather than anything that touches
-                    // the desktop. Like the text offer above, nothing is read from
-                    // disk here — `ClipboardFiles` advertises names and sizes, and
-                    // bytes move only when one side actually pastes.
                     Some(SessionCmd::ClipboardImage { image, .. }) => {
                         clipboard::offer_local_image(clip, image);
-                        Vec::new()
-                    }
-                    Some(SessionCmd::ClipboardFiles { files, .. }) => {
-                        if files.is_empty() {
-                            clipboard::clear_local_offer(clip);
-                        }
-                        Vec::new()
-                    }
-                    Some(SessionCmd::ClearLocalClipboard) => {
-                        clipboard::clear_local_offer(clip);
                         Vec::new()
                     }
                     Some(SessionCmd::FileContents { stream_id, data, .. }) => {

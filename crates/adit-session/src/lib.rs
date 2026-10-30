@@ -2424,6 +2424,9 @@ impl SessionManager {
 
     /// Offer a local file selection to the active RDP desktop (metadata only).
     pub fn offer_rdp_files_to_active(&self, files: Vec<ClipFile>) {
+        if !files.is_empty() {
+            return;
+        }
         if let Some(session_id) = self.active_session {
             if let Some(record) = self.sessions.get(&session_id) {
                 if let Some(rdp) = &record.rdp {
