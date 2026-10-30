@@ -123,6 +123,42 @@ fn legacy_session_api_cannot_send_file_metadata_or_bytes() {
     );
 }
 
+#[test]
+fn windows_clipboard_change_revokes_all_helpers_without_closing_sessions() {
+    let profiles = vec![
+        ConnectionProfile::new("a", "a.invalid", 22, "fixture"),
+        ConnectionProfile::new("b", "b.invalid", 22, "fixture"),
+    ];
+    let ids = [profiles[0].id, profiles[1].id];
+    let mut manager = SessionManager::with_profiles(profiles);
+    let a = manager.open_mock_session(ids[0]).unwrap();
+    let b = manager.open_mock_session(ids[1]).unwrap();
+    let (handle_a, rx_a, _events_a) = RdpClientHandle::test_fixture_with_channels();
+    let (handle_b, rx_b, _events_b) = RdpClientHandle::test_fixture_with_channels();
+    manager.sessions.get_mut(&a).unwrap().rdp = Some(handle_a);
+    manager.sessions.get_mut(&b).unwrap().rdp = Some(handle_b);
+    manager.observe_windows_clipboard_sequence(10);
+    for rx in [&rx_a, &rx_b] {
+        assert!(
+            matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::ClipboardFiles(files)) if files.is_empty())
+        );
+    }
+    manager.observe_windows_clipboard_sequence(10);
+    assert!(rx_a.try_recv().is_err());
+    manager.observe_windows_clipboard_sequence(11);
+    for rx in [&rx_a, &rx_b] {
+        assert!(
+            matches!(rx.try_recv(), Ok(adit_rdp_proto::ClientMsg::ClipboardFiles(files)) if files.is_empty())
+        );
+    }
+    for id in [a, b] {
+        assert_eq!(
+            manager.sessions[&id].summary.status,
+            SessionStatus::Connected
+        );
+    }
+}
+
 fn attach_test_rdp(manager: &mut SessionManager, session: SessionId) -> RdpFileRequester {
     let handle = RdpClientHandle::test_fixture();
     let requester = handle.file_requester_for_generation(1);

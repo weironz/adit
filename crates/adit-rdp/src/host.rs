@@ -101,8 +101,8 @@ pub fn run_host() -> Result<(), RdpError> {
                             let _ = tx.send(request);
                         }
                     }
-                    // Close or a clean EOF ends the session. File messages from
-                    // older apps are deliberately dropped by session_command.
+                    // Close or a clean EOF ends the session. Legacy file
+                    // offers only clear cached text/image; their metadata is dropped.
                     Ok(Some(ClientMsg::Close)) | Ok(None) => break,
                     Ok(Some(message)) => {
                         if let Some(command) = session_command(message) {
@@ -181,8 +181,10 @@ fn session_command(message: ClientMsg) -> Option<SessionCmd> {
             offset,
             length,
         }),
-        ClientMsg::ClipboardFiles(_)
-        | ClientMsg::FileContents { .. }
+        // Old apps may still send nonempty file selections. Discard their
+        // metadata but also retire any older local text/image offer.
+        ClientMsg::ClipboardFiles(_) => Some(SessionCmd::ClearLocalClipboard),
+        ClientMsg::FileContents { .. }
         | ClientMsg::Connect(_)
         | ClientMsg::Close => None,
     }
@@ -215,10 +217,16 @@ mod tests {
             write_msg(&mut bytes, msg).unwrap();
         }
         let mut input = bytes.as_slice();
-        for _ in 0..messages.len() {
+        let file_offer = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
+        assert!(matches!(session_command(file_offer), Some(SessionCmd::ClearLocalClipboard)));
+        for _ in 1..messages.len() {
             let decoded = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
             assert!(session_command(decoded).is_none());
         }
+        assert!(matches!(
+            session_command(ClientMsg::ClipboardFiles(Vec::new())),
+            Some(SessionCmd::ClearLocalClipboard)
+        ));
         assert!(matches!(
             session_command(ClientMsg::Input(InputEvent::ClipboardText("text".into()))),
             Some(SessionCmd::Input(InputEvent::ClipboardText(text))) if text == "text"

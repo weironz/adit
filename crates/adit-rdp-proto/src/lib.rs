@@ -277,8 +277,8 @@ pub enum ClientMsg {
     /// bytes are not a string. It is a third clipboard format, and MS-RDPECLIP
     /// treats it as exactly that.
     ClipboardImage(Vec<u8>),
-    /// Legacy local-file offer retained for IPC compatibility. The helper
-    /// ignores it while local-to-RDP file sharing is temporarily disabled.
+    /// Legacy local-file offer retained for IPC compatibility. File metadata is
+    /// ignored; any offer clears the helper's local text/image cache.
     ClipboardFiles(Vec<ClipFile>),
     /// Legacy local-file response. The helper ignores it; the app answers
     /// requests from an older helper with `None`, never file bytes.

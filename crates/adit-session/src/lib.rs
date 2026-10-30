@@ -443,6 +443,8 @@ pub struct SessionManager {
     auto_accept_host_keys: bool,
     /// Share the clipboard with an RDP desktop.
     rdp_clipboard: bool,
+    /// Last observed Windows clipboard sequence, shared across native windows.
+    windows_clipboard_sequence: Option<u32>,
     /// Visual fidelity to request from an RDP server. Read when a session is
     /// opened and never after: RDP fixes it during the handshake.
     rdp_quality: adit_rdp_proto::Quality,
@@ -574,6 +576,7 @@ impl SessionManager {
             default_size: TerminalSize::default(),
             auto_accept_host_keys: true,
             rdp_clipboard: true,
+            windows_clipboard_sequence: None,
             rdp_quality: adit_rdp_proto::Quality::default(),
             sftp: None,
             tunnels: Vec::new(),
@@ -622,6 +625,20 @@ impl SessionManager {
                 {
                     rdp.answer_file_contents(read.stream_id, None);
                 }
+            }
+        }
+    }
+
+    /// Retire all helpers' cached local offers once per Windows clipboard change.
+    /// Zero is an unavailable sequence and must remain fail-closed.
+    pub fn observe_windows_clipboard_sequence(&mut self, sequence: u32) {
+        if self.windows_clipboard_sequence == Some(sequence) {
+            return;
+        }
+        self.windows_clipboard_sequence = Some(sequence);
+        for record in self.sessions.values() {
+            if let Some(rdp) = &record.rdp {
+                rdp.send_clipboard_files(Vec::new());
             }
         }
     }

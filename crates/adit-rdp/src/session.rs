@@ -41,6 +41,8 @@ pub(crate) enum SessionCmd {
     Input(InputEvent),
     /// Offer a locally-copied image to the remote clipboard (raw CF_DIB).
     ClipboardImage(Vec<u8>),
+    /// An empty legacy file offer revokes only local text/image.
+    ClearLocalClipboard,
     /// The app wants a byte range of a file the remote offered.
     RequestFileContents {
         generation: u64,
@@ -575,6 +577,10 @@ async fn active_session(
                     // Images and remote-file reads remain available.
                     Some(SessionCmd::ClipboardImage(image)) => {
                         clipboard::offer_local_image(clip, image);
+                        Vec::new()
+                    }
+                    Some(SessionCmd::ClearLocalClipboard) => {
+                        clipboard::clear_local_offer(clip);
                         Vec::new()
                     }
                     Some(SessionCmd::RequestFileContents { generation, stream_id, index, offset, length }) => {
