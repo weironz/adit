@@ -128,13 +128,8 @@ pub(crate) enum ClipboardAction {
     },
     /// An image arrived from the remote; hand it to the app.
     InboundImage(Vec<u8>),
-    /// Offer a local file selection to the remote (`initiate_file_copy`).
-    AdvertiseFiles(Vec<ClipFile>),
-    /// Answer the remote's `FileContentsRequest` with bytes the app read.
-    SubmitFileContents {
-        stream_id: u32,
-        data: Option<Vec<u8>>,
-    },
+    /// Refuse a request for a local file without carrying metadata or bytes.
+    RefuseFileContents { stream_id: u32 },
     /// Pull a byte range of a remote file (`request_file_contents`).
     RequestFileContents(BoundRead),
     /// The remote copied files; hand the list to the app to offer locally.
@@ -142,25 +137,8 @@ pub(crate) enum ClipboardAction {
         generation: u64,
         files: Vec<ClipFile>,
     },
-    /// The remote is pasting and needs bytes from a local file; ask the app.
-    NeedFileContents {
-        stream_id: u32,
-        index: u32,
-        offset: u64,
-        length: u32,
-    },
     /// Bytes arrived from the remote; hand them to the waiting local paste.
     InboundFileContents(Reply),
-}
-
-/// Split a flat wire name (`docs\notes.txt`) into the descriptor's directory and
-/// leaf halves. MS-RDPECLIP carries the tree this way and so does [`ClipFile`],
-/// so this is the only place the two representations meet.
-fn split_relative(name: &str) -> (Option<String>, String) {
-    match name.rsplit_once('\\') {
-        Some((dir, leaf)) if !dir.is_empty() => (Some(dir.to_owned()), leaf.to_owned()),
-        _ => (None, name.to_owned()),
-    }
 }
 
 /// Rejoin a descriptor's two halves into the flat form [`ClipFile`] uses.
@@ -169,23 +147,6 @@ fn join_relative(descriptor: &FileDescriptor) -> String {
         Some(dir) if !dir.is_empty() => format!("{dir}\\{}", descriptor.name),
         _ => descriptor.name.clone(),
     }
-}
-
-fn to_descriptor(file: &ClipFile) -> FileDescriptor {
-    let (relative_path, name) = split_relative(&file.name);
-    let mut attributes = ClipboardFileAttributes::empty();
-    if file.is_dir {
-        attributes |= ClipboardFileAttributes::DIRECTORY;
-    }
-    // `FileDescriptor` is #[non_exhaustive], so it is built through its
-    // constructor and then filled in rather than with a struct literal.
-    let mut descriptor = FileDescriptor::new(name);
-    descriptor.attributes = Some(attributes);
-    // A directory has no size, and sending one makes some servers try to read
-    // bytes out of it.
-    descriptor.file_size = (!file.is_dir).then_some(file.size);
-    descriptor.relative_path = relative_path;
-    descriptor
 }
 
 fn from_descriptor(descriptor: &FileDescriptor) -> ClipFile {
@@ -239,20 +200,13 @@ pub(crate) struct ClipboardState {
     /// CLIPRDR reached `Ready` (capabilities exchanged and our first
     /// `FormatList` acknowledged). Advertising before that is out of sequence.
     ready: bool,
-    /// Files the app offered from the local clipboard, flat with relative paths.
-    /// Held here rather than only inside `Cliprdr` because a `SIZE` request is
-    /// answered straight from this metadata without troubling the app.
-    local_files: Vec<ClipFile>,
-    /// Same repeat-suppression as `advertised_text`: the GUI polls on a timer.
-    advertised_files: Vec<ClipFile>,
     /// The lock id the server handed us with the remote's file list. Quoted back
     /// on every `request_file_contents` so the bytes come from the snapshot that
     /// was copied, not from whatever the remote clipboard holds by the time the
     /// paste actually runs.
     remote_files: RemoteFiles,
-    /// Whether the server negotiated file transfer at all. Without the
-    /// capability `initiate_file_copy` and `request_file_contents` both refuse,
-    /// so this is what stops us queueing work that can only fail.
+    /// Whether the server negotiated file transfer. Remote-to-local requests
+    /// need this capability even though local-to-remote files are disabled.
     files_negotiated: bool,
     actions: VecDeque<ClipboardAction>,
 }
@@ -294,24 +248,16 @@ impl ClipboardState {
         self.actions.push_back(ClipboardAction::Advertise(formats));
     }
 
-    /// Record text the app copied locally and, once the channel is up, offer it
-    /// to the remote. Before `Ready` we only stash it: the initial `FormatList`
-    /// is part of the handshake and is sent from `on_request_format_list`.
-    /// Record an image the app copied locally and offer it to the remote.
-    ///
-    /// Like text and files, only the *format* is advertised — the bytes cross
-    /// when something over there pastes. Unlike them, the bytes are already in
-    /// hand, because a DIB has no path to fetch it from later.
+    /// Record an image the app copied locally and offer its format to the
+    /// remote. The DIB bytes cross only when the remote pastes.
     pub(crate) fn offer_local_image(&mut self, image: Vec<u8>) {
         if self.local_image.as_ref().is_some_and(|held| *held == image) {
             return;
         }
         self.revoke_remote_files(false);
         self.local_image = Some(image);
-        // One clipboard holds one thing: an image copy replaces whatever text
-        // or file list was offered, exactly as it does on Windows.
+        // A local image replaces the text previously offered.
         self.local_text = None;
-        self.local_files.clear();
         if self.ready {
             self.queue_advertise();
         }
@@ -324,46 +270,10 @@ impl ClipboardState {
         self.revoke_remote_files(false);
         self.local_text = Some(text);
         self.local_image = None;
-        // One clipboard holds one thing. MS-RDPECLIP agrees: each FormatList
-        // completely replaces the last, and `initiate_copy` drops the file list
-        // upstream — mirroring it here keeps our idea of what is offered from
-        // drifting away from the processor's.
-        self.local_files.clear();
-        self.advertised_files.clear();
+        // Each new FormatList replaces the prior image offer.
         if self.ready {
             self.queue_advertise();
         }
-    }
-
-    /// Record files the app copied locally and offer them to the remote.
-    ///
-    /// Nothing is read from disk here or at any point in this process: only the
-    /// metadata crosses. Bytes are pulled one range at a time when — and only
-    /// when — something on the remote actually pastes.
-    pub(crate) fn offer_local_files(&mut self, files: Vec<ClipFile>) {
-        let files = if adit_rdp_proto::validate_clipboard_file_list(&files).is_ok() {
-            files
-        } else {
-            Vec::new()
-        };
-        if self.local_files == files {
-            return;
-        }
-        self.revoke_remote_files(false);
-        self.local_files = files;
-        self.local_text = None;
-        self.local_image = None;
-        self.advertised_text = None;
-        if self.ready && self.files_negotiated {
-            self.advertised_files = self.local_files.clone();
-            self.actions
-                .push_back(ClipboardAction::AdvertiseFiles(self.local_files.clone()));
-        }
-    }
-
-    /// Look up an offered file by its index in the list the remote was given.
-    fn local_file(&self, index: u32) -> Option<&ClipFile> {
-        self.local_files.get(usize::try_from(index).ok()?)
     }
 
     pub(crate) fn take_actions(&mut self) -> Vec<ClipboardAction> {
@@ -376,12 +286,11 @@ impl ClipboardState {
     fn reset_for_new_channel(&mut self) {
         self.advertised_text = None;
         self.advertised_image_len = None;
-        self.advertised_files.clear();
         self.pending_remote_format = None;
         self.ready = false;
         // Scoped to the channel, not to the user's clipboard: the lock id and the
         // negotiated capability both belong to the CLIPRDR session that just went
-        // away. `local_files` deliberately survives, exactly as `local_text` does.
+        // away.
         self.files_negotiated = false;
         self.actions.clear();
         self.revoke_remote_files(false);
@@ -410,29 +319,7 @@ pub(crate) fn offer_local_image(state: &SharedClipboard, image: Vec<u8>) {
     }
 }
 
-/// Hand a local file selection to the CLIPRDR state machine. Metadata only —
-/// nothing is read from disk until the remote pastes.
-pub(crate) fn offer_local_files(state: &SharedClipboard, files: Vec<ClipFile>) {
-    if let Ok(mut guard) = state.lock() {
-        guard.offer_local_files(files);
-    }
-}
-
-/// Queue the app's answer to a [`HostMsg::FileContentsNeeded`].
-pub(crate) fn submit_file_contents(state: &SharedClipboard, stream_id: u32, data: Option<Vec<u8>>) {
-    if let Ok(mut guard) = state.lock() {
-        guard
-            .actions
-            .push_back(ClipboardAction::SubmitFileContents { stream_id, data });
-    }
-}
-
-/// Queue a pull of a byte range from a file the remote offered.
-///
-/// Refused outright when the server never negotiated file transfer: upstream's
-/// `request_file_contents` would reject it anyway, and failing here means the
-/// waiting local paste is told "no" instead of hanging on a stream that will
-/// never be answered.
+/// Request a range from the captured remote file offer.
 pub(crate) fn request_file_contents(
     state: &SharedClipboard,
     generation: u64,
@@ -504,10 +391,7 @@ impl AditCliprdrBackend {
         self.with_state(|state| {
             state
                 .actions
-                .push_back(ClipboardAction::SubmitFileContents {
-                    stream_id,
-                    data: None,
-                });
+                .push_back(ClipboardAction::RefuseFileContents { stream_id });
         });
     }
 }
@@ -516,9 +400,8 @@ ironrdp_core::impl_as_any!(AditCliprdrBackend);
 
 impl CliprdrBackend for AditCliprdrBackend {
     fn temporary_directory(&self) -> &str {
-        // Announced by CLIPRDR_TEMP_DIRECTORY and never used by us: files are
-        // delay-rendered straight from their real path on demand, so nothing is
-        // ever staged. Some servers refuse the handshake without the field.
+        // Announced for servers that require the field during the handshake.
+        // Remote file contents are fetched on demand rather than staged here.
         "."
     }
 
@@ -564,14 +447,6 @@ impl CliprdrBackend for AditCliprdrBackend {
             state.files_negotiated = files;
             if !files {
                 state.revoke_remote_files(false);
-            }
-            // Files copied before the handshake finished missed their chance to
-            // be advertised; this is the first moment we know they can be.
-            if files && state.ready && state.advertised_files != state.local_files {
-                state.advertised_files = state.local_files.clone();
-                state
-                    .actions
-                    .push_back(ClipboardAction::AdvertiseFiles(state.local_files.clone()));
             }
         });
         tracing::debug!(?capabilities, files, "CLIPRDR capabilities negotiated");
@@ -718,69 +593,11 @@ impl CliprdrBackend for AditCliprdrBackend {
         }
     }
 
-    /// The remote is pasting files we offered and wants either a file size or a
-    /// byte range from one.
+    /// Refuse a remote request for local file metadata or content.
     fn on_file_contents_request(&mut self, request: FileContentsRequest) {
-        let stream_id = request.stream_id;
-        // `lindex` is signed on the wire and negative is invalid. Upstream
-        // rejects it during decode, but the conversion has to be total anyway.
-        let Ok(index) = u32::try_from(request.index) else {
-            tracing::warn!(
-                stream_id,
-                index = request.index,
-                "negative file index; refusing"
-            );
-            self.refuse(stream_id);
-            return;
-        };
-
-        self.with_state(|state| {
-            let Some(file) = state.local_file(index).cloned() else {
-                tracing::warn!(stream_id, index, "request for a file we never offered");
-                state
-                    .actions
-                    .push_back(ClipboardAction::SubmitFileContents {
-                        stream_id,
-                        data: None,
-                    });
-                return;
-            };
-
-            // A SIZE request is answered from metadata already in hand — no round
-            // trip to the app and no disk read. Explorer issues one per file
-            // before reading a single byte, so this is most of the traffic.
-            if request.flags.contains(FileContentsFlags::SIZE) {
-                state
-                    .actions
-                    .push_back(ClipboardAction::SubmitFileContents {
-                        stream_id,
-                        data: Some(file.size.to_le_bytes().to_vec()),
-                    });
-                return;
-            }
-
-            if file.is_dir {
-                tracing::warn!(stream_id, index, "byte range requested from a directory");
-                state
-                    .actions
-                    .push_back(ClipboardAction::SubmitFileContents {
-                        stream_id,
-                        data: None,
-                    });
-                return;
-            }
-
-            // Clamped rather than honoured: `cbRequested` is remote-controlled,
-            // and an outsized value would have the app allocate it and then try
-            // to frame it down the same pipe the desktop is drawn through.
-            let length = request.requested_size.min(adit_rdp_proto::FILE_CHUNK_BYTES);
-            state.actions.push_back(ClipboardAction::NeedFileContents {
-                stream_id,
-                index,
-                offset: request.position,
-                length,
-            });
-        });
+        // Reject SIZE and RANGE alike. Never ask the app to read a local file,
+        // even when a peer sends a stale or unsolicited request.
+        self.refuse(request.stream_id);
     }
 
     /// Bytes (or a size) arriving for a local paste we started.
@@ -855,17 +672,6 @@ fn for_app(action: ClipboardAction) -> Result<HostMsg, ClipboardAction> {
         ClipboardAction::InboundFiles { generation, files } => {
             Ok(HostMsg::ClipboardFiles { generation, files })
         }
-        ClipboardAction::NeedFileContents {
-            stream_id,
-            index,
-            offset,
-            length,
-        } => Ok(HostMsg::FileContentsNeeded {
-            stream_id,
-            index,
-            offset,
-            length,
-        }),
         ClipboardAction::InboundFileContents(Reply {
             generation,
             stream_id,
@@ -939,16 +745,9 @@ pub(crate) fn pump(
                     None => OwnedFormatDataResponse::new_error(),
                 })
             }
-            ClipboardAction::AdvertiseFiles(files) => {
-                cliprdr.initiate_file_copy(files.iter().map(to_descriptor).collect())
+            ClipboardAction::RefuseFileContents { stream_id } => {
+                cliprdr.submit_file_contents(FileContentsResponse::new_error(*stream_id))
             }
-            ClipboardAction::SubmitFileContents { stream_id, data } => cliprdr
-                .submit_file_contents(match data {
-                    Some(bytes) => {
-                        FileContentsResponse::new_data_response(*stream_id, bytes.clone())
-                    }
-                    None => FileContentsResponse::new_error(*stream_id),
-                }),
             ClipboardAction::RequestFileContents(read) => {
                 let Some(request) = prepare_remote_read(state, read) else {
                     continue;
@@ -959,7 +758,6 @@ pub(crate) fn pump(
             ClipboardAction::Inbound(_)
             | ClipboardAction::InboundImage(_)
             | ClipboardAction::InboundFiles { .. }
-            | ClipboardAction::NeedFileContents { .. }
             | ClipboardAction::InboundFileContents(_) => {
                 unreachable!("app-addressed actions are handled above")
             }
@@ -992,6 +790,97 @@ mod tests {
     use ironrdp_core::{decode, Encode as _, WriteCursor};
 
     use super::*;
+
+    #[test]
+    fn real_cliprdr_refuses_unsolicited_file_metadata_and_content_requests() {
+        use ironrdp_cliprdr::pdu::{ClipboardPdu, FormatListResponse};
+        use ironrdp_svc::{SvcMessage, SvcProcessor as _};
+
+        let state = new_shared();
+        let backend = AditCliprdrBackend::new(Arc::clone(&state));
+        let mut clip = CliprdrClient::new(Box::new(backend));
+
+        // Drive the real processor to Ready using its normal wire handshake.
+        let ready = ClipboardPdu::MonitorReady;
+        clip.process(&ironrdp_core::encode_vec(&ready).unwrap())
+            .unwrap();
+        assert!(
+            matches!(actions(&state).as_slice(), [ClipboardAction::Advertise(ids)] if ids.is_empty())
+        );
+        let initial: Vec<SvcMessage> = clip.initiate_copy(&[]).unwrap().into();
+        assert_eq!(initial.len(), 3); // capabilities, temporary directory, empty format list
+        let ack = ClipboardPdu::FormatListResponse(FormatListResponse::Ok);
+        clip.process(&ironrdp_core::encode_vec(&ack).unwrap())
+            .unwrap();
+        assert!(actions(&state).is_empty());
+
+        // A registered file-list format can only be serviced inline by IronRDP
+        // if initiate_file_copy installed a list. The new helper never does so.
+        let list_request = ClipboardPdu::FormatDataRequest(FormatDataRequest {
+            format: ClipboardFormatId(0xC001),
+        });
+        assert!(clip
+            .process(&ironrdp_core::encode_vec(&list_request).unwrap())
+            .unwrap()
+            .is_empty());
+        let queued = actions(&state);
+        assert!(matches!(
+            queued.as_slice(),
+            [ClipboardAction::SubmitText {
+                format: ClipboardFormatId(0xC001),
+                text: None
+            }]
+        ));
+        let refusal: Vec<SvcMessage> = clip
+            .submit_format_data(format_data_response(ClipboardFormatId(0xC001), None))
+            .unwrap()
+            .into();
+        let refusal_wire = refusal[0].encode_unframed_pdu().unwrap();
+        assert!(matches!(
+            decode::<ClipboardPdu<'_>>(&refusal_wire).unwrap(),
+            ClipboardPdu::FormatDataResponse(ref response) if response.is_error()
+        ));
+
+        for (stream_id, flags, size) in [
+            (10, FileContentsFlags::SIZE, 8),
+            (11, FileContentsFlags::RANGE, 32),
+        ] {
+            let request = ClipboardPdu::FileContentsRequest(FileContentsRequest {
+                stream_id,
+                index: 0,
+                flags,
+                position: 0,
+                requested_size: size,
+                data_id: Some(3),
+            });
+            let messages = clip
+                .process(&ironrdp_core::encode_vec(&request).unwrap())
+                .unwrap();
+            assert_eq!(messages.len(), 1);
+            let wire = messages[0].encode_unframed_pdu().unwrap();
+            let response = decode::<ClipboardPdu<'_>>(&wire).unwrap();
+            assert!(matches!(response, ClipboardPdu::FileContentsResponse(ref r)
+                if r.stream_id() == stream_id && r.is_error() && r.data().is_empty()));
+            assert!(actions(&state).is_empty());
+        }
+
+        // The backend itself also refuses if an upstream processor ever calls it.
+        let mut backend = AditCliprdrBackend {
+            state: Arc::clone(&state),
+        };
+        backend.on_file_contents_request(FileContentsRequest {
+            stream_id: 12,
+            index: 0,
+            flags: FileContentsFlags::RANGE,
+            position: 0,
+            requested_size: 1,
+            data_id: None,
+        });
+        assert_eq!(
+            actions(&state),
+            vec![ClipboardAction::RefuseFileContents { stream_id: 12 }]
+        );
+    }
 
     #[test]
     fn file_epoch_backend_rejects_old_gui_requests_and_late_wire_replies() {

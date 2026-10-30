@@ -10,7 +10,7 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 
 use crate::display::{self, SharedDisplay};
-use adit_rdp_proto::{ClipFile, ConnectRequest, HostMsg, InputEvent, PointerUpdate};
+use adit_rdp_proto::{ConnectRequest, HostMsg, InputEvent, PointerUpdate};
 use ironrdp_connector::{ClientConnector, ConnectionResult, ServerName};
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
@@ -41,13 +41,6 @@ pub(crate) enum SessionCmd {
     Input(InputEvent),
     /// Offer a locally-copied image to the remote clipboard (raw CF_DIB).
     ClipboardImage(Vec<u8>),
-    /// Offer a local file selection to the remote clipboard (metadata only).
-    ClipboardFiles(Vec<ClipFile>),
-    /// The app read the bytes the remote asked for, or failed to.
-    FileContents {
-        stream_id: u32,
-        data: Option<Vec<u8>>,
-    },
     /// The app wants a byte range of a file the remote offered.
     RequestFileContents {
         generation: u64,
@@ -579,21 +572,9 @@ async fn active_session(
                         clipboard::offer_local_text(clip, text);
                         Vec::new()
                     }
-                    // File transfer: all three are metadata-or-bytes bookkeeping
-                    // for the CLIPRDR pump below rather than anything that touches
-                    // the desktop. Like the text offer above, nothing is read from
-                    // disk here — `ClipboardFiles` advertises names and sizes, and
-                    // bytes move only when one side actually pastes.
+                    // Images and remote-file reads remain available.
                     Some(SessionCmd::ClipboardImage(image)) => {
                         clipboard::offer_local_image(clip, image);
-                        Vec::new()
-                    }
-                    Some(SessionCmd::ClipboardFiles(files)) => {
-                        clipboard::offer_local_files(clip, files);
-                        Vec::new()
-                    }
-                    Some(SessionCmd::FileContents { stream_id, data }) => {
-                        clipboard::submit_file_contents(clip, stream_id, data);
                         Vec::new()
                     }
                     Some(SessionCmd::RequestFileContents { generation, stream_id, index, offset, length }) => {

@@ -277,14 +277,11 @@ pub enum ClientMsg {
     /// bytes are not a string. It is a third clipboard format, and MS-RDPECLIP
     /// treats it as exactly that.
     ClipboardImage(Vec<u8>),
-    /// Offer a local file selection to the remote clipboard. The helper holds
-    /// the metadata and answers the server's descriptor request from it; the
-    /// bytes are fetched lazily, one [`HostMsg::FileContentsNeeded`] at a time.
+    /// Legacy local-file offer retained for IPC compatibility. The helper
+    /// ignores it while local-to-RDP file sharing is temporarily disabled.
     ClipboardFiles(Vec<ClipFile>),
-    /// Bytes the app read from a local file, answering
-    /// [`HostMsg::FileContentsNeeded`]. `None` reports a read failure, which the
-    /// helper turns into the protocol's error response — a paste that fails
-    /// loudly beats one that silently writes a truncated file.
+    /// Legacy local-file response. The helper ignores it; the app answers
+    /// requests from an older helper with `None`, never file bytes.
     FileContents {
         stream_id: u32,
         data: Option<Vec<u8>>,
@@ -338,8 +335,8 @@ pub enum HostMsg {
         generation: u64,
         files: Vec<ClipFile>,
     },
-    /// The remote is pasting and wants a byte range of a file the app offered.
-    /// Answer with [`ClientMsg::FileContents`] carrying the same `stream_id`.
+    /// Legacy request from an older helper for a local file range. The app
+    /// answers with [`ClientMsg::FileContents`] containing `None`.
     FileContentsNeeded {
         stream_id: u32,
         index: u32,

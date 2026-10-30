@@ -101,52 +101,16 @@ pub fn run_host() -> Result<(), RdpError> {
                             let _ = tx.send(request);
                         }
                     }
-                    Ok(Some(ClientMsg::Input(event))) => {
-                        if input_tx.send(SessionCmd::Input(event)).is_err() {
-                            break; // session ended
-                        }
-                    }
-                    Ok(Some(ClientMsg::ClipboardImage(image))) => {
-                        if input_tx.send(SessionCmd::ClipboardImage(image)).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(Some(ClientMsg::ClipboardFiles(files))) => {
-                        if input_tx.send(SessionCmd::ClipboardFiles(files)).is_err() {
-                            break;
-                        }
-                    }
-                    Ok(Some(ClientMsg::FileContents { stream_id, data })) => {
-                        if input_tx
-                            .send(SessionCmd::FileContents { stream_id, data })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Ok(Some(ClientMsg::RequestFileContents {
-                        generation,
-                        stream_id,
-                        index,
-                        offset,
-                        length,
-                    })) => {
-                        if input_tx
-                            .send(SessionCmd::RequestFileContents {
-                                generation,
-                                stream_id,
-                                index,
-                                offset,
-                                length,
-                            })
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    // Close or a clean EOF ⇒ drop `input_tx`, which the session
-                    // observes as a graceful-shutdown request.
+                    // Close or a clean EOF ends the session. File messages from
+                    // older apps are deliberately dropped by session_command.
                     Ok(Some(ClientMsg::Close)) | Ok(None) => break,
+                    Ok(Some(message)) => {
+                        if let Some(command) = session_command(message) {
+                            if input_tx.send(command).is_err() {
+                                break;
+                            }
+                        }
+                    }
                     Err(_) => break,
                 }
             }
@@ -196,4 +160,82 @@ pub fn run_host() -> Result<(), RdpError> {
     let _ = writer.join();
 
     result
+}
+
+/// Only commands safe for this helper reach the RDP session. An older app
+/// cannot inject file metadata or pre-read bytes.
+fn session_command(message: ClientMsg) -> Option<SessionCmd> {
+    match message {
+        ClientMsg::Input(event) => Some(SessionCmd::Input(event)),
+        ClientMsg::ClipboardImage(image) => Some(SessionCmd::ClipboardImage(image)),
+        ClientMsg::RequestFileContents {
+            generation,
+            stream_id,
+            index,
+            offset,
+            length,
+        } => Some(SessionCmd::RequestFileContents {
+            generation,
+            stream_id,
+            index,
+            offset,
+            length,
+        }),
+        ClientMsg::ClipboardFiles(_)
+        | ClientMsg::FileContents { .. }
+        | ClientMsg::Connect(_)
+        | ClientMsg::Close => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adit_rdp_proto::{ClipFile, InputEvent};
+
+    #[test]
+    fn old_file_messages_are_dropped_at_the_helper_ipc_boundary() {
+        let messages = [
+            ClientMsg::ClipboardFiles(vec![ClipFile {
+                name: "private.txt".into(),
+                size: 7,
+                is_dir: false,
+            }]),
+            ClientMsg::FileContents {
+                stream_id: 11,
+                data: Some(b"private".to_vec()),
+            },
+            ClientMsg::FileContents {
+                stream_id: 11,
+                data: None,
+            },
+        ];
+        let mut bytes = Vec::new();
+        for msg in &messages {
+            write_msg(&mut bytes, msg).unwrap();
+        }
+        let mut input = bytes.as_slice();
+        for _ in 0..messages.len() {
+            let decoded = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
+            assert!(session_command(decoded).is_none());
+        }
+        assert!(matches!(
+            session_command(ClientMsg::Input(InputEvent::ClipboardText("text".into()))),
+            Some(SessionCmd::Input(InputEvent::ClipboardText(text))) if text == "text"
+        ));
+        assert!(matches!(
+            session_command(ClientMsg::ClipboardImage(vec![1, 2])),
+            Some(SessionCmd::ClipboardImage(image)) if image == [1, 2]
+        ));
+        assert!(matches!(
+            session_command(ClientMsg::RequestFileContents {
+                generation: 1,
+                stream_id: 2,
+                index: 0,
+                offset: 0,
+                length: 1
+            }),
+            Some(SessionCmd::RequestFileContents { generation: 1, .. })
+        ));
+    }
 }
