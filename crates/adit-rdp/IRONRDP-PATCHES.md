@@ -30,6 +30,16 @@ crates.io connector.
 | `rdstls.rs` | The **RDSTLS** security exchange (recv Capabilities → send password AuthReq → recv AuthRsp), ported from FreeRDP `rdstls.c`. Runs on the TLS stream before MCS. | IronRDP implements RDSTLS (only the `SecurityProtocol::RDSTLS` flag exists today). |
 | `session.rs` `run_session` | Reconnect loop that follows a redirection: carries the routing token, builds the one-time RDSTLS creds, and reconnects. | Same as `redirect.rs`. |
 
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-egfx/`
+
+Crates.io `ironrdp-egfx` 0.3.0 discards the monitor definitions in
+`ResetGraphics` before invoking its handler. The marked patch in `src/client.rs`
+adds a backward-compatible handler callback carrying those definitions, so Adit
+can verify the server's actual topology before granting pointer input. Remove
+the patch when upstream exposes the same information. The synthetic
+`issue97_real_egfx_reset_pdu_preserves_reported_monitor_geometry` test exercises
+the encoded PDU through the graphics channel decoder.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/`
 
 Pulled in via `[patch.crates-io] ironrdp-graphics = { path = "vendor/ironrdp-graphics" }`.
