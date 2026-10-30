@@ -128,7 +128,7 @@ pub(crate) type Rect = (usize, usize, usize, usize);
 // with a quadratic insertion scan.
 const MAX_DIRTY_RECTS: usize = 256;
 
-struct DirtyRects {
+pub(crate) struct DirtyRects {
     width: usize,
     height: usize,
     rects: Vec<Rect>,
@@ -136,7 +136,7 @@ struct DirtyRects {
 }
 
 impl DirtyRects {
-    fn new(width: usize, height: usize) -> Self {
+    pub(crate) fn new(width: usize, height: usize) -> Self {
         Self {
             width,
             height,
@@ -163,7 +163,7 @@ impl DirtyRects {
         }
     }
 
-    fn insert(&mut self, (x, y, w, h): Rect) {
+    pub(crate) fn insert(&mut self, (x, y, w, h): Rect) {
         if x >= self.width || y >= self.height {
             return;
         }
@@ -187,7 +187,7 @@ impl DirtyRects {
 
     /// Convert the bounded bitset to at most one masked tile per 64x64 area.
     /// Masks preserve the distinction between copied pixels and fresh paints.
-    fn into_regions(mut self) -> Vec<(Rect, Option<Vec<u8>>)> {
+    pub(crate) fn into_regions(mut self) -> Vec<(Rect, Option<Vec<u8>>)> {
         let Some(bits) = self.bits.take() else {
             prefer_full_frame(&mut self.rects, self.width, self.height);
             return self.rects.into_iter().map(|r| (r, None)).collect();

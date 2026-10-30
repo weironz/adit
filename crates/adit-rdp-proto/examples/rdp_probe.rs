@@ -94,8 +94,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let result: Result<(), Box<dyn std::error::Error>> = (|| {
         while start.elapsed() < Duration::from_secs(timeout) {
             match received.recv_timeout(Duration::from_millis(20)) {
+                Ok(HostMsg::GraphicsReset { epoch, .. }) if epoch != input_epoch => {
+                    return Err("invalid graphics reset epoch".into());
+                }
                 Ok(HostMsg::Connected { width, height })
-                | Ok(HostMsg::Resized { width, height }) => {
+                | Ok(HostMsg::Resized { width, height })
+                | Ok(HostMsg::GraphicsReset { width, height, .. }) => {
                     let bytes = usize::from(width)
                         .checked_mul(usize::from(height))
                         .and_then(|n| n.checked_mul(4))

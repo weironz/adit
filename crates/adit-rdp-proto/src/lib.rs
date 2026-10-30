@@ -459,6 +459,12 @@ pub enum HostMsg {
         epoch: u64,
         monitors: Vec<MonitorGeometry>,
     },
+    /// A server reset invalidates prior paint coverage even at the same size.
+    GraphicsReset {
+        epoch: u64,
+        width: u16,
+        height: u16,
+    },
 }
 
 /// Write a length-prefixed, bincode-encoded message and flush. Fails if the
@@ -780,6 +786,15 @@ mod desktop_protocol_tests {
             },
         )
         .unwrap();
+        write_msg(
+            &mut bytes,
+            &HostMsg::GraphicsReset {
+                epoch: 7,
+                width: 400,
+                height: 200,
+            },
+        )
+        .unwrap();
         let mut input = std::io::Cursor::new(bytes);
         assert!(matches!(read_msg::<_, HostMsg>(&mut input).unwrap(),
             Some(HostMsg::MaskedTile { x: 3, y: 4, width: 2, height: 1, painted, .. }) if painted == [1]));
@@ -792,6 +807,14 @@ mod desktop_protocol_tests {
         ));
         assert!(matches!(read_msg::<_, HostMsg>(&mut input).unwrap(),
             Some(HostMsg::MonitorLayoutObserved { epoch: 7, monitors }) if monitors[0].left == -200));
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut input).unwrap(),
+            Some(HostMsg::GraphicsReset {
+                epoch: 7,
+                width: 400,
+                height: 200
+            })
+        ));
     }
     fn screen(left: i32, top: i32, primary: bool) -> Monitor {
         Monitor {

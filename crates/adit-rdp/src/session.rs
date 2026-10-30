@@ -296,7 +296,44 @@ struct SessionInput<'a> {
     network_progress: &'a AtomicU64,
 }
 
-type PendingResize = (u32, u32, u64);
+#[derive(Clone, Copy)]
+struct PendingResize {
+    width: u32,
+    height: u32,
+    revision: u64,
+    deadline: Option<tokio::time::Instant>,
+}
+
+impl PendingResize {
+    fn new(width: u32, height: u32, revision: u64, now: Option<tokio::time::Instant>) -> Self {
+        Self {
+            width,
+            height,
+            revision,
+            deadline: now.map(|t| t + display::CAPABILITIES_TIMEOUT),
+        }
+    }
+
+    fn start_waiting(&mut self, now: tokio::time::Instant) {
+        self.deadline
+            .get_or_insert(now + display::CAPABILITIES_TIMEOUT);
+    }
+}
+
+fn take_expired_resize(
+    pending: &mut Option<PendingResize>,
+    now: tokio::time::Instant,
+) -> Option<u64> {
+    if pending
+        .as_ref()
+        .and_then(|r| r.deadline)
+        .is_some_and(|deadline| now >= deadline)
+    {
+        pending.take().map(|resize| resize.revision)
+    } else {
+        None
+    }
+}
 type DisplayRequest<'a> = (
     &'a SharedDisplay,
     &'a mut Option<display::PendingLayout>,
@@ -321,20 +358,33 @@ async fn wait_activation_read<T>(
 ) -> Option<T> {
     tokio::pin!(read);
     loop {
-        let deadline = controls
+        let layout_deadline = controls
             .pending_layout
             .as_ref()
-            .and_then(|request| request.deadline)
+            .and_then(|request| request.deadline);
+        let resize_deadline = controls
+            .pending_resize
+            .as_ref()
+            .and_then(|request| request.deadline);
+        let deadline = layout_deadline
+            .into_iter()
+            .chain(resize_deadline)
+            .min()
             .unwrap_or_else(|| tokio::time::Instant::now() + display::CAPABILITIES_TIMEOUT);
         tokio::select! {
             result = &mut read => return Some(result),
-            _ = tokio::time::sleep_until(deadline), if controls.pending_layout.is_some() => {
-                if let Some(request) = controls.pending_layout.take() {
+            _ = tokio::time::sleep_until(deadline), if layout_deadline.is_some() || resize_deadline.is_some() => {
+                let now = tokio::time::Instant::now();
+                if layout_deadline.is_some_and(|deadline| now >= deadline) {
+                    let request = controls.pending_layout.take().expect("deadline belongs to pending layout");
                     if controls.host.send(HostMsg::MonitorLayoutResult {
                         epoch: controls.epoch,
                         request_id: request.request_id,
                         result: Err("DisplayControl capabilities timed out".into()),
                     }).is_err() { return None; }
+                }
+                if let Some(revision) = take_expired_resize(controls.pending_resize, now) {
+                    if controls.host.send(HostMsg::ResizeRejected { epoch: controls.epoch, revision }).is_err() { return None; }
                 }
             }
             command = next_command(controls.input, controls.display, controls.epoch) => {
@@ -348,7 +398,7 @@ async fn wait_activation_read<T>(
                     }
                     Some(SessionCmd::Resize { width, height, revision, .. }) => {
                         let (width, height) = MonitorLayoutEntry::adjust_display_size(u32::from(width), u32::from(height));
-                        *controls.pending_resize = Some((width, height, revision));
+                        *controls.pending_resize = Some(PendingResize::new(width, height, revision, Some(tokio::time::Instant::now())));
                     }
                     Some(SessionCmd::RejectedKeyboard) => {
                         if controls.host.send(HostMsg::InputDiscarded).is_err() { return None; }
@@ -774,7 +824,7 @@ pub(crate) async fn run_session(
                             Some(SessionCmd::Resize { width, height, revision, .. }) => {
                                 let (width, height) = MonitorLayoutEntry::adjust_display_size(
                                     u32::from(width), u32::from(height));
-                                pending_resize = Some((width, height, revision));
+                                pending_resize = Some(PendingResize::new(width, height, revision, None));
                             }
                             Some(SessionCmd::RejectedKeyboard) => {
                                 host_tx.send(HostMsg::InputDiscarded).map_err(|_| RdpError::ControlChannelClosed)?;
@@ -1010,15 +1060,11 @@ async fn connect(
 }
 
 /// Copy only changed legacy pixels, using the same cost planner as EGFX.
-fn image_tiles(image: &DecodedImage, mut rects: Vec<egfx::Rect>) -> Vec<HostMsg> {
-    egfx::prefer_full_frame(
-        &mut rects,
-        usize::from(image.width()),
-        usize::from(image.height()),
-    );
+fn image_tiles(image: &DecodedImage, rects: egfx::DirtyRects) -> Vec<HostMsg> {
     rects
+        .into_regions()
         .into_iter()
-        .filter_map(|(x, y, w, h)| {
+        .filter_map(|((x, y, w, h), painted)| {
             let fw = usize::from(image.width());
             let fh = usize::from(image.height());
             if x >= fw || y >= fh {
@@ -1034,12 +1080,23 @@ fn image_tiles(image: &DecodedImage, mut rects: Vec<egfx::Rect>) -> Vec<HostMsg>
                 let start = (row * fw + x) * 4;
                 rgba.extend_from_slice(&image.data()[start..start + w * 4]);
             }
-            Some(HostMsg::Tile {
-                x: x as u16,
-                y: y as u16,
-                width: w as u16,
-                height: h as u16,
-                rgba,
+            Some(if let Some(painted) = painted {
+                HostMsg::MaskedTile {
+                    x: x as u16,
+                    y: y as u16,
+                    width: w as u16,
+                    height: h as u16,
+                    rgba,
+                    painted,
+                }
+            } else {
+                HostMsg::Tile {
+                    x: x as u16,
+                    y: y as u16,
+                    width: w as u16,
+                    height: h as u16,
+                    rgba,
+                }
             })
         })
         .collect()
@@ -1145,6 +1202,9 @@ async fn active_session(
     if let Some(request) = pending_layout.as_mut() {
         request.start_waiting(tokio::time::Instant::now());
     }
+    if let Some(request) = pending_resize.as_mut() {
+        request.start_waiting(tokio::time::Instant::now());
+    }
     // A request received during connection must be considered even if the
     // newly established desktop is otherwise completely idle.
     let mut pump_initial_layout = pending_layout.is_some() || pending_resize.is_some();
@@ -1183,16 +1243,19 @@ async fn active_session(
     let mut egfx_active = false;
 
     'session: loop {
-        let layout_deadline = pending_layout
-            .as_ref()
-            .and_then(|request| request.deadline)
+        let layout_deadline = pending_layout.as_ref().and_then(|request| request.deadline);
+        let resize_deadline = pending_resize.as_ref().and_then(|request| request.deadline);
+        let deadline = layout_deadline
+            .into_iter()
+            .chain(resize_deadline)
+            .min()
             .unwrap_or_else(|| tokio::time::Instant::now() + display::CAPABILITIES_TIMEOUT);
         let outputs = tokio::select! {
             _ = std::future::ready(()), if pump_initial_layout => {
                 pump_initial_layout = false;
                 Vec::new()
             }
-            _ = tokio::time::sleep_until(layout_deadline), if pending_layout.is_some() => {
+            _ = tokio::time::sleep_until(deadline), if layout_deadline.is_some() || resize_deadline.is_some() => {
                 Vec::new()
             }
             frame_read = reader.read_pdu() => {
@@ -1242,7 +1305,7 @@ async fn active_session(
                     Some(SessionCmd::Resize { width, height, revision, .. }) => {
                         let (w, h) = MonitorLayoutEntry::adjust_display_size(
                             u32::from(width), u32::from(height));
-                        *pending_resize = Some((w, h, revision));
+                        *pending_resize = Some(PendingResize::new(w, h, revision, Some(tokio::time::Instant::now())));
                         pointer_epoch = None;
                         let released = release_pointer_buttons(&mut input_db);
                         if released.is_empty() { Vec::new() } else { active_stage.process_fastpath_input(&mut image, &released)? }
@@ -1314,7 +1377,8 @@ async fn active_session(
             }
         };
 
-        let mut dirty_rects = Vec::new();
+        let mut dirty_rects =
+            egfx::DirtyRects::new(usize::from(image.width()), usize::from(image.height()));
         for out in outputs {
             if let Some(pointer) = pointer_update(&out) {
                 if host_tx.send(HostMsg::Pointer(pointer)).is_err() {
@@ -1336,15 +1400,12 @@ async fn active_session(
                 .map_err(|e| ironrdp_session::custom_err!("write frame", e))?,
                 ActiveStageOutput::GraphicsUpdate(region) => {
                     if region.right >= region.left && region.bottom >= region.top {
-                        egfx::add_dirty_rect(
-                            &mut dirty_rects,
-                            (
-                                usize::from(region.left),
-                                usize::from(region.top),
-                                usize::from(region.right) - usize::from(region.left) + 1,
-                                usize::from(region.bottom) - usize::from(region.top) + 1,
-                            ),
-                        );
+                        dirty_rects.insert((
+                            usize::from(region.left),
+                            usize::from(region.top),
+                            usize::from(region.right) - usize::from(region.left) + 1,
+                            usize::from(region.bottom) - usize::from(region.top) + 1,
+                        ));
                     }
                 }
                 ActiveStageOutput::DeactivateAll => {
@@ -1503,6 +1564,10 @@ async fn active_session(
                                 desktop_size.width,
                                 desktop_size.height,
                             );
+                            dirty_rects = egfx::DirtyRects::new(
+                                usize::from(image.width()),
+                                usize::from(image.height()),
+                            );
                             active_stage.set_fastpath_processor(
                                 fast_path::ProcessorBuilder {
                                     io_channel_id: connection_activation.io_channel_id(),
@@ -1535,15 +1600,12 @@ async fn active_session(
                             break 'activation;
                         }
                     }
-                    egfx::add_dirty_rect(
-                        &mut dirty_rects,
-                        (
-                            0,
-                            0,
-                            usize::from(image.width()),
-                            usize::from(image.height()),
-                        ),
-                    );
+                    dirty_rects.insert((
+                        0,
+                        0,
+                        usize::from(image.width()),
+                        usize::from(image.height()),
+                    ));
                 }
                 ActiveStageOutput::Terminate(_reason) => break 'session,
                 // Multitransport (UDP) and auto-detect are advisory; ignore.
@@ -1562,7 +1624,14 @@ async fn active_session(
             {
                 break 'session;
             }
-            if host_tx.send(HostMsg::Resized { width, height }).is_err() {
+            if host_tx
+                .send(HostMsg::GraphicsReset {
+                    epoch,
+                    width,
+                    height,
+                })
+                .is_err()
+            {
                 break 'session;
             }
         }
@@ -1611,6 +1680,20 @@ async fn active_session(
             let mut state = display.lock().unwrap_or_else(|e| e.into_inner());
             state.max_monitors = 0;
             state.max_area = 0;
+        }
+        let expired_resize = take_expired_resize(pending_resize, tokio::time::Instant::now())
+            .or_else(|| {
+                channel_closed
+                    .then(|| pending_resize.take().map(|r| r.revision))
+                    .flatten()
+            });
+        if let Some(revision) = expired_resize {
+            if host_tx
+                .send(HostMsg::ResizeRejected { epoch, revision })
+                .is_err()
+            {
+                break 'session;
+            }
         }
         if let Some(request) = pending_layout.as_ref() {
             let encoded = display::poll_layout(
@@ -1688,7 +1771,12 @@ async fn active_session(
         }
 
         // Retry a parked resize now that more channels may have connected.
-        if let Some((w, h, revision)) = pending_resize.filter(|_| {
+        if let Some(PendingResize {
+            width: w,
+            height: h,
+            revision,
+            ..
+        }) = pending_resize.filter(|_| {
             display_rx.is_empty()
                 && pending_layout.is_none()
                 && display::ready(&mut active_stage, display)
@@ -1805,6 +1893,149 @@ mod display_deadline_tests {
 
     static TEST_IDLE_GENERATION: AtomicU64 = AtomicU64::new(0);
     static TEST_NETWORK_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+    #[tokio::test(start_paused = true)]
+    async fn review97_unavailable_display_control_rejects_parked_resize() {
+        let request = ConnectRequest {
+            host: "synthetic.invalid".into(),
+            port: 0,
+            username: String::new(),
+            password: String::new(),
+            domain: None,
+            width: 800,
+            height: 600,
+            enable_clipboard: false,
+            enable_audio: false,
+            quality: adit_rdp_proto::Quality::default(),
+        };
+        let connection = ConnectionResult {
+            io_channel_id: 1003,
+            user_channel_id: 1001,
+            message_channel_id: None,
+            share_id: 1,
+            static_channels: Default::default(),
+            desktop_size: ironrdp_connector::DesktopSize {
+                width: 800,
+                height: 600,
+            },
+            enable_server_pointer: false,
+            pointer_software_rendering: false,
+            activation_factory: ConnectionActivationFactory::new(
+                build_connector_config(&request, None),
+                1003,
+                1001,
+            ),
+            compression_type: None,
+        };
+        let (stream, _peer) = tokio::io::duplex(1024);
+        let framed: UpgradedFramed = TokioFramed::new(Box::new(stream));
+        let (_input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
+        let (_display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
+        let routing = InputRouting::default();
+        let (host_tx, host_rx) = std_mpsc::channel();
+        let (egfx, clip, display) = (
+            egfx::new_shared(),
+            clipboard::new_shared(),
+            SharedDisplay::default(),
+        );
+        let (mut pending, mut resize, mut deferred) = (
+            None,
+            Some(PendingResize::new(900, 700, 1, None)),
+            VecDeque::new(),
+        );
+        let session = active_session(
+            framed,
+            connection,
+            SessionInput {
+                ordinary: &mut input_rx,
+                display: &mut display_rx,
+                routing: &routing,
+                epoch: 0,
+                deferred: &mut deferred,
+                idle_generation: &TEST_IDLE_GENERATION,
+                network_progress: &TEST_NETWORK_PROGRESS,
+            },
+            &host_tx,
+            &egfx,
+            &clip,
+            (&display, &mut pending, &mut resize),
+        );
+        tokio::pin!(session);
+        tokio::select! { biased; result = &mut session => panic!("session closed: {result:?}"), _ = tokio::task::yield_now() => {} }
+        assert!(matches!(
+            host_rx.try_recv(),
+            Ok(HostMsg::DisplayControl { .. })
+        ));
+        tokio::select! { biased; result = &mut session => panic!("session closed: {result:?}"), _ = tokio::time::advance(display::CAPABILITIES_TIMEOUT) => {} }
+        tokio::select! { biased; result = &mut session => panic!("session closed: {result:?}"), _ = tokio::task::yield_now() => {} }
+        assert!(
+            matches!(
+                host_rx.try_recv(),
+                Ok(HostMsg::ResizeRejected {
+                    epoch: 0,
+                    revision: 1
+                })
+            ),
+            "unsent resize never received a bounded rejection"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn review97_resize_expiry_survives_a_stalled_reactivation() {
+        let (_input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
+        let (_display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
+        let (host, events) = std_mpsc::channel();
+        let mut deferred = VecDeque::new();
+        let mut pending_layout = None;
+        let mut pending_resize = Some(PendingResize::new(
+            900,
+            700,
+            3,
+            Some(tokio::time::Instant::now()),
+        ));
+        let mut controls = ActivationControls {
+            input: &mut input_rx,
+            display: &mut display_rx,
+            deferred: &mut deferred,
+            pending_layout: &mut pending_layout,
+            pending_resize: &mut pending_resize,
+            host: &host,
+            epoch: 2,
+        };
+        let wait = wait_activation_read(std::future::pending::<()>(), &mut controls);
+        tokio::pin!(wait);
+        tokio::select! { biased; result = &mut wait => panic!("read ended: {result:?}"), _ = tokio::task::yield_now() => {} }
+        tokio::select! { biased; result = &mut wait => panic!("read ended: {result:?}"), _ = tokio::time::advance(display::CAPABILITIES_TIMEOUT) => {} }
+        tokio::select! { biased; result = &mut wait => panic!("read ended: {result:?}"), _ = tokio::task::yield_now() => {} }
+        assert!(matches!(
+            events.try_recv(),
+            Ok(HostMsg::ResizeRejected {
+                epoch: 2,
+                revision: 3
+            })
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn review97_new_resize_owns_its_own_deadline() {
+        let now = tokio::time::Instant::now();
+        let mut resize = Some(PendingResize::new(600, 400, 1, Some(now)));
+        tokio::time::advance(display::CAPABILITIES_TIMEOUT - std::time::Duration::from_secs(1))
+            .await;
+        assert!(take_expired_resize(&mut resize, tokio::time::Instant::now()).is_none());
+        resize = Some(PendingResize::new(
+            800,
+            600,
+            2,
+            Some(tokio::time::Instant::now()),
+        ));
+        assert!(take_expired_resize(&mut resize, now + display::CAPABILITIES_TIMEOUT).is_none());
+        tokio::time::advance(display::CAPABILITIES_TIMEOUT).await;
+        assert_eq!(
+            take_expired_resize(&mut resize, tokio::time::Instant::now()),
+            Some(2)
+        );
+    }
 
     #[test]
     fn issue97_legacy_monitor_layout_pdu_preserves_actual_geometry() {
@@ -3008,11 +3239,11 @@ mod display_deadline_tests {
     fn new_layout_clears_parked_resize_and_redirect_discards_old_commands() {
         let (tx, mut rx) = tokio_mpsc::unbounded_channel();
         let mut pending = None;
-        let mut resize = Some((640, 480, 1));
+        let mut resize = Some(PendingResize::new(640, 480, 1, None));
         stage_layout(&mut pending, &mut resize, 1, vec![monitor()], None);
         assert!(resize.is_none());
         assert_eq!(pending.as_ref().unwrap().request_id, 1);
-        resize = Some((800, 600, 2));
+        resize = Some(PendingResize::new(800, 600, 2, None));
         tx.send(SessionCmd::Input {
             epoch: 0,
             event: InputEvent::Resize {
@@ -3206,6 +3437,44 @@ mod process_error_tests {
 #[cfg(test)]
 mod desktop_output_tests {
     use super::*;
+
+    #[test]
+    fn review97_legacy_scattered_dirty_regions_are_bounded_and_exact() {
+        let image = DecodedImage::new(PixelFormat::RgbA32, 1024, 1);
+        let mut dirty = egfx::DirtyRects::new(1024, 1);
+        for x in (0..1024).step_by(2) {
+            dirty.insert((x, 0, 1, 1));
+        }
+        let tiles = image_tiles(&image, dirty);
+        assert!(
+            tiles.len() <= 16,
+            "{} legacy messages for one fragmented row",
+            tiles.len()
+        );
+        let mut fresh = vec![false; 1024];
+        for tile in tiles {
+            match tile {
+                HostMsg::Tile { x, width, .. } => {
+                    for col in 0..usize::from(width) {
+                        fresh[usize::from(x) + col] = true;
+                    }
+                }
+                HostMsg::MaskedTile {
+                    x, width, painted, ..
+                } => {
+                    for col in 0..usize::from(width) {
+                        if painted[col / 8] & (1 << (col % 8)) != 0 {
+                            fresh[usize::from(x) + col] = true;
+                        }
+                    }
+                }
+                _ => panic!("unexpected message"),
+            }
+        }
+        for (x, painted) in fresh.iter().enumerate() {
+            assert_eq!(*painted, x % 2 == 0, "pixel {x}");
+        }
+    }
     use ironrdp_graphics::pointer::DecodedPointer;
     #[test]
     fn actual_stage_pointer_outputs_keep_pixels_hotspot_visibility_and_position() {
@@ -3246,7 +3515,9 @@ mod desktop_output_tests {
     #[test]
     fn legacy_dirty_rects_copy_only_the_inclusive_changed_region() {
         let image = DecodedImage::new(PixelFormat::RgbA32, 16, 12);
-        let tiles = image_tiles(&image, vec![(15, 10, 3, 3)]);
+        let mut dirty = egfx::DirtyRects::new(16, 12);
+        dirty.insert((15, 10, 3, 3));
+        let tiles = image_tiles(&image, dirty);
         assert_eq!(tiles.len(), 1);
         let HostMsg::Tile {
             x,
