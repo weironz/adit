@@ -410,6 +410,11 @@ pub(crate) fn offer_local_image(state: &SharedClipboard, image: Vec<u8>) {
     }
 }
 
+#[cfg(test)]
+pub(crate) fn test_local_image(state: &SharedClipboard) -> Option<Vec<u8>> {
+    state.lock().unwrap().local_image.clone()
+}
+
 /// Hand a local file selection to the CLIPRDR state machine. Metadata only —
 /// nothing is read from disk until the remote pastes.
 pub(crate) fn offer_local_files(state: &SharedClipboard, files: Vec<ClipFile>) {
@@ -848,10 +853,10 @@ fn format_data_response(format: ClipboardFormatId, text: Option<&str>) -> OwnedF
 
 /// Split the actions addressed to the app off from the ones addressed to the
 /// wire, handing the latter back untouched.
-fn for_app(action: ClipboardAction) -> Result<HostMsg, ClipboardAction> {
+fn for_app(action: ClipboardAction, epoch: u64) -> Result<HostMsg, ClipboardAction> {
     match action {
-        ClipboardAction::Inbound(text) => Ok(HostMsg::ClipboardText(text)),
-        ClipboardAction::InboundImage(image) => Ok(HostMsg::ClipboardImage(image)),
+        ClipboardAction::Inbound(text) => Ok(HostMsg::EpochClipboardText { epoch, text }),
+        ClipboardAction::InboundImage(image) => Ok(HostMsg::EpochClipboardImage { epoch, image }),
         ClipboardAction::InboundFiles { generation, files } => {
             Ok(HostMsg::ClipboardFiles { generation, files })
         }
@@ -861,6 +866,7 @@ fn for_app(action: ClipboardAction) -> Result<HostMsg, ClipboardAction> {
             offset,
             length,
         } => Ok(HostMsg::FileContentsNeeded {
+            epoch,
             stream_id,
             index,
             offset,
@@ -890,6 +896,7 @@ pub(crate) fn pump(
     state: &SharedClipboard,
     active_stage: &mut ActiveStage,
     host_tx: &std_mpsc::Sender<HostMsg>,
+    epoch: u64,
 ) -> Option<Vec<Vec<u8>>> {
     let actions = match state.lock() {
         Ok(mut guard) => guard.take_actions(),
@@ -904,7 +911,7 @@ pub(crate) fn pump(
         // Four of the actions are addressed to the app rather than the wire.
         // `for_app` hands back the ones that are not, because matching by value
         // would otherwise move the action away from the CLIPRDR branch below.
-        let action = match for_app(action) {
+        let action = match for_app(action, epoch) {
             Ok(message) => {
                 if host_tx.send(message).is_err() {
                     return None;

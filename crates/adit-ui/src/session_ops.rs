@@ -784,6 +784,7 @@ pub(crate) fn maybe_report_mouse_motion(app: &mut AditApp) -> bool {
 /// with the remote is the bug being fixed here.
 pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     desktop_panes::release_owned(app);
+    release_single_owned(app);
     if app.vnc_grab_keys || (app.native_window_id.is_some() && app.desktop_window_focused) {
         keyboard_hook::disarm();
     }
@@ -814,20 +815,20 @@ pub(crate) fn release_rdp_modifiers(app: &mut AditApp) {
     if !app.manager.active_is_desktop() {
         return;
     }
-    for button in [
-        RdpMouseButton::Left,
-        RdpMouseButton::Middle,
-        RdpMouseButton::Right,
-    ] {
-        app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
-            button,
-            pressed: false,
-        });
-    }
     // VNC tracks the exact logical symbols above, including AltGr. RDP's
     // unconditional PC modifier reset would inject key-ups this viewer never
     // owned into a shared VNC desktop.
     if app.manager.active_is_vnc() {
+        for button in [
+            RdpMouseButton::Left,
+            RdpMouseButton::Middle,
+            RdpMouseButton::Right,
+        ] {
+            app.manager.send_rdp_input_to_active(RdpInput::MouseButton {
+                button,
+                pressed: false,
+            });
+        }
         return;
     }
     // (scancode, extended) for both halves of each pair; the right-hand ones are

@@ -122,18 +122,6 @@ pub(crate) struct EgfxFrame {
 /// A dirty region: `(x, y, w, h)` in pixels.
 pub(crate) type Rect = (usize, usize, usize, usize);
 
-/// How many separate dirty rects to carry before coalescing.
-///
-/// One rect was the original behaviour, and it degrades in exactly the case
-/// that matters: a blinking cursor in one corner and a clock in another grow
-/// the single rect to span both, so a few hundred changed pixels ship as most
-/// of the screen. An unbounded list is the opposite failure — a full repaint
-/// arrives as ~900 tiles at 2560-class sizes, and one IPC message each costs
-/// more than the pixels saved. Sixteen keeps unrelated activity apart while a
-/// genuine full-surface paint still collapses to roughly one rect, because
-/// adjacent tiles merge for free (see [`merge_cost`]).
-const MAX_DIRTY_RECTS: usize = 16;
-
 fn area(rect: Rect) -> usize {
     rect.2 * rect.3
 }
@@ -156,14 +144,17 @@ fn merge_cost(a: Rect, b: Rect) -> i64 {
 }
 
 pub(crate) fn prefer_full_frame(rects: &mut Vec<Rect>, width: usize, height: usize) {
-    if rects
-        .iter()
-        .map(|r| area(*r) as i64 * 4 + MESSAGE_COST)
-        .sum::<i64>()
-        > (width * height) as i64 * 4 + MESSAGE_COST
-    {
+    // The receiver treats every pixel of a tile as freshly painted. A cheaper
+    // full-frame copy is safe only if a paint actually covered the surface.
+    if rects.contains(&(0, 0, width, height)) {
         *rects = vec![(0, 0, width, height)];
     }
+}
+
+fn union_is_exact(a: Rect, b: Rect) -> bool {
+    let overlap_width = (a.0 + a.2).min(b.0 + b.2).saturating_sub(a.0.max(b.0));
+    let overlap_height = (a.1 + a.3).min(b.1 + b.3).saturating_sub(a.1.max(b.1));
+    area(union(a, b)) == area(a) + area(b) - overlap_width * overlap_height
 }
 
 impl EgfxFrame {
@@ -228,9 +219,9 @@ pub(crate) fn take_frames(shared: &SharedEgfx) -> Vec<FrameUpdate> {
     let (surface_width, surface_height) = (frame.width, frame.height);
 
     let mut rects = std::mem::take(&mut frame.dirty_rects);
-    // No recorded rect (defensive) -> whole surface.
+    // Without a recorded paint there is no evidence that any pixel is fresh.
     if rects.is_empty() {
-        rects.push((0, 0, fw, fh));
+        return Vec::new();
     }
 
     prefer_full_frame(&mut rects, fw, fh);
@@ -295,8 +286,7 @@ fn grow_dirty(frame: &mut EgfxFrame, x: usize, y: usize, w: usize, h: usize) {
     add_dirty_rect(&mut frame.dirty_rects, (x, y, w, h));
 }
 
-/// Add one changed rect, merging when total cost decreases and coalescing only
-/// once the list is full.
+/// Add one changed rect, merging only when its union contains no unpainted pixels.
 ///
 /// The beneficial merges keep this cheap on the hot path: a progressive
 /// frame arrives as hundreds of adjacent 64x64 tiles, and each folds into the
@@ -314,7 +304,7 @@ pub(crate) fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
         again = false;
         let mut index = 0;
         while index < rects.len() {
-            if merge_cost(rects[index], merged) <= 0 {
+            if union_is_exact(rects[index], merged) && merge_cost(rects[index], merged) <= 0 {
                 merged = union(rects.swap_remove(index), merged);
                 again = true;
             } else {
@@ -323,24 +313,6 @@ pub(crate) fn add_dirty_rect(rects: &mut Vec<Rect>, new: Rect) {
         }
     }
     rects.push(merged);
-
-    // Full: give up the pair that costs least to join. Shrinking by one each
-    // time means the list cannot grow past the cap, however scattered the
-    // paints are.
-    while rects.len() > MAX_DIRTY_RECTS {
-        let mut best = (0, 1, i64::MAX);
-        for i in 0..rects.len() {
-            for j in (i + 1)..rects.len() {
-                let cost = merge_cost(rects[i], rects[j]);
-                if cost < best.2 {
-                    best = (i, j, cost);
-                }
-            }
-        }
-        let (i, j, _) = best;
-        let other = rects.swap_remove(j);
-        rects[i] = union(rects[i], other);
-    }
 }
 
 /// One entry of the EGFX bitmap cache.
@@ -1523,6 +1495,45 @@ mod clear_dump_tests {
 mod dirty_rect_tests {
     use super::*;
 
+    #[test]
+    fn nearby_dirty_rectangles_do_not_claim_the_unpainted_gap() {
+        let mut rects = Vec::new();
+        add_dirty_rect(&mut rects, (0, 0, 8, 8));
+        add_dirty_rect(&mut rects, (9, 0, 8, 8));
+        assert!(!rects.iter().any(|r| r.0 <= 8 && 8 < r.0 + r.2));
+    }
+
+    #[test]
+    fn emitted_frame_updates_never_mark_the_gap_between_fresh_paints() {
+        let shared = new_shared();
+        {
+            let mut frame = shared.lock().unwrap();
+            frame.resize(17, 8);
+            frame.rgba.fill(7); // pixels retained from the previous connection
+            grow_dirty(&mut frame, 0, 0, 8, 8);
+            grow_dirty(&mut frame, 9, 0, 8, 8);
+            frame.dirty = true;
+        }
+        let updates = take_frames(&shared);
+        assert_eq!(updates.len(), 2);
+        assert!(updates.iter().all(|tile| {
+            let left = usize::from(tile.x);
+            let right = left + usize::from(tile.width);
+            !(left <= 8 && 8 < right)
+        }));
+    }
+
+    #[test]
+    fn scattered_dirty_rectangles_do_not_claim_unpainted_pixels_after_the_cap() {
+        let mut rects = Vec::new();
+        for x in (0..40).step_by(2) {
+            add_dirty_rect(&mut rects, (x, 0, 1, 1));
+        }
+        for x in (1..40).step_by(2) {
+            assert!(!rects.iter().any(|r| r.0 <= x && x < r.0 + r.2));
+        }
+    }
+
     /// Every pixel that was marked must still be covered afterwards. Anything
     /// less is a region that changed on the server and never reaches the
     /// screen — the failure mode this whole mechanism can produce.
@@ -1575,17 +1586,15 @@ mod dirty_rect_tests {
         assert_eq!(rects, vec![(0, 0, 30, 10)]);
     }
 
-    /// Scattered paints must never grow the list past the cap, and must never
-    /// drop coverage while shrinking it.
+    /// Scattered paints retain coverage without claiming intervening pixels.
     #[test]
-    fn the_list_is_capped_and_loses_nothing() {
+    fn scattered_paints_lose_no_coverage() {
         let mut rects = Vec::new();
         let marked: Vec<Rect> = (0..200)
             .map(|i| ((i * 37) % 1900, (i * 61) % 1000, 8, 8))
             .collect();
         for rect in &marked {
             add_dirty_rect(&mut rects, *rect);
-            assert!(rects.len() <= MAX_DIRTY_RECTS, "{} rects", rects.len());
         }
         for rect in &marked {
             assert!(covers(&rects, *rect), "lost {rect:?}");
@@ -1607,11 +1616,11 @@ mod dirty_rect_tests {
 mod cost_merge_tests {
     use super::*;
     #[test]
-    fn small_gap_merges_when_one_message_costs_more_than_the_gap_pixels() {
+    fn small_gap_stays_unpainted_even_when_merging_would_be_cheaper() {
         let mut rects = Vec::new();
         add_dirty_rect(&mut rects, (0, 0, 8, 8));
         add_dirty_rect(&mut rects, (9, 0, 8, 8));
-        assert_eq!(rects, vec![(0, 0, 17, 8)]);
+        assert_eq!(rects, vec![(0, 0, 8, 8), (9, 0, 8, 8)]);
         assert!(merge_cost((0, 0, 8, 8), (9, 0, 8, 8)) < 0);
         assert!(merge_cost((0, 0, 8, 8), (100, 0, 8, 8)) > 0);
     }
@@ -1658,7 +1667,6 @@ mod cost_merge_tests {
         }
         let updates = take_frames(&shared);
         assert!(!updates.is_empty());
-        assert!(updates.len() <= MAX_DIRTY_RECTS);
         for update in updates {
             for row in 0..usize::from(update.height) {
                 let src = row * usize::from(update.width) * 4;

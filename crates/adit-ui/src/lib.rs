@@ -403,6 +403,8 @@ pub struct AditApp {
     // generation currently uploaded). `rdp_surface_size` is the last size we told
     // the helper, so a window resize only sends a Resize when it actually changed.
     rdp_frame_generation: u64,
+    rdp_input_epoch: Option<u64>,
+    rdp_owned_buttons: Vec<(SessionId, mouse::Button, Option<u64>)>,
     rdp_surface_size: Option<(u16, u16)>,
     // The remote desktop size we last *asked* for (viewport pixels). Sizing the
     // remote to the on-screen area renders it 1:1 instead of upscaling a fixed
@@ -794,10 +796,10 @@ pub enum Message {
     NativeImeEvent(SessionId, u64, iced::advanced::input_method::Event),
     // RDP: per-frame surface sampling + input over the graphical surface.
     RdpTick,
-    RdpPointerMoved(Point),
-    RdpPressed(mouse::Button),
-    RdpReleased(mouse::Button),
-    RdpScrolled(mouse::ScrollDelta),
+    RdpPointerMoved(Point, Option<u64>),
+    RdpPressed(mouse::Button, Option<u64>),
+    RdpReleased(mouse::Button, Option<u64>),
+    RdpScrolled(mouse::ScrollDelta, Option<u64>),
     // The floating fullscreen toolbar over an RDP desktop.
     ToggleRdpToolbarCollapsed,
     /// The pointer entered or left the collapsed toolbar's reveal zone.
@@ -842,10 +844,10 @@ pub enum Message {
     ReturnToMission,
     RdpMonitorCount(u16),
     RdpMonitorSelected(Option<usize>),
-    DesktopPaneMoved(SessionId, Point),
-    DesktopPanePressed(SessionId, mouse::Button),
-    DesktopPaneReleased(SessionId, mouse::Button),
-    DesktopPaneScrolled(SessionId, mouse::ScrollDelta),
+    DesktopPaneMoved(SessionId, Point, Option<u64>),
+    DesktopPanePressed(SessionId, mouse::Button, Option<u64>),
+    DesktopPaneReleased(SessionId, mouse::Button, Option<u64>),
+    DesktopPaneScrolled(SessionId, mouse::ScrollDelta, Option<u64>),
     GlobalPointerReleased(mouse::Button, bool),
     /// Switch how the host manager lays its entries out.
     HostLayoutChanged(HostLayout),
@@ -1782,6 +1784,8 @@ impl AditApp {
             terminal_context_menu: false,
             terminal_scroll_offset: 0,
             rdp_frame_generation: 0,
+            rdp_input_epoch: None,
+            rdp_owned_buttons: Vec::new(),
             rdp_surface_size: None,
             rdp_target_size: None,
             rdp_frame_session: None,
@@ -3193,6 +3197,7 @@ mod tests {
             height: 2,
             rgba: vec![255; 16],
             generation: 9,
+            rdp_input_epoch: None,
         };
         app.rdp_tiles = split_into_tiles(&frame);
         app.rdp_tiles_prev = split_into_tiles(&frame);
@@ -3239,6 +3244,7 @@ mod tests {
             height: 2,
             rgba: vec![255; 16],
             generation: 1,
+            rdp_input_epoch: None,
         };
         app.rdp_tiles = split_into_tiles(&frame);
         app.rdp_tiles_prev = split_into_tiles(&frame);
