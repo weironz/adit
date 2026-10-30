@@ -455,6 +455,7 @@ pub struct AditApp {
     /// changed. `rdp_image_offered_seq` also stops the remote's own image being
     /// handed straight back to it.
     rdp_clipboard_seq: u32,
+    rdp_text_observed_seq: u32,
     rdp_image_offered_seq: u32,
     /// Files currently offered to the remote, with the local path each came
     /// from. Indexed by the remote: a `FileContentsRequest` names a position in
@@ -1792,6 +1793,7 @@ impl AditApp {
             vnc_frame_coverage: update_loop::VncFrameCoverage::default(),
             rdp_clipboard_offered: None,
             rdp_clipboard_seq: 0,
+            rdp_text_observed_seq: 0,
             rdp_image_offered_seq: 0,
             rdp_offered_files: Vec::new(),
             rdp_chunk_bridge: clipboard_files::ChunkBridge::new(),
@@ -3282,6 +3284,21 @@ mod tests {
         send_vnc_keyboard(&mut app, &press);
         let _ = update(&mut app, Message::WindowUnfocused);
         assert!(app.vnc_pressed_keys.is_empty());
+    }
+
+    #[test]
+    fn synthetic_windows_clipboard_changes_retire_pending_text_reads() {
+        let mut app = drag_test_app();
+        app.rdp_clipboard_offered = Some("old".into());
+        let epoch = app.desktop_clipboard_epoch;
+        update_loop::observe_windows_clipboard(&mut app, 17);
+        assert!(app.rdp_clipboard_offered.is_none());
+        assert_ne!(app.desktop_clipboard_epoch, epoch);
+        let epoch = app.desktop_clipboard_epoch;
+        update_loop::observe_windows_clipboard(&mut app, 17);
+        assert_eq!(app.desktop_clipboard_epoch, epoch);
+        update_loop::observe_windows_clipboard(&mut app, 0);
+        assert_ne!(app.desktop_clipboard_epoch, epoch);
     }
 
     #[test]

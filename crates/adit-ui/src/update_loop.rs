@@ -146,6 +146,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::Vault(message) => return vault_ui::update(app, message),
         Message::Tick => {
+            // Invalidate even when another app has focus or another tab is
+            // selected: old helper caches must not outlive a clipboard change.
+            #[cfg(all(windows, not(test)))]
+            observe_windows_clipboard(app, clipboard_files::clipboard_sequence());
+
             // Auto-sync, when it is on and something is due. Two clocks, because
             // they answer different questions: the debounce pushes what was just
             // edited here, and the interval is the only thing that ever notices
@@ -257,6 +262,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // Files the remote copied: publish them on the Windows clipboard.
                 // Delay-rendered, so this costs one data object and no wire traffic.
                 if let Some(offer) = app.manager.take_rdp_clipboard_files() {
+                    // A later local copy may have the same text as one sent
+                    // before this remote file selection.
+                    app.rdp_clipboard_offered = None;
                     app.rdp_chunk_bridge.close();
                     app.rdp_chunk_bridge = clipboard_files::ChunkBridge::new();
                     app.rdp_file_scope = None;
@@ -346,14 +354,23 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if !app.rdp_clipboard
                 || app.manager.active_session() != Some(session)
                 || app.desktop_clipboard_epoch != epoch
-                || token
-                    .is_some_and(|token| clipboard_files::rdp_text_clipboard_token() != Some(token))
             {
+                return Task::none();
+            }
+            if token.is_some_and(|token| clipboard_files::rdp_text_clipboard_token() != Some(token))
+            {
+                #[cfg(windows)]
+                observe_windows_clipboard(app, clipboard_files::clipboard_sequence());
                 return Task::none();
             }
             if let Some(text) =
                 contents.filter(|text| app.manager.active_is_vnc() || !text.is_empty())
             {
+                if !app.manager.active_is_vnc()
+                    && clipboard_files::is_own_remote_file_text(&text, token)
+                {
+                    return Task::none();
+                }
                 if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
                     app.rdp_clipboard_offered = Some(text.clone());
                     app.manager.offer_clipboard_to_active_rdp(text);
@@ -3804,6 +3821,16 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
     );
     let _ = std::fs::write(path.with_extension("txt"), meta);
     let _ = std::fs::write(path.with_extension("raw"), &frame.rgba);
+}
+
+#[cfg(any(windows, test))]
+pub(super) fn observe_windows_clipboard(app: &mut AditApp, sequence: u32) {
+    app.manager.observe_windows_clipboard_sequence(sequence);
+    if !app.manager.active_is_vnc() && (sequence == 0 || app.rdp_text_observed_seq != sequence) {
+        app.rdp_text_observed_seq = sequence;
+        app.rdp_clipboard_offered = None;
+        app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
+    }
 }
 
 /// Sample the local clipboard for an image and offer it to the active RDP

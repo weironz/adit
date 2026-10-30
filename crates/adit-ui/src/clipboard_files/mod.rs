@@ -38,6 +38,8 @@ mod linux_fuse;
 #[cfg(windows)]
 mod ole;
 #[cfg(any(target_os = "linux", test))]
+mod remote_file_echo;
+#[cfg(any(target_os = "linux", test))]
 mod remote_tree;
 #[allow(unused_imports)]
 pub(crate) use bridge::{ChunkBridge, ChunkError};
@@ -90,6 +92,16 @@ pub(crate) fn take_clipboard_error() -> Option<String> {
     return linux::take_error();
     #[cfg(not(target_os = "linux"))]
     None
+}
+
+pub(crate) fn is_own_remote_file_text(text: &str, token: Option<u32>) -> bool {
+    #[cfg(target_os = "linux")]
+    return linux::is_own_remote_file_text(text, token);
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (text, token);
+        false
+    }
 }
 
 pub(crate) fn shutdown_file_clipboard() {
@@ -410,6 +422,23 @@ pub(crate) fn set_clipboard_image(_bytes: &[u8]) -> bool {
     false
 }
 
+#[cfg(any(windows, test))]
+const WINDOWS_FILE_FORMAT_NAMES: &[&str] = &[
+    "FileGroupDescriptorW",
+    "FileGroupDescriptor",
+    "FileContents",
+    "FileNameW",
+    "FileName",
+    "Shell IDList Array",
+];
+
+#[cfg(any(windows, test))]
+fn windows_has_file_format(mut available: impl FnMut(&str) -> Option<bool>) -> bool {
+    WINDOWS_FILE_FORMAT_NAMES
+        .iter()
+        .any(|name| available(name).unwrap_or(true))
+}
+
 /// Snapshot text only while Windows does not expose a file selection. Sequence
 /// checks discard async reads if the clipboard changes before completion.
 #[cfg(windows)]
@@ -420,24 +449,25 @@ pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
     let before = clipboard_sequence();
     // Check only format availability: do not fetch paths, descriptors or bytes.
     let has_files = unsafe {
-        let registered = [
-            RegisterClipboardFormatW(windows::core::w!("FileGroupDescriptorW")),
-            RegisterClipboardFormatW(windows::core::w!("FileGroupDescriptor")),
-            RegisterClipboardFormatW(windows::core::w!("FileContents")),
-        ];
-        registered.contains(&0)
-            || IsClipboardFormatAvailable(15).is_ok()
-            || registered
-                .iter()
-                .any(|id| IsClipboardFormatAvailable(*id).is_ok())
+        IsClipboardFormatAvailable(15).is_ok()
+            || windows_has_file_format(|name| {
+                let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+                let id = RegisterClipboardFormatW(windows::core::PCWSTR(name.as_ptr()));
+                (id != 0).then(|| IsClipboardFormatAvailable(id).is_ok())
+            })
     };
     let after = clipboard_sequence();
     safe_clipboard_snapshot(before, after, has_files).then_some(before)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
-    // X11 file selections can also appear as plain text; see docs/features.md.
+    // Reject text captured before the X11 ownership observer advanced.
+    Some(clipboard_sequence())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
     Some(0)
 }
 
@@ -449,6 +479,27 @@ pub(crate) fn safe_clipboard_snapshot(before: u32, after: u32, has_files: bool) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn windows_file_formats_override_an_available_text_representation() {
+        for format in [
+            "FileNameW",
+            "FileName",
+            "Shell IDList Array",
+            "FileGroupDescriptorW",
+            "FileGroupDescriptor",
+            "FileContents",
+        ] {
+            assert!(
+                windows_has_file_format(|name| Some(name == format)),
+                "{format}"
+            );
+        }
+        assert!(!windows_has_file_format(|_| Some(false)));
+        assert!(windows_has_file_format(
+            |name| (name != "FileNameW").then_some(false)
+        ));
+    }
 
     #[test]
     fn disabled_sharing_does_not_read_an_offered_file() {

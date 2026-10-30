@@ -63,6 +63,7 @@ presentation! {
     vnc_frame_coverage: update_loop::VncFrameCoverage = Default::default(),
     rdp_clipboard_offered: Option<String> = None,
     rdp_clipboard_seq: u32 = 0,
+    rdp_text_observed_seq: u32 = 0,
     rdp_image_offered_seq: u32 = 0,
     rdp_clipboard_ticks: u8 = 0,
     desktop_clipboard_epoch: u64 = 0,
@@ -140,6 +141,7 @@ macro_rules! clipboard_state {
 clipboard_state! {
     rdp_clipboard_offered: Option<String> = None,
     rdp_clipboard_seq: u32 = 0,
+    rdp_text_observed_seq: u32 = 0,
     rdp_image_offered_seq: u32 = 0,
     rdp_clipboard_ticks: u8 = 0,
     desktop_clipboard_epoch: u64 = 0,

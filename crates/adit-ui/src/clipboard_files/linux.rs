@@ -34,6 +34,7 @@ struct Shared {
     stop: AtomicBool,
     failed: AtomicBool,
     error: Mutex<Option<String>>,
+    own_file_text: Mutex<super::remote_file_echo::RemoteFileEcho>,
 }
 
 struct Service {
@@ -121,6 +122,17 @@ fn run(shared: Arc<Shared>, events: std::sync::mpsc::Receiver<()>) -> Result<(),
             {
                 match result {
                     Ok(next) => {
+                        // Protect the exact strings before taking X11 ownership:
+                        // iced can request UTF8_STRING as soon as set_files runs.
+                        {
+                            let mut own = shared
+                                .own_file_text
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner());
+                            own.remember(&next.paths);
+                            own.set_file_formats_present(true);
+                            advance_sequence(&shared);
+                        }
                         if clipboard.set_files(next.paths.clone()).is_ok() {
                             mount = Some(next);
                             shared.dirty.store(true, Ordering::Release);
@@ -138,22 +150,36 @@ fn run(shared: Arc<Shared>, events: std::sync::mpsc::Receiver<()>) -> Result<(),
             }
         }
         if shared.dirty.swap(false, Ordering::AcqRel) {
-            // Only observe that ownership changed. Do not fetch local file
-            // URI metadata while local-to-RDP file transfer is disabled.
-            if shared
-                .sequence
-                .fetch_add(1, Ordering::Release)
-                .wrapping_add(1)
-                == 0
-            {
-                shared.sequence.fetch_add(1, Ordering::Release);
-            }
+            // Query only target names, never local file paths or contents.
+            // A failed query keeps our echo guard active.
+            let formats = clipboard.available_formats().ok();
+            let has_files =
+                super::remote_file_echo::RemoteFileEcho::may_be_file_formats(formats.as_deref());
+            let mut own = shared
+                .own_file_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            own.set_file_formats_present(has_files);
+            advance_sequence(&shared);
         }
     }
     drop(mount);
     stop_watcher.stop();
     let _ = watcher.join();
     Ok(())
+}
+
+// Call while holding own_file_text so readers observe its classification and
+// the sequence as one snapshot.
+fn advance_sequence(shared: &Shared) {
+    if shared
+        .sequence
+        .fetch_add(1, Ordering::Release)
+        .wrapping_add(1)
+        == 0
+    {
+        shared.sequence.fetch_add(1, Ordering::Release);
+    }
 }
 
 #[cfg(test)]
@@ -236,6 +262,20 @@ pub(super) fn offer(
 
 pub(super) fn sequence() -> u32 {
     service().map_or(0, |service| service.shared.sequence.load(Ordering::Acquire))
+}
+
+pub(super) fn is_own_remote_file_text(text: &str, token: Option<u32>) -> bool {
+    SERVICE
+        .get()
+        .and_then(Option::as_ref)
+        .is_some_and(|service| {
+            let own = service
+                .shared
+                .own_file_text
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            own.is_stale_or_own_echo(text, token, service.shared.sequence.load(Ordering::Acquire))
+        })
 }
 
 pub(super) fn take_error() -> Option<String> {

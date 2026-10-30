@@ -400,12 +400,22 @@ connected. This is a temporary mitigation, not completion of issue #94.
 Windows text and images, Linux text, and remote-to-local files remain available.
 On Windows, a `CF_HDROP` or registered file-descriptor/content selection is not
 treated as text or image, and an asynchronous text read is discarded if the
-clipboard changes. The patched helper also rejects old app file IPC messages,
-but cannot identify filenames deliberately sent by an old app as plain text. On X11 some
-applications expose file selections as plain text or URI text. Plain text is
-still shared and cannot always be distinguished from such representations, so
-filenames or paths may still be sent as text; this mitigation does not claim
-zero risk for X11.
+clipboard changes. The app polls the Windows sequence even while unfocused and
+sends an empty legacy file offer to every helper to retire cached local text and
+images; this does not revoke remote file snapshots. A matching patched helper
+is required: the previous temporary helper ignored that empty message. Polling
+and IPC are asynchronous, so previously queued or transmitted data cannot be
+retracted and a clipboard change is not an instantaneous revocation barrier.
+
+The patched helper rejects nonempty old app file IPC messages, but cannot identify
+file data sent as plain text or an image. On X11 some applications expose file
+selections as plain text or URI text. Plain text is still shared and cannot always
+be distinguished from such representations, so filenames or paths may still be
+sent as text; this mitigation does not claim zero risk for X11. To prevent Adit
+from echoing its own remote files and revoking their offer, the X11 worker records
+its exact published file text and checks clipboard target names. A later pure-text
+copy, including the same path, remains eligible once the ownership change is
+observed; a failed target query keeps the echo guard active.
 
 **Remote → local** uses a COM `IDataObject` with delay-rendered `IStream`s on
 Windows, published by `OleSetClipboard` on a dedicated `OleInitialize`d STA.
