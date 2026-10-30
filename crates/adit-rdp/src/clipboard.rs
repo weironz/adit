@@ -316,7 +316,7 @@ impl ClipboardState {
         let had_local = self.local_text.take().is_some() | self.local_image.take().is_some();
         self.advertised_text = None;
         self.advertised_image_len = None;
-        if had_local && self.ready {
+        if self.ready && (had_local || !advertise) {
             self.actions
                 .retain(|action| !matches!(action, ClipboardAction::Advertise(_)));
         }
@@ -324,7 +324,7 @@ impl ClipboardState {
             match action {
                 // Before Ready, sanitize the initial list rather than dropping
                 // the message the handshake needs to complete.
-                ClipboardAction::Advertise(ids) if had_local => ids.clear(),
+                ClipboardAction::Advertise(ids) if had_local || !advertise => ids.clear(),
                 ClipboardAction::SubmitText { text, .. } => *text = None,
                 ClipboardAction::SubmitImage { image, .. } => *image = None,
                 _ => {}
@@ -891,21 +891,32 @@ mod tests {
                 self.0.lock().unwrap().extend_from_slice(bytes);
                 Ok(bytes.len())
             }
-            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
         let capture = Capture(Arc::new(Mutex::new(Vec::new())));
         let writer = capture.clone();
-        let subscriber = tracing_subscriber::fmt().without_time().with_ansi(false)
-            .with_writer(move || writer.clone()).finish();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.clone())
+            .finish();
         tracing::subscriber::with_default(subscriber, || {
-            log_clipboard_failure(&ClipboardAction::SubmitText {
-                format: ClipboardFormatId::CF_UNICODETEXT,
-                text: Some("sensitive-fixture-marker".into()),
-            }, "build");
-            log_clipboard_failure(&ClipboardAction::SubmitImage {
-                format: ClipboardFormatId::CF_DIB,
-                image: Some(vec![17, 34, 51]),
-            }, "encode");
+            log_clipboard_failure(
+                &ClipboardAction::SubmitText {
+                    format: ClipboardFormatId::CF_UNICODETEXT,
+                    text: Some("sensitive-fixture-marker".into()),
+                },
+                "build",
+            );
+            log_clipboard_failure(
+                &ClipboardAction::SubmitImage {
+                    format: ClipboardFormatId::CF_DIB,
+                    image: Some(vec![17, 34, 51]),
+                },
+                "encode",
+            );
         });
         let rendered = String::from_utf8(capture.0.lock().unwrap().clone()).unwrap();
         assert!(rendered.contains("submit_text") && rendered.contains("submit_image"));
@@ -979,6 +990,31 @@ mod tests {
     }
 
     #[test]
+    fn remote_file_copy_discards_queued_local_revocation_advertisement() {
+        use ironrdp_cliprdr::pdu::ClipboardFormatName;
+        let (mut backend, state) = backend();
+        backend.on_ready();
+        state.lock().unwrap().files_negotiated = true;
+        offer_local_text(&state, "old local text".into());
+        let _ = actions(&state);
+        clear_local_offer(&state);
+        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId(0xc003))
+            .with_name(ClipboardFormatName::FILE_LIST)]);
+        let queued = actions(&state);
+        assert!(!queued
+            .iter()
+            .any(|action| matches!(action, ClipboardAction::Advertise(_))));
+        assert!(queued.iter().any(|action| matches!(
+            action,
+            ClipboardAction::RequestText(ClipboardFormatId(0xc003))
+        )));
+        let mut descriptor = FileDescriptor::new("remote.txt");
+        descriptor.file_size = Some(4);
+        backend.on_remote_file_list(&[descriptor], Some(7));
+        assert!(state.lock().unwrap().remote_files.active());
+    }
+
+    #[test]
     fn clearing_local_offer_does_not_revoke_a_remote_file_snapshot() {
         let (mut backend, state) = backend();
         {
@@ -994,6 +1030,17 @@ mod tests {
         clear_local_offer(&state);
         assert!(state.lock().unwrap().remote_files.active());
         assert!(actions(&state).is_empty());
+        let generation = state.lock().unwrap().remote_files.generation();
+        request_file_contents(&state, generation, 123, 0, 0, 4);
+        let queued = actions(&state);
+        let read = queued
+            .iter()
+            .find_map(|action| match action {
+                ClipboardAction::RequestFileContents(read) => Some(read),
+                _ => None,
+            })
+            .expect("remote file must remain readable");
+        assert_eq!(prepare_remote_read(&state, read).unwrap().data_id, Some(7));
     }
 
     #[test]

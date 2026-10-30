@@ -184,9 +184,7 @@ fn session_command(message: ClientMsg) -> Option<SessionCmd> {
         // Old apps may still send nonempty file selections. Discard their
         // metadata but also retire any older local text/image offer.
         ClientMsg::ClipboardFiles(_) => Some(SessionCmd::ClearLocalClipboard),
-        ClientMsg::FileContents { .. }
-        | ClientMsg::Connect(_)
-        | ClientMsg::Close => None,
+        ClientMsg::FileContents { .. } | ClientMsg::Connect(_) | ClientMsg::Close => None,
     }
 }
 
@@ -218,7 +216,10 @@ mod tests {
         }
         let mut input = bytes.as_slice();
         let file_offer = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
-        assert!(matches!(session_command(file_offer), Some(SessionCmd::ClearLocalClipboard)));
+        assert!(matches!(
+            session_command(file_offer),
+            Some(SessionCmd::ClearLocalClipboard)
+        ));
         for _ in 1..messages.len() {
             let decoded = read_msg::<_, ClientMsg>(&mut input).unwrap().unwrap();
             assert!(session_command(decoded).is_none());
