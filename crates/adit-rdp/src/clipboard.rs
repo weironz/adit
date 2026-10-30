@@ -106,7 +106,7 @@ const MAX_CLIPBOARD_FILES: usize = 65_536;
 /// reach the `Cliprdr` processor that owns it (it is the thing being borrowed),
 /// let alone the socket. So it queues intent here and the session loop drains it
 /// afterwards. That indirection is also what makes the state machine testable.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub(crate) enum ClipboardAction {
     /// Advertise these formats to the remote (`FormatList`). An empty list is
     /// meaningful and legal: "the local clipboard holds nothing you can use".
@@ -139,6 +139,35 @@ pub(crate) enum ClipboardAction {
     },
     /// Bytes arrived from the remote; hand them to the waiting local paste.
     InboundFileContents(Reply),
+}
+
+impl ClipboardAction {
+    fn log_metadata(&self) -> (&'static str, usize) {
+        match self {
+            Self::Advertise(ids) => ("advertise", ids.len()),
+            Self::RequestText(_) => ("request_format", 0),
+            Self::SubmitText { text, .. } => ("submit_text", text.as_ref().map_or(0, String::len)),
+            Self::SubmitImage { image, .. } => ("submit_image", image.as_ref().map_or(0, Vec::len)),
+            Self::Inbound(text) => ("inbound_text", text.len()),
+            Self::InboundImage(image) => ("inbound_image", image.len()),
+            Self::RefuseFileContents { .. } => ("refuse_file", 0),
+            Self::RequestFileContents(_) => ("request_file", 0),
+            Self::InboundFiles { files, .. } => ("inbound_files", files.len()),
+            Self::InboundFileContents(reply) => {
+                ("inbound_file_data", reply.data.as_ref().map_or(0, Vec::len))
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for ClipboardAction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (kind, len) = self.log_metadata();
+        f.debug_struct("ClipboardAction")
+            .field("kind", &kind)
+            .field("length", &len)
+            .finish()
+    }
 }
 
 /// Rejoin a descriptor's two halves into the flat form [`ClipFile`] uses.
@@ -764,8 +793,9 @@ pub(crate) fn pump(
         };
         let messages = match messages {
             Ok(messages) => messages,
-            Err(error) => {
-                tracing::warn!(?action, "could not build clipboard PDU: {error}");
+            Err(_error) => {
+                let (kind, length) = action.log_metadata();
+                tracing::warn!(kind, length, "could not build clipboard PDU");
                 if let ClipboardAction::RequestFileContents(read) = &action {
                     fail_remote_read(state, read.wire_id);
                 }
@@ -774,8 +804,9 @@ pub(crate) fn pump(
         };
         match active_stage.process_svc_processor_messages(messages) {
             Ok(frame) => frames.push(frame),
-            Err(error) => {
-                tracing::warn!(?action, "could not encode clipboard PDU: {error}");
+            Err(_error) => {
+                let (kind, length) = action.log_metadata();
+                tracing::warn!(kind, length, "could not encode clipboard PDU");
                 if let ClipboardAction::RequestFileContents(read) = &action {
                     fail_remote_read(state, read.wire_id);
                 }
@@ -790,6 +821,26 @@ mod tests {
     use ironrdp_core::{decode, Encode as _, WriteCursor};
 
     use super::*;
+
+    #[test]
+    fn repro_action_debug_must_not_expose_clipboard_payloads() {
+        let action = ClipboardAction::SubmitText {
+            format: ClipboardFormatId::CF_UNICODETEXT,
+            text: Some("private-clipboard-marker".into()),
+        };
+        let rendered = format!("{action:?}");
+        assert!(!rendered.contains("private-clipboard-marker"));
+        assert!(rendered.contains("submit_text"));
+        assert!(rendered.contains("24"));
+        let image = ClipboardAction::SubmitImage {
+            format: ClipboardFormatId::CF_DIB,
+            image: Some(vec![17, 34, 51]),
+        };
+        let rendered = format!("{image:?}");
+        assert!(!rendered.contains("17"));
+        assert!(rendered.contains("submit_image"));
+        assert_eq!(image.log_metadata(), ("submit_image", 3));
+    }
 
     #[test]
     fn real_cliprdr_refuses_unsolicited_file_metadata_and_content_requests() {
