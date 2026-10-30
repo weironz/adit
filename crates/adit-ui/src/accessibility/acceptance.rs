@@ -16,6 +16,8 @@ const PROXY: &str = "SYNTHETIC-UIA-PROXY-TOKEN-DO-NOT-EXPOSE";
 const FINGERPRINT: &str = "SHA256:SYNTHETIC-new-fingerprint";
 const PREVIOUS: &str = "SHA256:SYNTHETIC-old-fingerprint";
 const LINK: &str = "https://fixture.invalid/synthetic?from=terminal";
+const AUTH_FIRST: &str = "SYNTHETIC-UIA-AUTH-FIRST";
+const AUTH_SECRET: &str = "SYNTHETIC-UIA-AUTH-SECRET";
 type Outcome = Arc<Mutex<Option<Result<Value, String>>>>;
 
 #[derive(Default)]
@@ -24,6 +26,9 @@ pub(super) struct Fixture {
     pub receiver: Option<tokio::sync::oneshot::Receiver<adit_session::HostKeyDecision>>,
     pub decisions: Vec<(u64, adit_session::HostKeyDecision)>,
     pub opened_links: Vec<String>,
+    pub auth_prompt: Option<(SessionId, AuthPromptInfo)>,
+    pub auth_receiver: Option<tokio::sync::oneshot::Receiver<Vec<String>>>,
+    pub auth_results: Vec<(u64, Vec<String>)>,
 }
 
 #[derive(Clone)]
@@ -45,6 +50,8 @@ struct Snapshot {
     keyboard_attempts: u64,
     stale_focus_rejected: u64,
     held_host_actions: usize,
+    auth_challenge: Option<u64>,
+    auth_results: Vec<(u64, usize, bool)>,
 }
 
 enum Command {
@@ -52,6 +59,8 @@ enum Command {
     InspectHeld(mpsc::Sender<Snapshot>),
     ReplayHeld(mpsc::Sender<Snapshot>),
     Host(bool, mpsc::Sender<Snapshot>),
+    Auth(usize, mpsc::Sender<Snapshot>),
+    SeedAuth(mpsc::Sender<Snapshot>),
     Link(mpsc::Sender<Snapshot>),
     Barrier(mpsc::Sender<Snapshot>),
     LegacyFocus(mpsc::Sender<Snapshot>),
@@ -132,6 +141,9 @@ fn allowed(message: &Message) -> bool {
             | Message::RespondHostKey { .. }
             | Message::ConfirmOpenHyperlink(_)
             | Message::CancelOpenHyperlink(_)
+            | Message::AuthPromptInput { .. }
+            | Message::SubmitAuthPrompt { .. }
+            | Message::CancelAuthPrompt { .. }
     )
 }
 
@@ -162,6 +174,18 @@ fn snapshot(state: &Harness) -> Snapshot {
         keyboard_attempts: diagnostics::keyboard_attempts(),
         stale_focus_rejected,
         held_host_actions: state.held_host_actions,
+        auth_challenge: state.app.auth_prompt.as_ref().map(|(_, prompt)| prompt.id),
+        auth_results: fixture
+            .auth_results
+            .iter()
+            .map(|(id, answers)| {
+                (
+                    *id,
+                    answers.len(),
+                    answers.as_slice() == [AUTH_FIRST, AUTH_SECRET],
+                )
+            })
+            .collect(),
     }
 }
 
@@ -291,6 +315,41 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                         fixture.receiver = Some(receiver);
                         state.hold_actions = false;
                         (ack, Some(Message::Tick))
+                    }
+                    Command::Auth(fields, ack) => {
+                        let prompts = (0..fields)
+                            .map(|index| adit_session::AuthPromptField {
+                                prompt: format!("SYNTHETIC field {}", index + 1),
+                                echo: index == 0,
+                            })
+                            .collect();
+                        let (prompt, receiver) = AuthPromptInfo::channel(
+                            "SYNTHETIC authentication".into(),
+                            "SYNTHETIC instructions".into(),
+                            prompts,
+                        );
+                        let fixture = state.app.accessibility.fixture.as_mut().unwrap();
+                        fixture.auth_prompt = Some((state.owner_ids[0], prompt));
+                        fixture.auth_receiver = Some(receiver);
+                        state.hold_actions = false;
+                        (ack, Some(Message::Tick))
+                    }
+                    Command::SeedAuth(ack) => {
+                        if let Some((_, prompt)) = &state.app.auth_prompt {
+                            let id = prompt.id;
+                            for (index, value) in [AUTH_FIRST, AUTH_SECRET].into_iter().enumerate()
+                            {
+                                let _ = update_loop::update(
+                                    &mut state.app,
+                                    Message::AuthPromptInput {
+                                        challenge_id: id,
+                                        index,
+                                        value: jump_auth_ui::SecretAnswer(value.into()),
+                                    },
+                                );
+                            }
+                        }
+                        (ack, None)
                     }
                     Command::Link(ack) => {
                         state.hold_actions = false;

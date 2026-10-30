@@ -38,6 +38,7 @@ struct Snapshot {
     child_focus_rejected: u64,
     cross_window_lease: Option<bool>,
     foreground_attempts: u64,
+    conflict: Option<(u64, u64)>,
 }
 
 enum Command {
@@ -49,6 +50,7 @@ enum Command {
     ProbeBackground(mpsc::Sender<Snapshot>),
     Modal(mpsc::Sender<Snapshot>),
     CloseModal(mpsc::Sender<Snapshot>),
+    InstallConflict(mpsc::Sender<Snapshot>),
     Ime(bool, mpsc::Sender<Snapshot>),
     Wheel(usize, mpsc::Sender<Snapshot>),
     Snapshot(mpsc::Sender<Snapshot>),
@@ -65,6 +67,7 @@ struct Harness {
     commands: mpsc::Receiver<Command>,
     sender: mpsc::Sender<Command>,
     outcome: Outcome,
+    conflict: Option<(u64, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -79,6 +82,9 @@ enum Event {
 // or dispatch application clipboard tasks, even if an operator interacts
 // with its visible windows while the synthetic UIA client is running.
 fn allowed_message(message: &Message) -> bool {
+    if let Message::DialogFocusActivate { action, .. } = message {
+        return allowed_message(action);
+    }
     if let Message::KeyboardInput(event) = message {
         return allowed_runtime(&iced::Event::Keyboard(event.clone()));
     }
@@ -98,6 +104,9 @@ fn allowed_message(message: &Message) -> bool {
             | Message::SendTerminalInput
             | Message::NativeImeEvent(..)
             | Message::ModifiersChanged(_)
+            | Message::RespondHostKey { .. }
+            | Message::SubmitAuthPrompt { .. }
+            | Message::CancelAuthPrompt { .. }
     )
 }
 
@@ -152,6 +161,7 @@ fn snapshot(state: &Harness) -> Snapshot {
         child_focus_rejected,
         cross_window_lease: None,
         foreground_attempts: accessibility::diagnostics::foreground_attempts(),
+        conflict: state.conflict,
     }
 }
 
@@ -315,6 +325,15 @@ fn update(state: &mut Harness, event: Event) -> Task<Event> {
                 }
                 Command::CloseModal(ack) => {
                     state.desktop.app.connection_dialog = None;
+                    state.desktop.sync_modal_owner();
+                    (ack, Task::none())
+                }
+                Command::InstallConflict(ack) => {
+                    state.conflict = Some(accessibility::synthetic_conflicting_prompts(
+                        &mut state.desktop.app,
+                        state.primary_session,
+                        state.child_session,
+                    ));
                     state.desktop.sync_modal_owner();
                     (ack, Task::none())
                 }
@@ -687,12 +706,66 @@ fn client(
     wait("UIA scroll follows wheel position", || {
         (command(&sender, Command::Snapshot).ok()?.child_scroll == 10).then_some(())
     })?;
+
+    command(&sender, |ack| Command::Switch(false, ack))?;
+    wait("primary foreground for conflicting authentication", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == primary).then_some(())
+    })?;
+    let (host_id, auth_id) = command(&sender, Command::InstallConflict)?
+        .conflict
+        .ok_or("conflicting prompt fixture missing")?;
+    let primary_root =
+        unsafe { automation.ElementFromHandle(HWND(primary as *mut std::ffi::c_void)) }
+            .map_err(|e| e.to_string())?;
+    let reject = wait("host-key owner remains actionable", || {
+        element(
+            &automation,
+            &primary_root,
+            &format!(":{host_id}/host-key:reject"),
+        )
+    })?;
+    wait(
+        "child UIA tree blocked while host-key owner is active",
+        || {
+            (element(&automation, &root, &format!("terminal-scroll:{session}")).is_none()
+                && element(
+                    &automation,
+                    &root,
+                    &format!("challenge:{auth_id}/auth:dialog"),
+                )
+                .is_none())
+            .then_some(())
+        },
+    )?;
+    let invoke: IUIAutomationInvokePattern =
+        unsafe { reject.GetCurrentPatternAs(UIA_InvokePatternId) }.map_err(|e| e.to_string())?;
+    unsafe { invoke.Invoke() }.map_err(|e| e.to_string())?;
+    let cancel = wait("MFA owner becomes actionable after host decision", || {
+        element(
+            &automation,
+            &root,
+            &format!("challenge:{auth_id}/auth:cancel"),
+        )
+    })?;
+    command(&sender, |ack| Command::Switch(true, ack))?;
+    wait("MFA window foreground", || {
+        (unsafe { GetForegroundWindow() }.0 as isize == child).then_some(())
+    })?;
+    let invoke: IUIAutomationInvokePattern =
+        unsafe { cancel.GetCurrentPatternAs(UIA_InvokePatternId) }.map_err(|e| e.to_string())?;
+    unsafe { invoke.Invoke() }.map_err(|e| e.to_string())?;
+    wait("cancelled MFA prompt closes", || {
+        element(&automation, &root, "auth:dialog")
+            .is_none()
+            .then_some(())
+    })?;
     Ok(
         json!({"native_uia": true, "production_detached_window_router": true,
         "cross_window_command_keyboard_blocked": true, "detached_uia_focus": true,
         "background_focus_operation_blocked": true,
         "stale_uia_request_cannot_steal_foreground_or_change_background_focus": true,
         "scheduled_focus_revoked_before_other_window_modal": true,
+        "host_key_then_mfa_across_windows_actionable": true,
         "detached_focus_keyboard_and_fresh_ime_restored": true,
         "detached_scroll_after_wheel": true, "screen_reader_tested": false, "remote_server_tested": false}),
     )
@@ -777,6 +850,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                     commands,
                     sender,
                     outcome: Arc::clone(&boot_outcome),
+                    conflict: None,
                 },
                 Task::batch([
                     opened.map(|id| Event::Native(NativeMessage::Opened(id))),

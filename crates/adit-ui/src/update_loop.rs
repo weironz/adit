@@ -1632,6 +1632,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             challenge_id,
             decision,
         } => {
+            if accessibility::namespace(app)
+                != format!("host-key-dialog:{session_id}:{challenge_id}")
+            {
+                return Task::none();
+            }
             #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
             if accessibility::acceptance_host_key_reply(app, session_id, challenge_id, decision) {
                 return Task::none();
@@ -1654,6 +1659,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 .auth_prompt
                 .as_ref()
                 .is_some_and(|(_, p)| p.id == challenge_id && p.is_pending())
+                && accessibility::namespace(app) == format!("challenge:{challenge_id}")
             {
                 if let Some(slot) = app.auth_prompt_answers.get_mut(index) {
                     *slot = value.0;
@@ -1664,13 +1670,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             session_id,
             challenge_id,
         } => {
-            jump_auth_ui::respond(app, session_id, challenge_id, false);
+            if accessibility::namespace(app) == format!("challenge:{challenge_id}") {
+                jump_auth_ui::respond(app, session_id, challenge_id, false);
+            }
         }
         Message::CancelAuthPrompt {
             session_id,
             challenge_id,
         } => {
-            jump_auth_ui::respond(app, session_id, challenge_id, true);
+            if accessibility::namespace(app) == format!("challenge:{challenge_id}") {
+                jump_auth_ui::respond(app, session_id, challenge_id, true);
+            }
         }
         Message::OpenHyperlink(url) => {
             // Terminal output is remote-controlled: confirm the real destination

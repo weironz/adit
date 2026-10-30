@@ -149,7 +149,11 @@ impl Client {
             let text = self.text(&element).unwrap_or_default();
             if [name.as_str(), value.as_str(), text.as_str()]
                 .iter()
-                .any(|value| value.contains(PASSWORD) || value.contains(PROXY))
+                .any(|value| {
+                    [PASSWORD, PROXY, AUTH_FIRST, AUTH_SECRET]
+                        .iter()
+                        .any(|secret| value.contains(secret))
+                })
             {
                 return Err("UIA exposed synthetic protected content".into());
             }
@@ -848,6 +852,99 @@ fn dialog_acceptance(
     Ok(())
 }
 
+fn auth_acceptance(client: &Client, commands: &mpsc::Sender<Command>) -> Result<(), String> {
+    for cancel in [true, false] {
+        let installed = command(commands, |ack| Command::Auth(0, ack))?;
+        let id = installed
+            .auth_challenge
+            .ok_or("zero-field auth challenge missing")?;
+        let dialog = client.wait("zero-field authentication dialog", || {
+            client.by_id(&format!("challenge:{id}/auth:dialog"))
+        })?;
+        client.assert_modal_dialog(&dialog)?;
+        if client.by_id("protected:验证字段 1").is_some() {
+            return Err("zero-field challenge exposed an input".into());
+        }
+        let key = if cancel { "auth:cancel" } else { "auth:submit" };
+        let label = if cancel { "取消" } else { "确定" };
+        client.invoke(&client.named(label, key)?)?;
+        let result = command(commands, Command::Barrier)?;
+        if result.auth_results.last() != Some(&(id, 0, false)) || result.auth_challenge.is_some() {
+            return Err(format!(
+                "zero-field auth {key} did not complete its challenge"
+            ));
+        }
+        client.wait("zero-field authentication closed", || {
+            client.by_id("auth:dialog").is_none().then_some(())
+        })?;
+    }
+    for cancel in [false, true] {
+        let installed = command(commands, |ack| Command::Auth(2, ack))?;
+        let id = installed
+            .auth_challenge
+            .ok_or("multi-field auth challenge missing")?;
+        let dialog = client.wait("multi-field authentication dialog", || {
+            client.by_id(&format!("challenge:{id}/auth:dialog"))
+        })?;
+        client.assert_modal_dialog(&dialog)?;
+        for key in [
+            "auth:name",
+            "auth:instructions",
+            "auth:field-label:0",
+            "auth:field-label:1",
+        ] {
+            client
+                .by_id(key)
+                .ok_or_else(|| format!("missing authentication text {key}"))?;
+        }
+        command(commands, Command::SeedAuth)?;
+        client.wait("seeded protected authentication fields", || {
+            let first = client.by_id("protected:验证字段 1")?;
+            let second = client.by_id("protected:验证字段 2")?;
+            (client.value(&first).as_deref() == Some("••••")
+                && client.value(&second).as_deref() == Some("••••"))
+            .then_some(())
+        })?;
+        for label in ["验证字段 1", "验证字段 2"] {
+            let field = client.named(label, &format!("protected:{label}"))?;
+            if !unsafe { field.CurrentIsPassword() }
+                .map_err(|e| e.to_string())?
+                .as_bool()
+            {
+                return Err("authentication field is not protected".into());
+            }
+            unsafe { field.SetFocus() }
+                .map_err(|error| format!("authentication field focus failed: {error}"))?;
+            client.wait("authentication field reached keyboard focus", || {
+                unsafe { field.CurrentHasKeyboardFocus() }
+                    .ok()?
+                    .as_bool()
+                    .then_some(())
+            })?;
+            let _ = client.set_value(&field, "MUST-NOT-BE-SET");
+        }
+        client.privacy()?;
+        let key = if cancel { "auth:cancel" } else { "auth:submit" };
+        let label = if cancel { "取消" } else { "确定" };
+        client.invoke(&client.named(label, key)?)?;
+        let result = command(commands, Command::Barrier)?;
+        let expected = if cancel {
+            (id, 0, false)
+        } else {
+            (id, 2, true)
+        };
+        if result.auth_results.last() != Some(&expected) || result.auth_challenge.is_some() {
+            return Err(format!(
+                "multi-field auth {key} returned an unexpected reply"
+            ));
+        }
+        client.wait("multi-field authentication closed", || {
+            client.by_id("auth:dialog").is_none().then_some(())
+        })?;
+    }
+    Ok(())
+}
+
 pub(super) fn run(
     hwnd: isize,
     owners: &[SessionId],
@@ -962,9 +1059,11 @@ pub(super) fn run(
         },
     )?;
     dialog_acceptance(&client, &commands, hwnd)?;
+    auth_acceptance(&client, &commands)?;
     let focus_statistics = command(&commands, Command::Barrier)?;
     Ok(json!({
         "hwnd": hwnd, "native_uia": true, "production_iced_widgets": true,
+        "auth_zero_and_multiple_fields_submit_cancel_and_protected": true,
         "navigation_invoke": true, "resource_invoke_and_value": true,
         "editor_set_value_and_save_invoke": true, "session_invoke": true,
         "editor_explicit_focus": true,

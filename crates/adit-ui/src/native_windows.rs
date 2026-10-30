@@ -86,6 +86,45 @@ pub(crate) fn prompt_visible(app: &AditApp, session: SessionId) -> bool {
     })
 }
 
+/// A single arbitration order is shared by routing, painting and UIA scopes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GlobalModal {
+    HostKey(SessionId),
+    Authentication(SessionId),
+    Connection,
+    Sftp,
+}
+
+pub(crate) fn global_modal(app: &AditApp) -> Option<GlobalModal> {
+    accessibility::pending_host_key(app)
+        .map(|(session, _)| GlobalModal::HostKey(session))
+        .or_else(|| {
+            app.auth_prompt
+                .as_ref()
+                .filter(|(_, prompt)| prompt.is_pending())
+                .map(|(session, _)| GlobalModal::Authentication(*session))
+        })
+        .or_else(|| {
+            app.connection_dialog
+                .is_some()
+                .then_some(GlobalModal::Connection)
+        })
+        .or_else(|| app.manager.sftp_is_open().then_some(GlobalModal::Sftp))
+}
+
+pub(crate) fn global_modal_owner(app: &AditApp, modal: GlobalModal) -> Option<window::Id> {
+    let primary = app.native_main_window.or(app.accessibility.primary);
+    match modal {
+        GlobalModal::HostKey(session) | GlobalModal::Authentication(session) => app
+            .native_session_windows
+            .get(&session)
+            .copied()
+            .or(primary),
+        GlobalModal::Connection => app.native_dialog_window.or(primary),
+        GlobalModal::Sftp => app.native_sftp_window.or(primary),
+    }
+}
+
 pub(crate) fn sftp_visible(app: &AditApp) -> bool {
     app.native_window_id
         .is_none_or(|window| app.native_sftp_window.or(app.native_main_window) == Some(window))
@@ -113,6 +152,10 @@ fn input_message(message: &Message) -> bool {
         message,
         Message::KeyboardInput(_)
             | Message::DialogFocusActivate { .. }
+            | Message::RespondHostKey { .. }
+            | Message::AuthPromptInput { .. }
+            | Message::SubmitAuthPrompt { .. }
+            | Message::CancelAuthPrompt { .. }
             | Message::TerminalInputChanged(_)
             | Message::CommandHistoryPrev
             | Message::CommandHistoryNext
@@ -585,29 +628,8 @@ impl DesktopApplication {
         {
             self.app.native_dialog_window = Some(self.owner(session));
         }
-        let owner = self
-            .app
-            .manager
-            .pending_host_key()
-            .map(|(sid, _)| self.owner(sid))
-            .or_else(|| {
-                self.app
-                    .auth_prompt
-                    .as_ref()
-                    .map(|(sid, _)| self.owner(*sid))
-            })
-            .or_else(|| {
-                self.app
-                    .connection_dialog
-                    .as_ref()
-                    .map(|_| self.app.native_dialog_window.unwrap_or(self.primary))
-            })
-            .or_else(|| {
-                self.app
-                    .manager
-                    .sftp_is_open()
-                    .then(|| self.app.native_sftp_window.unwrap_or(self.primary))
-            });
+        let owner = global_modal(&self.app)
+            .map(|modal| global_modal_owner(&self.app, modal).unwrap_or(self.primary));
         if owner != self.modal_owner {
             self.modal_owner = owner;
             if owner.is_some() {
@@ -649,7 +671,14 @@ impl DesktopApplication {
                 // Confirmation activations have their own dialog revision and
                 // lease. VNC input revocation during the same event batch must
                 // not discard them, while session and foreground checks remain.
-                let needs_input_epoch = !matches!(&message, Message::DialogFocusActivate { .. });
+                let needs_input_epoch = !matches!(
+                    &message,
+                    Message::DialogFocusActivate { .. }
+                        | Message::RespondHostKey { .. }
+                        | Message::AuthPromptInput { .. }
+                        | Message::SubmitAuthPrompt { .. }
+                        | Message::CancelAuthPrompt { .. }
+                );
                 if input_message(&message) && (!same_session || (needs_input_epoch && !same_epoch))
                 {
                     accessibility::cancel_discarded_message(&message);
@@ -985,23 +1014,22 @@ impl DesktopApplication {
                 )));
             }
         }
-        if self.app.native_dialog_window == Some(id) && self.app.connection_dialog.is_some() {
+        let global_modal = global_modal(&self.app);
+        if self.app.native_dialog_window == Some(id)
+            && global_modal == Some(GlobalModal::Connection)
+        {
             layers.push(opaque(connection_dialog_overlay(&self.app)));
         }
-        if let Some((sid, prompt)) = self
-            .app
-            .manager
-            .pending_host_key()
-            .filter(|(sid, _)| self.owner(*sid) == id)
+        if let Some((sid, prompt)) =
+            accessibility::pending_host_key(&self.app).filter(|(sid, _)| {
+                global_modal == Some(GlobalModal::HostKey(*sid)) && self.owner(*sid) == id
+            })
         {
             layers.push(opaque(host_key_dialog_overlay(sid, &prompt)));
         }
-        if let Some((sid, prompt)) = self
-            .app
-            .auth_prompt
-            .as_ref()
-            .filter(|(sid, _)| self.owner(*sid) == id)
-        {
+        if let Some((sid, prompt)) = self.app.auth_prompt.as_ref().filter(|(sid, _)| {
+            global_modal == Some(GlobalModal::Authentication(*sid)) && self.owner(*sid) == id
+        }) {
             layers.push(opaque(auth_prompt_dialog_overlay(
                 *sid,
                 prompt,
@@ -1272,6 +1300,101 @@ mod tests {
             },
             sessions,
         )
+    }
+
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    #[test]
+    fn host_key_and_mfa_share_the_same_global_owner_order() {
+        for host_on_child in [false, true] {
+            let (mut desktop, ids) = fixture();
+            let _ = desktop.detach(ids[0]);
+            let child = desktop.owner(ids[0]);
+            let (host_session, auth_session, host_window, auth_window) = if host_on_child {
+                (ids[0], ids[2], child, desktop.primary)
+            } else {
+                (ids[2], ids[0], desktop.primary, child)
+            };
+            accessibility::use_synthetic_fixture(&mut desktop.app);
+            let (host_id, auth_id) = accessibility::synthetic_conflicting_prompts(
+                &mut desktop.app,
+                host_session,
+                auth_session,
+            );
+            desktop.sync_modal_owner();
+            assert_eq!(desktop.modal_owner, Some(host_window));
+            desktop.focus(auth_window);
+            let _ = desktop.dispatch(
+                auth_window,
+                Message::CancelAuthPrompt {
+                    session_id: auth_session,
+                    challenge_id: auth_id,
+                },
+            );
+            assert!(
+                desktop
+                    .app
+                    .auth_prompt
+                    .as_ref()
+                    .is_some_and(|(_, prompt)| prompt.id == auth_id && prompt.is_pending()),
+                "a hidden MFA cancellation bypassed the selected host-key modal"
+            );
+            assert!(accessibility::acceptance_host_key_reply(
+                &mut desktop.app,
+                host_session,
+                host_id,
+                adit_session::HostKeyDecision::Reject
+            ));
+            desktop.sync_modal_owner();
+            assert_eq!(desktop.modal_owner, Some(auth_window));
+            desktop.focus(auth_window);
+            let _ = desktop.dispatch(
+                auth_window,
+                Message::CancelAuthPrompt {
+                    session_id: auth_session,
+                    challenge_id: auth_id,
+                },
+            );
+            assert!(desktop.app.auth_prompt.is_none());
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn auth_input_survives_input_epoch_change_but_not_session_change() {
+        let (mut desktop, ids) = fixture();
+        let primary = desktop.primary;
+        let (prompt, _receiver) = AuthPromptInfo::channel(
+            "SYNTHETIC".into(),
+            "".into(),
+            vec![adit_session::AuthPromptField {
+                prompt: "SYNTHETIC".into(),
+                echo: false,
+            }],
+        );
+        let id = prompt.id;
+        desktop.app.auth_prompt = Some((ids[2], prompt));
+        desktop.app.auth_prompt_answers = vec![String::new()];
+        let epoch = desktop.app.vnc_input_epoch;
+        desktop.app.vnc_input_epoch = epoch.wrapping_add(1);
+        let input = |value: &str| Message::AuthPromptInput {
+            challenge_id: id,
+            index: 0,
+            value: jump_auth_ui::SecretAnswer(value.into()),
+        };
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[1]),
+            epoch,
+            input("wrong-session"),
+        ));
+        assert!(desktop.app.auth_prompt_answers[0].is_empty());
+        let _ = desktop.update(NativeMessage::View(
+            primary,
+            Some(ids[2]),
+            epoch,
+            input("SYNTHETIC"),
+        ));
+        assert_eq!(desktop.app.auth_prompt_answers[0], "SYNTHETIC");
     }
 
     fn text(app: &DesktopApplication, session: SessionId) -> String {

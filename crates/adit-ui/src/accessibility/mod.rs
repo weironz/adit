@@ -125,6 +125,36 @@ pub(crate) fn use_synthetic_fixture(app: &mut AditApp) {
 }
 
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn synthetic_conflicting_prompts(
+    app: &mut AditApp,
+    host_session: SessionId,
+    auth_session: SessionId,
+) -> (u64, u64) {
+    let (host, host_receiver) = HostKeyPromptInfo::channel(
+        "fixture.invalid".into(),
+        22,
+        "ssh-ed25519".into(),
+        "SYNTHETIC".into(),
+        None,
+    );
+    let (auth, auth_receiver) =
+        AuthPromptInfo::channel("SYNTHETIC authentication".into(), "".into(), Vec::new());
+    let ids = (host.id, auth.id);
+    let fixture = app
+        .accessibility
+        .fixture
+        .as_mut()
+        .expect("synthetic fixture");
+    fixture.host_key = Some((host_session, host));
+    fixture.receiver = Some(host_receiver);
+    fixture.auth_prompt = Some((auth_session, auth.clone()));
+    fixture.auth_receiver = Some(auth_receiver);
+    app.auth_prompt = Some((auth_session, auth));
+    app.auth_prompt_answers.clear();
+    ids
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn synthetic_cross_window_focus(
     window: window::Id,
     id: iced::advanced::widget::Id,
@@ -991,6 +1021,34 @@ pub(crate) fn pending_host_key(app: &AditApp) -> Option<(SessionId, HostKeyPromp
     prompt
 }
 
+pub(crate) fn pending_auth_prompt(app: &AditApp) -> Option<(SessionId, AuthPromptInfo)> {
+    let prompt = app.manager.pending_auth_prompt();
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    let prompt = prompt.or_else(|| {
+        app.accessibility
+            .fixture
+            .as_ref()?
+            .auth_prompt
+            .as_ref()
+            .filter(|(_, prompt)| prompt.is_pending())
+            .cloned()
+    });
+    prompt
+}
+
+#[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+pub(crate) fn capture_auth_response(app: &mut AditApp, challenge: u64) {
+    if let Some(fixture) = app.accessibility.fixture.as_mut() {
+        if let Some(answers) = fixture
+            .auth_receiver
+            .as_mut()
+            .and_then(|receiver| receiver.try_recv().ok())
+        {
+            fixture.auth_results.push((challenge, answers));
+        }
+    }
+}
+
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub(crate) fn acceptance_host_key_reply(
     app: &mut AditApp,
@@ -1038,16 +1096,12 @@ pub(crate) fn namespace(app: &AditApp) -> String {
             app.terminal_context_menu,
         );
     }
-    if app.native_window_id.is_some()
-        && (pending_host_key(app)
-            .is_some_and(|(session, _)| !native_windows::prompt_visible(app, session))
-            || app
-                .auth_prompt
-                .as_ref()
-                .is_some_and(|(session, _)| !native_windows::prompt_visible(app, *session))
-            || (app.connection_dialog.is_some() && !native_windows::dialog_visible(app))
-            || (app.manager.sftp_is_open() && !native_windows::sftp_visible(app)))
-    {
+    let global = native_windows::global_modal(app);
+    if app.native_window_id.is_some_and(|window| {
+        global
+            .and_then(|modal| native_windows::global_modal_owner(app, modal))
+            .is_some_and(|owner| owner != window)
+    }) {
         return "native-modal-blocked".into();
     }
     // Same topmost-modal order as chrome::view. Hidden editor/navigation
@@ -1076,19 +1130,23 @@ pub(crate) fn namespace(app: &AditApp) -> String {
     if app.tunnels_open {
         return "tunnels".into();
     }
-    if app.manager.sftp_is_open() {
+    if global == Some(native_windows::GlobalModal::Sftp) {
         return "sftp".into();
     }
     if app.pending_hyperlink.is_some() {
         return format!("hyperlink:{}", app.hyperlink_prompt_generation);
     }
-    if let Some((_, prompt)) = &app.auth_prompt {
-        return format!("challenge:{}", prompt.id);
+    if let Some((session, prompt)) = &app.auth_prompt {
+        if global == Some(native_windows::GlobalModal::Authentication(*session)) {
+            return format!("challenge:{}", prompt.id);
+        }
     }
     if let Some((session, prompt)) = pending_host_key(app) {
-        return format!("host-key-dialog:{session}:{}", prompt.id);
+        if global == Some(native_windows::GlobalModal::HostKey(session)) {
+            return format!("host-key-dialog:{session}:{}", prompt.id);
+        }
     }
-    if app.connection_dialog.is_some() {
+    if global == Some(native_windows::GlobalModal::Connection) {
         return "connection-dialog".into();
     }
     if let Some(owner) = app.profile_editor {
@@ -1117,29 +1175,8 @@ pub(crate) fn detached_namespace(
     paste: bool,
     context_menu: bool,
 ) -> String {
-    let host = pending_host_key(app);
-    let owner = host
-        .as_ref()
-        .map(|(session, _)| *session)
-        .or_else(|| app.auth_prompt.as_ref().map(|(session, _)| *session));
-    let modal_owner = owner
-        .map(|session| {
-            app.native_session_windows
-                .get(&session)
-                .copied()
-                .or(app.native_main_window)
-        })
-        .or_else(|| {
-            app.connection_dialog
-                .as_ref()
-                .map(|_| app.native_dialog_window.or(app.native_main_window))
-        })
-        .or_else(|| {
-            app.manager
-                .sftp_is_open()
-                .then(|| app.native_sftp_window.or(app.native_main_window))
-        })
-        .flatten();
+    let global = native_windows::global_modal(app);
+    let modal_owner = global.and_then(|modal| native_windows::global_modal_owner(app, modal));
     if modal_owner.is_some_and(|owner| owner != window) {
         return "native-modal-blocked".into();
     }
@@ -1150,22 +1187,19 @@ pub(crate) fn detached_namespace(
         return format!("hyperlink:{link_generation}");
     }
     if let Some((session, prompt)) = &app.auth_prompt {
-        let owner = app
-            .native_session_windows
-            .get(session)
-            .copied()
-            .or(app.native_main_window);
-        if owner == Some(window) {
+        if global == Some(native_windows::GlobalModal::Authentication(*session)) {
             return format!("challenge:{}", prompt.id);
         }
     }
-    if let Some((session, prompt)) = host {
-        return format!("host-key-dialog:{session}:{}", prompt.id);
+    if let Some((session, prompt)) = pending_host_key(app) {
+        if global == Some(native_windows::GlobalModal::HostKey(session)) {
+            return format!("host-key-dialog:{session}:{}", prompt.id);
+        }
     }
-    if app.connection_dialog.is_some() {
+    if global == Some(native_windows::GlobalModal::Connection) {
         return "connection-dialog".into();
     }
-    if app.manager.sftp_is_open() {
+    if global == Some(native_windows::GlobalModal::Sftp) {
         return "sftp".into();
     }
     if context_menu {
@@ -1182,6 +1216,103 @@ mod tests {
         match message {
             Message::DialogFocusActivate { action, .. } => action,
             _ => message,
+        }
+    }
+
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    #[test]
+    fn simultaneous_host_key_and_mfa_choose_one_actionable_owner() {
+        let (mut app, primary, host_session, auth_session) = focus_fixture();
+        let child = window::Id::unique();
+        app.native_session_windows.insert(auth_session, child);
+        let (host, host_rx) = HostKeyPromptInfo::channel(
+            "fixture.invalid".into(),
+            22,
+            "ssh-ed25519".into(),
+            "SYNTHETIC".into(),
+            None,
+        );
+        let host_id = host.id;
+        let (auth, _auth_rx) = AuthPromptInfo::channel("SYNTHETIC".into(), "".into(), Vec::new());
+        let auth_id = auth.id;
+        app.accessibility.fixture = Some(acceptance::Fixture {
+            host_key: Some((host_session, host.clone())),
+            receiver: Some(host_rx),
+            ..Default::default()
+        });
+        app.auth_prompt = Some((auth_session, auth));
+        assert_eq!(
+            namespace(&app),
+            format!("host-key-dialog:{host_session}:{host_id}"),
+            "the selected host-key owner was blocked by another window's MFA prompt"
+        );
+        assert_eq!(
+            detached_namespace(&app, child, false, 0, false, false),
+            "native-modal-blocked"
+        );
+        assert!(host.respond(adit_session::HostKeyDecision::Reject));
+        assert_eq!(namespace(&app), "native-modal-blocked");
+        assert_eq!(
+            detached_namespace(&app, child, false, 0, false, false),
+            format!("challenge:{auth_id}")
+        );
+        assert_eq!(app.native_window_id, Some(primary));
+    }
+
+    #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
+    #[test]
+    fn host_key_precedes_auth_in_same_or_other_window_then_auth_resumes() {
+        for separate in [false, true] {
+            let (mut app, primary, auth_session, host_session) = focus_fixture();
+            let host_window = if separate {
+                window::Id::unique()
+            } else {
+                primary
+            };
+            if separate {
+                app.native_session_windows.insert(host_session, host_window);
+            }
+            let (host, host_rx) = HostKeyPromptInfo::channel(
+                "fixture.invalid".into(),
+                22,
+                "ssh-ed25519".into(),
+                "SYNTHETIC".into(),
+                None,
+            );
+            let (auth, _auth_rx) =
+                AuthPromptInfo::channel("SYNTHETIC".into(), "".into(), Vec::new());
+            let (host_id, auth_id) = (host.id, auth.id);
+            app.accessibility.fixture = Some(acceptance::Fixture {
+                host_key: Some((host_session, host.clone())),
+                receiver: Some(host_rx),
+                ..Default::default()
+            });
+            app.auth_prompt = Some((auth_session, auth));
+            if separate {
+                assert_eq!(namespace(&app), "native-modal-blocked");
+                assert_eq!(
+                    detached_namespace(&app, host_window, false, 0, false, false),
+                    format!("host-key-dialog:{host_session}:{host_id}")
+                );
+            } else {
+                assert_eq!(
+                    namespace(&app),
+                    format!("host-key-dialog:{host_session}:{host_id}")
+                );
+            }
+            let _ = update_loop::update(
+                &mut app,
+                Message::CancelAuthPrompt {
+                    session_id: auth_session,
+                    challenge_id: auth_id,
+                },
+            );
+            assert!(app
+                .auth_prompt
+                .as_ref()
+                .is_some_and(|(_, prompt)| prompt.id == auth_id && prompt.is_pending()));
+            assert!(host.respond(adit_session::HostKeyDecision::Reject));
+            assert_eq!(namespace(&app), format!("challenge:{auth_id}"));
         }
     }
 

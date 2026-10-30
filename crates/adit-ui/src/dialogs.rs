@@ -263,7 +263,7 @@ pub(crate) fn host_key_dialog_overlay(
 /// (re)sizing the answer buffer when a new prompt (or round) appears and clearing
 /// it once the prompt is gone.
 pub(crate) fn sync_auth_prompt(app: &mut AditApp) {
-    match app.manager.pending_auth_prompt() {
+    match accessibility::pending_auth_prompt(app) {
         Some((session_id, prompt)) => {
             let is_new = app.auth_prompt.as_ref().map(|(id, p)| (*id, p.id))
                 != Some((session_id, prompt.id))
@@ -289,17 +289,25 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
     prompt: &'a AuthPromptInfo,
     answers: &'a [String],
 ) -> Element<'a, Message> {
-    let mut body = column![text(t("需要交互式验证")).size(16).color(primary_text())].spacing(8);
+    let mut body = column![accessibility::control(
+        text(t("需要交互式验证")).size(16).color(primary_text()),
+        accessibility::Control::label("auth:title", t("需要交互式验证")),
+    )]
+    .spacing(8);
 
     if !prompt.name.trim().is_empty() {
-        body = body.push(text(prompt.name.clone()).size(12).color(primary_text()));
+        body = body.push(accessibility::control(
+            text(prompt.name.clone()).size(12).color(primary_text()),
+            accessibility::Control::label("auth:name", prompt.name.clone()),
+        ));
     }
     if !prompt.instructions.trim().is_empty() {
-        body = body.push(
+        body = body.push(accessibility::control(
             text(prompt.instructions.clone())
                 .size(11)
                 .color(muted_text()),
-        );
+            accessibility::Control::label("auth:instructions", prompt.instructions.clone()),
+        ));
     }
 
     let challenge_id = prompt.id;
@@ -333,7 +341,10 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
         }
         body = body.push(
             column![
-                text(label).size(11).color(muted_text()),
+                accessibility::control(
+                    text(label.clone()).size(11).color(muted_text()),
+                    accessibility::Control::label(&format!("auth:field-label:{index}"), label)
+                ),
                 accessibility::protected(
                     &tf("验证字段 {}", &[&(index + 1)]),
                     !value.is_empty(),
@@ -348,22 +359,38 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
         column![
             body,
             row![
-                button(t("取消"))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| secondary_button_style(status))
-                    .on_press(Message::CancelAuthPrompt {
+                accessibility::button(
+                    "auth:cancel",
+                    t("取消"),
+                    Message::CancelAuthPrompt {
                         session_id,
                         challenge_id
-                    }),
-                button(t("确定"))
-                    .width(Fill)
-                    .padding([6, 10])
-                    .style(|_theme, status| primary_button_style(status))
-                    .on_press(Message::SubmitAuthPrompt {
+                    },
+                    button(t("取消"))
+                        .width(Fill)
+                        .padding([6, 10])
+                        .style(|_theme, status| secondary_button_style(status))
+                        .on_press(Message::CancelAuthPrompt {
+                            session_id,
+                            challenge_id
+                        })
+                ),
+                accessibility::button(
+                    "auth:submit",
+                    t("确定"),
+                    Message::SubmitAuthPrompt {
                         session_id,
                         challenge_id
-                    }),
+                    },
+                    button(t("确定"))
+                        .width(Fill)
+                        .padding([6, 10])
+                        .style(|_theme, status| primary_button_style(status))
+                        .on_press(Message::SubmitAuthPrompt {
+                            session_id,
+                            challenge_id
+                        })
+                ),
             ]
             .spacing(8),
         ]
@@ -373,12 +400,15 @@ pub(crate) fn auth_prompt_dialog_overlay<'a>(
     .padding(14)
     .style(|_theme| connection_dialog_style());
 
-    container(panel)
-        .width(Fill)
-        .height(Fill)
-        .center(Fill)
-        .style(|_theme| dialog_scrim_style())
-        .into()
+    container(accessibility::control(
+        panel,
+        accessibility::Control::dialog("auth:dialog", t("需要交互式验证")),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .center(Fill)
+    .style(|_theme| dialog_scrim_style())
+    .into()
 }
 
 /// Confirm-before-open for a terminal hyperlink: shows the **real** destination
