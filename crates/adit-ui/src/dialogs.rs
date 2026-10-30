@@ -1322,23 +1322,35 @@ pub(crate) fn options_sections(app: &AditApp) -> [Element<'_, Message>; 3] {
         )
         .push(
             checkbox(app.rdp_clipboard)
-                .label(t("远程桌面共享剪贴板（VNC 仅基础文本）"))
+                .label(t("请求远程桌面共享剪贴板（VNC 仅基础文本）"))
                 .on_toggle(Message::ToggleRdpClipboard)
                 .size(16)
                 .text_size(12),
         )
-        // Also on the toolbar's ⚡ dropdown; duplicated here because the toolbar
-        // collapses to a tab, and a setting should not hide inside it.
         .push(
-            row![
-                text(t("RDP 画质")).size(12).color(primary_text()),
-                rdp_quality_choice(app, RdpQuality::High),
-                rdp_quality_choice(app, RdpQuality::Balanced),
-                rdp_quality_choice(app, RdpQuality::Speed),
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center),
+            text(t("这是请求值；RDP 确认结果在各会话窗口显示。"))
+                .size(11)
+                .color(muted_text()),
         );
+    if !clipboard_files::local_file_send_enabled() {
+        config_section = config_section.push(
+            text(t("RDP 本地文件发送至远端暂时禁用。"))
+                .size(11)
+                .color(muted_text()),
+        );
+    }
+    // Also on the toolbar's ⚡ dropdown; duplicated here because the toolbar
+    // collapses to a tab, and a setting should not hide inside it.
+    config_section = config_section.push(
+        row![
+            text(t("RDP 画质")).size(12).color(primary_text()),
+            rdp_quality_choice(app, RdpQuality::High),
+            rdp_quality_choice(app, RdpQuality::Balanced),
+            rdp_quality_choice(app, RdpQuality::Speed),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    );
 
     // Live preview of the rendered log filename for the active (or a sample)
     // session.

@@ -127,10 +127,12 @@ fn relative_parts(name: &str) -> Result<Vec<&str>, &'static str> {
 }
 
 pub(super) type Requester = Arc<dyn Fn(u32, u32, u64, u32) + Send + Sync>;
+pub(super) type CurrentOffer = Arc<dyn Fn() -> bool + Send + Sync>;
 
 pub(super) struct RemoteReader {
     bridge: ChunkBridge,
     request: Requester,
+    current: CurrentOffer,
     chunk: u32,
 }
 
@@ -142,10 +144,21 @@ pub(super) enum ReadError {
 }
 
 impl RemoteReader {
+    #[cfg(test)]
     pub fn new(bridge: ChunkBridge, request: Requester, chunk: u32) -> Self {
+        Self::new_guarded(bridge, request, Arc::new(|| true), chunk)
+    }
+
+    pub fn new_guarded(
+        bridge: ChunkBridge,
+        request: Requester,
+        current: CurrentOffer,
+        chunk: u32,
+    ) -> Self {
         Self {
             bridge,
             request,
+            current,
             chunk: chunk.clamp(1, MAX_CHUNK),
         }
     }
@@ -153,6 +166,9 @@ impl RemoteReader {
     /// Called by an OS worker only. An empty response before the declared EOF
     /// is a failed transfer, never successful truncation.
     pub fn read(&self, node: &Node, offset: u64, length: u32) -> Result<Vec<u8>, ReadError> {
+        if !(self.current)() {
+            return Err(ReadError::Transport(ChunkError::Disconnected));
+        }
         let index = node.remote_index.ok_or(ReadError::NotAFile)?;
         let length = u64::from(length.min(self.chunk)).min(node.size.saturating_sub(offset)) as u32;
         if length == 0 {
@@ -160,7 +176,13 @@ impl RemoteReader {
         }
         let stream = self.bridge.begin().map_err(ReadError::Transport)?;
         (self.request)(stream, index, offset, length);
-        let bytes = self.bridge.wait(stream).map_err(ReadError::Transport)?;
+        let bytes = self
+            .bridge
+            .wait_live(stream, || (self.current)())
+            .map_err(ReadError::Transport)?;
+        if !(self.current)() {
+            return Err(ReadError::Transport(ChunkError::Disconnected));
+        }
         if bytes.is_empty() || bytes.len() > length as usize {
             return Err(ReadError::InvalidReply);
         }
@@ -171,6 +193,61 @@ impl RemoteReader {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn revoked_offer_interrupts_a_read_without_a_remote_reply() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let tree = RemoteTree::new(&[file("file", 1)]).unwrap();
+        let node = tree.lookup(ROOT, "file").unwrap().clone();
+        let current = Arc::new(AtomicBool::new(true));
+        let check = current.clone();
+        let (requested, rx) = mpsc::channel();
+        let reader = RemoteReader::new_guarded(
+            ChunkBridge::new(),
+            Arc::new(move |_, _, _, _| {
+                let _ = requested.send(());
+            }),
+            Arc::new(move || check.load(Ordering::Acquire)),
+            1024,
+        );
+        let (done, result) = mpsc::channel();
+        let thread = std::thread::spawn(move || {
+            let _ = done.send(reader.read(&node, 0, 1));
+        });
+        rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        current.store(false, Ordering::Release);
+        let answer = result.recv_timeout(Duration::from_secs(2)).unwrap();
+        thread.join().unwrap();
+        assert_eq!(answer, Err(ReadError::Transport(ChunkError::Disconnected)));
+    }
+
+    #[test]
+    fn revoked_offer_cannot_deliver_already_queued_bytes() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tree = RemoteTree::new(&[file("file", 1)]).unwrap();
+        let node = tree.lookup(ROOT, "file").unwrap();
+        let bridge = ChunkBridge::new();
+        let reply = bridge.clone();
+        let current = Arc::new(AtomicBool::new(true));
+        let revoke = current.clone();
+        let reader = RemoteReader::new_guarded(
+            bridge,
+            Arc::new(move |stream, _, _, _| {
+                reply.deliver(stream, Some(vec![7]));
+                revoke.store(false, Ordering::Release);
+            }),
+            Arc::new(move || current.load(Ordering::Acquire)),
+            4,
+        );
+        assert_eq!(
+            reader.read(node, 0, 1),
+            Err(ReadError::Transport(ChunkError::Disconnected))
+        );
+    }
 
     fn file(name: &str, size: u64) -> ClipFile {
         ClipFile {

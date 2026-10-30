@@ -389,24 +389,35 @@ to be refusable. The flag is negotiated during the handshake, so it applies to t
 connection — but switching it off also stops the local poll and drops whatever the poll
 had already captured, so nothing stays queued for the next remote that asks.
 
+For Linux/X11, the user has chosen to keep local → RDP text sending available and
+accept the remaining asynchronous-notification risk. The X11 watcher classifies the
+last selection it has observed; its notification may arrive after the actual selection
+changes. A text read and its delivery can therefore pass the observed sequence checks
+while a newer file selection is already present, and a textual representation of that
+selection could be offered to the remote. The checks do not establish an atomic X11
+snapshot or eliminate this window, and a later marker cannot retract data already sent.
+Once a file or unknown selection is observed, Adit stops the corresponding text read,
+invalidates stale reads and old offers, and sends a fail-closed marker without file
+metadata to each live RDP session. A later observed ordinary-text selection can be sent
+again. Synthetic tests cover these event orderings, not real X11 delivery or timing.
+
 ### Files (CLIPRDR file transfer)
 
-**Ordinary files copy both ways, byte for byte** — the transfer path carries raw
-bytes and knows nothing about text. Copy a selection in Explorer and paste it into the
-remote desktop, or the reverse. Directory trees travel as a flat list of relative paths
-with the directories included as their own entries, which is how MS-RDPECLIP represents
-a tree.
+**Local → remote file sharing is temporarily disabled for safety.** Clipboard change
+notifications can arrive after the local selection changes, so a file request cannot
+yet be reliably tied to the current selection. Adit rejects that direction without
+disconnecting the desktop; Windows text and images, Linux ordinary text subject to the
+X11 risk above, and remote → local files are separate. This
+does not revoke data already accepted by the transport or received by the remote.
 
-**Nothing is staged or pre-read in either direction.** A copy publishes names and sizes;
-bytes leave disk (or the wire) only when something actually pastes. Copying a 4 GB folder
-and never pasting it costs nothing.
+Remote → local file transfer carries raw bytes and supports directory trees as a flat
+list of relative paths with directories included as entries, as MS-RDPECLIP represents
+a tree. File contents are read on demand rather than staged in advance.
 
 The two halves are asymmetric because Windows is:
 
-* **Local → remote** reads `CF_HDROP`, expands the selection, and answers the server's
-  `FileContentsRequest`s by reading byte ranges off disk. A `SIZE` request is answered
-  from metadata already held — Explorer issues one per file before reading anything, so
-  that is most of the traffic and none of it touches the disk.
+* **Local → remote** remains disabled until the local selection and wire request can
+  be bound safely; the desktop and the other clipboard directions remain available.
 * **Remote → local** needs a COM `IDataObject` with delay-rendered `IStream`s, published
   by `OleSetClipboard`. That call is apartment-bound, so it runs on a dedicated
   `OleInitialize`d STA thread with a message pump — the same shape FreeRDP uses, and for
@@ -488,18 +499,12 @@ dependency at all — and its whole state machine is unit-tested without a live 
 
 Consequences of that split:
 
-- **Text only.** `CF_UNICODETEXT` is advertised; `CF_TEXT` / `CF_OEMTEXT` are accepted
-  inbound. **Images and file copy-paste are out of scope** — files need a staging
-  directory, chunked `FileContents` streaming and clipboard locking, none of which the
-  helper IPC carries.
-- **Local → remote is delay-rendered**, like mstsc: only the format list is advertised,
-  and the text crosses the wire when something on the remote actually pastes.
-- **Remote → local is eager**: the moment the remote advertises text we fetch it, because
-  the app can't answer Windows' synchronous "give me the clipboard" across an async IPC
-  hop. Transfers are capped at 8 MiB in either direction.
-- The local clipboard is **polled every 500 ms**, and only while an RDP tab is in front —
-  Windows exposes no clipboard-change signal to a process that isn't listening for one.
-  So a local copy reaches the remote within about half a second, not instantly.
+- Text and images use the clipboard bridge; remote files use the on-demand stream
+  described above. The local-file sending direction is currently disabled.
+- Local text is delay-rendered: the remote receives it when an application requests it.
+  Remote text is fetched eagerly and clipboard payloads are bounded.
+- The foreground window samples local clipboard changes; polling is not a synchronous
+  proof that the underlying selection remained unchanged between two observations.
 
 ## Credentials & security
 
@@ -597,10 +602,9 @@ Verified shortcomings, so nobody has to rediscover them.
   `full_frame_tile` in `session.rs` still ships the whole framebuffer as one tile per
   update, which is what its `TODO(perf)` names and what the 288 MiB IPC message cap
   exists to accommodate. (H.264 *is* decoded — AVC420 and a from-scratch AVC444 — so a
-  host that negotiates AVC no longer renders black.) The clipboard is **text only** —
-  no images, no file copy-paste (see
-  [Clipboard](#clipboard-cliprdr)). Audio (`sound`) is implemented but off by default
-  because it pulls native Opus (needs CMake).
+  host that negotiates AVC no longer renders black.) Local-to-remote file sharing is
+  temporarily disabled (see [Files](#files-cliprdr-file-transfer)). Audio (`sound`) is
+  implemented but off by default because it pulls native Opus (needs CMake).
 - **Terminal**: no combining / zero-width character support, no DCS/Sixel, no charset
   designation, no custom tab stops. `TerminalChangeSet` dirty-row tracking is a stub
   that always reports the whole screen.

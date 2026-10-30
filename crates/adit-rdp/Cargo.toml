@@ -83,8 +83,17 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 # Only for the offline progressive replay: a decoded frame has to be LOOKED at.
 image = { version = "0.25", default-features = false, features = ["png"] }
 
+[[test]]
+name = "svc_dechunkify"
+path = "vendor/ironrdp-svc/tests/dechunkify.rs"
+
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
+# Bound untrusted static-channel reassembly before allocating or dispatching.
+ironrdp-svc = { path = "vendor/ironrdp-svc" }
+# Defer only cached FileGroupDescriptorW replies so the helper can revalidate
+# the originating snapshot immediately before transport ownership.
+ironrdp-cliprdr = { path = "vendor/ironrdp-cliprdr" }
 # Vendored + patched ironrdp-graphics (crates.io 0.9.0 + one marked hunk):
 # RemoteFX Progressive treats a tile `quality` of 0xFF as an index into
 # quantProgVals, but MS-RDPRFX 2.2.4.3.6 defines it as "losslessly encoded, no

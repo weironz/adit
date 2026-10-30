@@ -164,10 +164,21 @@ pub(super) struct RemoteMount {
 }
 
 impl RemoteMount {
+    #[cfg(test)]
     pub fn new(
         files: Vec<ClipFile>,
         bridge: ChunkBridge,
         request: super::remote_tree::Requester,
+        chunk: u32,
+    ) -> Result<Self, String> {
+        Self::new_guarded(files, bridge, request, std::sync::Arc::new(|| true), chunk)
+    }
+
+    pub fn new_guarded(
+        files: Vec<ClipFile>,
+        bridge: ChunkBridge,
+        request: super::remote_tree::Requester,
+        current: super::remote_tree::CurrentOffer,
         chunk: u32,
     ) -> Result<Self, String> {
         let tree = RemoteTree::new(&files).map_err(str::to_owned)?;
@@ -191,7 +202,7 @@ impl RemoteMount {
             .collect::<Result<_, _>>()?;
         let fs = FileSystem {
             tree,
-            reader: RemoteReader::new(bridge.clone(), request, chunk),
+            reader: RemoteReader::new_guarded(bridge.clone(), request, current, chunk),
             // These are process credentials, not identities supplied by the peer.
             uid: unsafe { libc::getuid() },
             gid: unsafe { libc::getgid() },

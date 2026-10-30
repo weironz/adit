@@ -5,6 +5,9 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+test-fixtures = []
+
 [dependencies]
 adit-domain.workspace = true
 adit-rdp-proto.workspace = true

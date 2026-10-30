@@ -1,13 +1,14 @@
 //! A dedicated STA owns a small transfer window, its OLE registration, and the
 //! modal DoDragDrop loop. iced keeps pumping tagged RDP chunk replies throughout.
 //! Never register over winit's IDropTarget or pass COM pointers across threads.
-use super::{Lease, Request};
-use crate::clipboard_files::data_object::FileDataObject;
+use super::{Lease, Notice, NoticeError, NoticeSlot, Request};
+use crate::clipboard_files::data_object::{ChunkRequester, FileDataObject};
+use crate::clipboard_files::ChunkBridge;
 use crate::i18n::tf;
 use adit_session::ClipFile;
 use std::{
     cell::{Cell, RefCell},
-    sync::{mpsc::Sender, OnceLock},
+    sync::{atomic::AtomicBool, Arc, OnceLock},
 };
 use windows::core::{implement, w, Ref, Result as WinResult, BOOL, HRESULT};
 use windows::Win32::{
@@ -36,7 +37,7 @@ use windows::Win32::{
     },
 };
 
-type Notices = Sender<(adit_domain::SessionId, String)>;
+type Notices = Arc<NoticeSlot>;
 
 pub(super) fn open(
     owner: isize,
@@ -58,10 +59,9 @@ pub(super) fn open(
                 notices.clone(),
                 true,
             );
-            if result.is_err() {
+            if let Err(error) = result {
                 lease.cancel();
-                let _ =
-                    notices.send((lease.session, "无法打开原生文件拖放窗口；未传输文件".into()));
+                notices.fail(error);
             }
         })
         .map(|_| ())
@@ -167,7 +167,6 @@ impl IDropSource_Impl for CopySource_Impl {
 /// accepting an offer and then synthesizing Ctrl+V would falsely report a drop.
 #[implement(IDropTarget)]
 struct InboundBoundary {
-    lease: Lease,
     notices: Notices,
 }
 impl InboundBoundary {
@@ -186,10 +185,7 @@ impl IDropTarget_Impl for InboundBoundary_Impl {
         _point: &POINTL,
         effect: *mut DROPEFFECT,
     ) -> WinResult<()> {
-        let _ = self.notices.send((
-            self.lease.session,
-            "当前仅支持远端文件拖出；拖入远端尚不支持，未读取或传输文件".into(),
-        ));
+        self.notices.publish(Notice::InboundUnsupported);
         self.refuse(effect)
     }
     fn DragOver(
@@ -226,8 +222,8 @@ struct Context {
     dragging: Cell<bool>,
 }
 impl Context {
-    fn announce(&self, text: &str) {
-        let _ = self.notices.send((self.lease.session, text.into()));
+    fn announce(&self, notice: Notice) {
+        self.notices.publish(notice);
     }
 }
 
@@ -265,13 +261,13 @@ fn run(
     lease: Lease,
     notices: Notices,
     visible: bool,
-) -> WinResult<()> {
-    let _sta = Sta::new()?;
+) -> Result<(), NoticeError> {
+    let _sta = Sta::new().map_err(|_| NoticeError::Open)?;
     let owner = HWND(owner as *mut _);
     if !owner_valid(owner) {
-        return Err(E_INVALIDARG.into());
+        return Err(NoticeError::Open);
     }
-    window_class()?;
+    window_class().map_err(|_| NoticeError::Open)?;
     let context = Box::new(Context {
         owner,
         title: title.chars().filter(|c| !c.is_control()).take(80).collect(),
@@ -295,11 +291,15 @@ fn run(
             210,
             Some(owner),
             None,
-            Some(GetModuleHandleW(None)?.into()),
+            Some(
+                GetModuleHandleW(None)
+                    .map_err(|_| NoticeError::Open)?
+                    .into(),
+            ),
             Some(&*context as *const Context as *const _),
-        )?;
+        )
+        .map_err(|_| NoticeError::Open)?;
         let target: IDropTarget = InboundBoundary {
-            lease: context.lease.clone(),
             notices: context.notices.clone(),
         }
         .into();
@@ -307,27 +307,33 @@ fn run(
             Ok(registration) => {
                 *context.registration.borrow_mut() = Some(registration);
             }
-            Err(error) => {
+            Err(_) => {
                 let _ = DestroyWindow(hwnd);
-                return Err(error);
+                return Err(NoticeError::Open);
             }
         }
         if SetTimer(Some(hwnd), 1, 100, None) == 0 {
             close(hwnd, &context);
-            return Err(E_INVALIDARG.into());
+            return Err(NoticeError::Open);
         }
         if visible {
             let _ = ShowWindow(hwnd, SW_SHOW);
         }
-        context.announce("已打开文件拖出窗口；尚未读取文件内容");
+        context.announce(Notice::Opened);
         let mut message = MSG::default();
-        while GetMessageW(&mut message, None, 0, 0).0 > 0 {
+        let message_loop_result = loop {
+            match message_loop_step(GetMessageW(&mut message, None, 0, 0).0) {
+                Ok(true) => {}
+                Ok(false) => break Ok(()),
+                Err(error) => break Err(error),
+            }
             let _ = TranslateMessage(&message);
             DispatchMessageW(&message);
-        }
+        };
         if IsWindow(Some(hwnd)).as_bool() {
             close(hwnd, &context);
         }
+        message_loop_result?;
     }
     Ok(())
 }
@@ -466,14 +472,20 @@ fn start_drag(context: &Context) {
     {
         return;
     }
+    let request_failed = Arc::new(AtomicBool::new(false));
     let Ok(object) = FileDataObject::for_drag(
         context.files.clone(),
         context.lease.bridge.clone(),
-        context.request.clone(),
+        request_for_drag(
+            context.request.clone(),
+            context.lease.bridge.clone(),
+            context.notices.clone(),
+            request_failed.clone(),
+        ),
         64 * 1024,
         context.lease.cancelled.clone(),
     ) else {
-        context.announce("文件描述无效，已拒绝拖放");
+        context.notices.fail(NoticeError::InvalidFiles);
         return;
     };
     let object: IDataObject = object.with_liveness(context.lease.current.clone()).into();
@@ -485,12 +497,52 @@ fn start_drag(context: &Context) {
     context.dragging.set(true);
     let result = unsafe { DoDragDrop(&object, &source, DROPEFFECT_COPY, &mut effect) };
     context.dragging.set(false);
-    if result == DRAGDROP_S_DROP && effect == DROPEFFECT_COPY {
-        context.announce("OLE 目标已接受文件复制；目标文件由资源管理器处理");
+    match drag_outcome(
+        result,
+        effect,
+        request_failed.load(std::sync::atomic::Ordering::Acquire),
+    ) {
+        Ok(notice) => context.announce(notice),
+        Err(error) => context.notices.fail(error),
+    }
+}
+
+fn request_for_drag(
+    request: Request,
+    reply: ChunkBridge,
+    notices: Notices,
+    failed: Arc<AtomicBool>,
+) -> ChunkRequester {
+    Arc::new(move |stream, index, offset, length| {
+        if request(stream, index, offset, length).is_err() {
+            failed.store(true, std::sync::atomic::Ordering::Release);
+            notices.fail(NoticeError::Incomplete);
+            reply.deliver(stream, None);
+        }
+    })
+}
+
+fn drag_outcome(
+    result: HRESULT,
+    effect: DROPEFFECT,
+    request_failed: bool,
+) -> Result<Notice, NoticeError> {
+    if request_failed {
+        Err(NoticeError::Incomplete)
+    } else if result == DRAGDROP_S_DROP && effect == DROPEFFECT_COPY {
+        Ok(Notice::Accepted)
     } else if result == DRAGDROP_S_CANCEL {
-        context.announce("文件拖放已取消");
+        Ok(Notice::Cancelled)
     } else {
-        context.announce("文件拖放未完成；未请求移动或删除远端文件");
+        Err(NoticeError::Incomplete)
+    }
+}
+
+fn message_loop_step(result: i32) -> Result<bool, NoticeError> {
+    if result < 0 {
+        Err(NoticeError::Incomplete)
+    } else {
+        Ok(result != 0)
     }
 }
 

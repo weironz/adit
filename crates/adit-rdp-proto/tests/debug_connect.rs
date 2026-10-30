@@ -16,7 +16,10 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg};
+use adit_rdp_proto::{
+    read_helper_hello, read_msg, write_client_hello, write_msg, ClientMsg, ConnectRequest, HostMsg,
+    IPC_PROTOCOL_VERSION,
+};
 
 /// Fraction of non-near-black pixels below which a tile is deemed "black".
 const BLACK_RATIO: f32 = 0.01;
@@ -67,7 +70,10 @@ fn debug_connect_real_host() {
         .expect("spawn helper");
 
     let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    write_client_hello(&mut stdin, IPC_PROTOCOL_VERSION).expect("send IPC hello");
+    read_helper_hello(&mut stdout).expect("compatible helper");
 
     write_msg(
         &mut stdin,
@@ -82,6 +88,7 @@ fn debug_connect_real_host() {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            clipboard_policy_id: None,
         }),
     )
     .expect("send Connect");

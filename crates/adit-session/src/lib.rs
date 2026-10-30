@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod clipboard_owner_tests;
+#[cfg(feature = "test-fixtures")]
+pub mod clipboard_test_fixture;
 mod jump_auth;
 mod sftp_shell;
 mod sftp_transfers;
@@ -52,7 +54,11 @@ pub use adit_rdp_proto::{
     validate_clipboard_file_list, validate_clipboard_relative_name, ClipFile,
     InputEvent as RdpInput, MouseButton as RdpMouseButton, Quality as RdpQuality,
 };
-pub use rdp_client::{RdpClientEvent, RdpClientHandle, RdpFileRequester, RdpFrame};
+pub use rdp_client::{
+    RdpClientEvent, RdpClientHandle, RdpClipboardLease, RdpClipboardPolicyFailure,
+    RdpClipboardPolicyStatus, RdpClipboardSequence, RdpFileRequestError, RdpFileRequester,
+    RdpFrame,
+};
 use vnc_client::VncClientHandle;
 pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
 pub use vnc_input::unicode_keysym;
@@ -69,6 +75,8 @@ const DEFAULT_RDP_HEIGHT: u16 = 720;
 
 /// Cap on retained SFTP transfer-queue entries before old finished ones are dropped.
 const MAX_TRANSFER_HISTORY: usize = 200;
+/// Do not let a continuously replenished desktop event queue monopolize a UI tick.
+const MAX_DESKTOP_EVENTS_PER_POLL: usize = 64;
 
 /// Exponential backoff (1,2,4,8,16,30,30,…s) between reconnect attempts.
 #[cfg(test)]
@@ -423,6 +431,7 @@ impl Drop for VncGatewayCredentials {
 
 enum PendingDesktopClipboard {
     Rdp(String),
+    RdpBound(String, RdpClipboardLease),
     Vnc(vnc::ClipboardText),
 }
 
@@ -455,17 +464,19 @@ pub struct SessionManager {
     /// per session because the system clipboard is itself a single slot: the
     /// most recent remote copy wins, exactly as it would between two local apps.
     pending_rdp_clipboard: Option<(SessionId, PendingDesktopClipboard)>,
-    pending_desktop_notice: Option<(SessionId, String)>,
+    pending_desktop_notice: VecDeque<(SessionId, String)>,
+    local_file_safety_notices: HashMap<SessionId, (u64, String)>,
     pending_trigger_notices: VecDeque<String>,
     /// Byte ranges the remote asked for, waiting for the UI to read them off
     /// disk. A `Vec` rather than the single slot the clipboard text uses: a
-    /// paste of several files has several streams open at once, and dropping
-    /// any of them hangs that file's transfer.
-    pending_rdp_file_reads: Vec<(SessionId, RdpFileRead)>,
+    /// paste of several files has several streams open at once. Admission is
+    /// bounded before requests enter the helper's event queue.
+    pending_rdp_file_reads: Vec<PendingRdpFileRead>,
     /// An image the remote copied, waiting for the UI to put it on the Windows
     /// clipboard. One slot, like the text beside it: the system clipboard is
     /// itself a single slot, so the newest remote copy wins.
     pending_rdp_clipboard_image: Option<(SessionId, Vec<u8>)>,
+    pending_rdp_clipboard_image_lease: Option<RdpClipboardLease>,
     /// A file list the remote copied, waiting for the UI to publish it. One slot,
     /// like the clipboard text beside it: the clipboard holds one thing.
     pending_rdp_clipboard_files: Option<RdpClipboardFileOffer>,
@@ -500,6 +511,12 @@ pub struct RdpFileChunk {
     owner: RdpFileRequester,
 }
 
+impl RdpFileChunk {
+    pub fn is_current(&self) -> bool {
+        self.generation == self.owner.generation() && self.owner.is_current()
+    }
+}
+
 /// Session-tagged events for explicit OLE drags, independent of clipboard focus.
 pub enum RdpFileDragEvent {
     Offered {
@@ -520,12 +537,47 @@ pub enum RdpFileDragEvent {
 }
 
 /// A byte range the remote wants from a file this side offered.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RdpFileRead {
+    pub generation: u64,
     pub stream_id: u32,
     pub index: u32,
     pub offset: u64,
     pub length: u32,
+    lease: rdp_client::LocalFileReadLease,
+    answered: bool,
+}
+
+impl RdpFileRead {
+    /// Whether this request still belongs to the live offer and CLIPRDR channel.
+    #[must_use]
+    pub fn is_current(&self) -> bool {
+        self.lease.is_current()
+    }
+
+    /// A cheap check for a queued filesystem worker immediately before I/O.
+    pub fn current_guard(&self) -> impl Fn() -> bool + Send + Sync + 'static {
+        self.lease.current_guard()
+    }
+
+    /// Reply to the helper that issued this request, even if another window has
+    /// since become active. A retired offer can only receive a failure.
+    pub fn answer(mut self, data: Option<Vec<u8>>) {
+        self.answered = true;
+        self.lease.answer(self.stream_id, data);
+    }
+}
+
+impl Drop for RdpFileRead {
+    fn drop(&mut self) {
+        if !self.answered {
+            self.lease.refuse(self.stream_id);
+        }
+    }
+}
+
+struct PendingRdpFileRead {
+    session: SessionId,
+    read: RdpFileRead,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -580,10 +632,12 @@ impl SessionManager {
             suppressed_tunnels: Vec::new(),
             next_tunnel_id: 0,
             pending_rdp_clipboard: None,
-            pending_desktop_notice: None,
+            pending_desktop_notice: VecDeque::new(),
+            local_file_safety_notices: HashMap::new(),
             pending_trigger_notices: VecDeque::new(),
             pending_rdp_file_reads: Vec::new(),
             pending_rdp_clipboard_image: None,
+            pending_rdp_clipboard_image_lease: None,
             pending_rdp_clipboard_files: None,
             pending_rdp_file_chunks: Vec::new(),
             pending_rdp_drag_events: Vec::new(),
@@ -608,10 +662,20 @@ impl SessionManager {
             }
             if let Some(rdp) = &record.rdp {
                 rdp.set_file_offers_enabled(enabled);
+                if !enabled {
+                    // The helper also caches file sizes and descriptors, and can
+                    // answer SIZE requests without asking the UI for file bytes.
+                    rdp.notify_local_file_selection();
+                }
             }
         }
         if !enabled {
+            for pending in self.pending_rdp_file_reads.drain(..) {
+                pending.read.answer(None);
+            }
             self.pending_rdp_clipboard = None;
+            self.pending_rdp_clipboard_image = None;
+            self.pending_rdp_clipboard_image_lease = None;
             self.pending_rdp_clipboard_files = None;
             self.pending_rdp_file_chunks.clear();
         }
@@ -1725,6 +1789,7 @@ impl SessionManager {
             enable_clipboard: self.rdp_clipboard,
             enable_audio: false,
             quality: self.profile_rdp_quality(profile_id),
+            clipboard_policy_id: None,
         };
 
         profile
@@ -1936,6 +2001,9 @@ impl SessionManager {
         });
 
         self.sessions.remove(&session_id);
+        self.local_file_safety_notices.remove(&session_id);
+        self.pending_rdp_file_reads
+            .retain(|pending| pending.session != session_id);
         self.order.retain(|id| *id != session_id);
 
         if self.active_session == Some(session_id) {
@@ -1967,6 +2035,8 @@ impl SessionManager {
         if let Some(rdp) = &record.rdp {
             rdp.close();
             record.summary.status = SessionStatus::Disconnected;
+            self.pending_rdp_file_reads
+                .retain(|pending| pending.session != session_id);
             return Ok(());
         }
         if let Some(vnc) = &record.vnc {
@@ -2236,20 +2306,59 @@ impl SessionManager {
         self.send_rdp_input_to_active(RdpInput::Resize { width, height });
     }
 
-    /// Offer locally-copied text to the active RDP session's remote clipboard.
-    /// Only the format offer crosses the RDP wire here; the text itself is sent
-    /// on when the remote actually pastes. A no-op for non-RDP sessions.
+    /// Legacy desktop text input, retained for VNC callers. RDP callers must
+    /// use `offer_clipboard_to_active_rdp_with_sequence`.
     pub fn offer_clipboard_to_active_rdp(&self, text: String) {
         self.send_rdp_input_to_active(RdpInput::ClipboardText(text));
     }
 
-    /// Take a nonfatal notice for the active desktop, discarding stale-tab notices.
+    /// Bind a sampled clipboard to the observed OS sequence. The helper writer
+    /// checks it again immediately before the first byte of the IPC frame.
+    pub fn offer_clipboard_to_active_rdp_with_sequence(
+        &self,
+        text: String,
+        sequence: RdpClipboardSequence,
+    ) {
+        if !self.rdp_clipboard {
+            return;
+        }
+        if let Some(record) = self.active_session.and_then(|id| self.sessions.get(&id)) {
+            if let Some(rdp) = &record.rdp {
+                if record.summary.status == SessionStatus::Connected {
+                    rdp.send_clipboard_text_with_sequence(text, sequence);
+                }
+            } else if let Some(vnc) = &record.vnc {
+                if sequence.is_current() {
+                    vnc.send_input(RdpInput::ClipboardText(text));
+                }
+            }
+        }
+    }
+
+    /// Take a nonfatal notice for the active desktop; other tabs retain theirs.
     #[must_use]
     pub fn take_desktop_notice(&mut self) -> Option<String> {
+        // The UI consumes trigger notices immediately after desktop notices on
+        // the same tick. Keep this one queued until it can actually be shown.
+        if !self.pending_trigger_notices.is_empty() {
+            return None;
+        }
+        let position = self
+            .pending_desktop_notice
+            .iter()
+            .position(|(id, _)| self.active_session == Some(*id))?;
         self.pending_desktop_notice
-            .take()
-            .filter(|(id, _)| self.active_session == Some(*id))
+            .remove(position)
             .map(|(_, message)| message)
+    }
+
+    /// Persistent local-to-remote file safety notice for this session, including
+    /// background tabs. It clears only after a later CLIPRDR channel is ready.
+    #[must_use]
+    pub fn rdp_local_file_safety_notice(&self, session_id: SessionId) -> Option<&str> {
+        self.local_file_safety_notices
+            .get(&session_id)
+            .map(|(_, message)| message.as_str())
     }
 
     pub fn take_trigger_notice(&mut self) -> Option<String> {
@@ -2260,43 +2369,138 @@ impl SessionManager {
     /// Returns `None` when nothing new arrived.
     #[must_use]
     pub fn take_rdp_clipboard(&mut self) -> Option<String> {
+        self.take_rdp_clipboard_for_write().map(|(text, _)| text)
+    }
+
+    /// Retain the policy/copy lease until the platform performs the write.
+    pub fn take_rdp_clipboard_for_write(&mut self) -> Option<(String, Option<RdpClipboardLease>)> {
         if self.pending_rdp_clipboard.as_ref().map(|(id, _)| *id) != self.active_session {
             return None;
         }
         self.pending_rdp_clipboard
             .take()
             .filter(|(id, _)| self.active_session == Some(*id))
-            .and_then(|(_, text)| match text {
-                PendingDesktopClipboard::Rdp(text) => Some(text),
-                PendingDesktopClipboard::Vnc(text) => text.into_current_text(),
+            .and_then(|(id, text)| match text {
+                PendingDesktopClipboard::Rdp(text) => Some((text, None)),
+                PendingDesktopClipboard::RdpBound(text, lease) => self
+                    .sessions
+                    .get(&id)
+                    .and_then(|record| record.rdp.as_ref())
+                    .filter(|rdp| rdp.owns_clipboard_lease(&lease) && lease.is_current())
+                    .map(|_| (text, Some(lease))),
+                PendingDesktopClipboard::Vnc(text) => {
+                    text.into_current_text().map(|text| (text, None))
+                }
             })
     }
 
     /// Byte ranges the remote is waiting on. Drained, so each is answered once.
     pub fn take_rdp_file_reads(&mut self) -> Vec<RdpFileRead> {
         let active = self.active_session;
-        self.pending_rdp_file_reads
-            .extract_if(.., |(id, _)| Some(*id) == active)
-            .map(|(_, read)| read)
-            .collect()
+        let mut reads = Vec::new();
+        for pending in self
+            .pending_rdp_file_reads
+            .extract_if(.., |pending| Some(pending.session) == active)
+        {
+            let current_owner = self
+                .sessions
+                .get(&pending.session)
+                .and_then(|record| record.rdp.as_ref())
+                .is_some_and(|rdp| rdp.owns_local_file_read_lease(&pending.read.lease));
+            if self.rdp_clipboard && current_owner && pending.read.lease.is_current() {
+                reads.push(pending.read);
+            } else {
+                pending.read.answer(None);
+            }
+        }
+        reads
+    }
+
+    #[must_use]
+    pub fn rdp_clipboard_enabled(&self) -> bool {
+        self.rdp_clipboard
+    }
+
+    /// Requested policy and helper confirmation for one RDP session. A
+    /// confirmed state means the helper observed this epoch and CLIPRDR is
+    /// ready; it does not claim that the remote application accepted a copy.
+    pub fn rdp_clipboard_policy_status(
+        &self,
+        session: SessionId,
+    ) -> Option<RdpClipboardPolicyStatus> {
+        let record = self.sessions.get(&session)?;
+        let rdp = record.rdp.as_ref()?;
+        let status = rdp.clipboard_policy_status();
+        match (record.summary.status, status) {
+            (SessionStatus::Connecting, RdpClipboardPolicyStatus::Confirmed { epoch, enabled }) => {
+                Some(RdpClipboardPolicyStatus::Pending { epoch, enabled })
+            }
+            (
+                SessionStatus::Disconnected | SessionStatus::Error,
+                RdpClipboardPolicyStatus::Pending { epoch, enabled }
+                | RdpClipboardPolicyStatus::Confirmed { epoch, enabled },
+            ) => Some(RdpClipboardPolicyStatus::Failed {
+                epoch,
+                enabled,
+                reason: RdpClipboardPolicyFailure::HelperDisconnected,
+            }),
+            (_, status) => Some(status),
+        }
     }
 
     /// An image the remote copied, if one arrived since the last call.
     pub fn take_rdp_clipboard_image(&mut self) -> Option<Vec<u8>> {
+        self.take_rdp_clipboard_image_for_write()
+            .map(|(image, _)| image)
+    }
+
+    pub fn take_rdp_clipboard_image_for_write(
+        &mut self,
+    ) -> Option<(Vec<u8>, Option<RdpClipboardLease>)> {
         if self.pending_rdp_clipboard_image.as_ref().map(|(id, _)| *id) != self.active_session {
             return None;
         }
-        self.pending_rdp_clipboard_image
-            .take()
-            .map(|(_, image)| image)
+        let (id, image) = self.pending_rdp_clipboard_image.take()?;
+        let lease = self.pending_rdp_clipboard_image_lease.take();
+        if let Some(lease) = &lease {
+            if !self.rdp_clipboard
+                || !self
+                    .sessions
+                    .get(&id)
+                    .and_then(|record| record.rdp.as_ref())
+                    .is_some_and(|rdp| rdp.owns_clipboard_lease(lease) && lease.is_current())
+            {
+                return None;
+            }
+        }
+        Some((image, lease))
     }
 
-    /// Offer a locally-copied image to the active RDP desktop.
+    /// Unbound images cannot be offered safely. Use the sequence-bound method.
     pub fn offer_image_to_active_rdp(&self, image: Vec<u8>) {
+        let _ = image;
         if let Some(session_id) = self.active_session {
             if let Some(record) = self.sessions.get(&session_id) {
                 if let Some(rdp) = &record.rdp {
-                    rdp.send_clipboard_image(image);
+                    rdp.reject_unbound_desktop_offer();
+                }
+            }
+        }
+    }
+
+    /// Offer a sampled image only while its original OS sequence is current.
+    pub fn offer_image_to_active_rdp_with_sequence(
+        &self,
+        image: Vec<u8>,
+        sequence: RdpClipboardSequence,
+    ) {
+        if !self.rdp_clipboard {
+            return;
+        }
+        if let Some(record) = self.active_session.and_then(|id| self.sessions.get(&id)) {
+            if record.summary.status == SessionStatus::Connected {
+                if let Some(rdp) = &record.rdp {
+                    rdp.send_clipboard_image_with_sequence(image, sequence);
                 }
             }
         }
@@ -2358,23 +2562,57 @@ impl SessionManager {
     }
 
     /// Offer a local file selection to the active RDP desktop (metadata only).
-    pub fn offer_rdp_files_to_active(&self, files: Vec<ClipFile>) {
+    /// A nonempty selection needs its original clipboard sequence and source;
+    /// a missing or unavailable sequence revokes the previous offer.
+    pub fn offer_rdp_files_to_active(
+        &self,
+        files: Vec<ClipFile>,
+        sequence: Option<RdpClipboardSequence>,
+    ) {
+        if !self.rdp_clipboard {
+            return;
+        }
         if let Some(session_id) = self.active_session {
             if let Some(record) = self.sessions.get(&session_id) {
                 if let Some(rdp) = &record.rdp {
-                    rdp.send_clipboard_files(files);
+                    rdp.send_clipboard_files(files, sequence);
                 }
             }
         }
     }
 
-    /// Answer one [`RdpFileRead`]. `None` reports a failed read, which becomes
-    /// the protocol's error response rather than a silently truncated file.
-    pub fn answer_rdp_file_read(&self, stream_id: u32, data: Option<Vec<u8>>) {
-        if let Some(session_id) = self.active_session {
-            if let Some(record) = self.sessions.get(&session_id) {
+    /// Revoke local file offers without changing the active session context.
+    pub fn revoke_all_rdp_file_offers(&self) {
+        for record in self.sessions.values() {
+            if let Some(rdp) = &record.rdp {
+                if rdp.has_local_file_offer() {
+                    rdp.revoke_local_files();
+                }
+            }
+        }
+    }
+
+    /// Freeze local clipboard offers for every RDP session when the globally
+    /// observed sequence changes. Zero means the sequence is unavailable.
+    /// This only queues IPC work and never waits for a helper or clipboard read.
+    pub fn observe_local_clipboard_sequence(&self, sequence: u32) {
+        for record in self.sessions.values() {
+            if let Some(rdp) = &record.rdp {
+                rdp.observe_local_clipboard_sequence(sequence);
+            }
+        }
+    }
+
+    /// Invalidate stale text or images on every live RDP helper after a local
+    /// file selection, without sending file metadata or changing the active tab.
+    pub fn notify_local_file_selection_to_all_rdp(&self) {
+        for record in self.sessions.values() {
+            if matches!(
+                record.summary.status,
+                SessionStatus::Connecting | SessionStatus::Connected
+            ) {
                 if let Some(rdp) = &record.rdp {
-                    rdp.answer_file_contents(stream_id, data);
+                    rdp.notify_local_file_selection();
                 }
             }
         }
@@ -3739,12 +3977,25 @@ impl SessionManager {
             // Drain RDP helper events. Framebuffer tiles are applied to the
             // surface on the client thread; here we only track status. The tab's
             // pixels refresh from a per-frame redraw subscription in the UI.
-            while let Some(event) = record
-                .rdp
-                .as_ref()
-                .and_then(RdpClientHandle::try_recv)
-                .or_else(|| record.vnc.as_ref().and_then(VncClientHandle::try_recv))
-            {
+            for _ in 0..MAX_DESKTOP_EVENTS_PER_POLL {
+                let event = if let Some(rdp) = &record.rdp {
+                    match rdp.poll_event_for_session() {
+                        rdp_client::RdpEventPoll::Event(event) => Some(event),
+                        rdp_client::RdpEventPoll::Discarded => {
+                            // Stale offers consume the same budget as delivered events.
+                            handled += 1;
+                            continue;
+                        }
+                        rdp_client::RdpEventPoll::Empty => {
+                            record.vnc.as_ref().and_then(VncClientHandle::try_recv)
+                        }
+                    }
+                } else {
+                    record.vnc.as_ref().and_then(VncClientHandle::try_recv)
+                };
+                let Some(event) = event else {
+                    break;
+                };
                 handled += 1;
                 match event {
                     RdpClientEvent::Connected { .. } => {
@@ -3753,7 +4004,34 @@ impl SessionManager {
                     }
                     RdpClientEvent::Notice(message) => {
                         if self.active_session == Some(record.summary.id) {
-                            self.pending_desktop_notice = Some((record.summary.id, message));
+                            self.pending_desktop_notice
+                                .push_back((record.summary.id, message));
+                        }
+                    }
+                    RdpClientEvent::ClipboardFileDirectionUnavailable {
+                        channel_epoch,
+                        message,
+                    } => {
+                        self.pending_rdp_file_reads.retain(|pending| {
+                            pending.session != record.summary.id || pending.read.lease.is_current()
+                        });
+                        self.local_file_safety_notices
+                            .insert(record.summary.id, (channel_epoch, message.clone()));
+                        self.pending_desktop_notice
+                            .push_back((record.summary.id, message));
+                    }
+                    RdpClientEvent::ClipboardChannelChanged { .. } => {
+                        self.pending_rdp_file_reads.retain(|pending| {
+                            pending.session != record.summary.id || pending.read.lease.is_current()
+                        });
+                    }
+                    RdpClientEvent::ClipboardLocalFileDirectionReady { channel_epoch } => {
+                        if self
+                            .local_file_safety_notices
+                            .get(&record.summary.id)
+                            .is_some_and(|(sealed_epoch, _)| channel_epoch > *sealed_epoch)
+                        {
+                            self.local_file_safety_notices.remove(&record.summary.id);
                         }
                     }
                     RdpClientEvent::Resized { .. } => {}
@@ -3791,12 +4069,41 @@ impl SessionManager {
                                 Some((record.summary.id, PendingDesktopClipboard::Rdp(text)));
                         }
                     }
+                    RdpClientEvent::ClipboardTextForRevision { stamp, text } => {
+                        if self.active_session == Some(record.summary.id) && self.rdp_clipboard {
+                            if let Some(rdp) = &record.rdp {
+                                let lease = rdp.clipboard_lease(stamp);
+                                if lease.is_current() {
+                                    self.pending_rdp_clipboard = Some((
+                                        record.summary.id,
+                                        PendingDesktopClipboard::RdpBound(text, lease),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                    RdpClientEvent::ClipboardWake => {
+                        unreachable!("clipboard wake is resolved by the RDP client")
+                    }
                     // Same split as the text above, for the same reason: only
                     // this process can touch a real file. Queued for the UI to
                     // answer on its next tick — never dropped, because the
                     // remote paste is blocked on the stream it asked for.
                     RdpClientEvent::ClipboardImage(image) => {
                         self.pending_rdp_clipboard_image = Some((record.summary.id, image));
+                        self.pending_rdp_clipboard_image_lease = None;
+                    }
+                    RdpClientEvent::ClipboardImageForRevision { stamp, image } => {
+                        if self.active_session == Some(record.summary.id) && self.rdp_clipboard {
+                            if let Some(rdp) = &record.rdp {
+                                let lease = rdp.clipboard_lease(stamp);
+                                if lease.is_current() {
+                                    self.pending_rdp_clipboard_image =
+                                        Some((record.summary.id, image));
+                                    self.pending_rdp_clipboard_image_lease = Some(lease);
+                                }
+                            }
+                        }
                     }
                     RdpClientEvent::ClipboardFiles { generation, files } => {
                         if !self.rdp_clipboard {
@@ -3812,6 +4119,42 @@ impl SessionManager {
                             .as_ref()
                             .expect("RDP event owner")
                             .file_requester_for_generation(generation);
+                        self.pending_rdp_drag_events.retain(|event| !matches!(event,
+                            RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
+                        self.pending_rdp_drag_events
+                            .push(RdpFileDragEvent::Offered {
+                                session: record.summary.id,
+                                generation,
+                                files: files.clone(),
+                                requester: requester.clone(),
+                            });
+                        if self.active_session == Some(record.summary.id) {
+                            self.pending_rdp_clipboard_files = Some(RdpClipboardFileOffer {
+                                session: record.summary.id,
+                                generation,
+                                files,
+                                requester,
+                            });
+                        }
+                    }
+                    RdpClientEvent::ClipboardFilesForEpoch {
+                        generation,
+                        revision,
+                        files,
+                    } => {
+                        if !self.rdp_clipboard {
+                            record
+                                .rdp
+                                .as_ref()
+                                .expect("RDP event owner")
+                                .invalidate_file_offer();
+                            continue;
+                        }
+                        let requester = record
+                            .rdp
+                            .as_ref()
+                            .expect("RDP event owner")
+                            .file_requester_for_epoch(generation, revision);
                         self.pending_rdp_drag_events.retain(|event| !matches!(event,
                             RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
                         self.pending_rdp_drag_events
@@ -3853,21 +4196,82 @@ impl SessionManager {
                                 .file_requester_for_generation(generation),
                         });
                     }
+                    RdpClientEvent::FileContentsForEpoch {
+                        generation,
+                        revision,
+                        stream_id,
+                        data,
+                    } => {
+                        self.pending_rdp_drag_events.push(RdpFileDragEvent::Chunk {
+                            session: record.summary.id,
+                            generation,
+                            stream_id,
+                            data: data.clone(),
+                        });
+                        self.pending_rdp_file_chunks.push(RdpFileChunk {
+                            session: record.summary.id,
+                            generation,
+                            stream_id,
+                            data,
+                            owner: record
+                                .rdp
+                                .as_ref()
+                                .expect("RDP event owner")
+                                .file_requester_for_epoch(generation, revision),
+                        });
+                    }
                     RdpClientEvent::FileContentsNeeded {
+                        generation,
                         stream_id,
                         index,
                         offset,
                         length,
                     } => {
-                        self.pending_rdp_file_reads.push((
-                            record.summary.id,
-                            RdpFileRead {
-                                stream_id,
-                                index,
-                                offset,
-                                length,
-                            },
-                        ));
+                        if let Some(rdp) = &record.rdp {
+                            let lease = rdp.local_file_read_lease(generation);
+                            if !self.rdp_clipboard || !lease.is_current() {
+                                lease.refuse(stream_id);
+                                continue;
+                            }
+                            self.pending_rdp_file_reads.push(PendingRdpFileRead {
+                                session: record.summary.id,
+                                read: RdpFileRead {
+                                    generation,
+                                    stream_id,
+                                    index,
+                                    offset,
+                                    length,
+                                    lease,
+                                    answered: false,
+                                },
+                            });
+                        }
+                    }
+                    RdpClientEvent::FileContentsNeededBound {
+                        request,
+                        index,
+                        offset,
+                        length,
+                    } => {
+                        if let Some(rdp) = &record.rdp {
+                            let lease = rdp.local_file_read_lease_for_request(request);
+                            if !self.rdp_clipboard || !lease.is_current() {
+                                lease.refuse(request.stream_id);
+                                continue;
+                            }
+                            self.pending_rdp_file_reads.push(PendingRdpFileRead {
+                                session: record.summary.id,
+                                read: RdpFileRead {
+                                    generation: request.generation,
+                                    stream_id: request.stream_id,
+                                    index,
+                                    offset,
+                                    length,
+                                    lease,
+                                    answered: false,
+                                },
+                            });
+                        }
                     }
                     RdpClientEvent::AuthRejected(message) => {
                         record.pending_host_key = None;
@@ -3889,6 +4293,8 @@ impl SessionManager {
                     }
                     RdpClientEvent::Closed => {
                         record.pending_host_key = None;
+                        self.pending_rdp_file_reads
+                            .retain(|pending| pending.session != record.summary.id);
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Closed {
                             session: record.summary.id,
                         });

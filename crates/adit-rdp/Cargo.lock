@@ -49,7 +49,10 @@ name = "adit-rdp-proto"
 version = "0.1.77"
 dependencies = [
  "bincode",
+ "getrandom 0.3.4",
+ "libc",
  "serde",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1445,8 +1448,6 @@ checksum = "2e548d9fd162558a5a8aaed72e528556ce88e77773634e3722b8d01d6f170388"
 [[package]]
 name = "ironrdp-cliprdr"
 version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb9050999a1e032f4313788ac5a6d06e897a4f672f1de2ed98683001fc1abf56"
 dependencies = [
  "bitflags 2.13.0",
  "ironrdp-core",
@@ -1622,8 +1623,6 @@ dependencies = [
 [[package]]
 name = "ironrdp-svc"
 version = "0.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24c36b82ab0f7fef2668fb7004008a0f3c100a3d9a7b18bd4495a71aba55b796"
 dependencies = [
  "bitflags 2.13.0",
  "ironrdp-core",

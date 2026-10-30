@@ -60,13 +60,72 @@ fn clicking_or_lost_capture_never_starts_a_file_operation() {
     assert!(!drag_intent((0, 0), (20, 20), true, false, (4, 4)));
     assert!(drag_intent((0, 0), (20, 20), true, true, (4, 4)));
 }
-fn boundary(lease: &Lease) -> IDropTarget {
-    let (tx, _rx) = mpsc::channel();
+fn boundary(_lease: &Lease) -> IDropTarget {
     InboundBoundary {
-        lease: lease.clone(),
-        notices: tx,
+        notices: Arc::new(NoticeSlot::default()),
     }
     .into()
+}
+
+#[test]
+fn drag_outcome_keeps_request_and_ole_failures_distinct_from_success_or_cancel() {
+    assert_eq!(
+        drag_outcome(DRAGDROP_S_DROP, DROPEFFECT_COPY, false),
+        Ok(Notice::Accepted)
+    );
+    assert_eq!(
+        drag_outcome(DRAGDROP_S_CANCEL, DROPEFFECT_NONE, false),
+        Ok(Notice::Cancelled)
+    );
+    for result in [DRAGDROP_S_DROP, DRAGDROP_S_CANCEL] {
+        assert_eq!(
+            drag_outcome(result, DROPEFFECT_COPY, true),
+            Err(NoticeError::Incomplete)
+        );
+    }
+    assert_eq!(
+        drag_outcome(E_INVALIDARG, DROPEFFECT_COPY, false),
+        Err(NoticeError::Incomplete)
+    );
+}
+
+#[test]
+fn message_loop_failure_is_not_a_clean_quit() {
+    assert_eq!(message_loop_step(1), Ok(true));
+    assert_eq!(message_loop_step(0), Ok(false));
+    assert_eq!(message_loop_step(-1), Err(NoticeError::Incomplete));
+}
+
+#[test]
+fn refused_request_wakes_the_stream_and_preserves_its_error_notice() {
+    let bridge = ChunkBridge::new();
+    let stream = bridge.begin().unwrap();
+    let notices = Arc::new(NoticeSlot::default());
+    let failed = Arc::new(AtomicBool::new(false));
+    let request = request_for_drag(
+        Arc::new(|_, _, _, _| Err(())),
+        bridge.clone(),
+        notices.clone(),
+        failed.clone(),
+    );
+    request(stream, 0, 0, 1);
+    assert_eq!(
+        bridge.wait(stream),
+        Err(crate::clipboard_files::ChunkError::Refused)
+    );
+    assert!(failed.load(Ordering::Acquire));
+    assert_eq!(
+        notices.take().unwrap().errors,
+        NoticeError::Incomplete as u8
+    );
+    assert_eq!(
+        drag_outcome(
+            DRAGDROP_S_DROP,
+            DROPEFFECT_COPY,
+            failed.load(Ordering::Acquire)
+        ),
+        Err(NoticeError::Incomplete)
+    );
 }
 
 #[test]
@@ -113,7 +172,7 @@ fn drop_target_refuses_physical_and_virtual_drops_without_reading_data() {
         let lease = lease();
         let reads = Arc::new(AtomicUsize::new(0));
         let observed = reads.clone();
-        let request: Request = Arc::new(move |_, _, _, _| {
+        let request = Arc::new(move |_, _, _, _| {
             observed.fetch_add(1, Ordering::Relaxed);
         });
         let object: IDataObject = FileDataObject::for_drag(
@@ -217,7 +276,7 @@ fn synthetic_istream_reads_binary_ranges_only_on_demand_and_cancels_immediately(
         let bridge = lease.bridge.clone();
         let reads = Arc::new(AtomicUsize::new(0));
         let observed = reads.clone();
-        let request: Request = Arc::new(move |stream, index, offset, length| {
+        let request = Arc::new(move |stream, index, offset, length| {
             observed.fetch_add(1, Ordering::Relaxed);
             assert_eq!((index, offset, length), (0, 0, 3));
             bridge.deliver(stream, Some(vec![0, 255, 1]));
@@ -408,7 +467,8 @@ fn destroying_the_owner_window_revokes_the_native_transfer_window_and_lease() {
         let owner_id = owner.0 as isize;
         let lease = lease();
         let observed = lease.clone();
-        let (notices, ready) = mpsc::channel();
+        let notices = Arc::new(NoticeSlot::default());
+        let ready = notices.clone();
         let (done, finished) = mpsc::channel();
         let thread = std::thread::spawn(move || {
             let result = run(
@@ -426,9 +486,14 @@ fn destroying_the_owner_window_revokes_the_native_transfer_window_and_lease() {
             );
             done.send(result.is_ok()).unwrap();
         });
-        ready
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while ready.take().is_none() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "transfer window did not open"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         unsafe {
             DestroyWindow(owner).unwrap();
         }

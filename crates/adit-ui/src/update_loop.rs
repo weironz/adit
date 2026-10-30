@@ -172,15 +172,34 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 }
             }
             if app.native_window_id.is_none() {
+                let sequence = clipboard_files::clipboard_sequence();
+                observe_local_clipboard_sequence(app, sequence);
+                if clipboard_files::observe_local_offer_sequence(sequence) {
+                    app.rdp_offered_files.clear();
+                    app.manager.revoke_all_rdp_file_offers();
+                }
                 app.manager.poll_events();
             }
+            clipboard_files::retain_local_offers(|session| app.manager.rdp_file_drag_live(session));
+            clipboard_files::retain_text_offer_invalidations(|session| {
+                app.manager.session_is_desktop(session)
+            });
+            clear_stale_local_file_send_notice(app);
+            sync_rdp_text_limit_notice(app);
+            if app
+                .manager
+                .active_session()
+                .is_none_or(|session| !app.manager.rdp_file_drag_live(session))
+            {
+                app.rdp_offered_files.clear();
+            }
             desktop_panes::refresh(app);
-            if let Some(notice) = app.manager.take_desktop_notice() {
+            let trigger_notice_shown = if let Some(notice) = app.manager.take_trigger_notice() {
                 app.notice = notice;
-            }
-            if let Some(notice) = app.manager.take_trigger_notice() {
-                app.notice = notice;
-            }
+                true
+            } else {
+                false
+            };
             // Fatal errors stop frame subscriptions too; retire cache/hook on
             // the regular tick rather than relying on one more video frame.
             retire_vnc_connection_cache(app);
@@ -226,26 +245,70 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_surface_size_prev = None;
             }
 
+            let owns_selected_session = native_windows::owns_selected_session(app);
+            if owns_selected_session {
+                service_desktop_file_streams(app);
+            }
+            // Drag state and events are global, even if this window has no
+            // selected session. Keep them serviced while focus is elsewhere.
+            let drag_events = app.manager.take_rdp_file_drag_events();
+            app.rdp_file_drag
+                .update(drag_events, app.rdp_clipboard, |id| {
+                    app.manager.rdp_file_drag_live(id)
+                });
+            if let Some(notice) = app
+                .manager
+                .active_session()
+                .filter(|_| owns_selected_session)
+                .and_then(|session| app.rdp_file_drag.take_notice(session))
+            {
+                app.notice = notice;
+            }
             if native_windows::owns_selected_session(app) && app.desktop_window_focused {
                 // RDP clipboard bridge: the helper is a windowless process, so only
                 // this one has a Windows clipboard. Remote copies land here...
-                if let Some(text) = app
+                if let Some((text, lease)) = app
                     .manager
-                    .take_rdp_clipboard()
+                    .take_rdp_clipboard_for_write()
                     .filter(|_| app.rdp_clipboard)
                 {
+                    if let Some(lease) = lease {
+                        let written = lease
+                            .with_current(|| clipboard_files::set_clipboard_text(&text))
+                            .unwrap_or(false);
+                        if written {
+                            remember_remote_clipboard_text(app, &text);
+                        } else {
+                            app.notice = "远端剪贴板内容已失效或无法写入本地剪贴板。".into();
+                        }
+                        show_desktop_notice(app, trigger_notice_shown);
+                        return Task::none();
+                    }
                     // Record it as already-offered so the poll below doesn't bounce
                     // the remote's own text straight back at it.
-                    app.rdp_clipboard_offered = Some(text.clone());
+                    remember_remote_clipboard_text(app, &text);
+                    show_desktop_notice(app, trigger_notice_shown);
                     return clipboard::write(text);
                 }
                 // An image the remote copied. Written straight through as CF_DIB —
                 // iced's clipboard is text-only, so this is Win32 directly.
-                if let Some(image) = app.manager.take_rdp_clipboard_image() {
-                    if app.rdp_clipboard && clipboard_files::set_clipboard_image(&image) {
+                if let Some((image, lease)) = app.manager.take_rdp_clipboard_image_for_write() {
+                    let written = app.rdp_clipboard
+                        && match lease {
+                            Some(lease) => lease
+                                .with_current(|| clipboard_files::set_clipboard_image(&image))
+                                .unwrap_or(false),
+                            None => clipboard_files::set_clipboard_image(&image),
+                        };
+                    if written {
                         // Writing bumps the sequence number; claiming it here is what
                         // stops the poll below offering the remote its own image back.
                         let seq = clipboard_files::clipboard_sequence();
+                        observe_local_clipboard_sequence(app, seq);
+                        if let Some(session) = app.manager.active_session() {
+                            let _ = clipboard_files::take_image_offer_invalidation(session);
+                            clipboard_files::record_remote_image_write(session, seq);
+                        }
                         app.rdp_clipboard_seq = seq;
                         app.rdp_image_offered_seq = seq;
                     }
@@ -274,49 +337,6 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         );
                     }
                 }
-                let drag_events = app.manager.take_rdp_file_drag_events();
-                if let Some((session, notice)) =
-                    app.rdp_file_drag
-                        .update(drag_events, app.rdp_clipboard, |id| {
-                            app.manager.rdp_file_drag_live(id)
-                        })
-                {
-                    if app.manager.active_session() == Some(session) {
-                        app.notice = notice;
-                    }
-                }
-                // Chunks answering a local paste. Handed straight to the COM stream
-                // blocked on them over on Explorer's thread.
-                for chunk in app.manager.take_rdp_file_chunks() {
-                    if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
-                        app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
-                    }
-                }
-                // With no live RDP session there is nothing that can answer a paste,
-                // so release any Explorer thread waiting on one instead of leaving it
-                // to time out — file by file, thirty seconds each.
-                if app
-                    .rdp_file_scope
-                    .is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session))
-                {
-                    app.rdp_chunk_bridge.close();
-                }
-
-                // Byte ranges the remote is pasting. Answered before the polls below
-                // because a remote paste is *blocked* on each one, and every request
-                // gets a reply even when the read fails — `None` becomes the
-                // protocol's error response, where silence would hang Explorer over
-                // there indefinitely.
-                for read in app.manager.take_rdp_file_reads() {
-                    let data = app
-                        .rdp_offered_files
-                        .get(read.index as usize)
-                        .and_then(|file| {
-                            clipboard_files::read_range(&file.path, read.offset, read.length)
-                        });
-                    app.manager.answer_rdp_file_read(read.stream_id, data);
-                }
-
                 let clipboard_ready = !app.manager.active_is_vnc()
                     || app
                         .manager
@@ -334,12 +354,45 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     {
                         // Explorer also offers file names as text. RDP checks files
                         // first; VNC supports text only and never requests local files.
-                        if !app.manager.active_is_vnc() {
-                            offer_local_files_if_changed(app);
-                            offer_local_image_if_changed(app);
-                        }
+                        let sequence = if app.manager.active_is_vnc() {
+                            None
+                        } else {
+                            let Some(sequence) =
+                                offer_local_files_if_changed(app, !trigger_notice_shown)
+                            else {
+                                // A file selection replaced text/image, or the
+                                // sample raced another copy. Retry next poll.
+                                show_desktop_notice(app, trigger_notice_shown);
+                                return Task::none();
+                            };
+                            offer_local_image_if_changed(app, sequence);
+                            Some(sequence)
+                        };
                         if let Some(session) = app.manager.active_session() {
-                            let epoch = app.desktop_clipboard_epoch;
+                            let Some(epoch) = prepare_desktop_text_read(app, session, sequence)
+                            else {
+                                return Task::none();
+                            };
+                            show_desktop_notice(app, trigger_notice_shown);
+                            #[cfg(windows)]
+                            if let Some(sequence) = sequence {
+                                return Task::perform(
+                                    async move {
+                                        tokio::task::spawn_blocking(move || {
+                                            clipboard_files::clipboard_text_snapshot(sequence)
+                                        })
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                    },
+                                    move |contents| {
+                                        Message::RdpClipboardPolled(session, epoch, contents)
+                                    },
+                                );
+                            }
+                            // Linux uses the same iced text read as VNC. The
+                            // delivery check rejects changes the X11 watcher
+                            // has observed, but cannot see a pending notice.
                             return clipboard::read().map(move |contents| {
                                 Message::RdpClipboardPolled(session, epoch, contents)
                             });
@@ -347,23 +400,17 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     }
                 }
             }
+            show_desktop_notice(app, trigger_notice_shown);
         }
         Message::RdpClipboardPolled(session, epoch, contents) => {
-            // A read can finish after a tab switch or after sharing was disabled.
-            if !app.rdp_clipboard
-                || app.manager.active_session() != Some(session)
-                || app.desktop_clipboard_epoch != epoch
-            {
-                return Task::none();
-            }
-            if let Some(text) =
-                contents.filter(|text| app.manager.active_is_vnc() || !text.is_empty())
-            {
-                if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
-                    app.rdp_clipboard_offered = Some(text.clone());
-                    app.manager.offer_clipboard_to_active_rdp(text);
-                }
-            }
+            apply_desktop_clipboard_sample(
+                app,
+                session,
+                epoch,
+                contents,
+                clipboard_files::text_sample_still_current,
+                clipboard_files::clipboard_sequence,
+            );
         }
         Message::RdpTick => {
             if let Some(error) = clipboard_files::take_clipboard_error() {
@@ -3621,23 +3668,29 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // otherwise the last thing copied stays queued for the next remote
             // that asks — the setting would read as off while still leaking.
             if !enabled {
+                let sessions: Vec<_> = app
+                    .manager
+                    .sessions()
+                    .into_iter()
+                    .filter(|summary| app.manager.session_is_desktop(summary.id))
+                    .map(|summary| summary.id)
+                    .collect();
+                // Parked sessions keep their own caches. A later re-enable must
+                // re-offer even an unchanged clipboard to each one.
+                clipboard_files::invalidate_content_offer_caches(&sessions);
+                clipboard_files::cancel_local_offers();
                 app.rdp_file_drag.cancel();
                 app.rdp_chunk_bridge.close();
                 app.rdp_file_scope = None;
                 app.rdp_clipboard_offered = None;
+                app.rdp_offered_files.clear();
             }
-            app.notice = if app.manager.active_is_vnc() {
-                if enabled {
-                    "VNC 剪贴板已按配置的收发策略开启"
-                } else {
-                    "VNC 剪贴板已关闭，已清除待发送文本"
-                }
-                .into()
-            } else if enabled {
-                String::from(t("已开启：RDP 共享剪贴板（下次连接生效）"))
+            app.notice = if enabled {
+                "已请求开启远程桌面剪贴板共享"
             } else {
-                String::from(t("已关闭：RDP 不再共享剪贴板（下次连接生效）"))
-            };
+                "已请求关闭远程桌面剪贴板共享"
+            }
+            .into();
         }
         Message::RdpToolbarHovered(inside) => {
             app.rdp_toolbar_hovered = inside;
@@ -3824,9 +3877,25 @@ fn dump_rdp_frame(frame: &adit_session::RdpFrame) {
 /// of megabytes and this runs twice a second, so comparing content would mean
 /// copying the whole image off the clipboard every time just to learn it had
 /// not changed.
-pub(crate) fn offer_local_image_if_changed(app: &mut AditApp) {
-    let seq = clipboard_files::clipboard_sequence();
-    if seq == 0 || seq == app.rdp_clipboard_seq {
+pub(crate) fn offer_local_image_if_changed(app: &mut AditApp, seq: u32) {
+    offer_local_image_from(app, seq, &NativeClipboardSource);
+}
+
+fn offer_local_image_from(app: &mut AditApp, seq: u32, source: &impl LocalClipboardSource) {
+    let current = source.sequence();
+    observe_local_clipboard_sequence(app, current);
+    if current != seq || seq == 0 {
+        return;
+    }
+    if let Some(session) = app.manager.active_session() {
+        if clipboard_files::take_image_offer_invalidation(session)
+            && !clipboard_files::is_remote_image_write(session, seq)
+        {
+            app.rdp_clipboard_seq = 0;
+            app.rdp_image_offered_seq = 0;
+        }
+    }
+    if seq == app.rdp_clipboard_seq {
         return;
     }
     app.rdp_clipboard_seq = seq;
@@ -3835,39 +3904,495 @@ pub(crate) fn offer_local_image_if_changed(app: &mut AditApp) {
     if seq == app.rdp_image_offered_seq {
         return;
     }
-    let Some(image) = clipboard_files::clipboard_image() else {
-        return;
-    };
-    app.rdp_image_offered_seq = seq;
-    app.manager.offer_image_to_active_rdp(image);
-}
-
-/// Sample the local clipboard for a *file* selection and offer it to the active
-/// RDP desktop, but only when the selection actually changed.
-///
-/// The offer costs a `FormatList` on the RDP wire and the expansion walks the
-/// selected directories, so repeating it on every poll tick would be expensive
-/// twice over. Comparing the expanded list rather than the raw paths is
-/// deliberate: re-copying the same folder after editing a file inside it is a
-/// genuinely different offer, and the sizes are what changed.
-pub(crate) fn offer_local_files_if_changed(app: &mut AditApp) {
-    let Some(paths) = clipboard_files::clipboard_paths() else {
-        // Not a file selection. The offered list is deliberately *kept*: the
-        // remote may still be pasting from it, and a paste reads its bytes by
-        // index long after Explorer's clipboard has moved on to something else.
-        return;
-    };
-    let expanded = clipboard_files::expand(&paths);
-    if expanded == app.rdp_offered_files {
+    let image = source.image(seq);
+    let current = source.sequence();
+    observe_local_clipboard_sequence(app, current);
+    if current != seq {
         return;
     }
-    app.rdp_offered_files = expanded;
-    let metadata = app
-        .rdp_offered_files
-        .iter()
-        .map(|file| file.meta.clone())
+    let Some(image) = image else { return };
+    app.rdp_image_offered_seq = seq;
+    app.manager
+        .offer_image_to_active_rdp_with_sequence(image, source.sequence_binding(seq));
+}
+
+fn prepare_desktop_text_read(
+    app: &mut AditApp,
+    session: SessionId,
+    sequence: Option<u32>,
+) -> Option<u64> {
+    if let Some(sequence) = sequence {
+        // Identify this particular read at delivery time, not just when the
+        // worker completes it. VNC keeps its independent text-only path.
+        app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
+        if !clipboard_files::authorize_text_read(session, app.desktop_clipboard_epoch, sequence) {
+            return None;
+        }
+    }
+    Some(app.desktop_clipboard_epoch)
+}
+
+fn apply_desktop_clipboard_sample(
+    app: &mut AditApp,
+    session: SessionId,
+    epoch: u64,
+    contents: Option<String>,
+    still_current: impl FnOnce(u32) -> bool,
+    sequence_source: impl Fn() -> u32 + Send + Sync + 'static,
+) {
+    // A read can finish after a tab switch, sharing change, or later copy.
+    if !app.rdp_clipboard
+        || app.manager.active_session() != Some(session)
+        || app.desktop_clipboard_epoch != epoch
+    {
+        return;
+    }
+    let vnc = app.manager.active_is_vnc();
+    let sequence = if !vnc {
+        let Some(sequence) = clipboard_files::take_text_read_sequence(session, epoch) else {
+            return;
+        };
+        if !still_current(sequence) {
+            observe_local_clipboard_sequence(app, sequence_source());
+            return;
+        }
+        let current = sequence_source();
+        observe_local_clipboard_sequence(app, current);
+        if current != sequence {
+            return;
+        }
+        Some(sequence)
+    } else {
+        None
+    };
+    if let Some(text) = contents.filter(|text| vnc || !text.is_empty()) {
+        if let Some(sequence) = sequence {
+            let invalidated = clipboard_files::take_text_offer_invalidation(session);
+            let own_remote_write = clipboard_files::take_remote_text_write(session, sequence)
+                && app.rdp_clipboard_offered.as_deref() == Some(text.as_str());
+            if invalidated && !own_remote_write {
+                app.rdp_clipboard_offered = None;
+            }
+            if text.len() > MAX_RDP_LOCAL_TEXT_BYTES {
+                clipboard_files::record_oversized_text_notice(session, sequence);
+                sync_rdp_text_limit_notice(app);
+                return;
+            }
+            clipboard_files::clear_oversized_text_notice(session);
+            sync_rdp_text_limit_notice(app);
+        }
+        if app.rdp_clipboard_offered.as_deref() != Some(text.as_str()) {
+            app.rdp_clipboard_offered = Some(text.clone());
+            if let Some(sequence) = sequence {
+                // A short String can retain an arbitrarily large allocation;
+                // the helper budgets allocated bytes, not just text length.
+                let text = text.into_boxed_str().into_string();
+                app.manager.offer_clipboard_to_active_rdp_with_sequence(
+                    text,
+                    adit_session::RdpClipboardSequence::new(sequence, sequence_source),
+                );
+            } else {
+                app.manager.offer_clipboard_to_active_rdp(text);
+            }
+        }
+    }
+}
+
+fn remember_remote_clipboard_text(app: &mut AditApp, text: &str) {
+    if !app.manager.active_is_vnc() {
+        if let Some(session) = app.manager.active_session() {
+            let _ = clipboard_files::take_text_offer_invalidation(session);
+            clipboard_files::record_remote_text_write(session);
+        }
+    }
+    app.rdp_clipboard_offered = Some(text.to_owned());
+}
+
+/// A clipboard observation is process-wide, even if no RDP window has focus.
+/// Retire the helpers first; window-local caches can then be reset lazily.
+pub(crate) fn observe_local_clipboard_sequence(app: &mut AditApp, sequence: u32) {
+    app.manager.observe_local_clipboard_sequence(sequence);
+    if clipboard_files::track_local_offer_sequence(sequence) {
+        let sessions: Vec<_> = app
+            .manager
+            .sessions()
+            .into_iter()
+            .filter(|summary| {
+                app.manager.session_is_desktop(summary.id)
+                    && matches!(
+                        summary.status,
+                        SessionStatus::Connecting | SessionStatus::Connected
+                    )
+            })
+            .map(|summary| summary.id)
+            .collect();
+        clipboard_files::invalidate_content_offer_caches(&sessions);
+        app.rdp_offered_files.clear();
+        app.manager.revoke_all_rdp_file_offers();
+    }
+}
+
+fn show_desktop_notice(app: &mut AditApp, trigger_notice_shown: bool) {
+    if trigger_notice_shown {
+        return;
+    }
+    if let Some(notice) = app.manager.take_desktop_notice() {
+        app.notice = notice;
+    }
+}
+
+fn service_desktop_file_streams(app: &mut AditApp) {
+    // Chunks answering a local paste. Handed straight to the COM stream
+    // blocked on them over on Explorer's thread.
+    for chunk in app.manager.take_rdp_file_chunks() {
+        if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
+            let data = if app.rdp_clipboard && chunk.is_current() {
+                chunk.data
+            } else {
+                None
+            };
+            app.rdp_chunk_bridge.deliver(chunk.stream_id, data);
+        }
+    }
+    // With no live RDP session there is nothing that can answer a paste,
+    // so release any Explorer thread waiting on one instead of leaving it
+    // to time out — file by file, thirty seconds each.
+    if app
+        .rdp_file_scope
+        .is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session))
+    {
+        app.rdp_chunk_bridge.close();
+    }
+
+    // Byte ranges the remote is pasting. Answered before the polls below
+    // because a remote paste is *blocked* on each one, and every request
+    // gets a reply even when the read fails — `None` becomes the
+    // protocol's error response, where silence would hang Explorer over
+    // there indefinitely.
+    for read in app.manager.take_rdp_file_reads() {
+        clipboard_files::answer_offered_read(app.rdp_clipboard, &app.rdp_offered_files, read);
+    }
+}
+
+/// Sample the local clipboard for a *file* selection for the active RDP desktop.
+///
+/// The sequence identifies the actual copy operation. Re-expanding an unchanged
+/// clipboard would silently offer a replacement file that the user never copied.
+/// The temporary local-file policy stops before opening or publishing any file.
+pub(crate) fn offer_local_files_if_changed(
+    app: &mut AditApp,
+    show_unverified_notice: bool,
+) -> Option<u32> {
+    offer_local_files_from(app, &NativeClipboardSource, show_unverified_notice)
+}
+
+trait LocalClipboardSource {
+    fn sequence(&self) -> u32;
+    fn sequence_binding(&self, sequence: u32) -> adit_session::RdpClipboardSequence;
+    fn unavailable(&self) -> bool;
+    fn selection(&self) -> clipboard_files::ClipboardFileSelection;
+    fn paths(&self) -> Option<Vec<std::path::PathBuf>>;
+    fn image(&self, sequence: u32) -> Option<Vec<u8>>;
+}
+
+struct NativeClipboardSource;
+
+const UNVERIFIED_CLIPBOARD_TEXT_NOTICE: &str =
+    "无法确认当前本地剪贴板状态；RDP 本地文字发送已暂停。";
+
+// Match the helper's normal text transfer cap, well below its input queue
+// budget. Reject rather than silently pasting a truncated document.
+const MAX_RDP_LOCAL_TEXT_BYTES: usize = 8 * 1024 * 1024;
+const RDP_TEXT_LIMIT_NOTICE: &str =
+    "本地剪贴板文字超过 8 MiB，未发送到此 RDP 会话；远程桌面仍可使用。";
+
+fn sync_rdp_text_limit_notice(app: &mut AditApp) {
+    let show = app.rdp_clipboard
+        && native_windows::owns_selected_session(app)
+        && app
+            .manager
+            .active_session()
+            .is_some_and(clipboard_files::has_oversized_text_notice);
+    if show && app.last_error.is_none() {
+        // last_error is also visible over a fullscreen desktop; it is a UI
+        // notice here and does not alter the connection state.
+        app.last_error = Some(RDP_TEXT_LIMIT_NOTICE.into());
+    } else if !show && app.last_error.as_deref() == Some(RDP_TEXT_LIMIT_NOTICE) {
+        app.last_error = None;
+    }
+}
+
+impl LocalClipboardSource for NativeClipboardSource {
+    fn sequence(&self) -> u32 {
+        clipboard_files::clipboard_sequence()
+    }
+
+    fn sequence_binding(&self, sequence: u32) -> adit_session::RdpClipboardSequence {
+        adit_session::RdpClipboardSequence::new(sequence, clipboard_files::clipboard_sequence)
+    }
+
+    fn unavailable(&self) -> bool {
+        clipboard_files::clipboard_selection_unavailable()
+    }
+
+    fn selection(&self) -> clipboard_files::ClipboardFileSelection {
+        clipboard_files::clipboard_file_selection()
+    }
+
+    fn paths(&self) -> Option<Vec<std::path::PathBuf>> {
+        clipboard_files::clipboard_paths()
+    }
+
+    fn image(&self, sequence: u32) -> Option<Vec<u8>> {
+        clipboard_files::clipboard_image(sequence)
+    }
+}
+
+fn offer_local_files_from(
+    app: &mut AditApp,
+    source: &impl LocalClipboardSource,
+    show_unverified_notice: bool,
+) -> Option<u32> {
+    if !app.rdp_clipboard || !app.manager.rdp_clipboard_enabled() {
+        return None;
+    }
+    let session = app.manager.active_session()?;
+    if !app.manager.rdp_file_drag_live(session) {
+        return None;
+    }
+    let sequence = source.sequence();
+    observe_local_clipboard_sequence(app, sequence);
+    let unavailable = sequence == 0 && source.unavailable();
+    if sequence == 0 && !unavailable {
+        // A transient zero is not a verified non-file snapshot either.
+        if show_unverified_notice {
+            app.notice = UNVERIFIED_CLIPBOARD_TEXT_NOTICE.into();
+        }
+        return None;
+    }
+    let (paths, suppress_other_formats) = if unavailable {
+        // With no reliable clipboard source, clear old offers and wait rather
+        // than treating an unknown file selection as ordinary text.
+        (Some(Vec::new()), true)
+    } else if clipboard_files::local_file_send_enabled() {
+        let paths = source.paths();
+        let selected = paths.is_some();
+        (paths, selected)
+    } else {
+        match source.selection() {
+            clipboard_files::ClipboardFileSelection::NonFile => (None, false),
+            // Some(empty) records the format without collecting paths.
+            clipboard_files::ClipboardFileSelection::LocalOrUnknown => (Some(Vec::new()), true),
+            // A remote-owned virtual file stays pasteable and is never echoed.
+            clipboard_files::ClipboardFileSelection::RemoteOwned => (None, true),
+        }
+    };
+    let checked_sequence = source.sequence();
+    observe_local_clipboard_sequence(app, checked_sequence);
+    // A clipboard change during the read still supersedes the old offer. Do
+    // not bind the raced sample; revoke it and retry the new sequence instead.
+    let stable = checked_sequence == sequence && (!unavailable || source.unavailable());
+    let (sequence, paths) = if stable {
+        (sequence, paths)
+    } else {
+        // Zero is an observed invalidation too; do not put the old generation
+        // back into the shared tracker while the new selection is still dirty.
+        (checked_sequence, None)
+    };
+    let sessions: Vec<_> = app
+        .manager
+        .sessions()
+        .into_iter()
+        .filter(|s| app.manager.rdp_file_drag_live(s.id))
+        .map(|s| s.id)
         .collect();
-    app.manager.offer_rdp_files_to_active(metadata);
+    let (result, superseded) = clipboard_files::poll_local_offer(
+        session,
+        app.desktop_clipboard_epoch,
+        sequence,
+        paths,
+        &sessions,
+    );
+    if superseded {
+        // Parked windows can still answer reads. Revoke the old generation in
+        // every live RDP session before any of them can send more file bytes.
+        app.rdp_offered_files.clear();
+        app.manager.revoke_all_rdp_file_offers();
+    }
+    if matches!(&result, clipboard_files::OfferPoll::Disabled { .. }) {
+        let final_sequence = source.sequence();
+        observe_local_clipboard_sequence(app, final_sequence);
+        if final_sequence != sequence {
+            // Do not send an old file marker after another copy displaced it.
+            // Leave cleanup pending for native windows, including parked tabs.
+            let (_, superseded) = clipboard_files::poll_local_offer(
+                session,
+                app.desktop_clipboard_epoch,
+                final_sequence,
+                None,
+                &sessions,
+            );
+            if superseded {
+                app.rdp_offered_files.clear();
+                app.manager.revoke_all_rdp_file_offers();
+            }
+            if show_unverified_notice {
+                app.notice = UNVERIFIED_CLIPBOARD_TEXT_NOTICE.into();
+            }
+            return None;
+        }
+    }
+    apply_local_offer(app, sequence, result);
+    // A stable Linux observation permits a text read, even though an X11
+    // notification for a newer selection may still be in flight.
+    if show_unverified_notice && (unavailable || !stable) {
+        app.notice = UNVERIFIED_CLIPBOARD_TEXT_NOTICE.into();
+    } else if app.notice == UNVERIFIED_CLIPBOARD_TEXT_NOTICE {
+        app.notice.clear();
+    }
+    (stable && !suppress_other_formats).then_some(sequence)
+}
+
+fn apply_local_offer(app: &mut AditApp, sequence: u32, result: clipboard_files::OfferPoll) {
+    apply_local_offer_with_policy(
+        app,
+        sequence,
+        result,
+        clipboard_files::local_file_send_enabled(),
+    );
+}
+
+fn apply_local_offer_with_policy(
+    app: &mut AditApp,
+    sequence: u32,
+    result: clipboard_files::OfferPoll,
+    enabled: bool,
+) {
+    match result {
+        clipboard_files::OfferPoll::Started if !app.rdp_offered_files.is_empty() => {
+            // A new selection supersedes the old offer even if binding stalls.
+            app.rdp_offered_files.clear();
+            app.manager.offer_rdp_files_to_active(Vec::new(), None);
+        }
+        clipboard_files::OfferPoll::Ready(files) if enabled => {
+            let metadata = files.iter().map(|file| file.meta.clone()).collect();
+            app.rdp_offered_files = files;
+            app.manager.offer_rdp_files_to_active(
+                metadata,
+                Some(adit_session::RdpClipboardSequence::new(
+                    sequence,
+                    clipboard_files::clipboard_sequence,
+                )),
+            );
+        }
+        clipboard_files::OfferPoll::Ready(_) => {
+            // A previously completed result must not bypass the current policy.
+            app.rdp_offered_files.clear();
+            app.manager.revoke_all_rdp_file_offers();
+        }
+        clipboard_files::OfferPoll::Unchanged if !enabled && !app.rdp_offered_files.is_empty() => {
+            // A parked window may restore a mapping after its notice was sent.
+            app.rdp_offered_files.clear();
+            app.manager.revoke_all_rdp_file_offers();
+        }
+        clipboard_files::OfferPoll::Disabled { session, epoch }
+            if !enabled
+                && app.rdp_clipboard
+                && app.manager.active_session() == Some(session)
+                && app.desktop_clipboard_epoch == epoch
+                && native_windows::owns_selected_session(app) =>
+        {
+            app.rdp_offered_files.clear();
+            app.manager.revoke_all_rdp_file_offers();
+            // A text read started before this file copy must not arrive after
+            // the marker and re-advertise the previous clipboard contents.
+            app.desktop_clipboard_epoch = app.desktop_clipboard_epoch.wrapping_add(1);
+            let live_sessions: Vec<_> = app
+                .manager
+                .sessions()
+                .into_iter()
+                .filter(|summary| {
+                    app.manager.session_is_desktop(summary.id)
+                        && matches!(
+                            summary.status,
+                            SessionStatus::Connecting | SessionStatus::Connected
+                        )
+                })
+                .map(|summary| summary.id)
+                .collect();
+            clipboard_files::record_file_selection_marker(
+                session,
+                sequence,
+                app.desktop_clipboard_epoch,
+                &live_sessions,
+            );
+            app.rdp_clipboard_offered = None;
+            // The OS clipboard is shared by every window. Each live RDP helper
+            // must retire its old text/image offer without receiving file data.
+            app.manager.notify_local_file_selection_to_all_rdp();
+            clear_local_binding_error(app);
+            // Detached windows have their own status bar; the primary view
+            // renders the tracker's session-scoped notice in chrome instead.
+            if app.native_auxiliary
+                || clipboard_files::local_file_send_disabled_notice(session).is_none()
+            {
+                app.notice = clipboard_files::LOCAL_FILE_SEND_DISABLED_NOTICE.into();
+            }
+        }
+        clipboard_files::OfferPoll::Failed {
+            session,
+            epoch,
+            error,
+        } if app.rdp_clipboard
+            && app.manager.active_session() == Some(session)
+            && app.desktop_clipboard_epoch == epoch
+            && native_windows::owns_selected_session(app) =>
+        {
+            app.rdp_offered_files.clear();
+            if enabled {
+                app.manager.offer_rdp_files_to_active(Vec::new(), None);
+                app.last_error = Some(error.message().into());
+            } else {
+                // A late binding failure cannot masquerade as a policy limit.
+                app.manager.revoke_all_rdp_file_offers();
+                clear_local_binding_error(app);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn clear_local_binding_error(app: &mut AditApp) {
+    if app.last_error.as_deref().is_some_and(|message| {
+        [
+            clipboard_files::BindError::Unavailable,
+            clipboard_files::BindError::SelectionLimit,
+            clipboard_files::BindError::HandleBudget,
+        ]
+        .into_iter()
+        .any(|error| message == error.message() || message == runtime(error.message()))
+    }) {
+        app.last_error = None;
+    }
+}
+
+fn clear_stale_local_file_send_notice(app: &mut AditApp) {
+    if app.notice == UNVERIFIED_CLIPBOARD_TEXT_NOTICE
+        && (!app.rdp_clipboard || !app.manager.active_is_desktop() || app.manager.active_is_vnc())
+    {
+        app.notice.clear();
+        return;
+    }
+    if app.notice != clipboard_files::LOCAL_FILE_SEND_DISABLED_NOTICE {
+        return;
+    }
+    let belongs_to_session = app.manager.active_session().is_some_and(|session| {
+        app.manager.rdp_local_file_safety_notice(session).is_some()
+            || clipboard_files::local_file_send_disabled_notice(session).is_some()
+    });
+    if !belongs_to_session {
+        app.notice.clear();
+    }
 }
 
 /// Returns true while a VNC tab has no authenticated active connection.
@@ -4025,5 +4550,1360 @@ mod vnc_resize_tests {
                 panic!("steady frames must not scan the maximum surface")
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod local_file_offer_tests {
+    use super::*;
+
+    // Existing delivery-order tests supply their own classification check;
+    // never ask the OS clipboard for a sequence from these synthetic peers.
+    fn apply_desktop_clipboard_sample(
+        app: &mut AditApp,
+        session: SessionId,
+        epoch: u64,
+        contents: Option<String>,
+        still_current: impl FnOnce(u32) -> bool,
+    ) {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        let sequence = std::sync::Arc::new(AtomicU32::new(0));
+        let capture = sequence.clone();
+        super::apply_desktop_clipboard_sample(
+            app,
+            session,
+            epoch,
+            contents,
+            move |value| {
+                capture.store(value, Ordering::Release);
+                still_current(value)
+            },
+            move || sequence.load(Ordering::Acquire),
+        );
+    }
+
+    #[derive(Clone)]
+    struct SyntheticSequence(std::sync::Arc<std::sync::atomic::AtomicU32>);
+
+    impl SyntheticSequence {
+        fn new(sequence: u32) -> Self {
+            Self(std::sync::Arc::new(std::sync::atomic::AtomicU32::new(
+                sequence,
+            )))
+        }
+        fn get(&self) -> u32 {
+            self.0.load(std::sync::atomic::Ordering::Acquire)
+        }
+        fn set(&self, sequence: u32) {
+            self.0.store(sequence, std::sync::atomic::Ordering::Release);
+        }
+    }
+
+    struct SyntheticClipboard {
+        sequence: SyntheticSequence,
+        unavailable: std::cell::Cell<bool>,
+        selection: std::cell::Cell<clipboard_files::ClipboardFileSelection>,
+    }
+
+    impl LocalClipboardSource for SyntheticClipboard {
+        fn sequence(&self) -> u32 {
+            self.sequence.get()
+        }
+
+        fn sequence_binding(&self, sequence: u32) -> adit_session::RdpClipboardSequence {
+            let source = self.sequence.clone();
+            adit_session::RdpClipboardSequence::new(sequence, move || source.get())
+        }
+
+        fn unavailable(&self) -> bool {
+            self.unavailable.get()
+        }
+
+        fn selection(&self) -> clipboard_files::ClipboardFileSelection {
+            self.selection.get()
+        }
+
+        fn paths(&self) -> Option<Vec<std::path::PathBuf>> {
+            panic!("the disabled policy must not read file paths")
+        }
+
+        fn image(&self, sequence: u32) -> Option<Vec<u8>> {
+            clipboard_files::verified_non_file_snapshot(
+                sequence,
+                || self.sequence(),
+                || self.selection(),
+                || Some(vec![1, 2, 3]),
+            )
+        }
+    }
+
+    #[test]
+    fn oversized_local_text_is_rejected_per_session_without_closing_desktop() {
+        use adit_rdp_proto::{ClientMsg, InputEvent};
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use std::time::Duration;
+
+        const CHILD: &str = "ADIT_SYNTHETIC_TEXT_LIMIT_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::oversized_local_text_is_rejected_per_session_without_closing_desktop",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated text-limit test: {status}");
+            return;
+        }
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let first = manager.open_mock_session(profile.id).unwrap();
+        let second = manager.open_mock_session(profile.id).unwrap();
+        let peers = [
+            SyntheticRdp::attach(&mut manager, first),
+            SyntheticRdp::attach(&mut manager, second),
+        ];
+        manager.set_rdp_clipboard(true);
+        manager.select_session_context(first).unwrap();
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            ..AditApp::default()
+        };
+        let source = SyntheticSequence::new(41);
+
+        let observe = |app: &mut AditApp, sequence| {
+            observe_local_clipboard_sequence(app, sequence);
+            let _ = clipboard_files::observe_local_offer_sequence(sequence);
+        };
+        let sample = |app: &mut AditApp, text: String| {
+            let sequence = source.get();
+            let session = app.manager.active_session().unwrap();
+            let epoch = prepare_desktop_text_read(app, session, Some(sequence)).unwrap();
+            let current = source.clone();
+            super::apply_desktop_clipboard_sample(
+                app,
+                session,
+                epoch,
+                Some(text),
+                |seen| seen == sequence,
+                move || current.get(),
+            );
+        };
+        observe(&mut app, 41);
+        for peer in &peers {
+            assert!(matches!(
+                peer.write_next_command(&app.manager, Duration::from_secs(1)),
+                Ok(Some(ClientMsg::LocalFileOfferRejected))
+            ));
+        }
+
+        let boundary = "x".repeat(MAX_RDP_LOCAL_TEXT_BYTES);
+        sample(&mut app, boundary.clone());
+        assert!(
+            matches!(peers[0].write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == boundary)
+        );
+
+        source.set(42);
+        observe(&mut app, 42);
+        for peer in &peers {
+            while let Some(command) = peer.try_command() {
+                assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+            }
+        }
+        // The limit is UTF-8 bytes, including a multibyte character crossing it.
+        sample(
+            &mut app,
+            format!("{}中", "x".repeat(MAX_RDP_LOCAL_TEXT_BYTES - 1)),
+        );
+        assert_eq!(app.last_error.as_deref(), Some(RDP_TEXT_LIMIT_NOTICE));
+        assert!(peers[0].try_command().is_none());
+        assert!(peers[1].try_command().is_none());
+
+        app.manager.select_session_context(second).unwrap();
+        sync_rdp_text_limit_notice(&mut app);
+        assert!(app.last_error.is_none());
+        app.manager.select_session_context(first).unwrap();
+        sync_rdp_text_limit_notice(&mut app);
+        assert_eq!(app.last_error.as_deref(), Some(RDP_TEXT_LIMIT_NOTICE));
+        app.manager
+            .send_rdp_input_to_active(adit_session::RdpInput::Key {
+                scancode: 30,
+                extended: false,
+                pressed: true,
+            });
+        assert!(matches!(
+            peers[0].write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::Input(InputEvent::Key { .. })))
+        ));
+
+        source.set(43);
+        observe(&mut app, 43);
+        for peer in &peers {
+            while let Some(command) = peer.try_command() {
+                assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+            }
+        }
+        sync_rdp_text_limit_notice(&mut app);
+        assert!(app.last_error.is_none());
+        sample(&mut app, "普通文字".into());
+        assert!(
+            matches!(peers[0].write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "普通文字")
+        );
+
+        source.set(44);
+        observe(&mut app, 44);
+        for peer in &peers {
+            while let Some(command) = peer.try_command() {
+                assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+            }
+        }
+        let mut overallocated = String::with_capacity(65 * 1024 * 1024);
+        overallocated.push_str("短文本");
+        sample(&mut app, overallocated);
+        assert!(
+            matches!(peers[0].write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "短文本")
+        );
+    }
+
+    #[test]
+    fn sequence_changes_rearm_text_without_echoing_a_remote_copy() {
+        use adit_rdp_proto::ClientMsg;
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use std::time::Duration;
+
+        const CHILD: &str = "ADIT_SYNTHETIC_TEXT_REARM_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::sequence_changes_rearm_text_without_echoing_a_remote_copy",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated text-rearm test: {status}");
+            return;
+        }
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        manager.set_rdp_clipboard(true);
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            ..AditApp::default()
+        };
+        let source = SyntheticSequence::new(11);
+        let observe = |app: &mut AditApp, value| {
+            source.set(value);
+            observe_local_clipboard_sequence(app, value);
+            let _ = clipboard_files::observe_local_offer_sequence(value);
+        };
+        let sample = |app: &mut AditApp, value: &str| {
+            let sequence = source.get();
+            let epoch = prepare_desktop_text_read(app, session, Some(sequence)).unwrap();
+            let current = source.clone();
+            super::apply_desktop_clipboard_sample(
+                app,
+                session,
+                epoch,
+                Some(value.into()),
+                |seen| seen == sequence,
+                move || current.get(),
+            );
+        };
+        let marker = |app: &AditApp| {
+            assert!(matches!(
+                peer.write_next_command(&app.manager, Duration::from_secs(1)),
+                Ok(Some(ClientMsg::LocalFileOfferRejected))
+            ));
+        };
+        let text = |app: &AditApp, expected: &str| {
+            assert!(
+                matches!(peer.write_next_command(&app.manager, Duration::from_secs(1)),
+                Ok(Some(ClientMsg::ClipboardTextForRevision { text: got, .. })) if got == expected)
+            );
+        };
+
+        observe(&mut app, 11);
+        marker(&app);
+        sample(&mut app, "same text");
+        text(&app, "same text");
+        observe(&mut app, 12);
+        marker(&app);
+        sample(&mut app, "same text");
+        text(&app, "same text");
+
+        remember_remote_clipboard_text(&mut app, "remote text");
+        // The Linux watcher can be dirty before it publishes the new sequence.
+        observe(&mut app, 0);
+        marker(&app);
+        observe(&mut app, 13);
+        sample(&mut app, "remote text");
+        assert!(
+            peer.try_command().is_none(),
+            "a remote write must not echo back"
+        );
+        observe(&mut app, 14);
+        while let Some(command) = peer.try_command() {
+            assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+        }
+        sample(&mut app, "remote text");
+        text(&app, "remote text");
+    }
+
+    #[test]
+    fn sampled_image_uses_its_synthetic_sequence_at_first_write() {
+        use adit_rdp_proto::ClientMsg;
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use std::{cell::Cell, time::Duration};
+
+        const CHILD: &str = "ADIT_SYNTHETIC_IMAGE_SEQUENCE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::sampled_image_uses_its_synthetic_sequence_at_first_write",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated image-sequence test: {status}");
+            return;
+        }
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        manager.set_rdp_clipboard(true);
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            ..AditApp::default()
+        };
+        let source = SyntheticClipboard {
+            sequence: SyntheticSequence::new(7),
+            unavailable: Cell::new(false),
+            selection: Cell::new(clipboard_files::ClipboardFileSelection::NonFile),
+        };
+        observe_local_clipboard_sequence(&mut app, 7);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::LocalFileOfferRejected))
+        ));
+        offer_local_image_from(&mut app, 7, &source);
+        source.sequence.set(8);
+        observe_local_clipboard_sequence(&mut app, 8);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(None)
+        ));
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::LocalFileOfferRejected))
+        ));
+        offer_local_image_from(&mut app, 8, &source);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardImageForRevision { image, .. })) if image == [1, 2, 3]
+        ));
+
+        let _ = update(&mut app, Message::ToggleRdpClipboard(false));
+        let _ = update(&mut app, Message::ToggleRdpClipboard(true));
+        while let Ok(command) = peer.write_next_command(&app.manager, Duration::from_millis(10)) {
+            assert!(!matches!(
+                command,
+                Some(ClientMsg::ClipboardImageForRevision { .. })
+            ));
+        }
+        // Re-enabling must not strand an unchanged clipboard in a stale cache.
+        offer_local_image_from(&mut app, 8, &source);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardImageForRevision { image, .. })) if image == [1, 2, 3]
+        ));
+
+        clipboard_files::record_remote_image_write(session, 8);
+        source.sequence.set(0);
+        observe_local_clipboard_sequence(&mut app, 0);
+        while let Some(command) = peer.try_command() {
+            assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+        }
+        source.sequence.set(8);
+        observe_local_clipboard_sequence(&mut app, 8);
+        offer_local_image_from(&mut app, 8, &source);
+        assert!(
+            peer.try_command().is_none(),
+            "a remote image must not echo after a dirty sample"
+        );
+    }
+
+    #[test]
+    fn dirty_sequence_during_classification_never_restores_the_old_generation() {
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use std::{cell::Cell, time::Duration};
+
+        const CHILD: &str = "ADIT_SYNTHETIC_DIRTY_SEQUENCE_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::dirty_sequence_during_classification_never_restores_the_old_generation",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated dirty-sequence test: {status}");
+            return;
+        }
+        struct RacingClipboard(Cell<u8>);
+        impl LocalClipboardSource for RacingClipboard {
+            fn sequence(&self) -> u32 {
+                let reads = self.0.get();
+                self.0.set(reads + 1);
+                if reads == 0 {
+                    71
+                } else {
+                    0
+                }
+            }
+            fn sequence_binding(&self, _: u32) -> adit_session::RdpClipboardSequence {
+                panic!("an unverified sample must never be offered")
+            }
+            fn unavailable(&self) -> bool {
+                false
+            }
+            fn selection(&self) -> clipboard_files::ClipboardFileSelection {
+                clipboard_files::ClipboardFileSelection::NonFile
+            }
+            fn paths(&self) -> Option<Vec<std::path::PathBuf>> {
+                panic!("local file sending is disabled")
+            }
+            fn image(&self, _: u32) -> Option<Vec<u8>> {
+                panic!("an unverified sample must never be offered")
+            }
+        }
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        manager.set_rdp_clipboard(true);
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            ..AditApp::default()
+        };
+        assert!(offer_local_files_from(&mut app, &RacingClipboard(Cell::new(0)), true).is_none());
+        assert!(!clipboard_files::track_local_offer_sequence(0));
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(adit_rdp_proto::ClientMsg::LocalFileOfferRejected))
+        ));
+        assert!(peer.try_command().is_none());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_text_file_and_late_x11_notification_are_observed_only() {
+        use adit_rdp_proto::ClientMsg;
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use clipboard_files::ClipboardFileSelection::{LocalOrUnknown, NonFile};
+        use std::cell::Cell;
+        use std::time::Duration;
+
+        const CHILD: &str = "ADIT_LINUX_CLIPBOARD_OBSERVATION_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::linux_text_file_and_late_x11_notification_are_observed_only",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated clipboard test: {status}");
+            return;
+        }
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let first = manager.open_mock_session(profile.id).unwrap();
+        let second = manager.open_mock_session(profile.id).unwrap();
+        let first_peer = SyntheticRdp::attach(&mut manager, first);
+        let second_peer = SyntheticRdp::attach(&mut manager, second);
+        manager.select_session_context(first).unwrap();
+        manager.set_rdp_clipboard(true);
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            notice: String::new(),
+            ..AditApp::default()
+        };
+        let source = SyntheticClipboard {
+            sequence: SyntheticSequence::new(7),
+            unavailable: Cell::new(false),
+            selection: Cell::new(NonFile),
+        };
+        let current = |sequence| {
+            clipboard_files::observed_non_file_sample_current(
+                sequence,
+                || source.sequence(),
+                || source.selection(),
+            )
+        };
+        let remote = first_peer.remote_offer(&app.manager, 37);
+
+        // Normal X11 text proceeds from the observed non-file generation.
+        let sequence = offer_local_files_from(&mut app, &source, true).unwrap();
+        assert!(app.notice.is_empty());
+        for peer in [&first_peer, &second_peer] {
+            assert!(matches!(
+                peer.write_next_command(&app.manager, Duration::from_secs(1)),
+                Ok(Some(ClientMsg::LocalFileOfferRejected))
+            ));
+        }
+        let epoch = prepare_desktop_text_read(&mut app, first, Some(sequence)).unwrap();
+        apply_desktop_clipboard_sample(
+            &mut app,
+            first,
+            epoch,
+            Some("ordinary text".into()),
+            current,
+        );
+        assert!(matches!(
+            first_peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "ordinary text"
+        ));
+        assert!(second_peer.try_command().is_none());
+
+        // Model a file copy before its X11 notification arrives. The observed
+        // generation is still NonFile, so its textual representation CAN be
+        // offered; this test records the accepted risk, not X11 safety.
+        let epoch = prepare_desktop_text_read(&mut app, first, Some(sequence)).unwrap();
+        apply_desktop_clipboard_sample(
+            &mut app,
+            first,
+            epoch,
+            Some("synthetic file representation".into()),
+            current,
+        );
+        assert!(matches!(
+            first_peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "synthetic file representation"
+        ));
+
+        // Once a notification has been observed, a dirty sequence rejects a
+        // queued sample before the new classification is published.
+        let epoch = prepare_desktop_text_read(&mut app, first, Some(sequence)).unwrap();
+        source.sequence.set(0);
+        let dirty_sequence = source.sequence.clone();
+        super::apply_desktop_clipboard_sample(
+            &mut app,
+            first,
+            epoch,
+            Some("queued".into()),
+            current,
+            move || dirty_sequence.get(),
+        );
+        for peer in [&first_peer, &second_peer] {
+            while let Some(command) = peer.try_command() {
+                assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+            }
+        }
+
+        // A published file or unknown classification invalidates in-flight
+        // reads. A previously sent empty marker may make another one redundant.
+        source.sequence.set(7);
+        let old_epoch = prepare_desktop_text_read(&mut app, first, Some(7)).unwrap();
+        for sequence in [8, 9] {
+            source.sequence.set(sequence);
+            source.selection.set(LocalOrUnknown);
+            assert_eq!(offer_local_files_from(&mut app, &source, true), None);
+            for peer in [&first_peer, &second_peer] {
+                while let Some(command) = peer.try_command() {
+                    assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+                }
+            }
+        }
+        apply_desktop_clipboard_sample(&mut app, first, old_epoch, Some("stale".into()), |_| {
+            panic!("the observed file marker invalidated the read")
+        });
+        assert!(first_peer.try_command().is_none());
+        assert!(
+            remote.is_current(),
+            "local file markers preserve the remote offer"
+        );
+
+        // A late completion remains tied to its original tab; the newly active
+        // tab can later send ordinary text independently.
+        source.sequence.set(10);
+        source.selection.set(NonFile);
+        let sequence = offer_local_files_from(&mut app, &source, true).unwrap();
+        let old_epoch = prepare_desktop_text_read(&mut app, first, Some(sequence)).unwrap();
+        app.manager.select_session_context(second).unwrap();
+        apply_desktop_clipboard_sample(
+            &mut app,
+            first,
+            old_epoch,
+            Some("wrong tab".into()),
+            current,
+        );
+        assert!(first_peer.try_command().is_none());
+        assert!(second_peer.try_command().is_none());
+        assert_eq!(
+            offer_local_files_from(&mut app, &source, true),
+            Some(sequence)
+        );
+        let epoch = prepare_desktop_text_read(&mut app, second, Some(sequence)).unwrap();
+        apply_desktop_clipboard_sample(
+            &mut app,
+            second,
+            epoch,
+            Some("ordinary text".into()),
+            current,
+        );
+        assert!(matches!(
+            second_peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "ordinary text"
+        ));
+        assert!(first_peer.try_command().is_none());
+    }
+
+    #[test]
+    fn clipboard_poll_event_order_fails_closed_without_touching_the_os() {
+        use adit_rdp_proto::ClientMsg;
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use clipboard_files::ClipboardFileSelection::{LocalOrUnknown, NonFile, RemoteOwned};
+        use std::cell::Cell;
+        use std::time::Duration;
+
+        const CHILD: &str = "ADIT_CLIPBOARD_SNAPSHOT_ORDER_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The production tracker is process-wide; isolate this event sequence.
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::clipboard_poll_event_order_fails_closed_without_touching_the_os",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated clipboard event test: {status}");
+            return;
+        }
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        manager.select_session_context(session).unwrap();
+        manager.set_rdp_clipboard(true);
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            notice: String::new(),
+            ..AditApp::default()
+        };
+        let source = SyntheticClipboard {
+            sequence: SyntheticSequence::new(7),
+            unavailable: Cell::new(false),
+            selection: Cell::new(NonFile),
+        };
+
+        // An unstable or unavailable observation still cannot authorize text.
+        app.notice = "synthetic trigger notice".into();
+        assert_eq!(offer_local_files_from(&mut app, &source, false), Some(7));
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::LocalFileOfferRejected))
+        ));
+        assert_eq!(app.notice, "synthetic trigger notice");
+        app.notice.clear();
+        let sequence = offer_local_files_from(&mut app, &source, true).unwrap();
+        assert!(app.notice.is_empty());
+        let epoch = prepare_desktop_text_read(&mut app, session, Some(sequence)).unwrap();
+        let read: Option<String> = clipboard_files::verified_non_file_snapshot(
+            sequence,
+            || 7,
+            || LocalOrUnknown,
+            || panic!("unverified file text must not be read"),
+        );
+        apply_desktop_clipboard_sample(&mut app, session, epoch, read, |_| false);
+        assert!(peer.try_command().is_none());
+
+        // A later ordinary sample can use the same observed generation.
+        let sequence = offer_local_files_from(&mut app, &source, true).unwrap();
+        assert_eq!(sequence, 7);
+        assert!(app.notice.is_empty());
+        let epoch = prepare_desktop_text_read(&mut app, session, Some(sequence)).unwrap();
+        let read = clipboard_files::verified_non_file_snapshot(
+            sequence,
+            || source.sequence(),
+            || source.selection(),
+            || Some("recovered text".into()),
+        );
+        apply_desktop_clipboard_sample(&mut app, session, epoch, read, |seq| seq == 7);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "recovered text"
+        ));
+
+        // A verified Windows text snapshot and image still reach the helper.
+        source.sequence.set(20);
+        observe_local_clipboard_sequence(&mut app, 20);
+        assert!(clipboard_files::observe_local_offer_sequence(20));
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::LocalFileOfferRejected))
+        ));
+        let sequence = offer_local_files_from(&mut app, &source, true).unwrap();
+        assert!(app.notice.is_empty());
+        let epoch = prepare_desktop_text_read(&mut app, session, Some(sequence)).unwrap();
+        let read = clipboard_files::verified_non_file_snapshot(
+            sequence,
+            || source.sequence(),
+            || source.selection(),
+            || Some("ordinary".into()),
+        );
+        apply_desktop_clipboard_sample(&mut app, session, epoch, read, |seq| seq == 20);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardTextForRevision { text, .. })) if text == "ordinary"
+        ));
+        offer_local_image_from(&mut app, sequence, &source);
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardImageForRevision { image: data, .. })) if data == [1, 2, 3]
+        ));
+
+        // Replacement between classification and read must discard even a
+        // file path returned as text; replacement after completion but before
+        // Message delivery must discard the formerly safe old text too.
+        let epoch = prepare_desktop_text_read(&mut app, session, Some(20)).unwrap();
+        let read: Option<String> = clipboard_files::verified_non_file_snapshot(
+            20,
+            || 20,
+            || LocalOrUnknown,
+            || panic!("a file representation must not be read"),
+        );
+        assert!(read.is_none());
+        apply_desktop_clipboard_sample(&mut app, session, epoch, read, |_| false);
+        let epoch = prepare_desktop_text_read(&mut app, session, Some(20)).unwrap();
+        let read = clipboard_files::verified_non_file_snapshot(
+            20,
+            || 20,
+            || NonFile,
+            || Some("old text".into()),
+        );
+        apply_desktop_clipboard_sample(&mut app, session, epoch, read, |_| false);
+        assert!(peer.try_command().is_none());
+
+        // A virtual file with no CF_HDROP is rejected through the real poll,
+        // while an Adit-owned remote virtual object is neither echoed nor
+        // mistaken for a local-file marker.
+        source.sequence.set(21);
+        source
+            .selection
+            .set(clipboard_files::classify_windows_file_selection(
+                true, false, true, false, false,
+            ));
+        assert_eq!(source.selection.get(), LocalOrUnknown);
+        observe_local_clipboard_sequence(&mut app, 21);
+        assert!(clipboard_files::observe_local_offer_sequence(21));
+        assert_eq!(offer_local_files_from(&mut app, &source, true), None);
+        let mut markers = 0;
+        while let Ok(command) = peer.write_next_command(&app.manager, Duration::from_millis(10)) {
+            assert!(matches!(command, Some(ClientMsg::LocalFileOfferRejected)));
+            markers += 1;
+        }
+        assert!(markers >= 1);
+
+        let remote = peer.remote_offer(&app.manager, 37);
+        source.sequence.set(22);
+        source
+            .selection
+            .set(clipboard_files::classify_windows_file_selection(
+                true, false, true, true, true,
+            ));
+        assert_eq!(source.selection.get(), RemoteOwned);
+        observe_local_clipboard_sequence(&mut app, 22);
+        assert!(clipboard_files::observe_local_offer_sequence(22));
+        assert_eq!(offer_local_files_from(&mut app, &source, true), None);
+        assert!(remote.is_current());
+        assert!(peer.try_command().is_none());
+
+        // Unsupported or failed backends cannot bless a cached NonFile result
+        // or an already queued text read, and must retire old helper offers.
+        let epoch = prepare_desktop_text_read(&mut app, session, Some(22)).unwrap();
+        peer.send_local_offer(
+            &app.manager,
+            vec![adit_session::ClipFile {
+                name: "synthetic-old.bin".into(),
+                size: 3,
+                is_dir: false,
+            }],
+        );
+        assert!(matches!(
+            peer.write_next_command(&app.manager, Duration::from_secs(1)),
+            Ok(Some(ClientMsg::ClipboardFiles { files, .. })) if !files.is_empty()
+        ));
+        app.rdp_offered_files = vec![clipboard_files::OfferedFile::test_fixture("old.bin")];
+        app.rdp_clipboard_offered = Some("old text".into());
+        source.sequence.set(0);
+        source.unavailable.set(true);
+        source.selection.set(NonFile);
+        observe_local_clipboard_sequence(&mut app, 0);
+        assert!(clipboard_files::observe_local_offer_sequence(0));
+        assert_eq!(offer_local_files_from(&mut app, &source, true), None);
+        assert!(app.rdp_clipboard_offered.is_none());
+        assert!(app.rdp_offered_files.is_empty());
+        assert_eq!(app.notice, UNVERIFIED_CLIPBOARD_TEXT_NOTICE);
+        let mut markers = 0;
+        while let Ok(command) = peer.write_next_command(&app.manager, Duration::from_millis(10)) {
+            assert!(matches!(command, Some(ClientMsg::LocalFileOfferRejected)));
+            markers += 1;
+        }
+        assert!(markers >= 1);
+        apply_desktop_clipboard_sample(
+            &mut app,
+            session,
+            epoch,
+            Some("file representation".into()),
+            |_| panic!("the old epoch was already revoked"),
+        );
+        assert!(peer.try_command().is_none());
+        assert!(remote.is_current());
+        remote.try_request(71, 0, 0, 3).unwrap();
+        assert!(matches!(
+            peer.next_command(Duration::from_secs(1)).unwrap(),
+            ClientMsg::RequestFileContents {
+                generation: 37,
+                stream_id: 71,
+                index: 0,
+                offset: 0,
+                length: 3,
+            }
+        ));
+    }
+
+    #[test]
+    fn interleaved_drag_notices_reach_their_primary_and_detached_windows() {
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+        use window_presentation::WindowPresentation;
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let profile_id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        let primary_session = manager.open_mock_session(profile_id).unwrap();
+        let detached_session = manager.open_mock_session(profile_id).unwrap();
+        let _primary_peer = SyntheticRdp::attach(&mut manager, primary_session);
+        let _detached_peer = SyntheticRdp::attach(&mut manager, detached_session);
+        manager.select_session_context(primary_session).unwrap();
+
+        let primary = window::Id::unique();
+        let detached = window::Id::unique();
+        let mut app = AditApp {
+            manager,
+            native_main_window: Some(primary),
+            native_window_id: Some(primary),
+            desktop_window_focused: false,
+            ..AditApp::default()
+        };
+        app.native_session_windows
+            .insert(detached_session, detached);
+        app.notice = "primary before".into();
+        let mut child = WindowPresentation {
+            notice: "detached before".into(),
+            ..WindowPresentation::default()
+        };
+
+        // The primary tick drains a later primary notice after the child's.
+        app.rdp_file_drag
+            .test_notice(detached_session, "detached 1");
+        app.rdp_file_drag.test_notice(primary_session, "primary 1");
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "primary 1");
+        assert_eq!(child.notice, "detached before");
+
+        child.swap(&mut app);
+        app.native_window_id = Some(detached);
+        app.native_auxiliary = true;
+        app.manager
+            .select_session_context(detached_session)
+            .unwrap();
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "detached 1");
+
+        // Reverse the dispatch order: the child drains a later child notice.
+        app.rdp_file_drag.test_notice(primary_session, "primary 2");
+        app.rdp_file_drag
+            .test_notice(detached_session, "detached 2");
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "detached 2");
+        child.swap(&mut app);
+        app.native_window_id = Some(primary);
+        app.native_auxiliary = false;
+        app.manager.select_session_context(primary_session).unwrap();
+        assert_eq!(app.notice, "primary 1");
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "primary 2");
+        assert_eq!(child.notice, "detached 2");
+
+        assert_eq!(app.manager.sessions().len(), 2);
+        for session in [primary_session, detached_session] {
+            assert_eq!(
+                app.manager.session_summary(session).unwrap().status,
+                SessionStatus::Connected
+            );
+            assert!(app.manager.rdp_file_drag_live(session));
+        }
+    }
+
+    #[test]
+    fn unowned_selected_session_keeps_its_drag_notice_for_the_new_owner() {
+        use adit_session::clipboard_test_fixture::SyntheticRdp;
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let profile_id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        let session = manager.open_mock_session(profile_id).unwrap();
+        let _peer = SyntheticRdp::attach(&mut manager, session);
+        let primary = window::Id::unique();
+        let detached = window::Id::unique();
+        let mut app = AditApp {
+            manager,
+            native_main_window: Some(primary),
+            native_window_id: Some(primary),
+            desktop_window_focused: false,
+            ..AditApp::default()
+        };
+        app.native_session_windows.insert(session, detached);
+        app.notice = "primary before".into();
+        app.rdp_file_drag.test_notice(session, "waiting for owner");
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "primary before");
+
+        // Returning the session to primary transfers ownership, not the
+        // connection, and the previously queued notice follows the session.
+        app.native_session_windows.remove(&session);
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "waiting for owner");
+        assert_eq!(app.manager.sessions().len(), 1);
+        assert!(app.manager.rdp_file_drag_live(session));
+    }
+
+    #[test]
+    fn security_notice_survives_competing_drag_notice_in_same_tick() {
+        use adit_session::{clipboard_test_fixture::SyntheticRdp, RdpClientEvent};
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let profile_id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        let session = manager.open_mock_session(profile_id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        let mut app = AditApp {
+            manager,
+            desktop_window_focused: true,
+            ..AditApp::default()
+        };
+        peer.send_event(
+            &app.manager,
+            RdpClientEvent::ClipboardFileDirectionUnavailable {
+                channel_epoch: 7,
+                message: "安全提示：请手动重新连接".into(),
+            },
+        );
+        app.rdp_file_drag.test_notice(session, "普通拖放提示");
+        let _ = update(&mut app, Message::Tick);
+        assert_eq!(app.notice, "安全提示：请手动重新连接");
+    }
+
+    #[test]
+    fn unfocused_window_drains_drag_chunks_and_notices() {
+        use adit_session::{clipboard_test_fixture::SyntheticRdp, RdpClientEvent};
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let profile_id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        let session = manager.open_mock_session(profile_id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        let mut app = AditApp {
+            manager,
+            desktop_window_focused: false,
+            ..AditApp::default()
+        };
+        peer.send_event(
+            &app.manager,
+            RdpClientEvent::FileContents {
+                generation: 7,
+                stream_id: 41,
+                data: Some(vec![42; 4096]),
+            },
+        );
+        app.rdp_file_drag.test_notice(session, "拖放提示");
+        let _ = update(&mut app, Message::Tick);
+        assert!(app.manager.take_rdp_file_drag_events().is_empty());
+        assert_eq!(app.notice, "拖放提示");
+    }
+
+    #[test]
+    fn security_notice_waits_until_trigger_notice_has_been_shown() {
+        use adit_session::{clipboard_test_fixture::SyntheticRdp, RdpClientEvent};
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let profile_id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        let session = manager.open_mock_session(profile_id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        let mut app = AditApp {
+            manager,
+            ..AditApp::default()
+        };
+        peer.send_event(
+            &app.manager,
+            RdpClientEvent::ClipboardFileDirectionUnavailable {
+                channel_epoch: 7,
+                message: "安全提示：请手动重新连接".into(),
+            },
+        );
+        app.manager.poll_events();
+        app.notice = "触发器提示".into();
+        show_desktop_notice(&mut app, true);
+        assert_eq!(app.notice, "触发器提示");
+        show_desktop_notice(&mut app, false);
+        assert_eq!(app.notice, "安全提示：请手动重新连接");
+    }
+
+    #[test]
+    fn empty_or_failed_new_offer_retires_the_previous_mapping() {
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            desktop_clipboard_epoch: 7,
+            ..AditApp::default()
+        };
+        for result in [
+            clipboard_files::OfferPoll::Started,
+            clipboard_files::OfferPoll::Ready(Vec::new()),
+            clipboard_files::OfferPoll::Failed {
+                session,
+                epoch: 7,
+                error: clipboard_files::BindError::Unavailable,
+            },
+        ] {
+            app.rdp_offered_files = vec![clipboard_files::OfferedFile::test_fixture("old.bin")];
+            apply_local_offer(&mut app, 1, result);
+            assert!(app.rdp_offered_files.is_empty());
+        }
+    }
+
+    #[test]
+    fn binding_errors_stay_with_their_session_epoch_and_native_window() {
+        use clipboard_files::{BindError, OfferPoll};
+        use window_presentation::WindowPresentation;
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let primary_session = manager.open_mock_session(profile.id).unwrap();
+        let child_session = manager.open_mock_session(profile.id).unwrap();
+        manager.select_session_context(primary_session).unwrap();
+        let primary = window::Id::unique();
+        let child_id = window::Id::unique();
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            native_main_window: Some(primary),
+            native_window_id: Some(primary),
+            desktop_clipboard_epoch: 5,
+            last_error: None,
+            ..AditApp::default()
+        };
+        app.native_session_windows.insert(child_session, child_id);
+        let failure = |session, epoch, error| OfferPoll::Failed {
+            session,
+            epoch,
+            error,
+        };
+        let apply_failure = |app: &mut AditApp, result| {
+            apply_local_offer_with_policy(app, 7, result, true);
+        };
+
+        // A different session, a stale epoch, and another window's session
+        // must not change either this window's message or its file mapping.
+        app.rdp_offered_files = vec![clipboard_files::OfferedFile::test_fixture("old.bin")];
+        apply_failure(&mut app, failure(child_session, 5, BindError::HandleBudget));
+        apply_failure(
+            &mut app,
+            failure(primary_session, 4, BindError::SelectionLimit),
+        );
+        app.manager.select_session_context(child_session).unwrap();
+        apply_failure(&mut app, failure(child_session, 5, BindError::HandleBudget));
+        assert!(app.last_error.is_none());
+        assert_eq!(app.rdp_offered_files.len(), 1);
+
+        app.manager.select_session_context(primary_session).unwrap();
+        app.rdp_clipboard = false;
+        apply_failure(
+            &mut app,
+            failure(primary_session, 5, BindError::SelectionLimit),
+        );
+        assert!(app.last_error.is_none());
+        app.rdp_clipboard = true;
+        apply_failure(
+            &mut app,
+            failure(primary_session, 5, BindError::SelectionLimit),
+        );
+        let primary_error = BindError::SelectionLimit.message();
+        assert_eq!(app.last_error.as_deref(), Some(primary_error));
+        assert!(app.rdp_offered_files.is_empty());
+
+        let mut child = WindowPresentation {
+            desktop_clipboard_epoch: 5,
+            ..WindowPresentation::default()
+        };
+        child.swap(&mut app);
+        app.native_window_id = Some(child_id);
+        app.manager.select_session_context(child_session).unwrap();
+        apply_failure(&mut app, failure(child_session, 5, BindError::HandleBudget));
+        let child_error = BindError::HandleBudget.message();
+        assert_eq!(app.last_error.as_deref(), Some(child_error));
+        child.swap(&mut app);
+        app.native_window_id = Some(primary);
+        app.manager.select_session_context(primary_session).unwrap();
+        assert_eq!(app.last_error.as_deref(), Some(primary_error));
+        assert_eq!(child.last_error.as_deref(), Some(child_error));
+    }
+
+    #[test]
+    fn disabled_file_selection_is_scoped_and_does_not_block_text_or_images() {
+        use adit_rdp_proto::{ClientMsg, InputEvent};
+        use adit_session::{clipboard_test_fixture::SyntheticRdp, RdpClientEvent};
+        use clipboard_files::{BindError, OfferPoll};
+        use std::time::Duration;
+
+        const CHILD: &str = "ADIT_DISABLED_FILE_POLICY_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            // The tracker is process-wide; no parallel UI test may consume or
+            // retain another fixture's per-session invalidation flags.
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "update_loop::local_file_offer_tests::disabled_file_selection_is_scoped_and_does_not_block_text_or_images",
+                    "--test-threads=1",
+                ])
+                .env(CHILD, "1")
+                .status()
+                .unwrap();
+            assert!(status.success(), "isolated policy test: {status}");
+            return;
+        }
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let other = manager.open_mock_session(profile.id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        let other_peer = SyntheticRdp::attach(&mut manager, other);
+        manager.select_session_context(session).unwrap();
+        manager.set_rdp_clipboard(true);
+        let primary = window::Id::unique();
+        let child = window::Id::unique();
+        let mut app = AditApp {
+            manager,
+            rdp_clipboard: true,
+            native_main_window: Some(primary),
+            native_window_id: Some(child),
+            native_auxiliary: true,
+            desktop_clipboard_epoch: 4,
+            rdp_clipboard_offered: Some("synthetic text".into()),
+            rdp_offered_files: vec![clipboard_files::OfferedFile::test_fixture("old.bin")],
+            last_error: Some(BindError::SelectionLimit.message().into()),
+            ..AditApp::default()
+        };
+        app.native_session_windows.insert(session, child);
+        observe_local_clipboard_sequence(&mut app, 7);
+        for receiver in [&peer, &other_peer] {
+            assert!(matches!(
+                receiver.write_next_command(&app.manager, Duration::from_secs(1)),
+                Ok(Some(ClientMsg::LocalFileOfferRejected))
+            ));
+        }
+
+        for result in [
+            OfferPoll::Disabled {
+                session: other,
+                epoch: 4,
+            },
+            OfferPoll::Disabled { session, epoch: 3 },
+        ] {
+            apply_local_offer(&mut app, 7, result);
+            assert_eq!(app.rdp_offered_files.len(), 1);
+            assert_eq!(
+                app.last_error.as_deref(),
+                Some(BindError::SelectionLimit.message())
+            );
+        }
+        app.native_window_id = Some(primary);
+        apply_local_offer(&mut app, 7, OfferPoll::Disabled { session, epoch: 4 });
+        assert_eq!(app.rdp_offered_files.len(), 1);
+        app.native_window_id = Some(child);
+        apply_local_offer(
+            &mut app,
+            7,
+            OfferPoll::Failed {
+                session,
+                epoch: 4,
+                error: BindError::HandleBudget,
+            },
+        );
+        assert!(app.rdp_offered_files.is_empty());
+        assert!(
+            app.last_error.is_none(),
+            "an old limit is not the disabled policy"
+        );
+        assert!(peer.try_command().is_none());
+        assert!(other_peer.try_command().is_none());
+        app.rdp_offered_files = vec![clipboard_files::OfferedFile::test_fixture("old.bin")];
+        app.last_error = Some(BindError::SelectionLimit.message().into());
+        apply_local_offer(&mut app, 7, OfferPoll::Disabled { session, epoch: 4 });
+        assert!(app.rdp_offered_files.is_empty());
+        assert!(app.last_error.is_none());
+        assert!(app.rdp_clipboard_offered.is_none());
+        assert_eq!(app.notice, clipboard_files::LOCAL_FILE_SEND_DISABLED_NOTICE);
+        assert_eq!(app.desktop_clipboard_epoch, 5);
+        for receiver in [&peer, &other_peer] {
+            while let Some(command) = receiver.try_command() {
+                assert!(matches!(command, ClientMsg::LocalFileOfferRejected));
+            }
+        }
+
+        // A parked mapping restored after the first notice is still retired.
+        app.rdp_offered_files = vec![clipboard_files::OfferedFile::test_fixture("parked.bin")];
+        apply_local_offer(&mut app, 7, OfferPoll::Unchanged);
+        assert!(app.rdp_offered_files.is_empty());
+        assert!(peer.try_command().is_none());
+
+        // A late completion from the former binding path cannot publish files.
+        apply_local_offer(
+            &mut app,
+            7,
+            OfferPoll::Ready(vec![clipboard_files::OfferedFile::test_fixture("late.bin")]),
+        );
+        assert!(app.rdp_offered_files.is_empty());
+        assert!(peer.try_command().is_none());
+
+        let _ = update(
+            &mut app,
+            Message::RdpClipboardPolled(session, 4, Some("stale text".into())),
+        );
+        assert!(peer.try_command().is_none());
+        assert!(clipboard_files::authorize_text_read(session, 5, 7));
+        apply_desktop_clipboard_sample(
+            &mut app,
+            session,
+            5,
+            Some("synthetic text".into()),
+            |seq| seq == 7,
+        );
+        assert!(matches!(
+            peer.next_command(Duration::from_secs(1)).unwrap(),
+            ClientMsg::Input(InputEvent::ClipboardText(text)) if text == "synthetic text"
+        ));
+        app.manager.offer_image_to_active_rdp_with_sequence(
+            vec![1, 2, 3],
+            adit_session::RdpClipboardSequence::new(7, || 7),
+        );
+        assert!(matches!(
+            peer.next_command(Duration::from_secs(1)).unwrap(),
+            ClientMsg::ClipboardImage(bytes) if bytes == [1, 2, 3]
+        ));
+        app.manager.select_session_context(other).unwrap();
+        app.native_window_id = Some(primary);
+        app.native_auxiliary = false;
+        app.rdp_clipboard_offered = Some("synthetic text".into());
+        assert!(clipboard_files::authorize_text_read(other, 5, 7));
+        apply_desktop_clipboard_sample(&mut app, other, 5, Some("synthetic text".into()), |seq| {
+            seq == 7
+        });
+        assert!(matches!(
+            other_peer.next_command(Duration::from_secs(1)).unwrap(),
+            ClientMsg::Input(InputEvent::ClipboardText(text)) if text == "synthetic text"
+        ));
+
+        // A remote copy refreshes its own cache; a prior marker must not make
+        // the following local sample echo that remote text back to the helper.
+        clipboard_files::record_file_selection_marker(other, 8, 5, &[other]);
+        other_peer.send_event(
+            &app.manager,
+            RdpClientEvent::ClipboardText("remote synthetic text".into()),
+        );
+        app.manager.poll_events();
+        app.native_auxiliary = true;
+        app.desktop_window_focused = true;
+        let pending_clipboard_write = update(&mut app, Message::Tick);
+        drop(pending_clipboard_write); // The synthetic test never writes the OS clipboard.
+        assert_eq!(
+            app.rdp_clipboard_offered.as_deref(),
+            Some("remote synthetic text")
+        );
+        assert!(clipboard_files::authorize_text_read(other, 5, 7));
+        apply_desktop_clipboard_sample(
+            &mut app,
+            other,
+            5,
+            Some("remote synthetic text".into()),
+            |seq| seq == 7,
+        );
+        assert!(
+            other_peer.try_command().is_none(),
+            "remote text must not echo back"
+        );
+    }
+
+    #[test]
+    fn disabled_notice_does_not_follow_another_session() {
+        use adit_session::{clipboard_test_fixture::SyntheticRdp, RdpClientEvent};
+
+        let profile = ConnectionProfile::new("fixture", "fixture.invalid", 22, "fixture");
+        let mut manager = SessionManager::with_profiles(vec![profile.clone()]);
+        let session = manager.open_mock_session(profile.id).unwrap();
+        let other = manager.open_mock_session(profile.id).unwrap();
+        let peer = SyntheticRdp::attach(&mut manager, session);
+        peer.send_event(
+            &manager,
+            RdpClientEvent::ClipboardFileDirectionUnavailable {
+                channel_epoch: 7,
+                message: clipboard_files::LOCAL_FILE_SEND_DISABLED_NOTICE.into(),
+            },
+        );
+        manager.poll_events();
+        manager.select_session_context(session).unwrap();
+        let mut app = AditApp {
+            manager,
+            notice: clipboard_files::LOCAL_FILE_SEND_DISABLED_NOTICE.into(),
+            ..AditApp::default()
+        };
+        clear_stale_local_file_send_notice(&mut app);
+        assert_eq!(app.notice, clipboard_files::LOCAL_FILE_SEND_DISABLED_NOTICE);
+        app.manager.select_session_context(other).unwrap();
+        clear_stale_local_file_send_notice(&mut app);
+        assert!(app.notice.is_empty());
     }
 }

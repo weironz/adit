@@ -20,16 +20,20 @@
 //! `Send` data.
 
 use std::sync::mpsc::{channel, Sender};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, OnceLock,
+};
 
 use adit_session::ClipFile;
 use windows::Win32::Foundation::{LPARAM, WPARAM};
 use windows::Win32::System::Com::IDataObject;
+use windows::Win32::System::DataExchange::GetClipboardOwner;
 use windows::Win32::System::Ole::{OleInitialize, OleSetClipboard, OleUninitialize};
 use windows::Win32::System::Threading::GetCurrentThreadId;
 use windows::Win32::UI::WindowsAndMessaging::{
-    DispatchMessageW, GetMessageW, PeekMessageW, PostThreadMessageW, TranslateMessage, MSG,
-    PM_NOREMOVE, WM_APP,
+    DispatchMessageW, GetMessageW, GetWindowThreadProcessId, PeekMessageW, PostThreadMessageW,
+    TranslateMessage, MSG, PM_NOREMOVE, WM_APP,
 };
 
 use super::bridge::ChunkBridge;
@@ -50,9 +54,41 @@ pub(crate) struct Offer {
 struct OleThread {
     offers: Mutex<Sender<Offer>>,
     thread_id: u32,
+    owns_remote_object: Arc<AtomicBool>,
 }
 
 static OLE_THREAD: OnceLock<Option<OleThread>> = OnceLock::new();
+
+/// A sequence alone is not proof of ownership: another application can copy
+/// between OleSetClipboard and our subsequent observation. Check the actual
+/// clipboard owner as well, and never start the OLE thread just for a query.
+pub(super) fn owns_clipboard(sequence: u32) -> bool {
+    let Some(Some(thread)) = OLE_THREAD.get() else {
+        return false;
+    };
+    sequence != 0
+        && thread.owns_remote_object.load(Ordering::Acquire)
+        && clipboard_owned_by_thread(thread.thread_id)
+        && super::clipboard_sequence() == sequence
+}
+
+fn clipboard_owned_by_thread(thread_id: u32) -> bool {
+    // SAFETY: the owner is an OS-provided window handle; querying its thread
+    // does not dereference any application-owned pointer.
+    unsafe {
+        GetClipboardOwner()
+            .ok()
+            .is_some_and(|owner| GetWindowThreadProcessId(owner, None) == thread_id)
+    }
+}
+
+struct OwnershipOnExit(Arc<AtomicBool>);
+
+impl Drop for OwnershipOnExit {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
+}
 
 /// Publish a file list on the Windows clipboard.
 ///
@@ -81,6 +117,8 @@ pub(crate) fn offer_to_clipboard(offer: Offer) {
 
 fn start_ole_thread() -> Option<OleThread> {
     let (offer_tx, offer_rx) = channel::<Offer>();
+    let owns_remote_object = Arc::new(AtomicBool::new(false));
+    let worker_owns_remote_object = owns_remote_object.clone();
     // The thread id is only knowable from inside the thread, so it comes back
     // out before anything is queued to it.
     let (id_tx, id_rx) = channel::<u32>();
@@ -88,6 +126,7 @@ fn start_ole_thread() -> Option<OleThread> {
     std::thread::Builder::new()
         .name("adit-ole-clipboard".into())
         .spawn(move || {
+            let _ownership_on_exit = OwnershipOnExit(worker_owns_remote_object.clone());
             // SAFETY: OleInitialize enters an STA for this thread and is paired
             // with OleUninitialize on every path out. Nothing else on this thread
             // touches COM before it.
@@ -118,7 +157,7 @@ fn start_ole_thread() -> Option<OleThread> {
                     // Drain: several offers can be queued behind one post, and
                     // only the newest describes what the clipboard now holds.
                     if let Some(offer) = offer_rx.try_iter().last() {
-                        publish(offer);
+                        publish(offer, &worker_owns_remote_object);
                     }
                     continue;
                 }
@@ -135,11 +174,13 @@ fn start_ole_thread() -> Option<OleThread> {
     Some(OleThread {
         offers: Mutex::new(offer_tx),
         thread_id,
+        owns_remote_object,
     })
 }
 
 /// Hand one data object to the clipboard. Runs on the OLE thread only.
-fn publish(offer: Offer) {
+fn publish(offer: Offer, owns_remote_object: &AtomicBool) {
+    owns_remote_object.store(false, Ordering::Release);
     let object: IDataObject =
         FileDataObject::new(offer.files, offer.bridge, offer.request, offer.chunk)
             .with_liveness(offer.current)
@@ -158,6 +199,17 @@ fn publish(offer: Offer) {
             // retrying: the remote's next copy re-offers, and a retry loop on
             // this thread would delay that.
             let _ = error;
+        } else {
+            let sequence = super::clipboard_sequence();
+            if sequence != 0
+                && clipboard_owned_by_thread(GetCurrentThreadId())
+                && super::clipboard_sequence() == sequence
+            {
+                owns_remote_object.store(true, Ordering::Release);
+            }
         }
     }
 }
+
+#[cfg(test)]
+mod tests;

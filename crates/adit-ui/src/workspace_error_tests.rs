@@ -33,8 +33,64 @@ fn view_signature(app: &AditApp) -> Vec<(Tag, usize)> {
     result
 }
 
+fn dispatch_keyboard(app: &mut AditApp) {
+    for pressed in [true, false] {
+        let event = if pressed {
+            keyboard::Event::KeyPressed {
+                key: Key::Character("a".into()),
+                modified_key: Key::Character("a".into()),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyA),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: Some("a".into()),
+                repeat: false,
+            }
+        } else {
+            keyboard::Event::KeyReleased {
+                key: Key::Character("a".into()),
+                modified_key: Key::Character("a".into()),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyA),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+            }
+        };
+        let _ = update(app, Message::KeyboardInput(event));
+    }
+}
+
+fn dispatch_inputs(app: &mut AditApp) {
+    // The same focused, unblocked dispatch must work before Error and be
+    // rejected afterwards, including queued messages from the old surface.
+    app.terminal_focused = true;
+    dispatch_keyboard(app);
+    let _ = update(app, Message::RdpPointerMoved(Point::new(1.0, 1.0)));
+    let _ = update(app, Message::RdpPressed(mouse::Button::Left));
+    let _ = update(app, Message::RdpReleased(mouse::Button::Left));
+    let _ = update(
+        app,
+        Message::RdpScrolled(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+    );
+    for pressed in [true, false] {
+        app.manager
+            .send_rdp_input_to_active(RdpInput::Unicode { ch: 'a', pressed });
+    }
+    app.manager.send_rdp_input_to_active(RdpInput::Resize {
+        width: 4,
+        height: 4,
+    });
+}
+
+fn wait_for_file(path: &std::path::Path, description: &str) {
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !path.is_file() {
+        assert!(Instant::now() < deadline, "{description}");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+}
+
 fn run_worker() {
     let mode = std::env::var(MODE_ENV).unwrap();
+    let live = mode.starts_with("live_");
     let report = std::path::PathBuf::from(std::env::var_os(REPORT_ENV).unwrap());
     let scratch = report.parent().unwrap().to_owned();
     let mut profile = ConnectionProfile::new("synthetic RDP error", "adit.invalid", 3389, "");
@@ -56,12 +112,29 @@ fn run_worker() {
         .unwrap();
     app.main_view = MainView::Terminal;
     let deadline = Instant::now() + Duration::from_secs(8);
-    while app.rdp_tiles.is_empty() {
+    loop {
         app.manager.poll_events();
         let _ = update(&mut app, Message::RdpTick);
+        let connected = app
+            .manager
+            .active_session_summary()
+            .is_some_and(|summary| summary.status == SessionStatus::Connected);
+        let tile_cached = app
+            .manager
+            .active_rdp_frame_if_newer(0)
+            .is_some_and(|frame| {
+                frame.width == 2
+                    && frame.height == 2
+                    && frame.rgba == [10, 20, 30, 255].repeat(4)
+                    && frame.generation == app.rdp_frame_generation
+                    && !app.rdp_tiles.is_empty()
+            });
+        if connected && tile_cached {
+            break;
+        }
         assert!(
             Instant::now() < deadline,
-            "public synthetic IPC frame must reach the UI"
+            "Connected and the synthetic IPC tile must reach the UI cache"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -71,6 +144,14 @@ fn run_worker() {
     );
     assert_eq!(app.rdp_surface_size, Some((2, 2)));
     assert!(app.manager.active_desktop_error().is_none());
+    let deadline = Instant::now() + Duration::from_secs(8);
+    while !app.manager.test_rdp_helper_attached(session) {
+        assert!(
+            Instant::now() < deadline,
+            "synthetic helper must be attached"
+        );
+        std::thread::sleep(Duration::from_millis(2));
+    }
     let healthy_view = view_signature(&app);
     let stale_count = app.rdp_tiles.len();
     let _release = ReleaseHold(report.with_extension("release"));
@@ -79,6 +160,22 @@ fn run_worker() {
         extended: false,
         pressed: true,
     });
+    if live {
+        dispatch_inputs(&mut app);
+        app.manager.test_rdp_fifo_barrier(session);
+        let preflight = report.with_extension("preflight");
+        wait_for_file(&preflight, "connected input FIFO barrier");
+        assert_eq!(
+            std::fs::read_to_string(preflight).unwrap(),
+            "key_down,key_up,move,button_down,button_up,wheel,unicode_down,unicode_up,resize",
+            "the tested input paths must actually reach the live helper before Error"
+        );
+        // A real HostMsg::Error now terminates the writer. Inject only its
+        // session event here so the original live-writer gate remains testable;
+        // the fatal modes below exercise the real reader and its Close.
+        app.manager
+            .test_inject_rdp_error_with_live_writer(session, ERROR);
+    }
     let deadline = Instant::now() + Duration::from_secs(8);
     let mut handled = 0;
     while app.manager.active_desktop_error().is_none() {
@@ -86,7 +183,7 @@ fn run_worker() {
         let _ = update(&mut app, Message::RdpTick);
         assert!(
             Instant::now() < deadline,
-            "specific Error must cross the real helper pipe"
+            "specific Error must reach the session"
         );
         std::thread::sleep(Duration::from_millis(2));
     }
@@ -109,65 +206,42 @@ fn run_worker() {
         healthy_view, failed_view,
         "the interactive image tree must leave the view on error"
     );
-    // These are production dispatcher messages that could already have been
-    // queued when the frame was visible. KeyboardInput is global (the RDP
-    // branch intentionally precedes terminal_focused), not a widget click.
-    app.terminal_focused = false;
-    for pressed in [true, false] {
-        let event = if pressed {
-            keyboard::Event::KeyPressed {
-                key: Key::Character("a".into()),
-                modified_key: Key::Character("a".into()),
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyA),
-                location: keyboard::Location::Standard,
-                modifiers: keyboard::Modifiers::empty(),
-                text: Some("a".into()),
-                repeat: false,
-            }
-        } else {
-            keyboard::Event::KeyReleased {
-                key: Key::Character("a".into()),
-                modified_key: Key::Character("a".into()),
-                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyA),
-                location: keyboard::Location::Standard,
-                modifiers: keyboard::Modifiers::empty(),
-            }
-        };
-        let _ = update(&mut app, Message::KeyboardInput(event));
-    }
-    let _ = update(&mut app, Message::RdpPointerMoved(Point::new(1.0, 1.0)));
-    let _ = update(&mut app, Message::RdpPressed(mouse::Button::Left));
-    let _ = update(&mut app, Message::RdpReleased(mouse::Button::Left));
-    let _ = update(
-        &mut app,
-        Message::RdpScrolled(mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+    dispatch_inputs(&mut app);
+    assert!(
+        crate::input::remote_workspace_accepts_input(&app),
+        "a focus or modal gate must not mask the session input gate"
     );
-    for pressed in [true, false] {
-        app.manager
-            .send_rdp_input_to_active(RdpInput::Unicode { ch: 'a', pressed });
+    // Preserve the original global-key case as well: these events can already
+    // be queued when the desktop loses focus after the error.
+    app.terminal_focused = false;
+    dispatch_keyboard(&mut app);
+    assert!(!crate::input::remote_workspace_accepts_input(&app));
+    app.terminal_focused = true;
+    if live {
+        // This synthetic marker shares the real writer FIFO with inputs.
+        // Reaching it proves the zero count is not a closed-writer artifact.
+        app.manager.test_rdp_fifo_barrier(session);
     }
-    app.manager.send_rdp_input_to_active(RdpInput::Resize {
-        width: 4,
-        height: 4,
-    });
-    // This empty metadata-only control message uses the same stdio writer
-    // FIFO, so the peer has read every earlier Input when it reports counts.
-    // No local clipboard or real file content is accessed.
-    app.manager.offer_rdp_files_to_active(Vec::new());
-    let deadline = Instant::now() + Duration::from_secs(8);
-    while !report.is_file() {
-        assert!(Instant::now() < deadline, "post-error peer FIFO barrier");
-        std::thread::sleep(Duration::from_millis(2));
-    }
+    wait_for_file(&report, "post-error peer evidence");
+    let evidence = if live {
+        format!("mode={mode}\ninputs_after_error=0\nbarrier=true\npipe_held_open=true\n")
+    } else {
+        format!("mode={mode}\ninputs_after_error=0\nclose_received=true\nstdin_eof=true\nstdout_held_open=true\n")
+    };
     assert_eq!(
         std::fs::read_to_string(&report).unwrap(),
-        format!("mode={mode}\ninputs_after_error=0\nbarrier=true\npipe_held_open=true\n"),
-        "Error must block global keys, queued pointer input, Unicode and resize before the peer closes"
+        evidence,
+        "the peer must report the expected live-writer or fatal-close evidence"
     );
     assert_eq!(app.manager.active_desktop_error(), Some(ERROR));
     assert_eq!(
         handled, 1,
-        "input isolation was checked while the peer was still open"
+        "the peer must still hold stdout open after the error"
+    );
+    assert_eq!(
+        app.manager.poll_events(),
+        0,
+        "no Closed/EOF may arrive before the peer is released"
     );
     std::fs::write(report.with_extension("release"), b"release").unwrap();
     let deadline = Instant::now() + Duration::from_secs(8);
@@ -182,7 +256,10 @@ fn run_worker() {
     }
     assert_eq!(
         std::fs::read_to_string(report.with_extension("finished")).unwrap(),
-        format!("mode={mode}\nclosed_message_sent={}\n", mode == "closed")
+        format!(
+            "mode={mode}\nclosed_message_sent={}\n",
+            mode.ends_with("_closed")
+        )
     );
     // Compare the actual production tree against its existing error-only
     // placeholder. This catches the old cached-image/mouse_area branch even
@@ -210,8 +287,9 @@ fn run_worker() {
         SessionStatus::Error
     );
     app.manager.close(session);
+    let error_source = if live { "injected_event" } else { "helper_ipc" };
     println!(
-        "synthetic_ipc mode={mode} had_frame=true held_after_error=true input_count=0 specific_error_preserved=true shutdown_event_consumed=true"
+        "synthetic_ipc mode={mode} error_source={error_source} had_frame=true held_after_error=true input_count=0 specific_error_preserved=true shutdown_event_consumed=true"
     );
 }
 
@@ -230,7 +308,7 @@ fn connected_rdp_error_replaces_cached_interactive_surface() {
         std::path::Path::new(&helper).is_file(),
         "IPC peer must be built first"
     );
-    for mode in ["closed", "eof"] {
+    for mode in ["live_closed", "live_eof", "fatal_closed", "fatal_eof"] {
         let scratch = std::env::temp_dir().join(format!("adit-rdp-error-ui-{}", SessionId::new()));
         std::fs::create_dir_all(&scratch).unwrap();
         let mut child = Command::new(std::env::current_exe().unwrap())
@@ -242,6 +320,8 @@ fn connected_rdp_error_replaces_cached_interactive_surface() {
             ])
             .env(WORKER_ENV, "1")
             .env("ADIT_RDP_HOST", &helper)
+            .env("ADIT_CONFIG_DIR", scratch.join("config"))
+            .env_remove("ADIT_RDP_FRAMES")
             .env(MODE_ENV, mode)
             .env(REPORT_ENV, scratch.join("peer.txt"))
             .stdin(Stdio::null())

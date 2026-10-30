@@ -56,6 +56,34 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         .width(Fill)
         .into();
 
+    // The status bar is hidden over a fullscreen desktop. Keep its errors and
+    // file-safety notice visible without changing the desktop's layout or input.
+    let safety = app
+        .manager
+        .active_session()
+        .and_then(|session| app.manager.rdp_local_file_safety_notice(session));
+    let policy = app
+        .manager
+        .active_session()
+        .filter(|_| native_windows::owns_selected_session(app))
+        .and_then(clipboard_files::local_file_send_disabled_notice);
+    let clipboard = rdp_clipboard_policy::for_selected_session(app);
+    let clipboard_text = clipboard.map(|status| status.inline());
+    let warning = safety.is_some()
+        || policy.is_some()
+        || app.last_error.is_some()
+        || clipboard.is_some_and(|status| status.is_failed());
+    let base: Element<'_, Message> = match desktop_overlay_notice(
+        rdp_fullscreen,
+        app.last_error.as_deref(),
+        safety,
+        policy,
+        clipboard_text.as_deref(),
+    ) {
+        Some(notice) => fullscreen_notice_overlay(base, notice, warning),
+        None => base,
+    };
+
     // Menus and the connection dialog float above the chrome instead of
     // reserving layout space, so opening one never shifts the content.
     let mut layers: Vec<Element<'_, Message>> = vec![base];
@@ -166,6 +194,64 @@ pub(crate) fn view_for(app: &AditApp, window: Option<window::Id>) -> Element<'_,
         stack(layers).into()
     };
     accessibility::scope(window, a11y_namespace, content)
+}
+
+fn desktop_overlay_notice(
+    rdp_fullscreen: bool,
+    error: Option<&str>,
+    safety: Option<&str>,
+    policy: Option<&str>,
+    clipboard: Option<&str>,
+) -> Option<String> {
+    if !rdp_fullscreen && policy.is_none() {
+        return None;
+    }
+    let mut messages = Vec::new();
+    for message in [clipboard.filter(|_| rdp_fullscreen), safety, policy, error]
+        .into_iter()
+        .flatten()
+    {
+        if !message.is_empty() {
+            let message = runtime(message);
+            if !messages.contains(&message) {
+                messages.push(message);
+            }
+        }
+    }
+    (!messages.is_empty()).then(|| messages.join(" | "))
+}
+
+fn fullscreen_notice_overlay<'a, Renderer>(
+    base: iced::Element<'a, Message, Theme, Renderer>,
+    notice: String,
+    warning: bool,
+) -> iced::Element<'a, Message, Theme, Renderer>
+where
+    Renderer: iced::advanced::text::Renderer + 'a,
+{
+    let banner = container(text(notice).size(12).color(primary_text()))
+        .padding([8, 14])
+        .width(Fill)
+        .style(move |_| container::Style {
+            background: Some(
+                if warning {
+                    danger_background()
+                } else {
+                    surface_alt()
+                }
+                .into(),
+            ),
+            ..container::Style::default()
+        });
+    // Text and containers do not capture events or claim pointer interaction;
+    // the stack lays out the desktop as its base layer at its original size.
+    iced::widget::stack![
+        base,
+        column![Space::new().height(Fill), banner]
+            .width(Fill)
+            .height(Fill)
+    ]
+    .into()
 }
 
 pub(crate) fn menu_bar(app: &AditApp) -> Element<'_, Message> {
@@ -367,4 +453,170 @@ pub(crate) fn menu_dropdown_button(
         .style(|_theme, status| menu_command_button_style(status))
         .on_press(Message::RunMenu(command))
         .into()
+}
+
+#[cfg(test)]
+mod fullscreen_notice_tests {
+    use super::*;
+    use iced::advanced::{
+        clipboard, layout, renderer, widget::Tree, Clipboard, Layout, Shell, Widget,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    type Observations = Rc<RefCell<Vec<(iced::Event, iced::Rectangle, Option<Point>)>>>;
+
+    struct DesktopProbe(Observations);
+
+    impl Widget<Message, Theme, ()> for DesktopProbe {
+        fn size(&self) -> iced::Size<Length> {
+            iced::Size::new(Fill, Fill)
+        }
+
+        fn layout(&mut self, _: &mut Tree, _: &(), limits: &layout::Limits) -> layout::Node {
+            layout::Node::new(limits.resolve(Fill, Fill, iced::Size::ZERO))
+        }
+
+        fn draw(
+            &self,
+            _: &Tree,
+            _: &mut (),
+            _: &Theme,
+            _: &renderer::Style,
+            _: Layout<'_>,
+            _: mouse::Cursor,
+            _: &iced::Rectangle,
+        ) {
+        }
+
+        fn update(
+            &mut self,
+            _: &mut Tree,
+            event: &iced::Event,
+            layout: Layout<'_>,
+            cursor: mouse::Cursor,
+            _: &(),
+            _: &mut dyn Clipboard,
+            _: &mut Shell<'_, Message>,
+            _: &iced::Rectangle,
+        ) {
+            self.0
+                .borrow_mut()
+                .push((event.clone(), layout.bounds(), cursor.position()));
+        }
+    }
+
+    fn observe_desktop(banner: Option<bool>) -> Vec<(iced::Event, iced::Rectangle, Option<Point>)> {
+        let observations = Observations::default();
+        let mut view: iced::Element<'_, Message, Theme, ()> =
+            iced::Element::new(DesktopProbe(observations.clone()));
+        if let Some(warning) = banner {
+            view = fullscreen_notice_overlay(view, "synthetic clipboard status".into(), warning);
+        }
+        let mut tree = Tree::new(view.as_widget());
+        let size = iced::Size::new(960.0, 640.0);
+        let node = view
+            .as_widget_mut()
+            .layout(&mut tree, &(), &layout::Limits::new(size, size));
+        let point = Point::new(40.0, 635.0);
+        if banner.is_some() {
+            let overlay = Layout::new(&node).children().nth(1).unwrap();
+            let banner = overlay.children().nth(1).unwrap();
+            assert!(
+                banner.bounds().contains(point),
+                "exercise input over the banner itself"
+            );
+        }
+        let viewport = iced::Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width: size.width,
+            height: size.height,
+        };
+        let events = [
+            iced::Event::Mouse(mouse::Event::CursorMoved { position: point }),
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: keyboard::Key::Character("x".into()),
+                modified_key: keyboard::Key::Character("x".into()),
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyX),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::default(),
+                text: Some("x".into()),
+                repeat: false,
+            }),
+        ];
+        for event in events {
+            let mut messages = Vec::new();
+            let mut shell = Shell::new(&mut messages);
+            view.as_widget_mut().update(
+                &mut tree,
+                &event,
+                Layout::new(&node),
+                mouse::Cursor::Available(point),
+                &(),
+                &mut clipboard::Null,
+                &mut shell,
+                &viewport,
+            );
+            assert!(!shell.is_event_captured());
+        }
+        let result = observations.borrow().clone();
+        result
+    }
+
+    #[test]
+    fn fullscreen_error_and_safety_are_visible_together() {
+        assert_eq!(
+            desktop_overlay_notice(false, Some("error"), Some("safety"), None, None),
+            None
+        );
+        assert_eq!(desktop_overlay_notice(true, None, None, None, None), None);
+        assert_eq!(
+            desktop_overlay_notice(true, Some("error"), None, None, None).as_deref(),
+            Some("error")
+        );
+        assert_eq!(
+            desktop_overlay_notice(true, Some("error"), Some("safety"), None, None).as_deref(),
+            Some("safety | error")
+        );
+        assert_eq!(
+            desktop_overlay_notice(false, None, Some("disabled"), Some("disabled"), None)
+                .as_deref(),
+            Some("disabled")
+        );
+        assert_eq!(
+            desktop_overlay_notice(false, None, None, Some("disabled"), None).as_deref(),
+            Some("disabled")
+        );
+        assert_eq!(
+            desktop_overlay_notice(true, Some("error"), Some("safety"), None, Some("pending"))
+                .as_deref(),
+            Some("pending | safety | error")
+        );
+        assert_eq!(
+            desktop_overlay_notice(false, None, None, None, Some("pending")),
+            None
+        );
+    }
+
+    #[test]
+    fn fullscreen_banner_does_not_move_desktop_or_capture_input() {
+        let normal = observe_desktop(None);
+        let with_banner = observe_desktop(Some(true));
+        assert_eq!(normal.len(), 4);
+        assert_eq!(with_banner, normal);
+        assert_eq!(observe_desktop(Some(false)), normal);
+        assert_eq!(
+            normal[0].1,
+            iced::Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 960.0,
+                height: 640.0
+            }
+        );
+        assert_eq!(normal[0].2, Some(Point::new(40.0, 635.0)));
+    }
 }

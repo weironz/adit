@@ -6,11 +6,13 @@
 //! channel and emits [`HostMsg`]s to a std channel. The [`crate::host`] layer
 //! bridges those channels to the child process's stdin/stdout.
 
-use std::sync::mpsc as std_mpsc;
+use std::collections::VecDeque;
 use std::sync::Arc;
 
 use crate::display::{self, SharedDisplay};
-use adit_rdp_proto::{ClipFile, ConnectRequest, HostMsg, InputEvent, PointerUpdate};
+use adit_rdp_proto::{
+    ClipFile, ClipboardFileRequestId, ConnectRequest, HostMsg, InputEvent, PointerUpdate,
+};
 use ironrdp_connector::{ClientConnector, ConnectionResult, ServerName};
 use ironrdp_displaycontrol::client::DisplayControlClient;
 use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
@@ -24,10 +26,10 @@ use ironrdp_tokio::reqwest::ReqwestNetworkClient;
 use ironrdp_tokio::{split_tokio_framed, FramedWrite, TokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
-use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::clipboard::{self, SharedClipboard};
 use crate::egfx::{self, EgfxHandler, SharedEgfx};
+use crate::host::{HostSendError, HostSender, InputEnd, SessionInput};
 use crate::{build_connector_config, input::map_input, RdpError};
 
 /// A command from the app for the session loop.
@@ -39,15 +41,31 @@ use crate::{build_connector_config, input::map_input, RdpError};
 #[derive(Debug)]
 pub(crate) enum SessionCmd {
     Input(InputEvent),
+    ReplaceableInput(std::sync::Arc<std::sync::Mutex<Option<InputEvent>>>),
+    ClipboardTextForRevision {
+        stamp: adit_rdp_proto::ClipboardStamp,
+        text: String,
+    },
+    ClipboardImageForRevision {
+        stamp: adit_rdp_proto::ClipboardStamp,
+        image: Vec<u8>,
+    },
+    ClipboardPolicyChanged,
     /// Offer a locally-copied image to the remote clipboard (raw CF_DIB).
     ClipboardImage(Vec<u8>),
     /// Offer a local file selection to the remote clipboard (metadata only).
-    ClipboardFiles(Vec<ClipFile>),
+    ClipboardFiles {
+        generation: u64,
+        files: Vec<ClipFile>,
+    },
+    /// A local file copy replaced text or an image, but its metadata was discarded.
+    LocalFileOfferRejected,
     /// The app read the bytes the remote asked for, or failed to.
     FileContents {
-        stream_id: u32,
+        request: ClipboardFileRequestId,
         data: Option<Vec<u8>>,
     },
+    SuspendLocalFileDirection,
     /// The app wants a byte range of a file the remote offered.
     RequestFileContents {
         generation: u64,
@@ -56,6 +74,106 @@ pub(crate) enum SessionCmd {
         offset: u64,
         length: u32,
     },
+}
+
+impl SessionCmd {
+    pub(crate) fn queued_bytes(&self) -> usize {
+        let payload = match self {
+            Self::Input(InputEvent::ClipboardText(text))
+            | Self::ClipboardTextForRevision { text, .. } => text.capacity(),
+            Self::Input(InputEvent::MonitorLayout(monitors)) => monitors
+                .capacity()
+                .saturating_mul(std::mem::size_of::<adit_rdp_proto::Monitor>()),
+            Self::ClipboardImage(image) | Self::ClipboardImageForRevision { image, .. } => {
+                image.capacity()
+            }
+            Self::ClipboardFiles { files, .. } => files.iter().fold(
+                files
+                    .capacity()
+                    .saturating_mul(std::mem::size_of::<ClipFile>()),
+                |size, file| size.saturating_add(file.name.capacity()),
+            ),
+            Self::FileContents { data, .. } => data.as_ref().map_or(0, Vec::capacity),
+            Self::Input(_)
+            | Self::ReplaceableInput(_)
+            | Self::LocalFileOfferRejected
+            | Self::ClipboardPolicyChanged
+            | Self::RequestFileContents { .. }
+            | Self::SuspendLocalFileDirection => 0,
+        };
+        std::mem::size_of::<Self>().saturating_add(payload)
+    }
+}
+
+fn input_end_error(reason: InputEnd) -> Option<&'static str> {
+    match reason {
+        InputEnd::Close => None,
+        InputEnd::Overloaded => Some("RDP 辅助进程的输入队列已满，会话已关闭"),
+        InputEnd::InvalidFrame => Some("RDP 辅助进程收到无效的控制消息，会话已关闭"),
+    }
+}
+
+const LOCAL_FILES_DISABLED_NOTICE: &str =
+    "RDP 本地文件发送至远端已暂时禁用；文字、图片和远端文件接收仍可使用，桌面连接保持正常。";
+
+/// Seal this direction before a connector can create or use a CLIPRDR channel.
+fn new_session_clipboard(host: &HostSender) -> SharedClipboard {
+    let clipboard = clipboard::new_shared_for_policy(host.clipboard_policy_epoch());
+    clipboard::suspend_local_file_direction(&clipboard);
+    // Send the acknowledgement first so the specific, persistent explanation
+    // is the last notice seen by the app. Neither notice can close the desktop.
+    clipboard::flush_local_file_direction_notices(&clipboard, host);
+    let _ = host.send(HostMsg::ClipboardFileDirectionUnavailable {
+        channel_epoch: 0,
+        message: LOCAL_FILES_DISABLED_NOTICE.into(),
+    });
+    clipboard
+}
+
+fn reject_local_file_offer(clipboard: &SharedClipboard, generation: u64, files: Vec<ClipFile>) {
+    if files.is_empty() {
+        clipboard::offer_local_files(clipboard, generation, files);
+    } else {
+        drop(files);
+        clipboard::reject_local_file_offer(clipboard);
+    }
+}
+
+fn handle_active_clipboard_command(command: SessionCmd, clipboard: &SharedClipboard) {
+    match command {
+        SessionCmd::Input(InputEvent::ClipboardText(text)) => {
+            clipboard::offer_local_text(clipboard, text);
+        }
+        SessionCmd::ClipboardImage(image) => clipboard::offer_local_image(clipboard, image),
+        SessionCmd::ClipboardTextForRevision { stamp, text } => {
+            clipboard::offer_bound_text(clipboard, stamp, text)
+        }
+        SessionCmd::ClipboardImageForRevision { stamp, image } => {
+            clipboard::offer_bound_image(clipboard, stamp, image)
+        }
+        SessionCmd::ClipboardFiles { generation, files } => {
+            reject_local_file_offer(clipboard, generation, files);
+        }
+        SessionCmd::LocalFileOfferRejected => clipboard::reject_local_file_offer(clipboard),
+        SessionCmd::FileContents { request, data: _ } => {
+            // Keep the failure bookkeeping, but never pass local bytes to the
+            // clipboard backend, even for an unsolicited or stale response.
+            clipboard::submit_file_contents(clipboard, request, None);
+        }
+        SessionCmd::SuspendLocalFileDirection => {
+            clipboard::suspend_local_file_direction(clipboard);
+        }
+        SessionCmd::RequestFileContents {
+            generation,
+            stream_id,
+            index,
+            offset,
+            length,
+        } => clipboard::request_file_contents(
+            clipboard, generation, stream_id, index, offset, length,
+        ),
+        _ => unreachable!("only clipboard commands are routed here"),
+    }
 }
 
 /// A type-erased upgraded (post-TLS) framed transport.
@@ -74,8 +192,8 @@ const MAX_REDIRECTS: u32 = 5;
 /// PDU, reconnect to the target carrying the routing token, and repeat.
 pub(crate) async fn run_session(
     mut request: ConnectRequest,
-    mut input_rx: tokio_mpsc::UnboundedReceiver<SessionCmd>,
-    host_tx: std_mpsc::Sender<HostMsg>,
+    mut input_rx: SessionInput,
+    host_tx: HostSender,
 ) -> Result<(), RdpError> {
     // Shared framebuffer the EGFX handler (running inside `ActiveStage::process`)
     // composites into; the active loop samples it and emits tiles.
@@ -93,7 +211,7 @@ pub(crate) async fn run_session(
     // Clipboard state outlives a single CLIPRDR channel on purpose: a GNOME
     // system-mode handover redirects and rebuilds the channel, and the text the
     // user copied did not change under them.
-    let shared_clipboard = clipboard::new_shared();
+    let shared_clipboard = new_session_clipboard(&host_tx);
     let mut routing_token: Option<Vec<u8>> = None;
     // One-time credentials for the RDSTLS handover auth, populated on a redirect.
     let mut rdstls_creds: Option<crate::rdstls::RdstlsCreds> = None;
@@ -106,42 +224,28 @@ pub(crate) async fn run_session(
         // futures borrowing `request` / `routing_token` are dropped before we may
         // reassign those on a redirect.
         let (connection_result, framed) = {
-            let connect_fut = connect(
+            let connect_fut = Box::pin(connect(
                 &request,
                 &shared_egfx,
                 &shared_clipboard,
                 &shared_display,
                 routing_token.as_deref(),
                 rdstls_creds.as_ref(),
-            );
-            tokio::pin!(connect_fut);
-            let deadline = tokio::time::sleep(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS));
-            tokio::pin!(deadline);
-            loop {
-                tokio::select! {
-                    result = &mut connect_fut => {
-                        match result {
-                            Ok(v) => break v,
-                            Err(e) => {
-                                tracing::error!("RDP connect failed: {e}");
-                                return Err(RdpError::Connect(e.to_string()));
-                            }
-                        }
-                    }
-                    _ = &mut deadline => {
-                        return Err(RdpError::Connect(format!(
-                            "connection timed out after {CONNECT_TIMEOUT_SECS}s"
-                        )));
-                    }
-                    msg = input_rx.recv() => {
-                        match msg {
-                            None => return Err(RdpError::ControlChannelClosed),
-                            Some(SessionCmd::Input(InputEvent::MonitorLayout(layout))) => pending_layout = Some(layout),
-                            _ => {}
-                        }
-                    }
-                }
-            }
+            ));
+            drive_handshake(
+                async {
+                    connect_fut.await.map_err(|error| {
+                        tracing::error!("RDP connect failed: {error}");
+                        RdpError::Connect(error.to_string())
+                    })
+                },
+                &mut input_rx,
+                &shared_clipboard,
+                &mut pending_layout,
+                &host_tx,
+                std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS),
+            )
+            .await?
         };
 
         // Announce the negotiated size once (the first successful connect); after a
@@ -149,31 +253,50 @@ pub(crate) async fn run_session(
         if !announced {
             announced = true;
             let desktop = connection_result.desktop_size;
-            if host_tx
-                .send(HostMsg::Connected {
+            host_tx
+                .send_when_ready(HostMsg::Connected {
                     width: desktop.width,
                     height: desktop.height,
                 })
-                .is_err()
-            {
-                return Err(RdpError::ControlChannelClosed);
-            }
+                .await
+                .map_err(|error| match error {
+                    HostSendError::Closed => RdpError::ControlChannelClosed,
+                    HostSendError::Overloaded => RdpError::Session(error.to_string()),
+                })?;
         }
 
-        match active_session(
-            framed,
-            connection_result,
-            &mut input_rx,
-            &host_tx,
-            &shared_egfx,
-            &shared_clipboard,
-            (&shared_display, &mut pending_layout),
-        )
-        .await
-        .map_err(|e| RdpError::Session(e.to_string()))?
-        {
+        let active_end = input_rx.end.clone();
+        let active = async {
+            Box::pin(active_session(
+                framed,
+                connection_result,
+                &mut input_rx,
+                &host_tx,
+                &shared_egfx,
+                &shared_clipboard,
+                (&shared_display, &mut pending_layout),
+            ))
+            .await
+            .map_err(|e| RdpError::Session(e.to_string()))
+        };
+        let Some(active_result) = guard_active_session(active, active_end).await? else {
+            return Ok(());
+        };
+        match active_result {
             None => return Ok(()),
             Some(redir) => {
+                // The old server is already gone. Fail its reads and revoke its
+                // advertised files before DNS/TCP/TLS for the new server begins.
+                guard_handshake(
+                    async {
+                        clipboard::leave_channel(&shared_clipboard, &host_tx)
+                            .await
+                            .map_err(|error| RdpError::Session(error.to_string()))
+                    },
+                    &mut input_rx.end,
+                    std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS),
+                )
+                .await?;
                 if pending_layout.is_none() {
                     let sent = shared_display
                         .lock()
@@ -223,6 +346,202 @@ pub(crate) async fn run_session(
             }
         }
     }
+}
+
+/// Allow the active loop to perform its normal graceful shutdown; a Close must
+/// still terminate it when output backpressure prevents the loop from polling.
+pub(crate) async fn guard_active_session<F, T>(
+    active: F,
+    mut end: tokio::sync::watch::Receiver<Option<InputEnd>>,
+) -> Result<Option<T>, RdpError>
+where
+    F: std::future::Future<Output = Result<T, RdpError>>,
+{
+    tokio::pin!(active);
+    let reason = loop {
+        if let Some(reason) = *end.borrow_and_update() {
+            break reason;
+        }
+        tokio::select! {
+            biased;
+            result = &mut active => return result.map(Some),
+            changed = end.changed() => {
+                if changed.is_err() { break InputEnd::Close; }
+            }
+        }
+    };
+    if let Some(message) = input_end_error(reason) {
+        return Err(RdpError::Session(message.into()));
+    }
+    match tokio::time::timeout(std::time::Duration::from_millis(100), &mut active).await {
+        Ok(Ok(result)) => Ok(Some(result)),
+        Ok(Err(_)) | Err(_) => Ok(None),
+    }
+}
+
+/// Keep the deadline and shutdown signal live while output waits for capacity.
+pub(crate) async fn guard_handshake<F, T>(
+    work: F,
+    end: &mut tokio::sync::watch::Receiver<Option<InputEnd>>,
+    timeout: std::time::Duration,
+) -> Result<T, RdpError>
+where
+    F: std::future::Future<Output = Result<T, RdpError>>,
+{
+    let stopped = async {
+        loop {
+            let reason = *end.borrow_and_update();
+            if let Some(reason) = reason {
+                return Err(input_end_error(reason)
+                    .map_or(RdpError::ControlChannelClosed, |message| {
+                        RdpError::Session(message.into())
+                    }));
+            }
+            if end.changed().await.is_err() {
+                return Err(RdpError::ControlChannelClosed);
+            }
+        }
+    };
+    tokio::select! {
+        biased;
+        result = stopped => result,
+        _ = tokio::time::sleep(timeout) => Err(RdpError::Connect(format!(
+            "connection timed out after {}s", timeout.as_secs()
+        ))),
+        result = work => result,
+    }
+}
+
+/// The completed connect is a barrier for commands already queued when the
+/// new channel became ready.
+pub(crate) async fn drive_handshake<F, T>(
+    connect: F,
+    input: &mut SessionInput,
+    clipboard: &SharedClipboard,
+    pending_layout: &mut Option<Vec<adit_rdp_proto::Monitor>>,
+    host: &HostSender,
+    timeout: std::time::Duration,
+) -> Result<T, RdpError>
+where
+    F: std::future::Future<Output = Result<T, RdpError>>,
+{
+    let SessionInput {
+        commands,
+        end,
+        ordering,
+        ..
+    } = input;
+    let work = async {
+        tokio::pin!(connect);
+        let mut clipboard_tick = tokio::time::interval(std::time::Duration::from_millis(50));
+        clipboard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            clipboard::flush_app_actions(clipboard, host)
+                .await
+                .map_err(|error| RdpError::Session(error.to_string()))?;
+            tokio::select! {
+                _ = clipboard_tick.tick() => {}
+                command = commands.recv() => match command {
+                    Some(queued) => handle_handshake_command(
+                        queued.command, clipboard, pending_layout, host,
+                    ).await?,
+                    None => return Err(RdpError::ControlChannelClosed),
+                },
+                result = &mut connect => {
+                    let connected = result?;
+                    // A ready callback and an input enqueue can happen in the
+                    // same connect poll. Apply that finite snapshot before any
+                    // wire action on the newly connected channel is pumped.
+                    let queued_at_connect = {
+                        let _ordering = ordering.lock().unwrap_or_else(|error| error.into_inner());
+                        commands.len()
+                    };
+                    for _ in 0..queued_at_connect {
+                        let Ok(queued) = commands.try_recv() else { break };
+                        handle_handshake_command(
+                            queued.command, clipboard, pending_layout, host,
+                        ).await?;
+                    }
+                    clipboard::flush_app_actions(clipboard, host)
+                        .await
+                        .map_err(|error| RdpError::Session(error.to_string()))?;
+                    return Ok(connected);
+                }
+            }
+        }
+    };
+    guard_handshake(work, end, timeout).await
+}
+
+/// Keep the GUI-owned clipboard current while a redirect rebuilds CLIPRDR.
+/// Input destined for the old desktop cannot be replayed on the new connection.
+pub(crate) async fn handle_handshake_command(
+    command: SessionCmd,
+    clipboard: &SharedClipboard,
+    pending_layout: &mut Option<Vec<adit_rdp_proto::Monitor>>,
+    host: &HostSender,
+) -> Result<(), RdpError> {
+    if matches!(&command, SessionCmd::SuspendLocalFileDirection) {
+        // An already-decoded suspension must suppress a queued Ready notice and
+        // old file actions before this handshake flush publishes either one.
+        clipboard::suspend_local_file_direction(clipboard);
+    }
+    // Deliver earlier remote revocations before responding to a later command.
+    clipboard::flush_app_actions(clipboard, host)
+        .await
+        .map_err(|error| RdpError::Session(error.to_string()))?;
+    match command {
+        SessionCmd::Input(InputEvent::MonitorLayout(layout)) => *pending_layout = Some(layout),
+        SessionCmd::Input(InputEvent::ClipboardText(text)) => {
+            clipboard::offer_local_text(clipboard, text);
+        }
+        SessionCmd::ClipboardImage(image) => clipboard::offer_local_image(clipboard, image),
+        SessionCmd::ClipboardTextForRevision { stamp, text } => {
+            clipboard::offer_bound_text(clipboard, stamp, text)
+        }
+        SessionCmd::ClipboardImageForRevision { stamp, image } => {
+            clipboard::offer_bound_image(clipboard, stamp, image)
+        }
+        SessionCmd::ClipboardPolicyChanged => {
+            let (policy_epoch, enabled) = clipboard::apply_shared_policy(clipboard);
+            host.send(HostMsg::ClipboardPolicyApplied {
+                policy_epoch,
+                enabled,
+            })
+            .map_err(|error| RdpError::Session(error.to_string()))?;
+        }
+        SessionCmd::ClipboardFiles { generation, files } => {
+            reject_local_file_offer(clipboard, generation, files);
+        }
+        SessionCmd::LocalFileOfferRejected => clipboard::reject_local_file_offer(clipboard),
+        SessionCmd::SuspendLocalFileDirection => {
+            clipboard::suspend_local_file_direction(clipboard);
+        }
+        SessionCmd::RequestFileContents {
+            generation,
+            stream_id,
+            ..
+        } => {
+            // The old channel is gone, so explicitly fail a paste racing a redirect.
+            host.send_when_ready(HostMsg::FileContents {
+                generation,
+                stream_id,
+                data: None,
+            })
+            .await
+            .map_err(|error| match error {
+                HostSendError::Closed => RdpError::ControlChannelClosed,
+                HostSendError::Overloaded => RdpError::Session(error.to_string()),
+            })?;
+        }
+        SessionCmd::Input(_)
+        | SessionCmd::ReplaceableInput(_)
+        | SessionCmd::FileContents { .. } => {}
+    }
+    clipboard::flush_local_file_direction_notices(clipboard, host);
+    clipboard::flush_app_actions(clipboard, host)
+        .await
+        .map_err(|error| RdpError::Session(error.to_string()))
 }
 
 /// Direct TCP connect, TLS upgrade, then finalize. On the initial connect the
@@ -394,27 +713,6 @@ fn pointer_update(output: &ActiveStageOutput) -> Option<PointerUpdate> {
     })
 }
 
-/// The head of a PDU as hex, for a log line about one we could not decode.
-///
-/// Deliberately a header, not a body. 32 bytes covers the TPKT/X.224/MCS framing,
-/// the Share Control header (totalLength, pduType, pduSource) and the start of a
-/// Share Data header — which together say what the PDU *was*. That is the
-/// question every wrong fix for the black-desktop symptom has answered by
-/// guessing. It cannot leak a credential: the bytes stop long before any payload,
-/// and the one PDU that carries a secret (the RDSTLS auth request) is one we
-/// send, never one we fail to decode.
-fn pdu_prefix(pdu: Option<&[u8]>) -> String {
-    let Some(bytes) = pdu else {
-        return String::from("<none>");
-    };
-    let head: String = bytes
-        .iter()
-        .take(32)
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    format!("len={} head={head}", bytes.len())
-}
-
 /// Call immediately after process(), before inspecting any output. The EGFX
 /// trait cannot return a decode error, and its stateful failure must not be
 /// mistaken for one of GNOME's independently skippable, unrecognised PDUs.
@@ -431,13 +729,19 @@ pub(crate) fn finish_active_process(
     }
     match processed {
         Ok(outputs) => Ok(outputs),
-        Err(error) => {
-            tracing::warn!(
-                ?action,
-                payload_len = payload.len(),
-                pdu = %pdu_prefix(Some(payload)),
-                "skipping PDU the active stage could not process: {error}"
-            );
+        Err(_) => {
+            static SKIPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            let count = SKIPPED
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                .wrapping_add(1);
+            if count <= 4 || count.is_power_of_two() {
+                tracing::warn!(
+                    ?action,
+                    payload_len = payload.len(),
+                    count,
+                    "skipping PDU the active stage could not process"
+                );
+            }
             Ok(Vec::new())
         }
     }
@@ -448,8 +752,8 @@ pub(crate) fn finish_active_process(
 async fn active_session(
     framed: UpgradedFramed,
     connection_result: ConnectionResult,
-    input_rx: &mut tokio_mpsc::UnboundedReceiver<SessionCmd>,
-    host_tx: &std_mpsc::Sender<HostMsg>,
+    input_rx: &mut SessionInput,
+    host_tx: &HostSender,
     egfx: &SharedEgfx,
     clip: &SharedClipboard,
     display_request: (&SharedDisplay, &mut Option<Vec<adit_rdp_proto::Monitor>>),
@@ -494,13 +798,36 @@ async fn active_session(
     // call, which would otherwise busy-loop the whole session and re-send shutdown
     // PDUs until the server happens to close the TCP connection.
     let mut input_open = true;
+    let mut pending_clipboard_frames = VecDeque::new();
+    let mut clipboard_tick = tokio::time::interval(std::time::Duration::from_millis(250));
+    clipboard_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Latches once the EGFX pipeline paints; from then on the legacy `image` is
     // not the display surface and must never be emitted (it would flash black).
     let mut egfx_active = false;
 
     'session: loop {
+        if let Some(reason) = input_open.then(|| *input_rx.end.borrow()).flatten() {
+            if let Some(message) = input_end_error(reason) {
+                return Err(ironrdp_session::custom_err!(
+                    "helper input",
+                    std::io::Error::other(message)
+                ));
+            }
+        }
+        // A queued clipboard replacement must be applied before we can commit
+        // any older file frame. Ordinary keyboard/mouse input does not block it.
+        let pending_offer = input_open && input_rx.has_pending_offer();
         let outputs = tokio::select! {
-            frame_read = reader.read_pdu() => {
+            _ = clipboard_tick.tick() => Vec::new(),
+            _ = input_rx.end.changed(), if input_open => {
+                let reason = input_rx.end.borrow_and_update().unwrap_or(InputEnd::Close);
+                if let Some(message) = input_end_error(reason) {
+                    return Err(ironrdp_session::custom_err!("helper input", std::io::Error::other(message)));
+                }
+                input_open = false;
+                active_stage.graceful_shutdown()?
+            }
+            frame_read = reader.read_pdu(), if !pending_offer => {
                 let (action, payload) = frame_read
                     .map_err(|e| ironrdp_session::custom_err!("read PDU", e))?;
                 // Intercept a Server Redirection PDU (GNOME system-mode handover)
@@ -519,10 +846,28 @@ async fn active_session(
                 let processed = active_stage.process(&mut image, action, &payload);
                 finish_active_process(processed, egfx, action, &payload)?
             }
-            input = input_rx.recv(), if input_open => {
+            input = input_rx.commands.recv(), if input_open => {
+                let reason = *input_rx.end.borrow();
+                if let Some(message) = reason.and_then(input_end_error) {
+                    return Err(ironrdp_session::custom_err!("helper input", std::io::Error::other(message)));
+                }
+                let input = if reason.is_some() { None } else { input.map(|queued| queued.command) };
+                let input = match input {
+                    Some(SessionCmd::ReplaceableInput(slot)) => {
+                        let event = slot.lock().unwrap_or_else(|error| error.into_inner()).take();
+                        if event.is_none() { continue; }
+                        event.map(SessionCmd::Input)
+                    }
+                    other => other,
+                };
                 match input {
+                    Some(SessionCmd::ReplaceableInput(_)) => unreachable!("replaceable input is resolved above"),
                     // App dropped the sender: shut down gracefully, exactly once.
                     None => {
+                        let reason = input_rx.end.borrow().unwrap_or(InputEnd::Close);
+                        if let Some(message) = input_end_error(reason) {
+                            return Err(ironrdp_session::custom_err!("helper input", std::io::Error::other(message)));
+                        }
                         input_open = false;
                         active_stage.graceful_shutdown()?
                     }
@@ -569,35 +914,20 @@ async fn active_session(
                             }
                         }
                     }
-                    // The GUI owns the real Windows clipboard and hands us
-                    // freshly-copied text; we only advertise it to the remote
-                    // (CLIPRDR delay-rendering), so nothing crosses the wire
-                    // until something over there actually pastes. The advertise
-                    // itself is emitted by the clipboard pump below. With the
-                    // channel disabled it just overwrites a string and stops there.
-                    Some(SessionCmd::Input(InputEvent::ClipboardText(text))) => {
-                        clipboard::offer_local_text(clip, text);
+                    Some(SessionCmd::ClipboardPolicyChanged) => {
+                        apply_clipboard_policy_barrier(clip, &mut pending_clipboard_frames, &mut active_stage, host_tx)?;
                         Vec::new()
                     }
-                    // File transfer: all three are metadata-or-bytes bookkeeping
-                    // for the CLIPRDR pump below rather than anything that touches
-                    // the desktop. Like the text offer above, nothing is read from
-                    // disk here — `ClipboardFiles` advertises names and sizes, and
-                    // bytes move only when one side actually pastes.
-                    Some(SessionCmd::ClipboardImage(image)) => {
-                        clipboard::offer_local_image(clip, image);
-                        Vec::new()
-                    }
-                    Some(SessionCmd::ClipboardFiles(files)) => {
-                        clipboard::offer_local_files(clip, files);
-                        Vec::new()
-                    }
-                    Some(SessionCmd::FileContents { stream_id, data }) => {
-                        clipboard::submit_file_contents(clip, stream_id, data);
-                        Vec::new()
-                    }
-                    Some(SessionCmd::RequestFileContents { generation, stream_id, index, offset, length }) => {
-                        clipboard::request_file_contents(clip, generation, stream_id, index, offset, length);
+                    Some(command @ (SessionCmd::Input(InputEvent::ClipboardText(_))
+                        | SessionCmd::ClipboardImage(_)
+                        | SessionCmd::ClipboardTextForRevision { .. }
+                        | SessionCmd::ClipboardImageForRevision { .. }
+                        | SessionCmd::ClipboardFiles { .. }
+                        | SessionCmd::LocalFileOfferRejected
+                        | SessionCmd::FileContents { .. }
+                        | SessionCmd::SuspendLocalFileDirection
+                        | SessionCmd::RequestFileContents { .. })) => {
+                        handle_active_clipboard_command(command, clip);
                         Vec::new()
                     }
                     // Mouse / key / unicode all fold into fast-path events.
@@ -629,9 +959,7 @@ async fn active_session(
         let mut dirty_rects = Vec::new();
         for out in outputs {
             if let Some(pointer) = pointer_update(&out) {
-                if host_tx.send(HostMsg::Pointer(pointer)).is_err() {
-                    break 'session;
-                }
+                send_host(host_tx, HostMsg::Pointer(pointer)).await?;
                 continue;
             }
             match out {
@@ -716,16 +1044,12 @@ async fn active_session(
                         // reactivation and keep the session alive.
                         let written = match stepped {
                             Ok(w) => w,
-                            Err(error) => {
-                                // The bytes are the point. Whether the PDU that ended
-                                // the reactivation was a handover in a shape `detect`
-                                // does not recognise is readable straight off its
-                                // Share Control header — and guessing at that instead
-                                // of reading it is what has produced wrong fixes for
-                                // this symptom before.
+                            Err(_) => {
+                                // The length is useful for diagnosis without logging
+                                // clipboard or other sensitive PDU payloads.
                                 tracing::warn!(
-                                    pdu = %pdu_prefix(pdu.as_deref()),
-                                    "abandoning reactivation, keeping session: {error}"
+                                    payload_len = pdu.as_ref().map_or(0, |bytes| bytes.len()),
+                                    "abandoning reactivation, keeping session"
                                 );
                                 break 'activation;
                             }
@@ -769,15 +1093,14 @@ async fn active_session(
                             // deactivation-reactivation until the next repaint.
                             if (desktop_size.width, desktop_size.height) != egfx_size {
                                 egfx_size = (desktop_size.width, desktop_size.height);
-                                if host_tx
-                                    .send(HostMsg::Resized {
+                                send_host(
+                                    host_tx,
+                                    HostMsg::Resized {
                                         width: desktop_size.width,
                                         height: desktop_size.height,
-                                    })
-                                    .is_err()
-                                {
-                                    break 'session; // app stopped listening
-                                }
+                                    },
+                                )
+                                .await?;
                             }
                             break 'activation;
                         }
@@ -802,18 +1125,15 @@ async fn active_session(
         // is borrowed by the processor there and can reach neither the channel
         // nor the socket), plus anything a local copy just enqueued. Emitted
         // after this iteration's response frames so the wire ordering stays sane.
-        match clipboard::pump(clip, &mut active_stage, host_tx) {
-            Some(frames) => {
-                for frame in frames {
-                    writer
-                        .write_all(&frame)
-                        .await
-                        .map_err(|e| ironrdp_session::custom_err!("write clipboard frame", e))?;
-                }
-            }
-            // The app stopped listening; end the session.
-            None => break 'session,
-        }
+        flush_clipboard_output(
+            writer.get_inner_mut().0,
+            &mut pending_clipboard_frames,
+            clip,
+            &mut active_stage,
+            host_tx,
+            input_open.then_some(&*input_rx),
+        )
+        .await?;
 
         // Emit the legacy DecodedImage only for legacy-bitmap servers. Once the
         // EGFX pipeline has produced a frame, `image` is NOT the display surface
@@ -823,9 +1143,7 @@ async fn active_session(
         // Deactivation-Reactivation, which rebuilds `image` empty.
         if !egfx_active {
             for tile in image_tiles(&image, dirty_rects) {
-                if host_tx.send(tile).is_err() {
-                    break 'session;
-                }
+                send_host(host_tx, tile).await?;
             }
         }
 
@@ -851,12 +1169,7 @@ async fn active_session(
         }
         let state = display.lock().unwrap_or_else(|e| e.into_inner()).clone();
         if last_display_state.as_ref() != Some(&state) {
-            if host_tx
-                .send(HostMsg::DisplayControl(state.clone()))
-                .is_err()
-            {
-                break 'session;
-            }
+            send_host(host_tx, HostMsg::DisplayControl(state.clone())).await?;
             last_display_state = Some(state);
         }
 
@@ -880,15 +1193,14 @@ async fn active_session(
             egfx_active = true;
             if (first.surface_width, first.surface_height) != egfx_size {
                 egfx_size = (first.surface_width, first.surface_height);
-                if host_tx
-                    .send(HostMsg::Resized {
+                send_host(
+                    host_tx,
+                    HostMsg::Resized {
                         width: first.surface_width,
                         height: first.surface_height,
-                    })
-                    .is_err()
-                {
-                    break 'session;
-                }
+                    },
+                )
+                .await?;
             }
         }
         // Only the changed regions cross the pipe: full frames are ~9 MB at
@@ -907,27 +1219,272 @@ async fn active_session(
                     "emitted frame region"
                 );
             }
-            if host_tx
-                .send(HostMsg::Tile {
+            send_host(
+                host_tx,
+                HostMsg::Tile {
                     x: update.x,
                     y: update.y,
                     width: update.width,
                     height: update.height,
                     rgba: update.rgba,
-                })
-                .is_err()
-            {
-                break 'session;
-            }
+                },
+            )
+            .await?;
         }
     }
 
     Ok(None)
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ClipboardCommit {
+    Deferred,
+    Written,
+    Discarded,
+}
+
+pub(crate) fn apply_clipboard_policy_barrier(
+    clip: &SharedClipboard,
+    pending: &mut VecDeque<clipboard::ClipboardWireFrame>,
+    stage: &mut ironrdp_session::ActiveStage,
+    host: &HostSender,
+) -> Result<(), ironrdp_session::SessionError> {
+    let (policy_epoch, enabled) = clipboard::apply_shared_policy(clip);
+    // The session cannot reach this point while a partially written frame is
+    // still being completed. Every remaining frame has sent no first byte.
+    let mut valid = VecDeque::new();
+    while let Some(mut frame) = pending.pop_front() {
+        if clipboard::revalidate_wire_frame(&mut frame, clip, stage).unwrap_or(false)
+            && (enabled || frame.is_safe_failure())
+        {
+            valid.push_back(frame);
+        }
+    }
+    *pending = valid;
+    host.send(HostMsg::ClipboardPolicyApplied {
+        policy_epoch,
+        enabled,
+    })
+    .map_err(|error| ironrdp_session::custom_err!("clipboard policy", error))
+}
+
+pub(crate) async fn flush_clipboard_output<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    pending: &mut VecDeque<clipboard::ClipboardWireFrame>,
+    clip: &SharedClipboard,
+    stage: &mut ironrdp_session::ActiveStage,
+    host: &HostSender,
+    input: Option<&SessionInput>,
+) -> Result<(), ironrdp_session::SessionError> {
+    loop {
+        clipboard::flush_local_file_direction_notices(clip, host);
+        if pending.is_empty() {
+            match clipboard::pump_with_pending_input(clip, stage, host, input).await {
+                Ok(frames) => pending.extend(frames),
+                Err(error @ clipboard::ClipboardPumpError::AppClosed) => {
+                    return Err(ironrdp_session::custom_err!("clipboard", error));
+                }
+                Err(error) => {
+                    tracing::debug!(%error, "clipboard work is unavailable; keeping the desktop open");
+                    return Ok(());
+                }
+            }
+            if pending.is_empty() {
+                clipboard::flush_local_file_direction_notices(clip, host);
+                return Ok(());
+            }
+        }
+        while let Some(frame) = pending.front_mut() {
+            let result = commit_clipboard_frame(writer, frame, clip, stage, input).await?;
+            clipboard::flush_local_file_direction_notices(clip, host);
+            match result {
+                ClipboardCommit::Deferred => return Ok(()),
+                ClipboardCommit::Written | ClipboardCommit::Discarded => {
+                    pending.pop_front();
+                }
+            }
+        }
+    }
+}
+
+/// A successful first write transfers ownership to the transport. Until then a
+/// replacement wakes this future and is processed before revalidation. TLS may
+/// buffer accepted bytes without sending them yet, but `AsyncWrite` cannot retract
+/// them; completing the frame avoids corrupting the live RDP byte stream.
+pub(crate) async fn commit_clipboard_frame<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    frame: &mut clipboard::ClipboardWireFrame,
+    clip: &SharedClipboard,
+    stage: &mut ironrdp_session::ActiveStage,
+    input: Option<&SessionInput>,
+) -> Result<ClipboardCommit, ironrdp_session::SessionError> {
+    use std::task::Poll;
+
+    loop {
+        let needs_barrier = frame.needs_offer_barrier();
+        let needs_suspension_barrier = frame.needs_suspension_barrier();
+        let notified = async {
+            match input {
+                Some(input) => input.offer_notify.notified().await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        let first_write = std::future::poll_fn(|cx| {
+            let mut ordering = input.map(|input| {
+                input
+                    .ordering
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+            });
+            if ordering.as_ref().is_some_and(|order| {
+                (needs_barrier && order.pending_offers != 0)
+                    || (needs_suspension_barrier && order.pending_suspensions != 0)
+            }) {
+                return Poll::Ready(Ok((ClipboardCommit::Deferred, 0)));
+            }
+            match clipboard::revalidate_wire_frame(frame, clip, stage) {
+                Ok(false) => return Poll::Ready(Ok((ClipboardCommit::Discarded, 0))),
+                Err(error) => {
+                    tracing::warn!(%error, "discarding a clipboard reply that could not be encoded");
+                    if frame.needs_suspension_barrier() {
+                        clipboard::suspend_local_file_direction(clip);
+                    }
+                    return Poll::Ready(Ok((ClipboardCommit::Discarded, 0)));
+                }
+                Ok(true) => {}
+            }
+            match std::pin::Pin::new(&mut *writer).poll_write(cx, &frame.bytes) {
+                Poll::Ready(Ok(0)) => Poll::Ready(Err(ironrdp_session::custom_err!(
+                    "write clipboard frame",
+                    std::io::Error::new(std::io::ErrorKind::WriteZero, "zero-length write")
+                ))),
+                Poll::Ready(Ok(written)) => {
+                    if let Some(ordering) = ordering.as_mut() {
+                        ordering.wire_progress = Some(std::time::Instant::now());
+                    }
+                    clipboard::note_wire_frame_started(frame, clip);
+                    Poll::Ready(Ok((ClipboardCommit::Written, written)))
+                }
+                Poll::Ready(Err(error)) => Poll::Ready(Err(ironrdp_session::custom_err!(
+                    "write clipboard frame",
+                    error
+                ))),
+                Poll::Pending => Poll::Pending,
+            }
+        });
+        let (result, written) = if needs_barrier || needs_suspension_barrier {
+            tokio::select! {
+                biased;
+                _ = notified => {
+                    if input.is_some_and(|input| {
+                        (needs_barrier && input.has_pending_offer())
+                            || (needs_suspension_barrier && input.has_pending_suspension())
+                    }) {
+                        return Ok(ClipboardCommit::Deferred);
+                    }
+                    continue;
+                }
+                result = first_write => result?,
+            }
+        } else {
+            first_write.await?
+        };
+        if result == ClipboardCommit::Written {
+            let mut offset = written;
+            while offset < frame.bytes.len() {
+                let count = tokio::io::AsyncWriteExt::write(writer, &frame.bytes[offset..])
+                    .await
+                    .map_err(|error| {
+                        ironrdp_session::custom_err!("write clipboard frame", error)
+                    })?;
+                if count == 0 {
+                    return Err(ironrdp_session::custom_err!(
+                        "write clipboard frame",
+                        std::io::Error::new(std::io::ErrorKind::WriteZero, "zero-length write")
+                    ));
+                }
+                offset += count;
+                if let Some(input) = input {
+                    input
+                        .ordering
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .wire_progress = Some(std::time::Instant::now());
+                }
+            }
+            tokio::io::AsyncWriteExt::flush(writer)
+                .await
+                .map_err(|error| ironrdp_session::custom_err!("flush clipboard frame", error))?;
+            if let Some(input) = input {
+                input
+                    .ordering
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .wire_progress = None;
+            }
+            clipboard::note_wire_frame_finished(frame, clip);
+        }
+        return Ok(result);
+    }
+}
+
+async fn send_host(
+    host: &HostSender,
+    message: HostMsg,
+) -> Result<(), ironrdp_session::SessionError> {
+    host.send_when_ready(message)
+        .await
+        .map_err(|error| ironrdp_session::custom_err!("helper output", error))
+}
+
 #[cfg(test)]
 mod process_error_tests {
     use super::*;
+
+    #[test]
+    fn bad_frame_logs_are_sampled_and_never_include_payload_or_error_text() {
+        #[derive(Clone)]
+        struct Capture(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Capture {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().unwrap().extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let bytes = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let capture = Capture(bytes.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || capture.clone())
+            .finish();
+        tracing::subscriber::with_default(subscriber, || {
+            for _ in 0..512 {
+                let error = ironrdp_session::custom_err!(
+                    "synthetic-secret-error",
+                    std::io::Error::other("synthetic-secret-source")
+                );
+                assert!(finish_active_process(
+                    Err(error),
+                    &egfx::new_shared(),
+                    ironrdp_pdu::Action::X224,
+                    b"synthetic-secret-payload"
+                )
+                .is_ok());
+            }
+        });
+        let output = String::from_utf8(bytes.lock().unwrap().clone()).unwrap();
+        assert!(!output.contains("synthetic-secret"));
+        assert!(output.contains("payload_len"));
+        assert!(
+            output.lines().count() <= 16,
+            "bad-frame logs were not sampled"
+        );
+    }
 
     #[test]
     fn unrelated_stage_error_still_skips_one_pdu_and_next_output_survives() {
@@ -1021,5 +1578,540 @@ mod desktop_output_tests {
             })
             .collect();
         assert_eq!(rgba, &expected);
+    }
+}
+
+#[cfg(test)]
+mod local_file_fail_closed_tests {
+    use super::*;
+    use adit_rdp_proto::{write_msg, ClientMsg};
+    use ironrdp_cliprdr::backend::CliprdrBackend;
+    use ironrdp_cliprdr::pdu::{
+        Capabilities, ClipboardFormat, ClipboardFormatId, ClipboardFormatName,
+        ClipboardGeneralCapabilityFlags, ClipboardPdu, ClipboardProtocolVersion,
+        FileContentsResponse, FileDescriptor, FormatDataRequest, FormatListResponse,
+        OwnedFormatDataResponse,
+    };
+    use ironrdp_cliprdr::CliprdrClient;
+    use ironrdp_core::{Encode as _, WriteCursor};
+    use ironrdp_svc::{StaticChannelSet, SvcProcessor};
+    use std::any::TypeId;
+    use std::io::Cursor;
+    use std::pin::Pin;
+    use std::task::{Context, Poll};
+
+    const NAME: &str = "synthetic-secret-name-9261.bin";
+    const SIZE: u64 = 0x7123_5678_9abc_def0;
+    const CONTENT: &[u8] = b"synthetic-local-file-bytes-3974";
+
+    #[derive(Default)]
+    struct CaptureWriter(Vec<u8>);
+
+    impl AsyncWrite for CaptureWriter {
+        fn poll_write(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            bytes: &[u8],
+        ) -> Poll<std::io::Result<usize>> {
+            self.0.extend_from_slice(bytes);
+            Poll::Ready(Ok(bytes.len()))
+        }
+
+        fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+
+        fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    fn local_file() -> ClipFile {
+        ClipFile {
+            name: NAME.into(),
+            size: SIZE,
+            is_dir: false,
+        }
+    }
+
+    // Exercise the same framed reader and bounded input queue as stdin.
+    fn enqueue_ipc(sender: &crate::host::InputSender, message: ClientMsg) {
+        let mut bytes = Vec::new();
+        write_msg(&mut bytes, &message).unwrap();
+        let decoded = crate::host::read_client_frame(&mut Cursor::new(bytes), sender)
+            .unwrap()
+            .unwrap();
+        let command = match decoded {
+            crate::host::ClientFrame::FileHandled => return,
+            crate::host::ClientFrame::Message(ClientMsg::Input(event)) => SessionCmd::Input(event),
+            crate::host::ClientFrame::Message(ClientMsg::ClipboardImage(image)) => {
+                SessionCmd::ClipboardImage(image)
+            }
+            crate::host::ClientFrame::Message(ClientMsg::RequestFileContents {
+                generation,
+                stream_id,
+                index,
+                offset,
+                length,
+            }) => SessionCmd::RequestFileContents {
+                generation,
+                stream_id,
+                index,
+                offset,
+                length,
+            },
+            _ => panic!("unexpected synthetic IPC message"),
+        };
+        assert!(sender.send(command));
+    }
+
+    fn file_contents() -> ClientMsg {
+        ClientMsg::BoundFileContents {
+            request: ClipboardFileRequestId {
+                channel_epoch: 1,
+                snapshot_revision: 1,
+                generation: 7,
+                stream_id: 42,
+            },
+            data: Some(CONTENT.to_vec()),
+        }
+    }
+
+    fn assert_no_local_file_data(bytes: &[u8]) {
+        let utf16_name: Vec<u8> = NAME.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let descriptor_format: Vec<u8> = "FileGroupDescriptorW"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        let size = SIZE.to_le_bytes();
+        for secret in [
+            NAME.as_bytes(),
+            utf16_name.as_slice(),
+            size.as_slice(),
+            CONTENT,
+            descriptor_format.as_slice(),
+        ] {
+            assert!(!bytes.windows(secret.len()).any(|window| window == secret));
+        }
+    }
+
+    fn assert_state_does_not_cache_local_files(clipboard: &SharedClipboard) {
+        let state = format!("{:?}", clipboard.lock().unwrap());
+        assert!(!state.contains(NAME));
+        assert!(!state.contains(&format!("size: {SIZE}")));
+        assert!(!state.contains(&format!("{:?}", CONTENT)));
+    }
+
+    fn assert_format_request_failed(wire: &[u8]) {
+        let error = ClipboardPdu::FormatDataResponse(OwnedFormatDataResponse::new_error());
+        let bytes = ironrdp_core::encode_vec(&error).unwrap();
+        assert!(wire
+            .windows(bytes.len())
+            .any(|window| window == bytes.as_slice()));
+    }
+
+    fn stage(clipboard: &SharedClipboard) -> ironrdp_session::ActiveStage {
+        let mut client = CliprdrClient::new(Box::new(clipboard::AditCliprdrBackend::new(
+            Arc::clone(clipboard),
+        )));
+        for pdu in [
+            ClipboardPdu::Capabilities(Capabilities::new(
+                ClipboardProtocolVersion::V2,
+                ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
+                    | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
+                    | ClipboardGeneralCapabilityFlags::USE_LONG_FORMAT_NAMES,
+            )),
+            ClipboardPdu::FormatListResponse(FormatListResponse::Ok),
+        ] {
+            let mut bytes = vec![0; pdu.size()];
+            pdu.encode(&mut WriteCursor::new(&mut bytes)).unwrap();
+            client.process(&bytes).unwrap();
+        }
+        let mut channels = StaticChannelSet::new();
+        channels.insert(client);
+        channels.attach_channel_id(TypeId::of::<CliprdrClient>(), 1004);
+        ironrdp_session::ActiveStageBuilder {
+            static_channels: channels,
+            user_channel_id: 1001,
+            io_channel_id: 1003,
+            message_channel_id: None,
+            share_id: 1,
+            compression_type: None,
+            enable_server_pointer: false,
+            pointer_software_rendering: false,
+        }
+        .build()
+    }
+
+    async fn request_format_and_capture(
+        clipboard: &SharedClipboard,
+        host: &HostSender,
+        format: ClipboardFormatId,
+    ) -> Vec<u8> {
+        let mut stage = stage(clipboard);
+        let request = ClipboardPdu::FormatDataRequest(FormatDataRequest { format });
+        let mut pdu = vec![0; request.size()];
+        request.encode(&mut WriteCursor::new(&mut pdu)).unwrap();
+        let packet = ironrdp_svc::server_encode_svc_messages(
+            vec![ironrdp_svc::SvcMessage::from(pdu)],
+            1004,
+            1001,
+        )
+        .unwrap();
+        let mut image = DecodedImage::new(PixelFormat::RgbA32, 1, 1);
+        let outputs = stage
+            .process(&mut image, ironrdp_pdu::Action::X224, &packet)
+            .unwrap();
+        let mut writer = CaptureWriter::default();
+        for output in outputs {
+            if let ActiveStageOutput::ResponseFrame(bytes) = output {
+                writer.0.extend(bytes);
+            }
+        }
+        flush_clipboard_output(
+            &mut writer,
+            &mut VecDeque::new(),
+            clipboard,
+            &mut stage,
+            host,
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(!writer.0.is_empty(), "the request receives a wire response");
+        writer.0
+    }
+
+    fn host_messages(
+        receiver: &std::sync::mpsc::Receiver<crate::host::QueuedHostMessage>,
+    ) -> (Vec<HostMsg>, Vec<u8>) {
+        let mut messages = Vec::new();
+        let mut bytes = Vec::new();
+        while let Ok(queued) = receiver.try_recv() {
+            write_msg(&mut bytes, &queued.message).unwrap();
+            messages.push(queued.message);
+        }
+        (messages, bytes)
+    }
+
+    #[tokio::test]
+    async fn handshake_ipc_never_publishes_local_file_offers_or_contents() {
+        let (host, receiver) = crate::host::host_channel();
+        let clipboard = new_session_clipboard(&host);
+        let (sender, mut input) = crate::host::input_channel();
+        enqueue_ipc(
+            &sender,
+            ClientMsg::ClipboardFiles {
+                generation: 7,
+                files: vec![local_file()],
+            },
+        );
+        enqueue_ipc(&sender, file_contents());
+        enqueue_ipc(
+            &sender,
+            ClientMsg::ClipboardFiles {
+                generation: 0,
+                files: Vec::new(),
+            },
+        );
+        drive_handshake(
+            std::future::ready(Ok(())),
+            &mut input,
+            &clipboard,
+            &mut None,
+            &host,
+            std::time::Duration::from_secs(1),
+        )
+        .await
+        .unwrap();
+        assert_state_does_not_cache_local_files(&clipboard);
+        let wire =
+            request_format_and_capture(&clipboard, &host, ClipboardFormatId::new(0xc0fe)).await;
+        assert_no_local_file_data(&wire);
+        clipboard::leave_channel(&clipboard, &host).await.unwrap();
+        handle_handshake_command(
+            SessionCmd::ClipboardFiles {
+                generation: 8,
+                files: vec![local_file()],
+            },
+            &clipboard,
+            &mut None,
+            &host,
+        )
+        .await
+        .unwrap();
+        let redirected_wire =
+            request_format_and_capture(&clipboard, &host, ClipboardFormatId::new(0xc0fe)).await;
+        assert_no_local_file_data(&redirected_wire);
+        assert_state_does_not_cache_local_files(&clipboard);
+        let (messages, ipc) = host_messages(&receiver);
+        assert_no_local_file_data(&ipc);
+        assert!(messages.iter().any(|message| matches!(message,
+            HostMsg::ClipboardFileDirectionUnavailable { message, .. }
+                if message == LOCAL_FILES_DISABLED_NOTICE)));
+        assert!(!messages.iter().any(|message| matches!(
+            message,
+            HostMsg::Closed
+                | HostMsg::Error(_)
+                | HostMsg::ClipboardLocalFileDirectionReady { .. }
+                | HostMsg::FileContentsNeeded { .. }
+        )));
+        assert!(input.end.borrow().is_none());
+    }
+
+    #[tokio::test]
+    async fn rejected_files_during_handshake_revoke_the_previous_text_or_image() {
+        for (previous, format, bytes) in [
+            (
+                ClientMsg::Input(InputEvent::ClipboardText("prior secret".into())),
+                ClipboardFormatId::CF_UNICODETEXT,
+                "prior secret"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                ClientMsg::ClipboardImage(vec![31, 41, 59, 26]),
+                ClipboardFormatId::CF_DIB,
+                vec![31, 41, 59, 26],
+            ),
+        ] {
+            let (host, receiver) = crate::host::host_channel();
+            let clipboard = new_session_clipboard(&host);
+            let (sender, mut input) = crate::host::input_channel();
+            enqueue_ipc(&sender, previous);
+            enqueue_ipc(&sender, ClientMsg::LocalFileOfferRejected);
+            drive_handshake(
+                std::future::ready(Ok(())),
+                &mut input,
+                &clipboard,
+                &mut None,
+                &host,
+                std::time::Duration::from_secs(1),
+            )
+            .await
+            .unwrap();
+            let wire = request_format_and_capture(&clipboard, &host, format).await;
+            assert!(!wire
+                .windows(bytes.len())
+                .any(|window| window == bytes.as_slice()));
+            assert_format_request_failed(&wire);
+            assert_no_local_file_data(&wire);
+            let (messages, _) = host_messages(&receiver);
+            assert!(!messages
+                .iter()
+                .any(|message| matches!(message, HostMsg::Closed | HostMsg::Error(_))));
+            assert!(input.end.borrow().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn active_ipc_keeps_desktop_and_other_clipboard_formats_available() {
+        let (host, receiver) = crate::host::host_channel();
+        let clipboard = new_session_clipboard(&host);
+        let (sender, mut input) = crate::host::input_channel();
+        for message in [
+            ClientMsg::ClipboardFiles {
+                generation: 0,
+                files: vec![local_file()],
+            },
+            ClientMsg::ClipboardFiles {
+                generation: 7,
+                files: vec![local_file()],
+            },
+            file_contents(),
+            ClientMsg::Input(InputEvent::ClipboardText("synthetic text".into())),
+        ] {
+            enqueue_ipc(&sender, message);
+        }
+        while let Ok(queued) = input.commands.try_recv() {
+            handle_active_clipboard_command(queued.command, &clipboard);
+        }
+        assert!(format!("{:?}", clipboard.lock().unwrap()).contains("synthetic text"));
+        let text_wire =
+            request_format_and_capture(&clipboard, &host, ClipboardFormatId::CF_UNICODETEXT).await;
+        let text: Vec<u8> = "synthetic text"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        assert!(text_wire
+            .windows(text.len())
+            .any(|window| window == text.as_slice()));
+        assert_no_local_file_data(&text_wire);
+        enqueue_ipc(&sender, ClientMsg::ClipboardImage(vec![11, 22, 33, 44]));
+        enqueue_ipc(
+            &sender,
+            ClientMsg::ClipboardFiles {
+                generation: 0,
+                files: Vec::new(),
+            },
+        );
+        while let Ok(queued) = input.commands.try_recv() {
+            handle_active_clipboard_command(queued.command, &clipboard);
+        }
+        assert!(format!("{:?}", clipboard.lock().unwrap()).contains("[11, 22, 33, 44]"));
+        let image_wire =
+            request_format_and_capture(&clipboard, &host, ClipboardFormatId::CF_DIB).await;
+        assert!(image_wire
+            .windows(4)
+            .any(|window| window == [11, 22, 33, 44]));
+        assert_no_local_file_data(&image_wire);
+        assert_state_does_not_cache_local_files(&clipboard);
+        let wire =
+            request_format_and_capture(&clipboard, &host, ClipboardFormatId::new(0xc0fe)).await;
+        assert_no_local_file_data(&wire);
+        // An ordinary desktop update remains deliverable after the rejected IPC.
+        host.send(HostMsg::Tile {
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            rgba: vec![1, 2, 3, 255],
+        })
+        .unwrap();
+        let (messages, ipc) = host_messages(&receiver);
+        assert_no_local_file_data(&ipc);
+        assert!(messages
+            .iter()
+            .any(|message| matches!(message, HostMsg::Tile { .. })));
+        assert!(!messages.iter().any(|message| matches!(
+            message,
+            HostMsg::Closed
+                | HostMsg::Error(_)
+                | HostMsg::FileContentsNeeded { .. }
+                | HostMsg::ClipboardLocalFileDirectionReady { .. }
+        )));
+        assert!(input.end.borrow().is_none());
+    }
+
+    #[tokio::test]
+    async fn rejected_runtime_files_replace_old_text_and_images_with_errors() {
+        for (previous, format, bytes) in [
+            (
+                ClientMsg::Input(InputEvent::ClipboardText("runtime secret".into())),
+                ClipboardFormatId::CF_UNICODETEXT,
+                "runtime secret"
+                    .encode_utf16()
+                    .flat_map(u16::to_le_bytes)
+                    .collect::<Vec<_>>(),
+            ),
+            (
+                ClientMsg::ClipboardImage(vec![37, 61, 83, 91]),
+                ClipboardFormatId::CF_DIB,
+                vec![37, 61, 83, 91],
+            ),
+        ] {
+            let (host, receiver) = crate::host::host_channel();
+            let clipboard = new_session_clipboard(&host);
+            let (sender, mut input) = crate::host::input_channel();
+            enqueue_ipc(&sender, previous);
+            handle_active_clipboard_command(input.commands.try_recv().unwrap().command, &clipboard);
+            let before = request_format_and_capture(&clipboard, &host, format).await;
+            assert!(before
+                .windows(bytes.len())
+                .any(|window| window == bytes.as_slice()));
+            enqueue_ipc(&sender, ClientMsg::LocalFileOfferRejected);
+            handle_active_clipboard_command(input.commands.try_recv().unwrap().command, &clipboard);
+            let after = request_format_and_capture(&clipboard, &host, format).await;
+            assert!(!after
+                .windows(bytes.len())
+                .any(|window| window == bytes.as_slice()));
+            assert_format_request_failed(&after);
+            assert_no_local_file_data(&after);
+            enqueue_ipc(
+                &sender,
+                ClientMsg::Input(InputEvent::ClipboardText("new text".into())),
+            );
+            handle_active_clipboard_command(input.commands.try_recv().unwrap().command, &clipboard);
+            let new_text =
+                request_format_and_capture(&clipboard, &host, ClipboardFormatId::CF_UNICODETEXT)
+                    .await;
+            let expected: Vec<u8> = "new text"
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect();
+            assert!(new_text
+                .windows(expected.len())
+                .any(|window| window == expected.as_slice()));
+            host.send(HostMsg::Tile {
+                x: 0,
+                y: 0,
+                width: 1,
+                height: 1,
+                rgba: vec![1, 2, 3, 255],
+            })
+            .unwrap();
+            let (messages, _) = host_messages(&receiver);
+            assert!(messages
+                .iter()
+                .any(|message| matches!(message, HostMsg::Tile { .. })));
+            assert!(!messages
+                .iter()
+                .any(|message| matches!(message, HostMsg::Closed | HostMsg::Error(_))));
+            assert!(input.end.borrow().is_none());
+        }
+    }
+
+    #[test]
+    fn empty_file_offer_remains_a_real_revocation() {
+        // Exercise the empty path even on a pre-existing, unsealed snapshot.
+        let clipboard = clipboard::new_shared();
+        clipboard::offer_local_files(&clipboard, 7, vec![local_file()]);
+        assert!(format!("{:?}", clipboard.lock().unwrap()).contains(NAME));
+        reject_local_file_offer(&clipboard, 0, Vec::new());
+        assert_state_does_not_cache_local_files(&clipboard);
+    }
+
+    #[tokio::test]
+    async fn suspended_local_direction_keeps_remote_file_reads_working() {
+        let (host, receiver) = crate::host::host_channel();
+        let clipboard = new_session_clipboard(&host);
+        let mut backend = clipboard::AditCliprdrBackend::new(Arc::clone(&clipboard));
+        backend.on_process_negotiated_capabilities(
+            ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED,
+        );
+        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::new(0xc123))
+            .with_name(ClipboardFormatName::FILE_LIST)]);
+        let mut descriptor = FileDescriptor::new("remote-fixture.bin");
+        descriptor.file_size = Some(3);
+        backend.on_remote_file_list(&[descriptor], Some(10));
+        clipboard::flush_app_actions(&clipboard, &host)
+            .await
+            .unwrap();
+        let (messages, _) = host_messages(&receiver);
+        let generation = messages
+            .iter()
+            .find_map(|message| match message {
+                HostMsg::ClipboardFilesForPolicy {
+                    generation, files, ..
+                } if !files.is_empty() => Some(*generation),
+                _ => None,
+            })
+            .expect("remote file offer remains available");
+        let (sender, mut input) = crate::host::input_channel();
+        enqueue_ipc(&sender, ClientMsg::LocalFileOfferRejected);
+        handle_active_clipboard_command(input.commands.try_recv().unwrap().command, &clipboard);
+        enqueue_ipc(
+            &sender,
+            ClientMsg::RequestFileContents {
+                generation,
+                stream_id: 71,
+                index: 0,
+                offset: 0,
+                length: 3,
+            },
+        );
+        handle_active_clipboard_command(input.commands.try_recv().unwrap().command, &clipboard);
+        // This is the first synthetic remote read, whose channel wire id is 1.
+        backend
+            .on_file_contents_response(FileContentsResponse::new_data_response(1, vec![4, 5, 6]));
+        clipboard::flush_app_actions(&clipboard, &host)
+            .await
+            .unwrap();
+        let (messages, _) = host_messages(&receiver);
+        assert!(messages.iter().any(|message| matches!(message,
+            HostMsg::FileContents { generation: got, stream_id: 71, data: Some(data) }
+                if *got == generation && data == &[4, 5, 6])));
+        assert!(input.end.borrow().is_none());
     }
 }

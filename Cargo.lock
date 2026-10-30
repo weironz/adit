@@ -75,8 +75,11 @@ name = "adit-rdp-proto"
 version = "0.1.77"
 dependencies = [
  "bincode",
+ "getrandom 0.3.4",
  "image",
+ "libc",
  "serde",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -171,6 +174,7 @@ dependencies = [
  "accesskit",
  "accesskit_windows",
  "adit-domain",
+ "adit-rdp-proto",
  "adit-session",
  "adit-storage",
  "adit-sync",

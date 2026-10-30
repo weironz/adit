@@ -479,7 +479,21 @@ impl DesktopApplication {
         );
         let had_sftp = self.app.manager.sftp_is_open();
         let had_dialog = self.app.connection_dialog.is_some();
+        let revoke_local_files = matches!(message, Message::ToggleRdpClipboard(false));
         let task = self.in_window(id, |app| update(app, message));
+        if revoke_local_files && !self.app.rdp_clipboard {
+            // The setting belongs to the application, but each window and
+            // parked session owns its own delayed-read file mapping.
+            self.app.rdp_offered_files.clear();
+            self.app.rdp_chunk_bridge.close();
+            for window in self.windows.values_mut() {
+                window.state.rdp_offered_files.clear();
+                window.state.rdp_chunk_bridge.close();
+            }
+            for lease in self.clipboard_leases.values_mut() {
+                lease.revoke_local_files();
+            }
+        }
         if !had_sftp && self.app.manager.sftp_is_open() {
             self.app.native_sftp_window = Some(id);
         }
@@ -530,6 +544,25 @@ impl DesktopApplication {
         if let Some(previous) = previous {
             let _ = self.app.manager.select_session_context(previous);
         }
+    }
+
+    fn revoke_stale_local_file_offers(&mut self, sequence: u32) {
+        update_loop::observe_local_clipboard_sequence(&mut self.app, sequence);
+        if !clipboard_files::observe_local_offer_sequence(sequence) {
+            return;
+        }
+        self.revoke_local_file_offers();
+    }
+
+    fn revoke_local_file_offers(&mut self) {
+        self.app.rdp_offered_files.clear();
+        for window in self.windows.values_mut() {
+            window.state.rdp_offered_files.clear();
+        }
+        for lease in self.clipboard_leases.values_mut() {
+            lease.clear_local_file_mapping();
+        }
+        self.app.manager.revoke_all_rdp_file_offers();
     }
 
     fn sync_presentations(&mut self) {
@@ -617,6 +650,7 @@ impl DesktopApplication {
             NativeMessage::Tick => {
                 // Poll the sole manager in primary, then service each window's
                 // presentation and clipboard streams without re-polling transports.
+                self.revoke_stale_local_file_offers(clipboard_files::clipboard_sequence());
                 let focused = self.focused.unwrap_or(self.primary);
                 let _ = self.in_window(focused, |app| {
                     app.manager.poll_events();
@@ -896,9 +930,20 @@ impl DesktopApplication {
                 .height(TOOLBAR_HEIGHT),
             );
         }
-        let status = state.last_error.as_deref().unwrap_or(&state.notice);
+        let normal = crate::i18n::runtime(state.last_error.as_deref().unwrap_or(&state.notice));
+        let status = crate::workspace::status_with_file_safety(
+            &normal,
+            self.app
+                .manager
+                .rdp_local_file_safety_notice(window.session),
+        );
+        let mut status_row = row![].spacing(7).align_y(Alignment::Center);
+        if let Some(policy) = rdp_clipboard_policy::for_session(&self.app, window.session) {
+            status_row = status_row.push(policy.badge(tooltip::Position::Top));
+        }
+        status_row = status_row.push(text(status).size(11));
         body = body.push(
-            container(text(status.to_owned()).size(11))
+            container(status_row)
                 .padding([0, 8])
                 .center_y(STATUS_BAR_HEIGHT)
                 .width(Fill),
@@ -1124,6 +1169,14 @@ pub fn run_acceptance() -> iced::Result {
         },
     )
 }
+
+#[cfg(test)]
+#[path = "native_window_clipboard_regression.rs"]
+mod clipboard_regression_tests;
+
+#[cfg(test)]
+#[path = "rdp_clipboard_policy_window_tests.rs"]
+mod clipboard_policy_window_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1541,14 +1594,7 @@ mod tests {
     #[test]
     fn merging_preserves_clipboard_stream_metadata_and_tab_switch_restores_its_owner() {
         let (mut desktop, ids) = fixture();
-        let offered = |name: &str| clipboard_files::OfferedFile {
-            path: std::path::PathBuf::from(name),
-            meta: adit_session::ClipFile {
-                name: name.into(),
-                size: 1,
-                is_dir: false,
-            },
-        };
+        let offered = clipboard_files::OfferedFile::test_fixture;
         let primary_file = offered("fixture-only-primary.bin");
         let child_file = offered("fixture-only-child.bin");
         desktop.app.rdp_clipboard_offered = Some("primary-fixture-offer".into());
@@ -1577,5 +1623,136 @@ mod tests {
         // delayed file-content mapping must survive with its actual owner.
         assert_eq!(desktop.app.rdp_offered_files, vec![child_file]);
         assert_eq!(desktop.app.manager.sessions().len(), 3);
+    }
+
+    #[test]
+    fn window_and_tab_switches_keep_their_bound_local_file_handles() {
+        let root = std::env::temp_dir().join(format!("adit-native-clipboard-{}", SessionId::new()));
+        std::fs::create_dir(&root).expect("new synthetic fixture");
+        let root = std::fs::canonicalize(root).unwrap();
+        let temp = std::fs::canonicalize(std::env::temp_dir()).unwrap();
+        assert_eq!(root.parent(), Some(temp.as_path()));
+        assert!(root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("adit-native-clipboard-"));
+        let primary_path = root.join("primary.bin");
+        let child_path = root.join("child.bin");
+        std::fs::write(&primary_path, b"primary").unwrap();
+        std::fs::write(&child_path, b"child").unwrap();
+        let primary_file = clipboard_files::OfferedFile::test_bind(&primary_path);
+        let child_file = clipboard_files::OfferedFile::test_bind(&child_path);
+
+        let (mut desktop, ids) = fixture();
+        desktop.app.rdp_offered_files = vec![primary_file.clone()];
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        let _ = desktop.in_window(child, |app| {
+            app.rdp_offered_files = vec![child_file.clone()];
+            Task::none()
+        });
+        std::fs::rename(&primary_path, root.join("old-primary.bin")).unwrap();
+        std::fs::rename(&child_path, root.join("old-child.bin")).unwrap();
+        std::fs::write(&primary_path, b"replacement").unwrap();
+        std::fs::write(&child_path, b"replacement").unwrap();
+
+        let _ = desktop.merge(child, false);
+        assert_eq!(
+            desktop.app.rdp_offered_files[0].test_read(),
+            Some(b"child".to_vec())
+        );
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[2]));
+        assert_eq!(
+            desktop.app.rdp_offered_files[0].test_read(),
+            Some(b"primary".to_vec())
+        );
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[0]));
+        assert_eq!(
+            desktop.app.rdp_offered_files[0].test_read(),
+            Some(b"child".to_vec())
+        );
+        let _ = desktop.dispatch(desktop.primary, Message::ToggleRdpClipboard(false));
+        assert!(desktop.app.rdp_offered_files.is_empty());
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[2]));
+        assert!(desktop.app.rdp_offered_files.is_empty());
+
+        drop((desktop, primary_file, child_file));
+        for _ in 0..100 {
+            if std::fs::remove_dir_all(&root).is_ok() || !root.exists() {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        panic!("could not remove synthetic fixture {root:?}");
+    }
+
+    #[test]
+    fn parked_disconnected_session_retires_its_local_offer() {
+        let (mut desktop, ids) = fixture();
+        desktop.app.rdp_offered_files = vec![clipboard_files::OfferedFile::test_fixture(
+            "disconnected.bin",
+        )];
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[1]));
+        assert!(desktop.clipboard_leases.contains_key(&ids[2]));
+        // The fixture session has no live RDP helper, as after a disconnect.
+        desktop.service_parked_clipboards();
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[2]));
+        assert!(desktop.app.rdp_offered_files.is_empty());
+    }
+
+    #[test]
+    fn disabling_clipboard_revokes_file_offers_in_every_window_and_parked_session() {
+        let (mut desktop, ids) = fixture();
+        let offered = clipboard_files::OfferedFile::test_fixture;
+        desktop.app.rdp_offered_files = vec![offered("parked-fixture.bin")];
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[1]));
+        desktop.app.rdp_offered_files = vec![offered("primary-fixture.bin")];
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        let _ = desktop.in_window(child, |app| {
+            app.rdp_offered_files = vec![offered("child-fixture.bin")];
+            Task::none()
+        });
+        assert!(desktop.clipboard_leases.contains_key(&ids[2]));
+        assert!(!desktop.app.rdp_offered_files.is_empty());
+        assert!(!desktop.windows[&child].state.rdp_offered_files.is_empty());
+        let parked_bridge = desktop.clipboard_leases[&ids[2]].test_bridge();
+        let primary_bridge = desktop.app.rdp_chunk_bridge.clone();
+        let child_bridge = desktop.windows[&child].state.rdp_chunk_bridge.clone();
+        assert!(parked_bridge.begin().is_ok());
+        assert!(primary_bridge.begin().is_ok());
+        assert!(child_bridge.begin().is_ok());
+
+        let _ = desktop.dispatch(child, Message::ToggleRdpClipboard(false));
+        assert!(desktop.app.rdp_offered_files.is_empty());
+        assert!(desktop.windows[&child].state.rdp_offered_files.is_empty());
+        assert!(parked_bridge.begin().is_err());
+        assert!(primary_bridge.begin().is_err());
+        assert!(child_bridge.begin().is_err());
+        let _ = desktop.dispatch(desktop.primary, Message::ToggleRdpClipboard(true));
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[2]));
+        assert!(desktop.app.rdp_offered_files.is_empty());
+    }
+
+    #[test]
+    fn clipboard_change_retires_local_mappings_without_stealing_focus() {
+        let (mut desktop, ids) = fixture();
+        let offered = clipboard_files::OfferedFile::test_fixture;
+        desktop.app.rdp_offered_files = vec![offered("parked.bin")];
+        let _ = desktop.dispatch(desktop.primary, Message::TabClicked(ids[1]));
+        desktop.app.rdp_offered_files = vec![offered("primary.bin")];
+        let _ = desktop.detach(ids[0]);
+        let child = desktop.owner(ids[0]);
+        let _ = desktop.in_window(child, |app| {
+            app.rdp_offered_files = vec![offered("child.bin")];
+            Task::none()
+        });
+        let active = desktop.app.manager.active_session();
+        desktop.revoke_local_file_offers();
+        assert!(desktop.app.rdp_offered_files.is_empty());
+        assert!(desktop.windows[&child].state.rdp_offered_files.is_empty());
+        assert!(desktop.clipboard_leases[&ids[2]].test_local_files_empty());
+        assert_eq!(desktop.app.manager.active_session(), active);
     }
 }

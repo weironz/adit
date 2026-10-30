@@ -117,7 +117,7 @@ impl ChunkBridge {
     ///
     /// **Never call this from the UI thread.** It is meant for the COM stream's
     /// `Read`, which runs on Explorer's thread.
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub(crate) fn wait(&self, stream_id: u32) -> Result<Vec<u8>, ChunkError> {
         self.wait_live(stream_id, || true)
     }
@@ -198,11 +198,28 @@ impl ChunkBridge {
         let inner = lock.lock().unwrap_or_else(|e| e.into_inner());
         inner.slots.len()
     }
+
+    #[cfg(test)]
+    pub(crate) fn test_is_pending(&self, stream_id: u32) -> bool {
+        let (lock, _) = &*self.inner;
+        let inner = lock.lock().unwrap_or_else(|e| e.into_inner());
+        matches!(inner.slots.get(&stream_id), Some(None))
+    }
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    pub(crate) fn bridge_with_test_id(stream_id: u32) -> ChunkBridge {
+        let bridge = ChunkBridge::new();
+        {
+            let (lock, _) = &*bridge.inner;
+            assert!(lock.lock().unwrap().slots.insert(stream_id, None).is_none());
+        }
+        bridge
+    }
 
     #[test]
     fn exhausting_the_wire_id_space_never_wraps_to_an_old_request() {

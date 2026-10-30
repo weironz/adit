@@ -7,7 +7,10 @@
 //! ACK confirms driver command processing, not remote execution. Verify the
 //! remote effect separately. Remote clipboard updates can replace CLIP offers;
 //! TEXT is useful for fixture control, but never proves native keyboard/IME input.
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg, InputEvent};
+use adit_rdp_proto::{
+    read_helper_hello, read_msg, write_client_hello, write_msg, ClientMsg, ClipboardStamp,
+    ConnectRequest, HostMsg, InputEvent, SharedClipboardPolicy, IPC_PROTOCOL_VERSION,
+};
 use std::{
     io::{self, BufRead},
     process::{Command, Stdio},
@@ -29,7 +32,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("missing stdin password".into());
     }
     let password = password.trim_end_matches(['\r', '\n']).to_owned();
-    let mut child = Command::new(&args[1])
+    let clipboard_enabled = args.iter().any(|s| s == "--fixture-report");
+    let policy = SharedClipboardPolicy::create(0, clipboard_enabled)?;
+    let mut command = Command::new(&args[1]);
+    command
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(if args.iter().any(|arg| arg == "--fixture-report") {
@@ -37,9 +43,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             Stdio::null()
         })
-        .env("RUST_LOG", "warn")
-        .spawn()?;
+        .env("RUST_LOG", "warn");
+    policy.configure_child(&mut command)?;
+    let mut child = command.spawn()?;
     let mut wire = child.stdin.take().ok_or("helper stdin missing")?;
+    let mut output = child.stdout.take().ok_or("helper stdout missing")?;
+    write_client_hello(&mut wire, IPC_PROTOCOL_VERSION)?;
+    read_helper_hello(&mut output)?;
     write_msg(
         &mut wire,
         &ClientMsg::Connect(ConnectRequest {
@@ -50,12 +60,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             domain: None,
             width: 1280,
             height: 800,
-            enable_clipboard: args.iter().any(|s| s == "--fixture-report"),
+            enable_clipboard: clipboard_enabled,
             enable_audio: false,
             quality: Default::default(),
+            clipboard_policy_id: Some(policy.id().to_owned()),
         }),
     )?;
-    let mut output = child.stdout.take().ok_or("helper stdout missing")?;
     let (events, received) = mpsc::sync_channel(8);
     std::thread::spawn(move || loop {
         match read_msg::<_, HostMsg>(&mut output) {
@@ -137,7 +147,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("first_tile_ms={}", start.elapsed().as_millis());
                     }
                 }
-                Ok(HostMsg::ClipboardText(text))
+                Ok(HostMsg::ClipboardTextForRevision { text, .. })
                     if text.starts_with("ADIT_VNC_TEST:")
                         && args.iter().any(|s| s == "--fixture-report") =>
                 {
@@ -217,9 +227,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if !args.iter().any(|arg| arg == "--fixture-report") {
                         return Err("CLIP requires --fixture-report".into());
                     }
+                    let (policy_epoch, enabled, revision) = policy.load_full();
+                    let content_revision = revision
+                        .checked_add(1)
+                        .ok_or("clipboard revision exhausted")?;
+                    policy.store_full(policy_epoch, enabled, content_revision)?;
                     write_msg(
                         &mut wire,
-                        &ClientMsg::Input(InputEvent::ClipboardText(text.to_owned())),
+                        &ClientMsg::ClipboardTextForRevision {
+                            stamp: ClipboardStamp {
+                                policy_epoch,
+                                content_revision,
+                            },
+                            text: text.to_owned(),
+                        },
                     )?;
                 } else if let Some(key) = command.strip_prefix("KEY ") {
                     let parts: Vec<_> = key.split_whitespace().collect();

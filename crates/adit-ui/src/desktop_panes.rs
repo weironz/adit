@@ -372,6 +372,9 @@ pub(crate) fn pane_view(app: &AditApp, id: SessionId, index: usize) -> Element<'
     if read_only {
         labels = labels.push(text(t("只读")).size(11).color(muted_text()));
     }
+    if let Some(policy) = rdp_clipboard_policy::for_session(app, id) {
+        labels = labels.push(policy.badge(tooltip::Position::Bottom));
+    }
     let header = mouse_area(
         container(
             labels

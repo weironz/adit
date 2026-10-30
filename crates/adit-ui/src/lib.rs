@@ -69,6 +69,7 @@ mod display_accessibility;
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
 mod keyboard_hook;
+mod rdp_clipboard_policy;
 mod rdp_dragdrop;
 mod vnc_cursor;
 #[cfg(feature = "native-vnc-acceptance")]

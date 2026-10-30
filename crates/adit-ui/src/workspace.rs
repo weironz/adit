@@ -600,7 +600,7 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         ),
         rdp_toolbar_button(
             "📋",
-            t("剪贴板同步"),
+            t("请求剪贴板共享"),
             app.rdp_clipboard,
             Some(Message::ToggleRdpClipboard(!app.rdp_clipboard)),
         ),
@@ -1717,11 +1717,16 @@ pub(crate) fn dim_color(color: Color) -> Color {
 }
 
 pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
-    let status = if let Some(error) = &app.last_error {
+    let normal_status = if let Some(error) = &app.last_error {
         tf("错误：{}", &[&runtime(&error)])
     } else {
         runtime(&app.notice)
     };
+    let safety = app
+        .manager
+        .active_session()
+        .and_then(|session| app.manager.rdp_local_file_safety_notice(session));
+    let status = status_with_file_safety(&normal_status, safety);
 
     // Left cluster: a red REC badge while the active session is logging,
     // followed by the current status/notice text.
@@ -1737,6 +1742,9 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
         left = left
             .push(text("⇶").size(12).color(accent()))
             .push(text(tf("广播 ×{}", &[&reach])).size(11).color(accent()));
+    }
+    if let Some(policy) = rdp_clipboard_policy::for_selected_session(app) {
+        left = left.push(policy.badge(tooltip::Position::Top));
     }
     left = left.push(text(status).size(11).color(muted_text()));
 
@@ -1771,6 +1779,16 @@ pub(crate) fn status_bar(app: &AditApp) -> Element<'_, Message> {
     .width(Fill)
     .style(|_theme| status_bar_style())
     .into()
+}
+
+pub(crate) fn status_with_file_safety(normal: &str, safety: Option<&str>) -> String {
+    match safety.filter(|message| !message.is_empty()) {
+        Some(message) if !normal.is_empty() && normal != message => {
+            format!("{} | {normal}", runtime(message))
+        }
+        Some(message) => runtime(message),
+        None => normal.to_owned(),
+    }
 }
 
 fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
@@ -1829,4 +1847,22 @@ fn rdp_monitor_controls(app: &AditApp) -> iced::widget::Row<'_, Message> {
         );
     }
     controls
+}
+
+#[cfg(test)]
+mod safety_status_tests {
+    use super::status_with_file_safety;
+
+    #[test]
+    fn safety_warning_remains_visible_alongside_an_error() {
+        assert_eq!(
+            status_with_file_safety("配置保存失败", Some("文件共享已封存")),
+            "文件共享已封存 | 配置保存失败"
+        );
+        assert_eq!(
+            status_with_file_safety("文件共享已封存", Some("文件共享已封存")),
+            "文件共享已封存"
+        );
+        assert_eq!(status_with_file_safety("正常", None), "正常");
+    }
 }

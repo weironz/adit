@@ -6,7 +6,8 @@
 //! note), so it runs as a child process. The app writes [`ClientMsg`]s to the
 //! child's stdin and reads [`HostMsg`]s from its stdout, each length-prefixed
 //! (4-byte little-endian length + bincode payload). The child's stderr carries
-//! logs and never the protocol.
+//! logs and never the protocol. A credential-free hello and acknowledgement
+//! agree on [`IPC_PROTOCOL_VERSION`] before normal messages cross the pipe.
 //!
 //! This crate has no heavy dependencies on purpose: it is compiled independently
 //! by both workspaces, so it must never pull anything that could reintroduce the
@@ -16,6 +17,9 @@ use std::io::{self, Read, Write};
 
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+
+pub mod clipboard_policy;
+pub use clipboard_policy::SharedClipboardPolicy;
 
 /// Hard cap on a single framed message. It must cover the largest full-frame
 /// `Tile` the helper can produce: the desktop is clamped to 8192 per side, so a
@@ -165,10 +169,9 @@ pub enum Quality {
 /// Everything needed to open an RDP session. The password rides the stdin pipe,
 /// never argv/env, so it isn't visible in the process list.
 ///
-/// Adding a field here changes the bincode layout, and bincode has no version
-/// tolerance: an app talking to a helper built from a different revision fails
-/// to deserialise rather than degrading. That is why the two are built and
-/// shipped together — see the helper note in CLAUDE.md.
+/// Adding a field changes the bincode layout. Bump [`IPC_PROTOCOL_VERSION`] for
+/// every incompatible wire change; deserialisation alone cannot detect all of
+/// them, because one revision can silently interpret another's fields as data.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub host: String,
@@ -181,6 +184,8 @@ pub struct ConnectRequest {
     pub enable_clipboard: bool,
     pub enable_audio: bool,
     pub quality: Quality,
+    /// Per-session shared policy mapping, sent only through the control pipe.
+    pub clipboard_policy_id: Option<String>,
 }
 
 /// A mouse button, protocol-neutral.
@@ -263,10 +268,34 @@ pub use file_safety::{
     validate_clipboard_file_list, validate_clipboard_relative_name, MAX_CLIPBOARD_DESCRIPTORS,
 };
 
+/// Identity of a local-file read within a helper's CLIPRDR channels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ClipboardFileRequestId {
+    pub channel_epoch: u64,
+    pub snapshot_revision: u64,
+    pub generation: u64,
+    pub stream_id: u32,
+}
+
+/// App-owned policy and local clipboard observation at which content was sampled.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClipboardStamp {
+    pub policy_epoch: u64,
+    pub content_revision: u64,
+}
+
+/// Identity of a remote clipboard copy within one helper session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RemoteClipboardStamp {
+    pub local: ClipboardStamp,
+    pub channel_epoch: u64,
+    pub copy_revision: u64,
+}
+
 /// App → helper (over the helper's stdin).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
-    /// Must be the first message; opens the session.
+    /// Must be the first message after IPC negotiation; opens the session.
     Connect(ConnectRequest),
     Input(InputEvent),
     /// Offer a locally-copied image to the remote clipboard, as raw `CF_DIB`
@@ -277,15 +306,17 @@ pub enum ClientMsg {
     /// bytes are not a string. It is a third clipboard format, and MS-RDPECLIP
     /// treats it as exactly that.
     ClipboardImage(Vec<u8>),
-    /// Offer a local file selection to the remote clipboard. The helper holds
-    /// the metadata and answers the server's descriptor request from it; the
-    /// bytes are fetched lazily, one [`HostMsg::FileContentsNeeded`] at a time.
-    ClipboardFiles(Vec<ClipFile>),
-    /// Bytes the app read from a local file, answering
-    /// [`HostMsg::FileContentsNeeded`]. `None` reports a read failure, which the
-    /// helper turns into the protocol's error response — a paste that fails
-    /// loudly beats one that silently writes a truncated file.
+    /// Legacy local file offer. A live helper currently discards nonempty
+    /// metadata; an empty list still revokes an earlier local file offer.
+    ClipboardFiles {
+        /// Identifies this local offer within one helper; zero revokes it.
+        generation: u64,
+        files: Vec<ClipFile>,
+    },
+    /// Legacy unbound reply, retained for synthetic clients. A live helper
+    /// discards it because it cannot identify the originating channel.
     FileContents {
+        generation: u64,
         stream_id: u32,
         data: Option<Vec<u8>>,
     },
@@ -301,6 +332,28 @@ pub enum ClientMsg {
     },
     /// Ask for a graceful disconnect. Dropping stdin has the same effect.
     Close,
+    /// Reply to the exact local-file request issued by the helper.
+    BoundFileContents {
+        request: ClipboardFileRequestId,
+        data: Option<Vec<u8>>,
+    },
+    /// Permanently isolate this helper's local-to-remote file direction.
+    /// Other clipboard formats and the desktop remain available.
+    SuspendLocalFileDirection,
+    /// A local file selection displaced previous clipboard content, but no
+    /// file names, sizes or bytes are sent to the helper.
+    LocalFileOfferRejected,
+    /// Tag subsequent helper file offers with the app's sharing policy epoch.
+    ClipboardPolicyEpoch(u64),
+    /// A sampled local value, bound before it entered the app's IPC queue.
+    ClipboardTextForRevision {
+        stamp: ClipboardStamp,
+        text: String,
+    },
+    ClipboardImageForRevision {
+        stamp: ClipboardStamp,
+        image: Vec<u8>,
+    },
 }
 
 /// Helper → app (over the helper's stdout).
@@ -339,8 +392,12 @@ pub enum HostMsg {
         files: Vec<ClipFile>,
     },
     /// The remote is pasting and wants a byte range of a file the app offered.
-    /// Answer with [`ClientMsg::FileContents`] carrying the same `stream_id`.
+    /// Answer with [`ClientMsg::BoundFileContents`] carrying the entire identity.
     FileContentsNeeded {
+        channel_epoch: u64,
+        snapshot_revision: u64,
+        /// The local offer the helper used to validate this request.
+        generation: u64,
         stream_id: u32,
         index: u32,
         offset: u64,
@@ -359,6 +416,128 @@ pub enum HostMsg {
     Closed,
     Pointer(PointerUpdate),
     DisplayControl(DisplayControlState),
+    /// Nonfatal local file-sharing suspension; the desktop stays connected.
+    ClipboardFileDirectionUnavailable {
+        channel_epoch: u64,
+        message: String,
+    },
+    /// The helper has isolated local-to-remote files for its remaining lifetime.
+    LocalFileDirectionSuspended {
+        channel_epoch: u64,
+    },
+    /// The previous CLIPRDR channel has ended; its local file reads are stale.
+    ClipboardChannelChanged {
+        channel_epoch: u64,
+    },
+    /// This new channel is ready and negotiated local-to-remote file sharing.
+    ClipboardLocalFileDirectionReady {
+        channel_epoch: u64,
+    },
+    /// A remote file offer tagged before it entered the helper output queue.
+    ClipboardFilesForPolicy {
+        policy_epoch: u64,
+        generation: u64,
+        files: Vec<ClipFile>,
+    },
+    /// The helper observed this shared policy; it is not a server acceptance ack.
+    ClipboardPolicyApplied {
+        policy_epoch: u64,
+        enabled: bool,
+    },
+    /// The CLIPRDR channel reported that it is ready.
+    ClipboardChannelReady {
+        channel_epoch: u64,
+    },
+    /// The helper could not bind the shared policy; clipboard stays disabled.
+    ClipboardPolicyRejected,
+    /// The remote has replaced its clipboard, even if it never answers a paste.
+    ClipboardRemoteCopy(RemoteClipboardStamp),
+    ClipboardTextForRevision {
+        stamp: RemoteClipboardStamp,
+        text: String,
+    },
+    ClipboardImageForRevision {
+        stamp: RemoteClipboardStamp,
+        image: Vec<u8>,
+    },
+    ClipboardNotice(String),
+}
+
+/// Version of the complete bincode message layout, not the application release.
+/// Change this whenever either side's messages become wire-incompatible.
+pub const IPC_PROTOCOL_VERSION: u32 = 9;
+
+/// Marker shared by both halves of the fixed version negotiation.
+pub const IPC_HELLO_MAGIC: [u8; 8] = *b"ADITRDP\0";
+
+// The first payload word is deliberately outside the legacy ClientMsg enum.
+// An old helper rejects it instead of treating a new field as an old message.
+// This envelope must stay fixed across future protocol versions.
+const HELLO_DISCRIMINANT: u32 = u32::MAX;
+const HELLO_LENGTH: u32 = 4 + IPC_HELLO_MAGIC.len() as u32 + 4;
+
+/// Send the credential-free first frame. Do not send `Connect` until the helper
+/// has acknowledged the same version with [`read_helper_hello`].
+pub fn write_client_hello<W: Write>(w: &mut W, version: u32) -> io::Result<()> {
+    w.write_all(&HELLO_LENGTH.to_le_bytes())?;
+    w.write_all(&HELLO_DISCRIMINANT.to_le_bytes())?;
+    w.write_all(&IPC_HELLO_MAGIC)?;
+    w.write_all(&version.to_le_bytes())?;
+    w.flush()
+}
+
+/// Acknowledgements use the same fixed envelope, independently of `HostMsg`.
+pub fn write_helper_hello<W: Write>(w: &mut W, version: u32) -> io::Result<()> {
+    write_client_hello(w, version)
+}
+
+/// Read the first frame without deserialising a legacy `Connect`. Reject its
+/// length or discriminator without parsing its body, which may hold a password.
+/// A buffered reader can still prefetch bytes from the underlying pipe.
+pub fn read_client_hello<R: Read>(r: &mut R) -> io::Result<u32> {
+    let mut word = [0; 4];
+    r.read_exact(&mut word)?;
+    if u32::from_le_bytes(word) != HELLO_LENGTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid IPC hello length",
+        ));
+    }
+    r.read_exact(&mut word)?;
+    if u32::from_le_bytes(word) != HELLO_DISCRIMINANT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid IPC hello marker",
+        ));
+    }
+    let mut magic = [0; IPC_HELLO_MAGIC.len()];
+    r.read_exact(&mut magic)?;
+    if magic != IPC_HELLO_MAGIC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid IPC hello magic",
+        ));
+    }
+    r.read_exact(&mut word)?;
+    Ok(u32::from_le_bytes(word))
+}
+
+/// Accept only an explicit matching helper acknowledgement. An old helper
+/// closes the pipe on the unknown hello marker; that is a version failure too.
+pub fn read_helper_hello<R: Read>(r: &mut R) -> io::Result<()> {
+    let version = read_client_hello(r).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("RDP IPC 协商失败：辅助进程版本不兼容或未确认版本（{error}）"),
+        )
+    })?;
+    if version != IPC_PROTOCOL_VERSION {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("RDP IPC 协议版本不匹配：主程序 {IPC_PROTOCOL_VERSION}，辅助进程 {version}；请同时更新主程序和 RDP 辅助进程"),
+        ));
+    }
+    Ok(())
 }
 
 /// Write a length-prefixed, bincode-encoded message and flush. Fails if the
@@ -408,6 +587,180 @@ pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<Option<T>
 mod tests {
     use super::*;
 
+    // The variant indices and affected layouts are from the unversioned peer.
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    enum LegacyClientMsg {
+        Connect(ConnectRequest),
+        Input(InputEvent),
+        ClipboardImage(Vec<u8>),
+        ClipboardFiles(Vec<ClipFile>),
+        FileContents {
+            stream_id: u32,
+            data: Option<Vec<u8>>,
+        },
+        RequestFileContents {
+            generation: u64,
+            stream_id: u32,
+            index: u32,
+            offset: u64,
+            length: u32,
+        },
+        Close,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    enum LegacyHostMsg {
+        Connected,
+        Tile,
+        Resized,
+        ClipboardText,
+        ClipboardImage,
+        ClipboardFiles,
+        FileContentsNeeded,
+        FileContents,
+        Error(String),
+        Closed,
+    }
+
+    // Before image clipboard support, Error and Closed were one index earlier.
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    enum PreImageHostMsg {
+        Connected,
+        Tile,
+        Resized,
+        ClipboardText,
+        ClipboardFiles,
+        FileContentsNeeded,
+        FileContents,
+        Error(String),
+        Closed,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Deserialize)]
+    enum InitialHostMsg {
+        Connected,
+        Tile,
+        Resized,
+        ClipboardText,
+        Error(String),
+        Closed,
+    }
+
+    #[test]
+    fn legacy_helper_rejects_hello_before_any_new_message_or_credential() {
+        let mut sent = Vec::new();
+        write_client_hello(&mut sent, IPC_PROTOCOL_VERSION).unwrap();
+        assert!(read_msg::<_, LegacyClientMsg>(&mut io::Cursor::new(&sent)).is_err());
+        assert!(!sent
+            .windows(b"synthetic-password".len())
+            .any(|w| w == b"synthetic-password"));
+
+        // Demonstrate why relying on bincode errors is unsafe: this new file
+        // message successfully decodes as the old empty offer, losing bytes.
+        let mut file_message = Vec::new();
+        write_msg(
+            &mut file_message,
+            &ClientMsg::ClipboardFiles {
+                generation: 0,
+                files: vec![],
+            },
+        )
+        .unwrap();
+        assert!(
+            matches!(read_msg::<_, LegacyClientMsg>(&mut io::Cursor::new(file_message)).unwrap(), Some(LegacyClientMsg::ClipboardFiles(files)) if files.is_empty())
+        );
+    }
+
+    #[test]
+    fn legacy_connect_is_rejected_before_deserialising_its_body() {
+        let mut sent = Vec::new();
+        write_msg(
+            &mut sent,
+            &ClientMsg::Connect(ConnectRequest {
+                host: "adit.invalid".into(),
+                port: 3389,
+                username: "synthetic-user".into(),
+                password: "synthetic-password".into(),
+                domain: None,
+                width: 800,
+                height: 600,
+                enable_clipboard: true,
+                enable_audio: false,
+                quality: Quality::default(),
+                clipboard_policy_id: None,
+            }),
+        )
+        .unwrap();
+        let mut input = io::Cursor::new(sent);
+        assert!(read_client_hello(&mut input).is_err());
+        assert_eq!(
+            input.position(),
+            4,
+            "legacy payload must not be deserialised"
+        );
+
+        let mut error = Vec::new();
+        write_msg(&mut error, &HostMsg::Error("RDP IPC 协议版本不兼容".into())).unwrap();
+        assert!(
+            matches!(read_msg::<_, LegacyHostMsg>(&mut io::Cursor::new(error)).unwrap(), Some(LegacyHostMsg::Error(message)) if message.contains("版本"))
+        );
+    }
+
+    #[test]
+    fn old_error_indices_cannot_be_negotiated_by_an_unversioned_app() {
+        let mut error = Vec::new();
+        write_msg(&mut error, &HostMsg::Error("RDP IPC 协议版本不兼容".into())).unwrap();
+        // These historical apps cannot display the new error: the same index
+        // was Closed or did not exist. Neither interprets it as clipboard data.
+        assert!(matches!(
+            read_msg::<_, PreImageHostMsg>(&mut io::Cursor::new(&error)).unwrap(),
+            Some(PreImageHostMsg::Closed)
+        ));
+        assert!(read_msg::<_, InitialHostMsg>(&mut io::Cursor::new(error)).is_err());
+    }
+
+    #[test]
+    fn hello_requires_matching_explicit_version() {
+        let mut hello = Vec::new();
+        write_client_hello(&mut hello, IPC_PROTOCOL_VERSION).unwrap();
+        assert_eq!(
+            read_client_hello(&mut io::Cursor::new(hello)).unwrap(),
+            IPC_PROTOCOL_VERSION
+        );
+
+        let mut response = Vec::new();
+        write_helper_hello(&mut response, IPC_PROTOCOL_VERSION).unwrap();
+        assert!(read_helper_hello(&mut io::Cursor::new(response)).is_ok());
+
+        let mut wrong = Vec::new();
+        write_helper_hello(&mut wrong, IPC_PROTOCOL_VERSION + 1).unwrap();
+        assert!(read_helper_hello(&mut io::Cursor::new(wrong))
+            .unwrap_err()
+            .to_string()
+            .contains("版本不匹配"));
+        let mut wrong_magic = Vec::new();
+        write_helper_hello(&mut wrong_magic, IPC_PROTOCOL_VERSION).unwrap();
+        wrong_magic[8] ^= 1;
+        assert!(read_helper_hello(&mut io::Cursor::new(wrong_magic)).is_err());
+        assert!(read_helper_hello(&mut io::Cursor::new(Vec::<u8>::new())).is_err());
+
+        let mut malformed = Vec::new();
+        malformed.extend_from_slice(&HELLO_LENGTH.to_le_bytes());
+        malformed.extend_from_slice(&0u32.to_le_bytes());
+        malformed.extend_from_slice(b"synthetic-password");
+        let mut input = io::Cursor::new(malformed);
+        assert!(read_client_hello(&mut input).is_err());
+        assert_eq!(
+            input.position(),
+            8,
+            "invalid marker must not consume the body"
+        );
+    }
+
     /// The clipboard split (app owns the Windows clipboard, helper owns CLIPRDR)
     /// puts arbitrary user text on this pipe in both directions, so the framing
     /// has to survive whatever ends up on someone's clipboard.
@@ -443,6 +796,33 @@ mod tests {
         assert!(read_msg::<_, HostMsg>(&mut cursor)
             .expect("clean end of stream")
             .is_none());
+    }
+
+    #[test]
+    fn sharing_policy_epoch_survives_both_ipc_directions() {
+        let mut pipe = Vec::new();
+        write_msg(&mut pipe, &ClientMsg::ClipboardPolicyEpoch(23)).unwrap();
+        write_msg(
+            &mut pipe,
+            &HostMsg::ClipboardFilesForPolicy {
+                policy_epoch: 23,
+                generation: 7,
+                files: vec![ClipFile {
+                    name: "fixture.bin".into(),
+                    size: 1,
+                    is_dir: false,
+                }],
+            },
+        )
+        .unwrap();
+        let mut pipe = io::Cursor::new(pipe);
+        assert!(matches!(
+            read_msg::<_, ClientMsg>(&mut pipe).unwrap(),
+            Some(ClientMsg::ClipboardPolicyEpoch(23))
+        ));
+        assert!(
+            matches!(read_msg::<_, HostMsg>(&mut pipe).unwrap(), Some(HostMsg::ClipboardFilesForPolicy { policy_epoch: 23, generation: 7, files }) if files[0].name == "fixture.bin")
+        );
     }
 
     /// A copied tree is a flat list of relative paths, directories included as
@@ -534,6 +914,7 @@ mod tests {
         write_msg(
             &mut pipe,
             &ClientMsg::FileContents {
+                generation: 9,
                 stream_id: 7,
                 data: None,
             },
@@ -542,6 +923,7 @@ mod tests {
         write_msg(
             &mut pipe,
             &ClientMsg::FileContents {
+                generation: 10,
                 stream_id: 8,
                 data: Some(Vec::new()),
             },
@@ -555,14 +937,168 @@ mod tests {
         assert!(matches!(
             failure,
             ClientMsg::FileContents {
+                generation: 9,
                 stream_id: 7,
                 data: None
             }
         ));
         assert!(matches!(
             empty,
-            ClientMsg::FileContents { stream_id: 8, data: Some(ref bytes) } if bytes.is_empty()
+            ClientMsg::FileContents { generation: 10, stream_id: 8, data: Some(ref bytes) } if bytes.is_empty()
         ));
+    }
+
+    #[test]
+    fn local_file_offer_and_read_keep_their_generation_across_ipc() {
+        let mut pipe = Vec::new();
+        write_msg(
+            &mut pipe,
+            &ClientMsg::ClipboardFiles {
+                generation: 17,
+                files: vec![ClipFile {
+                    name: "synthetic.bin".into(),
+                    size: 3,
+                    is_dir: false,
+                }],
+            },
+        )
+        .unwrap();
+        write_msg(
+            &mut pipe,
+            &HostMsg::FileContentsNeeded {
+                channel_epoch: 3,
+                snapshot_revision: 5,
+                generation: 17,
+                stream_id: 7,
+                index: 0,
+                offset: 1,
+                length: 2,
+            },
+        )
+        .unwrap();
+        let mut cursor = io::Cursor::new(pipe);
+        assert!(
+            matches!(read_msg::<_, ClientMsg>(&mut cursor).unwrap(), Some(ClientMsg::ClipboardFiles { generation: 17, files }) if files.len() == 1)
+        );
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut cursor).unwrap(),
+            Some(HostMsg::FileContentsNeeded {
+                channel_epoch: 3,
+                snapshot_revision: 5,
+                generation: 17,
+                stream_id: 7,
+                index: 0,
+                offset: 1,
+                length: 2
+            })
+        ));
+    }
+
+    #[test]
+    fn bound_local_file_reply_preserves_the_complete_request_identity() {
+        let request = ClipboardFileRequestId {
+            channel_epoch: 12,
+            snapshot_revision: 5,
+            generation: 7,
+            stream_id: 41,
+        };
+        let mut pipe = Vec::new();
+        write_msg(
+            &mut pipe,
+            &ClientMsg::BoundFileContents {
+                request,
+                data: Some(vec![1, 2]),
+            },
+        )
+        .unwrap();
+        assert!(matches!(
+            read_msg::<_, ClientMsg>(&mut io::Cursor::new(pipe)).unwrap(),
+            Some(ClientMsg::BoundFileContents { request: got, data: Some(data) })
+                if got == request && data == [1, 2]
+        ));
+    }
+
+    #[test]
+    fn previous_ipc_version_is_rejected_before_messages_are_exchanged() {
+        for version in [5, 6, 7, 8] {
+            let mut response = Vec::new();
+            write_helper_hello(&mut response, version).unwrap();
+            let error = read_helper_hello(&mut io::Cursor::new(response)).unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        }
+    }
+
+    #[test]
+    fn fixed_v9_peer_hello_and_direction_control_layout_are_independent() {
+        const HELLO_V9: [u8; 20] = [
+            16, 0, 0, 0, 255, 255, 255, 255, b'A', b'D', b'I', b'T', b'R', b'D', b'P', 0, 9, 0, 0,
+            0,
+        ];
+        let mut sent = Vec::new();
+        write_client_hello(&mut sent, IPC_PROTOCOL_VERSION).unwrap();
+        assert_eq!(sent, HELLO_V9);
+        assert!(read_helper_hello(&mut io::Cursor::new(HELLO_V9)).is_ok());
+        let mut old = HELLO_V9;
+        old[16] = 8;
+        assert!(read_helper_hello(&mut io::Cursor::new(old)).is_err());
+        let mut notice = Vec::new();
+        write_msg(
+            &mut notice,
+            &HostMsg::ClipboardFileDirectionUnavailable {
+                channel_epoch: 7,
+                message: "notice".into(),
+            },
+        )
+        .unwrap();
+        // Appended variant index 12 and bincode's little-endian field layout.
+        assert_eq!(&notice[4..8], &12_u32.to_le_bytes());
+        assert_eq!(&notice[8..16], &7_u64.to_le_bytes());
+        assert!(
+            matches!(read_msg::<_, HostMsg>(&mut io::Cursor::new(notice)).unwrap(),
+            Some(HostMsg::ClipboardFileDirectionUnavailable { channel_epoch: 7, message }) if message == "notice")
+        );
+        let mut command = Vec::new();
+        write_msg(&mut command, &ClientMsg::SuspendLocalFileDirection).unwrap();
+        assert_eq!(&command[4..8], &8_u32.to_le_bytes());
+        assert!(matches!(
+            read_msg::<_, ClientMsg>(&mut io::Cursor::new(command)).unwrap(),
+            Some(ClientMsg::SuspendLocalFileDirection)
+        ));
+        let mut marker = Vec::new();
+        write_msg(&mut marker, &ClientMsg::LocalFileOfferRejected).unwrap();
+        assert_eq!(marker, [4, 0, 0, 0, 9, 0, 0, 0]);
+        assert!(matches!(
+            read_msg::<_, ClientMsg>(&mut io::Cursor::new(marker)).unwrap(),
+            Some(ClientMsg::LocalFileOfferRejected)
+        ));
+        let mut acknowledgement = Vec::new();
+        write_msg(
+            &mut acknowledgement,
+            &HostMsg::LocalFileDirectionSuspended { channel_epoch: 7 },
+        )
+        .unwrap();
+        assert_eq!(&acknowledgement[4..8], &13_u32.to_le_bytes());
+        assert!(matches!(
+            read_msg::<_, HostMsg>(&mut io::Cursor::new(acknowledgement)).unwrap(),
+            Some(HostMsg::LocalFileDirectionSuspended { channel_epoch: 7 })
+        ));
+        for (message, discriminant) in [
+            (
+                HostMsg::ClipboardChannelChanged { channel_epoch: 8 },
+                14_u32,
+            ),
+            (
+                HostMsg::ClipboardLocalFileDirectionReady { channel_epoch: 9 },
+                15_u32,
+            ),
+        ] {
+            let mut encoded = Vec::new();
+            write_msg(&mut encoded, &message).unwrap();
+            assert_eq!(&encoded[4..8], &discriminant.to_le_bytes());
+            assert!(read_msg::<_, HostMsg>(&mut io::Cursor::new(encoded))
+                .unwrap()
+                .is_some());
+        }
     }
 
     #[test]

@@ -30,6 +30,15 @@ crates.io connector.
 | `rdstls.rs` | The **RDSTLS** security exchange (recv Capabilities → send password AuthReq → recv AuthRsp), ported from FreeRDP `rdstls.c`. Runs on the TLS stream before MCS. | IronRDP implements RDSTLS (only the `SecurityProtocol::RDSTLS` flag exists today). |
 | `session.rs` `run_session` | Reconnect loop that follows a redirection: carries the routing token, builds the one-time RDSTLS creds, and reconnects. | Same as `redirect.rs`. |
 
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-svc/`
+
+The 0.8.0 static-channel reassembler bounds each message to 128 MiB and
+checks fragment sequence and declared length before appending. This prevents
+unbounded accumulation when a peer never sends a final fragment. It is a
+per-channel limit, not an aggregate memory budget. Compressed static-channel
+data remains unsupported. See `vendor/ironrdp-svc/ADIT-PATCH.md` for provenance,
+compatibility constraints and regression tests.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/`
 
 Pulled in via `[patch.crates-io] ironrdp-graphics = { path = "vendor/ironrdp-graphics" }`.
@@ -142,6 +151,42 @@ cargo test --manifest-path crates/adit-rdp/vendor/ironrdp-graphics/Cargo.toml gl
 Capture harness: `ADIT_RDP_DUMP=1` also writes `clear-NNN.bin` + sidecars under
 `%APPDATA%\Adit`, successes included — the caches are stateful, so a failing
 stream replays only in arrival order.
+
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-cliprdr/`
+
+The crates.io `ironrdp-cliprdr` 0.7.0 file-list request handler encodes its
+cached `FileGroupDescriptorW` inline inside `ActiveStage::process`. A clipboard
+replacement can already be waiting at the helper's input barrier when that
+response is produced. Two `ADIT PATCH` sites add a backend hook for this one
+response and keep the upstream inline behavior as the default. Adit takes the
+response into its existing clipboard output queue, binds it to the generation
+and internal revision of the file list cached by `initiate_file_copy`, and
+revalidates that identity immediately before the transport accepts the first
+byte. If it is stale, the helper sends a `CB_RESPONSE_FAIL` format-data
+response. Text, image, Preferred DropEffect and other SVC responses do not use
+the hook.
+
+The incoming `LockData` handler also asks the backend before caching a locked
+file list. The default accepts the lock as upstream did; Adit refuses locks on
+a sealed local file direction so a late lock cannot create another snapshot.
+The protocol has no LockData failure reply, so subsequent file requests receive
+their normal failure responses.
+
+For decoded file-content requests, a backend hook runs before IronRDP can send
+an inline error for a missing capability, missing list or invalid index. Adit
+owns validation and queues every answer behind the same stream-ID admission and
+revocation barrier. This prevents an invalid duplicate from replying to an
+earlier request. Deferred failures may also be encoded before Ready, matching
+the upstream inline failure path; successful content still requires Ready.
+Other backends retain IronRDP's default request handling.
+
+Once `AsyncWrite` accepts any bytes, the helper finishes the complete encoded
+message to preserve the RDP stream. A TLS writer can buffer accepted plaintext;
+the hook cannot retract bytes already accepted by that writer. The
+`active_stage_descriptor_*` tests exercise the real active stage, queued
+revocation, repeated generations and names, and fragmented responses without a
+remote host. Drop this patch when upstream exposes an equivalent deferred,
+snapshot-bound response.
 
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 

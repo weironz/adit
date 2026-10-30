@@ -279,6 +279,21 @@ jobs:
       - name: Clippy the RDP helper
         if: runner.os == 'Windows'
         run: cargo clippy --manifest-path crates/adit-rdp/Cargo.toml --all-targets --locked -- -D warnings
+
+      - name: Test the RDP helper
+        if: runner.os == 'Windows'
+        run: cargo test --manifest-path crates/adit-rdp/Cargo.toml --locked
+
+      - name: Test the RDP IPC version handshake
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          cargo build -p adit-rdp-proto --example rdp_handshake_test_peer --locked
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { 'target' }
+          $env:ADIT_RDP_IPC_TEST_HELPER = (Resolve-Path "$target/debug/examples/rdp_handshake_test_peer.exe").Path
+          cargo test -p adit-session --lib rdp_client::ipc_handshake_tests::client_never_sends_credentials_or_queued_files_until_version_matches --locked -- --exact --ignored
+          exit $LASTEXITCODE
       - name: Launch headless
         if: runner.os == 'Linux'
         env:

@@ -68,6 +68,7 @@ presentation! {
     desktop_clipboard_epoch: u64 = 0,
     rdp_offered_files: Vec<clipboard_files::OfferedFile> = Vec::new(),
     rdp_chunk_bridge: clipboard_files::ChunkBridge = clipboard_files::ChunkBridge::new(),
+    rdp_file_scope: Option<(SessionId, u64)> = None,
     rdp_resize_requested_at: Option<Instant> = None,
     rdp_resize_pending: Option<(u16, u16)> = None,
     rdp_resize_pending_since: Option<Instant> = None,
@@ -145,19 +146,52 @@ clipboard_state! {
     desktop_clipboard_epoch: u64 = 0,
     rdp_offered_files: Vec<clipboard_files::OfferedFile> = Vec::new(),
     rdp_chunk_bridge: clipboard_files::ChunkBridge = clipboard_files::ChunkBridge::new(),
+    rdp_file_scope: Option<(SessionId, u64)> = None,
 }
 
 impl ClipboardLease {
+    #[cfg(test)]
+    pub fn test_bridge(&self) -> clipboard_files::ChunkBridge {
+        self.rdp_chunk_bridge.clone()
+    }
+
+    #[cfg(test)]
+    pub fn test_local_files_empty(&self) -> bool {
+        self.rdp_offered_files.is_empty()
+    }
+
+    pub fn revoke_local_files(&mut self) {
+        self.rdp_offered_files.clear();
+        self.rdp_chunk_bridge.close();
+    }
+
+    pub fn clear_local_file_mapping(&mut self) {
+        self.rdp_offered_files.clear();
+    }
+
     pub fn service_streams(&mut self, manager: &mut SessionManager) {
+        if manager
+            .active_session()
+            .is_none_or(|session| !manager.rdp_file_drag_live(session))
+        {
+            self.rdp_offered_files.clear();
+        }
         for chunk in manager.take_rdp_file_chunks() {
-            self.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+            if self.rdp_file_scope == Some((chunk.session, chunk.generation)) {
+                let data = if manager.rdp_clipboard_enabled() && chunk.is_current() {
+                    chunk.data
+                } else {
+                    None
+                };
+                self.rdp_chunk_bridge.deliver(chunk.stream_id, data);
+            }
         }
         for read in manager.take_rdp_file_reads() {
-            let data = self
-                .rdp_offered_files
-                .get(read.index as usize)
-                .and_then(|file| clipboard_files::read_range(&file.path, read.offset, read.length));
-            manager.answer_rdp_file_read(read.stream_id, data);
+            clipboard_files::answer_offered_read(
+                manager.rdp_clipboard_enabled(),
+                &self.rdp_offered_files,
+                read,
+            );
         }
     }
 }
