@@ -641,10 +641,17 @@ impl DesktopApplication {
             .map(|modal| global_modal_owner(&self.app, modal).unwrap_or(self.primary));
         if owner != self.modal_owner {
             self.modal_owner = owner;
+            let clipboard_modal = update_loop::vnc_clipboard_security_modal(&self.app);
+            let ids: Vec<_> = std::iter::once(self.primary)
+                .chain(self.windows.keys().copied())
+                .collect();
+            for id in &ids {
+                let _ = self.in_window(*id, |app| {
+                    update_loop::set_vnc_clipboard_security_modal(app, clipboard_modal);
+                    Task::none()
+                });
+            }
             if owner.is_some() {
-                let ids: Vec<_> = std::iter::once(self.primary)
-                    .chain(self.windows.keys().copied())
-                    .collect();
                 for id in ids {
                     if owner != Some(id) {
                         accessibility::block_background_window(id);

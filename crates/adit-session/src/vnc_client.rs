@@ -112,14 +112,36 @@ struct SharedState {
     diagnostics: VncDiagnostics,
     accepting_input: bool,
     clipboard_enabled: bool,
+    clipboard_send_paused: bool,
+    clipboard_send_epoch: u64,
     clipboard_policy: Option<vnc::ClipboardPolicy>,
 }
 
 impl SharedState {
+    fn allows_clipboard_epoch(&self, epoch: u64) -> bool {
+        self.clipboard_send_epoch == epoch
+            && !self.clipboard_send_paused
+            && self.clipboard_enabled
+            && !self.options.read_only
+            && self.options.clipboard_send
+            && self.accepting_input
+    }
+
+    fn set_clipboard_send_paused(&mut self, paused: bool) {
+        if self.clipboard_send_paused != paused {
+            self.clipboard_send_paused = paused;
+            self.clipboard_send_epoch = self.clipboard_send_epoch.wrapping_add(1);
+            self.apply_clipboard_policy();
+        }
+    }
+
     fn apply_clipboard_policy(&self) {
         if let Some(policy) = &self.clipboard_policy {
             policy.set(
-                self.clipboard_enabled && !self.options.read_only && self.options.clipboard_send,
+                self.clipboard_enabled
+                    && !self.clipboard_send_paused
+                    && !self.options.read_only
+                    && self.options.clipboard_send,
                 self.clipboard_enabled && self.options.clipboard_receive,
             );
         }
@@ -139,6 +161,7 @@ pub(super) struct VncClientHandle {
 
 enum Command {
     Input(RdpInput),
+    Clipboard { text: String, epoch: u64 },
     Key { keysym: u32, pressed: bool },
     Text(String),
     ReadOnly(bool),
@@ -202,14 +225,29 @@ impl VncClientHandle {
             self.unicode_rejected();
             return;
         }
+        if let RdpInput::ClipboardText(text) = input {
+            let allowed = !state.options.read_only
+                && state.options.clipboard_send
+                && state.clipboard_enabled
+                && !state.clipboard_send_paused
+                && state.accepting_input;
+            let accepted = !allowed
+                || self.commands.push(Command::Clipboard {
+                    text,
+                    epoch: state.clipboard_send_epoch,
+                });
+            drop(state);
+            if !accepted {
+                let _ = self.errors.send(RdpClientEvent::Error(
+                    "VNC 输入队列已满，连接已关闭，请重新连接".into(),
+                ));
+                self.close();
+            }
+            return;
+        }
         let allowed = match &input {
             RdpInput::Resize { .. } => state.options.resize_remote,
-            RdpInput::ClipboardText(_) => {
-                !state.options.read_only
-                    && state.options.clipboard_send
-                    && state.clipboard_enabled
-                    && state.accepting_input
-            }
+            RdpInput::ClipboardText(_) => unreachable!(),
             _ => !state.options.read_only && state.accepting_input,
         };
         drop(state);
@@ -261,6 +299,9 @@ impl VncClientHandle {
     pub(super) fn set_read_only(&self, enabled: bool) {
         {
             let mut state = self.state.lock().unwrap();
+            if state.options.read_only != enabled {
+                state.clipboard_send_epoch = state.clipboard_send_epoch.wrapping_add(1);
+            }
             state.options.read_only = enabled;
             state.apply_clipboard_policy();
         }
@@ -268,8 +309,15 @@ impl VncClientHandle {
     }
     pub(super) fn set_clipboard_sharing(&self, enabled: bool) {
         let mut state = self.state.lock().unwrap();
+        if state.clipboard_enabled != enabled {
+            state.clipboard_send_epoch = state.clipboard_send_epoch.wrapping_add(1);
+        }
         state.clipboard_enabled = enabled;
         state.apply_clipboard_policy();
+    }
+    pub(super) fn set_clipboard_send_paused(&self, paused: bool) {
+        let mut state = self.state.lock().unwrap();
+        state.set_clipboard_send_paused(paused);
     }
     pub(super) fn resize_remote(&self) -> bool {
         self.state.lock().unwrap().options.resize_remote
@@ -350,6 +398,8 @@ fn spawn_vnc_session_with_timeout(
         diagnostics: VncDiagnostics::default(),
         accepting_input: true,
         clipboard_enabled: true,
+        clipboard_send_paused: false,
+        clipboard_send_epoch: 0,
         clipboard_policy: None,
     }));
     let (gateway_tx, gateway_rx) = mpsc::unbounded_channel();
@@ -634,6 +684,14 @@ impl Worker {
                             }
                             vec![]
                         },
+                        Command::Clipboard { text, epoch } => {
+                            let state = self.state.lock().unwrap();
+                            if state.allows_clipboard_epoch(epoch) {
+                                pointer.input(RdpInput::ClipboardText(text))
+                            } else {
+                                vec![]
+                            }
+                        }
                         Command::Input(input) => pointer.input(input),
                     };
                     for input in inputs {
@@ -1133,6 +1191,31 @@ mod gateway_deadline_tests;
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn authentication_pause_invalidates_queued_clipboard_after_resume() {
+        let mut state = super::SharedState {
+            options: adit_domain::VncOptions {
+                clipboard_send: true,
+                read_only: false,
+                ..Default::default()
+            },
+            cursor: None,
+            diagnostics: Default::default(),
+            accepting_input: true,
+            clipboard_enabled: true,
+            clipboard_send_paused: false,
+            clipboard_send_epoch: 0,
+            clipboard_policy: None,
+        };
+        let old = state.clipboard_send_epoch;
+        assert!(state.allows_clipboard_epoch(old));
+        state.set_clipboard_send_paused(true);
+        assert!(!state.allows_clipboard_epoch(old));
+        state.set_clipboard_send_paused(false);
+        assert!(!state.allows_clipboard_epoch(old));
+        assert!(state.allows_clipboard_epoch(state.clipboard_send_epoch));
+    }
+
     #[tokio::test]
     async fn gateway_wait_is_not_charged_to_vnc_handshake_timeout() {
         let result = super::gateway_then_vnc(

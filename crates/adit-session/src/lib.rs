@@ -633,16 +633,11 @@ impl SessionManager {
         }
     }
 
-    /// Retire all helpers' cached local offers once per Windows clipboard change.
-    /// Zero is an unavailable sequence and must remain fail-closed.
-    pub fn observe_windows_clipboard_sequence(&mut self, sequence: u32) {
-        if self.windows_clipboard_sequence == Some(sequence) {
-            return;
-        }
-        self.windows_clipboard_sequence = Some(sequence);
+    /// Suspend only outbound VNC clipboard data while a local security dialog is open.
+    pub fn set_vnc_clipboard_send_paused(&self, paused: bool) {
         for record in self.sessions.values() {
-            if let Some(rdp) = &record.rdp {
-                rdp.send_clipboard_files(Vec::new());
+            if let Some(vnc) = &record.vnc {
+                vnc.set_clipboard_send_paused(paused);
             }
         }
     }

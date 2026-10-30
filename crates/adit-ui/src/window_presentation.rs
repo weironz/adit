@@ -70,6 +70,8 @@ presentation! {
     rdp_image_offered_seq: u32 = 0,
     rdp_clipboard_ticks: u8 = 0,
     desktop_clipboard_epoch: u64 = 0,
+    vnc_clipboard_modal: bool = false,
+    vnc_clipboard_needs_baseline: bool = false,
     rdp_offered_files: Vec<clipboard_files::OfferedFile> = Vec::new(),
     rdp_chunk_bridge: clipboard_files::ChunkBridge = clipboard_files::ChunkBridge::new(),
     rdp_resize_requested_at: Option<Instant> = None,
@@ -148,6 +150,8 @@ clipboard_state! {
     rdp_image_offered_seq: u32 = 0,
     rdp_clipboard_ticks: u8 = 0,
     desktop_clipboard_epoch: u64 = 0,
+    vnc_clipboard_modal: bool = false,
+    vnc_clipboard_needs_baseline: bool = false,
     rdp_offered_files: Vec<clipboard_files::OfferedFile> = Vec::new(),
     rdp_chunk_bridge: clipboard_files::ChunkBridge = clipboard_files::ChunkBridge::new(),
 }
