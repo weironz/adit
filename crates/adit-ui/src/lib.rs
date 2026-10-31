@@ -65,6 +65,7 @@ use style::*;
 /// platforms do not share a mechanism. See the module docs.
 mod clipboard_files;
 mod display_accessibility;
+mod file_drop_listener;
 /// Passing global hotkeys through to a fullscreen remote desktop. A Win32
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
@@ -368,6 +369,7 @@ pub struct AditApp {
     sftp_remote_cwd_seen: String,
     sftp_local_selected: BTreeSet<String>,
     sftp_remote_selected: BTreeSet<String>,
+    sftp_file_drop: update_loop::SftpDropState,
     sftp_local_sort: (SftpSortKey, bool),
     sftp_remote_sort: (SftpSortKey, bool),
     sftp_last_click: Option<(SftpPane, String, Instant)>,
@@ -1028,7 +1030,9 @@ pub enum Message {
     ShowSftpContextMenu(SftpPane, String, bool),
     HideSftpContextMenu,
     SftpTransferSelected(SftpPane),
+    SftpFileHovered(std::path::PathBuf),
     SftpFileDropped(std::path::PathBuf),
+    SftpFilesHoveredLeft,
     SftpLocalPathChanged(String),
     SftpLocalGo,
     SftpRemotePathChanged(String),
@@ -1786,6 +1790,7 @@ impl AditApp {
             sftp_remote_cwd_seen: String::new(),
             sftp_local_selected: BTreeSet::new(),
             sftp_remote_selected: BTreeSet::new(),
+            sftp_file_drop: update_loop::SftpDropState::default(),
             sftp_local_sort: (SftpSortKey::Name, true),
             sftp_remote_sort: (SftpSortKey::Name, true),
             sftp_last_click: None,
@@ -2269,9 +2274,15 @@ fn runtime_event(
         event::Event::Mouse(mouse::Event::ButtonReleased(button)) => Some(
             Message::GlobalPointerReleased(button, status == event::Status::Ignored),
         ),
-        // Files dragged from the OS file manager onto the window.
+        // winit emits one hover and one drop event per file, but no drop point.
+        event::Event::Window(window::Event::FileHovered(path)) => {
+            Some(Message::SftpFileHovered(path))
+        }
         event::Event::Window(window::Event::FileDropped(path)) => {
             Some(Message::SftpFileDropped(path))
+        }
+        event::Event::Window(window::Event::FilesHoveredLeft) => {
+            Some(Message::SftpFilesHoveredLeft)
         }
         _ => None,
     }

@@ -5,6 +5,183 @@ fn read_terminal_clipboard(app: &AditApp) -> Task<Message> {
     clipboard::read().map(move |contents| Message::ClipboardPasted(session, contents))
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum SftpDropDestination {
+    Panel {
+        window: Option<window::Id>,
+        browser: SessionId,
+        cwd: String,
+    },
+    Shell {
+        window: Option<window::Id>,
+        session: SessionId,
+    },
+}
+
+fn sftp_drop_destination(app: &AditApp) -> Option<SftpDropDestination> {
+    // winit discards the release position. A panel owns its whole modal window;
+    // a shell is safe only while that window shows a single session surface.
+    match accessibility::namespace(app).as_str() {
+        "sftp"
+            if native_windows::sftp_visible(app)
+                && app.sftp_context_menu.is_none()
+                && app.sftp_overwrite.is_none() =>
+        {
+            let browser = app.manager.sftp_browser()?;
+            Some(SftpDropDestination::Panel {
+                window: app.native_window_id,
+                browser: browser.instance_id,
+                cwd: browser.cwd.clone(),
+            })
+        }
+        "main"
+            if app.manager.active_is_sftp_shell()
+                && native_windows::owns_selected_session(app)
+                && (app.native_auxiliary
+                    || (app.main_view != MainView::Hosts
+                        && !(app.main_view == MainView::Missions && mission_is_empty(app))
+                        && (app.fullscreen || app.panes.len() < 2))) =>
+        {
+            Some(SftpDropDestination::Shell {
+                window: app.native_window_id,
+                session: app.manager.active_session()?,
+            })
+        }
+        _ => None,
+    }
+}
+
+const MAX_DROPPED_FILES: usize = 4096;
+
+#[derive(Default)]
+pub(crate) struct SftpDropState {
+    batch: Option<SftpDropBatch>,
+}
+
+struct SftpDropBatch {
+    target: Option<SftpDropDestination>,
+    remaining: Vec<std::path::PathBuf>,
+    dropped: Vec<std::path::PathBuf>,
+    dropping: bool,
+    invalid: bool,
+}
+
+impl SftpDropState {
+    pub(crate) fn is_tracking(&self) -> bool {
+        self.batch.is_some()
+    }
+
+    pub(crate) fn invalidate(&mut self) {
+        if let Some(batch) = &mut self.batch {
+            batch.invalid = true;
+        }
+    }
+}
+
+fn reconcile_sftp_file_drop(app: &mut AditApp) {
+    if !app.sftp_file_drop.is_tracking() {
+        return;
+    }
+    let current = sftp_drop_destination(app);
+    if let Some(batch) = &mut app.sftp_file_drop.batch {
+        if batch.target != current {
+            batch.invalid = true;
+        }
+    }
+}
+
+fn hover_sftp_file(app: &mut AditApp, path: std::path::PathBuf) {
+    let target = sftp_drop_destination(app);
+    let state = &mut app.sftp_file_drop;
+    if state.batch.as_ref().is_none_or(|batch| batch.dropping) {
+        state.batch = Some(SftpDropBatch {
+            target: target.clone(),
+            remaining: Vec::new(),
+            dropped: Vec::new(),
+            dropping: false,
+            invalid: target.is_none(),
+        });
+    }
+    let batch = state.batch.as_mut().unwrap();
+    if batch.target != target || batch.remaining.len() >= MAX_DROPPED_FILES {
+        batch.invalid = true;
+    } else {
+        batch.remaining.push(path);
+    }
+}
+
+pub(super) fn handle_sftp_file_drop(
+    app: &mut AditApp,
+    path: std::path::PathBuf,
+    is_directory: impl Fn(&std::path::Path) -> bool,
+) {
+    let current = sftp_drop_destination(app);
+    let Some(batch) = &mut app.sftp_file_drop.batch else {
+        if current.is_some() {
+            app.notice = String::from(t(
+                "无法确认拖入目标，请切换到单个 SFTP 会话或打开 SFTP 面板",
+            ));
+        }
+        return;
+    };
+    batch.dropping = true;
+    if batch.target != current || current.is_none() {
+        batch.invalid = true;
+    }
+    let Some(index) = batch
+        .remaining
+        .iter()
+        .position(|expected| *expected == path)
+    else {
+        batch.invalid = true;
+        return;
+    };
+    batch.remaining.remove(index);
+    batch.dropped.push(path);
+    if !batch.remaining.is_empty() {
+        return;
+    }
+    let batch = app.sftp_file_drop.batch.take().unwrap();
+    if batch.invalid {
+        if app.manager.active_is_sftp_shell() || app.manager.sftp_is_open() {
+            app.notice = String::from(t(
+                "无法确认拖入目标，请切换到单个 SFTP 会话或打开 SFTP 面板",
+            ));
+        }
+        return;
+    }
+    let Some(destination) = batch.target else {
+        return;
+    };
+    if matches!(destination, SftpDropDestination::Shell { .. }) && batch.dropped.len() != 1 {
+        app.last_error = Some(String::from(t(
+            "SFTP 命令行一次只能拖入一个文件；批量上传请使用 SFTP 面板",
+        )));
+        return;
+    }
+    if batch.dropped.iter().any(|path| is_directory(path)) {
+        app.last_error = Some(String::from(t("暂不支持上传文件夹，请拖入单个文件")));
+        return;
+    }
+    match destination {
+        SftpDropDestination::Shell { .. } => {
+            if let Err(error) = app.manager.sftp_shell_upload_dropped(&batch.dropped[0]) {
+                app.last_error = Some(runtime(&error));
+            }
+        }
+        SftpDropDestination::Panel { .. } => {
+            start_transfers(
+                app,
+                batch
+                    .dropped
+                    .into_iter()
+                    .map(PendingTransfer::UploadPath)
+                    .collect(),
+            );
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct VncFrameCoverage {
     resize_epoch: Option<u64>,
@@ -86,6 +263,7 @@ pub(crate) fn set_vnc_clipboard_security_modal(app: &mut AditApp, active: bool) 
 }
 
 pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
+    reconcile_sftp_file_drop(app);
     set_vnc_clipboard_security_modal(app, vnc_clipboard_security_modal(app));
     let mut tasks = vec![update_message(app, message)];
     for (window, scope, message) in accessibility::drain(app) {
@@ -99,6 +277,7 @@ pub(crate) fn update(app: &mut AditApp, message: Message) -> Task<Message> {
         }
     }
     accessibility::retire_changed_scope(app);
+    reconcile_sftp_file_drop(app);
     accessibility::reconcile_remote_focus(app);
     // Focus can move locally without a WindowUnfocused event (settings, menus,
     // sidebar fields). Release keys before returning even from early Task paths.
@@ -1951,21 +2130,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 start_transfers(app, transfers);
             }
         },
+        Message::SftpFileHovered(path) => hover_sftp_file(app, path),
+        Message::SftpFilesHoveredLeft => app.sftp_file_drop = SftpDropState::default(),
         Message::SftpFileDropped(path) => {
-            if path.is_dir() {
-                app.last_error = Some(String::from(t("暂不支持上传文件夹，请拖入单个文件")));
-            } else if app.manager.active_is_sftp_shell() {
-                // Dropped onto a command-line SFTP tab: upload into its cwd.
-                if let Err(error) = app.manager.sftp_shell_upload_dropped(&path) {
-                    app.last_error = Some(runtime(&error));
-                }
-            } else if !app.manager.sftp_is_open() {
-                app.notice = String::from(t(
-                    "拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)",
-                ));
-            } else {
-                start_transfers(app, vec![PendingTransfer::UploadPath(path)]);
-            }
+            handle_sftp_file_drop(app, path, std::path::Path::is_dir);
         }
         Message::SftpLocalPathChanged(value) => app.sftp_local_path_edit = value,
         Message::SftpLocalGo => app
@@ -4312,5 +4480,28 @@ mod rdp_release_tests {
             take_single_button_lease(&mut leases, id, button, Some(Some(13)), Some(13)),
             Some(Some(12))
         );
+    }
+}
+
+#[cfg(test)]
+mod sftp_drop_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_rdp_profile_drop_never_queries_the_path() {
+        let mut profile = ConnectionProfile::new("rdp", "127.0.0.1", 3389, "");
+        profile.protocol = Protocol::Rdp;
+        let id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        manager.open_mock_session(id).unwrap();
+        let mut app = AditApp {
+            manager,
+            ..AditApp::default()
+        };
+        hover_sftp_file(&mut app, "untrusted-local-path".into());
+        handle_sftp_file_drop(&mut app, "untrusted-local-path".into(), |_| {
+            panic!("a rejected drop must not query path metadata")
+        });
+        assert!(app.last_error.is_none());
     }
 }
