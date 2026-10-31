@@ -130,13 +130,6 @@ pub(crate) enum ClipboardAction {
     InboundImage(Vec<u8>),
     /// Refuse a request for a local file without carrying metadata or bytes.
     RefuseFileContents { stream_id: u32 },
-    /// The remote is pasting and needs bytes from a local file; ask the app.
-    NeedFileContents {
-        stream_id: u32,
-        index: u32,
-        offset: u64,
-        length: u32,
-    },
     /// Pull a byte range of a remote file (`request_file_contents`).
     RequestFileContents(BoundRead),
     /// The remote copied files; hand the list to the app to offer locally.
@@ -158,7 +151,6 @@ impl ClipboardAction {
             Self::Inbound(text) => ("inbound_text", text.len()),
             Self::InboundImage(image) => ("inbound_image", image.len()),
             Self::RefuseFileContents { .. } => ("refuse_file", 0),
-            Self::NeedFileContents { length, .. } => ("need_file", *length as usize),
             Self::RequestFileContents(_) => ("request_file", 0),
             Self::InboundFiles { files, .. } => ("inbound_files", files.len()),
             Self::InboundFileContents(reply) => {
@@ -468,7 +460,6 @@ impl AditCliprdrBackend {
     fn with_state<R>(&self, f: impl FnOnce(&mut ClipboardState) -> R) -> Option<R> {
         self.state.lock().ok().map(|mut guard| f(&mut guard))
     }
-
 }
 
 ironrdp_core::impl_as_any!(AditCliprdrBackend);
@@ -678,16 +669,10 @@ impl CliprdrBackend for AditCliprdrBackend {
         // Reject SIZE and RANGE alike. Never ask the app to read a local file,
         // even when a peer sends a stale or unsolicited request.
         let stream_id = request.stream_id;
-        let length = request.requested_size.min(adit_rdp_proto::FILE_CHUNK_BYTES);
         self.with_state(|state| {
             state
                 .actions
-                .push_back(ClipboardAction::NeedFileContents {
-                    stream_id,
-                    index: request.index.max(0) as u32,
-                    offset: request.position,
-                    length,
-                });
+                .push_back(ClipboardAction::RefuseFileContents { stream_id });
         });
     }
 
@@ -763,18 +748,6 @@ fn for_app(action: ClipboardAction, epoch: u64) -> Result<HostMsg, ClipboardActi
         ClipboardAction::InboundFiles { generation, files } => {
             Ok(HostMsg::ClipboardFiles { generation, files })
         }
-        ClipboardAction::NeedFileContents {
-            stream_id,
-            index,
-            offset,
-            length,
-        } => Ok(HostMsg::FileContentsNeeded {
-            epoch,
-            stream_id,
-            index,
-            offset,
-            length,
-        }),
         ClipboardAction::InboundFileContents(Reply {
             generation,
             stream_id,
@@ -862,7 +835,6 @@ pub(crate) fn pump(
             ClipboardAction::Inbound(_)
             | ClipboardAction::InboundImage(_)
             | ClipboardAction::InboundFiles { .. }
-            | ClipboardAction::NeedFileContents { .. }
             | ClipboardAction::InboundFileContents(_) => {
                 unreachable!("app-addressed actions are handled above")
             }
