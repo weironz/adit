@@ -98,6 +98,7 @@ presentation! {
     sidebar_dragging: bool = false,
     cursor_pos: Point = Point::ORIGIN,
     context_menu_pos: Point = Point::ORIGIN,
+    sftp_file_drop: update_loop::SftpDropState = Default::default(),
     main_view: MainView = MainView::Terminal,
     missions: Missions = Missions::default(),
     desktop_panes: desktop_panes::DesktopPanes = Default::default(),
