@@ -231,6 +231,9 @@ pub(crate) struct ClipboardState {
     /// The format we asked the remote for. `FormatDataResponse` does not echo
     /// the format, so without this we could not pick the right character set.
     pending_remote_format: Option<ClipboardFormatId>,
+    /// Invalidates local responses already removed from `actions` by the pump.
+    local_revision: u64,
+    local_revision_exhausted: bool,
     /// CLIPRDR reached `Ready` (capabilities exchanged and our first
     /// `FormatList` acknowledged). Advertising before that is out of sequence.
     ready: bool,
@@ -246,6 +249,13 @@ pub(crate) struct ClipboardState {
 }
 
 impl ClipboardState {
+    fn advance_local_revision(&mut self) {
+        match self.local_revision.checked_add(1) {
+            Some(next) if !self.local_revision_exhausted => self.local_revision = next,
+            _ => self.local_revision_exhausted = true,
+        }
+    }
+
     fn revoke_remote_files(&mut self, expects_files: bool) {
         let (had_offer, replies) = self.remote_files.revoke(expects_files);
         self.actions.extend(
@@ -288,6 +298,10 @@ impl ClipboardState {
         if self.local_image.as_ref().is_some_and(|held| *held == image) {
             return;
         }
+        self.clear_local_offer(false);
+        if self.local_revision_exhausted {
+            return;
+        }
         self.revoke_remote_files(false);
         self.local_image = Some(image);
         // A local image replaces the text previously offered.
@@ -299,6 +313,10 @@ impl ClipboardState {
 
     pub(crate) fn offer_local_text(&mut self, text: String) {
         if self.local_text.as_deref() == Some(text.as_str()) {
+            return;
+        }
+        self.clear_local_offer(false);
+        if self.local_revision_exhausted {
             return;
         }
         self.revoke_remote_files(false);
@@ -313,6 +331,7 @@ impl ClipboardState {
     /// Retire only our local text/image offer; remote file snapshots are a
     /// separate direction and must survive clipboard invalidation.
     fn clear_local_offer(&mut self, advertise: bool) {
+        self.advance_local_revision();
         let had_local = self.local_text.take().is_some() | self.local_image.take().is_some();
         self.advertised_text = None;
         self.advertised_image_len = None;
@@ -343,6 +362,11 @@ impl ClipboardState {
     /// deliberately kept: a GNOME system-mode handover redirects and rebuilds
     /// the channel, and the user's clipboard did not change under them.
     fn reset_for_new_channel(&mut self) {
+        self.advance_local_revision();
+        if self.local_revision_exhausted {
+            self.local_text = None;
+            self.local_image = None;
+        }
         self.advertised_text = None;
         self.advertised_image_len = None;
         self.pending_remote_format = None;
@@ -375,6 +399,13 @@ pub(crate) fn offer_local_text(state: &SharedClipboard, text: String) {
 pub(crate) fn offer_local_image(state: &SharedClipboard, image: Vec<u8>) {
     if let Ok(mut guard) = state.lock() {
         guard.offer_local_image(image);
+    }
+}
+
+/// Retire local clipboard data without touching remote file snapshots.
+pub(crate) fn clear_local_offer(state: &SharedClipboard) {
+    if let Ok(mut guard) = state.lock() {
+        guard.clear_local_offer(true);
     }
 }
 
@@ -486,9 +517,10 @@ impl CliprdrBackend for AditCliprdrBackend {
     fn on_ready(&mut self) {
         self.with_state(|state| {
             state.ready = true;
-            // The app may have copied something while the handshake was in
-            // flight; that text missed the initial FormatList.
-            if state.local_text != state.advertised_text {
+            // The app may have copied text or an image after the initial list.
+            if state.local_text != state.advertised_text
+                || state.local_image.as_ref().map(Vec::len) != state.advertised_image_len
+            {
                 state.queue_advertise();
             }
         });
@@ -774,20 +806,31 @@ pub(crate) fn pump(
     host_tx: &std_mpsc::Sender<HostMsg>,
     epoch: u64,
 ) -> Option<Vec<Vec<u8>>> {
-    let actions = match state.lock() {
-        Ok(mut guard) => guard.take_actions(),
+    let (actions, local_revision) = match state.lock() {
+        Ok(mut guard) => (guard.take_actions(), guard.local_revision),
         Err(_) => return Some(Vec::new()),
     };
     if actions.is_empty() {
         return Some(Vec::new());
     }
 
+    pump_actions(state, active_stage, host_tx, epoch, actions, local_revision)
+}
+
+fn pump_actions(
+    state: &SharedClipboard,
+    active_stage: &mut ActiveStage,
+    host_tx: &std_mpsc::Sender<HostMsg>,
+    epoch: u64,
+    actions: Vec<ClipboardAction>,
+    local_revision: u64,
+) -> Option<Vec<Vec<u8>>> {
     let mut frames = Vec::new();
     for action in actions {
         // Four of the actions are addressed to the app rather than the wire.
         // `for_app` hands back the ones that are not, because matching by value
         // would otherwise move the action away from the CLIPRDR branch below.
-        let action = match for_app(action, epoch) {
+        let mut action = match for_app(action, epoch) {
             Ok(message) => {
                 if host_tx.send(message).is_err() {
                     return None;
@@ -796,6 +839,36 @@ pub(crate) fn pump(
             }
             Err(action) => action,
         };
+
+        // The IPC reader can revoke a local offer after this batch was taken.
+        // Hold the lock through encoding so revocation cannot complete between
+        // validating these bytes and placing them into an in-flight frame.
+        let is_local = matches!(
+            action,
+            ClipboardAction::Advertise(_)
+                | ClipboardAction::SubmitText { .. }
+                | ClipboardAction::SubmitImage { .. }
+        );
+        let local_guard = if is_local { state.lock().ok() } else { None };
+        if is_local
+            && local_guard.as_ref().is_none_or(|guard| {
+                guard.local_revision_exhausted || guard.local_revision != local_revision
+            })
+        {
+            match &mut action {
+                ClipboardAction::Advertise(ids) => {
+                    // An initial empty list is required for the handshake; a
+                    // stale list in a ready channel must not steal ownership.
+                    if local_guard.as_ref().is_none_or(|guard| guard.ready) {
+                        continue;
+                    }
+                    ids.clear();
+                }
+                ClipboardAction::SubmitText { text, .. } => *text = None,
+                ClipboardAction::SubmitImage { image, .. } => *image = None,
+                _ => unreachable!(),
+            }
+        }
 
         let Some(cliprdr) = active_stage.get_svc_processor_mut::<CliprdrClient>() else {
             tracing::warn!("CLIPRDR channel is not open; dropping clipboard action");
@@ -858,21 +931,19 @@ pub(crate) fn pump(
                 }
             }
         }
+        drop(local_guard);
     }
     Some(frames)
 }
+
+#[cfg(test)]
+mod barrier_tests;
 
 #[cfg(test)]
 mod tests {
     use ironrdp_core::{decode, Encode as _, WriteCursor};
 
     use super::*;
-
-    fn clear_local_offer(state: &SharedClipboard) {
-        if let Ok(mut guard) = state.lock() {
-            guard.clear_local_offer(true);
-        }
-    }
 
     #[test]
     fn repro_action_debug_must_not_expose_clipboard_payloads() {

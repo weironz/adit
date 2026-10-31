@@ -59,11 +59,8 @@ pub(crate) enum SessionCmd {
         width: u16,
         height: u16,
     },
-    /// Offer a locally-copied image to the remote clipboard (raw CF_DIB).
-    ClipboardImage {
-        epoch: u64,
-        image: Vec<u8>,
-    },
+    /// Clipboard state was updated by the IPC reader; wake the session pump.
+    ClipboardWake,
     /// The app read the bytes the remote asked for, or failed to.
     FileContents {
         epoch: u64,
@@ -86,7 +83,6 @@ impl SessionCmd {
             Self::Input { epoch, .. }
             | Self::Pointer { epoch, .. }
             | Self::Resize { epoch, .. }
-            | Self::ClipboardImage { epoch, .. }
             | Self::FileContents { epoch, .. } => *epoch == current,
             _ => true,
         }
@@ -106,8 +102,40 @@ struct InputRoutingState {
 }
 
 impl InputRouting {
-    pub(crate) fn accepts_epoch(&self, epoch: u64) -> bool {
-        self.state.lock().unwrap_or_else(|e| e.into_inner()).epoch == epoch
+    pub(crate) fn offer_clipboard_text(
+        &self,
+        epoch: u64,
+        clip: &SharedClipboard,
+        text: String,
+    ) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.epoch != epoch {
+            return false;
+        }
+        clipboard::offer_local_text(clip, text);
+        true
+    }
+
+    pub(crate) fn offer_clipboard_image(
+        &self,
+        epoch: u64,
+        clip: &SharedClipboard,
+        image: Vec<u8>,
+    ) -> bool {
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        if state.epoch != epoch {
+            return false;
+        }
+        clipboard::offer_local_image(clip, image);
+        true
+    }
+
+    pub(crate) fn revoke_local_clipboard(&self, clip: &SharedClipboard) {
+        // Clipboard changes are global, including ones sent during a redirect
+        // before the app has observed the new epoch. Serialize with offers and
+        // epoch changes so an old queued offer cannot follow the barrier.
+        let _state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        clipboard::clear_local_offer(clip);
     }
 
     pub(crate) fn file_contents(
@@ -129,6 +157,9 @@ impl InputRouting {
     pub(crate) fn route(&self, epoch: u64, event: InputEvent) -> Option<(bool, SessionCmd)> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if epoch != state.epoch {
+            return None;
+        }
+        if matches!(event, InputEvent::ClipboardText(_)) {
             return None;
         }
         if is_display_input(&event) {
@@ -743,6 +774,7 @@ pub(crate) async fn run_session(
     mut input_rx: tokio_mpsc::UnboundedReceiver<SessionCmd>,
     mut display_rx: tokio_mpsc::UnboundedReceiver<SessionCmd>,
     routing: Arc<InputRouting>,
+    shared_clipboard: SharedClipboard,
     host_tx: std_mpsc::Sender<HostMsg>,
 ) -> Result<(), RdpError> {
     // Shared framebuffer the EGFX handler (running inside `ActiveStage::process`)
@@ -758,10 +790,6 @@ pub(crate) async fn run_session(
     let shared_display = SharedDisplay::default();
     let mut pending_layout = None;
     let mut pending_resize = None;
-    // Clipboard state outlives a single CLIPRDR channel on purpose: a GNOME
-    // system-mode handover redirects and rebuilds the channel, and the text the
-    // user copied did not change under them.
-    let shared_clipboard = clipboard::new_shared();
     let mut routing_token: Option<Vec<u8>> = None;
     // One-time credentials for the RDSTLS handover auth, populated on a redirect.
     let mut rdstls_creds: Option<crate::rdstls::RdstlsCreds> = None;
@@ -1304,21 +1332,7 @@ async fn active_session(
                         let released = release_pointer_buttons(&mut input_db);
                         if released.is_empty() { Vec::new() } else { active_stage.process_fastpath_input(&mut image, &released)? }
                     }
-                    // The GUI owns the real Windows clipboard and hands us
-                    // freshly-copied text; we only advertise it to the remote
-                    // (CLIPRDR delay-rendering), so nothing crosses the wire
-                    // until something over there actually pastes. The advertise
-                    // itself is emitted by the clipboard pump below. With the
-                    // channel disabled it just overwrites a string and stops there.
-                    Some(SessionCmd::Input { event: InputEvent::ClipboardText(text), .. }) => {
-                        clipboard::offer_local_text(clip, text);
-                        Vec::new()
-                    }
-                    // File transfer: all three are metadata-or-bytes bookkeeping
-                    Some(SessionCmd::ClipboardImage { image, .. }) => {
-                        clipboard::offer_local_image(clip, image);
-                        Vec::new()
-                    }
+                    Some(SessionCmd::ClipboardWake) => Vec::new(),
                     Some(SessionCmd::FileContents { stream_id, data, .. }) => {
                         clipboard::submit_file_contents(clip, stream_id, data);
                         Vec::new()
@@ -2229,18 +2243,8 @@ mod display_deadline_tests {
                     event: InputEvent::CancelMonitorLayout { request_id: 9 },
                 })
                 .unwrap();
-            input_tx
-                .send(SessionCmd::Input {
-                    epoch: 1,
-                    event: InputEvent::ClipboardText("copied".into()),
-                })
-                .unwrap();
-            input_tx
-                .send(SessionCmd::ClipboardImage {
-                    epoch: 1,
-                    image: vec![7, 8],
-                })
-                .unwrap();
+            input_tx.send(SessionCmd::ClipboardWake).unwrap();
+            input_tx.send(SessionCmd::ClipboardWake).unwrap();
             drop(input_tx);
         };
         let (read, ()) = tokio::join!(
@@ -2249,12 +2253,14 @@ mod display_deadline_tests {
         );
         assert!(read.is_none());
         assert!(pending_layout.is_none());
-        assert!(
-            matches!(deferred.pop_front(), Some(SessionCmd::Input { event: InputEvent::ClipboardText(text), .. }) if text == "copied")
-        );
-        assert!(
-            matches!(deferred.pop_front(), Some(SessionCmd::ClipboardImage { image, .. }) if image == [7, 8])
-        );
+        assert!(matches!(
+            deferred.pop_front(),
+            Some(SessionCmd::ClipboardWake)
+        ));
+        assert!(matches!(
+            deferred.pop_front(),
+            Some(SessionCmd::ClipboardWake)
+        ));
     }
 
     #[tokio::test]
@@ -2824,23 +2830,19 @@ mod display_deadline_tests {
                 .unwrap();
             assert!(defer_connect_command(&mut deferred, command));
         }
-        let (_, clipboard_text) = routing
-            .route(
-                1,
-                InputEvent::ClipboardText("copied during reconnect".into()),
-            )
-            .unwrap();
-        assert!(defer_connect_command(&mut deferred, clipboard_text));
+        let clip = clipboard::new_shared();
+        assert!(routing.offer_clipboard_text(1, &clip, "copied during reconnect".into()));
         assert!(defer_connect_command(
             &mut deferred,
-            SessionCmd::ClipboardImage {
-                epoch: 1,
-                image: vec![3, 4, 5]
-            },
+            SessionCmd::ClipboardWake
+        ));
+        assert!(routing.offer_clipboard_image(1, &clip, vec![3, 4, 5]));
+        assert!(defer_connect_command(
+            &mut deferred,
+            SessionCmd::ClipboardWake
         ));
         let (host_tx, host_rx) = std_mpsc::channel();
         let egfx = egfx::new_shared();
-        let clip = clipboard::new_shared();
         let display = SharedDisplay::default();
         let (mut pending, mut resize) = (None, None);
         let session = active_session(

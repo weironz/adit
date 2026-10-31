@@ -21,15 +21,17 @@ use adit_rdp_proto::{
 };
 use tokio::sync::mpsc as tokio_mpsc;
 
+use crate::clipboard::{self, SharedClipboard};
 use crate::session::{run_session, InputRouting, SessionCmd};
 use crate::RdpError;
 
-fn read_app_messages<R: io::Read>(
+pub(crate) fn read_app_messages<R: io::Read>(
     mut input: R,
     request_tx: std_mpsc::Sender<ConnectRequest>,
     input_tx: tokio_mpsc::UnboundedSender<SessionCmd>,
     display_tx: tokio_mpsc::UnboundedSender<SessionCmd>,
     routing: Arc<InputRouting>,
+    clipboard: SharedClipboard,
 ) {
     let mut request_tx = Some(request_tx);
     loop {
@@ -41,6 +43,16 @@ fn read_app_messages<R: io::Read>(
             }
             // Untagged input must not cross a redirection.
             Ok(Some(ClientMsg::Input(_))) => {}
+            Ok(Some(ClientMsg::EpochInput {
+                epoch,
+                event: adit_rdp_proto::InputEvent::ClipboardText(text),
+            })) => {
+                if routing.offer_clipboard_text(epoch, &clipboard, text)
+                    && input_tx.send(SessionCmd::ClipboardWake).is_err()
+                {
+                    break;
+                }
+            }
             Ok(Some(ClientMsg::EpochInput { epoch, event })) => {
                 let key = matches!(
                     &event,
@@ -57,17 +69,27 @@ fn read_app_messages<R: io::Read>(
                 }
             }
             Ok(Some(ClientMsg::ClipboardImage(_))) => {}
-            Ok(Some(ClientMsg::ClipboardFiles(_))) => {}
+            Ok(Some(ClientMsg::ClipboardFiles(_))) => {
+                routing.revoke_local_clipboard(&clipboard);
+                if input_tx.send(SessionCmd::ClipboardWake).is_err() {
+                    break;
+                }
+            }
             Ok(Some(ClientMsg::EpochClipboardImage { epoch, image })) => {
-                if routing.accepts_epoch(epoch)
-                    && input_tx
-                        .send(SessionCmd::ClipboardImage { epoch, image })
-                        .is_err()
+                if routing.offer_clipboard_image(epoch, &clipboard, image)
+                    && input_tx.send(SessionCmd::ClipboardWake).is_err()
                 {
                     break;
                 }
             }
-            Ok(Some(ClientMsg::EpochClipboardFiles { .. })) => {}
+            Ok(Some(ClientMsg::EpochClipboardFiles { .. })) => {
+                // Discard file metadata. Even a stale epoch can carry a real
+                // clipboard change made during redirection.
+                routing.revoke_local_clipboard(&clipboard);
+                if input_tx.send(SessionCmd::ClipboardWake).is_err() {
+                    break;
+                }
+            }
             Ok(Some(ClientMsg::FileContents {
                 epoch,
                 stream_id,
@@ -170,6 +192,10 @@ pub fn run_host() -> Result<(), RdpError> {
     let (display_tx, display_rx) = tokio_mpsc::unbounded_channel();
     let routing = Arc::new(InputRouting::default());
     let reader_routing = Arc::clone(&routing);
+    // Revocation must reach the clipboard before older session commands drain;
+    // the same state is kept when redirection rebuilds the CLIPRDR channel.
+    let clipboard = clipboard::new_shared();
+    let reader_clipboard = Arc::clone(&clipboard);
     let (host_tx, host_rx) = std_mpsc::channel::<HostMsg>();
     let (hello_tx, hello_rx) = std_mpsc::sync_channel::<Option<u32>>(1);
 
@@ -185,7 +211,14 @@ pub fn run_host() -> Result<(), RdpError> {
             if hello_tx.send(version).is_err() || version != Some(IPC_PROTOCOL_VERSION) {
                 return;
             }
-            read_app_messages(input, req_tx, input_tx, display_tx, reader_routing);
+            read_app_messages(
+                input,
+                req_tx,
+                input_tx,
+                display_tx,
+                reader_routing,
+                reader_clipboard,
+            );
         })
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
@@ -241,6 +274,7 @@ pub fn run_host() -> Result<(), RdpError> {
         input_rx,
         display_rx,
         routing,
+        clipboard,
         host_tx.clone(),
     ));
 
@@ -259,6 +293,9 @@ pub fn run_host() -> Result<(), RdpError> {
 
     result
 }
+
+#[cfg(test)]
+mod barrier_tests;
 
 #[cfg(test)]
 mod redirect_epoch_tests {
@@ -326,7 +363,14 @@ mod redirect_epoch_tests {
         };
         let worker_routing = Arc::clone(&routing);
         let worker = thread::spawn(move || {
-            read_app_messages(reader, request_tx, input_tx, display_tx, worker_routing)
+            read_app_messages(
+                reader,
+                request_tx,
+                input_tx,
+                display_tx,
+                worker_routing,
+                clipboard::new_shared(),
+            )
         });
         let old = frame(ClientMsg::EpochInput {
             epoch: 0,
