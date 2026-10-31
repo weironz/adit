@@ -417,6 +417,13 @@ fn framed_file_barrier_preserves_remote_file_snapshot_and_never_offers_local_fil
             }
         })
         .expect("remote file lock");
+    // The wire request is only ours to answer once the pump has marked the
+    // queued format request issued; a fabricated response without that step
+    // has nothing to be correlated with.
+    assert_eq!(
+        clipboard::test_begin_remote_format(&state),
+        Some(ClipboardFormatId(0xc001))
+    );
     let _: Vec<SvcMessage> = clip
         .initiate_paste(ClipboardFormatId(0xc001))
         .unwrap()
