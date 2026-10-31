@@ -1,4 +1,5 @@
 //! CLIPRDR adapter for text, images and generation-bound file snapshots.
+//! Local file sending is disabled.
 //!
 //! ## Why this shape
 //!
@@ -20,9 +21,10 @@
 //! ## File snapshot ownership
 //!
 //! Images and file ranges travel through IPC, while all OS interaction remains
-//! in the app. Each remote file offer binds metadata, a generation and the
-//! server's clipboard lock. Neither delayed rendering nor a queued request may
-//! look up whichever lock happens to be current when it finally runs.
+//! in the app. Format requests are serialized to discard an obsolete response
+//! before requesting the next offer, assuming one response per request. The
+//! wire has no response or lock ID, so unannounced changes and unsolicited or
+//! duplicate responses can still be misattributed.
 //!
 //! ## Direction asymmetry (deliberate)
 //!
@@ -41,10 +43,11 @@ use std::sync::{Arc, Mutex};
 
 use adit_rdp_proto::{ClipFile, HostMsg};
 use ironrdp_cliprdr::backend::CliprdrBackend;
+use ironrdp_cliprdr::pdu::ClipboardFileAttributes;
 use ironrdp_cliprdr::pdu::{
-    ClipboardFileAttributes, ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags,
-    FileContentsFlags, FileContentsRequest, FileContentsResponse, FileDescriptor,
-    FormatDataRequest, FormatDataResponse, LockDataId, OwnedFormatDataResponse,
+    ClipboardFormat, ClipboardFormatId, ClipboardGeneralCapabilityFlags, FileContentsFlags,
+    FileContentsRequest, FileContentsResponse, FileDescriptor, FormatDataRequest,
+    FormatDataResponse, LockDataId, OwnedFormatDataResponse,
 };
 use ironrdp_cliprdr::CliprdrClient;
 use ironrdp_session::ActiveStage;
@@ -112,7 +115,10 @@ pub(crate) enum ClipboardAction {
     /// meaningful and legal: "the local clipboard holds nothing you can use".
     Advertise(Vec<ClipboardFormatId>),
     /// Ask the remote for its clipboard in this format (`FormatDataRequest`).
-    RequestText(ClipboardFormatId),
+    RequestFormat {
+        format: ClipboardFormatId,
+        generation: u64,
+    },
     /// Answer the remote's `FormatDataRequest`. `text: None` ⇒ error response.
     SubmitText {
         format: ClipboardFormatId,
@@ -145,7 +151,7 @@ impl ClipboardAction {
     fn log_metadata(&self) -> (&'static str, usize) {
         match self {
             Self::Advertise(ids) => ("advertise", ids.len()),
-            Self::RequestText(_) => ("request_format", 0),
+            Self::RequestFormat { .. } => ("request_format", 0),
             Self::SubmitText { text, .. } => ("submit_text", text.as_ref().map_or(0, String::len)),
             Self::SubmitImage { image, .. } => ("submit_image", image.as_ref().map_or(0, Vec::len)),
             Self::Inbound(text) => ("inbound_text", text.len()),
@@ -211,6 +217,16 @@ fn validated_remote_files(files: &[FileDescriptor]) -> Result<Vec<ClipFile>, &'s
     Ok(listed)
 }
 
+/// The wire response has no request ID, so at most one request may be issued.
+#[derive(Debug, Clone, Copy)]
+struct RemoteFormatRequest {
+    format: ClipboardFormatId,
+    generation: u64,
+    files: bool,
+    issued: bool,
+    invalidated: bool,
+}
+
 /// Everything the backend and the session loop share. Session-scoped fields are
 /// reset when a new backend is built, because a server redirection rebuilds the
 /// CLIPRDR channel from scratch while the app's offered text stays valid.
@@ -228,22 +244,22 @@ pub(crate) struct ClipboardState {
     /// wire but not free, and the GUI polls its clipboard on a timer, so this
     /// suppresses the repeats.
     advertised_text: Option<String>,
-    /// The format we asked the remote for. `FormatDataResponse` does not echo
-    /// the format, so without this we could not pick the right character set.
-    pending_remote_format: Option<ClipboardFormatId>,
+    /// Independent of IronRDP's pending format, which a FormatList clears even
+    /// when the previous response is still in flight.
+    pending_remote_format: Option<RemoteFormatRequest>,
+    /// Only the newest clipboard is useful after consuming the pending response.
+    deferred_remote_format: Option<RemoteFormatRequest>,
     /// Invalidates local responses already removed from `actions` by the pump.
     local_revision: u64,
     local_revision_exhausted: bool,
     /// CLIPRDR reached `Ready` (capabilities exchanged and our first
     /// `FormatList` acknowledged). Advertising before that is out of sequence.
     ready: bool,
-    /// The lock id the server handed us with the remote's file list. Quoted back
-    /// on every `request_file_contents` so the bytes come from the snapshot that
-    /// was copied, not from whatever the remote clipboard holds by the time the
-    /// paste actually runs.
+    /// The lock ID sent for a remote file offer is carried in every range
+    /// request. A compliant peer uses it to select the locked file stream;
+    /// the format response itself does not establish that association.
     remote_files: RemoteFiles,
-    /// Whether the server negotiated file transfer. Remote-to-local requests
-    /// need this capability even though local-to-remote files are disabled.
+    /// Whether the server negotiated file transfer.
     files_negotiated: bool,
     actions: VecDeque<ClipboardAction>,
 }
@@ -254,6 +270,76 @@ impl ClipboardState {
             Some(next) if !self.local_revision_exhausted => self.local_revision = next,
             _ => self.local_revision_exhausted = true,
         }
+    }
+
+    fn invalidate_remote_format(&mut self) {
+        self.deferred_remote_format = None;
+        if let Some(request) = self.pending_remote_format.as_mut() {
+            if request.issued {
+                // A late response is still possible. Wait for a response before
+                // issuing the successor; the protocol cannot identify it.
+                request.invalidated = true;
+            } else {
+                self.pending_remote_format = None;
+            }
+        }
+        self.actions
+            .retain(|action| !matches!(action, ClipboardAction::RequestFormat { .. }));
+    }
+
+    fn queue_remote_format(&mut self, format: ClipboardFormatId, files: bool) {
+        let request = RemoteFormatRequest {
+            format,
+            generation: self.remote_files.generation(),
+            files,
+            issued: false,
+            invalidated: false,
+        };
+        if self.pending_remote_format.is_some() {
+            self.deferred_remote_format = Some(request);
+        } else {
+            self.enqueue_remote_format(request);
+        }
+    }
+
+    fn enqueue_remote_format(&mut self, request: RemoteFormatRequest) {
+        self.pending_remote_format = Some(request);
+        self.actions.push_back(ClipboardAction::RequestFormat {
+            format: request.format,
+            generation: request.generation,
+        });
+    }
+
+    fn begin_remote_format(&mut self, format: ClipboardFormatId, generation: u64) -> bool {
+        let Some(request) = self.pending_remote_format.as_mut() else {
+            return false;
+        };
+        if request.format != format
+            || request.generation != generation
+            || request.generation != self.remote_files.generation()
+            || request.issued
+            || request.invalidated
+        {
+            return false;
+        }
+        request.issued = true;
+        true
+    }
+
+    fn finish_remote_format(&mut self) -> Option<RemoteFormatRequest> {
+        if !self
+            .pending_remote_format
+            .is_some_and(|request| request.issued)
+        {
+            return None;
+        }
+        let completed = self.pending_remote_format.take();
+        if let Some(next) = self.deferred_remote_format.take() {
+            if next.generation == self.remote_files.generation() {
+                self.enqueue_remote_format(next);
+            }
+        }
+        completed
     }
 
     fn revoke_remote_files(&mut self, expects_files: bool) {
@@ -298,6 +384,7 @@ impl ClipboardState {
         if self.local_image.as_ref().is_some_and(|held| *held == image) {
             return;
         }
+        self.invalidate_remote_format();
         self.clear_local_offer(false);
         if self.local_revision_exhausted {
             return;
@@ -315,6 +402,7 @@ impl ClipboardState {
         if self.local_text.as_deref() == Some(text.as_str()) {
             return;
         }
+        self.invalidate_remote_format();
         self.clear_local_offer(false);
         if self.local_revision_exhausted {
             return;
@@ -370,6 +458,7 @@ impl ClipboardState {
         self.advertised_text = None;
         self.advertised_image_len = None;
         self.pending_remote_format = None;
+        self.deferred_remote_format = None;
         self.ready = false;
         // Scoped to the channel, not to the user's clipboard: the lock id and the
         // negotiated capability both belong to the CLIPRDR session that just went
@@ -412,6 +501,20 @@ pub(crate) fn clear_local_offer(state: &SharedClipboard) {
 #[cfg(test)]
 pub(crate) fn test_local_image(state: &SharedClipboard) -> Option<Vec<u8>> {
     state.lock().unwrap().local_image.clone()
+}
+
+/// Test-only: take the queued remote format request and mark it issued, the
+/// way the pump does before it puts a `FormatDataRequest` on the wire. A test
+/// that drives the channel directly has to pass through this gate too, or the
+/// response it fabricates has nothing to be correlated with.
+#[cfg(test)]
+pub(crate) fn test_begin_remote_format(state: &SharedClipboard) -> Option<ClipboardFormatId> {
+    let mut guard = state.lock().ok()?;
+    let (format, generation) = match guard.actions.front() {
+        Some(ClipboardAction::RequestFormat { format, generation }) => (*format, *generation),
+        _ => return None,
+    };
+    guard.begin_remote_format(format, generation).then_some(format)
 }
 
 /// Queue the app's answer to a [`HostMsg::FileContentsNeeded`].
@@ -458,6 +561,16 @@ fn fail_remote_read(state: &SharedClipboard, wire_id: u32) {
     }
 }
 
+fn fail_remote_format(state: &SharedClipboard, format: ClipboardFormatId, generation: u64) {
+    if let Ok(mut guard) = state.lock() {
+        if guard.pending_remote_format.is_some_and(|request| {
+            request.issued && request.format == format && request.generation == generation
+        }) {
+            guard.finish_remote_format();
+        }
+    }
+}
+
 fn prepare_remote_read(state: &SharedClipboard, read: &BoundRead) -> Option<FileContentsRequest> {
     let current = state.lock().ok()?.remote_files.current(read);
     if !current {
@@ -498,18 +611,14 @@ ironrdp_core::impl_as_any!(AditCliprdrBackend);
 impl CliprdrBackend for AditCliprdrBackend {
     fn temporary_directory(&self) -> &str {
         // Announced for servers that require the field during the handshake.
-        // Remote file contents are fetched on demand rather than staged here.
+        // This helper does not stage clipboard files there.
         "."
     }
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
-        // `Cliprdr` adds USE_LONG_FORMAT_NAMES itself.
-        //
-        // CAN_LOCK_CLIPDATA rides along with file support and is not really
-        // optional: without it the server hands us no clipDataId, and a paste
-        // that takes a while then reads whatever the remote clipboard holds as
-        // each chunk arrives rather than what was copied. Locking is what pins
-        // the snapshot for the length of the transfer.
+        // `Cliprdr` adds USE_LONG_FORMAT_NAMES itself. Keep the negotiated
+        // stream capability so IronRDP can explicitly refuse unsolicited local
+        // file requests; no file offer is accepted in either direction.
         ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
             | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
     }
@@ -551,69 +660,36 @@ impl CliprdrBackend for AditCliprdrBackend {
     }
 
     fn on_remote_copy(&mut self, available_formats: &[ClipboardFormat]) {
-        // A file list is delay-rendered by the remote too: the FormatList only
-        // names the format, and `initiate_paste` is what fetches the descriptors.
-        // They arrive at `on_remote_file_list` below rather than at
-        // `on_format_data_response`, which is why this returns early instead of
-        // recording a `pending_remote_format`.
         let files = available_formats
             .iter()
             .find(|format| format.name().is_some_and(|n| n.value() == FILE_LIST_FORMAT));
-        self.with_state(|state| {
-            // The remote now owns the clipboard. Never answer requests with a
-            // local copy from before that ownership change.
-            state.clear_local_offer(false);
-            state.revoke_remote_files(files.is_some());
-        });
-        if let Some(format) = files {
-            self.with_state(|state| {
-                state
-                    .actions
-                    .push_back(ClipboardAction::RequestText(format.id));
-            });
-            return;
-        }
-
-        let text_available = TEXT_FORMATS
-            .iter()
-            .any(|wanted| available_formats.iter().any(|f| f.id == *wanted));
-        if !text_available {
-            // Images only when there is no text. A copy offering both is text
-            // with a rendering attached (a spreadsheet cell, a styled run), and
-            // the text is what the user meant to paste.
-            if let Some(format) = IMAGE_FORMATS
-                .iter()
-                .copied()
-                .find(|wanted| available_formats.iter().any(|f| f.id == *wanted))
-            {
-                self.with_state(|state| {
-                    state.pending_remote_format = Some(format);
-                    state
-                        .actions
-                        .push_back(ClipboardAction::RequestText(format));
-                });
-                return;
-            }
-        }
-        let chosen = TEXT_FORMATS
+        let text = TEXT_FORMATS
             .iter()
             .copied()
             .find(|wanted| available_formats.iter().any(|f| f.id == *wanted));
-        match chosen {
-            Some(format) => {
-                self.with_state(|state| {
-                    state.pending_remote_format = Some(format);
-                    state
-                        .actions
-                        .push_back(ClipboardAction::RequestText(format));
-                });
+        let image = IMAGE_FORMATS
+            .iter()
+            .copied()
+            .find(|wanted| available_formats.iter().any(|f| f.id == *wanted));
+        // Text takes precedence over an image rendered alongside it.
+        let chosen = files
+            .map(|format| (format.id, true))
+            .or_else(|| text.or(image).map(|format| (format, false)));
+        self.with_state(|state| {
+            // Invalidate and enqueue together so a local copy cannot slip
+            // between the ownership change and the new request.
+            state.invalidate_remote_format();
+            state.clear_local_offer(false);
+            state.revoke_remote_files(files.is_some());
+            if let Some((format, is_file)) = chosen {
+                state.queue_remote_format(format, is_file);
             }
-            None => {
-                tracing::debug!(
-                    formats = ?available_formats.iter().map(|f| f.id.value()).collect::<Vec<_>>(),
-                    "remote clipboard holds no text format we support; ignoring"
-                );
-            }
+        });
+        if chosen.is_none() {
+            tracing::debug!(
+                formats = ?available_formats.iter().map(|f| f.id.value()).collect::<Vec<_>>(),
+                "remote clipboard holds no text format we support; ignoring"
+            );
         }
     }
 
@@ -648,18 +724,28 @@ impl CliprdrBackend for AditCliprdrBackend {
     }
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
-        let format = self
-            .with_state(|state| state.pending_remote_format.take())
+        let request = self
+            .with_state(ClipboardState::finish_remote_format)
             .flatten();
+        let Some(request) = request else {
+            tracing::warn!("unsolicited CLIPRDR format data response; ignoring");
+            return;
+        };
+        if request.invalidated {
+            tracing::debug!("discarding a superseded CLIPRDR format response");
+            return;
+        }
+        let format = request.format;
         if response.is_error() {
             tracing::warn!(?format, "remote refused to hand over its clipboard");
             return;
         }
-        let Some(format) = format else {
-            // Nothing correlates this response to a request of ours.
-            tracing::warn!("unsolicited CLIPRDR format data response; ignoring");
+        if request.files {
+            // IronRDP forwards malformed file lists here instead of invoking
+            // on_remote_file_list. Never interpret those bytes as text.
+            tracing::warn!("remote file descriptor response could not be decoded");
             return;
-        };
+        }
         if is_image_format(format) {
             let bytes = response.data();
             if bytes.is_empty() || bytes.len() > MAX_CLIPBOARD_IMAGE_BYTES {
@@ -671,9 +757,11 @@ impl CliprdrBackend for AditCliprdrBackend {
             }
             let image = bytes.to_vec();
             self.with_state(|state| {
-                state
-                    .actions
-                    .push_back(ClipboardAction::InboundImage(image));
+                if request.generation == state.remote_files.generation() {
+                    state
+                        .actions
+                        .push_back(ClipboardAction::InboundImage(image));
+                }
             });
             return;
         }
@@ -690,7 +778,11 @@ impl CliprdrBackend for AditCliprdrBackend {
                 );
             }
             Ok(text) => {
-                self.with_state(|state| state.actions.push_back(ClipboardAction::Inbound(text)));
+                self.with_state(|state| {
+                    if request.generation == state.remote_files.generation() {
+                        state.actions.push_back(ClipboardAction::Inbound(text));
+                    }
+                });
             }
             Err(error) => tracing::warn!("could not decode remote clipboard text: {error}"),
         }
@@ -725,6 +817,25 @@ impl CliprdrBackend for AditCliprdrBackend {
 
     /// Descriptors for a file list the remote copied.
     fn on_remote_file_list(&mut self, files: &[FileDescriptor], clip_data_id: Option<u32>) {
+        let request = self
+            .with_state(|state| {
+                if !state
+                    .pending_remote_format
+                    .is_some_and(|request| request.issued && request.files)
+                {
+                    return None;
+                }
+                state.finish_remote_format()
+            })
+            .flatten();
+        let Some(request) = request else {
+            tracing::warn!("unsolicited remote file descriptors; refusing offer");
+            return;
+        };
+        if request.invalidated {
+            tracing::debug!("discarding superseded remote file descriptors");
+            return;
+        }
         if !files.is_empty() && clip_data_id.is_none() {
             tracing::warn!("remote file clipboard has no stable lock; refusing file offer");
         }
@@ -733,6 +844,9 @@ impl CliprdrBackend for AditCliprdrBackend {
             Vec::new()
         });
         self.with_state(|state| {
+            if request.generation != state.remote_files.generation() {
+                return;
+            }
             let expects_files = state.remote_files.expects_files();
             state.revoke_remote_files(expects_files);
             let accepted =
@@ -883,7 +997,16 @@ fn pump_actions(
                     ids.iter().copied().map(ClipboardFormat::new).collect();
                 cliprdr.initiate_copy(&formats)
             }
-            ClipboardAction::RequestText(format) => cliprdr.initiate_paste(*format),
+            ClipboardAction::RequestFormat { format, generation } => {
+                if !state
+                    .lock()
+                    .ok()
+                    .is_some_and(|mut guard| guard.begin_remote_format(*format, *generation))
+                {
+                    continue;
+                }
+                cliprdr.initiate_paste(*format)
+            }
             ClipboardAction::SubmitText { format, text } => {
                 cliprdr.submit_format_data(format_data_response(*format, text.as_deref()))
             }
@@ -919,6 +1042,9 @@ fn pump_actions(
                 if let ClipboardAction::RequestFileContents(read) = &action {
                     fail_remote_read(state, read.wire_id);
                 }
+                if let ClipboardAction::RequestFormat { format, generation } = &action {
+                    fail_remote_format(state, *format, *generation);
+                }
                 continue;
             }
         };
@@ -929,6 +1055,9 @@ fn pump_actions(
                 if let ClipboardAction::RequestFileContents(read) = &action {
                     fail_remote_read(state, read.wire_id);
                 }
+                if let ClipboardAction::RequestFormat { format, generation } = &action {
+                    fail_remote_format(state, *format, *generation);
+                }
             }
         }
         drop(local_guard);
@@ -938,6 +1067,8 @@ fn pump_actions(
 
 #[cfg(test)]
 mod barrier_tests;
+#[cfg(test)]
+mod protocol_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1083,13 +1214,16 @@ mod tests {
         clear_local_offer(&state);
         backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId(0xc003))
             .with_name(ClipboardFormatName::FILE_LIST)]);
-        let queued = actions(&state);
+        let queued = issued_actions(&state);
         assert!(!queued
             .iter()
             .any(|action| matches!(action, ClipboardAction::Advertise(_))));
         assert!(queued.iter().any(|action| matches!(
             action,
-            ClipboardAction::RequestText(ClipboardFormatId(0xc003))
+            ClipboardAction::RequestFormat {
+                format: ClipboardFormatId(0xc003),
+                ..
+            }
         )));
         let mut descriptor = FileDescriptor::new("remote.txt");
         descriptor.file_size = Some(4);
@@ -1099,15 +1233,8 @@ mod tests {
 
     #[test]
     fn clearing_local_offer_does_not_revoke_a_remote_file_snapshot() {
-        let (mut backend, state) = backend();
-        {
-            let mut state = state.lock().unwrap();
-            state.files_negotiated = true;
-            state.revoke_remote_files(true);
-        }
-        let mut descriptor = FileDescriptor::new("remote.txt");
-        descriptor.file_size = Some(4);
-        backend.on_remote_file_list(&[descriptor], Some(7));
+        let (_, state) = backend();
+        install_test_snapshot(&state, "remote.txt", 4, 7);
         assert!(state.lock().unwrap().remote_files.active());
         let _ = actions(&state);
         clear_local_offer(&state);
@@ -1220,14 +1347,7 @@ mod tests {
     #[test]
     fn file_epoch_backend_rejects_old_gui_requests_and_late_wire_replies() {
         let (mut backend, state) = backend();
-        {
-            let mut state = state.lock().unwrap();
-            state.files_negotiated = true;
-            state.revoke_remote_files(true);
-        }
-        let mut descriptor = FileDescriptor::new("A.bin");
-        descriptor.file_size = Some(8);
-        backend.on_remote_file_list(&[descriptor.clone()], Some(10));
+        install_test_snapshot(&state, "A.bin", 8, 10);
         let a = state.lock().unwrap().remote_files.generation();
         request_file_contents(&state, a, 42, 0, 0, 3);
         let queued = actions(&state);
@@ -1239,8 +1359,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(prepare_remote_read(&state, &old).unwrap().data_id, Some(10));
-        descriptor.name = "B.bin".into();
-        backend.on_remote_file_list(&[descriptor], Some(20));
+        install_test_snapshot(&state, "B.bin", 8, 20);
         let b = state.lock().unwrap().remote_files.generation();
         // GUI is still holding A: helper authority, not GUI polling, must refuse.
         request_file_contents(&state, a, 43, 0, 0, 3);
@@ -1277,14 +1396,7 @@ mod tests {
     #[test]
     fn file_epoch_text_format_list_and_redirection_revoke_active_files() {
         let (mut backend, state) = backend();
-        {
-            let mut state = state.lock().unwrap();
-            state.files_negotiated = true;
-            state.revoke_remote_files(true);
-        }
-        let mut descriptor = FileDescriptor::new("A.bin");
-        descriptor.file_size = Some(8);
-        backend.on_remote_file_list(&[descriptor], Some(10));
+        install_test_snapshot(&state, "A.bin", 8, 10);
         let generation = state.lock().unwrap().remote_files.generation();
         let _ = actions(&state);
         backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
@@ -1304,10 +1416,14 @@ mod tests {
 
     #[test]
     fn unsafe_remote_file_descriptors_revoke_the_previous_offer() {
+        use ironrdp_cliprdr::pdu::ClipboardFormatName;
         let (mut backend, state) = backend();
         for name in ["C:\\escape", "..\\escape", "\\absolute", "NUL.txt"] {
             let descriptor = FileDescriptor::new(name);
             assert!(validated_remote_files(std::slice::from_ref(&descriptor)).is_err());
+            backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId(0xc001))
+                .with_name(ClipboardFormatName::FILE_LIST)]);
+            let _ = issued_actions(&state);
             backend.on_remote_file_list(&[descriptor], Some(7));
             assert!(actions(&state).iter().any(
                 |a| matches!(a, ClipboardAction::InboundFiles { files, .. } if files.is_empty())
@@ -1331,6 +1447,33 @@ mod tests {
 
     fn actions(state: &SharedClipboard) -> Vec<ClipboardAction> {
         state.lock().expect("state lock").take_actions()
+    }
+
+    fn issued_actions(state: &SharedClipboard) -> Vec<ClipboardAction> {
+        let queued = actions(state);
+        for action in &queued {
+            if let ClipboardAction::RequestFormat { format, generation } = action {
+                assert!(state
+                    .lock()
+                    .unwrap()
+                    .begin_remote_format(*format, *generation));
+            }
+        }
+        queued
+    }
+
+    // Exercise revocation of an existing snapshot even while new offers are disabled.
+    fn install_test_snapshot(state: &SharedClipboard, name: &str, size: u64, data_id: u32) {
+        let mut state = state.lock().unwrap();
+        state.revoke_remote_files(true);
+        assert!(state.remote_files.install(
+            vec![ClipFile {
+                name: name.into(),
+                size,
+                is_dir: false,
+            }],
+            Some(data_id)
+        ));
     }
 
     fn text_format(id: ClipboardFormatId) -> ClipboardFormat {
@@ -1402,11 +1545,11 @@ mod tests {
         let requested = actions(&state);
         assert!(requested.iter().any(|a| matches!(
             a,
-            ClipboardAction::RequestText(id) if *id == ClipboardFormatId::CF_UNICODETEXT
+            ClipboardAction::RequestFormat { format, .. } if *format == ClipboardFormatId::CF_UNICODETEXT
         )));
         assert!(!requested.iter().any(|a| matches!(
             a,
-            ClipboardAction::RequestText(id) if *id == ClipboardFormatId::CF_DIB
+            ClipboardAction::RequestFormat { format, .. } if *format == ClipboardFormatId::CF_DIB
         )));
     }
 
@@ -1421,7 +1564,7 @@ mod tests {
 
         assert!(actions(&state).iter().any(|a| matches!(
             a,
-            ClipboardAction::RequestText(id) if *id == ClipboardFormatId::CF_DIB
+            ClipboardAction::RequestFormat { format, .. } if *format == ClipboardFormatId::CF_DIB
         )));
     }
 
@@ -1513,22 +1656,26 @@ mod tests {
             text_format(ClipboardFormatId::CF_TEXT),
             text_format(ClipboardFormatId::CF_UNICODETEXT),
         ]);
-        assert_eq!(
-            actions(&state),
-            vec![ClipboardAction::RequestText(
-                ClipboardFormatId::CF_UNICODETEXT
-            )]
-        );
+        assert!(matches!(
+            actions(&state).as_slice(),
+            [ClipboardAction::RequestFormat {
+                format: ClipboardFormatId::CF_UNICODETEXT,
+                ..
+            }]
+        ));
     }
 
     #[test]
     fn a_remote_copy_falls_back_to_legacy_text_formats() {
         let (mut backend, state) = backend();
         backend.on_remote_copy(&[text_format(ClipboardFormatId::CF_OEMTEXT)]);
-        assert_eq!(
-            actions(&state),
-            vec![ClipboardAction::RequestText(ClipboardFormatId::CF_OEMTEXT)]
-        );
+        assert!(matches!(
+            actions(&state).as_slice(),
+            [ClipboardAction::RequestFormat {
+                format: ClipboardFormatId::CF_OEMTEXT,
+                ..
+            }]
+        ));
     }
 
     #[test]
@@ -1544,7 +1691,7 @@ mod tests {
     fn remote_unicode_text_round_trips_to_the_app() {
         let (mut backend, state) = backend();
         backend.on_remote_copy(&[text_format(ClipboardFormatId::CF_UNICODETEXT)]);
-        let _ = actions(&state);
+        let _ = issued_actions(&state);
 
         // Decode from the encoded PDU, exactly as the session would.
         let wire = encoded(&OwnedFormatDataResponse::new_unicode_string("你好 world"));
@@ -1561,7 +1708,7 @@ mod tests {
     fn remote_ansi_text_is_decoded_with_the_requested_charset() {
         let (mut backend, state) = backend();
         backend.on_remote_copy(&[text_format(ClipboardFormatId::CF_TEXT)]);
-        let _ = actions(&state);
+        let _ = issued_actions(&state);
 
         let wire = encoded(&OwnedFormatDataResponse::new_string("plain"));
         let response: FormatDataResponse<'_> = decode(&wire).expect("decode response");
@@ -1577,7 +1724,7 @@ mod tests {
     fn an_error_response_produces_nothing_and_clears_the_pending_format() {
         let (mut backend, state) = backend();
         backend.on_remote_copy(&[text_format(ClipboardFormatId::CF_UNICODETEXT)]);
-        let _ = actions(&state);
+        let _ = issued_actions(&state);
 
         backend.on_format_data_response(FormatDataResponse::new_error());
         assert!(actions(&state).is_empty());
@@ -1603,7 +1750,7 @@ mod tests {
     fn oversized_remote_text_is_dropped() {
         let (mut backend, state) = backend();
         backend.on_remote_copy(&[text_format(ClipboardFormatId::CF_UNICODETEXT)]);
-        let _ = actions(&state);
+        let _ = issued_actions(&state);
 
         let huge = "a".repeat(MAX_CLIPBOARD_BYTES + 1);
         let wire = encoded(&OwnedFormatDataResponse::new_unicode_string(&huge));
