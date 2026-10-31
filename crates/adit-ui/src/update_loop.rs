@@ -5,6 +5,54 @@ fn read_terminal_clipboard(app: &AditApp) -> Task<Message> {
     clipboard::read().map(move |contents| Message::ClipboardPasted(session, contents))
 }
 
+#[derive(Clone, Copy)]
+enum SftpDropDestination {
+    Panel,
+    Shell,
+}
+
+fn sftp_drop_destination(app: &AditApp) -> Option<SftpDropDestination> {
+    // FileDropped has a window ID but no position. This checks only the
+    // visible window and topmost surface; it is not a pane hit test.
+    match accessibility::namespace(app).as_str() {
+        "sftp" if native_windows::sftp_visible(app) && app.sftp_context_menu.is_none() => {
+            Some(SftpDropDestination::Panel)
+        }
+        "main"
+            if app.manager.active_is_sftp_shell()
+                && native_windows::owns_selected_session(app)
+                && (app.native_auxiliary || app.main_view != MainView::Hosts) =>
+        {
+            Some(SftpDropDestination::Shell)
+        }
+        _ => None,
+    }
+}
+
+fn handle_sftp_file_drop(
+    app: &mut AditApp,
+    path: std::path::PathBuf,
+    is_directory: impl FnOnce(&std::path::Path) -> bool,
+) {
+    let Some(destination) = sftp_drop_destination(app) else {
+        return;
+    };
+    if is_directory(&path) {
+        app.last_error = Some(String::from(t("暂不支持上传文件夹，请拖入单个文件")));
+        return;
+    }
+    match destination {
+        SftpDropDestination::Shell => {
+            if let Err(error) = app.manager.sftp_shell_upload_dropped(&path) {
+                app.last_error = Some(runtime(&error));
+            }
+        }
+        SftpDropDestination::Panel => {
+            start_transfers(app, vec![PendingTransfer::UploadPath(path)]);
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct VncFrameCoverage {
     resize_epoch: Option<u64>,
@@ -1952,20 +2000,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         },
         Message::SftpFileDropped(path) => {
-            if path.is_dir() {
-                app.last_error = Some(String::from(t("暂不支持上传文件夹，请拖入单个文件")));
-            } else if app.manager.active_is_sftp_shell() {
-                // Dropped onto a command-line SFTP tab: upload into its cwd.
-                if let Err(error) = app.manager.sftp_shell_upload_dropped(&path) {
-                    app.last_error = Some(runtime(&error));
-                }
-            } else if !app.manager.sftp_is_open() {
-                app.notice = String::from(t(
-                    "拖拽上传：请先打开 SFTP (Alt+P 开命令行，或打开 SFTP 面板)",
-                ));
-            } else {
-                start_transfers(app, vec![PendingTransfer::UploadPath(path)]);
-            }
+            handle_sftp_file_drop(app, path, std::path::Path::is_dir);
         }
         Message::SftpLocalPathChanged(value) => app.sftp_local_path_edit = value,
         Message::SftpLocalGo => app
@@ -4312,5 +4347,27 @@ mod rdp_release_tests {
             take_single_button_lease(&mut leases, id, button, Some(Some(13)), Some(13)),
             Some(Some(12))
         );
+    }
+}
+
+#[cfg(test)]
+mod sftp_drop_tests {
+    use super::*;
+
+    #[test]
+    fn rejected_rdp_profile_drop_never_queries_the_path() {
+        let mut profile = ConnectionProfile::new("rdp", "127.0.0.1", 3389, "");
+        profile.protocol = Protocol::Rdp;
+        let id = profile.id;
+        let mut manager = SessionManager::with_profiles(vec![profile]);
+        manager.open_mock_session(id).unwrap();
+        let mut app = AditApp {
+            manager,
+            ..AditApp::default()
+        };
+        handle_sftp_file_drop(&mut app, "untrusted-local-path".into(), |_| {
+            panic!("a rejected drop must not query path metadata")
+        });
+        assert!(app.last_error.is_none());
     }
 }
