@@ -1318,6 +1318,163 @@ mod tests {
         )
     }
 
+    fn sftp_drop_fixture(panel: bool) -> (DesktopApplication, SessionId) {
+        let mut ssh = ConnectionProfile::new("drop-ssh", "127.0.0.1", 1, "fixture");
+        ssh.protocol = Protocol::Ssh;
+        let mut sftp = ConnectionProfile::new("drop-sftp", "127.0.0.1", 1, "fixture");
+        sftp.protocol = Protocol::Sftp;
+        let ssh_id = ssh.id;
+        let sftp_id = sftp.id;
+        let (mut desktop, _) = fixture();
+        desktop.app.manager = SessionManager::with_profiles(vec![ssh, sftp]);
+        if panel {
+            desktop
+                .app
+                .manager
+                .open_live_ssh_session(ssh_id, String::new(), String::new())
+                .unwrap();
+            desktop.app.manager.open_sftp_for_active().unwrap();
+            desktop.app.native_sftp_window = Some(desktop.primary);
+        }
+        let shell = desktop
+            .app
+            .manager
+            .open_live_ssh_session(sftp_id, String::new(), String::new())
+            .unwrap();
+        (desktop, shell)
+    }
+
+    fn drop_file(desktop: &mut DesktopApplication, id: window::Id, path: std::path::PathBuf) {
+        let _ = desktop.update(NativeMessage::Runtime(
+            id,
+            iced::Event::Window(window::Event::FileDropped(path)),
+            event::Status::Ignored,
+        ));
+    }
+
+    fn shell_text(desktop: &DesktopApplication) -> String {
+        terminal_text::snapshot_to_text(&desktop.app.manager.active_snapshot(Viewport::tail(50)))
+    }
+
+    #[test]
+    fn visible_sftp_panel_does_not_send_drop_to_background_shell() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn modal_above_sftp_shell_blocks_window_file_drop() {
+        let (mut desktop, _) = sftp_drop_fixture(false);
+        desktop.app.settings_open = true;
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+    }
+
+    #[test]
+    fn primary_window_cannot_drop_into_a_detached_sftp_shell() {
+        let (mut desktop, shell) = sftp_drop_fixture(false);
+        let _ = desktop.detach(shell);
+        desktop.app.manager.activate(shell).unwrap();
+        desktop.app.main_view = MainView::Terminal;
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+    }
+
+    #[test]
+    fn sftp_shell_still_receives_a_drop_in_its_window() {
+        let (mut desktop, _) = sftp_drop_fixture(false);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert!(shell_text(&desktop).contains("尚未连接，无法上传"));
+    }
+
+    #[test]
+    fn covered_sftp_panel_does_not_queue_a_drop() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        desktop.app.settings_open = true;
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+    }
+
+    #[test]
+    fn sftp_panel_drop_is_accepted_only_by_its_owner_window() {
+        let (mut desktop, shell) = sftp_drop_fixture(true);
+        let _ = desktop.detach(shell);
+        let child = desktop.owner(shell);
+        desktop.app.native_sftp_window = Some(child);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        drop_file(&mut desktop, child, "synthetic-drop.txt".into());
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn sftp_panel_pane_to_pane_drag_still_queues_both_directions() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        for (source, destination, name) in [
+            (SftpPane::Local, SftpPane::Remote, "synthetic-upload.txt"),
+            (SftpPane::Remote, SftpPane::Local, "synthetic-download.txt"),
+        ] {
+            let _ = desktop.update(NativeMessage::Window(
+                primary,
+                Message::SftpRowPress(source, name.into()),
+            ));
+            let _ = desktop.update(NativeMessage::Window(
+                primary,
+                Message::SftpDragEnter(destination),
+            ));
+            let _ = desktop.update(NativeMessage::Window(primary, Message::CancelProfileDrag));
+        }
+        let transfers = &desktop.app.manager.sftp_browser().unwrap().transfers;
+        assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].direction, TransferDirection::Upload);
+        assert_eq!(transfers[0].name, "synthetic-upload.txt");
+        assert_eq!(transfers[1].direction, TransferDirection::Download);
+        assert_eq!(transfers[1].name, "synthetic-download.txt");
+    }
+
+    #[test]
+    fn rejected_drop_does_not_examine_directory_metadata() {
+        let (mut desktop, _) = fixture();
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, std::env::temp_dir());
+        assert!(
+            desktop.app.last_error.is_none(),
+            "a non-SFTP drop was classified as a directory"
+        );
+    }
+
     #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
     #[test]
     fn host_key_and_mfa_share_the_same_global_owner_order() {
