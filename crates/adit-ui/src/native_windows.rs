@@ -23,6 +23,8 @@ pub(crate) enum NativeMessage {
     Blink,
     Selection,
     Opened(window::Id),
+    #[cfg(windows)]
+    DropRegistered(window::Id, bool),
 }
 
 struct DetachedWindow {
@@ -38,6 +40,8 @@ pub(crate) struct DesktopApplication {
     windows: HashMap<window::Id, DetachedWindow>,
     clipboard_leases: HashMap<SessionId, ClipboardLease>,
     modal_owner: Option<window::Id>,
+    #[cfg(windows)]
+    drop_shells: HashSet<SessionId>,
 }
 
 pub(crate) fn run(
@@ -45,6 +49,10 @@ pub(crate) fn run(
     mut settings: window::Settings,
 ) -> iced::Result {
     settings.exit_on_close_request = false;
+    #[cfg(windows)]
+    {
+        settings.platform_specific.drag_and_drop = false;
+    }
     iced::daemon(
         move || {
             let (mut app, startup) = boot();
@@ -58,7 +66,11 @@ pub(crate) fn run(
                 windows: HashMap::new(),
                 clipboard_leases: HashMap::new(),
                 modal_owner: None,
+                #[cfg(windows)]
+                drop_shells: HashSet::new(),
             };
+            #[cfg(windows)]
+            let desktop = { let mut desktop = desktop; desktop.refresh_drop_shells(); desktop };
             (
                 desktop,
                 Task::batch([
@@ -194,6 +206,52 @@ fn input_message(message: &Message) -> bool {
 }
 
 impl DesktopApplication {
+    #[cfg(windows)]
+    fn refresh_drop_shells(&mut self) {
+        let original = self.app.manager.active_session();
+        let Some(original) = original else {
+            self.drop_shells.clear();
+            return;
+        };
+        let sessions = self.app.manager.sessions();
+        let mut shells = HashSet::new();
+        for session in sessions {
+            if self.app.manager.select_session_context(session.id).is_ok()
+                && self.app.manager.active_is_sftp_shell()
+            {
+                shells.insert(session.id);
+            }
+        }
+        let _ = self.app.manager.select_session_context(original);
+        if self.drop_shells != shells {
+            native_file_drop::invalidate_all();
+            self.drop_shells = shells;
+        }
+    }
+
+    #[cfg(windows)]
+    fn native_drop_policy(&self, id: window::Id, namespace: &str) -> native_file_drop::Policy {
+        if namespace == "main" {
+            native_file_drop::Policy::Shells(self.drop_shells.clone())
+        } else if namespace == "sftp"
+            && global_modal_owner(&self.app, GlobalModal::Sftp) == Some(id)
+            && self.app.sftp_context_menu.is_none()
+            && self.app.sftp_overwrite.is_none()
+        {
+            self.app
+                .manager
+                .sftp_browser()
+                .map_or(native_file_drop::Policy::Disabled, |browser| {
+                    native_file_drop::Policy::Panel {
+                        instance: browser.instance_id,
+                        cwd: browser.cwd.clone(),
+                    }
+                })
+        } else {
+            native_file_drop::Policy::Disabled
+        }
+    }
+
     fn known(&self, id: window::Id) -> bool {
         id == self.primary || self.windows.contains_key(&id)
     }
@@ -331,12 +389,15 @@ impl DesktopApplication {
             release_rdp_modifiers(&mut self.app);
             self.park_clipboard(Some(session));
         }
-        let (id, task) = window::open(window::Settings {
+        let settings = window::Settings {
             size: iced::Size::new(960.0, 640.0),
             icon: app_icon(),
             exit_on_close_request: false,
             ..Default::default()
-        });
+        };
+        #[cfg(windows)]
+        let settings = { let mut settings = settings; settings.platform_specific.drag_and_drop = false; settings };
+        let (id, task) = window::open(settings);
         self.app.native_session_windows.insert(session, id);
         let mut state = WindowPresentation::default();
         if was_active {
@@ -688,6 +749,8 @@ impl DesktopApplication {
     }
 
     fn invalidate_file_drops(&mut self) {
+        #[cfg(windows)]
+        native_file_drop::invalidate_all();
         self.app.sftp_file_drop.invalidate();
         for window in self.windows.values_mut() {
             window.state.sftp_file_drop.invalidate();
@@ -695,13 +758,49 @@ impl DesktopApplication {
     }
 
     fn update(&mut self, message: NativeMessage) -> Task<NativeMessage> {
+        #[cfg(windows)]
+        let refresh_shells = matches!(&message, NativeMessage::Tick | NativeMessage::Opened(_));
+        #[cfg(windows)]
+        if native_file_drop::has_interest()
+            && matches!(
+                &message,
+                NativeMessage::Window(..)
+                    | NativeMessage::View(..)
+                    | NativeMessage::Runtime(
+                        _,
+                        iced::Event::Window(
+                            window::Event::Resized(_)
+                                | window::Event::Rescaled(_)
+                                | window::Event::CloseRequested
+                                | window::Event::Closed
+                        ),
+                        _
+                    )
+            )
+        {
+            native_file_drop::invalidate_all();
+        }
         let tracking = self.app.sftp_file_drop.is_tracking()
             || self
                 .windows
                 .values()
-                .any(|window| window.state.sftp_file_drop.is_tracking());
+                .any(|window| window.state.sftp_file_drop.is_tracking())
+            || {
+                #[cfg(windows)]
+                {
+                    native_file_drop::has_interest()
+                }
+                #[cfg(not(windows))]
+                {
+                    false
+                }
+            };
         let before = tracking.then(|| self.file_drop_global_scope());
         let task = self.update_inner(message);
+        #[cfg(windows)]
+        if refresh_shells {
+            self.refresh_drop_shells();
+        }
         if before.is_some_and(|before| before != self.file_drop_global_scope()) {
             self.invalidate_file_drops();
         }
@@ -743,10 +842,37 @@ impl DesktopApplication {
                 }
                 self.dispatch(id, message)
             }
-            NativeMessage::Opened(id) => self.in_window(id, |app| {
-                sync_terminal_size(app);
-                window::scale_factor(id).map(Message::DisplayScale)
-            }),
+            NativeMessage::Opened(id) => {
+                let task = self.in_window(id, |app| {
+                    sync_terminal_size(app);
+                    window::scale_factor(id).map(Message::DisplayScale)
+                });
+                #[cfg(windows)]
+                {
+                    Task::batch([
+                        task,
+                        native_file_drop::register_task(id)
+                            .map(move |ok| NativeMessage::DropRegistered(id, ok)),
+                    ])
+                }
+                #[cfg(not(windows))]
+                {
+                    task
+                }
+            }
+            #[cfg(windows)]
+            NativeMessage::DropRegistered(id, ok) => {
+                if ok {
+                    Task::none()
+                } else {
+                    self.in_window(id, |app| {
+                        app.last_error = Some(String::from(t(
+                            "原生文件拖放不可用，请使用 SFTP 面板选择文件",
+                        )));
+                        Task::none()
+                    })
+                }
+            }
             NativeMessage::Tick => {
                 // Poll the sole manager in primary, then service each window's
                 // presentation and clipboard streams without re-polling transports.
@@ -937,7 +1063,18 @@ impl DesktopApplication {
             let session = self.app.manager.active_session();
             let epoch = self.app.vnc_input_epoch;
             let view = view(&self.app).map(move |m| NativeMessage::View(id, session, epoch, m));
-            return file_drop_listener::wrap(view, id);
+            #[cfg(windows)]
+            {
+                return file_drop_listener::wrap_native(
+                    view,
+                    id,
+                    self.native_drop_policy(id, &accessibility::namespace(&self.app)),
+                );
+            }
+            #[cfg(not(windows))]
+            {
+                return file_drop_listener::wrap(view, id);
+            }
         }
         let Some(window) = self.windows.get(&id) else {
             return Space::new().into();
@@ -1158,14 +1295,21 @@ impl DesktopApplication {
             let base = layers.pop().unwrap();
             layers.push(dialog_focus::background(base, false));
         }
+        #[cfg(windows)]
+        let policy = self.native_drop_policy(id, &namespace);
         let view: Element<'_, Message> =
             accessibility::scope(Some(id), namespace, stack(layers).into());
         let session = Some(window.session);
         let epoch = state.vnc_input_epoch;
-        file_drop_listener::wrap(
-            view.map(move |m| NativeMessage::View(id, session, epoch, m)),
-            id,
-        )
+        let view = view.map(move |m| NativeMessage::View(id, session, epoch, m));
+        #[cfg(windows)]
+        {
+            file_drop_listener::wrap_native(view, id, policy)
+        }
+        #[cfg(not(windows))]
+        {
+            file_drop_listener::wrap(view, id)
+        }
     }
 }
 
@@ -1377,6 +1521,8 @@ mod tests {
                 windows: HashMap::new(),
                 clipboard_leases: HashMap::new(),
                 modal_owner: None,
+                #[cfg(windows)]
+                drop_shells: HashSet::new(),
             },
             sessions,
         )

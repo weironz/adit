@@ -12,13 +12,34 @@ use native_windows::NativeMessage;
 struct Listener<'a> {
     child: Element<'a, NativeMessage>,
     window: window::Id,
+    #[cfg(windows)]
+    policy: native_file_drop::Policy,
 }
 
+#[cfg(any(not(windows), test))]
 pub(crate) fn wrap<'a>(
     child: Element<'a, NativeMessage>,
     window: window::Id,
 ) -> Element<'a, NativeMessage> {
-    Element::new(Listener { child, window })
+    Element::new(Listener {
+        child,
+        window,
+        #[cfg(windows)]
+        policy: native_file_drop::Policy::Disabled,
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn wrap_native<'a>(
+    child: Element<'a, NativeMessage>,
+    window: window::Id,
+    policy: native_file_drop::Policy,
+) -> Element<'a, NativeMessage> {
+    Element::new(Listener {
+        child,
+        window,
+        policy,
+    })
 }
 
 impl Widget<NativeMessage, Theme, iced::Renderer> for Listener<'_> {
@@ -142,6 +163,136 @@ impl Widget<NativeMessage, Theme, iced::Renderer> for Listener<'_> {
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
+        #[cfg(windows)]
+        native_file_drop::begin_frame(self.policy.clone());
+        self.child.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+        #[cfg(windows)]
+        native_file_drop::finish_frame(self.window, layout.bounds());
+    }
+}
+
+#[cfg(windows)]
+struct Region<'a> {
+    child: Element<'a, Message>,
+    mark: native_file_drop::Mark,
+}
+
+#[cfg(windows)]
+pub(crate) fn region<'a>(
+    child: Element<'a, Message>,
+    mark: native_file_drop::Mark,
+) -> Element<'a, Message> {
+    Element::new(Region { child, mark })
+}
+
+#[cfg(windows)]
+impl Widget<Message, Theme, iced::Renderer> for Region<'_> {
+    fn size(&self) -> Size<Length> {
+        self.child.as_widget().size()
+    }
+    fn size_hint(&self) -> Size<Length> {
+        self.child.as_widget().size_hint()
+    }
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(self.child.as_widget())]
+    }
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.child));
+    }
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.child
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &iced::Renderer,
+        operation: &mut dyn widget::Operation,
+    ) {
+        self.child
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn Clipboard,
+        shell: &mut Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.child.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+    }
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &iced::Renderer,
+    ) -> mouse::Interaction {
+        self.child.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut Tree,
+        layout: Layout<'a>,
+        renderer: &iced::Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'a, Message, Theme, iced::Renderer>> {
+        self.child.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut iced::Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        native_file_drop::mark(self.mark, layout.bounds(), *viewport);
         self.child.as_widget().draw(
             &tree.children[0],
             renderer,

@@ -70,6 +70,8 @@ mod file_drop_listener;
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
 mod keyboard_hook;
+#[cfg(windows)]
+mod native_file_drop;
 mod rdp_dragdrop;
 mod vnc_cursor;
 #[cfg(feature = "native-vnc-acceptance")]

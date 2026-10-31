@@ -270,7 +270,10 @@ pub(crate) fn sftp_remote_pane<'a>(
         .padding(8)
         .style(move |_theme| sftp_pane_style_dropzone(drop_active));
 
-    sftp_drag_layer(app, SftpPane::Remote, pane.into())
+    let pane = sftp_drag_layer(app, SftpPane::Remote, pane.into());
+    #[cfg(windows)]
+    let pane = file_drop_listener::region(pane, native_file_drop::Mark::Panel);
+    pane
 }
 
 /// Rename bar shown at the panel level for whichever pane is being edited.
