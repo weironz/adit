@@ -18,7 +18,10 @@ use std::sync::mpsc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg};
+use adit_rdp_proto::{
+    read_ipc_hello, read_msg, write_ipc_hello, write_msg, ClientMsg, ConnectRequest, HostMsg,
+    IPC_PROTOCOL_VERSION,
+};
 
 /// Fraction of non-near-black pixels below which a tile is deemed "black".
 const BLACK_RATIO: f32 = 0.01;
@@ -69,7 +72,10 @@ fn debug_connect_real_host() {
         .expect("spawn helper");
 
     let mut stdin = child.stdin.take().unwrap();
-    let stdout = child.stdout.take().unwrap();
+    let mut stdout = child.stdout.take().unwrap();
+
+    write_ipc_hello(&mut stdin, IPC_PROTOCOL_VERSION).expect("send IPC hello");
+    assert_eq!(read_ipc_hello(&mut stdout).unwrap(), IPC_PROTOCOL_VERSION);
 
     write_msg(
         &mut stdin,

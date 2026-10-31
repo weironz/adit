@@ -2,7 +2,8 @@
 //!
 //! Two dedicated threads own the binary stdio so it never mixes with the async
 //! RDP socket loop:
-//! * the **stdin reader** decodes [`ClientMsg`]s — the first `Connect` starts the
+//! * the **stdin reader** checks the IPC hello, then decodes [`ClientMsg`]s —
+//!   the first `Connect` starts the
 //!   session, epoch-tagged input feeds the session, and `Close`/EOF ends it;
 //! * the **stdout writer** serialises [`HostMsg`]s from the session.
 //!
@@ -14,7 +15,10 @@ use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::thread;
 
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg};
+use adit_rdp_proto::{
+    read_ipc_hello, read_msg, write_ipc_hello, write_msg, ClientMsg, ConnectRequest, HostMsg,
+    IPC_PROTOCOL_VERSION,
+};
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::session::{run_session, InputRouting, SessionCmd};
@@ -167,6 +171,7 @@ pub fn run_host() -> Result<(), RdpError> {
     let routing = Arc::new(InputRouting::default());
     let reader_routing = Arc::clone(&routing);
     let (host_tx, host_rx) = std_mpsc::channel::<HostMsg>();
+    let (hello_tx, hello_rx) = std_mpsc::sync_channel::<Option<u32>>(1);
 
     // ── stdin reader ─────────────────────────────────────────────────────────
     // A single lock for the process lifetime: `StdinLock` is internally buffered,
@@ -175,7 +180,12 @@ pub fn run_host() -> Result<(), RdpError> {
         .name("adit-rdp-stdin".into())
         .spawn(move || {
             let stdin = io::stdin();
-            read_app_messages(stdin.lock(), req_tx, input_tx, display_tx, reader_routing);
+            let mut input = stdin.lock();
+            let version = read_ipc_hello(&mut input).ok();
+            if hello_tx.send(version).is_err() || version != Some(IPC_PROTOCOL_VERSION) {
+                return;
+            }
+            read_app_messages(input, req_tx, input_tx, display_tx, reader_routing);
         })
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
@@ -185,6 +195,17 @@ pub fn run_host() -> Result<(), RdpError> {
         .spawn(move || {
             let stdout = io::stdout();
             let mut lock = stdout.lock();
+            // Never encode an error as HostMsg for an unversioned app: its enum
+            // may have different discriminants. A versioned peer can safely read
+            // our fixed hello even when its version differs.
+            let Ok(Some(version)) = hello_rx.recv() else {
+                return;
+            };
+            if write_ipc_hello(&mut lock, IPC_PROTOCOL_VERSION).is_err()
+                || version != IPC_PROTOCOL_VERSION
+            {
+                return;
+            }
             while let Ok(msg) = host_rx.recv() {
                 let is_final = matches!(msg, HostMsg::Closed);
                 if write_msg(&mut lock, &msg).is_err() {
@@ -199,7 +220,16 @@ pub fn run_host() -> Result<(), RdpError> {
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
     // Wait for the app's Connect before spinning up the RDP runtime.
-    let request = req_rx.recv().map_err(|_| RdpError::ControlChannelClosed)?;
+    let request = match req_rx.recv() {
+        Ok(request) => request,
+        Err(_) => {
+            // A version mismatch closes the request channel before the writer
+            // necessarily flushes its acknowledgement.
+            drop(host_tx);
+            let _ = writer.join();
+            return Err(RdpError::ControlChannelClosed);
+        }
+    };
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

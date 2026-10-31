@@ -19,7 +19,8 @@ use adit_rdp_proto::{
     monitor_bounds, DisplayControlState, Monitor, MonitorGeometry, PointerUpdate,
 };
 use adit_rdp_proto::{
-    read_msg, write_msg, ClientMsg, ClipFile, ConnectRequest, HostMsg, InputEvent,
+    read_ipc_hello, read_msg, write_ipc_hello, write_msg, ClientMsg, ClipFile, ConnectRequest,
+    HostMsg, InputEvent, IPC_PROTOCOL_VERSION,
 };
 
 pub(crate) fn to_wire_monitor(m: &adit_domain::DesktopMonitor) -> Monitor {
@@ -1737,6 +1738,10 @@ pub enum RdpClientError {
     Spawn(String),
     #[error("could not talk to the RDP helper: {0}")]
     Io(String),
+    #[error("RDP IPC 协商失败：{0}")]
+    Protocol(String),
+    #[error("RDP 连接已取消")]
+    Cancelled,
 }
 
 /// Locate the `adit-rdp-host` executable: an explicit override, then next to the
@@ -1851,18 +1856,27 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
                 (&surface_bg, Arc::clone(&layout_wake_reader)),
                 remote_offer_bg.clone(),
             ) {
+                remote_offer_bg.closed.store(true, Ordering::Release);
+                remote_offer_bg.generation.store(0, Ordering::Release);
                 if let Ok(mut surface) = surface_bg.lock() {
                     surface.close_layout();
                 }
                 layout_wake_reader.notify_all();
                 let _ = child.kill();
                 let _ = child.wait();
-                let _ = event_tx.send(RdpClientEvent::Error(error.to_string()));
+                if !matches!(error, RdpClientError::Cancelled) {
+                    let _ = event_tx.send(RdpClientEvent::Error(error.to_string()));
+                }
                 let _ = event_tx.send(RdpClientEvent::Closed);
                 return;
             }
             if let Ok(mut slot) = child_bg.lock() {
-                *slot = Some(child);
+                if remote_offer_bg.closed.load(Ordering::Acquire) {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                } else {
+                    *slot = Some(child);
+                }
             }
         })
         .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
@@ -1878,7 +1892,7 @@ pub fn spawn_rdp_session(request: ConnectRequest) -> Result<RdpClientHandle, Rdp
     })
 }
 
-/// Take the helper's pipes, send the opening `Connect`, and start the stdin-writer
+/// Take the helper's pipes, negotiate the version, and start the stdin-writer
 /// and stdout-reader bridge threads. Runs on the background spawn thread. `cmd_rx`
 /// (moved into the writer) and `event_tx` (cloned into the reader) come from the
 /// handle created in [`spawn_rdp_session`].
@@ -1893,8 +1907,7 @@ fn wire_up(
     display: (&Arc<Mutex<Surface>>, Arc<Condvar>),
     remote_offer: Arc<FileEpoch>,
 ) -> Result<(), RdpClientError> {
-    let (surface, layout_wake) = display;
-    let mut stdin = child
+    let stdin = child
         .stdin
         .take()
         .ok_or_else(|| RdpClientError::Spawn("helper stdin unavailable".into()))?;
@@ -1903,13 +1916,153 @@ fn wire_up(
         .take()
         .ok_or_else(|| RdpClientError::Spawn("helper stdout unavailable".into()))?;
 
-    // Merge blocker: #97 changes the bincode schema, while this legacy write
-    // sends credentials before the helper confirms a version. Integrate the
-    // shared #94 handshake and mixed-version tests before shipping either end;
-    // the combined epoch-bearing schema must use a version newer than #94's v8.
-    // Open the session before handing stdin to the writer thread.
-    write_msg(&mut stdin, &ClientMsg::Connect(request))
-        .map_err(|e| RdpClientError::Io(e.to_string()))?;
+    wire_up_pipes(
+        (stdin, stdout),
+        (request, Duration::from_secs(10)),
+        cmd_rx,
+        refuse_tx,
+        event_tx,
+        display,
+        remote_offer,
+    )
+}
+
+fn open_control_channel<W: std::io::Write + Send + 'static, R: std::io::Read + Send + 'static>(
+    mut stdin: W,
+    mut stdout: R,
+    request: ConnectRequest,
+    remote_offer: &Arc<FileEpoch>,
+    timeout: Duration,
+) -> Result<(W, R), RdpClientError> {
+    // The worker never owns the request: a late hello after a timeout or close
+    // cannot send credentials. Killing the child releases a blocked pipe read.
+    let (tx, rx) = std_mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name("adit-rdp-client-hello".into())
+        .spawn(move || {
+            let result = (|| {
+                write_ipc_hello(&mut stdin, IPC_PROTOCOL_VERSION)?;
+                let version = read_ipc_hello(&mut stdout)?;
+                Ok::<_, std::io::Error>((stdin, stdout, version))
+            })();
+            let _ = tx.send(result);
+        })
+        .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
+
+    let deadline = Instant::now() + timeout;
+    let (mut stdin, stdout, version) = wait_for_ipc_stage(rx, remote_offer, deadline, "确认版本")?
+        .map_err(|_| {
+            RdpClientError::Protocol(
+                "辅助进程版本不兼容或未确认版本；请同时更新主程序和 RDP 辅助进程".into(),
+            )
+        })?;
+    if version != IPC_PROTOCOL_VERSION {
+        return Err(RdpClientError::Protocol(format!(
+            "主程序协议版本为 {IPC_PROTOCOL_VERSION}，辅助进程为 {version}；请同时更新主程序和 RDP 辅助进程"
+        )));
+    }
+    if remote_offer.closed.load(Ordering::Acquire) {
+        return Err(RdpClientError::Cancelled);
+    }
+    let stopped = Arc::new(AtomicBool::new(false));
+    let writer_stopped = Arc::clone(&stopped);
+    let writer_offer = Arc::clone(remote_offer);
+    let (tx, rx) = std_mpsc::sync_channel(1);
+    thread::Builder::new()
+        .name("adit-rdp-client-connect".into())
+        .spawn(move || {
+            let mut guarded = StartupWriter {
+                inner: &mut stdin,
+                stopped: &writer_stopped,
+                remote_offer: &writer_offer,
+            };
+            let result = write_msg(&mut guarded, &ClientMsg::Connect(request));
+            let _ = tx.send((stdin, result));
+        })
+        .map_err(|e| RdpClientError::Spawn(e.to_string()))?;
+    let (stdin, result) = match wait_for_ipc_stage(rx, remote_offer, deadline, "接收连接请求")
+    {
+        Ok(result) => result,
+        Err(error) => {
+            stopped.store(true, Ordering::Release);
+            return Err(error);
+        }
+    };
+    result.map_err(|e| RdpClientError::Io(e.to_string()))?;
+    Ok((stdin, stdout))
+}
+
+fn wait_for_ipc_stage<T>(
+    receiver: std_mpsc::Receiver<T>,
+    remote_offer: &FileEpoch,
+    deadline: Instant,
+    stage: &str,
+) -> Result<T, RdpClientError> {
+    loop {
+        if remote_offer.closed.load(Ordering::Acquire) {
+            return Err(RdpClientError::Cancelled);
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(RdpClientError::Protocol(format!("等待辅助进程{stage}超时")));
+        }
+        match receiver.recv_timeout(remaining.min(Duration::from_millis(50))) {
+            Ok(result) => return Ok(result),
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(RdpClientError::Protocol(format!(
+                    "等待辅助进程{stage}时管道线程退出"
+                )));
+            }
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+struct StartupWriter<'a, W> {
+    inner: &'a mut W,
+    stopped: &'a AtomicBool,
+    remote_offer: &'a FileEpoch,
+}
+
+impl<W: std::io::Write> std::io::Write for StartupWriter<'_, W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.check()?;
+        self.inner.write(bytes)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.check()?;
+        self.inner.flush()
+    }
+}
+
+impl<W> StartupWriter<'_, W> {
+    fn check(&self) -> std::io::Result<()> {
+        if self.stopped.load(Ordering::Acquire) || self.remote_offer.closed.load(Ordering::Acquire)
+        {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionAborted,
+                "RDP startup stopped",
+            ))
+        } else {
+            Ok(())
+        }
+    }
+}
+
+fn wire_up_pipes<W: std::io::Write + Send + 'static, R: std::io::Read + Send + 'static>(
+    pipes: (W, R),
+    startup: (ConnectRequest, Duration),
+    cmd_rx: std_mpsc::Receiver<ClientMsg>,
+    refuse_tx: Arc<std_mpsc::Sender<ClientMsg>>,
+    event_tx: std_mpsc::Sender<RdpClientEvent>,
+    display: (&Arc<Mutex<Surface>>, Arc<Condvar>),
+    remote_offer: Arc<FileEpoch>,
+) -> Result<(), RdpClientError> {
+    let (surface, layout_wake) = display;
+    let (request, timeout) = startup;
+    let (mut stdin, stdout) =
+        open_control_channel(pipes.0, pipes.1, request, &remote_offer, timeout)?;
 
     // stdin writer: serialise ClientMsgs to the helper.
     thread::Builder::new()
@@ -3549,6 +3702,363 @@ mod rdp_presentation_tests {
             },
             rx,
         )
+    }
+
+    fn synthetic_request(port: u16) -> ConnectRequest {
+        ConnectRequest {
+            host: "127.0.0.1".into(),
+            port,
+            username: "synthetic-user".into(),
+            password: "synthetic-password".into(),
+            domain: None,
+            width: 2,
+            height: 2,
+            enable_clipboard: true,
+            enable_audio: false,
+            quality: adit_rdp_proto::Quality::default(),
+        }
+    }
+
+    fn ipc_pair() -> (std::net::TcpStream, std::net::TcpStream) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let app = std::net::TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (helper, _) = listener.accept().unwrap();
+        helper
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        (app, helper)
+    }
+
+    #[test]
+    fn ipc_handshake_bridge_preserves_desktop_and_remote_files_but_refuses_local_files() {
+        let (app, mut helper) = ipc_pair();
+        let peer = thread::spawn(move || {
+            assert_eq!(read_ipc_hello(&mut helper).unwrap(), IPC_PROTOCOL_VERSION);
+            write_ipc_hello(&mut helper, IPC_PROTOCOL_VERSION).unwrap();
+            assert!(matches!(read_msg::<_, ClientMsg>(&mut helper).unwrap(),
+                Some(ClientMsg::Connect(request)) if request.password == "synthetic-password"));
+            for event in [
+                HostMsg::Connected {
+                    width: 2,
+                    height: 2,
+                },
+                HostMsg::Tile {
+                    x: 0,
+                    y: 0,
+                    width: 1,
+                    height: 1,
+                    rgba: vec![1, 2, 3, 255],
+                },
+                HostMsg::ClipboardFiles {
+                    generation: 5,
+                    files: vec![ClipFile {
+                        name: "remote.txt".into(),
+                        size: 1,
+                        is_dir: false,
+                    }],
+                },
+                HostMsg::FileContentsNeeded {
+                    epoch: 0,
+                    stream_id: 17,
+                    index: 0,
+                    offset: 0,
+                    length: 1,
+                },
+            ] {
+                write_msg(&mut helper, &event).unwrap();
+            }
+            assert!(matches!(
+                read_msg::<_, ClientMsg>(&mut helper).unwrap(),
+                Some(ClientMsg::FileContents {
+                    epoch: 0,
+                    stream_id: 17,
+                    data: None
+                })
+            ));
+            assert!(matches!(
+                read_msg::<_, ClientMsg>(&mut helper).unwrap(),
+                Some(ClientMsg::RequestFileContents {
+                    generation: 5,
+                    stream_id: 18,
+                    ..
+                })
+            ));
+            write_msg(
+                &mut helper,
+                &HostMsg::FileContents {
+                    generation: 5,
+                    stream_id: 18,
+                    data: Some(vec![42]),
+                },
+            )
+            .unwrap();
+            write_msg(&mut helper, &HostMsg::Closed).unwrap();
+        });
+        let (handle, cmd_rx) = handle(Surface::new(1, 1));
+        wire_up_pipes(
+            (app.try_clone().unwrap(), app),
+            (synthetic_request(1), Duration::from_secs(2)),
+            cmd_rx,
+            Arc::clone(&handle.cmd_tx),
+            handle.event_tx.clone(),
+            (&handle.surface, Arc::clone(&handle.layout_wake)),
+            Arc::clone(&handle.remote_offer),
+        )
+        .unwrap();
+        assert!(matches!(
+            handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            RdpClientEvent::Connected {
+                width: 2,
+                height: 2
+            }
+        ));
+        assert!(
+            matches!(handle.event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            RdpClientEvent::ClipboardFiles { generation: 5, ref files } if files.len() == 1)
+        );
+        assert!(matches!(
+            handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            RdpClientEvent::FileContentsNeeded {
+                epoch: 0,
+                stream_id: 17,
+                ..
+            }
+        ));
+        assert_eq!(&handle.surface.lock().unwrap().rgba[..4], &[1, 2, 3, 255]);
+        handle.answer_file_contents(0, 17, Some(vec![99]));
+        handle.file_requester_for_generation(5).request(18, 0, 0, 1);
+        assert!(
+            matches!(handle.event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            RdpClientEvent::FileContents { generation: 5, stream_id: 18, data: Some(data) } if data == [42])
+        );
+        assert!(matches!(
+            handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap(),
+            RdpClientEvent::Closed
+        ));
+        peer.join().unwrap();
+    }
+
+    #[test]
+    fn ipc_handshake_old_and_future_helpers_receive_no_connect_or_credentials() {
+        use std::io::Read;
+        for version in [None, Some(8), Some(9), Some(11)] {
+            let (app, mut helper) = ipc_pair();
+            let peer = thread::spawn(move || {
+                if let Some(version) = version {
+                    assert_eq!(read_ipc_hello(&mut helper).unwrap(), IPC_PROTOCOL_VERSION);
+                    write_ipc_hello(&mut helper, version).unwrap();
+                } else {
+                    // An unversioned helper decodes the hello as ClientMsg.
+                    assert!(read_msg::<_, ClientMsg>(&mut helper).is_err());
+                    helper.shutdown(std::net::Shutdown::Write).unwrap();
+                }
+                let mut remaining = Vec::new();
+                helper.read_to_end(&mut remaining).unwrap();
+                remaining
+            });
+            let result = open_control_channel(
+                app.try_clone().unwrap(),
+                app,
+                synthetic_request(1),
+                &Arc::new(FileEpoch::default()),
+                Duration::from_secs(2),
+            );
+            assert!(matches!(result, Err(RdpClientError::Protocol(_))));
+            assert!(peer.join().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn ipc_handshake_timeout_or_close_discards_a_late_ack_before_connect() {
+        use std::io::Read;
+        for cancel in [false, true] {
+            let (app, mut helper) = ipc_pair();
+            let (seen_tx, seen_rx) = std_mpsc::channel();
+            let (release_tx, release_rx) = std_mpsc::channel();
+            let peer = thread::spawn(move || {
+                assert_eq!(read_ipc_hello(&mut helper).unwrap(), IPC_PROTOCOL_VERSION);
+                seen_tx.send(()).unwrap();
+                release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+                write_ipc_hello(&mut helper, IPC_PROTOCOL_VERSION).unwrap();
+                let mut remaining = Vec::new();
+                helper.read_to_end(&mut remaining).unwrap();
+                remaining
+            });
+            let state = Arc::new(FileEpoch::default());
+            let worker_state = Arc::clone(&state);
+            let worker = thread::spawn(move || {
+                open_control_channel(
+                    app.try_clone().unwrap(),
+                    app,
+                    synthetic_request(1),
+                    &worker_state,
+                    Duration::from_millis(200),
+                )
+            });
+            seen_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            if cancel {
+                state.closed.store(true, Ordering::Release);
+            }
+            let result = worker.join().unwrap();
+            if cancel {
+                assert!(matches!(result, Err(RdpClientError::Cancelled)));
+            } else {
+                assert!(matches!(result, Err(RdpClientError::Protocol(_))));
+            }
+            release_tx.send(()).unwrap();
+            assert!(peer.join().unwrap().is_empty());
+        }
+    }
+
+    #[test]
+    fn ipc_handshake_blocked_connect_write_obeys_timeout_and_close() {
+        struct BlockAfterHello {
+            stream: std::net::TcpStream,
+            hello_flushed: bool,
+            blocked: std_mpsc::Sender<()>,
+            release: std_mpsc::Receiver<()>,
+        }
+        impl std::io::Write for BlockAfterHello {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.hello_flushed {
+                    let _ = self.blocked.send(());
+                    let _ = self.release.recv_timeout(Duration::from_secs(5));
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::BrokenPipe,
+                        "synthetic",
+                    ));
+                }
+                std::io::Write::write(&mut self.stream, bytes)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                std::io::Write::flush(&mut self.stream)?;
+                self.hello_flushed = true;
+                Ok(())
+            }
+        }
+        for cancel in [false, true] {
+            let (app, mut helper) = ipc_pair();
+            let (seen_tx, seen_rx) = std_mpsc::channel();
+            let (release_tx, release_rx) = std_mpsc::channel();
+            let peer = thread::spawn(move || {
+                assert_eq!(read_ipc_hello(&mut helper).unwrap(), IPC_PROTOCOL_VERSION);
+                write_ipc_hello(&mut helper, IPC_PROTOCOL_VERSION).unwrap();
+            });
+            let state = Arc::new(FileEpoch::default());
+            let worker_state = Arc::clone(&state);
+            let worker = thread::spawn(move || {
+                let writer = BlockAfterHello {
+                    stream: app.try_clone().unwrap(),
+                    hello_flushed: false,
+                    blocked: seen_tx,
+                    release: release_rx,
+                };
+                open_control_channel(
+                    writer,
+                    app,
+                    synthetic_request(1),
+                    &worker_state,
+                    Duration::from_millis(400),
+                )
+            });
+            seen_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            if cancel {
+                state.closed.store(true, Ordering::Release);
+            }
+            let result = worker.join().unwrap();
+            release_tx.send(()).unwrap();
+            peer.join().unwrap();
+            if cancel {
+                assert!(matches!(result, Err(RdpClientError::Cancelled)));
+            } else {
+                assert!(matches!(result, Err(RdpClientError::Protocol(_))));
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "build the separate RDP helper and set ADIT_RDP_IPC_TEST_HELPER"]
+    fn real_helper_and_production_bridge_exchange_a_synthetic_local_session() {
+        struct ChildGuard(Child);
+        impl Drop for ChildGuard {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        let executable = std::env::var_os("ADIT_RDP_IPC_TEST_HELPER").expect("helper path");
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            loop {
+                match listener.accept() {
+                    Ok(connection) => {
+                        drop(connection);
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "helper never reached the synthetic server"
+                        );
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("synthetic server failed: {error}"),
+                }
+            }
+        });
+        let mut child = ChildGuard(
+            Command::new(executable)
+                .env_remove("ADIT_RDP_DUMP")
+                .env(
+                    "APPDATA",
+                    std::env::temp_dir().join(format!("adit-ipc-session-{}", std::process::id())),
+                )
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let (handle, cmd_rx) = handle(Surface::new(1, 1));
+        wire_up(
+            &mut child.0,
+            synthetic_request(port),
+            cmd_rx,
+            Arc::clone(&handle.cmd_tx),
+            handle.event_tx.clone(),
+            (&handle.surface, Arc::clone(&handle.layout_wake)),
+            Arc::clone(&handle.remote_offer),
+        )
+        .unwrap();
+        let mut saw_error = false;
+        loop {
+            match handle
+                .event_rx
+                .recv_timeout(Duration::from_secs(15))
+                .unwrap()
+            {
+                RdpClientEvent::Error(_) => saw_error = true,
+                RdpClientEvent::Closed => break,
+                _ => {}
+            }
+        }
+        server.join().unwrap();
+        assert!(
+            saw_error,
+            "the synthetic server closes before RDP negotiation"
+        );
     }
 
     // A synthetic helper writes the real framed IPC format to the production

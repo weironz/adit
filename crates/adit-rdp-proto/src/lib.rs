@@ -6,7 +6,8 @@
 //! note), so it runs as a child process. The app writes [`ClientMsg`]s to the
 //! child's stdin and reads [`HostMsg`]s from its stdout, each length-prefixed
 //! (4-byte little-endian length + bincode payload). The child's stderr carries
-//! logs and never the protocol.
+//! logs and never the protocol. Before any messages, both processes exchange a
+//! fixed, credential-free hello and require an exact IPC version match.
 //!
 //! This crate has no heavy dependencies on purpose: it is compiled independently
 //! by both workspaces, so it must never pull anything that could reintroduce the
@@ -177,10 +178,8 @@ pub enum Quality {
 /// Everything needed to open an RDP session. The password rides the stdin pipe,
 /// never argv/env, so it isn't visible in the process list.
 ///
-/// Adding a field here changes the bincode layout, and bincode has no version
-/// tolerance: an app talking to a helper built from a different revision fails
-/// to deserialise rather than degrading. That is why the two are built and
-/// shipped together — see the helper note in CLAUDE.md.
+/// Adding a field changes the bincode layout. Bump [`IPC_PROTOCOL_VERSION`] for
+/// incompatible wire changes: bincode can silently decode a different layout.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectRequest {
     pub host: String,
@@ -284,12 +283,9 @@ pub use file_safety::{
 
 /// App → helper (over the helper's stdin).
 ///
-/// Merge blocker: these epoch-bearing messages change the bincode schema.
-/// The handshake integrated from #94 must use a version newer than its v8; this
-/// branch deliberately does not implement a separate startup handshake.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientMsg {
-    /// Must be the first message; opens the session.
+    /// Must be the first message after version negotiation; opens the session.
     Connect(ConnectRequest),
     /// Legacy untagged input. An epoch-aware helper rejects it.
     Input(InputEvent),
@@ -304,8 +300,8 @@ pub enum ClientMsg {
     /// Legacy local-file offer retained for IPC compatibility. File metadata is
     /// ignored; any offer clears the helper's local text/image cache.
     ClipboardFiles(Vec<ClipFile>),
-    /// Legacy local-file response. The helper ignores it; the app answers
-    /// requests from an older helper with `None`, never file bytes.
+    /// Legacy local-file response. The app always answers with `None`, never
+    /// local file bytes.
     FileContents {
         /// Connection that issued the request, even if the reply is delayed.
         epoch: u64,
@@ -350,7 +346,7 @@ impl ClientMsg {
 /// Helper → app (over the helper's stdout).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HostMsg {
-    /// Handshake finished; the negotiated desktop size is authoritative.
+    /// RDP handshake finished; the negotiated desktop size is authoritative.
     Connected {
         width: u16,
         height: u16,
@@ -382,8 +378,8 @@ pub enum HostMsg {
         generation: u64,
         files: Vec<ClipFile>,
     },
-    /// Legacy request from an older helper for a local file range. The app
-    /// answers with [`ClientMsg::FileContents`] containing `None`.
+    /// Request for a local file range. The app answers with
+    /// [`ClientMsg::FileContents`] containing `None`.
     FileContentsNeeded {
         /// Connection whose CLIPRDR channel issued this request.
         epoch: u64,
@@ -437,7 +433,7 @@ pub enum HostMsg {
     },
     /// Dense framebuffer pixels with a row-major, least-significant-bit-first
     /// mask identifying which pixels were actually painted in this update.
-    /// This variant is part of the #97 IPC schema that must be negotiated by #94.
+    /// This variant is part of the versioned IPC schema.
     MaskedTile {
         x: u16,
         y: u16,
@@ -462,6 +458,56 @@ pub enum HostMsg {
         width: u16,
         height: u16,
     },
+}
+
+/// Version of both IPC message layouts, independent of the application release.
+/// Increase it for every incompatible change to either direction of the wire.
+/// Versions 8 and 9 were used by earlier, incompatible development schemas.
+pub const IPC_PROTOCOL_VERSION: u32 = 10;
+
+const IPC_HELLO_MAGIC: [u8; 8] = *b"ADITRDP\0";
+// An invalid bincode enum discriminant makes an unversioned helper reject the
+// hello rather than interpreting it as a ClientMsg. Keep this envelope stable.
+const IPC_HELLO_DISCRIMINANT: u32 = u32::MAX;
+const IPC_HELLO_LENGTH: u32 = 4 + IPC_HELLO_MAGIC.len() as u32 + 4;
+
+/// Send the fixed, credential-free hello or acknowledgement.
+pub fn write_ipc_hello<W: Write>(writer: &mut W, version: u32) -> io::Result<()> {
+    writer.write_all(&IPC_HELLO_LENGTH.to_le_bytes())?;
+    writer.write_all(&IPC_HELLO_DISCRIMINANT.to_le_bytes())?;
+    writer.write_all(&IPC_HELLO_MAGIC)?;
+    writer.write_all(&version.to_le_bytes())?;
+    writer.flush()
+}
+
+/// Read the fixed hello without deserializing an unversioned Connect request.
+/// The caller must compare the returned version before processing any messages.
+pub fn read_ipc_hello<R: Read>(reader: &mut R) -> io::Result<u32> {
+    let mut word = [0u8; 4];
+    reader.read_exact(&mut word)?;
+    if u32::from_le_bytes(word) != IPC_HELLO_LENGTH {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid IPC hello length",
+        ));
+    }
+    reader.read_exact(&mut word)?;
+    if u32::from_le_bytes(word) != IPC_HELLO_DISCRIMINANT {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid IPC hello marker",
+        ));
+    }
+    let mut magic = [0u8; IPC_HELLO_MAGIC.len()];
+    reader.read_exact(&mut magic)?;
+    if magic != IPC_HELLO_MAGIC {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid IPC hello magic",
+        ));
+    }
+    reader.read_exact(&mut word)?;
+    Ok(u32::from_le_bytes(word))
 }
 
 /// Write a length-prefixed, bincode-encoded message and flush. Fails if the
@@ -510,6 +556,53 @@ pub fn read_msg<R: Read, T: DeserializeOwned>(r: &mut R) -> io::Result<Option<T>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hello_has_a_stable_envelope_and_legacy_peers_reject_it() {
+        let mut hello = Vec::new();
+        write_ipc_hello(&mut hello, IPC_PROTOCOL_VERSION).unwrap();
+        assert_eq!(
+            hello,
+            [
+                16, 0, 0, 0, 255, 255, 255, 255, b'A', b'D', b'I', b'T', b'R', b'D', b'P', 0, 10,
+                0, 0, 0
+            ]
+        );
+        assert_eq!(read_ipc_hello(&mut io::Cursor::new(&hello)).unwrap(), 10);
+        assert!(read_msg::<_, ClientMsg>(&mut io::Cursor::new(&hello)).is_err());
+        assert!(read_msg::<_, HostMsg>(&mut io::Cursor::new(&hello)).is_err());
+    }
+
+    #[test]
+    fn hello_rejects_malformed_or_unversioned_first_frames() {
+        let mut hello = Vec::new();
+        write_ipc_hello(&mut hello, IPC_PROTOCOL_VERSION).unwrap();
+        for index in [0, 4, 8] {
+            let mut invalid = hello.clone();
+            invalid[index] ^= 1;
+            assert!(read_ipc_hello(&mut io::Cursor::new(invalid)).is_err());
+        }
+        for len in 0..hello.len() {
+            assert!(read_ipc_hello(&mut io::Cursor::new(&hello[..len])).is_err());
+        }
+        let request = ConnectRequest {
+            host: "localhost".into(),
+            port: 1,
+            username: "synthetic-user".into(),
+            password: "synthetic-password".into(),
+            domain: None,
+            width: 2,
+            height: 2,
+            enable_clipboard: true,
+            enable_audio: false,
+            quality: Quality::default(),
+        };
+        let mut legacy = Vec::new();
+        write_msg(&mut legacy, &ClientMsg::Connect(request)).unwrap();
+        let mut cursor = io::Cursor::new(legacy);
+        assert!(read_ipc_hello(&mut cursor).is_err());
+        assert_eq!(cursor.position(), 4, "do not parse the legacy Connect body");
+    }
 
     /// The clipboard split (app owns the Windows clipboard, helper owns CLIPRDR)
     /// puts arbitrary user text on this pipe in both directions, so the framing
@@ -723,27 +816,31 @@ mod desktop_protocol_tests {
                 data: Option<Vec<u8>>,
             },
         }
-        let mut bytes = Vec::new();
-        write_msg(
-            &mut bytes,
-            &ClientMsg::FileContents {
-                epoch: 1,
-                stream_id: 7,
-                data: Some(vec![42]),
-            },
-        )
-        .unwrap();
-        let decoded = read_msg::<_, LegacyClientMsg>(&mut std::io::Cursor::new(bytes)).unwrap();
-        assert!(
-            matches!(
-                decoded,
-                Some(LegacyClientMsg::FileContents {
-                    stream_id: 1,
-                    data: None
-                })
-            ),
-            "this incompatibility must be rejected by the #94 version handshake"
-        );
+        // The current app actually sends None: even this refusal can be
+        // silently associated with the wrong stream by an unversioned helper.
+        for data in [None, Some(vec![42])] {
+            let mut bytes = Vec::new();
+            write_msg(
+                &mut bytes,
+                &ClientMsg::FileContents {
+                    epoch: 1,
+                    stream_id: 7,
+                    data,
+                },
+            )
+            .unwrap();
+            let decoded = read_msg::<_, LegacyClientMsg>(&mut std::io::Cursor::new(bytes)).unwrap();
+            assert!(
+                matches!(
+                    decoded,
+                    Some(LegacyClientMsg::FileContents {
+                        stream_id: 1,
+                        data: None
+                    })
+                ),
+                "the IPC version handshake must reject this incompatible schema"
+            );
+        }
     }
 
     #[test]
