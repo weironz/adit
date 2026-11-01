@@ -319,6 +319,7 @@ impl DesktopApplication {
     }
 
     fn detach(&mut self, session: SessionId) -> Task<NativeMessage> {
+        self.invalidate_file_drops();
         if let Some(id) = self.app.native_session_windows.get(&session) {
             return window::gain_focus(*id);
         }
@@ -385,6 +386,7 @@ impl DesktopApplication {
     }
 
     fn merge(&mut self, id: window::Id, close_native: bool) -> Task<NativeMessage> {
+        self.invalidate_file_drops();
         if id == self.primary {
             return Task::none();
         }
@@ -667,7 +669,46 @@ impl DesktopApplication {
         }
     }
 
+    fn file_drop_global_scope(
+        &self,
+    ) -> (
+        Option<GlobalModal>,
+        Option<window::Id>,
+        Option<(SessionId, String)>,
+    ) {
+        let modal = global_modal(&self.app);
+        (
+            modal,
+            modal.and_then(|modal| global_modal_owner(&self.app, modal)),
+            self.app
+                .manager
+                .sftp_browser()
+                .map(|browser| (browser.instance_id, browser.cwd.clone())),
+        )
+    }
+
+    fn invalidate_file_drops(&mut self) {
+        self.app.sftp_file_drop.invalidate();
+        for window in self.windows.values_mut() {
+            window.state.sftp_file_drop.invalidate();
+        }
+    }
+
     fn update(&mut self, message: NativeMessage) -> Task<NativeMessage> {
+        let tracking = self.app.sftp_file_drop.is_tracking()
+            || self
+                .windows
+                .values()
+                .any(|window| window.state.sftp_file_drop.is_tracking());
+        let before = tracking.then(|| self.file_drop_global_scope());
+        let task = self.update_inner(message);
+        if before.is_some_and(|before| before != self.file_drop_global_scope()) {
+            self.invalidate_file_drops();
+        }
+        task
+    }
+
+    fn update_inner(&mut self, message: NativeMessage) -> Task<NativeMessage> {
         let task = match message {
             NativeMessage::Window(id, message) => self.dispatch(id, message),
             NativeMessage::View(id, session, epoch, message) => {
@@ -775,6 +816,10 @@ impl DesktopApplication {
                     && self.app.manager.sftp_is_open()
                     && self.app.native_sftp_window.unwrap_or(self.primary) != id
                 {
+                    let _ = self.in_window(id, |app| {
+                        app.sftp_file_drop.invalidate();
+                        Task::none()
+                    });
                     return window::gain_focus(self.app.native_sftp_window.unwrap_or(self.primary));
                 }
                 if self.modal_owner.is_some_and(|owner| owner != id)
@@ -831,7 +876,20 @@ impl DesktopApplication {
     fn subscription(&self) -> Subscription<NativeMessage> {
         let mut subs = vec![
             iced::time::every(Duration::from_millis(100)).map(|_| NativeMessage::Tick),
-            event::listen_with(|event, status, id| Some(NativeMessage::Runtime(id, event, status))),
+            event::listen_with(|event, status, id| {
+                if matches!(
+                    event,
+                    iced::Event::Window(
+                        window::Event::FileHovered(_)
+                            | window::Event::FileDropped(_)
+                            | window::Event::FilesHoveredLeft
+                    )
+                ) {
+                    None
+                } else {
+                    Some(NativeMessage::Runtime(id, event, status))
+                }
+            }),
         ];
         if terminal_cursor_blinks(&self.app)
             || self.windows.values().any(|w| {
@@ -878,7 +936,8 @@ impl DesktopApplication {
         if id == self.primary {
             let session = self.app.manager.active_session();
             let epoch = self.app.vnc_input_epoch;
-            return view(&self.app).map(move |m| NativeMessage::View(id, session, epoch, m));
+            let view = view(&self.app).map(move |m| NativeMessage::View(id, session, epoch, m));
+            return file_drop_listener::wrap(view, id);
         }
         let Some(window) = self.windows.get(&id) else {
             return Space::new().into();
@@ -1103,7 +1162,10 @@ impl DesktopApplication {
             accessibility::scope(Some(id), namespace, stack(layers).into());
         let session = Some(window.session);
         let epoch = state.vnc_input_epoch;
-        view.map(move |m| NativeMessage::View(id, session, epoch, m))
+        file_drop_listener::wrap(
+            view.map(move |m| NativeMessage::View(id, session, epoch, m)),
+            id,
+        )
     }
 }
 
@@ -1131,7 +1193,9 @@ fn is_sftp(message: &Message) -> bool {
             | Message::ShowSftpContextMenu(..)
             | Message::HideSftpContextMenu
             | Message::SftpTransferSelected(_)
+            | Message::SftpFileHovered(_)
             | Message::SftpFileDropped(_)
+            | Message::SftpFilesHoveredLeft
             | Message::SftpLocalPathChanged(_)
             | Message::SftpLocalGo
             | Message::SftpRemotePathChanged(_)
@@ -1316,6 +1380,743 @@ mod tests {
             },
             sessions,
         )
+    }
+
+    fn sftp_drop_fixture(panel: bool) -> (DesktopApplication, SessionId) {
+        let mut ssh = ConnectionProfile::new("drop-ssh", "127.0.0.1", 1, "fixture");
+        ssh.protocol = Protocol::Ssh;
+        let mut sftp = ConnectionProfile::new("drop-sftp", "127.0.0.1", 1, "fixture");
+        sftp.protocol = Protocol::Sftp;
+        let ssh_id = ssh.id;
+        let sftp_id = sftp.id;
+        let (mut desktop, _) = fixture();
+        desktop.app.manager = SessionManager::with_profiles(vec![ssh, sftp]);
+        if panel {
+            desktop
+                .app
+                .manager
+                .open_live_ssh_session(ssh_id, String::new(), String::new())
+                .unwrap();
+            desktop.app.manager.open_sftp_for_active().unwrap();
+            desktop.app.native_sftp_window = Some(desktop.primary);
+        }
+        let shell = desktop
+            .app
+            .manager
+            .open_live_ssh_session(sftp_id, String::new(), String::new())
+            .unwrap();
+        (desktop, shell)
+    }
+
+    fn drop_event(desktop: &mut DesktopApplication, id: window::Id, path: std::path::PathBuf) {
+        let _ = desktop.update(NativeMessage::Runtime(
+            id,
+            iced::Event::Window(window::Event::FileDropped(path)),
+            event::Status::Ignored,
+        ));
+    }
+
+    fn hover_file(desktop: &mut DesktopApplication, id: window::Id, path: std::path::PathBuf) {
+        let _ = desktop.update(NativeMessage::Runtime(
+            id,
+            iced::Event::Window(window::Event::FileHovered(path)),
+            event::Status::Ignored,
+        ));
+    }
+
+    fn drop_file(desktop: &mut DesktopApplication, id: window::Id, path: std::path::PathBuf) {
+        hover_file(desktop, id, path.clone());
+        drop_event(desktop, id, path);
+    }
+
+    fn ssh_profile(desktop: &DesktopApplication) -> ProfileId {
+        desktop
+            .app
+            .manager
+            .profiles()
+            .iter()
+            .find(|profile| profile.protocol == Protocol::Ssh)
+            .unwrap()
+            .id
+    }
+
+    #[test]
+    fn file_drop_security_rejects_a_split_containing_a_desktop() {
+        for protocol in [Protocol::Rdp, Protocol::Vnc] {
+            let (mut desktop, shell) = sftp_drop_fixture(false);
+            let profile = ssh_profile(&desktop);
+            desktop.app.manager.set_profile_protocol(profile, protocol);
+            let other = if protocol == Protocol::Vnc {
+                let id = desktop
+                    .app
+                    .manager
+                    .open_live_vnc_session(profile, String::new())
+                    .unwrap();
+                assert!(desktop.app.manager.session_is_desktop(id));
+                id
+            } else {
+                desktop.app.manager.open_mock_session(profile).unwrap()
+            };
+            desktop.app.manager.activate(shell).unwrap();
+            desktop.app.panes = vec![shell, other];
+            desktop.app.focused_pane = 0;
+            let before = shell_text(&desktop);
+            let primary = desktop.primary;
+            drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+            assert_eq!(
+                shell_text(&desktop),
+                before,
+                "a desktop pane was routed to SFTP"
+            );
+        }
+    }
+
+    #[test]
+    fn file_drop_security_rejects_split_before_inspecting_any_path() {
+        let (mut desktop, shell) = sftp_drop_fixture(false);
+        let profile = ssh_profile(&desktop);
+        let other = desktop.app.manager.open_mock_session(profile).unwrap();
+        desktop.app.manager.activate(shell).unwrap();
+        desktop.app.panes = vec![shell, other];
+        let primary = desktop.primary;
+        hover_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        let _ = desktop.in_window(primary, |app| {
+            update_loop::handle_sftp_file_drop(app, "synthetic-drop.txt".into(), |_| {
+                panic!("a split drop must be rejected before reading path metadata")
+            });
+            Task::none()
+        });
+    }
+
+    #[test]
+    fn file_drop_security_real_widget_tree_rejects_a_desktop_split_at_each_scale() {
+        use iced_runtime::user_interface::{Cache, UserInterface};
+        for scale in [1.0, 1.5, 2.0] {
+            let (mut desktop, shell) = sftp_drop_fixture(false);
+            let profile = ssh_profile(&desktop);
+            desktop
+                .app
+                .manager
+                .set_profile_protocol(profile, Protocol::Vnc);
+            let other = desktop
+                .app
+                .manager
+                .open_live_vnc_session(profile, String::new())
+                .unwrap();
+            assert!(desktop.app.manager.session_is_desktop(other));
+            desktop.app.manager.activate(shell).unwrap();
+            desktop.app.panes = vec![shell, other];
+            desktop.app.display_scale = scale;
+            let primary = desktop.primary;
+            let before = shell_text(&desktop);
+            let messages = {
+                let mut renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
+                    iced::Font::default(),
+                    iced::Pixels(16.0),
+                ));
+                let mut ui = UserInterface::build(
+                    desktop.view(primary),
+                    iced::Size::new(1000.0, 700.0),
+                    Cache::new(),
+                    &mut renderer,
+                );
+                let mut messages = Vec::new();
+                ui.update(
+                    &[
+                        iced::Event::Window(window::Event::FileHovered("synthetic.txt".into())),
+                        iced::Event::Window(window::Event::FileDropped("synthetic.txt".into())),
+                    ],
+                    mouse::Cursor::Unavailable,
+                    &mut renderer,
+                    &mut iced::advanced::clipboard::Null,
+                    &mut messages,
+                );
+                messages
+            };
+            assert_eq!(messages.len(), 2);
+            for message in messages {
+                let _ = desktop.update(message);
+            }
+            assert_eq!(shell_text(&desktop), before);
+            assert!(desktop.app.last_error.is_none());
+        }
+    }
+
+    #[test]
+    fn file_drop_security_keeps_multiple_panel_files_together() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        for path in ["synthetic-a.txt", "synthetic-b.txt"] {
+            hover_file(&mut desktop, primary, path.into());
+        }
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        assert!(
+            desktop
+                .app
+                .manager
+                .sftp_browser()
+                .unwrap()
+                .transfers
+                .is_empty(),
+            "a partial batch was queued"
+        );
+        drop_event(&mut desktop, primary, "synthetic-b.txt".into());
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            2
+        );
+    }
+
+    #[test]
+    fn file_drop_security_large_panel_batch_through_the_real_widget_tree() {
+        use iced_runtime::user_interface::{Cache, UserInterface};
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        let messages = {
+            let mut renderer = iced::Renderer::Secondary(iced_tiny_skia::Renderer::new(
+                iced::Font::default(),
+                iced::Pixels(16.0),
+            ));
+            let mut ui = UserInterface::build(
+                desktop.view(primary),
+                iced::Size::new(1000.0, 700.0),
+                Cache::new(),
+                &mut renderer,
+            );
+            let events = (0..150)
+                .map(|index| {
+                    iced::Event::Window(window::Event::FileHovered(
+                        format!("synthetic-{index}.txt").into(),
+                    ))
+                })
+                .chain((0..150).map(|index| {
+                    iced::Event::Window(window::Event::FileDropped(
+                        format!("synthetic-{index}.txt").into(),
+                    ))
+                }))
+                .collect::<Vec<_>>();
+            let mut messages = Vec::new();
+            ui.update(
+                &events,
+                mouse::Cursor::Unavailable,
+                &mut renderer,
+                &mut iced::advanced::clipboard::Null,
+                &mut messages,
+            );
+            messages
+        };
+        assert_eq!(messages.len(), 300);
+        for message in messages {
+            let _ = desktop.update(message);
+        }
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            150
+        );
+    }
+
+    #[test]
+    fn file_drop_security_discards_pending_files_after_reopening_the_panel() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        let source_profile = ssh_profile(&desktop);
+        let owner = desktop
+            .app
+            .manager
+            .sessions()
+            .iter()
+            .find(|summary| summary.profile_id == source_profile)
+            .unwrap()
+            .id;
+        let old = desktop.app.manager.sftp_browser().unwrap().instance_id;
+        for path in ["synthetic-a.txt", "synthetic-b.txt"] {
+            hover_file(&mut desktop, primary, path.into());
+        }
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        desktop.app.manager.close_sftp();
+        desktop.app.manager.select_session_context(owner).unwrap();
+        desktop.app.manager.open_sftp_for_active().unwrap();
+        assert_ne!(desktop.app.manager.sftp_browser().unwrap().instance_id, old);
+        drop_event(&mut desktop, primary, "synthetic-b.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+    }
+
+    #[test]
+    fn file_drop_security_does_not_borrow_another_windows_hover() {
+        let (mut desktop, shell) = sftp_drop_fixture(true);
+        let _ = desktop.detach(shell);
+        let child = desktop.owner(shell);
+        let primary = desktop.primary;
+        for path in ["synthetic-a.txt", "synthetic-b.txt"] {
+            hover_file(&mut desktop, primary, path.into());
+        }
+        drop_event(&mut desktop, child, "synthetic-a.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        drop_event(&mut desktop, primary, "synthetic-b.txt".into());
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            2
+        );
+    }
+
+    #[test]
+    fn file_drop_security_discards_a_batch_after_the_target_changes_and_returns() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        for path in ["synthetic-a.txt", "synthetic-b.txt"] {
+            hover_file(&mut desktop, primary, path.into());
+        }
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        desktop.app.settings_open = true;
+        let _ = desktop.update(NativeMessage::Window(
+            primary,
+            Message::GlobalCursorMoved(Point::ORIGIN),
+        ));
+        desktop.app.settings_open = false;
+        let _ = desktop.update(NativeMessage::Window(
+            primary,
+            Message::GlobalCursorMoved(Point::ORIGIN),
+        ));
+        drop_event(&mut desktop, primary, "synthetic-b.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+    }
+
+    #[test]
+    fn file_drop_security_rejects_unmatched_and_cancelled_batches() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        for path in ["synthetic-a.txt", "synthetic-b.txt"] {
+            hover_file(&mut desktop, primary, path.into());
+        }
+        drop_event(&mut desktop, primary, "unexpected.txt".into());
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        drop_event(&mut desktop, primary, "synthetic-b.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        hover_file(&mut desktop, primary, "synthetic-a.txt".into());
+        let _ = desktop.update(NativeMessage::Runtime(
+            primary,
+            iced::Event::Window(window::Event::FilesHoveredLeft),
+            event::Status::Ignored,
+        ));
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+    }
+
+    #[test]
+    fn file_drop_security_keeps_an_existing_overwrite_confirmation() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        desktop.app.sftp_overwrite = Some((Vec::new(), vec!["/existing.txt".into()]));
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, std::env::temp_dir());
+        assert_eq!(
+            desktop.app.sftp_overwrite.as_ref().unwrap().1,
+            ["/existing.txt"]
+        );
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        assert!(desktop.app.last_error.is_none());
+    }
+
+    #[test]
+    fn file_drop_security_rejects_multiple_shell_files_without_partial_upload() {
+        let (mut desktop, _) = sftp_drop_fixture(false);
+        let primary = desktop.primary;
+        let before = shell_text(&desktop);
+        for path in ["synthetic-a.txt", "synthetic-b.txt"] {
+            hover_file(&mut desktop, primary, path.into());
+        }
+        drop_event(&mut desktop, primary, "synthetic-a.txt".into());
+        drop_event(&mut desktop, primary, "synthetic-b.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+        assert!(desktop
+            .app
+            .last_error
+            .as_deref()
+            .is_some_and(|message| message.contains("SFTP")));
+    }
+
+    #[test]
+    fn file_drop_security_allows_a_fullscreen_shell_when_other_panes_are_hidden() {
+        let (mut desktop, shell) = sftp_drop_fixture(false);
+        let profile = ssh_profile(&desktop);
+        let other = desktop.app.manager.open_mock_session(profile).unwrap();
+        desktop.app.manager.activate(shell).unwrap();
+        desktop.app.panes = vec![shell, other];
+        desktop.app.fullscreen = true;
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-a.txt".into());
+        assert!(shell_text(&desktop).contains("尚未连接，无法上传"));
+    }
+
+    #[test]
+    #[ignore = "requires a disposable SSH fixture and ADIT_DROP_SFTP_PORT/USER/PASSWORD"]
+    fn file_drop_security_live_sftp_panel_and_shell_round_trip() {
+        use adit_session::TransferMode;
+        use std::time::Duration;
+
+        fn wait_until(
+            desktop: &mut DesktopApplication,
+            condition: impl Fn(&DesktopApplication) -> bool,
+        ) {
+            let deadline = Instant::now() + Duration::from_secs(20);
+            loop {
+                desktop.app.manager.poll_events();
+                if condition(desktop) {
+                    return;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "SFTP fixture did not reach the expected state"
+                );
+                std::thread::sleep(Duration::from_millis(25));
+            }
+        }
+
+        struct Files(std::path::PathBuf);
+        impl Drop for Files {
+            fn drop(&mut self) {
+                for name in [
+                    "fixture-drop-existing.txt",
+                    "fixture-drop-new.txt",
+                    "fixture-drop-shell.txt",
+                    "download-existing",
+                    "download-new",
+                    "download-shell",
+                ] {
+                    let _ = std::fs::remove_file(self.0.join(name));
+                }
+                let _ = std::fs::remove_dir(&self.0);
+            }
+        }
+
+        let port = std::env::var("ADIT_DROP_SFTP_PORT")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let user = std::env::var("ADIT_DROP_SFTP_USER").unwrap();
+        let password = std::env::var("ADIT_DROP_SFTP_PASSWORD").unwrap();
+        let known_hosts_dir = known_hosts_path()
+            .parent()
+            .unwrap()
+            .canonicalize()
+            .expect("create an isolated temporary known-hosts directory first");
+        assert!(
+            known_hosts_dir.starts_with(std::env::temp_dir().canonicalize().unwrap()),
+            "the live fixture must never write the user's known hosts"
+        );
+        let profile = ConnectionProfile::new("isolated-sftp-drop-fixture", "127.0.0.1", port, user);
+        let profile_id = profile.id;
+        let (mut desktop, _) = fixture();
+        desktop.app.manager = SessionManager::with_profiles(vec![profile]);
+        desktop.app.manager.set_auto_accept_host_keys(true);
+        let ssh = desktop
+            .app
+            .manager
+            .open_live_ssh_session(profile_id, password, String::new())
+            .unwrap();
+        wait_until(&mut desktop, |desktop| {
+            desktop
+                .app
+                .manager
+                .session_summary(ssh)
+                .is_some_and(|summary| summary.status == SessionStatus::Connected)
+        });
+        desktop.app.manager.open_sftp_for_active().unwrap();
+        desktop.app.native_sftp_window = Some(desktop.primary);
+        wait_until(&mut desktop, |desktop| {
+            desktop.app.manager.sftp_browser().is_some_and(|browser| {
+                browser.connected
+                    && browser
+                        .entries
+                        .iter()
+                        .any(|entry| entry.name == "fixture-drop-existing.txt")
+            })
+        });
+
+        let files =
+            Files(std::env::temp_dir().join(format!("adit-sftp-drop-{}", SessionId::new())));
+        std::fs::create_dir(&files.0).unwrap();
+        let names = ["fixture-drop-existing.txt", "fixture-drop-new.txt"];
+        let contents: [&[u8]; 2] = [b"new existing bytes", b"new file bytes"];
+        let paths = names.map(|name| files.0.join(name));
+        for (path, bytes) in paths.iter().zip(contents) {
+            std::fs::write(path, bytes).unwrap();
+        }
+        let primary = desktop.primary;
+        for path in &paths {
+            hover_file(&mut desktop, primary, path.clone());
+        }
+        drop_event(&mut desktop, primary, paths[0].clone());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        drop_event(&mut desktop, primary, paths[1].clone());
+        let (plans, clashes) = desktop
+            .app
+            .sftp_overwrite
+            .as_ref()
+            .expect("the whole batch must wait for confirmation");
+        assert_eq!(plans.len(), 2);
+        assert_eq!(clashes.len(), 1);
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        let _ = desktop.update(NativeMessage::Window(
+            primary,
+            Message::SftpConfirmOverwrite,
+        ));
+        wait_until(&mut desktop, |desktop| {
+            desktop.app.manager.sftp_browser().is_some_and(|browser| {
+                browser.transfers.len() == 2
+                    && browser
+                        .transfers
+                        .iter()
+                        .all(|item| item.status == TransferStatus::Done)
+            })
+        });
+
+        let cwd = desktop.app.manager.sftp_browser().unwrap().cwd.clone();
+        for (name, output) in names.into_iter().zip(["download-existing", "download-new"]) {
+            let remote = format!("{}/{}", cwd.trim_end_matches('/'), name);
+            desktop.app.manager.sftp_download_to(
+                &remote,
+                files.0.join(output),
+                TransferMode::CreateNew,
+            );
+        }
+        wait_until(&mut desktop, |desktop| {
+            desktop.app.manager.sftp_browser().is_some_and(|browser| {
+                browser.transfers.len() == 4
+                    && browser
+                        .transfers
+                        .iter()
+                        .all(|item| item.status == TransferStatus::Done)
+            })
+        });
+        assert_eq!(
+            std::fs::read(files.0.join("download-existing")).unwrap(),
+            contents[0]
+        );
+        assert_eq!(
+            std::fs::read(files.0.join("download-new")).unwrap(),
+            contents[1]
+        );
+
+        let _ = desktop.update(NativeMessage::Window(primary, Message::CloseSftp));
+        desktop.app.manager.activate(ssh).unwrap();
+        let shell = desktop.app.manager.open_sftp_shell_for_active().unwrap();
+        wait_until(&mut desktop, |desktop| {
+            desktop
+                .app
+                .manager
+                .session_summary(shell)
+                .is_some_and(|summary| summary.status == SessionStatus::Connected)
+                && shell_text(desktop).contains("已连接")
+        });
+        let shell_path = files.0.join("fixture-drop-shell.txt");
+        std::fs::write(&shell_path, b"shell file bytes").unwrap();
+        drop_file(&mut desktop, primary, shell_path);
+        wait_until(&mut desktop, |desktop| shell_text(desktop).contains("完成"));
+        desktop.app.manager.activate(ssh).unwrap();
+        desktop.app.manager.open_sftp_for_active().unwrap();
+        wait_until(&mut desktop, |desktop| {
+            desktop
+                .app
+                .manager
+                .sftp_browser()
+                .is_some_and(|browser| browser.connected)
+        });
+        let remote = format!(
+            "{}/fixture-drop-shell.txt",
+            desktop
+                .app
+                .manager
+                .sftp_browser()
+                .unwrap()
+                .cwd
+                .trim_end_matches('/')
+        );
+        desktop.app.manager.sftp_download_to(
+            &remote,
+            files.0.join("download-shell"),
+            TransferMode::CreateNew,
+        );
+        wait_until(&mut desktop, |desktop| {
+            desktop.app.manager.sftp_browser().is_some_and(|browser| {
+                browser.transfers.len() == 1 && browser.transfers[0].status == TransferStatus::Done
+            })
+        });
+        assert_eq!(
+            std::fs::read(files.0.join("download-shell")).unwrap(),
+            b"shell file bytes"
+        );
+    }
+
+    fn shell_text(desktop: &DesktopApplication) -> String {
+        terminal_text::snapshot_to_text(&desktop.app.manager.active_snapshot(Viewport::tail(50)))
+    }
+
+    #[test]
+    fn visible_sftp_panel_does_not_send_drop_to_background_shell() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn modal_above_sftp_shell_blocks_window_file_drop() {
+        let (mut desktop, _) = sftp_drop_fixture(false);
+        desktop.app.settings_open = true;
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+    }
+
+    #[test]
+    fn primary_window_cannot_drop_into_a_detached_sftp_shell() {
+        let (mut desktop, shell) = sftp_drop_fixture(false);
+        let _ = desktop.detach(shell);
+        desktop.app.manager.activate(shell).unwrap();
+        desktop.app.main_view = MainView::Terminal;
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+    }
+
+    #[test]
+    fn sftp_shell_still_receives_a_drop_in_its_window() {
+        let (mut desktop, _) = sftp_drop_fixture(false);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert!(shell_text(&desktop).contains("尚未连接，无法上传"));
+    }
+
+    #[test]
+    fn covered_sftp_panel_does_not_queue_a_drop() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        desktop.app.settings_open = true;
+        let before = shell_text(&desktop);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert_eq!(shell_text(&desktop), before);
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+    }
+
+    #[test]
+    fn sftp_panel_drop_is_accepted_only_by_its_owner_window() {
+        let (mut desktop, shell) = sftp_drop_fixture(true);
+        let _ = desktop.detach(shell);
+        let child = desktop.owner(shell);
+        desktop.app.native_sftp_window = Some(child);
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
+        drop_file(&mut desktop, child, "synthetic-drop.txt".into());
+        assert_eq!(
+            desktop.app.manager.sftp_browser().unwrap().transfers.len(),
+            1
+        );
+    }
+
+    #[test]
+    fn sftp_panel_pane_to_pane_drag_still_queues_both_directions() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        for (source, destination, name) in [
+            (SftpPane::Local, SftpPane::Remote, "synthetic-upload.txt"),
+            (SftpPane::Remote, SftpPane::Local, "synthetic-download.txt"),
+        ] {
+            let _ = desktop.update(NativeMessage::Window(
+                primary,
+                Message::SftpRowPress(source, name.into()),
+            ));
+            let _ = desktop.update(NativeMessage::Window(
+                primary,
+                Message::SftpDragEnter(destination),
+            ));
+            let _ = desktop.update(NativeMessage::Window(primary, Message::CancelProfileDrag));
+        }
+        let transfers = &desktop.app.manager.sftp_browser().unwrap().transfers;
+        assert_eq!(transfers.len(), 2);
+        assert_eq!(transfers[0].direction, TransferDirection::Upload);
+        assert_eq!(transfers[0].name, "synthetic-upload.txt");
+        assert_eq!(transfers[1].direction, TransferDirection::Download);
+        assert_eq!(transfers[1].name, "synthetic-download.txt");
+    }
+
+    #[test]
+    fn rejected_drop_does_not_examine_directory_metadata() {
+        let (mut desktop, _) = fixture();
+        let primary = desktop.primary;
+        drop_file(&mut desktop, primary, std::env::temp_dir());
+        assert!(
+            desktop.app.last_error.is_none(),
+            "a non-SFTP drop was classified as a directory"
+        );
     }
 
     #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
