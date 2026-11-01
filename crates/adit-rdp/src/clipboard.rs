@@ -257,7 +257,8 @@ pub(crate) struct ClipboardState {
     ready: bool,
     /// The lock ID sent for a remote file offer is carried in every range
     /// request. A compliant peer uses it to select the locked file stream;
-    /// the format response itself does not establish that association.
+    /// the format response itself does not establish that association, and
+    /// the peer may render a delayed file list from either locked snapshot.
     remote_files: RemoteFiles,
     /// Whether the server negotiated file transfer.
     files_negotiated: bool,
@@ -617,8 +618,9 @@ impl CliprdrBackend for AditCliprdrBackend {
 
     fn client_capabilities(&self) -> ClipboardGeneralCapabilityFlags {
         // `Cliprdr` adds USE_LONG_FORMAT_NAMES itself. Keep the negotiated
-        // stream capability so IronRDP can explicitly refuse unsolicited local
-        // file requests; no file offer is accepted in either direction.
+        // stream capability so IronRDP can explicitly refuse the server's
+        // unsolicited request for *our* clipboard files; remote-to-local file
+        // offers are still accepted.
         ClipboardGeneralCapabilityFlags::STREAM_FILECLIP_ENABLED
             | ClipboardGeneralCapabilityFlags::CAN_LOCK_CLIPDATA
     }
