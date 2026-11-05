@@ -86,6 +86,8 @@ ci:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo clippy --manifest-path {{rdp}} --all-targets --locked -- -D warnings
     cargo test --workspace
+    # Includes SVC reassembly and real unread-stdout process regressions.
+    cargo test --manifest-path {{rdp}} --locked
     cargo test -p adit-ssh --features integration --no-run
 
 # Opt-in VNC fixture code as well as the normal local gate. Ignored native

@@ -1,5 +1,7 @@
 # Rust build output
 /target
+# Isolated acceptance builds use repository-local target directories.
+/target-*/
 # adit-rdp is a separate (nested) workspace with its own target dir.
 crates/adit-rdp/target/
 # So is each vendored crate: they carry a `[workspace]` table so their own tests
@@ -26,6 +28,3 @@ logs
 .claude/
 *.suo
 *.sw?
-
-# Added by code-review-graph
-.code-review-graph/
