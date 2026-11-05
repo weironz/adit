@@ -70,6 +70,8 @@ mod file_drop_listener;
 /// low-level hook, armed only in fullscreen — see the module docs for why that
 /// leash is short.
 mod keyboard_hook;
+#[cfg(any(windows, test))]
+mod native_file_drop;
 mod rdp_dragdrop;
 mod vnc_cursor;
 #[cfg(feature = "native-vnc-acceptance")]
@@ -146,6 +148,8 @@ mod native_windows;
 pub use native_windows::run_acceptance as run_native_windows_acceptance;
 #[cfg(all(windows, feature = "native-accessibility-acceptance"))]
 pub use native_windows::run_accessibility_acceptance as run_accessibility_detached_acceptance;
+#[cfg(all(windows, feature = "native-workbench-acceptance"))]
+pub use native_windows::run_native_file_drop_acceptance;
 mod native_ime;
 mod terminal_appearance;
 mod window_presentation;

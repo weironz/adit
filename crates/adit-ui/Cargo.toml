@@ -11,6 +11,7 @@ native-workbench-acceptance = ["dep:image"]
 native-accessibility-acceptance = []
 
 [dev-dependencies]
+adit-session = { workspace = true, features = ["native-file-drop-test-support"] }
 iced_runtime = "=0.14.0"
 iced_tiny_skia = "=0.14.0"
 
@@ -28,6 +29,10 @@ required-features = ["native-workbench-acceptance"]
 
 [[example]]
 name = "native_windows_acceptance"
+required-features = ["native-workbench-acceptance"]
+
+[[example]]
+name = "native_file_drop_acceptance"
 required-features = ["native-workbench-acceptance"]
 
 [[example]]

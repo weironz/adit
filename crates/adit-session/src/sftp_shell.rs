@@ -43,15 +43,15 @@ const HELP: &str = "\
 传输: Ctrl+C 停止；get/put 不覆盖已有文件，续传使用 reget/reput。";
 
 /// What the shell is waiting on, so a reply prints against the right command.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Pending {
-    List,
+    List(String),
     /// `cd`: a listing that succeeds commits the target as the new cwd.
-    Cd,
+    Cd(String),
     Transfer,
     /// A listing Tab asked for, to be turned into a completion rather than
     /// printed.
-    Complete,
+    Complete(String),
 }
 
 /// A command-line SFTP session: its own SFTP connection plus a line editor.
@@ -60,6 +60,7 @@ pub struct SftpShell {
     pending_auth_prompt: Option<adit_ssh::AuthPromptRequest>,
     /// Remote working directory.
     pub cwd: String,
+    drop_revision: crate::DropRevision,
     /// Remote home, for a bare `cd`.
     home: String,
     /// Local working directory, for `lls`/`lcd`/`get`/`put`.
@@ -77,6 +78,7 @@ pub struct SftpShell {
     completing: Option<(usize, String, String, usize)>,
     pub connected: bool,
     pending: Option<Pending>,
+    initial_listing: Option<String>,
 }
 
 /// Command names, for completing the first word.
@@ -86,6 +88,19 @@ const COMMANDS: &[&str] = &[
 ];
 
 impl SftpShell {
+    pub(crate) fn drop_identity(&self) -> Option<(u64, &str)> {
+        if !self.connected
+            || self.initial_listing.is_some()
+            || self.pending.is_some()
+            || self
+                .pending_auth_prompt
+                .as_ref()
+                .is_some_and(|p| p.is_pending())
+        {
+            return None;
+        }
+        Some((self.drop_revision.0?, &self.cwd))
+    }
     pub(crate) fn pending_auth_prompt(&self) -> Option<adit_ssh::AuthPromptRequest> {
         self.pending_auth_prompt
             .as_ref()
@@ -98,6 +113,7 @@ impl SftpShell {
             handle,
             pending_auth_prompt: None,
             cwd: String::from("/"),
+            drop_revision: crate::DropRevision::default(),
             home: String::from("/"),
             local_cwd,
             editor: LineEditor::default(),
@@ -107,6 +123,7 @@ impl SftpShell {
             completing: None,
             connected: false,
             pending: None,
+            initial_listing: None,
         }
     }
 
@@ -237,6 +254,11 @@ impl SftpShell {
 
     /// Queue an upload of a dropped file into the current remote directory.
     pub(crate) fn upload_dropped(&mut self, terminal: &mut VtTerminal, local: &Path) {
+        let cwd = self.cwd.clone();
+        self.upload_dropped_at(terminal, local, &cwd);
+    }
+
+    pub(crate) fn upload_dropped_at(&mut self, terminal: &mut VtTerminal, local: &Path, cwd: &str) {
         if self.pending.is_some() {
             self.writeln(terminal, "已有传输进行中；Ctrl+C 可停止");
             return;
@@ -251,7 +273,8 @@ impl SftpShell {
             self.prompt(terminal);
             return;
         };
-        let remote = resolve_remote(&self.cwd, &self.home, &name);
+        let remote = resolve_remote(cwd, &self.home, &name);
+        self.drop_revision.revoke();
         // A drop can land mid-typed-line; keep the transcript readable.
         terminal.feed_str("\r\n");
         self.writeln(terminal, &format!("上传 {} -> {remote}", local.display()));
@@ -279,9 +302,11 @@ impl SftpShell {
                 }
             }
             SftpEvent::Ready { home } => {
+                self.drop_revision.revoke();
                 self.home = home.clone();
                 self.cwd = home;
                 self.connected = true;
+                self.initial_listing = Some(self.cwd.clone());
                 self.writeln(terminal, &format!("已连接。远程目录: {}", self.cwd));
                 self.writeln(terminal, "输入 help 查看可用命令，或直接把文件拖进来上传。");
                 self.prompt(terminal);
@@ -290,27 +315,38 @@ impl SftpShell {
             // backend lists the home directory on its own right after connecting
             // (to populate the dual-pane panel, which shares this connection type),
             // and dumping that unasked buried the prompt under the whole home dir.
-            SftpEvent::Listing { path, entries } => match self.pending {
-                Some(Pending::Cd) => {
-                    self.pending = None;
-                    self.cwd = path;
-                    self.writeln(terminal, &format!("远程目录: {}", self.cwd));
-                    self.prompt(terminal);
+            SftpEvent::Listing { path, entries } => {
+                // The worker lists home after Ready before it processes any
+                // queued commands. That response cannot answer cd/ls/Tab.
+                if let Some(initial) = &self.initial_listing {
+                    if initial == &path {
+                        self.initial_listing = None;
+                    }
+                    return false;
                 }
-                Some(Pending::List) => {
-                    self.pending = None;
-                    self.print_listing(terminal, &entries);
-                    self.prompt(terminal);
+                match self.pending.as_ref() {
+                    Some(Pending::Cd(requested)) if requested == &path => {
+                        self.drop_revision.revoke();
+                        self.pending = None;
+                        self.cwd = path;
+                        self.writeln(terminal, &format!("远程目录: {}", self.cwd));
+                        self.prompt(terminal);
+                    }
+                    Some(Pending::List(requested)) if requested == &path => {
+                        self.pending = None;
+                        self.print_listing(terminal, &entries);
+                        self.prompt(terminal);
+                    }
+                    // Asked for by Tab: splice, never print the directory.
+                    Some(Pending::Complete(requested)) if requested == &path => {
+                        self.pending = None;
+                        self.finish_remote_completion(terminal, &entries);
+                    }
+                    // Unsolicited (or a stray listing while a transfer is pending):
+                    // stay quiet and leave `pending` alone.
+                    _ => {}
                 }
-                // Asked for by Tab: splice, never print the directory.
-                Some(Pending::Complete) => {
-                    self.pending = None;
-                    self.finish_remote_completion(terminal, &entries);
-                }
-                // Unsolicited (or a stray listing while a transfer is pending):
-                // stay quiet and leave `pending` alone.
-                _ => {}
-            },
+            }
             // Per-chunk progress would fight the prompt for the line; `Done` reports.
             SftpEvent::Progress { .. } => {}
             SftpEvent::Done { id, label, bytes } => {
@@ -334,7 +370,23 @@ impl SftpShell {
                 self.prompt(terminal);
             }
             SftpEvent::Error(error) => {
-                self.pending = None;
+                let initial_failed = self
+                    .initial_listing
+                    .as_ref()
+                    .is_some_and(|path| error.starts_with(&format!("list {path}: ")));
+                if initial_failed {
+                    self.initial_listing = None;
+                } else {
+                    let requested = match self.pending.as_ref() {
+                        Some(Pending::Cd(path) | Pending::List(path) | Pending::Complete(path)) => {
+                            Some(path)
+                        }
+                        _ => None,
+                    };
+                    if requested.is_none_or(|path| error.starts_with(&format!("list {path}: "))) {
+                        self.pending = None;
+                    }
+                }
                 self.writeln(terminal, &format!("错误: {error}"));
                 self.prompt(terminal);
             }
@@ -355,7 +407,9 @@ impl SftpShell {
                 }
             }
             SftpEvent::Closed => {
+                self.drop_revision.revoke();
                 self.connected = false;
+                self.initial_listing = None;
                 self.pending = None;
                 self.active_transfer = None;
                 self.writeln(terminal, "SFTP 连接已关闭");
@@ -500,7 +554,7 @@ impl SftpShell {
             self.editor.line.clone(),
             self.editor.cursor,
         ));
-        self.pending = Some(Pending::Complete);
+        self.pending = Some(Pending::Complete(target.clone()));
         self.send(terminal, SftpCommand::ListDir(target));
     }
 
@@ -567,6 +621,7 @@ impl SftpShell {
     }
 
     fn execute(&mut self, terminal: &mut VtTerminal, line: &str) {
+        self.drop_revision.revoke();
         let args = split_args(line);
         let Some(command) = args.first().cloned() else {
             self.prompt(terminal);
@@ -632,7 +687,7 @@ impl SftpShell {
                     || self.cwd.clone(),
                     |p| resolve_remote(&self.cwd, &self.home, p),
                 );
-                self.pending = Some(Pending::List);
+                self.pending = Some(Pending::List(path.clone()));
                 self.send(terminal, SftpCommand::ListDir(path));
             }
             "cd" => {
@@ -642,7 +697,7 @@ impl SftpShell {
                 );
                 // There is no SFTP "chdir": a successful listing is what proves the
                 // directory exists, so `cd` is a listing whose reply commits the cwd.
-                self.pending = Some(Pending::Cd);
+                self.pending = Some(Pending::Cd(target.clone()));
                 self.send(terminal, SftpCommand::ListDir(target));
             }
             "get" | "reget" => {
@@ -991,6 +1046,182 @@ fn human_size(bytes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn drop_fixture() -> (std::net::TcpListener, SftpShell, VtTerminal) {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let request = adit_ssh::SftpRequest::new(
+            "127.0.0.1",
+            listener.local_addr().unwrap().port(),
+            "fixture",
+            "",
+        );
+        let handle = adit_ssh::spawn_sftp_session(request).unwrap();
+        let mut shell = SftpShell::new(handle, std::env::temp_dir());
+        let mut terminal = VtTerminal::with_title(Default::default(), "drop fixture");
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(&mut terminal, SftpEvent::Ready { home: "/a".into() });
+        shell.on_event(
+            &mut terminal,
+            SftpEvent::Listing {
+                path: "/a".into(),
+                entries: Vec::new(),
+            },
+        );
+        (listener, shell, terminal)
+    }
+
+    #[test]
+    fn native_drop_identity_revokes_at_cd_start_and_never_revives_on_a_b_a() {
+        let (_listener, mut shell, mut terminal) = drop_fixture();
+        let original = shell
+            .drop_identity()
+            .map(|(rev, cwd)| (rev, cwd.to_owned()))
+            .unwrap();
+        shell.execute(&mut terminal, "cd /b");
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(
+            &mut terminal,
+            SftpEvent::Listing {
+                path: "/b".into(),
+                entries: Vec::new(),
+            },
+        );
+        assert!(shell.drop_identity().is_some());
+        shell.execute(&mut terminal, "cd /a");
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(
+            &mut terminal,
+            SftpEvent::Listing {
+                path: "/a".into(),
+                entries: Vec::new(),
+            },
+        );
+        let current = shell.drop_identity().unwrap();
+        assert_eq!(current.1, original.1);
+        assert_ne!(current.0, original.0);
+    }
+
+    #[test]
+    fn native_drop_identity_recovers_after_failed_cd_with_a_new_revision() {
+        let (_listener, mut shell, mut terminal) = drop_fixture();
+        let original = shell.drop_identity().unwrap().0;
+        shell.execute(&mut terminal, "cd /missing");
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(
+            &mut terminal,
+            SftpEvent::Error("list /missing: fixture failure".into()),
+        );
+        let current = shell.drop_identity().unwrap();
+        assert_eq!(current.1, "/a");
+        assert_ne!(current.0, original);
+        shell.drop_revision.0 = Some(u64::MAX);
+        shell.execute(&mut terminal, "pwd");
+        assert!(shell.drop_identity().is_none());
+    }
+
+    #[test]
+    fn native_drop_initial_listing_and_initial_error_cannot_finish_a_later_cd() {
+        for fail_initial in [false, true] {
+            let (_listener, mut shell, mut terminal) = drop_fixture();
+            shell.on_event(&mut terminal, SftpEvent::Ready { home: "/a".into() });
+            shell.execute(&mut terminal, "cd \"/b: next\"");
+            assert!(shell.drop_identity().is_none());
+            if fail_initial {
+                shell.on_event(&mut terminal, SftpEvent::Error("list /a: denied".into()));
+            } else {
+                shell.on_event(
+                    &mut terminal,
+                    SftpEvent::Listing {
+                        path: "/a".into(),
+                        entries: Vec::new(),
+                    },
+                );
+            }
+            assert!(shell.drop_identity().is_none());
+            shell.on_event(
+                &mut terminal,
+                SftpEvent::Listing {
+                    path: "/unrelated".into(),
+                    entries: Vec::new(),
+                },
+            );
+            shell.on_event(
+                &mut terminal,
+                SftpEvent::Error("list /b: unrelated error".into()),
+            );
+            assert!(shell.drop_identity().is_none());
+            shell.on_event(
+                &mut terminal,
+                SftpEvent::Listing {
+                    path: "/b: next".into(),
+                    entries: Vec::new(),
+                },
+            );
+            assert_eq!(shell.drop_identity().unwrap().1, "/b: next");
+        }
+    }
+
+    #[test]
+    fn native_drop_only_the_full_requested_error_prefix_ends_cd() {
+        let (_listener, mut shell, mut terminal) = drop_fixture();
+        shell.execute(&mut terminal, "cd \"/b: next\"");
+        shell.on_event(&mut terminal, SftpEvent::Error("list /b: denied".into()));
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(
+            &mut terminal,
+            SftpEvent::Error("list /b: next: denied".into()),
+        );
+        assert_eq!(shell.drop_identity().unwrap().1, "/a");
+    }
+
+    #[test]
+    fn native_drop_initial_listing_is_not_an_ls_or_completion_reply() {
+        for completion in [false, true] {
+            let (_listener, mut shell, mut terminal) = drop_fixture();
+            shell.on_event(&mut terminal, SftpEvent::Ready { home: "/a".into() });
+            if completion {
+                shell.complete_remote(&mut terminal, 0, "/b/");
+            } else {
+                shell.execute(&mut terminal, "ls /b");
+            }
+            shell.on_event(
+                &mut terminal,
+                SftpEvent::Listing {
+                    path: "/a".into(),
+                    entries: Vec::new(),
+                },
+            );
+            assert!(shell.pending.is_some());
+            assert!(shell.drop_identity().is_none());
+            shell.on_event(
+                &mut terminal,
+                SftpEvent::Listing {
+                    path: "/b".into(),
+                    entries: Vec::new(),
+                },
+            );
+            assert!(shell.pending.is_none());
+        }
+    }
+
+    #[test]
+    fn native_drop_identity_is_absent_before_ready_and_after_closed() {
+        let (_listener, mut shell, mut terminal) = drop_fixture();
+        shell.on_event(&mut terminal, SftpEvent::Closed);
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(&mut terminal, SftpEvent::Ready { home: "/a".into() });
+        assert!(shell.drop_identity().is_none());
+        shell.on_event(
+            &mut terminal,
+            SftpEvent::Listing {
+                path: "/a".into(),
+                entries: Vec::new(),
+            },
+        );
+        assert!(shell.drop_identity().is_some());
+        shell.on_event(&mut terminal, SftpEvent::Closed);
+        assert!(shell.drop_identity().is_none());
+    }
 
     #[test]
     fn resolve_remote_handles_absolute_relative_home_and_dotdot() {

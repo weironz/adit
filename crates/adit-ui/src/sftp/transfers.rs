@@ -22,6 +22,14 @@ impl PreparedTransfer {
 }
 
 fn prepare(app: &AditApp, transfer: PendingTransfer) -> Option<PreparedTransfer> {
+    prepare_at(app, transfer, None)
+}
+
+fn prepare_at(
+    app: &AditApp,
+    transfer: PendingTransfer,
+    remote_cwd: Option<&str>,
+) -> Option<PreparedTransfer> {
     if let PendingTransfer::Prepared(prepared) = transfer {
         return Some(prepared);
     }
@@ -60,11 +68,42 @@ fn prepare(app: &AditApp, transfer: PendingTransfer) -> Option<PreparedTransfer>
         browser_instance: browser.instance_id,
         profile: browser.profile_id,
         endpoint: browser.endpoint.clone(),
-        remote: format!("{}/{}", browser.cwd.trim_end_matches('/'), name),
+        remote: format!(
+            "{}/{}",
+            remote_cwd.unwrap_or(&browser.cwd).trim_end_matches('/'),
+            name
+        ),
         local,
         direction,
         exists,
     })
+}
+
+#[cfg(windows)]
+pub(crate) fn start_dropped_transfers(
+    app: &mut AditApp,
+    instance: SessionId,
+    revision: u64,
+    cwd: &str,
+    paths: Vec<PathBuf>,
+) {
+    if !app.manager.sftp_browser().is_some_and(|browser| {
+        browser.instance_id == instance && browser.drop_identity() == Some((revision, cwd))
+    }) {
+        return;
+    }
+    let prepared: Option<Vec<_>> = paths
+        .into_iter()
+        .map(|path| {
+            prepare_at(app, PendingTransfer::UploadPath(path), Some(cwd))
+                .map(PendingTransfer::Prepared)
+        })
+        .collect();
+    // A malformed member refuses the whole native batch rather than uploading
+    // only its valid prefix. The ordinary picker keeps its existing behavior.
+    if let Some(prepared) = prepared {
+        start_transfers(app, prepared);
+    }
 }
 
 pub(crate) fn start_transfers(app: &mut AditApp, transfers: Vec<PendingTransfer>) {

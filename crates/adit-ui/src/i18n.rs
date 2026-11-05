@@ -868,6 +868,7 @@ const COMMON: &[(&str, &str)] = &[
         ("暂不支持上传文件夹，请拖入单个文件", "Folders cannot be uploaded yet. Drop a single file"),
         ("无法确认拖入目标，请切换到单个 SFTP 会话或打开 SFTP 面板", "Cannot identify the drop target. Switch to one SFTP session or open the SFTP panel"),
         ("SFTP 命令行一次只能拖入一个文件；批量上传请使用 SFTP 面板", "The SFTP command line accepts one dropped file at a time. Use the SFTP panel for multiple files"),
+        ("原生文件拖放不可用，请使用 SFTP 面板选择文件", "Native file drag and drop is unavailable. Choose files in the SFTP panel"),
         ("更新检查任务失败: {}", "Update check task failed: {}"),
         ("最多同时分屏 {} 个终端", "At most {} panes at once"),
         ("最近连接", "Recent"),

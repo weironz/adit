@@ -1,6 +1,10 @@
 #[cfg(test)]
 mod clipboard_owner_tests;
+#[cfg(test)]
+mod file_drop_tests;
 mod jump_auth;
+#[cfg(any(test, feature = "native-file-drop-test-support"))]
+mod native_file_drop_fixture;
 mod sftp_shell;
 mod sftp_transfers;
 mod terminal_encoding;
@@ -306,6 +310,8 @@ pub struct SftpBrowser {
     pub endpoint: String,
     // Remote pane.
     pub cwd: String,
+    drop_revision: DropRevision,
+    pending_listings: std::collections::VecDeque<String>,
     pub entries: Vec<SftpEntry>,
     // Local pane.
     pub local_cwd: PathBuf,
@@ -319,6 +325,77 @@ pub struct SftpBrowser {
     /// correlate to the exact queue row even when two transfers share a filename
     /// (and so a "stop" targets the right one).
     next_transfer_id: u64,
+}
+
+/// A lease must not become valid again after a directory round trip. Exhaustion
+/// fails closed instead of reusing a generation held by an old native drag.
+pub(crate) struct DropRevision(Option<u64>);
+
+impl Default for DropRevision {
+    fn default() -> Self {
+        Self(Some(0))
+    }
+}
+
+impl DropRevision {
+    fn revoke(&mut self) {
+        self.0 = self.0.and_then(|value| value.checked_add(1));
+    }
+}
+
+impl SftpBrowser {
+    #[must_use]
+    pub fn drop_identity(&self) -> Option<(u64, &str)> {
+        if !self.connected || !self.pending_listings.is_empty() {
+            return None;
+        }
+        Some((self.drop_revision.0?, &self.cwd))
+    }
+
+    fn begin_navigation(&mut self, path: String) {
+        self.drop_revision.revoke();
+        self.pending_listings.push_back(path);
+    }
+
+    fn request_listing(&mut self, path: String) {
+        self.begin_navigation(path.clone());
+        if self.handle.send(SftpCommand::ListDir(path)).is_err() {
+            // A failed send has no eventual response to consume.
+            self.pending_listings.pop_back();
+        }
+    }
+
+    fn finish_navigation(&mut self, path: String) {
+        if let Some(index) = self
+            .pending_listings
+            .iter()
+            .position(|pending| pending == &path)
+        {
+            self.pending_listings.remove(index);
+            self.drop_revision.revoke();
+        } else if self.cwd != path {
+            self.drop_revision.revoke();
+        }
+        self.cwd = path;
+    }
+
+    fn fail_navigation(&mut self, error: &str) {
+        // The worker's untagged Error also covers mkdir/rename/remove. Only a
+        // `list {requested path}: ...` failure retires a directory request.
+        // Longest match handles paths containing `: ` without retiring a
+        // shorter path's outstanding request.
+        let failed = self
+            .pending_listings
+            .iter()
+            .enumerate()
+            .filter(|(_, path)| error.starts_with(&format!("list {path}: ")))
+            .max_by_key(|(_, path)| path.len())
+            .map(|(index, _)| index);
+        if let Some(index) = failed {
+            self.pending_listings.remove(index);
+            self.drop_revision.revoke();
+        }
+    }
 }
 
 /// One local-filesystem entry shown in the local pane.
@@ -2927,6 +3004,41 @@ impl SessionManager {
             .is_some_and(|record| record.sftp_shell.is_some())
     }
 
+    /// Stable, cheap identity for a particular shell, independent of the UI's
+    /// active selector. Pending commands cannot lend a drop destination.
+    #[must_use]
+    pub fn sftp_shell_drop_identity(&self, session: SessionId) -> Option<(u64, &str)> {
+        let record = self.sessions.get(&session)?;
+        if record.summary.status != SessionStatus::Connected {
+            return None;
+        }
+        record.sftp_shell.as_ref()?.drop_identity()
+    }
+
+    /// Consume a native drag lease without borrowing the active tab or resolving
+    /// its destination again. `false` means that the queued lease was revoked.
+    pub fn sftp_shell_upload_dropped_at(
+        &mut self,
+        session: SessionId,
+        revision: u64,
+        cwd: &str,
+        local: &Path,
+    ) -> Result<bool, SessionError> {
+        if self.sftp_shell_drop_identity(session) != Some((revision, cwd)) {
+            return Ok(false);
+        }
+        let record = self
+            .sessions
+            .get_mut(&session)
+            .ok_or(SessionError::SessionNotFound)?;
+        let shell = record
+            .sftp_shell
+            .as_mut()
+            .ok_or(SessionError::NoActiveSshSession)?;
+        shell.upload_dropped_at(&mut record.terminal, local, cwd);
+        Ok(true)
+    }
+
     /// Upload a dropped file into the active SFTP shell's remote directory.
     pub fn sftp_shell_upload_dropped(&mut self, local: &Path) -> Result<(), SessionError> {
         let session_id = self.active_session.ok_or(SessionError::SessionNotFound)?;
@@ -2996,6 +3108,8 @@ impl SessionManager {
             profile_id,
             endpoint,
             cwd: String::from("/"),
+            drop_revision: DropRevision::default(),
+            pending_listings: std::collections::VecDeque::new(),
             entries: Vec::new(),
             local_cwd,
             local_entries,
@@ -3052,7 +3166,7 @@ impl SessionManager {
             let path = path.trim();
             if !path.is_empty() {
                 browser.status = format!("opening {path}");
-                let _ = browser.handle.send(SftpCommand::ListDir(path.to_string()));
+                browser.request_listing(path.to_string());
             }
         }
     }
@@ -3063,7 +3177,7 @@ impl SessionManager {
             let cwd = browser.cwd.clone();
             browser.status = format!("mkdir {name}…");
             let _ = browser.handle.send(SftpCommand::Mkdir(path));
-            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+            browser.request_listing(cwd);
         }
     }
 
@@ -3077,7 +3191,7 @@ impl SessionManager {
                 from: from_path,
                 to: to_path,
             });
-            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+            browser.request_listing(cwd);
         }
     }
 
@@ -3087,7 +3201,7 @@ impl SessionManager {
             let cwd = browser.cwd.clone();
             browser.status = format!("delete {name}…");
             let _ = browser.handle.send(SftpCommand::Remove { path, is_dir });
-            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+            browser.request_listing(cwd);
         }
     }
 
@@ -3192,7 +3306,7 @@ impl SessionManager {
         if let Some(browser) = &mut self.sftp {
             let target = join_remote(&browser.cwd, name);
             browser.status = format!("opening {target}");
-            let _ = browser.handle.send(SftpCommand::ListDir(target));
+            browser.request_listing(target);
         }
     }
 
@@ -3200,14 +3314,14 @@ impl SessionManager {
         if let Some(browser) = &mut self.sftp {
             let parent = parent_remote(&browser.cwd);
             browser.status = format!("opening {parent}");
-            let _ = browser.handle.send(SftpCommand::ListDir(parent));
+            browser.request_listing(parent);
         }
     }
 
     pub fn sftp_refresh(&mut self) {
         if let Some(browser) = &mut self.sftp {
             let cwd = browser.cwd.clone();
-            let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+            browser.request_listing(cwd);
         }
     }
 
@@ -3278,11 +3392,15 @@ impl SessionManager {
                     SftpEvent::Status(status) => browser.status = status,
                     SftpEvent::Ready { home } => {
                         browser.connected = true;
+                        browser.drop_revision.revoke();
+                        // The worker always lists home immediately after Ready,
+                        // before processing any commands already queued by UI.
+                        browser.pending_listings.push_front(home.clone());
                         browser.cwd = home.clone();
                         browser.status = format!("connected: {home}");
                     }
                     SftpEvent::Listing { path, entries } => {
-                        browser.cwd = path;
+                        browser.finish_navigation(path);
                         browser.entries = entries;
                         browser.busy = false;
                         browser.status = format!("{} item(s)", browser.entries.len());
@@ -3325,7 +3443,7 @@ impl SessionManager {
                         // Refresh both panes — a transferred file appears on the
                         // other side.
                         let cwd = browser.cwd.clone();
-                        let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+                        browser.request_listing(cwd);
                         browser.local_entries = read_local_dir(&browser.local_cwd);
                     }
                     SftpEvent::Cancelled { id, label } => {
@@ -3337,7 +3455,7 @@ impl SessionManager {
                         // Show any retained partial file so explicit resume is
                         // available after cancellation.
                         let cwd = browser.cwd.clone();
-                        let _ = browser.handle.send(SftpCommand::ListDir(cwd));
+                        browser.request_listing(cwd);
                         browser.local_entries = read_local_dir(&browser.local_cwd);
                     }
                     SftpEvent::TransferFailed { id, label, error } => {
@@ -3354,6 +3472,7 @@ impl SessionManager {
                         }
                     }
                     SftpEvent::Error(error) => {
+                        browser.fail_navigation(&error);
                         browser.busy = false;
                         if let Some(item) = browser.transfers.iter_mut().find(|t| {
                             matches!(t.status, TransferStatus::Pending | TransferStatus::Active)

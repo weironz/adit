@@ -1348,12 +1348,19 @@ pub(crate) fn terminal_view(
     };
     // The text document and its physical scrolling controls are siblings.
     let body = row![text, scrollbar,];
-    container(body)
+    let terminal: Element<'static, Message> = container(body)
         .padding(TERMINAL_PANEL_PADDING as u16)
         .height(Fill)
         .width(Fill)
         .style(move |_theme| terminal_panel_style(focused, style))
-        .into()
+        .into();
+    #[cfg(windows)]
+    let terminal = if let Some(owner) = owner {
+        file_drop_listener::region(terminal, native_file_drop::Mark::Shell(owner))
+    } else {
+        terminal
+    };
+    terminal
 }
 
 /// Width of the terminal scrollbar gutter, in pixels.

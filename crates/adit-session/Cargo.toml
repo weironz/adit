@@ -5,6 +5,10 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
+[features]
+# Enabled only by adit-ui's dev-dependency for synthetic native queue tests.
+native-file-drop-test-support = []
+
 [dependencies]
 adit-domain.workspace = true
 adit-rdp-proto.workspace = true
