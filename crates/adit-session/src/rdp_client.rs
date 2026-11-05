@@ -3880,8 +3880,28 @@ mod rdp_presentation_tests {
     #[test]
     fn ipc_handshake_timeout_or_close_discards_a_late_ack_before_connect() {
         use std::io::Read;
+
+        struct RecordedWriter {
+            stream: std::net::TcpStream,
+            writes: Arc<Mutex<Vec<u8>>>,
+        }
+        impl std::io::Write for RecordedWriter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.writes.lock().unwrap().extend_from_slice(bytes);
+                std::io::Write::write(&mut self.stream, bytes)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                std::io::Write::flush(&mut self.stream)
+            }
+        }
+
         for cancel in [false, true] {
             let (app, mut helper) = ipc_pair();
+            let writes = Arc::new(Mutex::new(Vec::new()));
+            let writer = RecordedWriter {
+                stream: app.try_clone().unwrap(),
+                writes: Arc::clone(&writes),
+            };
             let (seen_tx, seen_rx) = std_mpsc::channel();
             let (release_tx, release_rx) = std_mpsc::channel();
             let peer = thread::spawn(move || {
@@ -3890,14 +3910,19 @@ mod rdp_presentation_tests {
                 release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
                 write_ipc_hello(&mut helper, IPC_PROTOCOL_VERSION).unwrap();
                 let mut remaining = Vec::new();
-                helper.read_to_end(&mut remaining).unwrap();
+                if let Err(error) = helper.read_to_end(&mut remaining) {
+                    // Windows may reset the TCP fixture when the late reader
+                    // drops. The write transcript also detects attempted
+                    // credentials even if a reset discards buffered bytes.
+                    assert_eq!(error.kind(), std::io::ErrorKind::ConnectionReset);
+                }
                 remaining
             });
             let state = Arc::new(FileEpoch::default());
             let worker_state = Arc::clone(&state);
             let worker = thread::spawn(move || {
                 open_control_channel(
-                    app.try_clone().unwrap(),
+                    writer,
                     app,
                     synthetic_request(1),
                     &worker_state,
@@ -3916,6 +3941,9 @@ mod rdp_presentation_tests {
             }
             release_tx.send(()).unwrap();
             assert!(peer.join().unwrap().is_empty());
+            let mut hello = Vec::new();
+            write_ipc_hello(&mut hello, IPC_PROTOCOL_VERSION).unwrap();
+            assert_eq!(*writes.lock().unwrap(), hello);
         }
     }
 
