@@ -671,7 +671,9 @@ fn repaint_mock_terminals(state: &mut State) {
                 "\x1b[2J\x1b[HSYNTHETIC node-{:02}\r\n\
              In-memory fixture / no network transport\r\n\r\n\
              $ hostname\r\nsynthetic-node-{:02}\r\n\
-             $ echo native-workbench\r\nnative-workbench\r\n$ ",
+             $ echo native-workbench\r\nnative-workbench\r\n\
+             Plain: https://example.invalid/path\r\n\
+             OSC 8: \x1b[38;2;128;0;0m\x1b]8;;https://example.invalid/osc\x07LINK\x1b]8;;\x07\x1b[0m\r\n$ ",
                 index + 1,
                 index + 1,
             ))
@@ -996,6 +998,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     ProfileStore::default().save_catalog(&ProfileCatalog::from_profiles(profiles.clone()))?;
     SettingsStore::default().save(&AppSettings {
         language: config.language,
+        color_scheme: "Solarized Light".into(),
         dark_mode: config.dark,
         theme_mode: Some(if config.dark {
             ThemeMode::Dark
