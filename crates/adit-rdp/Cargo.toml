@@ -21,6 +21,12 @@ path = "src/lib.rs"
 name = "adit-rdp-host"
 path = "src/main.rs"
 
+# The vendored dependency disables automatic test discovery. Run its receive
+# regressions with the helper so ordinary `cargo test` exercises the patch.
+[[test]]
+name = "svc_dechunkify"
+path = "vendor/ironrdp-svc/tests/dechunkify.rs"
+
 [features]
 # Core (connect + render + input + resize) ships by default.
 default = []
@@ -85,6 +91,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 tokio = { version = "1", features = ["test-util"] }
 
 [patch.crates-io]
+# Bound static-channel reassembly; see IRONRDP-PATCHES.md.
+ironrdp-svc = { path = "vendor/ironrdp-svc" }
 # Preserve server monitor definitions in ResetGraphics callbacks; see IRONRDP-PATCHES.md.
 ironrdp-egfx = { path = "vendor/ironrdp-egfx" }
 ironrdp-connector = { path = "vendor/ironrdp-connector" }

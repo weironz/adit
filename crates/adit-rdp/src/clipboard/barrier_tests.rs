@@ -97,7 +97,7 @@ fn framed_barrier_sanitizes_text_and_image_already_taken_by_the_pump() {
             Arc::new(InputRouting::default()),
             Arc::clone(&state),
         );
-        let (host_tx, _host_rx) = std_mpsc::channel();
+        let (host_tx, _host_rx) = crate::host::host_channel();
         let frames = pump_actions(&state, &mut stage, &host_tx, 0, detached, revision).unwrap();
         assert_eq!(frames.len(), 1);
         let message: X224<SendDataRequest<'_>> = decode(&frames[0]).unwrap();
@@ -182,7 +182,7 @@ fn revoked_detached_format_list_preserves_initial_handshake_without_stealing_own
             Arc::new(InputRouting::default()),
             Arc::clone(&state),
         );
-        let (host_tx, _host_rx) = std_mpsc::channel();
+        let (host_tx, _host_rx) = crate::host::host_channel();
         let frames = pump_actions(&state, &mut stage, &host_tx, 0, detached, revision).unwrap();
         if ready {
             assert!(

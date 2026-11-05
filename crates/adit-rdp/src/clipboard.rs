@@ -38,6 +38,7 @@ mod remote_files;
 use remote_files::{BoundRead, RemoteFiles, Reply};
 
 use std::collections::VecDeque;
+#[cfg(test)]
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -51,6 +52,8 @@ use ironrdp_cliprdr::pdu::{
 };
 use ironrdp_cliprdr::CliprdrClient;
 use ironrdp_session::ActiveStage;
+
+use crate::host::HostSender;
 
 /// Ceiling on a single clipboard transfer in either direction, in bytes of the
 /// decoded UTF-8 string. A hostile or buggy server can advertise and hand back
@@ -515,7 +518,9 @@ pub(crate) fn test_begin_remote_format(state: &SharedClipboard) -> Option<Clipbo
         Some(ClipboardAction::RequestFormat { format, generation }) => (*format, *generation),
         _ => return None,
     };
-    guard.begin_remote_format(format, generation).then_some(format)
+    guard
+        .begin_remote_format(format, generation)
+        .then_some(format)
 }
 
 /// Queue the app's answer to a [`HostMsg::FileContentsNeeded`].
@@ -919,7 +924,7 @@ fn for_app(action: ClipboardAction, epoch: u64) -> Result<HostMsg, ClipboardActi
 pub(crate) fn pump(
     state: &SharedClipboard,
     active_stage: &mut ActiveStage,
-    host_tx: &std_mpsc::Sender<HostMsg>,
+    host_tx: &HostSender,
     epoch: u64,
 ) -> Option<Vec<Vec<u8>>> {
     let (actions, local_revision) = match state.lock() {
@@ -936,7 +941,7 @@ pub(crate) fn pump(
 fn pump_actions(
     state: &SharedClipboard,
     active_stage: &mut ActiveStage,
-    host_tx: &std_mpsc::Sender<HostMsg>,
+    host_tx: &HostSender,
     epoch: u64,
     actions: Vec<ClipboardAction>,
     local_revision: u64,

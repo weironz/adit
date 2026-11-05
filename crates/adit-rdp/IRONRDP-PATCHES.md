@@ -40,6 +40,84 @@ the patch when upstream exposes the same information. The synthetic
 `issue97_real_egfx_reset_pdu_preserves_reported_monitor_geometry` test exercises
 the encoded PDU through the graphics channel decoder.
 
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-svc/`
+
+Crates.io `ironrdp-svc` 0.8.0 only watches LAST while appending received chunks;
+it neither bounds the accumulated data nor checks the advertised message length.
+The `ADIT PATCH` in `src/lib.rs` caps each uncompressed receive message at
+**128 MiB**, checks the repeated total length and accumulated length before
+copying, and requires a complete message to match its advertised length.
+Capacity grows with received bytes using fallible reservation, never with the
+peer's length claim alone. Every reassembly error, including a truncated header,
+drops both the partial allocation and sequence state. A new FIRST also drops
+an unfinished message so its bytes cannot contaminate the new one.
+
+Compatibility is deliberately broader than the earlier strict draft:
+
+- [MS-RDPBCGR 3.1.5.2.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/334495b7-47b9-4e91-8d08-05d46285799b)
+  permits a complete PDU with neither FIRST nor LAST when no sequence is active.
+  Length-matching LAST-only messages remain accepted as in the published crate.
+  Middle chunks without either flag remain part of the active sequence.
+- Empty FIRST|LAST messages, empty fragments, and a message that reaches its
+  advertised size before a separate empty LAST are accepted. Repeated FIRST is
+  a resynchronization point, rather than an error that loses the new message.
+- [MS-RDPBCGR 2.2.6.1.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/f125c65e-6901-43c3-8071-d7d5aaee7ae4)
+  defines SUSPEND/RESUME as transport flow control. Header-only controls are
+  consumed as `Ok(None)` **before** data-length and FIRST/LAST processing. They
+  neither dispatch application data nor alter the pending buffer or expected
+  length, including when the control also carries FIRST|LAST. Thus
+  `FIRST(4, "a") -> SUSPEND -> RESUME -> LAST(4, "bcd")` yields exactly `"abcd"`.
+  Idle controls likewise do not establish a fragment sequence. Control bits on
+  data-bearing chunks introduce no flag-based rejection: those bytes follow
+  the existing bounded data-reassembly path.
+- IronRDP 0.11.0's `ironrdp-session/src/x224/mod.rs` passes SVC bytes directly to
+  this crate without bulk decompression. COMPRESSED is therefore **explicitly
+  rejected**, even when its encoded size happens to equal the declared size.
+  FLUSHED and compression-package metadata on **uncompressed** data remain
+  accepted: [MS-RDPBCGR 3.1.8.2.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/9355a663-ef22-4431-afeb-d72ac68f25fd)
+  does not require FLUSHED to be accompanied by COMPRESSED. SHOW_PROTOCOL,
+  SHADOW_PERSISTENT, and other non-control metadata keep the existing payload
+  interface; this patch adds no new flag whitelist or chunk-size restriction.
+
+The bound covers reassembled content and requested buffer capacity **per channel**;
+it is not a connection-wide budget, an unfinished-message timeout, or a bound on
+allocator overhead, transient reallocations, input storage, or consumer copies.
+128 MiB allows a raw 7680 x 4320 x 4-byte image plus its inner protocol header;
+clipboard consumers retain their separate limits. This patch does not implement
+SVC bulk decompression or session-wide suspend/resume, and does not change the
+outgoing encoder or any CLIPRDR implementation.
+
+**Existing outbound limitation:** the SVC encoder and session send path do not
+coordinate a global paused state across static channels. Consuming a SUSPEND
+control here does not gate subsequent application sends or responses, and
+RESUME does not drain a deferred-send queue. The specification's requirement to
+pause/resume all virtual-channel traffic is therefore still an existing
+session-level gap, not a capability supplied by this receive-memory patch.
+Implementing that coordination requires a separate change at the session's
+outbound owner; rejecting controls or discarding receive data is not a substitute.
+
+`tests/dechunkify.rs` is explicitly registered as the helper's `svc_dechunkify`
+target in `Cargo.toml`: the vendor's upstream `autotests = false` / `test = false`
+settings do not hide it. Run it through the **helper** workspace:
+
+```powershell
+cargo test --manifest-path crates/adit-rdp/Cargo.toml --locked --test svc_dechunkify
+cargo clippy --manifest-path crates/adit-rdp/Cargo.toml --all-targets --locked -- -D warnings
+```
+
+The suite covers the exact 128 MiB limit and larger claims, length and flag
+handling, interleaved and idle SUSPEND/RESUME controls without data dispatch,
+error recovery and channel isolation, the real outgoing chunk encoder,
+the Microsoft 2062-byte reassembly example, and the actual wire dumps from
+[MS-RDPECLIP 4.1.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpeclip/017fbfda-2f6d-449a-b9cf-396b2cc58591)
+and [4.4.2](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpeclip/539f2ca7-ee67-46ba-8995-b2274fd8bcea),
+decoded again by the published CLIPRDR parser. The enclosing SVC frames are
+synthetic; these are offline protocol regressions, not a live-server acceptance
+claim. Provenance and the crate archive checksum are in `vendor/ironrdp-svc/ADIT-PATCH.md`.
+Remove the patch when upstream supplies equivalent bounds and recovery while
+preserving these receive formats; revisit compression/control handling if those
+capabilities are implemented in the session layer.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-graphics/`
 
 Pulled in via `[patch.crates-io] ironrdp-graphics = { path = "vendor/ironrdp-graphics" }`.

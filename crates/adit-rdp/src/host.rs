@@ -5,20 +5,24 @@
 //! * the **stdin reader** checks the IPC hello, then decodes [`ClientMsg`]s —
 //!   the first `Connect` starts the
 //!   session, epoch-tagged input feeds the session, and `Close`/EOF ends it;
-//! * the **stdout writer** serialises [`HostMsg`]s from the session.
+//! * the **stdout writer** serialises [`HostMsg`](adit_rdp_proto::HostMsg)s from the session.
 //!
-//! Anything the helper prints to stdout that isn't a framed [`HostMsg`] would
+//! Anything the helper prints to stdout that isn't a framed [`HostMsg`](adit_rdp_proto::HostMsg) would
 //! corrupt the stream, so logs must go to stderr only.
 
-use std::io::{self, Write};
+mod output;
+
+pub(crate) use output::{host_channel, HostSender};
+
+use std::io;
 use std::sync::mpsc as std_mpsc;
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
-use adit_rdp_proto::{
-    read_ipc_hello, read_msg, write_ipc_hello, write_msg, ClientMsg, ConnectRequest, HostMsg,
-    IPC_PROTOCOL_VERSION,
-};
+#[cfg(test)]
+use adit_rdp_proto::write_msg;
+use adit_rdp_proto::{read_ipc_hello, read_msg, ClientMsg, ConnectRequest, IPC_PROTOCOL_VERSION};
 use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::clipboard::{self, SharedClipboard};
@@ -196,7 +200,7 @@ pub fn run_host() -> Result<(), RdpError> {
     // the same state is kept when redirection rebuilds the CLIPRDR channel.
     let clipboard = clipboard::new_shared();
     let reader_clipboard = Arc::clone(&clipboard);
-    let (host_tx, host_rx) = std_mpsc::channel::<HostMsg>();
+    let (host_tx, host_rx) = host_channel();
     let (hello_tx, hello_rx) = std_mpsc::sync_channel::<Option<u32>>(1);
 
     // ── stdin reader ─────────────────────────────────────────────────────────
@@ -223,44 +227,24 @@ pub fn run_host() -> Result<(), RdpError> {
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
     // ── stdout writer ────────────────────────────────────────────────────────
-    let writer = thread::Builder::new()
-        .name("adit-rdp-stdout".into())
-        .spawn(move || {
-            let stdout = io::stdout();
-            let mut lock = stdout.lock();
-            // Never encode an error as HostMsg for an unversioned app: its enum
-            // may have different discriminants. A versioned peer can safely read
-            // our fixed hello even when its version differs.
-            let Ok(Some(version)) = hello_rx.recv() else {
-                return;
-            };
-            if write_ipc_hello(&mut lock, IPC_PROTOCOL_VERSION).is_err()
-                || version != IPC_PROTOCOL_VERSION
-            {
-                return;
-            }
-            while let Ok(msg) = host_rx.recv() {
-                let is_final = matches!(msg, HostMsg::Closed);
-                if write_msg(&mut lock, &msg).is_err() {
-                    break;
-                }
-                let _ = lock.flush();
-                if is_final {
-                    break;
-                }
-            }
-        })
+    let stdout = output::stdout_pipe().map_err(|e| RdpError::Runtime(e.to_string()))?;
+    let writer = output::OutputWriter::spawn(stdout, hello_rx, host_rx)
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
     // Wait for the app's Connect before spinning up the RDP runtime.
-    let request = match req_rx.recv() {
-        Ok(request) => request,
-        Err(_) => {
-            // A version mismatch closes the request channel before the writer
-            // necessarily flushes its acknowledgement.
-            drop(host_tx);
-            let _ = writer.join();
-            return Err(RdpError::ControlChannelClosed);
+    let startup = Instant::now();
+    let request = loop {
+        match req_rx.recv_timeout(output::POLL_INTERVAL) {
+            Ok(request) => break request,
+            Err(std_mpsc::RecvTimeoutError::Timeout)
+                if startup.elapsed() < output::STARTUP_TIMEOUT && !host_tx.startup_failed() => {}
+            Err(_) => {
+                // Includes a version mismatch. Give its fixed hello a bounded
+                // opportunity to drain; never join a synchronous pipe writer.
+                let _ = host_tx.finish(None);
+                writer.finish();
+                return Err(RdpError::ControlChannelClosed);
+            }
         }
     };
 
@@ -269,29 +253,23 @@ pub fn run_host() -> Result<(), RdpError> {
         .build()
         .map_err(|e| RdpError::Runtime(e.to_string()))?;
 
-    let result = runtime.block_on(run_session(
+    let result = runtime.block_on(host_tx.supervise(run_session(
         request,
         input_rx,
         display_rx,
         routing,
         clipboard,
         host_tx.clone(),
-    ));
+    )));
 
     // Announce the outcome, then let the writer flush and exit.
-    match &result {
-        Ok(()) => {
-            let _ = host_tx.send(HostMsg::Closed);
-        }
-        Err(e) => {
-            let _ = host_tx.send(HostMsg::Error(e.to_string()));
-            let _ = host_tx.send(HostMsg::Closed);
-        }
-    }
-    drop(host_tx);
-    let _ = writer.join();
+    let _ = host_tx.finish(result.as_ref().err().map(ToString::to_string));
+    // Cancelling the session drops its socket. Blocking runtime jobs must not
+    // turn an output failure back into an unbounded process shutdown wait.
+    runtime.shutdown_timeout(output::RUNTIME_SHUTDOWN_TIMEOUT);
+    writer.finish();
 
-    result
+    host_tx.final_result(result)
 }
 
 #[cfg(test)]

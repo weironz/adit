@@ -3,13 +3,12 @@
 //! pumping server PDUs into framebuffer tiles and app input to the server.
 //!
 //! The loop is transport-agnostic: it receives [`InputEvent`]s from a Tokio
-//! channel and emits [`HostMsg`]s to a std channel. The [`crate::host`] layer
-//! bridges those channels to the child process's stdin/stdout.
+//! channel and emits [`HostMsg`]s through a bounded, nonblocking sender. The
+//! [`crate::host`] layer bridges those channels to the child process's stdin/stdout.
 
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
 
@@ -32,6 +31,7 @@ use tokio::sync::mpsc as tokio_mpsc;
 
 use crate::clipboard::{self, SharedClipboard};
 use crate::egfx::{self, EgfxHandler, SharedEgfx};
+use crate::host::HostSender;
 use crate::{build_connector_config, input::map_input, RdpError};
 
 /// A command from the app for the session loop.
@@ -371,7 +371,7 @@ struct ActivationControls<'a> {
     deferred: &'a mut VecDeque<SessionCmd>,
     pending_layout: &'a mut Option<display::PendingLayout>,
     pending_resize: &'a mut Option<PendingResize>,
-    host: &'a std_mpsc::Sender<HostMsg>,
+    host: &'a HostSender,
     epoch: u64,
 }
 
@@ -730,7 +730,7 @@ fn defer_connect_command(deferred: &mut VecDeque<SessionCmd>, command: SessionCm
 }
 
 fn announce_desktop(
-    host_tx: &std_mpsc::Sender<HostMsg>,
+    host_tx: &HostSender,
     announced: &mut bool,
     width: u16,
     height: u16,
@@ -775,7 +775,7 @@ pub(crate) async fn run_session(
     mut display_rx: tokio_mpsc::UnboundedReceiver<SessionCmd>,
     routing: Arc<InputRouting>,
     shared_clipboard: SharedClipboard,
-    host_tx: std_mpsc::Sender<HostMsg>,
+    host_tx: HostSender,
 ) -> Result<(), RdpError> {
     // Shared framebuffer the EGFX handler (running inside `ActiveStage::process`)
     // composites into; the active loop samples it and emits tiles.
@@ -1196,7 +1196,7 @@ async fn active_session(
     framed: UpgradedFramed,
     connection_result: ConnectionResult,
     input: SessionInput<'_>,
-    host_tx: &std_mpsc::Sender<HostMsg>,
+    host_tx: &HostSender,
     egfx: &SharedEgfx,
     clip: &SharedClipboard,
     display_request: DisplayRequest<'_>,
@@ -1932,7 +1932,7 @@ mod display_deadline_tests {
         let (_input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
         let (_display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
         let routing = InputRouting::default();
-        let (host_tx, host_rx) = std_mpsc::channel();
+        let (host_tx, host_rx) = crate::host::host_channel();
         let (egfx, clip, display) = (
             egfx::new_shared(),
             clipboard::new_shared(),
@@ -1984,7 +1984,7 @@ mod display_deadline_tests {
     async fn review97_resize_expiry_survives_a_stalled_reactivation() {
         let (_input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
         let (_display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
-        let (host, events) = std_mpsc::channel();
+        let (host, events) = crate::host::host_channel();
         let mut deferred = VecDeque::new();
         let mut pending_layout = None;
         let mut pending_resize = Some(PendingResize::new(
@@ -2116,7 +2116,7 @@ mod display_deadline_tests {
 
     #[test]
     fn every_redirect_announces_its_negotiated_desktop_size() {
-        let (tx, rx) = std_mpsc::channel();
+        let (tx, rx) = crate::host::host_channel();
         let mut announced = false;
         announce_desktop(&tx, &mut announced, 800, 600).unwrap();
         announce_desktop(&tx, &mut announced, 1024, 768).unwrap();
@@ -2213,7 +2213,7 @@ mod display_deadline_tests {
         let (input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
         let (display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
         let _display_hold = display_tx.clone();
-        let (host, _) = std_mpsc::channel();
+        let (host, _) = crate::host::host_channel();
         let mut deferred = VecDeque::new();
         let mut pending_layout = None;
         let mut pending_resize = None;
@@ -2304,7 +2304,7 @@ mod display_deadline_tests {
         let (input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
         let (display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
         let routing = InputRouting::default();
-        let (host, _) = std_mpsc::channel();
+        let (host, _) = crate::host::host_channel();
         let egfx = egfx::new_shared();
         let clip = clipboard::new_shared();
         let display = SharedDisplay::default();
@@ -2841,7 +2841,7 @@ mod display_deadline_tests {
             &mut deferred,
             SessionCmd::ClipboardWake
         ));
-        let (host_tx, host_rx) = std_mpsc::channel();
+        let (host_tx, host_rx) = crate::host::host_channel();
         let egfx = egfx::new_shared();
         let display = SharedDisplay::default();
         let (mut pending, mut resize) = (None, None);
@@ -3166,7 +3166,7 @@ mod display_deadline_tests {
             .unwrap();
         assert_eq!(routing.advance(), Some(1));
         input_tx.send(old).unwrap(); // delivered across the thread boundary after redirect
-        let (host_tx, host_rx) = std_mpsc::channel();
+        let (host_tx, host_rx) = crate::host::host_channel();
         let egfx = egfx::new_shared();
         let clip = clipboard::new_shared();
         let display = SharedDisplay::default();
@@ -3328,7 +3328,7 @@ mod display_deadline_tests {
         let (_input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
         let (_display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
         let routing = InputRouting::default();
-        let (host_tx, host_rx) = std_mpsc::channel();
+        let (host_tx, host_rx) = crate::host::host_channel();
         let egfx = egfx::new_shared();
         let clip = clipboard::new_shared();
         let display = SharedDisplay::default();
