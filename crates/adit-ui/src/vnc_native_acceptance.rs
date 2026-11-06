@@ -499,7 +499,7 @@ fn write_capture(
             .map_err(|error| error.to_string())
             .and_then(|result| result)
         },
-        move |result| NativeMessage::CaptureSaved(result),
+        NativeMessage::CaptureSaved,
     )
 }
 
