@@ -1,6 +1,7 @@
 //! Opt-in native acceptance window. It reuses the shipping widgets/dispatcher,
 //! but has isolated storage, synthetic localhost input and no clipboard access.
 use super::*;
+use image::ImageEncoder;
 use std::io::Write;
 use std::sync::atomic::AtomicU32;
 
@@ -18,6 +19,29 @@ struct State {
     auto: Option<HookAutotest>,
     ui_stall_enabled: bool,
     ui_stalls: u64,
+    /// Where the compositor's screenshots are written. The sampler under test
+    /// is a compositor-level decision, so the evidence has to come from the
+    /// compositor and not from a model of it.
+    capture_dir: Option<std::path::PathBuf>,
+    /// The captures still to be taken, in order.
+    capture_plan: Vec<CaptureStep>,
+    /// The step currently being served, if any.
+    capture_active: Option<CaptureStep>,
+    /// When the active step started, so its settle time can be honoured.
+    capture_started: Option<Instant>,
+    /// How many captures have been written so far.
+    capture_taken: usize,
+}
+
+/// One capture the acceptance run has to produce.
+#[derive(Clone, Copy, Debug)]
+struct CaptureStep {
+    /// What this capture is called in the log.
+    label: &'static str,
+    /// The fit setting the surface must be in when the shot is taken.
+    fit: bool,
+    /// How long to let the compositor settle in that geometry before shooting.
+    settle_ms: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -304,6 +328,10 @@ enum NativeMessage {
     ImeTick,
     NativeIme(serde_json::Value),
     StallUi,
+    /// The compositor has produced a screenshot of the acceptance window.
+    Captured(window::Screenshot),
+    /// The screenshot was written, or failed to be written.
+    CaptureSaved(Result<(), String>),
 }
 
 fn native_ime(window: window::Id) -> Task<NativeMessage> {
@@ -421,10 +449,155 @@ fn stall_ui(state: &mut State, trigger: &'static str) -> Task<NativeMessage> {
     Task::none()
 }
 
+/// Write a compositor screenshot as a PNG and record what it shows.
+///
+/// The surface is measured, not eyeballed: the pixel count and the fit factor
+/// that produced it are logged next to the file, so the capture can be checked
+/// against the fixture's own geometry without re-deriving it.
+fn write_capture(
+    state: &mut State,
+    screenshot: window::Screenshot,
+) -> Task<NativeMessage> {
+    let Some(dir) = state.capture_dir.clone() else {
+        return Task::none();
+    };
+    if !screenshot.scale_factor.is_finite()
+        || screenshot.scale_factor <= 0.0
+        || screenshot.size.width == 0
+        || screenshot.size.height == 0
+    {
+        return Task::done(NativeMessage::CaptureSaved(Err(
+            "invalid native screenshot geometry".into(),
+        )));
+    }
+    let index = state.capture_taken;
+    state.capture_taken += 1;
+    let name = format!("capture-{index:02}.png");
+    let path = dir.join(&name);
+    let rgba = screenshot.rgba.clone();
+    let (width, height) = (screenshot.size.width, screenshot.size.height);
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || -> Result<(), String> {
+                let file = std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&path)
+                    .map_err(|error| error.to_string())?;
+                let mut writer = std::io::BufWriter::new(file);
+                image::codecs::png::PngEncoder::new(&mut writer)
+                    .write_image(
+                        &rgba,
+                        width,
+                        height,
+                        image::ExtendedColorType::Rgba8,
+                    )
+                    .map_err(|error| error.to_string())?;
+                writer.flush().map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|result| result)
+        },
+        move |result| NativeMessage::CaptureSaved(result),
+    )
+}
+
+/// Drive the capture plan.
+///
+/// The plan is a list of steps; each step names the fit setting the surface
+/// has to be in when its shot is taken. A shot is taken only once the surface
+/// has been presented, the named fit setting is in effect, and the compositor
+/// has had time to draw it - otherwise the capture would show the wrong thing
+/// and look like a failure of the thing under test.
+fn capture_pump(state: &mut State) -> Task<NativeMessage> {
+    if state.capture_dir.is_none() {
+        return Task::none();
+    }
+    let surface_ready = state.app.rdp_surface_size.is_some() && !state.app.rdp_tiles.is_empty();
+    let Some(step) = state.capture_active else {
+        if state.capture_plan.is_empty() {
+            log(state, serde_json::json!({"event":"captures_finished"}));
+            return iced::exit();
+        }
+        if !surface_ready {
+            // Nothing has been presented yet; wait for the first frame.
+            return Task::none();
+        }
+        let step = state.capture_plan[0];
+        state.capture_active = Some(step);
+        state.capture_started = Some(Instant::now());
+        log(
+            state,
+            serde_json::json!({"event":"capture_step","label":step.label,
+            "requested_fit":step.fit,"current_fit":state.app.vnc_fit}),
+        );
+        if state.app.vnc_fit != step.fit {
+            return Task::done(NativeMessage::App(Message::ToggleVncFit));
+        }
+        return Task::none();
+    };
+    if !surface_ready {
+        return Task::none();
+    }
+    if state.app.vnc_fit != step.fit {
+        // The toggle has not been applied yet.
+        return Task::none();
+    }
+    let settled = state
+        .capture_started
+        .is_some_and(|started| started.elapsed() >= std::time::Duration::from_millis(step.settle_ms));
+    if !settled {
+        return Task::none();
+    }
+    window::latest().and_then(|id| window::screenshot(id).map(NativeMessage::Captured))
+}
+
 fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessage> {
     match message {
+        NativeMessage::Captured(screenshot) => {
+            let index = state.capture_taken;
+            let name = format!("capture-{index:02}.png");
+            let (width, height) = (screenshot.size.width, screenshot.size.height);
+            let scale_factor = screenshot.scale_factor;
+            let surface = state.app.rdp_surface_size;
+            let (fit_x, fit_y) = session_ops::rdp_fit_factors(
+                &state.app,
+                surface.unwrap_or((0, 0)),
+            );
+            let step = state.capture_active;
+            log(
+                state,
+                serde_json::json!({"event":"capture","file":name,
+                "label":step.map(|s| s.label),
+                "pixels":[width,height],"compositor_scale":scale_factor,
+                "surface":surface,"fit_factor":[fit_x,fit_y],
+                "window":[state.app.window_width,state.app.window_height],
+                "vnc_fit":state.app.vnc_fit}),
+            );
+            write_capture(state, screenshot)
+        }
+        NativeMessage::CaptureSaved(result) => {
+            match result {
+                Ok(()) => log(state, serde_json::json!({"event":"capture_saved"})),
+                Err(error) => log(
+                    state,
+                    serde_json::json!({"event":"capture_failed","error":error}),
+                ),
+            }
+            // The step has produced its file; retire it and arm the next one.
+            if !state.capture_plan.is_empty() {
+                state.capture_plan.remove(0);
+            }
+            state.capture_active = None;
+            state.capture_started = None;
+            capture_pump(state)
+        }
         NativeMessage::StallUi => stall_ui(state, "button"),
-        NativeMessage::ImeTick => window::latest().and_then(native_ime),
+        NativeMessage::ImeTick => Task::batch([
+            window::latest().and_then(native_ime),
+            capture_pump(state),
+        ]),
         NativeMessage::NativeIme(mut snapshot) => {
             snapshot["grab"] = serde_json::json!(state.app.vnc_grab_keys);
             snapshot["accepts_text"] = serde_json::json!(vnc_accepts_text_input(&state.app));
@@ -682,11 +855,18 @@ fn update_native(state: &mut State, message: NativeMessage) -> Task<NativeMessag
                             "generation":cursor.generation,
                         })
                     });
+                    // The fit factor is what decides the sampler, so acceptance
+                    // has to record it: without it the log cannot say whether the
+                    // surface was presented 1:1 or resampled.
+                    let (fit_x, fit_y) = session_ops::rdp_fit_factors(&state.app, (width, height));
                     log(
                         state,
                         serde_json::json!({"event":"geometry", "surface":[width,height],
                         "cursor":cursor, "app_scale":state.scale,"os_scale":state.os_scale,
-                        "display_scale":state.app.display_scale}),
+                        "display_scale":state.app.display_scale,
+                        "fit_factor":[fit_x,fit_y],
+                        "window":[state.app.window_width, state.app.window_height],
+                        "vnc_fit":state.app.vnc_fit}),
                     );
                 }
             }
@@ -773,6 +953,35 @@ pub fn run() -> iced::Result {
     // A reused PID directory must not silently import any previous run's state.
     std::fs::create_dir(&scratch).expect("fresh isolated acceptance directory");
     std::env::set_var("ADIT_CONFIG_DIR", &scratch);
+    // The compositor's screenshots are the evidence for the surface sampler,
+    // so they are written next to the event log of the same run.
+    let capture_dir = match std::env::var("ADIT_NATIVE_CAPTURE_DIR") {
+        Ok(path) if !path.is_empty() => {
+            let path = std::path::PathBuf::from(path);
+            std::fs::create_dir_all(&path).expect("capture directory");
+            Some(path)
+        }
+        _ => None,
+    };
+    // The plan: a magnified shot and a 1:1 control. The magnified one is the
+    // reported ghosting; the control must be pixel-identical before and after
+    // the fix, because a whole-number magnification keeps the old sampler.
+    let capture_plan = if std::env::var("ADIT_NATIVE_CAPTURE").as_deref() == Ok("1") {
+        vec![
+            CaptureStep {
+                label: "fit",
+                fit: true,
+                settle_ms: 900,
+            },
+            CaptureStep {
+                label: "one_to_one",
+                fit: false,
+                settle_ms: 900,
+            },
+        ]
+    } else {
+        Vec::new()
+    };
     let mut profile = ConnectionProfile::new("SYNTHETIC native acceptance", "127.0.0.1", 15915, "");
     profile.protocol = Protocol::Vnc;
     profile.vnc.security = VncSecurity::AllowNone;
@@ -789,6 +998,17 @@ pub fn run() -> iced::Result {
         "acceptance scale must be 1/1.5/2"
     );
     let fit = std::env::var("ADIT_NATIVE_FIT").as_deref() != Ok("0");
+    // The window size decides the fit factor, and the fit factor decides
+    // whether the surface is presented 1:1 or resampled. Acceptance has to be
+    // able to reach a fractional magnification to prove anything about it.
+    let width: f32 = std::env::var("ADIT_NATIVE_WIDTH")
+        .unwrap_or_else(|_| "1100".into())
+        .parse()
+        .expect("acceptance window width");
+    let height: f32 = std::env::var("ADIT_NATIVE_HEIGHT")
+        .unwrap_or_else(|_| "760".into())
+        .parse()
+        .expect("acceptance window height");
     ProfileStore::default()
         .save_profiles(&[profile.clone()])
         .expect("synthetic profile");
@@ -811,8 +1031,8 @@ pub fn run() -> iced::Result {
             main_view: MainView::Terminal,
             sidebar_visible: false,
             terminal_focused: true,
-            window_width: 1100.0,
-            window_height: 760.0,
+            window_width: width,
+            window_height: height,
             vnc_fit: fit,
             display_scale: scale,
             ..AditApp::default()
@@ -836,6 +1056,11 @@ pub fn run() -> iced::Result {
                 auto: auto.clone(),
                 ui_stall_enabled: std::env::var("ADIT_NATIVE_UI_STALL").as_deref() == Ok("1"),
                 ui_stalls: 0,
+                capture_dir: capture_dir.clone(),
+                capture_plan: capture_plan.clone(),
+                capture_active: None,
+                capture_started: None,
+                capture_taken: 0,
             },
             Task::batch([
                 window::latest().and_then(native_dpi),
@@ -875,7 +1100,7 @@ pub fn run() -> iced::Result {
         })
         .scale_factor(|state: &State| state.scale)
         .window(window::Settings {
-            size: iced::Size::new(1100.0, 760.0),
+            size: iced::Size::new(width, height),
             ..Default::default()
         })
         .run()

@@ -107,7 +107,7 @@ VNC 体验至少取决于五层：服务端采集/会话、认证与传输、画
 | 连接/认证 | TCP、VncAuth / None、共享会话、30 秒握手上限、认证失败原标签重试 | [VNC worker](../crates/adit-session/src/vnc_client.rs)、[会话层](../crates/adit-session/src/lib.rs) |
 | 画面 | ZRLE / CopyRect / Raw，归一化 padding 为 alpha；服务端尺寸变化 | 同上；[线协议测试](../crates/adit-session/tests/vnc.rs) |
 | 交互 | X11 keysyms、Unicode keysym、左右修饰键、失焦释放、移动合并、点击滚轮 | [键盘编码](../crates/adit-ui/src/input.rs)、VNC worker |
-| 显示与会话操作 | 标签页、适应窗口/原始比例、全屏、Ctrl+Alt+Del 按钮、手动重连 | [显示](../crates/adit-ui/src/workspace.rs)、[会话操作](../crates/adit-ui/src/session_ops.rs) |
+| 显示与会话操作 | 标签页、画面适应窗口/原始比例切换（工具提示同时说明当前状态与点击后的变化）、全屏、Ctrl+Alt+Del 按钮、手动重连 | [显示](../crates/adit-ui/src/workspace.rs)、[会话操作](../crates/adit-ui/src/session_ops.rs) |
 | 剪贴板 | ASCII 文本双向，可关闭；有会话归属检查 | worker、[UI 事件](../crates/adit-ui/src/update_loop.rs) |
 | 关闭与资源 | 独立取消信号可终止握手；输入队列有界，满队列明确关闭而非吞按键释放 | worker；握手取消/队列测试 |
 | 自动验证 | 线协议、认证重试、尺寸、CopyRect、突发画面、10000 次移动后的点击顺序 | [测试](../crates/adit-session/tests/vnc.rs)、[CI](../.github/workflows/ci.yml) |

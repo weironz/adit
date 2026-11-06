@@ -6,7 +6,7 @@ authors.workspace = true
 license.workspace = true
 
 [features]
-native-vnc-acceptance = []
+native-vnc-acceptance = ["dep:image"]
 native-workbench-acceptance = ["dep:image"]
 native-accessibility-acceptance = []
 

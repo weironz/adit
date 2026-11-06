@@ -544,12 +544,18 @@ impl DesktopApplication {
         };
         let (id, task) = window::open(drop_window_settings(settings));
         self.app.native_session_windows.insert(session, id);
-        let mut state = WindowPresentation::default();
+        let mut state = WindowPresentation {
+            vnc_fit: self.app.vnc_fit,
+            ..Default::default()
+        };
+        // The fit state is app-wide, so a detached window starts from the
+        // app's current value. Copying it only when the session happened to
+        // be the active one left every other session 1:1 in its own window
+        // while the main window had it fitted.
         if was_active {
             state.terminal_size = self.app.terminal_size;
             state.terminal_selection = self.app.terminal_selection.take();
             state.terminal_scroll_offset = std::mem::take(&mut self.app.terminal_scroll_offset);
-            state.vnc_fit = self.app.vnc_fit;
         }
         if let Some(mut lease) = self.clipboard_leases.remove(&session) {
             lease.swap_window(&mut state);

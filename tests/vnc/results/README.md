@@ -1,5 +1,16 @@
 # VNC fixture results
 
+## 2026-11-06 glyph ghosting on the remote VNC surface
+
+[2026-11-06 glyph ghosting](2026-11-06-vnc-glyph-ghosting/README.md) proves the
+texture sampler was the cause of [#230](https://github.com/weironz/adit/issues/230):
+nearest-neighbour copies texels, so at a fractional magnification a one-pixel
+stroke lands on two screen pixels in places and the text reads as doubled. The
+archived compositor screenshots are measured two ways that need no model of the
+renderer — the colour set against the framebuffer's own, and the share of device
+columns that are byte-identical copies of their left. The 1:1 control is
+pixel-identical between the two binaries.
+
 ## Native foreground input acceptance
 
 [2026-10-21 stateless shortcut translation](2026-10-21-stateless-system-keys/README.md)

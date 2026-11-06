@@ -80,7 +80,7 @@ presentation! {
     display_scale: f32 = 1.0,
     vnc_pressed_keys: Vec<(keyboard::key::Physical, u32)> = Vec::new(),
     rdp_pressed_keys: HashSet<(u8, bool)> = HashSet::new(),
-    vnc_fit: bool = false,
+    vnc_fit: bool = crate::VNC_FIT_DEFAULT,
     vnc_grab_keys: bool = false,
     vnc_preedit: Option<iced::advanced::input_method::Preedit> = None,
     native_preedit: Option<iced::advanced::input_method::Preedit> = None,
@@ -209,6 +209,10 @@ pub(crate) struct WindowScene {
     pub vnc: bool,
     pub scale: (f32, f32),
     pub previous_scale: (f32, f32),
+    /// Device pixels per remote pixel, per axis — the texture magnification
+    /// that decides the sampler (see `desktop_surface_filter`).
+    pub fit: (f32, f32),
+    pub previous_fit: (f32, f32),
     pub surface: (u16, u16),
     pub region: (f32, f32),
     pub cursor: Option<desktop_panes::RdpCursorVisual>,
@@ -233,6 +237,8 @@ impl WindowScene {
             vnc: app.manager.active_is_vnc(),
             scale: (scale / fx, scale / fy),
             previous_scale: (scale / px, scale / py),
+            fit: (fx, fy),
+            previous_fit: (px, py),
             surface,
             region: terminal_region_area(
                 app.window_width,
@@ -324,9 +330,15 @@ pub(crate) fn surface_view(
             &state.rdp_tiles_prev,
             scene.previous_scale.0,
             scene.previous_scale.1,
+            desktop_surface_filter_for_fit(scene.previous_fit.0, scene.previous_fit.1),
         ));
     }
-    layers.push(rdp_tile_grid(&state.rdp_tiles, sx, sy));
+    layers.push(rdp_tile_grid(
+        &state.rdp_tiles,
+        sx,
+        sy,
+        desktop_surface_filter_for_fit(scene.fit.0, scene.fit.1),
+    ));
     if scene.vnc {
         layers.push(Element::new(vnc_cursor::CursorLayer {
             cursor: state.vnc_cursor.clone(),

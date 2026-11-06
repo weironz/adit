@@ -252,7 +252,12 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     // The texture arrives as a grid of tiles, each small enough for the
     // renderer's synchronous upload path (see `split_into_tiles`); the seam
     // arithmetic lives with the layout in `rdp_tile_grid`.
-    let grid = rdp_tile_grid(&app.rdp_tiles, scale_x, scale_y);
+    let grid = rdp_tile_grid(
+        &app.rdp_tiles,
+        scale_x,
+        scale_y,
+        desktop_surface_filter_for_fit(fit_x, fit_y),
+    );
 
     // The outgoing generation rides beneath the incoming one across a size
     // swap — see `rdp_tiles_prev` for why an image that has not finished its
@@ -267,7 +272,12 @@ pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
         let prev_scale_x = app.display_scale.max(0.1) / prev_fill_x;
         let prev_scale_y = app.display_scale.max(0.1) / prev_fill_y;
         stack(vec![
-            rdp_tile_grid(&app.rdp_tiles_prev, prev_scale_x, prev_scale_y),
+            rdp_tile_grid(
+                &app.rdp_tiles_prev,
+                prev_scale_x,
+                prev_scale_y,
+                desktop_surface_filter_for_fit(prev_fill_x, prev_fill_y),
+            ),
             grid,
         ])
         .into()
@@ -408,6 +418,7 @@ pub(crate) fn rdp_tile_grid(
     tiles: &[RdpTile],
     scale_x: f32,
     scale_y: f32,
+    filter: iced::widget::image::FilterMethod,
 ) -> Element<'static, Message> {
     let edge_x = |device: u32| (device as f32 / scale_x).round();
     let edge_y = |device: u32| (device as f32 / scale_y).round();
@@ -431,7 +442,7 @@ pub(crate) fn rdp_tile_grid(
             iced::widget::image(tile.handle.clone())
                 .width(Length::Fixed(edge_x(next_x) - edge_x(device_x)))
                 .height(Length::Fixed(edge_y(next_y) - edge_y(device_y)))
-                .filter_method(iced::widget::image::FilterMethod::Nearest)
+                .filter_method(filter)
                 .content_fit(iced::ContentFit::Fill)
                 .into(),
         );
@@ -562,9 +573,16 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
 
     let buttons = row![
         if app.manager.active_is_vnc() {
+            // The glyph carries no words, so the tooltip is the only text the
+            // user gets. It has to answer two questions at once: what the
+            // picture is doing now, and what the click will change it to.
             rdp_toolbar_button(
                 "⤢",
-                t("适应窗口 / 原始比例"),
+                if app.vnc_fit {
+                    t("画面已适应窗口；点击改为原始比例")
+                } else {
+                    t("画面为原始比例；点击改为适应窗口")
+                },
                 app.vnc_fit,
                 Some(Message::ToggleVncFit),
             )

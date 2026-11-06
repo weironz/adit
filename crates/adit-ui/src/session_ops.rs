@@ -2080,6 +2080,63 @@ pub(crate) fn rdp_fill_factors(app: &AditApp, surface: (u16, u16)) -> (f32, f32)
     (sane(pane_w / natural_w), sane(pane_h / natural_h))
 }
 
+/// The sampler used to present a remote desktop surface.
+///
+/// The remote framebuffer is drawn once per tile and then scaled to the pane,
+/// so what decides the sampler is the **texture magnification**: source texels
+/// to device pixels. The presentation scale is `display_scale / fit` and the
+/// pane is `display_scale` device pixels per logical point, so the
+/// magnification works out to exactly the fit factor — 1.0 renders one device
+/// pixel per remote pixel, and a fitted surface renders `fit` device pixels per
+/// remote pixel.
+///
+/// Nearest-neighbour is only even across the surface when that magnification is
+/// a whole number: it *copies* texels instead of resampling them, so at a
+/// fractional magnification a one-pixel stroke lands on one screen pixel in
+/// some places and two in others, and the text reads as doubled — the ghosting
+/// reported against the remote VNC surface, where the pane (1908 px) is wider
+/// than the source (1792 px) and the fit factor is 1908/1792 = 1.0647.
+///
+/// Linear resamples instead of copying, so a stroke keeps one weight
+/// everywhere. It is not used when the magnification is a whole number: there
+/// nearest-neighbour is both the crisper sampler and the one the exact 1:1
+/// desktop has always used, so switching would trade sharpness for nothing.
+///
+/// Shrinking is a different problem (aliasing, not duplication) and falls to
+/// the same rule — a magnification below one is never a whole number.
+pub(crate) fn desktop_surface_filter(magnification: f32) -> iced::widget::image::FilterMethod {
+    if !magnification.is_finite() || magnification <= 0.0 {
+        return iced::widget::image::FilterMethod::Linear;
+    }
+    // A whole-number magnification, with a tolerance for the floating point
+    // error that survives the division it came through.
+    if magnification >= 1.0 && (magnification - magnification.round()).abs() <= 1e-3 {
+        iced::widget::image::FilterMethod::Nearest
+    } else {
+        iced::widget::image::FilterMethod::Linear
+    }
+}
+
+/// The sampler for a surface fitted by `fit_x`/`fit_y` device pixels per remote
+/// pixel.
+///
+/// The two axes can disagree — a transition deliberately stretches per axis,
+/// see `rdp_fit_factors` — and one sampler covers the whole surface, so a
+/// fractional axis would ghost while the other is copied. Nearest is therefore
+/// only used when *both* axes are whole numbers.
+pub(crate) fn desktop_surface_filter_for_fit(
+    fit_x: f32,
+    fit_y: f32,
+) -> iced::widget::image::FilterMethod {
+    if desktop_surface_filter(fit_x) == iced::widget::image::FilterMethod::Nearest
+        && desktop_surface_filter(fit_y) == iced::widget::image::FilterMethod::Nearest
+    {
+        iced::widget::image::FilterMethod::Nearest
+    } else {
+        iced::widget::image::FilterMethod::Linear
+    }
+}
+
 /// The picker label for a fidelity preset.
 pub(crate) fn rdp_quality_label(quality: RdpQuality) -> &'static str {
     match quality {

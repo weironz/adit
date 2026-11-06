@@ -222,6 +222,9 @@ struct Contain {
     height: f32,
     left: f32,
     top: f32,
+    /// Device pixels per remote pixel — the texture magnification, which is
+    /// what decides the sampler (see `desktop_surface_filter`).
+    magnification: f32,
 }
 
 impl Contain {
@@ -253,6 +256,7 @@ impl Contain {
             height,
             left: (pane_w - width) / 2.0,
             top: (pane_h - height) / 2.0,
+            magnification: fit,
         })
     }
 
@@ -318,7 +322,10 @@ fn tile_grid(tiles: &[RdpTile], fit: Contain) -> Element<'static, Message> {
                 .height(Length::Fixed(
                     fit.edge_y(y + u32::from(tile.height)) - fit.edge_y(y),
                 ))
-                .filter_method(iced::widget::image::FilterMethod::Nearest)
+                .filter_method(session_ops::desktop_surface_filter_for_fit(
+                    fit.magnification,
+                    fit.magnification,
+                ))
                 .content_fit(iced::ContentFit::Fill)
                 .into(),
         );

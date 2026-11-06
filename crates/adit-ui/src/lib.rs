@@ -1369,6 +1369,11 @@ const CELL_HEIGHT_RATIO: f32 = 1.308;
 const MIN_FONT_SIZE: u32 = 9;
 const MAX_FONT_SIZE: u32 = 28;
 
+/// Whether a VNC surface is fitted to the pane (`true`) or drawn 1:1
+/// (`false`). One constant for the whole app: the main window and a
+/// detached window have to agree, or the same session changes scale when
+/// it is pulled out of the main window.
+pub(crate) const VNC_FIT_DEFAULT: bool = true;
 const SIDEBAR_MIN_WIDTH: f32 = 220.0;
 const SIDEBAR_MAX_WIDTH: f32 = 640.0;
 const SIDEBAR_DIVIDER_WIDTH: f32 = 5.0;
@@ -1859,7 +1864,7 @@ impl AditApp {
             vnc_clipboard_modal: false,
             vnc_clipboard_needs_baseline: false,
             vnc_pressed_keys: Vec::new(),
-            vnc_fit: true,
+            vnc_fit: VNC_FIT_DEFAULT,
             vnc_grab_keys: false,
             vnc_preedit: None,
             vnc_input_epoch: 0,
@@ -2804,6 +2809,92 @@ mod tests {
         let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
         assert_eq!(fx, fy, "the steady fallback is aspect-preserving");
         assert!(fx < 1.0);
+    }
+
+    /// The sampler is chosen by the texture magnification: source texels to
+    /// device pixels. A whole-number magnification keeps the exact, crisp
+    /// nearest-neighbour sampling the 1:1 desktop has always used; a fractional
+    /// one resamples instead of copying texels, which is what removes the
+    /// doubled strokes reported against the remote VNC surface.
+    #[test]
+    fn the_surface_sampler_follows_the_texture_magnification() {
+        // Exactly 1:1 — the RDP steady state, and VNC in original scale.
+        assert_eq!(
+            desktop_surface_filter(1.0),
+            iced::widget::image::FilterMethod::Nearest
+        );
+        assert_eq!(
+            desktop_surface_filter(2.0),
+            iced::widget::image::FilterMethod::Nearest
+        );
+        assert_eq!(
+            desktop_surface_filter(3.0),
+            iced::widget::image::FilterMethod::Nearest
+        );
+        // The VNC fit factor measured against a real session: 1908 / 1792.
+        assert_eq!(
+            desktop_surface_filter(1908.0 / 1792.0),
+            iced::widget::image::FilterMethod::Linear
+        );
+        // Floating point noise around a whole number must not demote it.
+        assert_eq!(
+            desktop_surface_filter(2.0 + 1e-6),
+            iced::widget::image::FilterMethod::Nearest
+        );
+        // Shrinking is aliasing rather than duplication, and is not nearest.
+        assert_eq!(
+            desktop_surface_filter(0.5),
+            iced::widget::image::FilterMethod::Linear
+        );
+        // A degenerate factor must never reach the sampler.
+        assert_eq!(
+            desktop_surface_filter(0.0),
+            iced::widget::image::FilterMethod::Linear
+        );
+        assert_eq!(
+            desktop_surface_filter(f32::NAN),
+            iced::widget::image::FilterMethod::Linear
+        );
+    }
+
+    /// One sampler covers the whole surface, so a fractional axis would ghost
+    /// while the other axis is copied. Nearest is only used when both axes are
+    /// whole numbers.
+    #[test]
+    fn a_surface_with_one_fractional_axis_resamples() {
+        assert_eq!(
+            desktop_surface_filter_for_fit(1.0, 1.0),
+            iced::widget::image::FilterMethod::Nearest
+        );
+        assert_eq!(
+            desktop_surface_filter_for_fit(2.0, 1.0),
+            iced::widget::image::FilterMethod::Nearest
+        );
+        assert_eq!(
+            desktop_surface_filter_for_fit(1908.0 / 1792.0, 1.0),
+            iced::widget::image::FilterMethod::Linear
+        );
+        assert_eq!(
+            desktop_surface_filter_for_fit(1.0, 1908.0 / 1792.0),
+            iced::widget::image::FilterMethod::Linear
+        );
+    }
+
+    /// The exact 1:1 desktop must keep the nearest sampler it has always used.
+    /// Linear resampling agrees with nearest-neighbour pixel for pixel at a
+    /// whole-number magnification, but nearest is the crisper of the two and
+    /// switching it for nothing would soften every remote desktop.
+    #[test]
+    fn the_exact_one_to_one_desktop_keeps_the_nearest_sampler() {
+        let mut app = drag_test_app();
+        app.display_scale = 1.0;
+        app.rdp_target_size = None;
+        let (fx, fy) = rdp_fit_factors(&app, (4096, 2160));
+        assert_eq!((fx, fy), (1.0, 1.0));
+        assert_eq!(
+            desktop_surface_filter_for_fit(fx, fy),
+            iced::widget::image::FilterMethod::Nearest
+        );
     }
 
     /// Ctrl+Alt+Del is six events, and the release order is the part that

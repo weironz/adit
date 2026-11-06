@@ -1,0 +1,152 @@
+{
+  "framebuffer_colours": 58,
+  "source (1:1)": {
+    "surface": {
+      "left": 158,
+      "top": 171,
+      "right": 1357,
+      "bottom": 970,
+      "border_columns": [
+        1355,
+        1356,
+        1357
+      ],
+      "border_rows": [
+        968,
+        969,
+        970
+      ]
+    },
+    "canvas": {
+      "left": 198,
+      "top": 321,
+      "right": 758,
+      "bottom": 417
+    },
+    "measured_rect": {
+      "left": 201,
+      "right": 755,
+      "top": 324,
+      "bottom": 414
+    },
+    "measured_size": [
+      554,
+      90
+    ],
+    "magnification": 1.0,
+    "distinct_colours": 54,
+    "colours_not_in_the_framebuffer": 0,
+    "black_fraction": 0.9222,
+    "ink_columns": 230,
+    "copied_ink_columns": 0,
+    "copy_fraction": 0.0,
+    "duplicated_columns_all": 323,
+    "duplicated_columns_fraction": 0.58303,
+    "surface_duplicated_columns_fraction": 0.77481,
+    "surface_distinct_colours": 58
+  },
+  "fit, nearest-neighbour": {
+    "surface": {
+      "left": 16,
+      "top": 77,
+      "right": 1499,
+      "bottom": 1065,
+      "border_columns": [
+        1496,
+        1497,
+        1498,
+        1499
+      ],
+      "border_rows": [
+        1062,
+        1063,
+        1064,
+        1065
+      ]
+    },
+    "canvas": {
+      "left": 65,
+      "top": 263,
+      "right": 758,
+      "bottom": 381
+    },
+    "measured_rect": {
+      "left": 68,
+      "right": 755,
+      "top": 266,
+      "bottom": 378
+    },
+    "measured_size": [
+      687,
+      112
+    ],
+    "magnification": 1.23667,
+    "distinct_colours": 54,
+    "colours_not_in_the_framebuffer": 0,
+    "black_fraction": 0.9215,
+    "ink_columns": 286,
+    "copied_ink_columns": 55,
+    "copy_fraction": 0.19231,
+    "duplicated_columns_all": 455,
+    "duplicated_columns_fraction": 0.6623,
+    "surface_duplicated_columns_fraction": 0.77073,
+    "surface_distinct_colours": 272
+  },
+  "fit, resampled": {
+    "surface": {
+      "left": 16,
+      "top": 77,
+      "right": 1499,
+      "bottom": 1065,
+      "border_columns": [
+        1497,
+        1498,
+        1499
+      ],
+      "border_rows": [
+        1063,
+        1064,
+        1065
+      ]
+    },
+    "canvas": {
+      "left": 65,
+      "top": 263,
+      "right": 758,
+      "bottom": 381
+    },
+    "measured_rect": {
+      "left": 68,
+      "right": 755,
+      "top": 266,
+      "bottom": 378
+    },
+    "measured_size": [
+      687,
+      112
+    ],
+    "magnification": 1.23667,
+    "distinct_colours": 5871,
+    "colours_not_in_the_framebuffer": 5869,
+    "black_fraction": 0.885,
+    "ink_columns": 286,
+    "copied_ink_columns": 0,
+    "copy_fraction": 0.0,
+    "duplicated_columns_all": 400,
+    "duplicated_columns_fraction": 0.58224,
+    "surface_duplicated_columns_fraction": 0.73163,
+    "surface_distinct_colours": 6495
+  },
+  "one_to_one_differing_pixels": 199,
+  "one_to_one_difference_box": [
+    465,
+    1082,
+    493,
+    1089
+  ],
+  "one_to_one_same_binary_noise_pixels": 583,
+  "nearest_is_a_subset_of_the_framebuffer": true,
+  "resampled_is_not_a_subset_of_the_framebuffer": true,
+  "nearest_copies_more_than_resampled": true,
+  "nearest_copies_more_than_the_source": true
+}

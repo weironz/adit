@@ -99,7 +99,7 @@ Issue：<https://github.com/weironz/adit/issues/92>。
 | [#88 Telnet硬件](https://github.com/weironz/adit/issues/88) | RFC/IAC回环测试 | 需用户授权的真实Cisco/IPMI等设备，重点CR NUL。没有找到连接不等于没有可用设备。 |
 | [#87 OneDrive](https://github.com/weironz/adit/issues/87) | 编译期client id及release Secret引用已有 | 2026-11-02只读核查未见 ADIT_SYNC_ONEDRIVE_CLIENT_ID Secret；注册是否批准不明。刷新现状，若已有合法注册，配置后做真实OAuth/同步。不能未经授权新建账户或扩大云访问。 |
 | [#90 签名](https://github.com/weironz/adit/issues/90) | 采购/分发需求 | v0.1.77安装包内嵌PE证书表为空的只读检查；macOS未验证。缺签名服务/证书，不是继续写测试能解决。 |
-| [#230 字体重影](https://github.com/weironz/adit/issues/230) | 交接时新发现开放 issue，含截图 | 未排查。先读取原图，确认画质预设、缩放/DPI、服务端编码；不要先猜 JPEG 或字体设置是根因。 |
+| [#230 字体重影](https://github.com/weironz/adit/issues/230) | 交接时新发现开放 issue，含截图 | 已定位并修复：远端曲面纹理按 fit 系数放大，最近邻在分数放大倍数下**复制**纹素，一根 1 像素笔画在部分位置落到两个屏幕像素，文字即读作重影。修复后整数放大用最近邻、其余用线性重采样。合成器截图按两种与渲染器模型无关的方法验证（帧缓冲颜色集合、被复制的笔画列比例），1:1 对照逐像素不变。证据：`tests/vnc/results/2026-11-06-vnc-glyph-ghosting/`。不证明服务端编码或厂商实现的兼容性。 |
 
 #116 评论：<https://github.com/weironz/adit/issues/116#issuecomment-6557419895>。
 #94 评论：<https://github.com/weironz/adit/issues/94#issuecomment-6557419858>。

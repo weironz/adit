@@ -18,6 +18,10 @@ PF = struct.pack(">BBBBHHHBBB3x", 32, 24, 0, 1, 255, 255, 255, 0, 8, 16)
 EDS = -308
 NAME = b"ADIT SYNTHETIC LOOPBACK GRID - no user data"
 MAX_PIXELS = 4096 * 2160
+# The text layer is opt-in, so the grid-only self-test keeps working.
+TEXT_ENABLED = os.environ.get("ADIT_FIXTURE_TEXT") == "1"
+TEXT_ORIGIN_X = 40
+TEXT_ORIGIN_Y = 150
 
 
 def exact(conn, length):
@@ -38,6 +42,109 @@ def layout(width, height, reason=0):
     return rect(reason, 0, width, height, EDS) + struct.pack(
         ">B3xIHHHHI", 1, 42, 0, 0, width, height, 0
     )
+
+
+# --------------------------------------------------------------- text layer
+#
+# The reported symptom is doubled TEXT, so the fixture has to be able to
+# draw text. GDI with ClearType is the rasteriser Windows itself uses, and
+# the glyphs are rasterised ONCE at the source resolution: the framebuffer
+# then holds finished glyph pixels and the client decides how to magnify
+# them. That is the situation the issue describes, reproduced exactly.
+#
+# The layer is opt-in (ADIT_FIXTURE_TEXT=1) so the grid-only self-test and
+# the existing users of this peer are untouched.
+
+_TEXT_CACHE = {}
+
+
+def _text_bitmap(lines, size, width, line_height):
+    """Rasterise `lines` with ClearType; return (BGRA bytes, width, height)."""
+    key = (tuple(lines), size, width, line_height)
+    cached = _TEXT_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    import ctypes
+    import ctypes.wintypes as wt
+
+    gdi32 = ctypes.WinDLL("gdi32")
+    user32 = ctypes.WinDLL("user32")
+
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wt.DWORD), ("biWidth", ctypes.c_long),
+            ("biHeight", ctypes.c_long), ("biPlanes", wt.WORD),
+            ("biBitCount", wt.WORD), ("biCompression", wt.DWORD),
+            ("biSizeImage", wt.DWORD), ("biXPelsPerMeter", ctypes.c_long),
+            ("biYPelsPerMeter", ctypes.c_long), ("biClrUsed", wt.DWORD),
+            ("biClrImportant", wt.DWORD),
+        ]
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wt.DWORD * 3)]
+
+    height = line_height * len(lines)
+    screen_dc = user32.GetDC(0)
+    mem_dc = gdi32.CreateCompatibleDC(screen_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(screen_dc, width, height)
+    gdi32.SelectObject(mem_dc, bitmap)
+
+    brush = gdi32.CreateSolidBrush(0x00000000)          # black background
+    rect = wt.RECT(0, 0, width, height)
+    user32.FillRect(mem_dc, ctypes.byref(rect), brush)
+    gdi32.SetBkMode(mem_dc, 1)                            # TRANSPARENT
+    gdi32.SetTextColor(mem_dc, 0x00FFFFFF)                # white text
+    font = gdi32.CreateFontW(size, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 5, 0, "Consolas")
+    gdi32.SelectObject(mem_dc, font)
+    for index, line in enumerate(lines):
+        line_rect = wt.RECT(0, index * line_height, width, (index + 1) * line_height)
+        user32.DrawTextW(mem_dc, line, len(line), ctypes.byref(line_rect), 0)
+
+    info = BITMAPINFO()
+    info.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    info.bmiHeader.biWidth = width
+    info.bmiHeader.biHeight = -height                      # top-down
+    info.bmiHeader.biPlanes = 1
+    info.bmiHeader.biBitCount = 32
+    info.bmiHeader.biCompression = 0                       # BI_RGB
+    buffer = ctypes.create_string_buffer(width * height * 4)
+    gdi32.GetDIBits(mem_dc, bitmap, 0, height, buffer, ctypes.byref(info), 0)
+    gdi32.DeleteObject(bitmap)
+    gdi32.DeleteDC(mem_dc)
+    user32.ReleaseDC(0, screen_dc)
+    _TEXT_CACHE[key] = (bytes(buffer), width, height)
+    return _TEXT_CACHE[key]
+
+
+def text_rows(width, size=18):
+    """The text rows, in the fixture's own pixel format.
+
+    The fixture's format is 32-bit true colour with 8 bits of red at
+    offset 0, 8 bits of green at offset 8 and 16 bits of blue at offset
+    16, little endian - the same layout `colour()` writes. A 32-bit BGRA
+    DIB is converted into it here.
+    """
+    lines = [
+        "The quick brown fox jumps",
+        "over the lazy dog 0123456789",
+        "Handgloves fjord ILQO {}[]()#",
+        "remote VNC desktop text 1:1",
+    ]
+    line_height = size + 6
+    canvas_width = min(width, 560)
+    raw, canvas_width, canvas_height = _text_bitmap(
+        lines, size, canvas_width, line_height)
+
+    rows = []
+    for y in range(canvas_height):
+        row = bytearray()
+        source = y * canvas_width * 4
+        for x in range(canvas_width):
+            b, g, r, _a = raw[source + x * 4: source + x * 4 + 4]
+            row += struct.pack("<I", (r << 0) | (g << 8) | (b << 16))
+        rows.append(bytes(row))
+    return rows
 
 
 def grid(width, height, pixel_format, sequence):
@@ -90,6 +197,18 @@ def grid(width, height, pixel_format, sequence):
         for x in range(25 + bit * 12, 33 + bit * 12):
             for y in range(20, 32):
                 pixel(x, y, value)
+    # The text layer sits on top of the grid on a dark band, so the glyph
+    # edges are read against a known background.
+    if TEXT_ENABLED:
+        for row_index, row in enumerate(text_rows(width)):
+            y = TEXT_ORIGIN_Y + row_index
+            if not (0 <= y < height):
+                continue
+            start = TEXT_ORIGIN_X * size
+            if start >= width * size:
+                continue
+            end = min(width * size, start + len(row))
+            full[y * width * size + start: y * width * size + end] = row[:end - start]
     return bytes(full)
 
 
