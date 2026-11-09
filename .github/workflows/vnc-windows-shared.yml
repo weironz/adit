@@ -7,16 +7,6 @@ on:
         description: Run the full two-hour test after calibration
         type: boolean
         default: true
-  push:
-    branches: ['codex/vnc-windows-shared-soak']
-    paths:
-      - '.github/workflows/vnc-windows-shared.yml'
-      - 'tests/vnc/windows-server-smoke.ps1'
-      - 'tests/vnc/windows-load.py'
-      - 'crates/adit-session/examples/vnc_windows_shared_probe.rs'
-      - 'crates/adit-session/src/vnc_client.rs'
-      - 'crates/adit-session/Cargo.toml'
-      - 'Cargo.lock'
 
 permissions:
   contents: read
