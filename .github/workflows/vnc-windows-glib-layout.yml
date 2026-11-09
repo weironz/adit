@@ -1,11 +1,7 @@
 name: Windows QEMU GLib package layout (metadata only)
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-glib-layout']
-    paths:
-      - '.github/workflows/vnc-windows-glib-layout.yml'
+  workflow_dispatch: null
 
 permissions:
   contents: read

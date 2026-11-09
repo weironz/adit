@@ -1,12 +1,7 @@
 name: Windows guestfwd matching GLib helpers (fake only)
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-glib-layout']
-    paths:
-      - '.github/workflows/vnc-windows-guestfwd-matched.yml'
-      - 'tests/vnc/netem-guest/matching_helpers.ps1'
+  workflow_dispatch: null
 
 permissions:
   contents: read

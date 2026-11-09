@@ -1,11 +1,7 @@
 name: Windows GLib matching dependency metadata (no execution)
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-glib-layout']
-    paths:
-      - '.github/workflows/vnc-windows-glib-dependency.yml'
+  workflow_dispatch: null
 
 permissions:
   contents: read
