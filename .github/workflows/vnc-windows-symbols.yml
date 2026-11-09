@@ -1,9 +1,6 @@
 name: VNC Windows native symbol recovery
 on:
-  push:
-    branches: ['codex/vnc-recovered-windows-acceptance']
-    paths: ['.github/workflows/vnc-windows-symbols.yml']
-  workflow_dispatch:
+  workflow_dispatch: null
 permissions:
   contents: read
 jobs:
