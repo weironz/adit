@@ -1,12 +1,7 @@
 name: Windows guestfwd cmd feasibility (fake only)
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-windows-shared-soak', 'codex/vnc-guestfwd-cmd']
-    paths:
-      - '.github/workflows/vnc-windows-guestfwd-cmd.yml'
-      - 'tests/vnc/netem-guest/cmd_probe.py'
+  workflow_dispatch: null
 
 permissions:
   contents: read

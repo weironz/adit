@@ -1,17 +1,7 @@
 name: VNC Windows guest-egress impaired acceptance
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-windows-shared-soak']
-    paths:
-      - '.github/workflows/vnc-windows-impaired.yml'
-      - 'tests/vnc/netem-guest/**'
-      - 'tests/vnc/windows-server-smoke.ps1'
-      - 'tests/vnc/windows-load.py'
-      - 'crates/adit-session/examples/vnc_probe.rs'
-      - 'crates/adit-session/src/vnc_client.rs'
-      - 'crates/adit-vnc/**'
+  workflow_dispatch: null
 
 permissions:
   contents: read
