@@ -1,19 +1,7 @@
 name: VNC Windows service-mode calibration
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-windows-service']
-    paths:
-      - '.github/workflows/vnc-windows-service.yml'
-      - 'tests/vnc/windows-server-smoke.ps1'
-      - 'tests/vnc/windows-load.py'
-      - 'crates/adit-session/examples/vnc_probe.rs'
-      - 'crates/adit-session/src/vnc_client.rs'
-      - 'crates/adit-vnc/**'
-      - 'crates/adit-domain/**'
-      - '**/Cargo.toml'
-      - 'Cargo.lock'
+  workflow_dispatch: null
 
 permissions:
   contents: read
