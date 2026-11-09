@@ -1,16 +1,7 @@
 name: Windows guest host-alias TCP lifecycle (fake only)
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-guest-host-alias']
-    paths:
-      - '.github/workflows/vnc-windows-host-alias-fake.yml'
-      - 'tests/vnc/netem-guest/build.sh'
-      - 'tests/vnc/netem-guest/direct-init'
-      - 'tests/vnc/netem-guest/direct_guest.py'
-      - 'tests/vnc/netem-guest/direct_probe.py'
-      - 'tests/vnc/netem-guest/direct_windows.ps1'
+  workflow_dispatch: null
 
 permissions:
   contents: read
