@@ -1,13 +1,7 @@
 name: VNC Windows vendor smoke
 
 on:
-  workflow_dispatch:
-  push:
-    branches: [main, 'codex/vnc-windows-ci']
-    paths:
-      - '.github/workflows/vnc-windows.yml'
-      - 'tests/vnc/windows-server-smoke.ps1'
-      - 'crates/adit-session/examples/vnc_probe.rs'
+  workflow_dispatch: null
 
 permissions:
   contents: read
