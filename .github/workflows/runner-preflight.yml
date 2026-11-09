@@ -1,8 +1,6 @@
 name: Self-hosted dependency inventory
 on:
-  push:
-    branches: [codex/self-hosted-x64-ci]
-    paths: [.github/workflows/runner-preflight.yml]
+  workflow_dispatch: {}
 permissions:
   contents: read
 jobs:
