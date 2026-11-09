@@ -1,14 +1,6 @@
 name: VNC Windows actual service lock screen
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-windows-autonomous']
-    paths:
-      - '.github/workflows/vnc-windows-lock.yml'
-      - 'tests/vnc/windows-service-lock.py'
-      - 'tests/vnc/windows-service-uac.py'
-      - 'tests/vnc/windows-uac-cancel.ps1'
-      - 'tests/vnc/windows-server-smoke.ps1'
+  workflow_dispatch: null
 permissions:
   contents: read
 jobs:
