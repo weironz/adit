@@ -1,8 +1,5 @@
 name: VNC Windows direct TCP recovery
 on:
-  push:
-    branches: ['codex/vnc-recovered-windows-acceptance']
-    paths: ['.github/workflows/vnc-windows-direct-network.yml']
   workflow_dispatch:
     inputs:
       fixture_host:

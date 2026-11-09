@@ -1,12 +1,7 @@
 name: VNC Windows guest netem PoC
 
 on:
-  workflow_dispatch:
-  push:
-    branches: ['codex/vnc-windows-shared-soak']
-    paths:
-      - '.github/workflows/vnc-windows-netem.yml'
-      - 'tests/vnc/netem-guest/**'
+  workflow_dispatch: null
 
 permissions:
   contents: read
