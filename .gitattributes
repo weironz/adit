@@ -28,8 +28,9 @@ docker/test-sshd/sshd_config text eol=lf
 # Icon generator is a dev tool, not product code — keep it out of language stats.
 assets/make_icon.py linguist-detectable=false
 
-# The acceptance archive's raw pointer bitmaps and its JSON lines: the audit
-# compares the files byte for byte against the manifest, so they must not be
-# normalised on the way in. `*.rgba binary` already covers the bitmaps; the
-# JSON is text but must stay byte-identical to what the manifest records.
-tests/rdp/results/**/*.jsonl binary
+# The acceptance archives are compared byte for byte against their SHA-256
+# manifest by the audit script, so every file in them has to arrive exactly
+# as it was written - on Windows as well as on Linux. Marking them -text
+# stops the checkout from rewriting the line endings, which would make the
+# digest the manifest records disagree with the file on disk.
+tests/rdp/results/** -text
