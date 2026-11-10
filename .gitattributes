@@ -29,8 +29,18 @@ docker/test-sshd/sshd_config text eol=lf
 assets/make_icon.py linguist-detectable=false
 
 # The acceptance archives are compared byte for byte against their SHA-256
-# manifest by the audit script, so every file in them has to arrive exactly
-# as it was written - on Windows as well as on Linux. Marking them -text
-# stops the checkout from rewriting the line endings, which would make the
-# digest the manifest records disagree with the file on disk.
-tests/rdp/results/** -text
+# manifest by the audit script, so a checkout has to deliver exactly the
+# bytes the manifest describes, on Windows as well as on Linux.
+#
+# `text eol=lf` does that: the blob is stored with LF endings and every
+# checkout is written with LF endings, so the digest the manifest records
+# matches the file on disk everywhere. `-text` would also deliver the right
+# bytes, but it would store whatever an editor happened to write - a CRLF
+# from a Windows editor would be committed as-is and break the manifest.
+#
+# The raw bitmaps are binary and stay that way; the global `*.rgba` and
+# `*.png` rules below cover them, and this block does not override them.
+tests/rdp/results/**/*.md text eol=lf
+tests/rdp/results/**/*.json text eol=lf
+tests/rdp/results/**/*.jsonl text eol=lf
+tests/rdp/results/**/*.py text eol=lf
