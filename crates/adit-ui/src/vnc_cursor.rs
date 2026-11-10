@@ -4,6 +4,17 @@ use super::*;
 use iced::advanced::{layout, renderer, widget::Tree, Layout, Widget};
 use iced::{Rectangle, Size};
 
+/// Where the pointer was last seen, in window coordinates.
+///
+/// The overlay cannot be anchored to iced's live cursor: a transient
+/// `CursorLeft` turns it into `Unavailable`, and the server's bitmap
+/// disappeared while the local arrow came back. The pointer's position still
+/// arrives as a `CursorMoved` event, so it is remembered here.
+#[derive(Default)]
+struct PointerMemory {
+    local: Option<Point>,
+}
+
 pub(crate) struct CursorLayer {
     pub cursor: Option<adit_session::VncCursor>,
     pub ime_enabled: bool,
@@ -17,6 +28,12 @@ pub(crate) struct CursorLayer {
 }
 
 impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
+    fn tag(&self) -> iced::advanced::widget::tree::Tag {
+        iced::advanced::widget::tree::Tag::of::<PointerMemory>()
+    }
+    fn state(&self) -> iced::advanced::widget::tree::State {
+        iced::advanced::widget::tree::State::new(PointerMemory::default())
+    }
     fn size(&self) -> Size<Length> {
         Size::new(
             Length::Fixed(self.logical_size.width),
@@ -39,7 +56,7 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
     }
     fn draw(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         renderer: &mut iced::Renderer,
         _theme: &Theme,
         _style: &renderer::Style,
@@ -51,7 +68,15 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
             return;
         };
         let bounds = layout.bounds();
-        let Some(point) = cursor.position_over(bounds) else {
+        let memory = tree.state.downcast_ref::<PointerMemory>();
+        // A position outside the surface is not an anchor: the layer still
+        // hears every mouse event, so a pointer that moved off the remote
+        // area would otherwise draw the server's cursor out there too.
+        let local = memory
+            .local
+            .filter(|point| bounds.contains(*point))
+            .or_else(|| cursor.position_over(bounds));
+        let Some(point) = local else {
             return;
         };
         let Some(handle) = self.handle.as_ref() else {
@@ -69,7 +94,7 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
     }
     fn update(
         &mut self,
-        _tree: &mut Tree,
+        tree: &mut Tree,
         event: &iced::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
@@ -78,6 +103,14 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
         shell: &mut iced::advanced::Shell<'_, Message>,
         _viewport: &Rectangle,
     ) {
+        // The event carries the position even when the live cursor is
+        // `Unavailable`, so this is where the pointer stays known while the
+        // window reports it as gone.
+        if let iced::Event::Mouse(mouse::Event::CursorMoved { position }) = event {
+            tree.state
+                .downcast_mut::<PointerMemory>()
+                .local = Some(*position);
+        }
         if self.ime_enabled {
             let point = cursor
                 .position_over(layout.bounds())
@@ -99,13 +132,22 @@ impl Widget<Message, Theme, iced::Renderer> for CursorLayer {
     }
     fn mouse_interaction(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _viewport: &Rectangle,
         _renderer: &iced::Renderer,
     ) -> mouse::Interaction {
-        if self.cursor.is_some() && cursor.is_over(layout.bounds()) {
+        // The remembered position decides whether the pointer is over the
+        // surface: the OS pointer must stay hidden over the remote surface
+        // even while the window briefly reports the pointer as gone.
+        let over = tree
+            .state
+            .downcast_ref::<PointerMemory>()
+            .local
+            .or_else(|| cursor.position_over(layout.bounds()))
+            .is_some_and(|point| layout.bounds().contains(point));
+        if self.cursor.is_some() && over {
             mouse::Interaction::Hidden
         } else {
             mouse::Interaction::None

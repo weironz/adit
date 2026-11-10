@@ -1,0 +1,16 @@
+{
+  "issue": "https://github.com/weironz/adit/issues/92",
+  "title": "RDP：不绘制服务端光标形状",
+  "accepted_at": "2026-11-11",
+  "source_commit": "f8ede3b155948377056744126c45381058b23907",
+  "source_commit_subject": "fix(ui): replace a redundant closure the CI clippy gate rejects",
+  "note": "源码提交是验收运行时工作树所基于的 HEAD；本次改动（光标图层、指针租约、验收夹具）尚未提交，归档提交时以该 commit 为基线。",
+  "helper_build_command": "cargo build --manifest-path crates/adit-rdp/Cargo.toml --locked --release",
+  "helper_artifact": "crates/adit-rdp/target/release/adit-rdp-host.exe",
+  "helper_sha256": "b085ca94303155ed226a474c556f4690eca7d7a5eaeeffd9a7bbd1bc8661d22f",
+  "helper_bytes": 12866048,
+  "app_build_command": "cargo build --locked --features native-rdp-acceptance --example rdp_native_acceptance",
+  "harness": "crates/adit-ui/examples/rdp_native_acceptance.rs (feature native-rdp-acceptance)",
+  "server": "FreeRDP shadow server (freerdp-shadow-cli) on 127.0.0.1:13394, /server-side-cursor, Xvfb :99 with an XFixes cursor fixture",
+  "password_transport": "stdin only - the fixture password never appears in argv, in the repository, or in any shared document"
+}

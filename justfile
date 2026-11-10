@@ -90,6 +90,12 @@ ci:
     cargo test --manifest-path {{rdp}} --locked
     cargo test -p adit-ssh --features integration --no-run
 
+# Opt-in RDP fixture code as well as the normal local gate. The harness is
+# a feature build of adit-ui, so the root workspace's clippy never sees it.
+ci-rdp: ci
+    cargo clippy -p adit-ui --all-targets --features native-rdp-acceptance --locked -- -D warnings
+    cargo test -p adit-ui --features native-rdp-acceptance --locked --lib
+
 # Opt-in VNC fixture code as well as the normal local gate. Ignored native
 # tests stay opt-in: this command never injects keys or changes the desktop.
 ci-vnc: ci

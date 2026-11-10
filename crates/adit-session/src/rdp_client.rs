@@ -173,6 +173,14 @@ pub(super) struct Surface {
     pub(super) height: u16,
     pub(super) generation: u64,
     pointer: Option<super::VncCursor>,
+    /// Whether the server asked the client to hide the pointer.
+    ///
+    /// This is the server intent, independent of whether it also sent a
+    /// pointer bitmap. The two used to be conflated: a hidden pointer parked
+    /// a zero-sized placeholder shape, and the UI read "a shape exists" as
+    /// "the server owns the pointer here", so a hidden pointer produced
+    /// neither a drawn bitmap nor a visible OS pointer - no cursor at all.
+    pointer_hidden: bool,
     pointer_position: Option<(u16, u16)>,
     pointer_generation: u64,
     pointer_position_generation: u64,
@@ -344,6 +352,7 @@ impl Surface {
             height,
             generation: 0,
             pointer: None,
+            pointer_hidden: false,
             pointer_position: None,
             pointer_generation: 0,
             pointer_position_generation: 0,
@@ -435,8 +444,17 @@ impl Surface {
                 self.pointer_position = Some((x, y));
                 self.pointer_position_generation = self.pointer_position_generation.wrapping_add(1);
             }
-            PointerUpdate::Default => self.pointer = None,
-            PointerUpdate::Hidden => self.pointer = Some(super::VncCursor::default()),
+            PointerUpdate::Default => {
+                self.pointer = None;
+                self.pointer_hidden = false;
+            }
+            // "The server hid the pointer" and "the server sent a pointer
+            // bitmap" are separate facts. Hiding one is not the other, and a
+            // hidden pointer must not leave a stale bitmap behind either.
+            PointerUpdate::Hidden => {
+                self.pointer = None;
+                self.pointer_hidden = true;
+            }
             PointerUpdate::Bitmap {
                 width,
                 height,
@@ -445,7 +463,10 @@ impl Surface {
                 rgba,
             } => {
                 if width == 0 && height == 0 && rgba.is_empty() {
-                    self.pointer = Some(super::VncCursor::default());
+                    // An empty bitmap is the server saying "no shape here",
+                    // the same intent as an explicit hide.
+                    self.pointer = None;
+                    self.pointer_hidden = true;
                 } else if width <= 384
                     && height <= 384
                     && hotspot_x < width
@@ -460,6 +481,8 @@ impl Surface {
                         rgba,
                         generation: 0,
                     });
+                    // A bitmap means the server is showing a pointer again.
+                    self.pointer_hidden = false;
                 } else {
                     return;
                 }
@@ -482,6 +505,7 @@ impl Surface {
             next.rgba[dst..dst + copy_w].copy_from_slice(&self.rgba[src..src + copy_w]);
         }
         next.pointer = self.pointer.take();
+        next.pointer_hidden = self.pointer_hidden;
         next.pointer_position = self.pointer_position;
         next.pointer_generation = self.pointer_generation;
         next.pointer_position_generation = self.pointer_position_generation;
@@ -1024,6 +1048,9 @@ pub struct RdpFrame {
 
 pub struct RdpCursorSnapshot {
     pub shape: Option<super::VncCursor>,
+    /// The server asked for the pointer to be hidden over the remote
+    /// surface. It says nothing about whether a bitmap was also sent.
+    pub hidden: bool,
     pub position: Option<(u16, u16)>,
     pub position_generation: u64,
 }
@@ -2284,6 +2311,7 @@ fn read_helper_messages<R: std::io::Read>(
                     s.painted_layout_pixels = None;
                     s.pointer_paused = false;
                     s.pointer = None;
+                    s.pointer_hidden = false;
                     s.pointer_position = None;
                     s.pointer_generation = s.pointer_generation.wrapping_add(1);
                     s.pointer_position_generation = s.pointer_position_generation.wrapping_add(1);
@@ -2496,6 +2524,7 @@ impl super::SessionManager {
         });
         Some(RdpCursorSnapshot {
             shape: surface.pointer.clone(),
+            hidden: surface.pointer_hidden,
             position,
             position_generation: surface.pointer_position_generation,
         })
@@ -6693,9 +6722,34 @@ mod rdp_presentation_tests {
             "repeated server warps must not disappear"
         );
         s.update_pointer(PointerUpdate::Hidden);
-        assert_eq!(s.pointer.as_ref().unwrap().width, 0);
+        // "hidden" is a separate fact from "a shape exists": a hidden
+        // pointer leaves no bitmap to draw and no stale one to hide.
+        assert!(s.pointer.is_none());
+        assert!(s.pointer_hidden);
+        // Upstream's cached-pointer update is a *pair*: a hide followed by the
+        // bitmap for the same shape. The pair resolves to "the server is
+        // showing this cursor", which is the same net state as a standalone
+        // bitmap -- so the shape has to come back and the pointer must no
+        // longer read as hidden. The hide half must not leave the bitmap
+        // suppressed, or a cached pointer would vanish on the very servers
+        // that send it most often.
+        s.update_pointer(PointerUpdate::Bitmap {
+            width: 2,
+            height: 1,
+            hotspot_x: 1,
+            hotspot_y: 0,
+            rgba: vec![1, 2, 3, 255, 4, 5, 6, 255],
+        });
+        assert!(s.pointer.is_some(), "the cached bitmap must be applied");
+        assert!(
+            !s.pointer_hidden,
+            "a bitmap means the server shows a pointer again"
+        );
+        assert_eq!(s.pointer.as_ref().unwrap().hotspot_x, 1);
+        assert_eq!(&s.pointer.as_ref().unwrap().rgba[..4], &[1, 2, 3, 255]);
         s.update_pointer(PointerUpdate::Default);
         assert!(s.pointer.is_none());
+        assert!(!s.pointer_hidden);
         assert_eq!(s.rgba, original);
         assert_eq!(
             s.generation, 0,

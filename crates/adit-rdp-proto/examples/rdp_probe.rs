@@ -7,7 +7,10 @@
 //! ACK confirms driver command processing, not remote execution. Verify the
 //! remote effect separately. Remote clipboard updates can replace CLIP offers;
 //! TEXT is useful for fixture control, but never proves native keyboard/IME input.
-use adit_rdp_proto::{read_msg, write_msg, ClientMsg, ConnectRequest, HostMsg, InputEvent};
+use adit_rdp_proto::{
+    read_ipc_hello, read_msg, write_ipc_hello, write_msg, ClientMsg, ConnectRequest, HostMsg,
+    InputEvent, IPC_PROTOCOL_VERSION,
+};
 use std::{
     io::{self, BufRead},
     process::{Command, Stdio},
@@ -22,7 +25,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             "usage: rdp_probe helper host username [timeout-seconds]; password on stdin".into(),
         );
     }
+    // The fixture's port is not always 3389, and the wire request carries it
+    // explicitly, so `host:port` is accepted rather than hiding the port in
+    // an environment variable.
+    let (host, port) = match args[2].split_once(':') {
+        Some((host, port)) => (host.to_owned(), port.parse::<u16>()?),
+        None => (args[2].clone(), 3389),
+    };
     let timeout: u64 = args.get(4).map(|s| s.parse()).transpose()?.unwrap_or(120);
+    // A local account needs its domain spelled out: NTLM folds the domain
+    // into the response hash, and an empty domain does not match what the
+    // server computes for the account it knows about.
+    let domain = args
+        .iter()
+        .position(|arg| arg == "--domain")
+        .and_then(|index| args.get(index + 1))
+        .cloned();
+
+    // The requested desktop size. A server that grants whatever is asked for
+    // hides the "refused resize" case the app has to survive, so the probe has
+    // to be able to ask for a size the server cannot give.
+    let requested_size = args
+        .iter()
+        .position(|arg| arg == "--size")
+        .and_then(|index| args.get(index + 1))
+        .and_then(|value| value.split_once('x'))
+        .and_then(|(w, h)| Some((w.parse::<u16>().ok()?, h.parse::<u16>().ok()?)))
+        .unwrap_or((1280, 800));
+
+    // The pointer bitmap is the server's own drawing, so the acceptance needs
+    // it as pixels: dumping each distinct shape turns "the server sent a
+    // pointer" into a template the GUI screenshot can be matched against.
+    let pointer_dump = args
+        .iter()
+        .position(|arg| arg == "--pointer-dump")
+        .and_then(|index| args.get(index + 1))
+        .cloned();
+
+    println!(
+        "requested_size={}x{}",
+        requested_size.0, requested_size.1
+    );
+
     let mut input = io::stdin().lock();
     let mut password = String::new();
     if input.read_line(&mut password)? == 0 {
@@ -37,36 +81,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         } else {
             Stdio::null()
         })
-        .env("RUST_LOG", "warn")
+        // An inherited RUST_LOG wins: the helper's own log is the only
+        // window into a failed connection, so the driver must not silence it.
+        .env(
+            "RUST_LOG",
+            std::env::var("RUST_LOG").unwrap_or_else(|_| "warn".to_owned()),
+        )
+
         .spawn()?;
     let mut wire = child.stdin.take().ok_or("helper stdin missing")?;
+    // The helper speaks a versioned IPC envelope: it reads a fixed hello before
+    // it will look at a Connect request. Without it the helper rejects the
+    // stream as a version mismatch and exits before it opens a socket.
+    write_ipc_hello(&mut wire, IPC_PROTOCOL_VERSION)?;
     write_msg(
         &mut wire,
         &ClientMsg::Connect(ConnectRequest {
-            host: args[2].clone(),
-            port: 3389,
+            host,
+            port,
             username: args[3].clone(),
             password,
-            domain: None,
-            width: 1280,
-            height: 800,
+            domain: domain.clone(),
+            width: requested_size.0,
+            height: requested_size.1,
             enable_clipboard: args.iter().any(|s| s == "--fixture-report"),
-            enable_audio: false,
+            // Some servers (the FreeRDP shadow server among them) open an
+            // AUDIN dynamic channel and mis-frame the stream when the client
+            // refuses it, so the driver can be told to accept it.
+            enable_audio: std::env::var_os("ADIT_PROBE_AUDIO").is_some(),
             quality: Default::default(),
         }),
     )?;
     let mut output = child.stdout.take().ok_or("helper stdout missing")?;
     let (events, received) = mpsc::sync_channel(8);
-    std::thread::spawn(move || loop {
-        match read_msg::<_, HostMsg>(&mut output) {
+    std::thread::spawn(move || {
+        // The helper answers with the same versioned envelope. An unversioned
+        // peer would decode those 20 bytes as a HostMsg and see a stream
+        // error instead of the session.
+        if read_ipc_hello(&mut output).ok() != Some(IPC_PROTOCOL_VERSION) {
+            let _ = events.send(HostMsg::Closed);
+            return;
+        }
+        loop {
+            match read_msg::<_, HostMsg>(&mut output) {
             Ok(Some(message)) => {
                 if events.send(message).is_err() {
                     break;
                 }
             }
-            _ => {
-                let _ = events.send(HostMsg::Closed);
-                break;
+                _ => {
+                    let _ = events.send(HostMsg::Closed);
+                    break;
+                }
             }
         }
     });
@@ -88,6 +154,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut size = (0u16, 0u16);
     let mut pixels = Vec::new();
     let mut tiles = 0u64;
+    // The server pointer is its own wire channel: a shape change arrives
+    // independently of the framebuffer, so the acceptance has to count the
+    // pointer messages rather than infer a shape from the pixels.
+    let mut pointer_events = 0u64;
+    let mut pointer_shapes: Vec<(u16, u16, u16, u16)> = Vec::new();
+    // The server sends shape changes without a position, so the position that
+    // caused each one is only recoverable from the move that preceded it.
+    let mut last_move: Option<(u16, u16)> = None;
+    let mut dumped_shapes: Vec<(u16, u16, u16, u16)> = Vec::new();
     let mut pause_until = Instant::now();
     let mut typed = std::collections::VecDeque::new();
     let mut next_character = Instant::now();
@@ -162,6 +237,68 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Err("invalid redirect epoch".into());
                     }
                     input_epoch = epoch;
+                }
+                Ok(HostMsg::Pointer(update)) => {
+                    pointer_events += 1;
+                    let description = match &update {
+                        adit_rdp_proto::PointerUpdate::Default => "default".to_owned(),
+                        adit_rdp_proto::PointerUpdate::Hidden => "hidden".to_owned(),
+                        adit_rdp_proto::PointerUpdate::Position { x, y } => {
+                            format!("position {x},{y}")
+                        }
+                        adit_rdp_proto::PointerUpdate::Bitmap {
+                            width,
+                            height,
+                            hotspot_x,
+                            hotspot_y,
+                            rgba,
+                        } => {
+                            let shape = (*width, *height, *hotspot_x, *hotspot_y);
+                            if !pointer_shapes.contains(&shape) {
+                                pointer_shapes.push(shape);
+                            }
+                            format!(
+                                "bitmap {width}x{height} hotspot {hotspot_x},{hotspot_y} bytes {}",
+                                rgba.len()
+                            )
+                        }
+                    };
+                    match last_move {
+                        Some((x, y)) => {
+                            println!("pointer_event={pointer_events} client_pos={x},{y} {description}")
+                        }
+                        None => {
+                            println!("pointer_event={pointer_events} client_pos=none {description}")
+                        }
+                    }
+                    if let (Some(dir), adit_rdp_proto::PointerUpdate::Bitmap {
+                        width,
+                        height,
+                        hotspot_x,
+                        hotspot_y,
+                        rgba,
+                    }) = (pointer_dump.as_deref(), &update)
+                    {
+                        let shape = (*width, *height, *hotspot_x, *hotspot_y);
+                        if !dumped_shapes.contains(&shape) {
+                            dumped_shapes.push(shape);
+                            let index = dumped_shapes.len();
+                            let path = std::path::Path::new(dir).join(format!(
+                                "shape-{index:02}-{width}x{height}-hot{hotspot_x},{hotspot_y}.png"
+                            ));
+                            if let Some(parent) = path.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            let _ = image::save_buffer(
+                                &path,
+                                rgba,
+                                u32::from(*width),
+                                u32::from(*height),
+                                image::ColorType::Rgba8,
+                            );
+                            println!("pointer_shape_dumped={}", path.display());
+                        }
+                    }
                 }
                 Ok(HostMsg::Error(error)) => return Err(error.into()),
                 Ok(HostMsg::Closed) => return Err("helper closed".into()),
@@ -292,13 +429,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if parts.len() != 2 {
                         return Err("pointer command requires x y".into());
                     }
+                    let move_x: u16 = parts[0].parse()?;
+                    let move_y: u16 = parts[1].parse()?;
+                    last_move = Some((move_x, move_y));
                     write_msg(
                         &mut wire,
                         &ClientMsg::input_at(
                             input_epoch,
                             InputEvent::MouseMove {
-                                x: parts[0].parse()?,
-                                y: parts[1].parse()?,
+                                x: move_x,
+                                y: move_y,
                             },
                         ),
                     )?;
@@ -345,6 +485,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err("probe deadline expired".into())
     })();
+    println!(
+        "pointer_summary events={pointer_events} distinct_shapes={}",
+        pointer_shapes.len()
+    );
     let _ = write_msg(&mut wire, &ClientMsg::Close);
     drop(wire);
     drop(received);

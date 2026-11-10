@@ -1,0 +1,99 @@
+{
+  "bitmap-01-arrow-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 272,
+    "bbox": [
+      2,
+      3,
+      19,
+      28
+    ]
+  },
+  "bitmap-02-ibeam-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 128,
+    "bbox": [
+      10,
+      8,
+      21,
+      23
+    ]
+  },
+  "bitmap-03-arrow-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 272,
+    "bbox": [
+      2,
+      3,
+      19,
+      28
+    ]
+  },
+  "bitmap-04-ibeam-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 128,
+    "bbox": [
+      10,
+      8,
+      21,
+      23
+    ]
+  },
+  "bitmap-05-xterm-cursor-9x16": {
+    "width": 9,
+    "height": 16,
+    "opaque_pixels": 86,
+    "bbox": [
+      0,
+      0,
+      8,
+      15
+    ]
+  },
+  "bitmap-06-toolbar-zone-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 272,
+    "bbox": [
+      2,
+      3,
+      19,
+      28
+    ]
+  },
+  "bitmap-07-outside-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 272,
+    "bbox": [
+      2,
+      3,
+      19,
+      28
+    ]
+  },
+  "bitmap-08-scaled-arrow-32x32": {
+    "width": 32,
+    "height": 32,
+    "opaque_pixels": 272,
+    "bbox": [
+      2,
+      3,
+      19,
+      28
+    ]
+  },
+  "scaled-arrow": {
+    "drawn_pixels": 101
+  },
+  "toolbar-zone": {
+    "drawn_pixels": 32
+  },
+  "outside": {
+    "drawn_pixels": 0
+  }
+}

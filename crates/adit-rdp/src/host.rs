@@ -263,7 +263,7 @@ pub fn run_host() -> Result<(), RdpError> {
     )));
 
     // Announce the outcome, then let the writer flush and exit.
-    let _ = host_tx.finish(result.as_ref().err().map(ToString::to_string));
+    let _ = host_tx.finish(result.as_ref().err().map(|error| crate::error_chain(error)));
     // Cancelling the session drops its socket. Blocking runtime jobs must not
     // turn an output failure back into an unbounded process shutdown wait.
     runtime.shutdown_timeout(output::RUNTIME_SHUTDOWN_TIMEOUT);

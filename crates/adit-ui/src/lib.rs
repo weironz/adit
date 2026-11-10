@@ -74,10 +74,14 @@ mod keyboard_hook;
 mod native_file_drop;
 mod rdp_dragdrop;
 mod vnc_cursor;
+#[cfg(feature = "native-rdp-acceptance")]
+mod rdp_native_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 mod vnc_native_acceptance;
 #[cfg(feature = "native-workbench-acceptance")]
 mod workbench_acceptance;
+#[cfg(feature = "native-rdp-acceptance")]
+pub use rdp_native_acceptance::run as run_native_rdp_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
 #[cfg(feature = "native-workbench-acceptance")]
@@ -2101,7 +2105,14 @@ fn app_theme(app: &AditApp) -> Theme {
     display_accessibility::base_theme(app.dark_mode)
 }
 
-#[cfg(feature = "native-vnc-acceptance")]
+// The acceptance harnesses need the app\x27s own subscription: without the
+// 100 ms tick and the vsync-paced frame pump there is no `desktop_panes::refresh`
+// and no frame ever reaches the compositor, so a capture would show an empty
+// surface rather than the thing under test.
+#[cfg(any(
+    feature = "native-vnc-acceptance",
+    feature = "native-rdp-acceptance"
+))]
 fn subscription(app: &AditApp) -> Subscription<Message> {
     let mut subs = vec![
         iced::time::every(Duration::from_millis(100)).map(|_| Message::Tick),
@@ -2213,6 +2224,7 @@ fn sidebar_drag_event(
 
 #[cfg(any(
     feature = "native-vnc-acceptance",
+    feature = "native-rdp-acceptance",
     feature = "native-workbench-acceptance"
 ))]
 fn runtime_subscription(app: &AditApp) -> Subscription<Message> {

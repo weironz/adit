@@ -21,6 +21,13 @@ pub(crate) struct DesktopPanes {
 pub(crate) struct RdpCursorVisual {
     shape: Option<adit_session::VncCursor>,
     handle: Option<iced::widget::image::Handle>,
+    /// The server asked for the pointer to be hidden over the remote surface.
+    ///
+    /// Kept apart from `shape` on purpose: a server can hide the pointer
+    /// without sending a bitmap, and send a bitmap without hiding it.
+    /// Reading "a shape exists" as "the server owns the pointer" hid the OS
+    /// pointer over a surface where nothing was drawn in its place.
+    hidden: bool,
     position: Option<(u16, u16)>,
     position_generation: u64,
 }
@@ -138,10 +145,15 @@ pub(crate) fn refresh(app: &mut AditApp) {
     for id in cursor_sessions {
         if let Some(cursor) = app.manager.session_rdp_cursor(id) {
             let shape = cursor.shape;
+            let hidden = cursor.hidden;
             let position = cursor.position;
             let position_generation = cursor.position_generation;
+            // `hidden` has to be compared too: a hidden pointer and a default
+            // pointer both carry no shape, so the shape generation alone
+            // cannot tell the two transitions apart.
             let changed = app.desktop_panes.cursors.get(&id).is_none_or(|old| {
                 old.shape.as_ref().map(|s| s.generation) != shape.as_ref().map(|s| s.generation)
+                    || old.hidden != hidden
             });
             if changed {
                 let handle = shape
@@ -159,6 +171,7 @@ pub(crate) fn refresh(app: &mut AditApp) {
                     RdpCursorVisual {
                         shape,
                         handle,
+                        hidden,
                         position,
                         position_generation,
                     },
@@ -1343,6 +1356,16 @@ struct RdpCursorMotion {
     server_generation: u64,
     server: Option<(u16, u16)>,
     use_server: bool,
+    /// Where the pointer was last seen, in window coordinates.
+    ///
+    /// The drawn bitmap and the "hide the OS pointer" decision cannot be
+    /// taken from iced's live cursor: a transient `CursorLeft` (a console
+    /// window flashing under the pointer is enough) turns the cursor into
+    /// `Unavailable`, and anchoring to it blanked the server's bitmap and
+    /// let the local arrow back over the remote surface. The pointer's
+    /// position still arrives as a `CursorMoved` event even then, so it is
+    /// remembered here instead.
+    local: Option<Point>,
 }
 
 fn rdp_cursor_bounds(
@@ -1411,13 +1434,19 @@ impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
         tree: &mut iced::advanced::widget::Tree,
         event: &iced::Event,
         layout: iced::advanced::Layout<'_>,
-        cursor: mouse::Cursor,
+        _cursor: mouse::Cursor,
         _renderer: &iced::Renderer,
         _clipboard: &mut dyn iced::advanced::Clipboard,
         _shell: &mut iced::advanced::Shell<'_, Message>,
         _viewport: &iced::Rectangle,
     ) {
         let state = tree.state.downcast_mut::<RdpCursorMotion>();
+        // The event carries the position even when the live cursor is
+        // `Unavailable`, so this is where the pointer stays known while the
+        // window reports it as gone.
+        if let iced::Event::Mouse(mouse::Event::CursorMoved { position }) = event {
+            state.local = Some(*position);
+        }
         let server = self.visual.as_ref().and_then(|v| v.position);
         let generation = self.visual.as_ref().map_or(0, |v| v.position_generation);
         if state.server != server
@@ -1429,8 +1458,19 @@ impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
             state.server = server;
             state.use_server = server.is_some();
         }
+        // The pointer moving over the surface takes the anchor back from
+        // the server's last reported position. The remembered position
+        // decides whether the movement landed over the surface: the live
+        // cursor is `Unavailable` exactly when a stray window steals the
+        // hover, and then the server's stale position would stay the anchor.
+        //
+        // This stays tied to an actual movement. Clearing it on every event
+        // would cancel the server's anchor the moment it was set, and the
+        // bitmap would never follow the server's pointer.
         if matches!(event, iced::Event::Mouse(mouse::Event::CursorMoved { .. }))
-            && cursor.is_over(layout.bounds())
+            && state
+                .local
+                .is_some_and(|point| layout.bounds().contains(point))
         {
             state.use_server = false;
         }
@@ -1453,8 +1493,20 @@ impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
         };
         let bounds = layout.bounds();
         let motion = tree.state.downcast_ref::<RdpCursorMotion>();
+        // The remembered position comes first: it is the one the app has
+        // actually been told about, and it survives a momentary loss of the
+        // live cursor. The live cursor is the fallback for the frames
+        // before the first move ever arrived.
+        //
+        // A position outside the surface is not an anchor: the layer still
+        // hears every mouse event, so a pointer that moved off the remote
+        // area would otherwise draw the server's cursor out there too.
+        let local = motion
+            .local
+            .filter(|point| bounds.contains(*point))
+            .or_else(|| cursor.position_over(bounds));
         let point = rdp_cursor_anchor(
-            cursor.position_over(bounds),
+            local,
             motion.use_server.then_some(visual.position).flatten(),
             bounds,
             self.scale_x,
@@ -1474,15 +1526,34 @@ impl iced::advanced::Widget<Message, Theme, iced::Renderer> for RdpCursorLayer {
     }
     fn mouse_interaction(
         &self,
-        _tree: &iced::advanced::widget::Tree,
+        tree: &iced::advanced::widget::Tree,
         layout: iced::advanced::Layout<'_>,
         cursor: mouse::Cursor,
         _viewport: &iced::Rectangle,
         _renderer: &iced::Renderer,
     ) -> mouse::Interaction {
-        if self.visual.as_ref().is_some_and(|v| v.shape.is_some())
-            && cursor.is_over(layout.bounds())
-        {
+        // The OS pointer is hidden over the remote surface whenever the
+        // server owns the pointer there: either it sent a bitmap for us to
+        // draw, or it asked for the pointer to be hidden. Otherwise the local
+        // pointer would sit on top of the remote one.
+        //
+        // It comes back by itself once the pointer leaves the surface, since
+        // `Hidden` is only published while the cursor is over the bounds.
+        let owns_pointer = self
+            .visual
+            .as_ref()
+            .is_some_and(|v| v.hidden || v.shape.is_some());
+        // Whether the pointer is over the surface is decided from the
+        // remembered position, not from the live cursor: the OS pointer must
+        // stay hidden over the remote surface even while the window briefly
+        // reports the pointer as gone, or the local arrow would sit on top
+        // of the server's cursor.
+        let motion = tree.state.downcast_ref::<RdpCursorMotion>();
+        let over = motion
+            .local
+            .or_else(|| cursor.position_over(layout.bounds()))
+            .is_some_and(|point| layout.bounds().contains(point));
+        if owns_pointer && over {
             mouse::Interaction::Hidden
         } else {
             mouse::Interaction::None
@@ -1532,4 +1603,36 @@ mod rdp_cursor_tests {
             assert_eq!(b.height, 24.0 / scale);
         }
     }
+}
+
+/// The drawn server pointer's shape and hotspot, for the acceptance harness.
+///
+/// `RdpCursorVisual`'s fields are private to this module, so a reader outside
+/// it cannot check that the bitmap the app draws really carries the hotspot
+/// the server announced. This exposes exactly that, and nothing else: the
+/// pixels live in the widget tree, not here.
+#[cfg(feature = "native-rdp-acceptance")]
+pub(crate) fn cursor_visual_summary(app: &AditApp, id: SessionId) -> Option<(u16, u16, u16, u16, u64)> {
+    let visual = app.desktop_panes.cursors.get(&id)?;
+    let shape = visual.shape.as_ref()?;
+    Some((
+        shape.width,
+        shape.height,
+        shape.hotspot_x,
+        shape.hotspot_y,
+        shape.generation,
+    ))
+}
+
+/// The pixels the app is about to draw for the server pointer.
+///
+/// The acceptance harness has to compare what the app draws against the
+/// bitmap the server announced. The shape summary above carries the geometry
+/// but not the pixels, and the pixels are what a screenshot is matched
+/// against — so the harness gets them verbatim rather than a re-encoding.
+#[cfg(feature = "native-rdp-acceptance")]
+pub(crate) fn cursor_visual_rgba(app: &AditApp, id: SessionId) -> Option<(u16, u16, Vec<u8>)> {
+    let visual = app.desktop_panes.cursors.get(&id)?;
+    let shape = visual.shape.as_ref()?;
+    Some((shape.width, shape.height, shape.rgba.clone()))
 }

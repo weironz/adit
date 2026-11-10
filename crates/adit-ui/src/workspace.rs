@@ -196,8 +196,8 @@ pub(crate) fn workspace(app: &AditApp) -> Element<'_, Message> {
 /// mapped to remote-desktop pixels. Presented 1:1 in the steady state,
 /// aspect-preserved in fit mode, and stretched per axis while a resize is in
 /// flight — see `rdp_fit_factors` for why the transition must not preserve
-/// aspect. A single OS cursor is shown (the server pointer isn't composited),
-/// so the cursor can follow local motion without a network round trip.
+/// aspect. The server pointer is composited over the picture when the server
+/// sends one, and the local OS pointer is hidden while the server owns it.
 pub(crate) fn rdp_surface_view(app: &AditApp) -> Element<'_, Message> {
     let (sw, sh) = app.rdp_surface_size.unwrap_or((0, 0));
     // One scale per axis for the whole function, folding the fit factors into
@@ -530,8 +530,15 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
                 button(text("⌄").size(13))
                     .padding([0, 10])
                     .height(Length::Fixed(14.0))
-                    .style(|_theme, status| rdp_toolbar_button_style(false, true, status))
-                    .on_press(Message::ToggleRdpToolbarCollapsed),
+                    .style(|_theme, _status| {
+                        // The glyph is only drawn while the zone is hovered, so it
+                        // always wears the hovered style. It deliberately has no
+                        // `on_press`: a button with a handler publishes `Pointer`,
+                        // which outranks the remote pointer's `Hidden`, and the local
+                        // arrow would come back over the whole desktop. The zone takes
+                        // the click instead.
+                        rdp_toolbar_button_style(false, true, button::Status::Hovered)
+                    }),
                 container(text(t("展开工具栏")).size(11))
                     .padding([3, 7])
                     .style(|_theme| tooltip_style()),
@@ -541,7 +548,15 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         } else {
             Space::new().into()
         };
-        let zone = mouse_area(opaque(
+        // The zone is deliberately NOT opaque. `opaque` publishes `Idle`, which
+        // outranks the remote pointer's `Hidden`, and a `Stack` that sees a
+        // topmost layer with a mouse interaction hands the layers below it an
+        // UNAVAILABLE cursor: the server's bitmap stopped being drawn anywhere in
+        // the pane, the remote stopped receiving pointer moves, and the local
+        // arrow came back - the same defect as the server pointer not being
+        // drawn, in a 96x20 box. With no interaction of its own the zone falls
+        // through to the desktop layer, which owns the pointer there.
+        let zone = mouse_area(
             container(tab)
                 .center_x(Length::Fixed(RDP_TOOLBAR_REVEAL_WIDTH))
                 .center_y(Length::Fixed(RDP_TOOLBAR_REVEAL_HEIGHT))
@@ -556,9 +571,13 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
                         container::Style::default()
                     }
                 }),
-        ))
+        )
         .on_enter(Message::RdpToolbarHovered(true))
-        .on_exit(Message::RdpToolbarHovered(false));
+        .on_exit(Message::RdpToolbarHovered(false))
+        // The click belongs to the zone, not to the glyph: the zone is the only
+        // region that must stay free of a mouse interaction, and a `mouse_area`
+        // publishes the interaction of its content, not one of its own.
+        .on_press(Message::ToggleRdpToolbarCollapsed);
 
         return column![
             row![Space::new().width(Fill), zone, Space::new().width(Fill)],

@@ -218,3 +218,75 @@ mod tests {
         }
     }
 }
+
+/// Render an error together with every cause behind it.
+///
+/// IronRDP's `SessionError` prints only its outermost context and a kind
+/// ("custom error"); the source chain — the part that names the PDU the
+/// server actually sent — is dropped by `to_string()`. The helper log is the
+/// only window into a failed RDP session (the GUI discards the helper's
+/// stderr), so a flattened error hides the one fact that would explain it.
+pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(", caused by: ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
+}
+
+#[cfg(test)]
+mod error_chain_tests {
+    use super::error_chain;
+    use std::error::Error;
+    use std::fmt;
+
+    #[derive(Debug)]
+    struct Inner;
+
+    impl fmt::Display for Inner {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "not enough bytes")
+        }
+    }
+
+    impl Error for Inner {}
+
+    #[derive(Debug)]
+    struct Middle(Inner);
+
+    impl fmt::Display for Middle {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            write!(f, "decode error")
+        }
+    }
+
+    impl Error for Middle {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            Some(&self.0)
+        }
+    }
+
+    /// A flattened error is what made the helper log say only "custom error"
+    /// while the real cause — the PDU the server sent — stayed invisible. The
+    /// chain has to survive every hop.
+    #[test]
+    fn keeps_every_cause_in_the_chain() {
+        let text = error_chain(&Middle(Inner));
+        assert_eq!(
+            text,
+            "decode error, caused by: not enough bytes",
+            "the innermost cause must survive"
+        );
+    }
+
+    /// An error with no cause must not gain a dangling "caused by".
+    #[test]
+    fn a_chainless_error_stands_alone() {
+        let text = error_chain(&Inner);
+        assert_eq!(text, "not enough bytes");
+        assert!(!text.contains("caused by"));
+    }
+}

@@ -885,7 +885,7 @@ pub(crate) async fn run_session(
             (&shared_display, &mut pending_layout, &mut pending_resize),
         )
         .await
-        .map_err(|e| RdpError::Session(e.to_string()))?
+        .map_err(|e| RdpError::Session(crate::error_chain(&e)))?
         {
             None => return Ok(()),
             Some(redir) => {

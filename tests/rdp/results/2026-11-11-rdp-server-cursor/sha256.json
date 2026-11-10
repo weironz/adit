@@ -1,0 +1,86 @@
+{
+  "archive": "2026-11-11-rdp-server-cursor",
+  "issue": "https://github.com/weironz/adit/issues/92",
+  "files": {
+    "analysis.json": {
+      "sha256": "85b34c2ab6f51e532f88f1ee1d64ca4a8d3b3edb1e5094efb072a4fc2cbf864f",
+      "bytes": 1379
+    },
+    "bitmap-01-arrow-32x32.rgba": {
+      "sha256": "e07d4e60570635ed575d744e86b519bdd26535d0eaaec55a24d74349510bd054",
+      "bytes": 4096
+    },
+    "bitmap-02-ibeam-32x32.rgba": {
+      "sha256": "15ad79f6e41866652d8194f1c8b823c37b1a84a1e6b90ca5c6fd0884e1a2dd7e",
+      "bytes": 4096
+    },
+    "bitmap-03-arrow-32x32.rgba": {
+      "sha256": "e07d4e60570635ed575d744e86b519bdd26535d0eaaec55a24d74349510bd054",
+      "bytes": 4096
+    },
+    "bitmap-04-ibeam-32x32.rgba": {
+      "sha256": "15ad79f6e41866652d8194f1c8b823c37b1a84a1e6b90ca5c6fd0884e1a2dd7e",
+      "bytes": 4096
+    },
+    "bitmap-05-xterm-cursor-9x16.rgba": {
+      "sha256": "511009967dc63ec1f77f39d9cbd788128c8d841a4ebd62ec1575d68c56d376e4",
+      "bytes": 576
+    },
+    "bitmap-06-toolbar-zone-32x32.rgba": {
+      "sha256": "e07d4e60570635ed575d744e86b519bdd26535d0eaaec55a24d74349510bd054",
+      "bytes": 4096
+    },
+    "bitmap-07-outside-32x32.rgba": {
+      "sha256": "e07d4e60570635ed575d744e86b519bdd26535d0eaaec55a24d74349510bd054",
+      "bytes": 4096
+    },
+    "bitmap-08-scaled-arrow-32x32.rgba": {
+      "sha256": "e07d4e60570635ed575d744e86b519bdd26535d0eaaec55a24d74349510bd054",
+      "bytes": 4096
+    },
+    "capture-01-arrow.png": {
+      "sha256": "8af4e0e06ce08d3926e9e6eaddaf005681f5f427a91d3026ec415a733c3c8215",
+      "bytes": 69502
+    },
+    "capture-02-ibeam.png": {
+      "sha256": "8f262c32c74d9dc75048300a5c76d8ee281e057089206daf8f38c63aae142016",
+      "bytes": 69329
+    },
+    "capture-03-arrow.png": {
+      "sha256": "91fbe5b28527d88aca96bd695ab7f2f11c3c32f0988ff37bcee0bbe287e152b2",
+      "bytes": 69591
+    },
+    "capture-04-ibeam.png": {
+      "sha256": "307fdafcd98d80ed9e7918b552f3b93b351234687f27bcd507d981d11e22d676",
+      "bytes": 69330
+    },
+    "capture-05-xterm-cursor.png": {
+      "sha256": "7e4714c090dc5877b7fa331b754e8f309087fcbb397670b37cc4a80cf05c2311",
+      "bytes": 69290
+    },
+    "capture-06-toolbar-zone.png": {
+      "sha256": "2e184248258528dbc5bdad75607d99e75dbb5868c26ce89015ca21e38ea31946",
+      "bytes": 73141
+    },
+    "capture-07-outside.png": {
+      "sha256": "4c98ef2d098989a68c9b53c11575d3855846eec7641a36533a43cf694d7343f1",
+      "bytes": 69276
+    },
+    "capture-08-scaled-arrow.png": {
+      "sha256": "a71a261244527d2e238ee8c43ee4d6de2db735c2610ea7298a141b4aa871cd7b",
+      "bytes": 46628
+    },
+    "events.jsonl": {
+      "sha256": "458244a94d27615a7173ecfa4fb34108f4c8e1ea13e552968d7fd19005cf13ce",
+      "bytes": 24784
+    },
+    "provenance.json": {
+      "sha256": "eead9c5f1e24ec86b344b123e0ac6c724a38342a49632c0aeaf47de9f46e089e",
+      "bytes": 1254
+    },
+    "README.md": {
+      "sha256": "0631625e50ae872ecaa64c0d40ac8188989d025c4d11ec4b117e7649d34b2edb",
+      "bytes": 7422
+    }
+  }
+}

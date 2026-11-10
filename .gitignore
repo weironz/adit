@@ -28,3 +28,11 @@ logs
 .claude/
 *.suo
 *.sw?
+
+# Local acceptance scratch: probe drivers, captured frames, patched copies of
+# third-party sources. Never part of the build, and the probe drivers hold a
+# test-host password that must not reach the repository.
+.scratch/
+
+# A concept mock from a design discussion, unrelated to the build.
+adit-workspace-concept.png

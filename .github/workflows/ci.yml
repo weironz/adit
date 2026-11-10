@@ -101,6 +101,12 @@ jobs:
       - name: Clippy the opt-in native VNC acceptance harness
         run: cargo clippy -p adit-ui --example vnc_native_acceptance --features native-vnc-acceptance --locked -- -D warnings
 
+      - name: Clippy the opt-in native RDP acceptance harness
+        run: cargo clippy -p adit-ui --all-targets --features native-rdp-acceptance --locked -- -D warnings
+
+      - name: Test the opt-in native RDP acceptance harness
+        run: cargo test -p adit-ui --features native-rdp-acceptance --locked --lib
+
       - name: Clippy the opt-in native workbench acceptance harness
         run: cargo clippy -p adit-ui --all-targets --features native-workbench-acceptance --locked -- -D warnings
 
