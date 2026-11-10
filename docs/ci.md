@@ -7,7 +7,18 @@
 | Windows x64 | `home-workstation-windows-adit-01` | `self-hosted, Windows, X64, home-workstation, repo-adit` |
 | Linux x64 | `home-workstation-linux-adit-01` | `self-hosted, Linux, X64, home-workstation, repo-adit` |
 
-ARM64 与 macOS 暂停，不回退到 GitHub 托管机器。工作流可由 main push、同仓库 PR 或手动触发；外部 fork PR 不在持久化 runner 上执行。
+ARM64 与 macOS 暂停，不回退到 GitHub 托管机器。
+
+### 当前环境的 Linux runner 缺口
+
+这台宿主机上只登记了 Windows runner（`home-workstation-windows-adit-01`），
+GitHub 侧没有可调度的 `home-workstation-linux-adit-01`。因此 `ci.yml` 矩阵里的
+`linux-x64` 子任务，以及只跑 Linux 的 `ui-native.yml`，会一直停在 queued，直到
+被下一次运行取消——**它们并不是「跑失败」，而是根本没有开始执行**。
+
+判断一次 CI 结果时必须区分这两种情况：看 `jobs` 里子任务的 `status` 是
+`queued`（等 runner）还是 `completed`（跑完了）。只有 Windows 子任务能作为
+当前环境的实际门禁；Linux 侧的覆盖需要在 Linux 机器上单独复验。工作流可由 main push、同仓库 PR 或手动触发；外部 fork PR 不在持久化 runner 上执行。
 
 ## 依赖准备
 
