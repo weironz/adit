@@ -238,7 +238,7 @@ in `Cargo.toml`. Only **five** patches differ from crates.io `ironrdp-connector`
 `0.10.0`; each is tagged `ADIT PATCH`. Find them with:
 
 ```
-grep -rn "ADIT PATCH" crates/adit-rdp/vendor/
+grep -rn "ADIT PATCH" crates/adit-rdp/vendor/ironrdp-connector/
 ```
 
 That finds **six** markers, not five: five of them are in `src/connection.rs`,
