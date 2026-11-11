@@ -234,15 +234,17 @@ stream replays only in arrival order.
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
 Pulled in via `[patch.crates-io] ironrdp-connector = { path = "vendor/ironrdp-connector" }`
-in `Cargo.toml`. Only **five** sites differ from crates.io `ironrdp-connector`
+in `Cargo.toml`. Only **five** patches differ from crates.io `ironrdp-connector`
 `0.10.0`; each is tagged `ADIT PATCH`. Find them with:
 
 ```
 grep -rn "ADIT PATCH" crates/adit-rdp/vendor/
 ```
 
-Four are in `src/connection.rs`; the fifth is the new `Config::client_monitors`
-field in `src/lib.rs`:
+That finds **six** markers, not five: five of them are in `src/connection.rs`,
+and the sixth is the new `Config::client_monitors` field in `src/lib.rs` — patch
+5 below is one logical change that spans both files, so it carries a marker on
+each side:
 
 1. **RDSTLS on redirect** (`ConnectionInitiationSendRequest`). When the config
    carries a routing token (i.e. we're following a GNOME handover), request
@@ -291,8 +293,17 @@ field in `src/lib.rs`:
    the block needs no normalisation; only the inclusive `right`/`bottom` wire
    convention differs from Adit's own struct.
 
-> Keeping the diff to five marked sites across two files is deliberate:
-> re-vendoring a newer `ironrdp-connector` is a 5-hunk reapply, and each patch is
+   FreeRDP additionally gates the block on the server having advertised
+   `EXTENDED_CLIENT_DATA_SUPPORTED` in its negotiation response
+   (`gcc_write_client_data_blocks`). We do not: the GCC blocks exchange *is*
+   the extended-client-data mechanism, and upstream IronRDP already emits
+   core/security/network blocks unconditionally, so a server that could not
+   parse extended client data would already have failed before reaching this
+   block. Gating it would mean threading the negotiation response flags
+   through four connector states for no additional safety.
+
+> Keeping the diff to five patches across two files is deliberate: re-vendoring
+> a newer `ironrdp-connector` is a 5-patch reapply, and each patch is
 > independently removable as upstream closes the gap.
 
 ## Re-vendoring checklist
@@ -300,7 +311,7 @@ field in `src/lib.rs`:
 When bumping IronRDP:
 
 1. Copy the new `ironrdp-connector` source into `vendor/ironrdp-connector/`.
-2. Re-apply the five `ADIT PATCH` hunks above (or drop any that upstream fixed).
+2. Re-apply the five `ADIT PATCH` patches above (or drop any that upstream fixed).
 3. `cargo build --bin adit-rdp-host` in `crates/adit-rdp/` (its own workspace).
 4. Smoke-test against a GNOME system-mode host — see the ignored harness
    `crates/adit-rdp-proto/tests/debug_connect.rs`.
