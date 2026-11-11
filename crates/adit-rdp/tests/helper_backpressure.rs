@@ -49,6 +49,7 @@ fn unread_stdout_cannot_keep_the_real_helper_process_alive() {
             enable_clipboard: true,
             enable_audio: false,
             quality: Quality::High,
+            monitors: Vec::new(),
         }),
     )
     .unwrap();

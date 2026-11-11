@@ -110,6 +110,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // refuses it, so the driver can be told to accept it.
             enable_audio: std::env::var_os("ADIT_PROBE_AUDIO").is_some(),
             quality: Default::default(),
+            monitors: Vec::new(),
         }),
     )?;
     let mut output = child.stdout.take().ok_or("helper stdout missing")?;

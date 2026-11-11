@@ -79,10 +79,12 @@ tracing = "0.1"
 # RUST_LOG is set, so normal runs stay silent.
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
-# Vendored + patched ironrdp-connector (crates.io 0.10.0 + three marked hunks):
+# Vendored + patched ironrdp-connector (crates.io 0.10.0 + five marked hunks):
 # RDSTLS on the GNOME handover redirect, EGFX capability advertisement, and
-# dropping the MCS message channel to dodge a connect-time deadlock. Byte-for-byte
-# identical to upstream otherwise. Full rationale + re-vendoring steps in
+# dropping the MCS message channel to dodge a connect-time deadlock, and
+# advertising the client's monitor geometry in the GCC capabilities exchange.
+# Byte-for-byte identical to upstream otherwise. Full rationale + re-vendoring
+# steps in
 # IRONRDP-PATCHES.md; each hunk is tagged `ADIT PATCH` in
 # vendor/ironrdp-connector/src/connection.rs.
 [dev-dependencies]

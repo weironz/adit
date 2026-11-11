@@ -234,14 +234,15 @@ stream replays only in arrival order.
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
 Pulled in via `[patch.crates-io] ironrdp-connector = { path = "vendor/ironrdp-connector" }`
-in `Cargo.toml`. Only **three** sites differ from crates.io `ironrdp-connector`
+in `Cargo.toml`. Only **five** sites differ from crates.io `ironrdp-connector`
 `0.10.0`; each is tagged `ADIT PATCH`. Find them with:
 
 ```
 grep -rn "ADIT PATCH" crates/adit-rdp/vendor/
 ```
 
-All four are in `src/connection.rs`:
+Four are in `src/connection.rs`; the fifth is the new `Config::client_monitors`
+field in `src/lib.rs`:
 
 1. **RDSTLS on redirect** (`ConnectionInitiationSendRequest`). When the config
    carries a routing token (i.e. we're following a GNOME handover), request
@@ -273,16 +274,33 @@ All four are in `src/connection.rs`:
    suppresses it if Adit ever turns it on. Drop this the moment the vendored crate
    is built under a lint table that enables the lint.
 
-> Keeping the diff to four marked sites in one file is deliberate: re-vendoring a
-> newer `ironrdp-connector` is a 4-hunk reapply, and each patch is independently
-> removable as upstream closes the gap.
+5. **Client Monitor Data advertisement** (`Config::client_monitors` in
+   `src/lib.rs`, consumed by `create_gcc_blocks` in `src/connection.rs`). Upstream
+   hard-codes `monitor: None` in the GCC blocks, so the client never tells the
+   server what its monitor geometry is at connect time and the server can only
+   size its virtual desktop from `desktop_size`. Adit knows the real layout
+   (it is persisted per profile and re-negotiated later over the DisplayControl
+   DVC), so the connector now carries it and emits the GCC Client Monitor Data
+   block.
+
+   The block is sent **only when there is more than one monitor**, matching
+   FreeRDP (`gcc_write_client_monitor_data`): a single-screen client sends no
+   monitor block at all, and a one-monitor block makes some servers reject the
+   connection. The geometry is already relative to the primary monitor at the
+   origin — the same coordinates the DisplayControl channel later confirms — so
+   the block needs no normalisation; only the inclusive `right`/`bottom` wire
+   convention differs from Adit's own struct.
+
+> Keeping the diff to five marked sites across two files is deliberate:
+> re-vendoring a newer `ironrdp-connector` is a 5-hunk reapply, and each patch is
+> independently removable as upstream closes the gap.
 
 ## Re-vendoring checklist
 
 When bumping IronRDP:
 
 1. Copy the new `ironrdp-connector` source into `vendor/ironrdp-connector/`.
-2. Re-apply the three `ADIT PATCH` hunks above (or drop any that upstream fixed).
+2. Re-apply the five `ADIT PATCH` hunks above (or drop any that upstream fixed).
 3. `cargo build --bin adit-rdp-host` in `crates/adit-rdp/` (its own workspace).
 4. Smoke-test against a GNOME system-mode host — see the ignored harness
    `crates/adit-rdp-proto/tests/debug_connect.rs`.

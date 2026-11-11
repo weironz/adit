@@ -1907,6 +1907,7 @@ mod display_deadline_tests {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         };
         let connection = ConnectionResult {
             io_channel_id: 1003,
@@ -2279,6 +2280,7 @@ mod display_deadline_tests {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         };
         let connection = ConnectionResult {
             io_channel_id: 1003,
@@ -2779,6 +2781,7 @@ mod display_deadline_tests {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         };
         let connection = ConnectionResult {
             io_channel_id: 1003,
@@ -3136,6 +3139,7 @@ mod display_deadline_tests {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         };
         let connection = ConnectionResult {
             io_channel_id: 1003,
@@ -3306,6 +3310,7 @@ mod display_deadline_tests {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         };
         let config = build_connector_config(&request, None);
         let connection = ConnectionResult {
