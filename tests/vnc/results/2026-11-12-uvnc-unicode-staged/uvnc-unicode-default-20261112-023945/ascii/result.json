@@ -1,0 +1,20 @@
+{
+    "case":  "ascii",
+    "mode":  "full_unicode",
+    "outcome":  "failed",
+    "input":  "abc",
+    "input_scalars":  [
+                          "U+0061",
+                          "U+0062",
+                          "U+0063"
+                      ],
+    "expected":  "abc",
+    "expected_scalars":  [
+                             "U+0061",
+                             "U+0062",
+                             "U+0063"
+                         ],
+    "rejection_expected":  false,
+    "clipboard_send_used":  false,
+    "error":  "TextBox readiness failed"
+}

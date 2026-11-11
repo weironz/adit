@@ -1,5 +1,20 @@
 # VNC fixture results
 
+## 2026-11-12 UltraVNC staged acceptance: compatibility mode passes 5/5
+
+[2026-11-12 UltraVNC staged](2026-11-12-uvnc-unicode-staged/README.md) is the
+real-machine answer to the last open item of
+[#205](https://github.com/weironz/adit/issues/205): portable UltraVNC 1.8.3.0 in
+the VM's **console** session, the production `TEXT` entry, and an actual WinForms
+TextBox. With the BMP compatibility mode on, both non-BMP cases reject the whole
+commit — `input_delta` press/release/keypress/text_changes all zero — and the
+other three consume their exact scalars. Staged counting also explains the old
+"24 releases over the lifecycle": every case shows one unrelated key pair in the
+**connection** phase, the input phase is exact, and the close phase is always
+zero. The default Unicode run kept the vendor's `U+1F60A → U+F60A` truncation as
+a failure and lost its first case to a window-readiness flake, which the fixture
+now waits 30 s for (readiness only) instead of 10 s.
+
 ## 2026-11-11 TightVNC application mode could not listen on the host
 
 [2026-11-11 TightVNC application mode blocked](2026-11-11-tight-app-mode-blocked/README.md)

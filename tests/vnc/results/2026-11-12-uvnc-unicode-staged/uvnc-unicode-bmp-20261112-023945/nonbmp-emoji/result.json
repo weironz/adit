@@ -1,0 +1,132 @@
+{
+    "case":  "nonbmp-emoji",
+    "mode":  "bmp_compatibility",
+    "outcome":  "passed",
+    "input":  "😊",
+    "input_scalars":  [
+                          "U+1F60A"
+                      ],
+    "expected":  "",
+    "expected_scalars":  [
+
+                         ],
+    "rejection_expected":  true,
+    "clipboard_send_used":  false,
+    "before":  {
+                   "pid":  11992,
+                   "box_hwnd":  525412,
+                   "text":  "",
+                   "scalars":  [
+
+                               ],
+                   "focused":  true,
+                   "press":  0,
+                   "release":  0,
+                   "keypress":  0,
+                   "unfocused_input":  0,
+                   "focus_losses":  0,
+                   "text_changes":  0
+               },
+    "native_before":  {
+                          "foreground_pid":  11992,
+                          "foreground_hwnd":  525354,
+                          "gui_ok":  true,
+                          "focus_hwnd":  525412
+                      },
+    "ack_before_received":  true,
+    "connected_before":  {
+                             "pid":  11992,
+                             "box_hwnd":  525412,
+                             "text":  "",
+                             "scalars":  [
+
+                                         ],
+                             "focused":  true,
+                             "press":  1,
+                             "release":  1,
+                             "keypress":  0,
+                             "unfocused_input":  0,
+                             "focus_losses":  0,
+                             "text_changes":  0
+                         },
+    "native_connected_before":  {
+                                    "foreground_pid":  11992,
+                                    "foreground_hwnd":  525354,
+                                    "gui_ok":  true,
+                                    "focus_hwnd":  525412
+                                },
+    "connection_delta":  {
+                             "press":  1,
+                             "release":  1,
+                             "keypress":  0,
+                             "text_changes":  0
+                         },
+    "connected_after":  {
+                            "pid":  11992,
+                            "box_hwnd":  525412,
+                            "text":  "",
+                            "scalars":  [
+
+                                        ],
+                            "focused":  true,
+                            "press":  1,
+                            "release":  1,
+                            "keypress":  0,
+                            "unfocused_input":  0,
+                            "focus_losses":  0,
+                            "text_changes":  0
+                        },
+    "native_connected_after":  {
+                                   "foreground_pid":  11992,
+                                   "foreground_hwnd":  525354,
+                                   "gui_ok":  true,
+                                   "focus_hwnd":  525412
+                               },
+    "input_delta":  {
+                        "press":  0,
+                        "release":  0,
+                        "keypress":  0,
+                        "text_changes":  0
+                    },
+    "ack_after_received":  true,
+    "after":  {
+                  "pid":  11992,
+                  "box_hwnd":  525412,
+                  "text":  "",
+                  "scalars":  [
+
+                              ],
+                  "focused":  true,
+                  "press":  1,
+                  "release":  1,
+                  "keypress":  0,
+                  "unfocused_input":  0,
+                  "focus_losses":  0,
+                  "text_changes":  0
+              },
+    "native_after":  {
+                         "foreground_pid":  11992,
+                         "foreground_hwnd":  525354,
+                         "gui_ok":  true,
+                         "focus_hwnd":  525412
+                     },
+    "driver_exit":  0,
+    "close_delta":  {
+                        "press":  0,
+                        "release":  0,
+                        "keypress":  0,
+                        "text_changes":  0
+                    },
+    "checks":  {
+                   "driver_ready":  true,
+                   "driver_exit_zero":  true,
+                   "acknowledged_input_phase":  true,
+                   "same_target":  true,
+                   "target_focused":  true,
+                   "all_input_focused":  true,
+                   "input_counts_correct":  true,
+                   "compatibility_notice_correct":  true,
+                   "exact_scalars":  true,
+                   "final_scalars_unchanged":  true
+               }
+}

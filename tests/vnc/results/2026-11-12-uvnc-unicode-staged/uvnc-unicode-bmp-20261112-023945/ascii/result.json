@@ -1,0 +1,140 @@
+{
+    "case":  "ascii",
+    "mode":  "bmp_compatibility",
+    "outcome":  "passed",
+    "input":  "abc",
+    "input_scalars":  [
+                          "U+0061",
+                          "U+0062",
+                          "U+0063"
+                      ],
+    "expected":  "abc",
+    "expected_scalars":  [
+                             "U+0061",
+                             "U+0062",
+                             "U+0063"
+                         ],
+    "rejection_expected":  false,
+    "clipboard_send_used":  false,
+    "before":  {
+                   "pid":  9848,
+                   "box_hwnd":  394330,
+                   "text":  "",
+                   "scalars":  [
+
+                               ],
+                   "focused":  true,
+                   "press":  0,
+                   "release":  0,
+                   "keypress":  0,
+                   "unfocused_input":  0,
+                   "focus_losses":  0,
+                   "text_changes":  0
+               },
+    "native_before":  {
+                          "foreground_pid":  9848,
+                          "foreground_hwnd":  394244,
+                          "gui_ok":  true,
+                          "focus_hwnd":  394330
+                      },
+    "ack_before_received":  true,
+    "connected_before":  {
+                             "pid":  9848,
+                             "box_hwnd":  394330,
+                             "text":  "",
+                             "scalars":  [
+
+                                         ],
+                             "focused":  true,
+                             "press":  1,
+                             "release":  1,
+                             "keypress":  0,
+                             "unfocused_input":  0,
+                             "focus_losses":  0,
+                             "text_changes":  0
+                         },
+    "native_connected_before":  {
+                                    "foreground_pid":  9848,
+                                    "foreground_hwnd":  394244,
+                                    "gui_ok":  true,
+                                    "focus_hwnd":  394330
+                                },
+    "connection_delta":  {
+                             "press":  1,
+                             "release":  1,
+                             "keypress":  0,
+                             "text_changes":  0
+                         },
+    "connected_after":  {
+                            "pid":  9848,
+                            "box_hwnd":  394330,
+                            "text":  "abc",
+                            "scalars":  [
+                                            "U+0061",
+                                            "U+0062",
+                                            "U+0063"
+                                        ],
+                            "focused":  true,
+                            "press":  4,
+                            "release":  4,
+                            "keypress":  3,
+                            "unfocused_input":  0,
+                            "focus_losses":  0,
+                            "text_changes":  3
+                        },
+    "native_connected_after":  {
+                                   "foreground_pid":  9848,
+                                   "foreground_hwnd":  394244,
+                                   "gui_ok":  true,
+                                   "focus_hwnd":  394330
+                               },
+    "input_delta":  {
+                        "press":  3,
+                        "release":  3,
+                        "keypress":  3,
+                        "text_changes":  3
+                    },
+    "ack_after_received":  true,
+    "after":  {
+                  "pid":  9848,
+                  "box_hwnd":  394330,
+                  "text":  "abc",
+                  "scalars":  [
+                                  "U+0061",
+                                  "U+0062",
+                                  "U+0063"
+                              ],
+                  "focused":  true,
+                  "press":  4,
+                  "release":  4,
+                  "keypress":  3,
+                  "unfocused_input":  0,
+                  "focus_losses":  0,
+                  "text_changes":  3
+              },
+    "native_after":  {
+                         "foreground_pid":  9848,
+                         "foreground_hwnd":  394244,
+                         "gui_ok":  true,
+                         "focus_hwnd":  394330
+                     },
+    "driver_exit":  0,
+    "close_delta":  {
+                        "press":  0,
+                        "release":  0,
+                        "keypress":  0,
+                        "text_changes":  0
+                    },
+    "checks":  {
+                   "driver_ready":  true,
+                   "driver_exit_zero":  true,
+                   "acknowledged_input_phase":  true,
+                   "same_target":  true,
+                   "target_focused":  true,
+                   "all_input_focused":  true,
+                   "input_counts_correct":  true,
+                   "compatibility_notice_correct":  true,
+                   "exact_scalars":  true,
+                   "final_scalars_unchanged":  true
+               }
+}

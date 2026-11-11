@@ -1,0 +1,5 @@
+ready_ms=1753
+ack=before-e3fbd88999164e11b216bf3898ccf84e
+text_rejected=unicode_compatibility
+notice=VNC 字符兼容模式：本次输入包含不兼容字符（如部分表情），整段未发送。若服务端支持这些字符，可关闭兼容模式后重新连接
+ack=after-b84ff05a0bce42419bd691fe23c66448
