@@ -393,11 +393,18 @@ is more than one monitor (FreeRDP omits it for a single screen, and a
 one-monitor block makes some servers reject the connection).
 
 What is **not** verified is acceptance against a real multi-monitor server. The
-FreeRDP shadow fixture parses the advertised list but does not act on it — it
-uses its own Xinerama-derived geometry (`shadow_client.c:206`) and implements no
-DisplayControl DVC — so it can neither confirm nor refute the behaviour.
-Verifying it needs an actual Windows or GNOME RDP server with more than one
-monitor.
+FreeRDP shadow fixture **parses and validates** the advertised list but does not
+act on it — it uses its own Xinerama-derived geometry
+(`shadow_client.c:206`) and implements no DisplayControl DVC — so it can neither
+confirm nor refute the behaviour. Verifying it needs an actual Windows or GNOME
+RDP server with more than one monitor.
+
+What the fixture *does* settle is the wire form: the server's own
+`gcc_read_client_monitor_data` accepted our block and the session connected with
+a two-monitor layout, and a deliberately inverted rectangle on the same code path
+made the server log `rdpMonitor::rect 1280x0-1279x799 invalid` and drop the
+connection. The server is therefore reading the block we send — silence on the
+well-formed layout is acceptance, not absence.
 
 ### Clipboard (CLIPRDR)
 

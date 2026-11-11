@@ -62,6 +62,96 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .and_then(|index| args.get(index + 1))
         .cloned();
 
+    // The monitor layout to advertise at connect time, as `WIDTHxHEIGHT` pairs
+    // separated by commas: `--monitors 1280x800,1280x800`. The first entry is
+    // the primary and sits at the origin; the rest are laid out left to right.
+    // A real server parses this block and rejects a malformed one, so driving
+    // it is what shows the wire form is accepted rather than merely encoded.
+    let monitor_sizes: Vec<(u16, u16)> = args
+        .iter()
+        .position(|arg| arg == "--monitors")
+        .and_then(|index| args.get(index + 1))
+        .map(|value| {
+            value
+                .split(',')
+                .filter_map(|entry| {
+                    let (w, h) = entry.trim().split_once('x')?;
+                    let (width, height) = (w.parse::<u16>().ok()?, h.parse::<u16>().ok()?);
+                    Some((width, height))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut monitors: Vec<adit_rdp_proto::Monitor> = monitor_sizes
+        .iter()
+        .enumerate()
+        .map(|(index, (width, height))| adit_rdp_proto::Monitor {
+            left: (index as i32) * i32::from(*width),
+            top: 0,
+            width: *width,
+            height: *height,
+            primary: index == 0,
+            scale_percent: 100,
+        })
+        .collect();
+    if !monitors.is_empty() {
+        println!(
+            "advertising_monitors={}",
+            monitors
+                .iter()
+                .map(|m| format!("{}x{}+{}+{}", m.width, m.height, m.left, m.top))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+    }
+
+    // A negative control for the monitor block: `--corrupt-monitors` gives the
+    // second monitor a zero width, which the helper turns into an inverted
+    // rectangle on the wire (`right` is `left + width - 1`, so a zero width
+    // yields `right < left`). A real server must reject that — FreeRDP's
+    // `gcc_read_client_monitor_data` fails the connection with
+    // `rdpMonitor::rect ... invalid`.
+    //
+    // This exists because "the server logged no error" is not evidence that
+    // the server read the block at all: it is equally consistent with the
+    // block never arriving. A deliberately broken block that the server
+    // *does* complain about turns the silence into proof, because the same
+    // code path that stayed quiet on the well-formed block is the one that
+    // speaks up on the malformed one.
+    if args.iter().any(|arg| arg == "--corrupt-monitors") && monitors.len() >= 2 {
+        monitors[1].width = 0;
+        println!("corrupted_monitors=true");
+    }
+
+    // The desktop the server is asked for. With a layout, that is the
+    // bounding box of the whole set, not the primary monitor's size.
+    //
+    // The bounding box is computed here rather than through
+    // `adit_rdp_proto::monitor_bounds`, because that validator is the app's
+    // gate, not the wire's: this probe exists to put bytes on the wire that
+    // the app would refuse to send, so that a real server's parser can be
+    // observed rejecting them.
+    let desktop_size = if monitors.len() < 2 {
+        requested_size
+    } else {
+        let left = monitors.iter().map(|m| m.left).min().unwrap_or_default();
+        let top = monitors.iter().map(|m| m.top).min().unwrap_or_default();
+        let right = monitors
+            .iter()
+            .map(|m| m.left + i32::from(m.width))
+            .max()
+            .unwrap_or_default();
+        let bottom = monitors
+            .iter()
+            .map(|m| m.top + i32::from(m.height))
+            .max()
+            .unwrap_or_default();
+        (
+            (right - left) as u16,
+            (bottom - top) as u16,
+        )
+    };
+
     println!(
         "requested_size={}x{}",
         requested_size.0, requested_size.1
@@ -102,15 +192,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             username: args[3].clone(),
             password,
             domain: domain.clone(),
-            width: requested_size.0,
-            height: requested_size.1,
+            // A multi-screen session must ask for a desktop big enough to
+            // hold the whole layout: the server sizes its virtual desktop
+            // from what we advertise, and a smaller request would clip the
+            // outer monitors. This mirrors `rdp_desktop_size` in adit-session.
+            width: desktop_size.0,
+            height: desktop_size.1,
             enable_clipboard: args.iter().any(|s| s == "--fixture-report"),
             // Some servers (the FreeRDP shadow server among them) open an
             // AUDIN dynamic channel and mis-frame the stream when the client
             // refuses it, so the driver can be told to accept it.
             enable_audio: std::env::var_os("ADIT_PROBE_AUDIO").is_some(),
             quality: Default::default(),
-            monitors: Vec::new(),
+            monitors,
         }),
     )?;
     let mut output = child.stdout.take().ok_or("helper stdout missing")?;
