@@ -304,7 +304,7 @@ const COMMON: &[(&str, &str)] = &[
     ("没有匹配的主机", "No matching hosts"),
     ("还没有会话配置", "No session profiles yet"),
     ("VNC：窗口修饰键同步超时，已释放系统键抓取", "VNC: window modifier sync timed out; system key capture released"),
-    ("VNC：当前布局的此系统组合字符不支持（未映射、死键或多字符），字符未发送；此前发送的 Win 键仍按原顺序释放", "VNC: this system key character is unsupported by the current layout (unmapped, dead key or multiple characters). Character withheld; prior Windows keys are still released in order"),
+    ("VNC：当前布局的此系统组合字符不支持（未映射、死键、存在未完成的组合或多字符），字符未发送；此前发送的 Win 键仍按原顺序释放", "VNC: this system key character is unsupported by the current layout (unmapped, dead key, an unfinished composition or multiple characters). Character withheld; prior Windows keys are still released in order"),
     ("已加载 {} 个会话配置和分组: {}", "Loaded {} session profiles and groups: {}"),
     ("使用演示会话配置，保存后写入 {}", "Using demo session profiles; saving writes to {}"),
     ("选择 SSH config（不执行其中的命令）", "Select SSH config (commands will not be executed)"),

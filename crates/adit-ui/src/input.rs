@@ -706,7 +706,7 @@ fn route_vnc_chord(app: &mut AditApp, stroke: keyboard_hook::vnc_chord::Stroke) 
                 symbol
             }
             Err(reason) => {
-                app.notice = "VNC：当前布局的此系统组合字符不支持（未映射、死键或多字符），字符未发送；此前发送的 Win 键仍按原顺序释放".into();
+                app.notice = "VNC：当前布局的此系统组合字符不支持（未映射、死键、存在未完成的组合或多字符），字符未发送；此前发送的 Win 键仍按原顺序释放".into();
                 // One diagnostic per physical press, with no typed text. The
                 // repeat/up branches above cannot flood logs or invent key-ups.
                 eprintln!("VNC system chord translation unavailable: {reason}");

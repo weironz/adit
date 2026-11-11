@@ -251,6 +251,21 @@ pub(crate) fn single_character(result: i32, text: &[u16]) -> Result<char, &'stat
     Ok(first)
 }
 
+/// Whether an unfinished local composition would rewrite the next key.
+///
+/// A pending dead key makes `ToUnicodeEx(flags = 4)` answer for the *composed*
+/// character — German acute + E is `é`, one scalar, indistinguishable from a
+/// layout that really spells é on that key. So the chord is translated only
+/// after a space probe shows nothing is waiting: with no composition pending,
+/// space is exactly U+0020 on every layout, while a pending dead key returns
+/// its spacing accent (U+00B4 for acute), or the accent plus the space when the
+/// two do not compose. No space row at all (`result == 0`) proves nothing
+/// either, so it withholds the chord instead of guessing.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn composition_pending(result: i32, text: &[u16]) -> bool {
+    single_character(result, text) != Ok(' ')
+}
+
 pub(crate) fn translate(stroke: &Stroke) -> Result<u32, &'static str> {
     if stroke.vk == 0x10 && stroke.scan == 0x36 {
         return Ok(0xffe2);
@@ -265,10 +280,29 @@ pub(crate) fn translate(stroke: &Stroke) -> Result<u32, &'static str> {
         return super::vnc_layout::translate(stroke);
     }
     #[cfg(windows)]
+    return translate_native(stroke);
+    #[cfg(not(windows))]
+    Err("native-layout-unavailable")
+}
+
+/// Layouts without a copied table: the OS answers, but only when the local
+/// composition state cannot rewrite the stroke.
+#[cfg(windows)]
+pub(crate) fn translate_native(stroke: &Stroke) -> Result<u32, &'static str> {
     unsafe {
         use windows::Win32::UI::Input::KeyboardAndMouse::{ToUnicodeEx, HKL};
         if stroke.modifiers.caps.is_none() {
             return Err("caps-state-unavailable");
+        }
+        let hkl = HKL(stroke.layout as *mut _);
+        let mut pending = [0u16; 16];
+        let probe = ToUnicodeEx(0x20, 0x39, &[0u8; 256], &mut pending, 4, Some(hkl));
+        if composition_pending(probe, &pending) {
+            // A Win chord names one physical key. Sending the composed letter
+            // would type a character the user never asked for, and flags = 4
+            // cannot be asked for the uncomposed one without consuming the
+            // accent the user is still typing locally.
+            return Err("pending-dead-key");
         }
         let mut state = [0u8; 256];
         if stroke.modifiers.shift {
@@ -316,8 +350,6 @@ pub(crate) fn translate(stroke: &Stroke) -> Result<u32, &'static str> {
             0x0100_0000 | value
         })
     }
-    #[cfg(not(windows))]
-    Err("native-layout-unavailable")
 }
 
 #[cfg(test)]
@@ -407,6 +439,98 @@ mod tests {
         assert_eq!(single_character(-1, &[0xb4]), Err("dead-key"));
         assert_eq!(single_character(1, &[0x12]), Err("control-character"));
         assert_eq!(single_character(1, &[0xd83d]), Err("invalid-utf16"));
+    }
+
+    #[test]
+    fn only_a_clean_space_proves_no_pending_composition() {
+        assert!(!composition_pending(1, &[0x20]));
+        // Pending acute rewrites the probe into its spacing accent...
+        assert!(composition_pending(1, &[0xb4]));
+        // ...or into accent + base when the two cannot compose, which is what
+        // a pending acute does to Win+R today.
+        assert!(composition_pending(2, &[0xb4, 0x72]));
+        assert!(composition_pending(-1, &[0xb4]));
+        // A layout without a space row proves nothing, so it must not pass.
+        assert!(composition_pending(0, &[0; 16]));
+    }
+
+    #[cfg(all(windows, target_pointer_width = "64"))]
+    #[test]
+    #[ignore = "needs the standard German layout preloaded; ADIT_VNC_ISOLATED_LAYOUT_TEST=1"]
+    fn pending_accent_withholds_the_chord_without_consuming_it() {
+        use windows::Win32::UI::Input::KeyboardAndMouse::{
+            GetKeyboardLayoutList, ToUnicodeEx, HKL,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{PeekMessageW, MSG, PM_NOREMOVE};
+        assert_eq!(
+            std::env::var("ADIT_VNC_ISOLATED_LAYOUT_TEST").as_deref(),
+            Ok("1"),
+            "unsupported: isolated VM required"
+        );
+        let mut layouts = [HKL::default(); 64];
+        let count = unsafe { GetKeyboardLayoutList(Some(&mut layouts)) };
+        assert!(count > 0, "unsupported: cannot enumerate loaded layouts");
+        assert!(
+            layouts[..(count as usize).min(layouts.len())]
+                .iter()
+                .any(|h| h.0 as usize == 0x0407_0407),
+            "unsupported: German must already be loaded"
+        );
+        let stroke = |vk, scan| Stroke {
+            vk,
+            scan,
+            extended: false,
+            pressed: true,
+            repeat: false,
+            layout: 0x0407_0407,
+            modifiers: Modifiers {
+                shift: false,
+                control: false,
+                alt: false,
+                right_alt: false,
+                caps: Some(false),
+            },
+        };
+        let german = crate::keyboard_hook::vnc_layout::prepare(0x0407_0407);
+        let result = std::thread::spawn(move || {
+            let mut message = MSG::default();
+            unsafe {
+                let _ = PeekMessageW(&mut message, None, 0, 0, PM_NOREMOVE);
+            }
+            let state = [0u8; 256];
+            let hkl = HKL(0x0407_0407 as *mut _);
+            let mut text = [0u16; 16];
+            let accent = unsafe { ToUnicodeEx(0xdd, 0x0d, &state, &mut text, 0, Some(hkl)) };
+            let probe = || {
+                let mut space = [0u16; 16];
+                let count = unsafe { ToUnicodeEx(0x20, 0x39, &state, &mut space, 4, Some(hkl)) };
+                (count, space)
+            };
+            let before = probe();
+            // The copied German table answers the chord without reading the
+            // composition at all, so the established path cannot regress.
+            let mapped_e = translate(&stroke(0x45, 0x12));
+            let native_e = translate_native(&stroke(0x45, 0x12));
+            let native_r = translate_native(&stroke(0x52, 0x13));
+            let after = probe();
+            text.fill(0);
+            let composed = unsafe { ToUnicodeEx(0x45, 0x12, &state, &mut text, 0, Some(hkl)) };
+            (accent, before, mapped_e, native_e, native_r, after, composed, text)
+        })
+        .join()
+        .expect("test composition thread completes");
+        let (accent, before, mapped_e, native_e, native_r, after, composed, text) = result;
+        assert!(accent < 0, "acute must establish a real pending accent");
+        assert_eq!(single_character(before.0, &before.1), Ok('\u{b4}'));
+        assert_eq!(german, Ok(()));
+        assert_eq!(mapped_e, Ok('e' as u32));
+        assert_eq!(native_e, Err("pending-dead-key"));
+        assert_eq!(native_r, Err("pending-dead-key"));
+        // Probing must not consume the accent: it is still pending after, and
+        // the user's own next keystroke still composes as before.
+        assert_eq!(single_character(after.0, &after.1), Ok('\u{b4}'));
+        assert_eq!(composed, 1);
+        assert_eq!(text[0], '\u{e9}' as u16);
     }
 
     #[test]

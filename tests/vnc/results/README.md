@@ -1,5 +1,18 @@
 # VNC fixture results
 
+## 2026-11-11 TightVNC application mode could not listen on the host
+
+[2026-11-11 TightVNC application mode blocked](2026-11-11-tight-app-mode-blocked/README.md)
+records an attempt to rerun the staged-ACK compatibility fixture for
+[#205](https://github.com/weironz/adit/issues/205) on the development
+workstation. Both hash-pinned, signature-checked servers start and never bind a
+port there — TightVNC 2.8.90 leaves `127.0.0.1:15911` unbound and the fixture
+reports `TightVNC app listener readiness failed`, and the official UltraVNC
+1.8.3.0 archive fails the same way with a log that stops before listening. The
+account is not elevated and the session is RDP, which is the environment to
+change, not the client. No TEXT case ran, so this archive is **not** acceptance
+evidence and says nothing about the compatibility policy itself.
+
 ## 2026-11-06 glyph ghosting on the remote VNC surface
 
 [2026-11-06 glyph ghosting](2026-11-06-vnc-glyph-ghosting/README.md) proves the

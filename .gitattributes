@@ -44,3 +44,9 @@ tests/rdp/results/**/*.md text eol=lf
 tests/rdp/results/**/*.json text eol=lf
 tests/rdp/results/**/*.jsonl text eol=lf
 tests/rdp/results/**/*.py text eol=lf
+
+# Same rule for the VNC fixtures: their SHA-256 manifests are checked against
+# the files on disk, so a Windows checkout must not rewrite the endings.
+tests/vnc/results/**/*.md text eol=lf
+tests/vnc/results/**/*.json text eol=lf
+tests/vnc/results/**/*.txt text eol=lf

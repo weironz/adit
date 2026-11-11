@@ -1,0 +1,5 @@
+WinVNCAppMain : server created ok
+imp_desktop_thread : SelectHDESK to Default (25c) from 184
+imp_desktop_thread : Username willz 
+vncMenu::vncMenu : vncmenu(server)
+DesktopUsersToken::getDesktopUsersToken : GetExplorerLogonPid 7348

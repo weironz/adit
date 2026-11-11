@@ -1,0 +1,43 @@
+{
+  "captured_utc": "2026-11-11T09:22:00Z",
+  "scope": "Second-vendor check: does any user-mode Windows VNC server bind on this host? Not acceptance evidence.",
+  "archive": {
+    "url": "https://uvnc.eu/download/1800/UltraVNC_1830.zip",
+    "expected_sha256": "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f",
+    "actual_sha256": "11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f"
+  },
+  "server": {
+    "relative_path": "portable/x64/winvnc.exe",
+    "file_version": "1.8.3.0",
+    "mode": "portable user application, never installed as service"
+  },
+  "launch": {
+    "arguments": ["-config", "<owned ultravnc.ini>", "-run"],
+    "ini_auth": "synthetic adit-ci, fixed-key VNC DES with reversed key bits, written through WritePrivateProfileStructW",
+    "ini_bind": { "PortNumber": 15911, "LoopbackOnly": 1, "AllowLoopback": 1, "UseIpv6": 0, "AuthHosts": "-:+127.0.0.1" },
+    "ini_input": { "InputsEnabled": 1, "LocalInputsDisabled": 0 },
+    "ini_logging": { "DebugMode": 2, "DebugLevel": 9 }
+  },
+  "observed": {
+    "process_alive_after_8s": true,
+    "process_exit_code": null,
+    "tcp_listeners_on_15911": 0,
+    "udp_endpoints_on_15911": 0,
+    "log_tail": "WinVNCAppMain : server created ok / imp_desktop_thread : SelectHDESK to Default (25c) from 184 / imp_desktop_thread : Username willz / vncMenu::vncMenu : vncmenu(server) / DesktopUsersToken::getDesktopUsersToken : GetExplorerLogonPid 7348",
+    "log_file": "ultravnc-1830.log.txt"
+  },
+  "environment": {
+    "os": "Microsoft Windows 11 10.0.26300 x64",
+    "elevated": false,
+    "session_id": 1,
+    "session_kind": "rdp",
+    "console_session_logged_in": false,
+    "firewall_profiles_enabled": ["Domain", "Private", "Public"]
+  },
+  "cleanup": {
+    "owned_processes_stopped": true,
+    "listeners_remaining_on_15911_or_5900": 0,
+    "udp_remaining_on_15911": 0
+  },
+  "conclusion": "TightVNC 2.8.90 and UltraVNC 1.8.3.0 both start and never bind in this non-elevated RDP session. The block is environmental, so no Windows application-consumption sample exists for issue 205 from this attempt."
+}
