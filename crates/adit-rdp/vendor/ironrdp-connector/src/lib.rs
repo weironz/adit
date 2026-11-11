@@ -256,6 +256,20 @@ pub struct Config {
     /// [\[MS-RDPBCGR\] 2.2.1.3.7]: https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/861f2bbb-6ca2-4c5a-8c44-0714fa901e70
     /// [`MultiTransportChannelData`]: ironrdp_pdu::gcc::MultiTransportChannelData
     pub multitransport_flags: Option<gcc::MultiTransportFlags>,
+
+    /// ADIT PATCH: the client's own monitor geometry, advertised to the server
+    /// in the GCC Client Monitor Data block during capabilities exchange.
+    ///
+    /// `None` (or a single monitor) sends no monitor block at all, which is
+    /// what a plain single-screen client does. A list of two or more makes the
+    /// server size its initial virtual desktop from the advertised geometry
+    /// instead of from [`Config::desktop_size`].
+    ///
+    /// The list is the *whole* layout, not a delta: the server replaces its
+    /// desktop with what it is told. The primary monitor must be at (0, 0) —
+    /// the coordinates are relative to it, exactly as mstsc and FreeRDP send
+    /// them.
+    pub client_monitors: Option<Vec<gcc::Monitor>>,
 }
 
 ironrdp_core::assert_impl!(Config: Send, Sync);

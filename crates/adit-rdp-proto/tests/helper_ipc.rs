@@ -88,6 +88,7 @@ fn helper_reports_error_on_unreachable_host() {
         enable_clipboard: false,
         enable_audio: false,
         quality: adit_rdp_proto::Quality::default(),
+        monitors: Vec::new(),
     };
     write_msg(&mut stdin, &ClientMsg::Connect(request)).expect("send Connect");
 
@@ -156,6 +157,7 @@ fn helper_rejects_legacy_and_mismatched_apps_without_opening_a_connection() {
                 enable_clipboard: true,
                 enable_audio: false,
                 quality: adit_rdp_proto::Quality::default(),
+                monitors: Vec::new(),
             }),
         )
         .unwrap();

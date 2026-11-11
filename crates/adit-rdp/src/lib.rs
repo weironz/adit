@@ -13,6 +13,7 @@
 //! hotspot while local motion stays independent of remote frame delivery.
 
 use ironrdp_connector::{Config as ConnectorConfig, Credentials, DesktopSize};
+use ironrdp_pdu::gcc;
 use thiserror::Error;
 
 mod avc444;
@@ -164,6 +165,7 @@ pub(crate) fn build_connector_config(
         enable_server_pointer: true,
         pointer_software_rendering: false,
         multitransport_flags: None,
+        client_monitors: gcc_monitors(&request.monitors),
         performance_flags: performance_flags(request.quality),
         license_cache: None,
         timezone_info: Default::default(),
@@ -171,6 +173,39 @@ pub(crate) fn build_connector_config(
         work_dir: String::new(),
         compression_type: None,
     }
+}
+
+/// The client's monitor geometry, as the GCC Client Monitor Data block wants it.
+///
+/// The block is only meaningful for a real multi-screen layout, and FreeRDP
+/// omits it entirely for a single screen (gcc.c, `gcc_write_client_monitor_data`).
+/// Sending a one-monitor block would make a server that only understands the
+/// old single-screen case reject the connection, so a single monitor is
+/// dropped here and the plain `width` × `height` desktop is requested instead.
+///
+/// The geometry is already relative to the primary monitor at the origin —
+/// that is what `adit_rdp_proto::monitor_bounds` validates — so it needs no
+/// normalisation. `right`/`bottom` are *inclusive* on the wire, which is the
+/// one place the GCC types differ from ours.
+fn gcc_monitors(monitors: &[adit_rdp_proto::Monitor]) -> Option<Vec<gcc::Monitor>> {
+    if monitors.len() < 2 {
+        return None;
+    }
+    let converted = monitors
+        .iter()
+        .map(|m| gcc::Monitor {
+            left: m.left,
+            top: m.top,
+            right: m.left + i32::from(m.width) - 1,
+            bottom: m.top + i32::from(m.height) - 1,
+            flags: if m.primary {
+                gcc::MonitorFlags::PRIMARY
+            } else {
+                gcc::MonitorFlags::empty()
+            },
+        })
+        .collect();
+    Some(converted)
 }
 
 #[cfg(test)]
@@ -216,6 +251,120 @@ mod tests {
         ] {
             assert!(!flags.contains(disable), "High must not set {disable:?}");
         }
+    }
+
+    fn wire_monitor(left: i32, top: i32, primary: bool) -> adit_rdp_proto::Monitor {
+        adit_rdp_proto::Monitor {
+            left,
+            top,
+            width: 800,
+            height: 600,
+            primary,
+            scale_percent: 100,
+        }
+    }
+
+    /// A single-screen client must send no monitor block at all. FreeRDP omits
+    /// it for one monitor (gcc.c, `gcc_write_client_monitor_data`), and some
+    /// servers reject a connection that announces a one-monitor layout.
+    #[test]
+    fn a_single_monitor_sends_no_monitor_block() {
+        assert!(gcc_monitors(&[]).is_none());
+        assert!(gcc_monitors(&[wire_monitor(0, 0, true)]).is_none());
+    }
+
+    /// The GCC rectangle is *inclusive* on the right and bottom, ours is not:
+    /// an 800×600 monitor at the origin is 0..799 × 0..599 on the wire.
+    #[test]
+    fn the_wire_rectangle_is_inclusive() {
+        let monitors = gcc_monitors(&[wire_monitor(0, 0, true), wire_monitor(800, 0, false)])
+            .expect("two monitors");
+        assert_eq!(monitors[0].left, 0);
+        assert_eq!(monitors[0].top, 0);
+        assert_eq!(monitors[0].right, 799);
+        assert_eq!(monitors[0].bottom, 599);
+        assert_eq!(monitors[1].left, 800);
+        assert_eq!(monitors[1].right, 1599);
+    }
+
+    /// Exactly one monitor carries the primary flag; the server uses it to
+    /// anchor the layout, so a second one would make the origin ambiguous.
+    #[test]
+    fn only_the_primary_carries_the_primary_flag() {
+        let monitors = gcc_monitors(&[wire_monitor(0, 0, true), wire_monitor(800, 0, false)])
+            .expect("two monitors");
+        assert!(monitors[0].flags.contains(gcc::MonitorFlags::PRIMARY));
+        assert!(monitors[1].flags.is_empty());
+    }
+
+    /// The block's byte layout is what a server actually parses, so it is
+    /// checked against the encoder rather than against our own struct: flags,
+    /// count, then 20 bytes per monitor.
+    #[test]
+    fn the_encoded_block_matches_the_wire_layout() {
+        let monitors = gcc_monitors(&[wire_monitor(0, 0, true), wire_monitor(800, 0, false)])
+            .expect("two monitors");
+        let block = gcc::ClientMonitorData {
+            monitors: monitors.clone(),
+        };
+        let bytes = ironrdp_core::encode_vec(&block).expect("encode");
+        assert_eq!(bytes.len(), 8 + 2 * 20);
+
+        let count = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
+        assert_eq!(count, 2);
+        assert_eq!(
+            i32::from_le_bytes(bytes[8..12].try_into().unwrap()),
+            0,
+            "the primary monitor is at the origin"
+        );
+        assert_eq!(
+            i32::from_le_bytes(bytes[16..20].try_into().unwrap()),
+            799,
+            "right is inclusive"
+        );
+        assert_eq!(
+            u32::from_le_bytes(bytes[24..28].try_into().unwrap()),
+            gcc::MonitorFlags::PRIMARY.bits(),
+            "the primary flag rides in the first monitor's flags"
+        );
+    }
+
+    /// The block as the server sees it on the wire: a GCC user-data header
+    /// (type `0xC005`, length `20 * count + 12`) followed by the payload.
+    /// FreeRDP's `gcc_write_client_monitor_data` writes exactly these numbers,
+    /// and a server parses them literally — a length off by one desynchronises
+    /// everything after the block.
+    #[test]
+    fn the_gcc_block_header_matches_the_wire_format() {
+        let monitors = gcc_monitors(&[wire_monitor(0, 0, true), wire_monitor(800, 0, false)])
+            .expect("two monitors");
+        let block = gcc::ClientMonitorData {
+            monitors: monitors.clone(),
+        };
+        let payload = ironrdp_core::encode_vec(&block).expect("encode");
+
+        // The GCC user-data header the connector wraps the block in: the type
+        // followed by the length, which counts the header itself.
+        let mut wire = Vec::new();
+        wire.extend_from_slice(&0xC005u16.to_le_bytes());
+        wire.extend_from_slice(&((payload.len() + 4) as u16).to_le_bytes());
+        wire.extend_from_slice(&payload);
+
+        assert_eq!(
+            u16::from_le_bytes(wire[0..2].try_into().unwrap()),
+            0xC005,
+            "Client Monitor Data is GCC type 0xC005"
+        );
+        assert_eq!(
+            u16::from_le_bytes(wire[2..4].try_into().unwrap()),
+            20 * 2 + 12,
+            "the block length is 20 bytes per monitor plus a 12-byte header"
+        );
+        assert_eq!(
+            wire.len(),
+            4 + 8 + 2 * 20,
+            "header, then flags + count, then 20 bytes per monitor"
+        );
     }
 }
 

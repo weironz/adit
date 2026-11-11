@@ -1825,6 +1825,26 @@ impl SessionManager {
             height
         };
 
+        profile
+            .session_options
+            .validate()
+            .map_err(SessionError::Unsupported)?;
+        // The persisted monitor layout is validated above, so it is either
+        // empty or a legal 1..16-monitor arrangement.
+        let monitors = profile
+            .session_options
+            .rdp_monitors
+            .as_ref()
+            .map_or_else(Vec::new, |items| {
+                items.iter().map(rdp_client::to_wire_monitor).collect()
+            });
+        // A multi-screen session must ask for a desktop big enough to hold the
+        // whole layout: the server sizes its virtual desktop from what we
+        // advertise, and a smaller request would clip the outer monitors.
+        // mstsc and FreeRDP do the same — the requested desktop is the
+        // bounding box of the monitor set, not the primary monitor's size.
+        let (width, height) = rdp_desktop_size(&monitors, width, height)?;
+
         let request = adit_rdp_proto::ConnectRequest {
             host: host.to_string(),
             port,
@@ -1841,19 +1861,12 @@ impl SessionManager {
             enable_clipboard: self.rdp_clipboard,
             enable_audio: false,
             quality: self.profile_rdp_quality(profile_id),
+            // The layout is advertised to the server during capabilities
+            // exchange, so the remote desktop is sized from it right away
+            // instead of only after a DisplayControl round-trip.
+            monitors: monitors.clone(),
         };
 
-        profile
-            .session_options
-            .validate()
-            .map_err(SessionError::Unsupported)?;
-        let monitors = profile
-            .session_options
-            .rdp_monitors
-            .as_ref()
-            .map_or_else(Vec::new, |items| {
-                items.iter().map(rdp_client::to_wire_monitor).collect()
-            });
         let handle = RdpClientHandle::spawn_with_monitors(
             request,
             monitors,
@@ -4394,6 +4407,31 @@ fn split_domain(username: &str) -> (Option<String>, String) {
     (None, username.to_string())
 }
 
+/// The desktop size to ask the server for, given the monitor layout we are
+/// about to advertise.
+///
+/// A multi-screen session must ask for a desktop big enough to hold the whole
+/// layout: the server sizes its virtual desktop from what we advertise, and a
+/// smaller request would clip the outer monitors. mstsc and FreeRDP do the
+/// same — the requested desktop is the bounding box of the monitor set, not
+/// the primary monitor's size.
+///
+/// A single screen (or none) keeps the caller's size: that is the window we
+/// were asked to connect into, and the server resizes to it later anyway.
+fn rdp_desktop_size(
+    monitors: &[adit_rdp_proto::Monitor],
+    width: u16,
+    height: u16,
+) -> Result<(u16, u16), SessionError> {
+    if monitors.len() < 2 {
+        return Ok((width, height));
+    }
+    match adit_rdp_proto::monitor_bounds(monitors) {
+        Ok((_, _, w, h)) => Ok((w, h)),
+        Err(error) => Err(SessionError::Unsupported(error.to_owned())),
+    }
+}
+
 fn join_remote(cwd: &str, name: &str) -> String {
     if name.starts_with('/') {
         return name.to_string();
@@ -4800,6 +4838,80 @@ fn probe_terminal(
 
 #[cfg(test)]
 mod tests {
+    /// The desktop size we ask for must cover the whole layout we advertise:
+    /// the server sizes its virtual desktop from the request, so asking for
+    /// less than the layout spans would clip the outer monitors.
+    #[test]
+    fn a_multi_monitor_layout_asks_for_its_whole_bounding_box() {
+        let monitors = vec![
+            adit_rdp_proto::Monitor {
+                left: 0,
+                top: 0,
+                width: 1920,
+                height: 1080,
+                primary: true,
+                scale_percent: 100,
+            },
+            adit_rdp_proto::Monitor {
+                left: 1920,
+                top: 0,
+                width: 1280,
+                height: 1024,
+                primary: false,
+                scale_percent: 100,
+            },
+        ];
+        assert_eq!(
+            rdp_desktop_size(&monitors, 800, 600).unwrap(),
+            (3200, 1080),
+            "the request must span both monitors, not the caller's window"
+        );
+    }
+
+    /// A single screen keeps the caller's size: there is no layout to fit, and
+    /// the server resizes to the window later anyway.
+    #[test]
+    fn a_single_monitor_keeps_the_requested_size() {
+        let monitor = adit_rdp_proto::Monitor {
+            left: 0,
+            top: 0,
+            width: 1920,
+            height: 1080,
+            primary: true,
+            scale_percent: 100,
+        };
+        assert_eq!(
+            rdp_desktop_size(std::slice::from_ref(&monitor), 800, 600).unwrap(),
+            (800, 600)
+        );
+        assert_eq!(rdp_desktop_size(&[], 800, 600).unwrap(), (800, 600));
+    }
+
+    /// An illegal layout must be refused rather than quietly connecting to a
+    /// desktop that does not match what was persisted.
+    #[test]
+    fn an_illegal_layout_is_refused() {
+        let monitors = vec![
+            adit_rdp_proto::Monitor {
+                left: 0,
+                top: 0,
+                width: 1920,
+                height: 1080,
+                primary: true,
+                scale_percent: 100,
+            },
+            adit_rdp_proto::Monitor {
+                left: 0,
+                top: 0,
+                width: 1280,
+                height: 1024,
+                primary: false,
+                scale_percent: 100,
+            },
+        ];
+        assert!(rdp_desktop_size(&monitors, 800, 600).is_err());
+    }
+
     #[test]
     fn host_key_response_without_live_pending_challenge_is_rejected() {
         let mut manager = SessionManager::with_demo_profiles();

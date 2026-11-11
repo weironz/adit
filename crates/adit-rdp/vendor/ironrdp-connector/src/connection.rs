@@ -905,7 +905,23 @@ fn create_gcc_blocks<'a>(
         },
         // TODO(#139): support for Some(ClientClusterData { flags: RedirectionFlags::REDIRECTION_SUPPORTED, redirection_version: RedirectionVersion::V4, redirected_session_id: 0, }),
         cluster: None,
-        monitor: None,
+        // ADIT PATCH: was `None`. The client's monitor geometry is now
+        // advertised here, so the server can size the initial virtual desktop
+        // from it instead of from `desktop_size` alone.
+        //
+        // The block is only sent when the client really has more than one
+        // monitor: FreeRDP omits it for a single screen (gcc.c,
+        // `gcc_write_client_monitor_data`), and a one-monitor block would
+        // make a server that only understands the old single-screen case
+        // reject the connection. The primary monitor is expected at the
+        // origin and the coordinates are relative to it, so the block needs
+        // no normalisation — the caller supplies the same geometry the
+        // DisplayControl channel later confirms.
+        monitor: config.client_monitors.as_ref().filter(|m| m.len() > 1).map(|monitors| {
+            gcc::ClientMonitorData {
+                monitors: monitors.clone(),
+            }
+        }),
         // ADIT PATCH: was `Some(gcc::ClientMessageChannelData)`. Requesting the
         // message channel makes the connector enter its ConnectTimeAutoDetection
         // phase, where it only advances to licensing on an I/O-channel PDU. Some

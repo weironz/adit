@@ -192,6 +192,18 @@ pub struct ConnectRequest {
     pub enable_clipboard: bool,
     pub enable_audio: bool,
     pub quality: Quality,
+    /// The monitor layout to advertise to the server while the connection is
+    /// being established.
+    ///
+    /// Empty means "single monitor": the helper then asks for the plain
+    /// `width` × `height` desktop and sends no GCC Client Monitor Data block,
+    /// exactly as it did before this field existed.
+    ///
+    /// A non-empty list is the client's own monitor geometry, and it is
+    /// advertised in the GCC capabilities exchange so the server can size the
+    /// initial virtual desktop from it. It must be the *whole* layout, not a
+    /// delta: the server replaces its desktop with what it is told.
+    pub monitors: Vec<Monitor>,
 }
 
 /// A mouse button, protocol-neutral.
@@ -463,7 +475,12 @@ pub enum HostMsg {
 /// Version of both IPC message layouts, independent of the application release.
 /// Increase it for every incompatible change to either direction of the wire.
 /// Versions 8 and 9 were used by earlier, incompatible development schemas.
-pub const IPC_PROTOCOL_VERSION: u32 = 10;
+///
+/// 11 added [`ConnectRequest::monitors`], which changes the bincode layout of
+/// that struct: an older helper decoding a newer request would read the
+/// monitor list's length prefix as the end of the struct and silently ignore
+/// the trailing bytes.
+pub const IPC_PROTOCOL_VERSION: u32 = 11;
 
 const IPC_HELLO_MAGIC: [u8; 8] = *b"ADITRDP\0";
 // An invalid bincode enum discriminant makes an unversioned helper reject the
@@ -561,14 +578,20 @@ mod tests {
     fn hello_has_a_stable_envelope_and_legacy_peers_reject_it() {
         let mut hello = Vec::new();
         write_ipc_hello(&mut hello, IPC_PROTOCOL_VERSION).unwrap();
+        // The envelope itself is fixed — magic, discriminant, length — and the
+        // version rides at the end. Only the trailing version is expected to
+        // move when the wire layout changes.
         assert_eq!(
-            hello,
-            [
-                16, 0, 0, 0, 255, 255, 255, 255, b'A', b'D', b'I', b'T', b'R', b'D', b'P', 0, 10,
-                0, 0, 0
+            &hello[..16],
+            &[
+                16, 0, 0, 0, 255, 255, 255, 255, b'A', b'D', b'I', b'T', b'R', b'D', b'P', 0
             ]
         );
-        assert_eq!(read_ipc_hello(&mut io::Cursor::new(&hello)).unwrap(), 10);
+        assert_eq!(&hello[16..], &IPC_PROTOCOL_VERSION.to_le_bytes());
+        assert_eq!(
+            read_ipc_hello(&mut io::Cursor::new(&hello)).unwrap(),
+            IPC_PROTOCOL_VERSION
+        );
         assert!(read_msg::<_, ClientMsg>(&mut io::Cursor::new(&hello)).is_err());
         assert!(read_msg::<_, HostMsg>(&mut io::Cursor::new(&hello)).is_err());
     }
@@ -596,6 +619,7 @@ mod tests {
             enable_clipboard: true,
             enable_audio: false,
             quality: Quality::default(),
+            monitors: Vec::new(),
         };
         let mut legacy = Vec::new();
         write_msg(&mut legacy, &ClientMsg::Connect(request)).unwrap();
@@ -639,6 +663,59 @@ mod tests {
         assert!(read_msg::<_, HostMsg>(&mut cursor)
             .expect("clean end of stream")
             .is_none());
+    }
+
+    /// The monitor layout is carried in the connect request, so it has to
+    /// survive the pipe. An empty list and a real layout are both legal and
+    /// they must not be confused for one another — the helper sends a monitor
+    /// block only for a real multi-screen layout.
+    #[test]
+    fn the_monitor_layout_survives_the_pipe() {
+        let layout = vec![
+            Monitor {
+                left: 0,
+                top: 0,
+                width: 1920,
+                height: 1080,
+                primary: true,
+                scale_percent: 100,
+            },
+            Monitor {
+                left: 1920,
+                top: 0,
+                width: 1280,
+                height: 1024,
+                primary: false,
+                scale_percent: 150,
+            },
+        ];
+
+        for monitors in [Vec::new(), layout.clone()] {
+            let request = ConnectRequest {
+                host: "localhost".into(),
+                port: 3389,
+                username: "synthetic-user".into(),
+                password: "synthetic-password".into(),
+                domain: None,
+                width: 3200,
+                height: 1080,
+                enable_clipboard: true,
+                enable_audio: false,
+                quality: Quality::default(),
+                monitors: monitors.clone(),
+            };
+
+            let mut pipe = Vec::new();
+            write_msg(&mut pipe, &ClientMsg::Connect(request)).expect("write app → helper");
+            let mut cursor = io::Cursor::new(pipe);
+            match read_msg::<_, ClientMsg>(&mut cursor)
+                .expect("read app → helper")
+                .expect("a message")
+            {
+                ClientMsg::Connect(got) => assert_eq!(got.monitors, monitors),
+                other => panic!("unexpected message: {other:?}"),
+            }
+        }
     }
 
     /// A copied tree is a flat list of relative paths, directories included as

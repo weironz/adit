@@ -3745,6 +3745,7 @@ mod rdp_presentation_tests {
             enable_clipboard: true,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         }
     }
 
@@ -3879,7 +3880,10 @@ mod rdp_presentation_tests {
     #[test]
     fn ipc_handshake_old_and_future_helpers_receive_no_connect_or_credentials() {
         use std::io::Read;
-        for version in [None, Some(8), Some(9), Some(11)] {
+        // Every version other than the current one must be refused, on both
+        // sides of it: an older helper would mis-decode the connect request,
+        // a newer one speaks a layout this app does not know.
+        for version in [None, Some(8), Some(9), Some(10), Some(12)] {
             let (app, mut helper) = ipc_pair();
             let peer = thread::spawn(move || {
                 if let Some(version) = version {

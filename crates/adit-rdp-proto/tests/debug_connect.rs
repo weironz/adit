@@ -90,6 +90,7 @@ fn debug_connect_real_host() {
             enable_clipboard: false,
             enable_audio: false,
             quality: adit_rdp_proto::Quality::default(),
+            monitors: Vec::new(),
         }),
     )
     .expect("send Connect");
