@@ -168,8 +168,9 @@ exchange in right after the upgrade "just works" with `connect_finalize`.
 
 ## 5. The vendored connector patches
 
-Only **three** hunks differ from crates.io `ironrdp-connector 0.10.0`, each tagged
-`ADIT PATCH` in `vendor/ironrdp-connector/src/connection.rs`:
+Only **five** patches differ from crates.io `ironrdp-connector 0.10.0`, each tagged
+`ADIT PATCH` in `vendor/ironrdp-connector/src/connection.rs` (patch 5 also touches
+`src/lib.rs`):
 
 1. **Request RDSTLS on redirect** — when the config carries a routing token, request
    `SecurityProtocol::RDSTLS` exclusively (forces the handover down the RDSTLS path or
@@ -178,6 +179,12 @@ Only **three** hunks differ from crates.io `ironrdp-connector 0.10.0`, each tagg
    `SUPPORT_NET_CHAR_AUTODETECT`).
 3. **`message_channel: None`** — skip the MCS message channel to avoid a
    ConnectTimeAutoDetection deadlock (see pitfall #2 below).
+4. **`expect` → `allow` on `single_use_lifetimes`** — a build-noise fix, not a
+   behaviour change (the vendored copy does not inherit upstream's lint table, so the
+   expectation could never fire).
+5. **Client Monitor Data advertisement** — carry the client's monitor geometry into
+   the GCC blocks so the server learns the layout at connect time, not only later over
+   DisplayControl.
 
 Everything else Adit adds is a **separate additive module** — no upstream edits. Full
 rationale + re-vendoring checklist in
