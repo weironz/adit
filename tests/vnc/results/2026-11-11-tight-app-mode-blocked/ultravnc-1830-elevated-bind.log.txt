@@ -1,0 +1,9 @@
+zip_sha256=11163a0b9b86321bf6403eb0cf84b81f7230ce32e6291377e1fe5beb987f7e4f
+server=C:\Users\willz\AppData\Local\Temp\adit-205-elevated\uvncbind\portable\x64\winvnc.exe version=1.8.3.0
+passwd_written=True
+elevated=True
+pid=68160 exited=False bound=False listeners=0
+listen_addresses=
+udp15911=1
+log=WinVNCAppMain : server created ok / imp_desktop_thread : SelectHDESK to Default (26c) from 188 / imp_desktop_thread : Username willz  / vncMenu::vncMenu : vncmenu(server) / DesktopUsersToken::getDesktopUsersToken : GetExplorerLogonPid 7348
+remaining_procs=0 remaining_tcp=0
