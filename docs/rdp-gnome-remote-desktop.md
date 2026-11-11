@@ -343,9 +343,22 @@ unless `RUST_LOG` is set. It never logs the password (only `pw_len`).
 
 ## 9. Deferred (next RDP increment)
 
-Audio (RDPSND — needs a CMake/Opus toolchain), multi-monitor, real server-cursor shape,
-and dirty-rect frame delivery (currently full-frame tiles). `sound` is an `adit-rdp`
-cargo feature, OFF by default. Tracked as backlog item #52.
+Audio (RDPSND — needs a CMake/Opus toolchain) and dirty-rect frame delivery
+(currently full-frame tiles). `sound` is an `adit-rdp` cargo feature, OFF by
+default.
+
+**Multi-monitor is done** — the layout is picked, persisted per profile,
+re-negotiated over the DisplayControl DVC, and switched at runtime, and the
+client's geometry is advertised to the server at connect time through the GCC
+Client Monitor Data block (so a server that never speaks DisplayControl still
+learns the geometry up front). The toolbar carries the monitor-layout control.
+What is *not* done is acceptance against a real multi-monitor server: the
+FreeRDP shadow fixture parses the advertised list but ignores it and has no
+DisplayControl DVC, so it cannot confirm the behaviour either way.
+
+**The server cursor shape is drawn** — `ActiveStageOutput::PointerBitmap` is
+composited over the remote surface, with the hotspot and the local pointer kept
+independent.
 
 Clipboard (CLIPRDR) **is done** — text both ways, on by default, no cargo feature; it is
 gated at runtime by `ConnectRequest::enable_clipboard`. See

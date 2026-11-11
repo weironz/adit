@@ -380,6 +380,25 @@ silently stopped resolution tracking and left unexplained black bars. The scale 
 fold into the same per-axis scales the tile layout and the mouse mapping share, which is
 what keeps the pointer and the picture agreeing about where a pixel is.
 
+### Multi-monitor
+
+The layout is chosen in the RDP toolbar, persisted per profile, and re-negotiated
+over the DisplayControl DVC; it can be switched while the session runs. The
+client's geometry is **also advertised at connect time** through the GCC Client
+Monitor Data block, so a server that never speaks DisplayControl still learns
+the layout up front instead of sizing its virtual desktop from the requested
+width/height alone. The wire form follows FreeRDP's encoder: inclusive
+`right`/`bottom`, the primary at the origin, and the block sent only when there
+is more than one monitor (FreeRDP omits it for a single screen, and a
+one-monitor block makes some servers reject the connection).
+
+What is **not** verified is acceptance against a real multi-monitor server. The
+FreeRDP shadow fixture parses the advertised list but does not act on it — it
+uses its own Xinerama-derived geometry (`shadow_client.c:206`) and implements no
+DisplayControl DVC — so it can neither confirm nor refute the behaviour.
+Verifying it needs an actual Windows or GNOME RDP server with more than one
+monitor.
+
 ### Clipboard (CLIPRDR)
 
 **Text copies both ways**, on by default. Copy in the remote desktop and it lands on the
@@ -594,9 +613,8 @@ original rather than a key (see [Known gaps](#known-gaps)).
 Verified shortcomings, so nobody has to rediscover them.
 
 ### Not implemented
-- **RDP**: the server cursor shape isn't drawn — `ActiveStageOutput::PointerBitmap` is
-  dropped, so the pointer stays whatever the local one is. Dirty-rect tracking exists on
-  the **EGFX** path only. There it carries up to 16 rects kept apart rather than unioned
+- **RDP**: dirty-rect tracking exists on the
+  **EGFX** path only. There it carries up to 16 rects kept apart rather than unioned
   (`MAX_DIRTY_RECTS` in `egfx.rs`), merging a pair only when the merge is *free* — the
   hundreds of adjacent 64×64 tiles of a progressive frame fold into strips at zero cost,
   while a blinking cursor in one corner and a clock in another stay two small rects
