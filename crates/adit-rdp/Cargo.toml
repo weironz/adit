@@ -109,4 +109,11 @@ ironrdp-graphics = { path = "vendor/ironrdp-graphics" }
 # the RLEX segment parse special-cases a one-entry palette in a way FreeRDP
 # does not. Between them they rejected almost every ClearCodec PDU a real
 # Windows host sends.
-ironrdp-pdu = { path = "vendor/ironrdp-pdu" }
+# Vendored + patched ironrdp-displaycontrol (crates.io 0.8.0 + one marked hunk):
+# The server sends the whole DISPLAYCONTROL_CAPS_PDU, header included, but
+# 0.8.0 decoded the capability fields straight out of the DVC payload and so
+# read the header's words as the capabilities. GNOME Remote Desktop's
+# `16, 8192, 8192` came out as `5, 20, 16`, making the advertised area 1600
+# square pixels instead of 1 073 741 824 and rejecting every layout the server
+# would have accepted. The patch parses the full PDU.
+ironrdp-displaycontrol = { path = "vendor/ironrdp-displaycontrol" }
