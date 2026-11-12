@@ -414,6 +414,10 @@ which speaks both mechanisms:
   from the *advertised* layout — `2560x800`, two monitors observed — where
   without the block it returned the requested `640x480` and one monitor. The
   server takes the client's geometry over its own size request.
+  Note what this does *not* mean: GRD sizes its virtual desktop from the
+  advertised layout but only paints its own physical screen into it, so a
+  `2560x800` virtual desktop holds `1280x800` of real content and the rest is
+  black. The desktop is sized as advertised; the content is not.
 - **After connect (DisplayControl DVC).** The server reports its capabilities
   (`16` monitors, `8192 × 8192` area factors) and **accepts** a
   `DISPLAYCONTROL_MONITOR_LAYOUT_PDU`, answering `result=ok` and reporting
@@ -429,8 +433,22 @@ now vendored and patched — see
 [`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md).
 
 What remains unverified is the part a single-screen server cannot exercise:
-the **physical** multi-screen topology — pointer coordinates crossing a screen
-boundary, and the layout surviving a reconnect.
+the **pointer crossing a screen boundary**. The GRD host presents one physical
+screen, so there is no second screen for the pointer to cross into — and it
+draws no cursor into the framebuffer, so a moved pointer leaves the captured
+pixels unchanged. The client-side arithmetic that maps a virtual-desktop
+coordinate onto the selected monitor's viewport (and drops input that falls in
+a gap between monitors) is covered by unit tests, but the *server's* view of
+those coordinates cannot be observed on this host.
+
+The **layout surviving a reconnect** is no longer in that category. It is
+covered by `crates/adit-ui/examples/multimon_reconnect_probe.rs`, which drives
+the app's own connect path twice against the same on-disk profile — reloading
+the profile from the file between the rounds, so the second round can only get
+the layout from the store — and asserts that both rounds negotiate the same
+two-monitor layout. The layout lives in `SessionOptions.rdp_monitors`, is
+re-read when the session starts, and is applied twice: once in the GCC block at
+connect, and once as a post-connect DisplayControl request.
 
 ### Clipboard (CLIPRDR)
 

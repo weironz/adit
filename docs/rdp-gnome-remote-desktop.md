@@ -372,8 +372,14 @@ large; the crate is now vendored and patched (see
 
 What is *not* done is acceptance against a **physical** multi-screen server:
 the GRD host presents a single screen, so the pointer-coordinate-across-screens
-and layout-persistence-across-reconnect checks still need a host with more
-than one display.
+check still needs a host with more than one display. (The pointer cannot even
+be observed there — GRD draws no cursor into the framebuffer, so a moved
+pointer leaves the captured pixels byte-identical, and it sends no pointer
+position updates after the client's own moves.) The **layout surviving a
+reconnect** *is* covered: `crates/adit-ui/examples/multimon_reconnect_probe.rs`
+drives the app's own connect path twice against the same on-disk profile,
+reloading the profile from the file between rounds, and both rounds negotiate
+the same two-monitor layout.
 
 **The server cursor shape is drawn** — `ActiveStageOutput::PointerBitmap` is
 composited over the remote surface, with the hotspot and the local pointer kept
