@@ -306,6 +306,48 @@ each side:
 > a newer `ironrdp-connector` is a 5-patch reapply, and each patch is
 > independently removable as upstream closes the gap.
 
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-displaycontrol/`
+
+Pulled in via `[patch.crates-io] ironrdp-displaycontrol = { path = "vendor/ironrdp-displaycontrol" }`
+in `Cargo.toml`. Crates.io `ironrdp-displaycontrol` 0.8.0 has **two** marked
+patches; find them with:
+
+```
+grep -rn "ADIT PATCH" crates/adit-rdp/vendor/ironrdp-displaycontrol/
+```
+
+1. **Capability parsing past the PDU header** (`src/client.rs`). The server
+   sends the whole `DISPLAYCONTROL_CAPS_PDU`, i.e. the capability set prefixed
+   with the 8-byte `DISPLAYCONTROL_HEADER` (Type + Length), per
+   [MS-RDPEDISP 2.2.2.1](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpedisp/f4d5b25d-6d1a-4a29-8a3f-fd4dcd0b0dba).
+   0.8.0 decoded the capability fields straight out of the DVC payload
+   instead of parsing the PDU, so the header's two words were read as the
+   capabilities. Against GNOME Remote Desktop the server's real
+   `16, 8192, 8192` came out as `5, 20, 16` — the PDU type, the PDU length,
+   and only then the actual monitor count — which made the advertised maximum
+   area `5 × 20 × 16 = 1600` square pixels instead of
+   `16 × 8192 × 8192 = 1 073 741 824`. `display.rs` then rejected **every**
+   layout as "exceeds server monitor count/area capability", including a
+   single 800×600 screen. The patch parses the full PDU, which is what
+   upstream 0.9.0 does.
+
+2. **`DisplayControlCapabilities::max_num_monitors()`** (`src/pdu/mod.rs`).
+   Upstream added this getter in 0.9.0 alongside the fix above. Without it the
+   caller has to re-encode the capabilities to read the monitor count. The
+   patch adds only the getter.
+
+The regression test lives in `crates/adit-rdp/src/display.rs`:
+`server_capabilities_are_read_past_the_display_control_header` feeds the
+exact bytes GNOME Remote Desktop puts on the wire and asserts the caps come
+out as `16` monitors and `1 073 741 824` square pixels. It fails against
+unpatched 0.8.0 with `left: 5, right: 16`.
+
+> Both patches exist upstream now, but only in 0.9.0/0.10.0, whose dependency
+> cascade (ironrdp-core 0.3, ironrdp-dvc 0.9, ironrdp-pdu 0.10, ironrdp-svc
+> 0.9) cannot be reconciled with this repo's pinned 0.8-era versions — the same
+> wall as `ironrdp-connector`. Re-vendor when the root workspace's IronRDP
+> pins move up as a set.
+
 ## Re-vendoring checklist
 
 When bumping IronRDP:

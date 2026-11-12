@@ -359,9 +359,21 @@ re-negotiated over the DisplayControl DVC, and switched at runtime, and the
 client's geometry is advertised to the server at connect time through the GCC
 Client Monitor Data block (so a server that never speaks DisplayControl still
 learns the geometry up front). The toolbar carries the monitor-layout control.
-What is *not* done is acceptance against a real multi-monitor server: the
-FreeRDP shadow fixture parses the advertised list but ignores it and has no
-DisplayControl DVC, so it cannot confirm the behaviour either way.
+Both halves have been run against a **real GNOME Remote Desktop** host: the
+connect-time block makes the server size its desktop from the advertised
+geometry (`2560x800` for two `1280x800` monitors, against a requested
+`640x480`), and the post-connect DisplayControl exchange is **accepted**
+(`result=ok`, with the resulting topology reported back). That second half
+needed a client-side fix — IronRDP's `ironrdp-displaycontrol` 0.8.0 read the
+capability fields without skipping the PDU header, so the server's
+`16, 8192, 8192` arrived as `5, 20, 16` and every layout was rejected as too
+large; the crate is now vendored and patched (see
+[`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md)).
+
+What is *not* done is acceptance against a **physical** multi-screen server:
+the GRD host presents a single screen, so the pointer-coordinate-across-screens
+and layout-persistence-across-reconnect checks still need a host with more
+than one display.
 
 **The server cursor shape is drawn** — `ActiveStageOutput::PointerBitmap` is
 composited over the remote surface, with the hotspot and the local pointer kept

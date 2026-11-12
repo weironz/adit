@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // gate, not the wire's: this probe exists to put bytes on the wire that
     // the app would refuse to send, so that a real server's parser can be
     // observed rejecting them.
-    let desktop_size = if monitors.len() < 2 {
+    let mut desktop_size = if monitors.len() < 2 {
         requested_size
     } else {
         let left = monitors.iter().map(|m| m.left).min().unwrap_or_default();
@@ -151,6 +151,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             (bottom - top) as u16,
         )
     };
+
+    // `--desktop-size WxH` decouples the requested desktop from the advertised
+    // layout. That separation is what makes the experiment meaningful: if the
+    // layout is honoured, the server's desktop follows the *layout* and not
+    // the size that was asked for, so asking for a small desktop while
+    // advertising a wide layout must still produce a wide desktop. Without
+    // this switch the two always agree and the observation proves nothing.
+    if let Some(index) = args.iter().position(|arg| arg == "--desktop-size") {
+        let value = args
+            .get(index + 1)
+            .ok_or("--desktop-size requires WIDTHxHEIGHT")?;
+        let (w, h) = value.split_once('x').ok_or("--desktop-size requires WIDTHxHEIGHT")?;
+        desktop_size = (w.parse()?, h.parse()?);
+        println!("desktop_size_override={}x{}", desktop_size.0, desktop_size.1);
+    }
 
     println!(
         "requested_size={}x{}",
@@ -246,6 +261,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let start = Instant::now();
     let mut ready = false;
     let mut input_epoch = 0u64;
+    // Each layout request carries its own ID so the server's answer can be
+    // matched to the request that caused it.
+    let mut layout_request_id = 0u64;
     let mut size = (0u16, 0u16);
     let mut pixels = Vec::new();
     let mut tiles = 0u64;
@@ -332,6 +350,41 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Err("invalid redirect epoch".into());
                     }
                     input_epoch = epoch;
+                }
+                Ok(HostMsg::MonitorLayoutObserved { monitors, .. }) => {
+                    // The server's own view of the monitor topology. This is the
+                    // only direct evidence of what the server actually decided
+                    // the desktop is, so it is printed rather than summarised:
+                    // a single entry at (0,0) means the server ignored the
+                    // advertised layout and opened one screen.
+                    println!(
+                        "observed_monitors count={} {}",
+                        monitors.len(),
+                        monitors
+                            .iter()
+                            .map(|m| {
+                                format!(
+                                    "{}x{}+{}+{}",
+                                    m.width, m.height, m.left, m.top
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join(",")
+                    );
+                }
+                Ok(HostMsg::MonitorLayoutResult { epoch, request_id, result }) => {
+                    // The helper only reports that it wrote the layout; the
+                    // server's acceptance is not observable on this channel,
+                    // so the result is printed verbatim and the topology that
+                    // follows in `MonitorLayoutObserved` is what says whether
+                    // the server acted on it.
+                    println!(
+                        "layout_result request={request_id} epoch={epoch} result={}",
+                        match result {
+                            Ok(()) => "ok".to_owned(),
+                            Err(error) => format!("error: {error}"),
+                        }
+                    );
                 }
                 Ok(HostMsg::Pointer(update)) => {
                     pointer_events += 1;
@@ -516,6 +569,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         return Err("ACK requires a short alphanumeric token".into());
                     }
                     println!("command_ack={token}");
+                } else if let Some(layout) = command.strip_prefix("LAYOUT ") {
+                    // Drive a DisplayControl layout change on a live session,
+                    // the way the app's layout switcher does. The syntax
+                    // matches `--monitors`: `WIDTHxHEIGHT` pairs separated by
+                    // commas, the first one primary and at the origin, the
+                    // rest laid out left to right.
+                    //
+                    // This is the post-connect half of multi-monitor support.
+                    // The connect-time GCC block asks the server for a layout;
+                    // this asks the server to *change* to one, which is the
+                    // only path that can show whether the server honours a
+                    // layout it did not start with.
+                    let mut entries: Vec<adit_rdp_proto::Monitor> = Vec::new();
+                    for (index, entry) in layout.split(',').enumerate() {
+                        let (w, h) = entry
+                            .trim()
+                            .split_once('x')
+                            .ok_or("LAYOUT requires WIDTHxHEIGHT entries")?;
+                        let width: u16 = w.parse()?;
+                        let height: u16 = h.parse()?;
+                        entries.push(adit_rdp_proto::Monitor {
+                            left: (index as i32) * i32::from(width),
+                            top: 0,
+                            width,
+                            height,
+                            primary: index == 0,
+                            scale_percent: 100,
+                        });
+                    }
+                    if entries.is_empty() {
+                        return Err("LAYOUT requires at least one monitor".into());
+                    }
+                    layout_request_id += 1;
+                    write_msg(
+                        &mut wire,
+                        &ClientMsg::input_at(
+                            input_epoch,
+                            InputEvent::MonitorLayout {
+                                request_id: layout_request_id,
+                                monitors: entries,
+                            },
+                        ),
+                    )?;
+                    println!("layout_requested request={layout_request_id}");
                 } else if let Some(point) = command
                     .strip_prefix("CLICK ")
                     .or_else(|| command.strip_prefix("MOVE "))

@@ -94,15 +94,14 @@ pub(crate) fn ready(stage: &mut ActiveStage, state: &SharedDisplay) -> bool {
 }
 
 pub(crate) fn capabilities(state: &SharedDisplay, caps: &DisplayControlCapabilities) {
-    // 0.8 exposes area but not MaxNumMonitors. Read the public encoder's first
-    // u32 rather than guessing a count or patching another upstream crate.
-    if let Ok(bytes) = ironrdp_core::encode_vec(caps) {
-        if let Ok(count) = <[u8; 4]>::try_from(&bytes[..4]) {
-            let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
-            state.max_monitors = u32::from_le_bytes(count);
-            state.max_area = caps.max_monitor_area();
-        }
-    }
+    let mut state = state.lock().unwrap_or_else(|e| e.into_inner());
+    state.max_monitors = caps.max_num_monitors();
+    state.max_area = caps.max_monitor_area();
+    tracing::info!(
+        max_monitors = state.max_monitors,
+        max_area = state.max_area,
+        "display control capabilities"
+    );
 }
 
 fn layout(monitors: &[Monitor]) -> Result<DisplayControlMonitorLayout, String> {
@@ -179,6 +178,7 @@ pub(crate) fn encode_layout(
 mod tests {
     use super::*;
     use ironrdp_core::{Decode as _, ReadCursor};
+    use ironrdp_dvc::DvcProcessor;
 
     fn monitor(left: i32, primary: bool) -> Monitor {
         Monitor {
@@ -216,6 +216,37 @@ mod tests {
         let caps = state.lock().unwrap();
         assert_eq!(caps.max_monitors, 2);
         assert_eq!(caps.max_area, 2 * 4096 * 2048);
+    }
+
+    /// The wire form of DISPLAYCONTROL_CAPS_PDU, header included: the server
+    /// sends Type + Length before the capability fields (MS-RDPEDISP 2.2.2.1).
+    /// These are the bytes GNOME Remote Desktop puts on the wire.
+    #[test]
+    fn server_capabilities_are_read_past_the_display_control_header() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&5u32.to_le_bytes()); // DISPLAYCONTROL_PDU_TYPE_CAPS
+        bytes.extend_from_slice(&20u32.to_le_bytes()); // Length: 8 header + 12 caps
+        bytes.extend_from_slice(&16u32.to_le_bytes()); // MaxNumMonitors
+        bytes.extend_from_slice(&8192u32.to_le_bytes()); // MaxMonitorAreaFactorA
+        bytes.extend_from_slice(&8192u32.to_le_bytes()); // MaxMonitorAreaFactorB
+
+        let state = SharedDisplay::default();
+        let received = Arc::new(Mutex::new(None));
+        let sink = Arc::clone(&received);
+        let mut client = DisplayControlClient::new(move |caps| {
+            *sink.lock().unwrap() = Some(caps);
+            Ok(Vec::new())
+        });
+        DvcProcessor::process(&mut client, 0, &bytes).unwrap();
+
+        let caps = received.lock().unwrap().clone().unwrap();
+        capabilities(&state, &caps);
+        let caps = state.lock().unwrap();
+        // Without skipping the header these read as 5, 20 and 16, so the
+        // advertised area was 1600 square pixels and every layout was
+        // rejected as too large.
+        assert_eq!(caps.max_monitors, 16);
+        assert_eq!(caps.max_area, 16 * 8192 * 8192);
     }
 
     #[test]

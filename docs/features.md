@@ -406,6 +406,32 @@ made the server log `rdpMonitor::rect 1280x0-1279x799 invalid` and drop the
 connection. The server is therefore reading the block we send — silence on the
 well-formed layout is acceptance, not absence.
 
+Both halves have since been run against a **real GNOME Remote Desktop** host,
+which speaks both mechanisms:
+
+- **Connect time (GCC Client Monitor Data).** With a two-monitor geometry
+  advertised and a `640x480` desktop requested, the server sized its desktop
+  from the *advertised* layout — `2560x800`, two monitors observed — where
+  without the block it returned the requested `640x480` and one monitor. The
+  server takes the client's geometry over its own size request.
+- **After connect (DisplayControl DVC).** The server reports its capabilities
+  (`16` monitors, `8192 × 8192` area factors) and **accepts** a
+  `DISPLAYCONTROL_MONITOR_LAYOUT_PDU`, answering `result=ok` and reporting
+  back the resulting topology — two `1280x800` monitors, then a single
+  `800x600` after a second request.
+
+That second half only worked once a **client-side bug** was fixed: IronRDP's
+`ironrdp-displaycontrol` 0.8.0 read the capability fields straight out of the
+DVC payload, without skipping the 8-byte `DISPLAYCONTROL_HEADER`, so the
+server's `16, 8192, 8192` was read as `5, 20, 16`. The advertised area became
+1600 square pixels and *every* layout was rejected as too large. The crate is
+now vendored and patched — see
+[`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md).
+
+What remains unverified is the part a single-screen server cannot exercise:
+the **physical** multi-screen topology — pointer coordinates crossing a screen
+boundary, and the layout surviving a reconnect.
+
 ### Clipboard (CLIPRDR)
 
 **Text copies both ways**, on by default. Copy in the remote desktop and it lands on the
