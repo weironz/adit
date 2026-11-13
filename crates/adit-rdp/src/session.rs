@@ -1162,6 +1162,63 @@ fn pdu_prefix(pdu: Option<&[u8]>) -> String {
     format!("len={} head={head}", bytes.len())
 }
 
+/// Run the active stage, turning a panic into an ordinary session error.
+///
+/// On 2026-10-20 a ClearCodec decode unwound on a slice range (issue #223).
+/// Nothing between the codec and the top of the session loop caught it, so it
+/// unwound straight out of `block_on`, `run_host` never returned, and the
+/// helper exited 101. The app saw only stdout EOF and showed 「连接已断开，按
+/// Enter 重新连接」 — the panic text never reached `rdp-helper.log` either,
+/// because that file is a `tracing` writer and a panic goes to stderr.
+///
+/// The EGFX decode path now catches its own panics (`EgfxHandler`), but the
+/// codecs it drives are vendored and other codec paths exist; a panic must
+/// never be able to take the helper down, whatever raised it. This is the
+/// last line of that defence: the reason travels as a plain string because
+/// `ironrdp_error::Error`'s Display prints only `[context] kind`, so a source
+/// chain would be dropped before reaching the GUI.
+pub(crate) fn process_active_stage(
+    active_stage: &mut ironrdp_session::ActiveStage,
+    image: &mut ironrdp_session::image::DecodedImage,
+    action: ironrdp_pdu::Action,
+    payload: &[u8],
+) -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+    guard_panic(
+        || active_stage.process(image, action, payload),
+        action,
+        payload.len(),
+    )
+}
+
+/// The panic guard itself, over a closure.
+///
+/// Split out from `process_active_stage` so the guard can be exercised
+/// without an `ActiveStage` that panics on demand — which is not something a
+/// test can arrange through the public API, since the panic this exists for
+/// came from a decoder bug rather than from bad input the test controls.
+fn guard_panic<T>(
+    work: impl FnOnce() -> Result<T, ironrdp_session::SessionError>,
+    action: ironrdp_pdu::Action,
+    payload_len: usize,
+) -> Result<T, ironrdp_session::SessionError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(processed) => processed,
+        Err(caught) => {
+            let reason = crate::egfx::panic_reason(caught);
+            tracing::error!(
+                %reason,
+                ?action,
+                payload_len,
+                "the active stage panicked; ending the session with a reported reason"
+            );
+            Err(ironrdp_session::reason_err!(
+                "RDP session",
+                "the decoder panicked: {reason}"
+            ))
+        }
+    }
+}
+
 /// Call immediately after process(), before inspecting any output. The EGFX
 /// trait cannot return a decode error, and its stateful failure must not be
 /// mistaken for one of GNOME's independently skippable, unrecognised PDUs.
@@ -1299,7 +1356,12 @@ async fn active_session(
                 // of them was killing the connection right after the handover (the
                 // desktop showed "connecting" forever). Losing one frame/order is far
                 // better than losing the session.
-                let processed = active_stage.process(&mut image, action, &payload);
+                let processed = crate::session::process_active_stage(
+                    &mut active_stage,
+                    &mut image,
+                    action,
+                    &payload,
+                );
                 finish_active_process(processed, egfx, action, &payload)?
             }
             input = next_active_command(input_rx, display_rx, deferred, epoch), if input_open => {
@@ -3532,5 +3594,75 @@ mod desktop_output_tests {
             })
             .collect();
         assert_eq!(rgba, &expected);
+    }
+}
+
+#[cfg(test)]
+mod panic_guard_tests {
+    use super::*;
+
+    /// A panic inside the active stage must end the session with a *reported*
+    /// reason, not a dead helper.
+    ///
+    /// This is NOT a reproduction of the 2026-10-20 field failure: the
+    /// ClearCodec slice range that caused it was fixed upstream of this
+    /// guard, so there is no live codec panic left to trigger. The panic is
+    /// raised deliberately here, because the guard has to keep working for
+    /// the next decoder bug — including ones in the vendored crates Adit
+    /// does not own.
+    #[test]
+    fn a_panicking_active_stage_becomes_a_reported_session_error() {
+        let result = guard_panic(
+            || -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+                panic!("synthetic decoder panic in the active stage");
+            },
+            ironrdp_pdu::Action::X224,
+            7,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("the panic was swallowed"),
+        };
+        let text = error.to_string();
+        assert!(
+            text.contains("the decoder panicked"),
+            "the error must say what happened: {text}"
+        );
+        assert!(
+            text.contains("synthetic decoder panic in the active stage"),
+            "the panic text must reach the GUI: {text}"
+        );
+    }
+
+    /// The guard must not disturb an ordinary failure.
+    #[test]
+    fn an_ordinary_error_passes_through_the_guard() {
+        let result = guard_panic(
+            || -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+                Err(ironrdp_session::custom_err!(
+                    "unrecognised PDU",
+                    std::io::Error::other("unsupported")
+                ))
+            },
+            ironrdp_pdu::Action::X224,
+            0,
+        );
+        assert!(result.is_err());
+    }
+
+    /// And it must not disturb an ordinary success.
+    #[test]
+    fn an_ordinary_success_passes_through_the_guard() {
+        let result = guard_panic(
+            || -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+                Ok(vec![ActiveStageOutput::ResponseFrame(vec![1, 2, 3])])
+            },
+            ironrdp_pdu::Action::X224,
+            0,
+        )
+        .expect("a successful decode must survive the guard");
+        assert!(
+            matches!(result.as_slice(), [ActiveStageOutput::ResponseFrame(bytes)] if bytes == &[1, 2, 3])
+        );
     }
 }
