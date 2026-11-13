@@ -359,27 +359,38 @@ re-negotiated over the DisplayControl DVC, and switched at runtime, and the
 client's geometry is advertised to the server at connect time through the GCC
 Client Monitor Data block (so a server that never speaks DisplayControl still
 learns the geometry up front). The toolbar carries the monitor-layout control.
-Both halves have been run against a **real GNOME Remote Desktop** host: the
-connect-time block makes the server size its desktop from the advertised
-geometry (`2560x800` for two `1280x800` monitors, against a requested
-`640x480`), and the post-connect DisplayControl exchange is **accepted**
-(`result=ok`, with the resulting topology reported back). That second half
-needed a client-side fix — IronRDP's `ironrdp-displaycontrol` 0.8.0 read the
-capability fields without skipping the PDU header, so the server's
-`16, 8192, 8192` arrived as `5, 20, 16` and every layout was rejected as too
-large; the crate is now vendored and patched (see
+Both halves have been run against a **real RDP server**: the connect-time block
+makes the server size its desktop from the advertised geometry (`2560x800` for
+two `1280x800` monitors, against a requested `640x480`), and the post-connect
+DisplayControl exchange is **accepted** (`result=ok`, with the resulting
+topology reported back). That second half needed a client-side fix — IronRDP's
+`ironrdp-displaycontrol` 0.8.0 read the capability fields without skipping the
+PDU header, so the server's `16, 8192, 8192` arrived as `5, 20, 16` and every
+layout was rejected as too large; the crate is now vendored and patched (see
 [`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md)).
 
+> **Correction (2026-11-13).** This paragraph previously said those runs were
+> against a **real GNOME Remote Desktop** host. They were not: every probe
+> targeted `192.168.72.10`, this machine's own Windows `TermService`. The
+> authorized GRD host (`192.168.72.20` / `will-opt7010`) was never connected
+> to — it was unreachable on 3389, 22 and 5900 throughout. The mistake was
+> plausible because `16, 8192, 8192` are GRD's own constants *and* the
+> Windows server advertises the identical values, so the capability numbers
+> cannot identify the server. The verified claims stand; only the server's
+> identity was wrong.
+
 What is *not* done is acceptance against a **physical** multi-screen server:
-the GRD host presents a single screen, so the pointer-coordinate-across-screens
-check still needs a host with more than one display. (The pointer cannot even
-be observed there — GRD draws no cursor into the framebuffer, so a moved
-pointer leaves the captured pixels byte-identical, and it sends no pointer
-position updates after the client's own moves.) The **layout surviving a
-reconnect** *is* covered: `crates/adit-ui/examples/multimon_reconnect_probe.rs`
-drives the app's own connect path twice against the same on-disk profile,
-reloading the profile from the file between rounds, and both rounds negotiate
-the same two-monitor layout.
+the hosts available here present a single screen, so the
+pointer-coordinate-across-screens check still needs a host with more than one
+display. (The pointer cannot even be observed on the Windows server — it
+keeps the cursor on its own side rather than painting it into the virtual
+desktop, so a moved pointer leaves the captured pixels byte-identical, and it
+sends no pointer position updates after the client's own moves.) The **layout
+surviving a reconnect** *is* covered:
+`crates/adit-ui/examples/multimon_reconnect_probe.rs` drives the app's own
+connect path twice against the same on-disk profile, reloading the profile
+from the file between rounds, and both rounds negotiate the same two-monitor
+layout.
 
 **The server cursor shape is drawn** — `ActiveStageOutput::PointerBitmap` is
 composited over the remote surface, with the hotspot and the local pointer kept
