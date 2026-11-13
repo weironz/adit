@@ -10,9 +10,10 @@ was driven. The archived screenshots are measured against the exported bitmaps
 pixel for pixel, and a read-only `audit.py` recomputes every number from the
 pixels rather than trusting the harness.
 
-The authorized acceptance target (the GRD host `192.168.72.10`) was unreachable
-from this machine, so the GUI acceptance ran against a local X / FreeRDP shadow
-fixture. See the entry's README for what that does and does not establish.
+The authorized acceptance target (the GRD host `192.168.72.20` / `will-opt7010`)
+was unreachable from this machine, so the GUI acceptance ran against a local X /
+FreeRDP shadow fixture. See the entry's README for what that does and does not
+establish.
 
 ## 2026-11-13 multi-monitor against a real Windows server
 
