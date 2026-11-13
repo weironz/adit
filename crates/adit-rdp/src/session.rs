@@ -20,7 +20,6 @@ use ironrdp_displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp_dvc::DrdynvcClient;
 use ironrdp_egfx::client::GraphicsPipelineClient;
 use ironrdp_graphics::image_processing::PixelFormat;
-use ironrdp_input::Database;
 use ironrdp_session::image::DecodedImage;
 use ironrdp_session::{ActiveStageBuilder, ActiveStageOutput};
 use ironrdp_tokio::reqwest::ReqwestNetworkClient;
@@ -32,7 +31,11 @@ use tokio::sync::mpsc as tokio_mpsc;
 use crate::clipboard::{self, SharedClipboard};
 use crate::egfx::{self, EgfxHandler, SharedEgfx};
 use crate::host::HostSender;
-use crate::{build_connector_config, input::map_input, RdpError};
+use crate::{
+    build_connector_config,
+    input::{map_input, InputState},
+    RdpError,
+};
 
 /// A command from the app for the session loop.
 ///
@@ -230,7 +233,7 @@ fn current_pointer_event(event: &InputEvent, epoch: u64, current: u64) -> bool {
 }
 
 fn release_pointer_buttons(
-    db: &mut Database,
+    state: &mut InputState,
 ) -> Vec<ironrdp_pdu::input::fast_path::FastPathInputEvent> {
     use adit_rdp_proto::MouseButton;
     let mut events = Vec::new();
@@ -242,7 +245,7 @@ fn release_pointer_buttons(
         MouseButton::X2,
     ] {
         events.extend(map_input(
-            db,
+            state,
             &InputEvent::MouseButton {
                 button,
                 pressed: false,
@@ -1253,7 +1256,7 @@ async fn active_session(
     .build();
 
     // Input scancode/pointer state machine.
-    let mut input_db = Database::new();
+    let mut input_state = InputState::new();
     let mut pointer_epoch = None;
     // Once the app's input channel closes we request a graceful shutdown ONCE and
     // then stop polling it: `recv()` returns `None` immediately on every subsequent
@@ -1317,7 +1320,7 @@ async fn active_session(
                     Some(SessionCmd::Input { event: InputEvent::MonitorLayout { request_id, monitors }, .. }) => {
                         stage_layout(pending_layout, pending_resize, request_id, monitors, Some(tokio::time::Instant::now()));
                         pointer_epoch = None;
-                        let released = release_pointer_buttons(&mut input_db);
+                        let released = release_pointer_buttons(&mut input_state);
                         if released.is_empty() { Vec::new() } else { active_stage.process_fastpath_input(&mut image, &released)? }
                     }
                     Some(SessionCmd::Input { event: InputEvent::CancelMonitorLayout { request_id }, .. }) => {
@@ -1329,7 +1332,7 @@ async fn active_session(
                             u32::from(width), u32::from(height));
                         *pending_resize = Some(PendingResize::new(w, h, revision, Some(tokio::time::Instant::now())));
                         pointer_epoch = None;
-                        let released = release_pointer_buttons(&mut input_db);
+                        let released = release_pointer_buttons(&mut input_state);
                         if released.is_empty() { Vec::new() } else { active_stage.process_fastpath_input(&mut image, &released)? }
                     }
                     Some(SessionCmd::ClipboardWake) => Vec::new(),
@@ -1348,7 +1351,7 @@ async fn active_session(
                             && pointer_epoch != Some(revision) => Vec::new(),
                     Some(SessionCmd::Pointer { event: other @ InputEvent::MouseMove { .. }, revision, .. }) => {
                         pointer_epoch = Some(revision);
-                        let events = map_input(&mut input_db, &other);
+                        let events = map_input(&mut input_state, &other);
                         if events.is_empty() { Vec::new() } else { active_stage.process_fastpath_input(&mut image, &events)? }
                     }
                     // Mouse / key / unicode all fold into fast-path events.
@@ -1366,7 +1369,7 @@ async fn active_session(
                                 tracing::info!(%ch, pressed, "unicode input reached the helper");
                             }
                         }
-                        let events = map_input(&mut input_db, &other);
+                        let events = map_input(&mut input_state, &other);
                         if events.is_empty() {
                             Vec::new()
                         } else {
@@ -1418,7 +1421,7 @@ async fn active_session(
                     use ironrdp_session::fast_path;
 
                     pointer_epoch = None;
-                    let released = release_pointer_buttons(&mut input_db);
+                    let released = release_pointer_buttons(&mut input_state);
                     if !released.is_empty() {
                         for out in active_stage.process_fastpath_input(&mut image, &released)? {
                             if let ActiveStageOutput::ResponseFrame(bytes) = out {
@@ -3265,7 +3268,7 @@ mod display_deadline_tests {
 
     #[test]
     fn changing_layout_releases_held_buttons_without_releasing_keys() {
-        let mut db = Database::new();
+        let mut db = InputState::new();
         let button = adit_rdp_proto::MouseButton::Left;
         assert!(!map_input(
             &mut db,
