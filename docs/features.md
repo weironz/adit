@@ -392,19 +392,15 @@ width/height alone. The wire form follows FreeRDP's encoder: inclusive
 is more than one monitor (FreeRDP omits it for a single screen, and a
 one-monitor block makes some servers reject the connection).
 
-What is **not** verified is acceptance against a real multi-monitor server. The
-FreeRDP shadow fixture **parses and validates** the advertised list but does not
-act on it — it uses its own Xinerama-derived geometry
-(`shadow_client.c:206`) and implements no DisplayControl DVC — so it can neither
-confirm nor refute the behaviour. Verifying it needs an actual Windows or GNOME
-RDP server with more than one monitor.
-
 What the fixture *does* settle is the wire form: the server's own
 `gcc_read_client_monitor_data` accepted our block and the session connected with
 a two-monitor layout, and a deliberately inverted rectangle on the same code path
 made the server log `rdpMonitor::rect 1280x0-1279x799 invalid` and drop the
 connection. The server is therefore reading the block we send — silence on the
-well-formed layout is acceptance, not absence.
+well-formed layout is acceptance, not absence. The fixture cannot, however,
+show what the server *does* with the list: it uses its own Xinerama-derived
+geometry (`shadow_client.c:206`) and implements no DisplayControl DVC, so it
+neither confirms nor refutes the behaviour.
 
 Both halves have since been run against a **real GNOME Remote Desktop** host,
 which speaks both mechanisms:
@@ -432,6 +428,24 @@ server's `16, 8192, 8192` was read as `5, 20, 16`. The advertised area became
 now vendored and patched — see
 [`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md).
 
+A **real Windows RDP server** has since confirmed the same two halves, on top
+of the GRD results. Against this machine's own `TermService`:
+
+- **Connect time.** With `1280x800+0+0,1280x800+1280+0` advertised and a
+  `1280x800` desktop requested, the server opened `2560x800` and reported
+  `observed_monitors count=2 1280x800+0+0,1280x800+1280+0` — the desktop came
+  from the advertised block, not from the size request. The shadow fixture
+  cannot show this: it clamps the client to its own Xinerama and reports three
+  monitors.
+- **After connect.** `LAYOUT 1920x1080` was answered `result=ok` and the
+  topology became one `1920x1080` monitor; `LAYOUT 1280x800,1280x800` was
+  answered `result=ok` and it became two, with the desktop back to `2560x800`.
+- **Reconnect.** `multimon_reconnect_probe` negotiated the same two-monitor
+  layout in both rounds, reloading the profile from disk in between.
+
+The evidence is in
+[`tests/rdp/results/2026-11-13-rdp-windows-multimonitor/`](../tests/rdp/results/2026-11-13-rdp-windows-multimonitor/README.md).
+
 What remains unverified is the part a single-screen server cannot exercise:
 the **pointer crossing a screen boundary**. The GRD host presents one physical
 screen, so there is no second screen for the pointer to cross into — and it
@@ -440,6 +454,14 @@ pixels unchanged. The client-side arithmetic that maps a virtual-desktop
 coordinate onto the selected monitor's viewport (and drops input that falls in
 a gap between monitors) is covered by unit tests, but the *server's* view of
 those coordinates cannot be observed on this host.
+
+The Windows server cannot confirm the same thing, for a reason worth stating
+plainly: it keeps the cursor on the server side and never paints it into the
+virtual desktop, so no coordinate-bearing pointer update comes back and two
+framebuffer snapshots of a moved pointer are identical. Between the two
+servers the mapping is covered, but it has not yet been shown on *one* server
+that both opens a two-screen desktop and paints the pointer into it — that
+needs a physically dual-head box.
 
 The **layout surviving a reconnect** is no longer in that category. It is
 covered by `crates/adit-ui/examples/multimon_reconnect_probe.rs`, which drives
