@@ -295,6 +295,24 @@ impl EgfxFrame {
 
 pub(crate) type SharedEgfx = Arc<Mutex<EgfxFrame>>;
 
+/// The text of a caught panic.
+///
+/// `catch_unwind` hands back a boxed payload whose type is not known to the
+/// caller: a `&str` or a `String` for the ordinary `panic!` family, and
+/// anything else for a payload a library raised itself. The last case has to
+/// survive as *something* — the whole point of catching the unwind is to
+/// report why the session ended — so an unrecognised payload is rendered by
+/// its `Debug` form rather than discarded.
+pub(crate) fn panic_reason(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(text) = payload.downcast_ref::<&'static str>() {
+        (*text).to_owned()
+    } else if let Some(text) = payload.downcast_ref::<String>() {
+        text.clone()
+    } else {
+        format!("unknown panic payload: {payload:?}")
+    }
+}
+
 pub(crate) fn new_shared() -> SharedEgfx {
     Arc::new(Mutex::new(EgfxFrame {
         rgba: Vec::new(),
@@ -535,6 +553,14 @@ pub(crate) struct EgfxHandler {
     /// Counters for the one-off diagnostics above.
     unhandled_logged: u32,
     frames_seen: u32,
+    /// Test-only: make the ClearCodec decode step panic.
+    ///
+    /// The panic this guards against no longer has a live site — the cached
+    /// glyph read that produced it now bounds checks — so the guard has to be
+    /// exercised with a deliberate panic to be worth anything. Kept behind
+    /// `cfg(test)` so it cannot be set in a shipped binary.
+    #[cfg(test)]
+    inject_clear_panic: bool,
     /// How many "no rect covered this tile" warnings have been logged.
     unclipped_logged: u32,
     /// Whether anything was composited since the last present. `EndFrame`
@@ -571,6 +597,8 @@ impl EgfxHandler {
             unclipped_logged: 0,
             unhandled_logged: 0,
             frames_seen: 0,
+            #[cfg(test)]
+            inject_clear_panic: false,
             cache: HashMap::new(),
         }
     }
@@ -782,13 +810,47 @@ bytes={}
         // Keep all preceding cache state AND this PDU, even if decoding it
         // panics. A failures-only or after-decode dump loses that evidence.
         let dump = self.dump_clear_stream(pdu, w, h);
-        let outcome = self
-            .clear
-            .decode_onto(&pdu.bitmap_data, w, h, background.as_deref());
+        // A decoder panic must not become a dead helper.
+        //
+        // On 2026-10-20 the ClearCodec decoder unwound on a slice range
+        // (issue #223). Nothing between the decoder and the top of the
+        // session loop catches it, so it unwound straight out of
+        // `block_on`, `run_host` never returned, and the process exited 101.
+        // The app saw only stdout EOF and showed 「连接已断开，按 Enter 重新
+        // 连接」 — the panic text never reached `rdp-helper.log` either,
+        // because that file is a `tracing` writer and a panic goes to
+        // stderr. The one piece of evidence the field report had was the
+        // exit code, which said nothing about why.
+        //
+        // Catching it here turns the same failure into an ordinary decode
+        // error, which the session layer already carries to the GUI with its
+        // concrete reason (`finish_active_process` -> `HostMsg::Error`).
+        //
+        // The reason is carried as a plain string rather than as a decode
+        // error's source chain: `ironrdp_error::Error`'s Display prints only
+        // `[context] kind`, so a source would be dropped on the way to the
+        // GUI — exactly the detail this path exists to preserve.
+        let outcome = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            self.decode_clear_into(pdu, w, h, background.as_deref())
+        })) {
+            Ok(Ok(bgra)) => Ok(bgra),
+            Ok(Err(error)) => Err(format!("ClearCodec decode failed: {error}")),
+            Err(payload) => {
+                let reason = panic_reason(payload);
+                // The log is the only place this text can survive on its own:
+                // the GUI shows it too, but a session that dies before the
+                // app polls leaves only the log.
+                tracing::error!(
+                    %reason,
+                    "ClearCodec decoder panicked; treating it as a decode failure"
+                );
+                Err(format!("ClearCodec decode failed: decoder panicked: {reason}"))
+            }
+        };
         if let Some(dump) = dump {
             let result = match &outcome {
                 Ok(_) => "ok".to_owned(),
-                Err(error) => error.to_string(),
+                Err(message) => message.clone(),
             };
             if let Err(error) = dump.finish(&result) {
                 tracing::warn!(%error, "ClearCodec capture outcome could not be saved");
@@ -796,8 +858,7 @@ bytes={}
         }
         let mut bgra = match outcome {
             Ok(bgra) => bgra,
-            Err(error) => {
-                let message = format!("ClearCodec decode failed: {error}");
+            Err(message) => {
                 tracing::error!(%message, "closing session after stateful graphics decode failure");
                 self.decode_failed = true;
                 self.composited = false;
@@ -827,6 +888,30 @@ bytes={}
             Self::blit_rect(&mut frame, dx, dy, usize::from(w), usize::from(h), &bgra);
             self.composited = true;
         }
+    }
+
+    /// The decoder call itself, isolated so the panic guard above has exactly
+    /// one place to wrap.
+    ///
+    /// The `#[cfg(test)]` hook exists because the panic this guards against
+    /// no longer has a live site: the ClearCodec slice range that produced it
+    /// was fixed upstream of this guard (the cached-glyph read now bounds
+    /// checks), so the only way to prove the guard still works is to raise a
+    /// panic deliberately. The test does that and says so in its name — it is
+    /// not a reproduction of the field failure.
+    fn decode_clear_into(
+        &mut self,
+        pdu: &ironrdp_egfx::pdu::WireToSurface1Pdu,
+        w: u16,
+        h: u16,
+        background: Option<&[u8]>,
+    ) -> ironrdp_core::DecodeResult<Vec<u8>> {
+        #[cfg(test)]
+        if self.inject_clear_panic {
+            panic!("synthetic ClearCodec decoder panic");
+        }
+        self.clear
+            .decode_onto(&pdu.bitmap_data, w, h, background)
     }
 
     /// WireToSurface1 with classic RemoteFX (TS_RFX): decode through the
@@ -2001,5 +2086,108 @@ mod cost_merge_tests {
         }
         assert_eq!(before, expected);
         assert!(take_frames(&shared).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod decoder_panic_tests {
+    use super::*;
+    use ironrdp_egfx::pdu::{Codec1Type, GfxPdu, PixelFormat, WireToSurface1Pdu};
+    use ironrdp_pdu::geometry::ExclusiveRectangle;
+
+    /// A deliberately raised decoder panic must become a visible decode
+    /// error, not a dead helper.
+    ///
+    /// This is NOT a reproduction of the 2026-10-20 field failure: the
+    /// ClearCodec slice range that caused it no longer exists — the cached
+    /// glyph read bounds checks now — so there is no live panic to trigger.
+    /// What is under test is the *defence*, which has to keep working for the
+    /// next codec bug, including ones in the vendored crates that Adit does
+    /// not own.
+    #[test]
+    fn an_injected_clear_codec_panic_becomes_a_reported_decode_error() {
+        let shared = new_shared();
+        let mut handler = EgfxHandler::new(Arc::clone(&shared));
+        handler.surfaces.insert(
+            1,
+            SurfaceInfo {
+                origin_x: 0,
+                origin_y: 0,
+                width: 2,
+                height: 2,
+            },
+        );
+        {
+            let mut frame = shared.lock().unwrap();
+            frame.resize(2, 2);
+            frame.rgba.fill(7);
+            frame.dirty = true;
+            frame.dirty_rects.insert((0, 0, 2, 2));
+        }
+        handler.inject_clear_panic = true;
+
+        let pdu = WireToSurface1Pdu {
+            surface_id: 1,
+            codec_id: Codec1Type::ClearCodec,
+            pixel_format: PixelFormat::XRgb,
+            destination_rectangle: ExclusiveRectangle {
+                left: 0,
+                top: 0,
+                right: 2,
+                bottom: 2,
+            },
+            bitmap_data: vec![3, 0, 0, 0],
+        };
+        // The call must RETURN. Before the guard this unwound out of the
+        // helper, and the app saw a bare disconnect.
+        handler.on_unhandled_pdu(&GfxPdu::WireToSurface1(pdu));
+
+        let error = shared
+            .lock()
+            .unwrap()
+            .decode_error
+            .clone()
+            .expect("the panic must be reported as a decode error");
+        assert!(
+            error.contains("panicked"),
+            "the error must say it was a panic: {error}"
+        );
+        assert!(
+            error.contains("synthetic ClearCodec decoder panic"),
+            "the panic text must survive to the caller: {error}"
+        );
+        // The partial paint from before the failure must not escape.
+        assert!(take_frames(&shared).is_empty());
+
+        // And the session layer must turn it into an error the GUI shows,
+        // rather than a silent disconnect.
+        let result = crate::session::finish_active_process(
+            Ok(Vec::new()),
+            &shared,
+            ironrdp_pdu::Action::X224,
+            &[],
+        );
+        let session_error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("the panic was swallowed by the session layer"),
+        };
+        assert!(
+            session_error.to_string().contains("synthetic ClearCodec decoder panic"),
+            "the reason must reach the GUI: {session_error}"
+        );
+    }
+
+    /// A panic payload the caller cannot interpret must still produce a
+    /// reason. The point of catching the unwind is to report why the session
+    /// ended, so a payload that is neither `&str` nor `String` has to be
+    /// rendered rather than dropped.
+    #[test]
+    fn an_unrecognised_panic_payload_still_produces_a_reason() {
+        let payload: Box<dyn std::any::Any + Send> = Box::new(42_u32);
+        let reason = panic_reason(payload);
+        assert!(
+            reason.contains("unknown panic payload"),
+            "the payload must be rendered, not dropped: {reason}"
+        );
     }
 }

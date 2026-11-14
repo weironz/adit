@@ -231,6 +231,48 @@ Capture harness: `ADIT_RDP_DUMP=1` also writes `clear-NNN.bin` + sidecars under
 `%APPDATA%\Adit`, successes included — the caches are stateful, so a failing
 stream replays only in arrival order.
 
+### Additive (no vendor changes) — `crates/adit-rdp/src/egfx.rs` + `src/session.rs`
+
+The ClearCodec panic that opened issue #223 has **no live site any more** — the
+cached-glyph read that produced it now bounds checks (see the ClearCodec table
+above), so the decoder cannot unwind on that input. What is left of #223 is the
+*defence*, and that is entirely Adit-side: the vendored codecs are not Adit's
+code and can change, and other codec paths exist.
+
+The failure mode was specific and expensive to diagnose. A decoder panic
+unwound straight through `active_stage.process` (nothing on that path runs on
+a `spawn_blocking` thread) out of `block_on`, so `run_host` never returned and
+the helper exited **101**. The app saw only stdout EOF, sent a bare
+`RdpClientEvent::Closed`, and the GUI degraded to
+「连接已断开，按 Enter 重新连接」 — with `desktop_error` left `None`. The panic
+text never reached `rdp-helper.log` either, because that file is a
+`tracing_subscriber` writer and a panic goes to stderr. The only evidence the
+field report had was the exit code, which said nothing about *why*.
+
+There are now two guards, both in Adit's own code:
+
+1. **`egfx.rs` — the decode seam.** `decode_clear_codec` wraps the decoder
+   call in `catch_unwind` and turns a panic into an ordinary decode error,
+   which the session layer already carries to the GUI with its concrete
+   reason (`finish_active_process` → `HostMsg::Error`). The partial paint from
+   before the failure is discarded, so no half-decoded frame crosses the IPC
+   pipe.
+2. **`session.rs` — the session layer.** `process_active_stage` wraps the
+   whole active stage, so a panic from *any* codec path ends the session with
+   a reported reason instead of taking the helper down.
+
+Both carry the reason as a **plain string**, never as a decode error's source
+chain: `ironrdp_error::Error`'s `Display` prints only `[context] kind` and
+drops the source, so a source would be lost on the way to the GUI — exactly
+the detail this path exists to preserve. The reason is also `tracing::error!`-ed
+so it survives in `rdp-helper.log` on its own, even if the session dies before
+the app polls.
+
+The regression tests raise the panic **deliberately** (a `cfg(test)` hook in
+`EgfxHandler`) and say so in their names — they are not reproductions of the
+field failure, because no live panic remains to reproduce. What they prove is
+that the guard still works for the next decoder bug.
+
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
 Pulled in via `[patch.crates-io] ironrdp-connector = { path = "vendor/ironrdp-connector" }`
