@@ -381,6 +381,37 @@ drives the app's own connect path twice against the same on-disk profile,
 reloading the profile from the file between rounds, and both rounds negotiate
 the same two-monitor layout.
 
+The **client half** of the pointer check is covered for real, though: the
+acceptance tool drives the actual OS pointer and reads back the coordinate that
+reaches the wire, and all four points land where they were aimed. What GRD
+cannot provide is the *server's* view of that coordinate — and that is not a
+gap in the method but a property of the host:
+
+- GRD paints **no cursor** into the framebuffer. Three snapshots at different
+  pointer positions are pixel-identical.
+- `GrdRdpCursorUpdate` has **no position field**, so the server never states
+  where it thinks the pointer is.
+- GRD **logs no pointer coordinates**.
+- Every host-side pointer oracle is blocked: the Shell `Screenshot` D-Bus call
+  is `AccessDenied`, Shell `Eval` returns `(false, '')`, the GDK3 Wayland seat
+  reports `0,0`, and `xdotool` reads the **X** pointer while GRD drives the
+  **Wayland** cursor — two different things.
+
+Two further limits of GRD headless are worth recording, because they shape
+what the multi-monitor evidence can claim:
+
+- **Headless GRD places its ei regions past the host's physical screen** and
+  does not drive the live compositor. It serves a *virtual* desktop, not the
+  host's screen. Its virtual monitors are real as far as the protocol is
+  concerned (`MAX_MONITOR_COUNT_HEADLESS` is 16), but they are not physical
+  displays.
+- The host has **one** physical display. So the multi-monitor layout exercised
+  against it is virtual on both ends, and the hardest case — a pointer
+  crossing a *physical* screen boundary — remains unaccepted.
+
+The evidence is in
+[`tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/`](../tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/README.md).
+
 **The server cursor shape is drawn** — `ActiveStageOutput::PointerBitmap` is
 composited over the remote surface, with the hotspot and the local pointer kept
 independent.
