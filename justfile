@@ -96,6 +96,13 @@ ci-rdp: ci
     cargo clippy -p adit-ui --all-targets --features native-rdp-acceptance --locked -- -D warnings
     cargo test -p adit-ui --features native-rdp-acceptance --locked --lib
 
+# The RDP pointer acceptance harness is opt-in for the same reason: it drives
+# the OS pointer, so it must never be built by a command that runs the app's
+# own tests unattended.
+ci-rdp-pointer: ci
+    cargo clippy -p adit-ui --all-targets --features native-rdp-pointer-acceptance --locked -- -D warnings
+    cargo test -p adit-ui --features native-rdp-pointer-acceptance --locked --lib
+
 # Opt-in VNC fixture code as well as the normal local gate. Ignored native
 # tests stay opt-in: this command never injects keys or changes the desktop.
 ci-vnc: ci

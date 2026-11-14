@@ -369,15 +369,34 @@ PDU header, so the server's `16, 8192, 8192` arrived as `5, 20, 16` and every
 layout was rejected as too large; the crate is now vendored and patched (see
 [`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md)).
 
-> **Correction (2026-11-13).** This paragraph previously said those runs were
-> against a **real GNOME Remote Desktop** host. They were not: every probe
-> targeted `192.168.72.10`, this machine's own Windows `TermService`. The
-> authorized GRD host (`192.168.72.20` / `will-opt7010`) was never connected
-> to — it was unreachable on 3389, 22 and 5900 throughout. The mistake was
-> plausible because `16, 8192, 8192` are GRD's own constants *and* the
-> Windows server advertises the identical values, so the capability numbers
-> cannot identify the server. The verified claims stand; only the server's
-> identity was wrong.
+> **Correction (2026-11-13).** The paragraph above used to say those runs were
+> against a **real GNOME Remote Desktop** host. They were not: every probe of
+> that run targeted `192.168.72.10`, this machine's own Windows `TermService`.
+> The mistake was plausible because `16, 8192, 8192` are GRD's own constants
+> *and* the Windows server advertises the identical values, so the capability
+> numbers cannot identify the server — only the server's actual reaction to a
+> layout request can.
+>
+> The claims themselves were verified, against a real RDP server; only the
+> server's *identity* was wrong. The GRD host itself has since been reached
+> (its address moved to `100.70.113.193`), and the acceptance against it is
+> archived in
+> [`tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/`](../tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/README.md).
+
+**A mid-session layout change is verified too.** The post-connect request
+carries the same geometry the client already advertised, so on its own it only
+shows the channel works. Making the two differ needs
+`SessionManager::set_active_rdp_monitor_count` — the toolbar's
+single/dual-screen button. `crates/adit-ui/examples/layout_switch_probe.rs`
+drives it against the GRD host, and the server's own log records the change:
+`Received new monitor layout. PDU contains 1 monitor` then `Disposing 1
+virtual monitor(s)`, with the surviving monitor at `[0, 0, 1200, 800]`.
+
+Note that the server's *surface* list does not show this change: the host
+disposes only the second virtual monitor and leaves the first alive, so it
+sends no surface deletion and the client's surface view is unchanged by the
+switch. DisplayControl has no layout acknowledgement, so the server half of
+this item is read from the server's log, not from the wire.
 
 What is *not* done is acceptance against a **physical** multi-screen server:
 the hosts available here present a single screen, so the
@@ -391,6 +410,37 @@ surviving a reconnect** *is* covered:
 connect path twice against the same on-disk profile, reloading the profile
 from the file between rounds, and both rounds negotiate the same two-monitor
 layout.
+
+The **client half** of the pointer check is covered for real, though: the
+acceptance tool drives the actual OS pointer and reads back the coordinate that
+reaches the wire, and all four points land where they were aimed. What GRD
+cannot provide is the *server's* view of that coordinate — and that is not a
+gap in the method but a property of the host:
+
+- GRD paints **no cursor** into the framebuffer. Three snapshots at different
+  pointer positions are pixel-identical.
+- `GrdRdpCursorUpdate` has **no position field**, so the server never states
+  where it thinks the pointer is.
+- GRD **logs no pointer coordinates**.
+- Every host-side pointer oracle is blocked: the Shell `Screenshot` D-Bus call
+  is `AccessDenied`, Shell `Eval` returns `(false, '')`, the GDK3 Wayland seat
+  reports `0,0`, and `xdotool` reads the **X** pointer while GRD drives the
+  **Wayland** cursor — two different things.
+
+Two further limits of GRD headless are worth recording, because they shape
+what the multi-monitor evidence can claim:
+
+- **Headless GRD places its ei regions past the host's physical screen** and
+  does not drive the live compositor. It serves a *virtual* desktop, not the
+  host's screen. Its virtual monitors are real as far as the protocol is
+  concerned (`MAX_MONITOR_COUNT_HEADLESS` is 16), but they are not physical
+  displays.
+- The host has **one** physical display. So the multi-monitor layout exercised
+  against it is virtual on both ends, and the hardest case — a pointer
+  crossing a *physical* screen boundary — remains unaccepted.
+
+The evidence is in
+[`tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/`](../tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/README.md).
 
 **The server cursor shape is drawn** — `ActiveStageOutput::PointerBitmap` is
 composited over the remote surface, with the hotspot and the local pointer kept

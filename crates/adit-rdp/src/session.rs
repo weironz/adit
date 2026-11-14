@@ -44,6 +44,14 @@ use crate::{build_connector_config, input::map_input, RdpError};
 pub(crate) enum SessionCmd {
     Discarded,
     RejectedKeyboard,
+    /// The app asked the session to end.
+    ///
+    /// Sent just before the input channel closes, so the session can tell a
+    /// deliberate close from a broken pipe. Both close the same channel, but
+    /// only one of them is an ordinary end of session — and that one must not
+    /// be reported as a failure, because the helper would exit non-zero on
+    /// every normal disconnect.
+    AppClosed,
     Input {
         epoch: u64,
         event: InputEvent,
@@ -264,7 +272,21 @@ async fn next_command(
         command = display.recv() => command,
         command = input.recv() => command,
     };
-    command.map(|command| classify_command(command, epoch))
+    match command {
+        Some(command) => Some(classify_command(command, epoch)),
+        // The display channel is closed and empty. That is what the reader
+        // leaving does — and it drops *both* senders together, so it is also
+        // what an ordinary close of the session looks like. The close
+        // announcement sits in the input queue, which the `biased` select never
+        // polled, so it is looked for here.
+        //
+        // Without this the session would report a broken pipe for an ordinary
+        // disconnect and the helper would exit non-zero on every normal close.
+        None => input
+            .try_recv()
+            .ok()
+            .map(|command| classify_command(command, epoch)),
+    }
 }
 
 fn classify_command(command: SessionCmd, epoch: u64) -> SessionCmd {
@@ -427,6 +449,10 @@ async fn wait_activation_read<T>(
                     }
                     Some(SessionCmd::RejectedKeyboard) => {
                         if controls.host.send(HostMsg::InputDiscarded).is_err() { return None; }
+                    }
+                    Some(SessionCmd::AppClosed) => {
+                        controls.host.note_app_closing();
+                        return None;
                     }
                     Some(command) => {
                         if !defer_connect_command(controls.deferred, command)
@@ -717,7 +743,13 @@ async fn while_control_open<T>(
 }
 
 fn defer_connect_command(deferred: &mut VecDeque<SessionCmd>, command: SessionCmd) -> bool {
-    if !matches!(&command, SessionCmd::Pointer { .. } | SessionCmd::Discarded) {
+    // `AppClosed` is not deferred: it ends the session, and a deferred close
+    // would be replayed against the *next* connection instead of ending the
+    // one it was meant to end.
+    if !matches!(
+        &command,
+        SessionCmd::Pointer { .. } | SessionCmd::Discarded | SessionCmd::AppClosed
+    ) {
         if deferred.len() == MAX_DEFERRED_COMMANDS {
             // None of this batch reached the new server. Discard it together
             // so a key press cannot replay without its release, and report it.
@@ -836,6 +868,12 @@ pub(crate) async fn run_session(
                     }
                     msg = next_command(&mut input_rx, &mut display_rx, epoch) => {
                         match msg {
+                            // The app asked for the session to end. That is an
+                            // ordinary close, not a failure.
+                            Some(SessionCmd::AppClosed) => {
+                                host_tx.note_app_closing();
+                                return Ok(());
+                            }
                             None => return Err(RdpError::ControlChannelClosed),
                             Some(SessionCmd::Input { event: InputEvent::MonitorLayout { request_id, monitors }, .. }) => {
                                 stage_layout(&mut pending_layout, &mut pending_resize, request_id, monitors, None);
@@ -1162,6 +1200,63 @@ fn pdu_prefix(pdu: Option<&[u8]>) -> String {
     format!("len={} head={head}", bytes.len())
 }
 
+/// Run the active stage, turning a panic into an ordinary session error.
+///
+/// On 2026-10-20 a ClearCodec decode unwound on a slice range (issue #223).
+/// Nothing between the codec and the top of the session loop caught it, so it
+/// unwound straight out of `block_on`, `run_host` never returned, and the
+/// helper exited 101. The app saw only stdout EOF and showed 「连接已断开，按
+/// Enter 重新连接」 — the panic text never reached `rdp-helper.log` either,
+/// because that file is a `tracing` writer and a panic goes to stderr.
+///
+/// The EGFX decode path now catches its own panics (`EgfxHandler`), but the
+/// codecs it drives are vendored and other codec paths exist; a panic must
+/// never be able to take the helper down, whatever raised it. This is the
+/// last line of that defence: the reason travels as a plain string because
+/// `ironrdp_error::Error`'s Display prints only `[context] kind`, so a source
+/// chain would be dropped before reaching the GUI.
+pub(crate) fn process_active_stage(
+    active_stage: &mut ironrdp_session::ActiveStage,
+    image: &mut ironrdp_session::image::DecodedImage,
+    action: ironrdp_pdu::Action,
+    payload: &[u8],
+) -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+    guard_panic(
+        || active_stage.process(image, action, payload),
+        action,
+        payload.len(),
+    )
+}
+
+/// The panic guard itself, over a closure.
+///
+/// Split out from `process_active_stage` so the guard can be exercised
+/// without an `ActiveStage` that panics on demand — which is not something a
+/// test can arrange through the public API, since the panic this exists for
+/// came from a decoder bug rather than from bad input the test controls.
+fn guard_panic<T>(
+    work: impl FnOnce() -> Result<T, ironrdp_session::SessionError>,
+    action: ironrdp_pdu::Action,
+    payload_len: usize,
+) -> Result<T, ironrdp_session::SessionError> {
+    match std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)) {
+        Ok(processed) => processed,
+        Err(caught) => {
+            let reason = crate::egfx::panic_reason(caught);
+            tracing::error!(
+                %reason,
+                ?action,
+                payload_len,
+                "the active stage panicked; ending the session with a reported reason"
+            );
+            Err(ironrdp_session::reason_err!(
+                "RDP session",
+                "the decoder panicked: {reason}"
+            ))
+        }
+    }
+}
+
 /// Call immediately after process(), before inspecting any output. The EGFX
 /// trait cannot return a decode error, and its stateful failure must not be
 /// mistaken for one of GNOME's independently skippable, unrecognised PDUs.
@@ -1231,6 +1326,13 @@ async fn active_session(
     // newly established desktop is otherwise completely idle.
     let mut pump_initial_layout = pending_layout.is_some() || pending_resize.is_some();
     let mut keys_logged = 0u32;
+    // Pointer-coordinate probe: a multi-monitor session can be wrong in a way
+    // nothing else shows. The framebuffer is flat, so a coordinate that
+    // belongs on the second screen but is delivered as if it were on the
+    // first still draws correctly — the mistake is invisible in the picture
+    // and visible only in the numbers. So the coordinates that reach the wire
+    // are logged, the same way the keyboard probe logs its keys.
+    let mut pointer_moves_logged = 0u32;
     // Frame-flow probe: a frozen desktop and a healthy one look identical from
     // outside, so record what actually reached the app.
     let mut frames_emitted = 0u32;
@@ -1299,12 +1401,25 @@ async fn active_session(
                 // of them was killing the connection right after the handover (the
                 // desktop showed "connecting" forever). Losing one frame/order is far
                 // better than losing the session.
-                let processed = active_stage.process(&mut image, action, &payload);
+                let processed = crate::session::process_active_stage(
+                    &mut active_stage,
+                    &mut image,
+                    action,
+                    &payload,
+                );
                 finish_active_process(processed, egfx, action, &payload)?
             }
             input = next_active_command(input_rx, display_rx, deferred, epoch), if input_open => {
                 match input {
                     Some(SessionCmd::Discarded) => Vec::new(),
+                    // The app asked for the session to end. That is an
+                    // ordinary close, not a failure: the helper must not exit
+                    // non-zero on every normal disconnect.
+                    Some(SessionCmd::AppClosed) => {
+                        input_open = false;
+                        host_tx.note_app_closing();
+                        active_stage.graceful_shutdown()?
+                    }
                     Some(SessionCmd::RejectedKeyboard) => {
                         if host_tx.send(HostMsg::InputDiscarded).is_err() { break 'session; }
                         Vec::new()
@@ -1348,6 +1463,12 @@ async fn active_session(
                             && pointer_epoch != Some(revision) => Vec::new(),
                     Some(SessionCmd::Pointer { event: other @ InputEvent::MouseMove { .. }, revision, .. }) => {
                         pointer_epoch = Some(revision);
+                        if pointer_moves_logged < 200 {
+                            pointer_moves_logged += 1;
+                            if let InputEvent::MouseMove { x, y } = &other {
+                                tracing::info!(x, y, "pointer move reached the helper");
+                            }
+                        }
                         let events = map_input(&mut input_db, &other);
                         if events.is_empty() { Vec::new() } else { active_stage.process_fastpath_input(&mut image, &events)? }
                     }
@@ -3532,5 +3653,105 @@ mod desktop_output_tests {
             })
             .collect();
         assert_eq!(rgba, &expected);
+    }
+}
+
+#[cfg(test)]
+mod app_closed_delivery_tests {
+    use super::*;
+
+    /// The close must survive the input channel closing behind it.
+    ///
+    /// `next_command` polls the *display* channel first, and the reader
+    /// drops both channels together when it returns. A closed display
+    /// channel is ready immediately and empty, so a `select!` that polls it
+    /// first would take `None` — the close — and never look at the input
+    /// queue where the announcement is. The session would then report a
+    /// broken pipe for an ordinary disconnect.
+    #[tokio::test]
+    async fn the_announced_close_survives_the_channel_dropping_behind_it() {
+        let (input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
+        let (display_tx, mut display_rx) = tokio_mpsc::unbounded_channel();
+        input_tx.send(SessionCmd::AppClosed).unwrap();
+        // The reader returns: both senders drop, exactly as they do when the
+        // app closes the session.
+        drop(input_tx);
+        drop(display_tx);
+
+        let command = next_command(&mut input_rx, &mut display_rx, 0).await;
+        assert!(
+            matches!(command, Some(SessionCmd::AppClosed)),
+            "the close must be seen, got {command:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod panic_guard_tests {
+    use super::*;
+
+    /// A panic inside the active stage must end the session with a *reported*
+    /// reason, not a dead helper.
+    ///
+    /// This is NOT a reproduction of the 2026-10-20 field failure: the
+    /// ClearCodec slice range that caused it was fixed upstream of this
+    /// guard, so there is no live codec panic left to trigger. The panic is
+    /// raised deliberately here, because the guard has to keep working for
+    /// the next decoder bug — including ones in the vendored crates Adit
+    /// does not own.
+    #[test]
+    fn a_panicking_active_stage_becomes_a_reported_session_error() {
+        let result = guard_panic(
+            || -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+                panic!("synthetic decoder panic in the active stage");
+            },
+            ironrdp_pdu::Action::X224,
+            7,
+        );
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("the panic was swallowed"),
+        };
+        let text = error.to_string();
+        assert!(
+            text.contains("the decoder panicked"),
+            "the error must say what happened: {text}"
+        );
+        assert!(
+            text.contains("synthetic decoder panic in the active stage"),
+            "the panic text must reach the GUI: {text}"
+        );
+    }
+
+    /// The guard must not disturb an ordinary failure.
+    #[test]
+    fn an_ordinary_error_passes_through_the_guard() {
+        let result = guard_panic(
+            || -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+                Err(ironrdp_session::custom_err!(
+                    "unrecognised PDU",
+                    std::io::Error::other("unsupported")
+                ))
+            },
+            ironrdp_pdu::Action::X224,
+            0,
+        );
+        assert!(result.is_err());
+    }
+
+    /// And it must not disturb an ordinary success.
+    #[test]
+    fn an_ordinary_success_passes_through_the_guard() {
+        let result = guard_panic(
+            || -> Result<Vec<ActiveStageOutput>, ironrdp_session::SessionError> {
+                Ok(vec![ActiveStageOutput::ResponseFrame(vec![1, 2, 3])])
+            },
+            ironrdp_pdu::Action::X224,
+            0,
+        )
+        .expect("a successful decode must survive the guard");
+        assert!(
+            matches!(result.as_slice(), [ActiveStageOutput::ResponseFrame(bytes)] if bytes == &[1, 2, 3])
+        );
     }
 }
