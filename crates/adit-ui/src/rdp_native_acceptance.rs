@@ -505,6 +505,12 @@ enum NativeMessage {
     /// granted.
     Raised(bool),
     /// A periodic reading of the OS pointer's visibility.
+    ///
+    /// Only the Windows probe produces one: the reader is `GetCursorInfo`,
+    /// which has no counterpart elsewhere. The variant still exists on every
+    /// platform so the message type has one shape, and so the handler below
+    /// needs no cfg of its own.
+    #[cfg_attr(not(windows), allow(dead_code))]
     Visibility(bool),
     /// The OS pointer was moved to the requested client point, or the move
     /// failed. The screen point is reported so a failure is visible.
