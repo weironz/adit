@@ -359,16 +359,29 @@ re-negotiated over the DisplayControl DVC, and switched at runtime, and the
 client's geometry is advertised to the server at connect time through the GCC
 Client Monitor Data block (so a server that never speaks DisplayControl still
 learns the geometry up front). The toolbar carries the monitor-layout control.
-Both halves have been run against a **real GNOME Remote Desktop** host: the
-connect-time block makes the server size its desktop from the advertised
-geometry (`2560x800` for two `1280x800` monitors, against a requested
-`640x480`), and the post-connect DisplayControl exchange is **accepted**
-(`result=ok`, with the resulting topology reported back). That second half
-needed a client-side fix — IronRDP's `ironrdp-displaycontrol` 0.8.0 read the
-capability fields without skipping the PDU header, so the server's
-`16, 8192, 8192` arrived as `5, 20, 16` and every layout was rejected as too
-large; the crate is now vendored and patched (see
+Both halves have been run against a **real RDP server**: the connect-time block
+makes the server size its desktop from the advertised geometry (`2560x800` for
+two `1280x800` monitors, against a requested `640x480`), and the post-connect
+DisplayControl exchange is **accepted** (`result=ok`, with the resulting
+topology reported back). That second half needed a client-side fix — IronRDP's
+`ironrdp-displaycontrol` 0.8.0 read the capability fields without skipping the
+PDU header, so the server's `16, 8192, 8192` arrived as `5, 20, 16` and every
+layout was rejected as too large; the crate is now vendored and patched (see
 [`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md)).
+
+> **Correction (2026-11-13).** The paragraph above used to say those runs were
+> against a **real GNOME Remote Desktop** host. They were not: every probe of
+> that run targeted `192.168.72.10`, this machine's own Windows `TermService`.
+> The mistake was plausible because `16, 8192, 8192` are GRD's own constants
+> *and* the Windows server advertises the identical values, so the capability
+> numbers cannot identify the server — only the server's actual reaction to a
+> layout request can.
+>
+> The claims themselves were verified, against a real RDP server; only the
+> server's *identity* was wrong. The GRD host itself has since been reached
+> (its address moved to `100.70.113.193`), and the acceptance against it is
+> archived in
+> [`tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/`](../tests/rdp/results/2026-11-14-rdp-grd-headless-multimonitor/README.md).
 
 **A mid-session layout change is verified too.** The post-connect request
 carries the same geometry the client already advertised, so on its own it only
@@ -386,15 +399,17 @@ switch. DisplayControl has no layout acknowledgement, so the server half of
 this item is read from the server's log, not from the wire.
 
 What is *not* done is acceptance against a **physical** multi-screen server:
-the GRD host presents a single screen, so the pointer-coordinate-across-screens
-check still needs a host with more than one display. (The pointer cannot even
-be observed there — GRD draws no cursor into the framebuffer, so a moved
-pointer leaves the captured pixels byte-identical, and it sends no pointer
-position updates after the client's own moves.) The **layout surviving a
-reconnect** *is* covered: `crates/adit-ui/examples/multimon_reconnect_probe.rs`
-drives the app's own connect path twice against the same on-disk profile,
-reloading the profile from the file between rounds, and both rounds negotiate
-the same two-monitor layout.
+the hosts available here present a single screen, so the
+pointer-coordinate-across-screens check still needs a host with more than one
+display. (The pointer cannot even be observed on the Windows server — it
+keeps the cursor on its own side rather than painting it into the virtual
+desktop, so a moved pointer leaves the captured pixels byte-identical, and it
+sends no pointer position updates after the client's own moves.) The **layout
+surviving a reconnect** *is* covered:
+`crates/adit-ui/examples/multimon_reconnect_probe.rs` drives the app's own
+connect path twice against the same on-disk profile, reloading the profile
+from the file between rounds, and both rounds negotiate the same two-monitor
+layout.
 
 The **client half** of the pointer check is covered for real, though: the
 acceptance tool drives the actual OS pointer and reads back the coordinate that
