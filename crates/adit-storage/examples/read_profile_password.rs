@@ -29,20 +29,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // machine the user does not control. The credential store keeps the
     // password keyed to the profile, so refusing here is enough: without the
     // profile there is no password to print.
+    //
+    // The check is "not on the public internet", not "RFC 1918": a tailnet
+    // host (Tailscale, WireGuard) sits in RFC 6598's shared address space,
+    // which is exactly the user's own machine and is outside every
+    // `is_private` range.
     let profiles = adit_storage::ProfileStore::default().load_profiles()?;
     let profile = profiles
         .iter()
         .find(|p| p.id == id)
         .ok_or("no such profile")?;
-    let host: std::net::IpAddr = profile
-        .host
-        .parse()
-        .map_err(|_| "the profile's host is not an IP address")?;
-    let private = match host {
-        std::net::IpAddr::V4(v4) => v4.is_private() || v4.is_loopback(),
-        std::net::IpAddr::V6(v6) => v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00,
-    };
-    if !private {
+    if !adit_domain::is_non_public_host(&profile.host) {
         return Err("refusing to print a credential for a non-private host".into());
     }
     use std::io::Write;
