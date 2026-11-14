@@ -7,8 +7,12 @@ if (($#)); then echo 'usage: setup-linux-runner.sh [--check-only]' >&2; exit 2; 
 [[ $(uname -sm) == 'Linux x86_64' ]] || { echo 'Linux x64 runner required' >&2; exit 1; }
 sudo -n true
 # winit dlopens libxkbcommon-x11: compiling alone cannot detect its absence.
+# libfuse3-dev is what `fuser` (the Linux RDP file clipboard) probes for in its
+# build script, so its absence fails the build with a pkg-config error rather
+# than a missing-symbol one.
 packages=(build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayland-dev
   libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev libdbus-1-dev
+  libfuse3-dev
   xvfb mesa-vulkan-drivers libgl1-mesa-dri x11vnc tigervnc-standalone-server
   tigervnc-tools x11-xserver-utils x11-utils xdotool xauth python3-tk python3-yaml
   rpm iproute2 curl ca-certificates)
@@ -23,5 +27,5 @@ if ((${#missing[@]})); then
 fi
 docker info --format 'Docker {{.ServerVersion}}'
 python3 -c 'import tkinter; import yaml; print("Python Tk/YAML available")'
-pkg-config --exists xkbcommon wayland-client x11 gtk+-3.0 dbus-1
+pkg-config --exists xkbcommon wayland-client x11 gtk+-3.0 dbus-1 fuse3
 echo 'Linux build, VNC, packaging and Docker prerequisites available'
