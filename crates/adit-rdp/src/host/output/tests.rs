@@ -124,10 +124,60 @@ fn message_budget_and_reserved_terminal_suffix_are_bounded_and_ordered() {
     ));
 }
 
+/// A closed output pipe is not a failure once the app has asked to close.
+///
+/// The app asks the helper to close, then stops reading the helper's stdout.
+/// The writer's final flush therefore hits a broken pipe and aborts the
+/// output — which used to be reported as the session's outcome, so the
+/// helper exited non-zero on *every* ordinary disconnect.
+///
+/// The exit code is read by the app's disconnect path, by the acceptance
+/// harness, and by the release gate. A normal close that reads as a crash
+/// makes all three wrong.
 #[test]
-fn watchdog_counts_only_active_writes_and_resets_on_progress() {
+fn a_closed_output_pipe_does_not_fail_a_session_that_the_app_closed() {
     let (host, _receiver) = host_channel();
-    let now = Instant::now();
+    host.note_app_closing();
+    host.state.abort(HostSendError::Closed);
+    assert!(
+        host.final_result(Ok(())).is_ok(),
+        "a session the app asked to close must not fail on the broken pipe"
+    );
+}
+
+/// A pipe that broke while the session was still running is a real failure.
+///
+/// Forgiving a closed pipe must not swallow a delivery failure: the app is
+/// still there, expecting frames, and the output stopped.
+#[test]
+fn a_closed_output_pipe_still_fails_a_session_the_app_did_not_close() {
+    let (host, _receiver) = host_channel();
+    host.state.abort(HostSendError::Closed);
+    assert!(
+        host.final_result(Ok(())).is_err(),
+        "a pipe that broke mid-session must fail the session"
+    );
+}
+
+/// The other output failures are real and must still fail the session.
+///
+/// Forgiving the closed pipe must not turn an output that was overloaded or
+/// stalled into a success: those mean the helper could not deliver frames
+/// the app needed.
+#[test]
+fn a_real_output_failure_still_fails_the_session() {
+    let (host, _receiver) = host_channel();
+    host.note_app_closing();
+    host.state.abort(HostSendError::Overloaded);
+    assert!(host.final_result(Ok(())).is_err());
+    let (host, _receiver) = host_channel();
+    host.note_app_closing();
+    host.state.abort(HostSendError::Stalled);
+    assert!(host.final_result(Ok(())).is_err());
+}
+
+#[test]
+fn watchdog_counts_only_active_writes_and_resets_on_progress() {    let (host, _receiver) = host_channel();    let now = Instant::now();
     assert!(!host.state.stalled(now + Duration::from_secs(60)));
     host.state.begin_frame();
     assert!(host.state.stalled(now + Duration::from_secs(60)));

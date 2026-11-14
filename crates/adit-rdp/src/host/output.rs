@@ -81,6 +81,12 @@ struct OutputState {
     progress: Mutex<Progress>,
     failure: watch::Sender<Option<HostSendError>>,
     cancelled: AtomicBool,
+    /// The app asked the session to close.
+    ///
+    /// Set when the app's own close announcement reaches the session, so the
+    /// output pipe breaking afterwards can be recognised as the *expected*
+    /// consequence of that close rather than a delivery failure.
+    app_closing: AtomicBool,
     limits: Limits,
 }
 
@@ -198,6 +204,7 @@ fn channel_with_limits(limits: Limits) -> (HostSender, HostReceiver) {
         }),
         failure,
         cancelled: AtomicBool::new(false),
+        app_closing: AtomicBool::new(false),
         limits,
     });
     (
@@ -288,8 +295,17 @@ impl HostSender {
         })
     }
 
-    pub(super) fn startup_failed(&self) -> bool {
-        if self.state.stalled(Instant::now()) {
+    /// Record that the app asked the session to close.
+    ///
+    /// The app stops reading the helper's stdout once it has asked for the
+    /// close, so the output pipe breaks as a *consequence*. Remembering the
+    /// request is what tells that apart from a pipe that broke while the
+    /// session was still running, which is a real delivery failure.
+    pub(crate) fn note_app_closing(&self) {
+        self.state.app_closing.store(true, Ordering::Release);
+    }
+
+    pub(super) fn startup_failed(&self) -> bool {        if self.state.stalled(Instant::now()) {
             self.state.abort(HostSendError::Stalled);
         }
         self.state.failure.borrow().is_some()
@@ -322,6 +338,21 @@ impl HostSender {
 
     pub(super) fn final_result(&self, result: Result<(), RdpError>) -> Result<(), RdpError> {
         match (result, *self.state.failure.borrow()) {
+            // The app asked the session to close, so it stopped reading the
+            // helper's stdout, and the writer's final flush hit a broken pipe.
+            //
+            // Reporting that made the helper exit non-zero on *every* normal
+            // disconnect, which reads as a crash to anything watching the exit
+            // code — the app's own disconnect path, the acceptance harness and
+            // the release gate all saw a failure where none happened.
+            //
+            // Only a pipe that closed *because the app asked it to* is
+            // forgiven. A pipe that broke while the session was still running
+            // is a real delivery failure and still fails the session — the
+            // distinction is the app's own announcement, not the pipe.
+            (Ok(()), Some(HostSendError::Closed)) if self.state.app_closing.load(Ordering::Acquire) => {
+                Ok(())
+            }
             // Existing session callers map a failed send to ControlChannelClosed.
             // Keep the actual output cause when admission triggered that return.
             (Ok(()), Some(error)) | (Err(RdpError::ControlChannelClosed), Some(error)) => {

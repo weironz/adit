@@ -72,7 +72,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("usage: multimon_reconnect_probe private-ip username [port]; password on stdin".into());
     }
     let host: std::net::Ipv4Addr = args[1].parse()?;
-    if !host.is_private() && !host.is_loopback() {
+    if !adit_domain::is_non_public_v4(host) {
         return Err("acceptance is restricted to a private/loopback host".into());
     }
     let mut password = Zeroizing::new(String::new());
