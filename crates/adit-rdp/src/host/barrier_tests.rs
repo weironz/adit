@@ -36,6 +36,20 @@ fn framed_messages(
     while let Ok(command) = input_rx.try_recv() {
         commands.push(command);
     }
+    // The close the helper appends is announced as a command of its own, so
+    // it is the last thing in the queue. The tests below ask about the
+    // *routed* commands, so the announcement is split off here rather than
+    // repeated in every assertion.
+    let announced = commands
+        .iter()
+        .filter(|command| matches!(command, SessionCmd::AppClosed))
+        .count();
+    assert_eq!(announced, 1, "the close must be announced exactly once");
+    assert!(
+        matches!(commands.last(), Some(SessionCmd::AppClosed)),
+        "the announcement must be last, got {commands:?}"
+    );
+    commands.pop();
     commands
 }
 
@@ -583,4 +597,51 @@ fn framed_file_barrier_preserves_remote_file_snapshot_and_never_offers_local_fil
         matches!(ironrdp_core::decode::<ClipboardPdu<'_>>(&response[0].encode_unframed_pdu().unwrap()).unwrap(),
         ClipboardPdu::FileContentsResponse(response) if response.is_error())
     );
+}
+
+/// The app's `Close` is an ordinary end of session, not a failure.
+///
+/// The helper reports every error as a non-zero exit code, so a close that
+/// is reported as an error makes *every normal disconnect* look like a
+/// crash. The reader therefore announces the close before the input channel
+/// drops, so the session can end as a success.
+#[test]
+fn app_close_is_announced_before_the_input_channel_drops() {
+    let state = clipboard::new_shared();
+    let routing = Arc::new(InputRouting::default());
+    let (reader, mut writer) = io::pipe().unwrap();
+    write_msg(&mut writer, &ClientMsg::Close).unwrap();
+    drop(writer);
+
+    let (request_tx, _request_rx) = std_mpsc::channel();
+    let (input_tx, mut input_rx) = tokio_mpsc::unbounded_channel();
+    let (display_tx, _display_rx) = tokio_mpsc::unbounded_channel();
+    read_app_messages(
+        reader,
+        request_tx,
+        input_tx,
+        display_tx,
+        Arc::clone(&routing),
+        Arc::clone(&state),
+    );
+
+    // The close arrives as a command, so the session sees it before the
+    // channel closes.
+    let commands: Vec<SessionCmd> = std::iter::from_fn(|| input_rx.try_recv().ok()).collect();
+    let announced = commands
+        .iter()
+        .filter(|command| matches!(command, SessionCmd::AppClosed))
+        .count();
+    assert_eq!(
+        announced, 1,
+        "the app's close must be announced exactly once, got {commands:?}"
+    );
+    // And it is the *last* thing: nothing may be queued behind it.
+    assert!(
+        matches!(commands.last(), Some(SessionCmd::AppClosed)),
+        "nothing may be queued behind the close, got {commands:?}"
+    );
+    // The channel is closed afterwards, which is what the session sees when
+    // the app dies instead of closing deliberately.
+    assert!(input_rx.try_recv().is_err());
 }
