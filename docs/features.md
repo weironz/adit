@@ -491,6 +491,24 @@ The evidence for all of this is in
 including the four independent negative results that pin down *why* the
 server-side pointer coordinate is unobservable on a GRD host.
 
+### A decoder crash no longer looks like a dropped connection
+
+A panic inside an RDP decoder used to kill the helper outright: the unwind
+ran out of the session loop, the process exited **101**, and the app saw only
+a closed pipe — so the desktop showed
+「连接已断开，按 Enter 重新连接」 and the reason was gone. The exit code was the
+only evidence, and it said nothing about *why*.
+
+Now a decoder panic is caught and turned into an ordinary error: the desktop
+shows **what failed**, with the panic text in it, and the same text is written
+to `rdp-helper.log`. Two guards do this — one around the EGFX decode step, one
+around the whole session's decode stage — because the codecs are vendored
+third-party code and a future one can panic on input nobody here controls.
+
+A decode failure that the server can recover from still skips the offending
+region; this only changes what happens when a decoder *crashes* rather than
+rejects a frame.
+
 ### Clipboard (CLIPRDR)
 
 **Text copies both ways**, on by default. Copy in the remote desktop and it lands on the
