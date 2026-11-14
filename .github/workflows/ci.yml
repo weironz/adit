@@ -107,6 +107,12 @@ jobs:
       - name: Test the opt-in native RDP acceptance harness
         run: cargo test -p adit-ui --features native-rdp-acceptance --locked --lib
 
+      - name: Clippy the opt-in native RDP pointer acceptance harness
+        run: cargo clippy -p adit-ui --all-targets --features native-rdp-pointer-acceptance --locked -- -D warnings
+
+      - name: Test the opt-in native RDP pointer acceptance harness
+        run: cargo test -p adit-ui --features native-rdp-pointer-acceptance --locked --lib
+
       - name: Clippy the opt-in native workbench acceptance harness
         run: cargo clippy -p adit-ui --all-targets --features native-workbench-acceptance --locked -- -D warnings
 
