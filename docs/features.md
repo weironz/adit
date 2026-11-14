@@ -477,6 +477,24 @@ and recomputes the expectation from where the pointer *actually landed*, so
 "the pointer never arrived" and "the client computed it wrong" cannot be
 confused.
 
+The **server's view of the coordinates** has since been observed directly, on
+a FreeRDP shadow server reading two side-by-side RandR virtual monitors. The
+server's own X11 pointer (`xdotool getmouselocation`) lands on exactly the
+coordinates the client sent, pixel for pixel, including across the seam
+(`1279`, `1280`, `1281` at `y=400`) and on the second monitor (`2000,400`,
+`1300,700`). So the coordinate mapping is now verified end to end on the one
+axis the GRD host could not exercise.
+
+That check also turned up a **client-side bug in the same area**. IronRDP's
+`ironrdp_input::Database` starts out holding the origin and only emits a move
+when the position *differs* from the one it holds, so the first move of a
+session to `(0,0)` — the top-left corner of the remote desktop — was
+swallowed and never reached the server, which kept its old pointer position
+instead. The button PDUs that followed carried the Database's position rather
+than the one the user aimed at. Adit now tracks the last pointer position it
+actually sent and emits the move itself, so the origin is reachable and a
+mouse that has not moved still produces nothing.
+
 The **layout surviving a reconnect** is no longer in that category. It is
 covered by `crates/adit-ui/examples/multimon_reconnect_probe.rs`, which drives
 the app's own connect path twice against the same on-disk profile — reloading
