@@ -422,6 +422,27 @@ which speaks both mechanisms:
   `DISPLAYCONTROL_MONITOR_LAYOUT_PDU`, answering `result=ok` and reporting
   back the resulting topology — two `1280x800` monitors, then a single
   `800x600` after a second request.
+- **A layout change during the session.** The above settles that the channel
+  works; it does not settle that the remote *follows* a change, because the
+  post-connect request carries the same geometry the client already
+  advertised at connect time. Making the two differ needs the path the
+  toolbar's single/dual-screen button takes —
+  `SessionManager::set_active_rdp_monitor_count` — which sends a layout the
+  server has not seen in this session. Driven by
+  `crates/adit-ui/examples/layout_switch_probe.rs` against the GRD host, the
+  client reports `2 × 1200x800 → 1 × 1200x800` and the **server's own log**
+  records the matching change: `Received new monitor layout. PDU contains 1
+  monitor` followed by `Disposing 1 virtual monitor(s)`. The remote desktop
+  shrank from `2400x800` to `1200x800`.
+
+One trap worth knowing, because it makes a correct client look broken:
+**the server's surface list is not a proxy for its layout.** When the GRD host
+applies a two-monitor → one-monitor change it disposes only the *second*
+virtual monitor and leaves the first alive, so it sends no surface deletion at
+all and the client's view of the surfaces is unchanged by the switch. A test
+that asserts "one surface left after the switch" fails on a switch the server
+applied correctly. DisplayControl has no layout acknowledgement either, so the
+server half of this item can only be read off the server's own log.
 
 That second half only worked once a **client-side bug** was fixed: IronRDP's
 `ironrdp-displaycontrol` 0.8.0 read the capability fields straight out of the

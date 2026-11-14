@@ -21,9 +21,10 @@ covers [#233](https://github.com/weironz/adit/issues/233) against a **real GRD h
 in headless remote-login mode — the same target `mstsc` reaches. Three of the
 issue's four items are closed there: the server opens its virtual desktop from
 the advertised GCC block (two `1200x800` surfaces at `(0,0)` and `(1200,0)`),
-follows a post-connect DisplayControl layout change (the old surfaces are
-deleted and new ones created, with new ids), and the layout survives a reconnect
-through the profile store.
+follows a **mid-session** layout change (the client's `2 × 1200x800 →
+1 × 1200x800` switch reaches the server, which disposes one virtual monitor
+and rebuilds the other at `[0, 0, 1200, 800]`), and the layout survives a
+reconnect through the profile store.
 
 The pointer coordinates are covered on the **client** side, deterministically:
 the acceptance tool drives the real OS pointer and reads back the coordinate

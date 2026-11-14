@@ -370,6 +370,21 @@ capability fields without skipping the PDU header, so the server's
 large; the crate is now vendored and patched (see
 [`IRONRDP-PATCHES.md`](../crates/adit-rdp/IRONRDP-PATCHES.md)).
 
+**A mid-session layout change is verified too.** The post-connect request
+carries the same geometry the client already advertised, so on its own it only
+shows the channel works. Making the two differ needs
+`SessionManager::set_active_rdp_monitor_count` — the toolbar's
+single/dual-screen button. `crates/adit-ui/examples/layout_switch_probe.rs`
+drives it against the GRD host, and the server's own log records the change:
+`Received new monitor layout. PDU contains 1 monitor` then `Disposing 1
+virtual monitor(s)`, with the surviving monitor at `[0, 0, 1200, 800]`.
+
+Note that the server's *surface* list does not show this change: the host
+disposes only the second virtual monitor and leaves the first alive, so it
+sends no surface deletion and the client's surface view is unchanged by the
+switch. DisplayControl has no layout acknowledgement, so the server half of
+this item is read from the server's log, not from the wire.
+
 What is *not* done is acceptance against a **physical** multi-screen server:
 the GRD host presents a single screen, so the pointer-coordinate-across-screens
 check still needs a host with more than one display. (The pointer cannot even
