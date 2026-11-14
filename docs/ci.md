@@ -20,6 +20,38 @@ GitHub 侧没有可调度的 `home-workstation-linux-adit-01`。因此 `ci.yml` 
 `queued`（等 runner）还是 `completed`（跑完了）。只有 Windows 子任务能作为
 当前环境的实际门禁；Linux 侧的覆盖需要在 Linux 机器上单独复验。工作流可由 main push、同仓库 PR 或手动触发；外部 fork PR 不在持久化 runner 上执行。
 
+### 固定并发组会把下一次运行一起堵住
+
+`ci.yml` 的并发组是固定的（`group: adit-self-hosted-ci`，`cancel-in-progress: false`）。
+由于 `linux-x64` 永远停在 queued，**整个 run 会一直占着这个组**，下一次 dispatch
+的 run 只能停在 queued，直到前一个被取消。所以 Linux runner 缺失的后果不止于
+「Linux 腿不跑」——它还让**新 run 的 Windows 腿也排队**。
+
+新 dispatch 的 run 迟迟不动时，先取消上一个还占着组的 run：
+
+```bash
+gh run list --workflow ci.yml --limit 3
+gh run cancel <上一个 run id>
+```
+
+取消后新 run 才会开始跑 Windows 腿。
+
+### Linux 半边可以本地复刻
+
+没有 Linux runner 时，`ci.yml` 的 Linux 部分可以在 Docker 里跑一遍，用于在提交前
+发现只有 Linux 才会暴露的问题。这不是替代 CI 的正式门禁（容器里的发行版、图形栈、
+`sudo`/netns 权限都和真实 runner 不同），但它能挡住绝大多数 Linux-only 的编译失败。
+
+两个真实 runner 上才会失败、容器里同样会失败的坑：
+
+- `fuser`（Linux 的 RDP 文件剪贴板，走 FUSE）用 pkg-config 探测 `fuse3`，缺了会在
+  **编译期**报 `Package fuse3 was not found in the pkg-config search path`，而不是
+  链接期报缺符号。因此 `libfuse3-dev` 必须在 `.github/scripts/setup-linux-runner.sh`
+  的依赖列表里。
+- `#[cfg(windows)]` 专属的构造会让对应 enum variant 在 Linux 上变成 dead code，
+  而 CI 的 `clippy -D warnings` 会把它变成错误。仓库约定是给这类 variant 加
+  `#[cfg_attr(not(windows), allow(dead_code))]`。
+
 ## 依赖准备
 
 - Windows：MSVC x64 C++ Build Tools、Windows SDK、Git、PowerShell 7 和 Rust stable/Clippy。`.github/scripts/setup-windows-runner.ps1` 检查已有 MSVC/SDK，并在 runner 可写工具目录安装经过 SHA-256 校验的 just 1.59.0，不提升服务账号权限。缺少 MSVC/SDK 时需先在机器上安装对应组件。
