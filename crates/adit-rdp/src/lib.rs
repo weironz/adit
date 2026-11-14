@@ -38,6 +38,20 @@ pub enum RdpError {
     Session(String),
     #[error("the app closed the control channel")]
     ControlChannelClosed,
+    /// The app asked the session to end.
+    ///
+    /// Distinct from [`RdpError::ControlChannelClosed`] because the two mean
+    /// opposite things: the app closing the channel is how an *ordinary*
+    /// session ends, and it must not be reported as a failure. A session that
+    /// ended this way is a success, and the helper exits 0 — otherwise every
+    /// normal disconnect would exit non-zero and read as a crash.
+    ///
+    /// The variant exists because the app's `Close` message and a *broken*
+    /// pipe both close the same channel: the first is deliberate, the second
+    /// is not, and only the session layer can tell them apart by whether the
+    /// `Close` actually arrived.
+    #[error("the app closed the session")]
+    AppClosed,
 }
 
 /// Extract the value of a `Cookie: msts=<value>\r\n` load-balance / routing token

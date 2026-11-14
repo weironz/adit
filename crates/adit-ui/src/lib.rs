@@ -76,12 +76,16 @@ mod rdp_dragdrop;
 mod vnc_cursor;
 #[cfg(feature = "native-rdp-acceptance")]
 mod rdp_native_acceptance;
+#[cfg(feature = "native-rdp-pointer-acceptance")]
+mod rdp_pointer_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 mod vnc_native_acceptance;
 #[cfg(feature = "native-workbench-acceptance")]
 mod workbench_acceptance;
 #[cfg(feature = "native-rdp-acceptance")]
 pub use rdp_native_acceptance::run as run_native_rdp_acceptance;
+#[cfg(feature = "native-rdp-pointer-acceptance")]
+pub use rdp_pointer_acceptance::run as run_native_rdp_pointer_acceptance;
 #[cfg(feature = "native-vnc-acceptance")]
 pub use vnc_native_acceptance::run as run_native_vnc_acceptance;
 #[cfg(feature = "native-workbench-acceptance")]
@@ -2111,7 +2115,8 @@ fn app_theme(app: &AditApp) -> Theme {
 // surface rather than the thing under test.
 #[cfg(any(
     feature = "native-vnc-acceptance",
-    feature = "native-rdp-acceptance"
+    feature = "native-rdp-acceptance",
+    feature = "native-rdp-pointer-acceptance"
 ))]
 fn subscription(app: &AditApp) -> Subscription<Message> {
     let mut subs = vec![
@@ -2225,6 +2230,7 @@ fn sidebar_drag_event(
 #[cfg(any(
     feature = "native-vnc-acceptance",
     feature = "native-rdp-acceptance",
+    feature = "native-rdp-pointer-acceptance",
     feature = "native-workbench-acceptance"
 ))]
 fn runtime_subscription(app: &AditApp) -> Subscription<Message> {

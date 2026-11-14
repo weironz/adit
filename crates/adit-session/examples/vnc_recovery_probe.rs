@@ -44,7 +44,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if ip.is_multicast()
         || ip.is_unspecified()
         || ip.is_broadcast()
-        || (!ip.is_private() && !ip.is_loopback() && !public_fixture)
+        || (!adit_domain::is_non_public_v4(ip) && !public_fixture)
     {
         return Err(
             "recovery acceptance is limited to an isolated private/loopback fixture".into(),

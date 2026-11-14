@@ -20,7 +20,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     let host: std::net::Ipv4Addr = args[1].parse()?;
-    if !host.is_private() && !host.is_loopback() {
+    if !adit_domain::is_non_public_v4(host) {
         return Err("input is restricted to an authorized private/loopback fixture".into());
     }
     let timeout = if positional_len == 4 {

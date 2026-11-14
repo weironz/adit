@@ -8,6 +8,7 @@ license.workspace = true
 [features]
 native-vnc-acceptance = ["dep:image"]
 native-rdp-acceptance = ["dep:image"]
+native-rdp-pointer-acceptance = []
 native-workbench-acceptance = ["dep:image"]
 native-accessibility-acceptance = []
 
@@ -43,6 +44,10 @@ required-features = ["native-vnc-acceptance"]
 [[example]]
 name = "rdp_native_acceptance"
 required-features = ["native-rdp-acceptance"]
+
+[[example]]
+name = "rdp_pointer_acceptance"
+required-features = ["native-rdp-pointer-acceptance"]
 
 [[example]]
 name = "keyboard_hook_probe"

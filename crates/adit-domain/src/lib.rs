@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use uuid::Uuid;
+mod host_range;
+pub use host_range::{is_non_public, is_non_public_host, is_non_public_v4, is_non_public_v6};
+
 mod proxy_command;
 pub use proxy_command::ProxyCommand;
 

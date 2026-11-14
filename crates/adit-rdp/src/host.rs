@@ -125,7 +125,14 @@ pub(crate) fn read_app_messages<R: io::Read>(
                     break;
                 }
             }
-            Ok(Some(ClientMsg::Close)) | Ok(None) | Err(_) => break,
+            // The app closed the session deliberately. Say so before the
+            // channel drops, so the session can end as a success rather than
+            // as a broken pipe.
+            Ok(Some(ClientMsg::Close)) => {
+                let _ = input_tx.send(SessionCmd::AppClosed);
+                break;
+            }
+            Ok(None) | Err(_) => break,
         }
     }
 }
@@ -522,6 +529,13 @@ mod redirect_epoch_tests {
         assert!(matches!(input_rx.try_recv(), Ok(SessionCmd::FileContents {
             epoch: 1, stream_id: 7, data: Some(bytes)
         }) if bytes == vec![2]));
+        // The close is announced as a command of its own, so it is the last
+        // thing in the queue — nothing may follow it.
+        assert!(
+            matches!(input_rx.try_recv(), Ok(SessionCmd::AppClosed)),
+            "the close must be announced, got {:?}",
+            input_rx.try_recv()
+        );
         assert!(input_rx.try_recv().is_err());
     }
 }
