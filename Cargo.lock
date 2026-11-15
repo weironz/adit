@@ -53,7 +53,7 @@ dependencies = [
 
 [[package]]
 name = "adit-app"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "adit-storage",
  "adit-ui",
@@ -63,7 +63,7 @@ dependencies = [
 
 [[package]]
 name = "adit-domain"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "serde",
  "serde_json",
@@ -72,7 +72,7 @@ dependencies = [
 
 [[package]]
 name = "adit-rdp-proto"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "bincode",
  "image",
@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "adit-session"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "adit-domain",
  "adit-rdp-proto",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "adit-ssh"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "adit-domain",
  "base64 0.22.1",
@@ -125,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "adit-storage"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "adit-domain",
  "adit-rdp-proto",
@@ -142,7 +142,7 @@ dependencies = [
 
 [[package]]
 name = "adit-sync"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "adit-domain",
  "adit-storage",
@@ -157,7 +157,7 @@ dependencies = [
 
 [[package]]
 name = "adit-terminal"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "serde",
  "unicode-segmentation",
@@ -167,7 +167,7 @@ dependencies = [
 
 [[package]]
 name = "adit-ui"
-version = "0.1.77"
+version = "0.1.78"
 dependencies = [
  "accesskit",
  "accesskit_windows",
