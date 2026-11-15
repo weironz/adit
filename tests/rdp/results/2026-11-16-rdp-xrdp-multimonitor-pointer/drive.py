@@ -46,6 +46,11 @@ def main():
     ap.add_argument("--monitors", required=True)
     ap.add_argument("--oracle", required=True)
     ap.add_argument("--layout-oracle", help="command whose output records the server's monitor topology")
+    ap.add_argument(
+        "--relayout",
+        help="LAYOUT argument sent once connected (e.g. 1280x800@150,1280x800@150), "
+        "for what only a post-connect layout can set, such as a desktop scale factor",
+    )
     ap.add_argument("--out", required=True)
     ap.add_argument("--settle-timeout", type=float, default=3.0)
     ap.add_argument("targets", nargs="+")
@@ -103,6 +108,15 @@ def main():
         send("WAIT 1500")
         send("ACK settled")
         wait_for("command_ack=settled", 30)
+        if args.relayout:
+            send(f"LAYOUT {args.relayout}")
+            result = wait_for("layout_result", 30)
+            records.append({"kind": "relayout", "request": args.relayout, "result": result})
+            # The server applies a new layout (and any DPI change) after it
+            # answers; give it time before reading topology.
+            send("WAIT 3000")
+            send("ACK relaid")
+            wait_for("command_ack=relaid", 30)
         if args.layout_oracle:
             topo = subprocess.run(args.layout_oracle, shell=True, capture_output=True, text=True, timeout=10)
             print("server topology:\n" + topo.stdout, flush=True)

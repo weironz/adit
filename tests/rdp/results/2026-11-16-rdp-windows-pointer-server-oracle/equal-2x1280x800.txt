@@ -1,0 +1,125 @@
+probe: advertising_monitors=1280x800+0+0,1280x800+1280+0
+probe: requested_size=1280x800
+probe: connected=2560x800 elapsed_ms=103
+probe: observed_monitors count=2 1280x800+0+0,1280x800+1280+0
+probe: connected=2560x800 elapsed_ms=110
+probe: pointer_event=1 client_pos=none hidden
+probe: pointer_event=2 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096
+probe: pointer_event=3 client_pos=none hidden
+probe: pointer_event=4 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096
+probe: pointer_event=5 client_pos=none bitmap 41x39 hotspot 19,19 bytes 6396
+probe: pointer_event=6 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096
+probe: first_tile_ms=381
+probe: pointer_event=7 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396
+probe: pointer_event=8 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=9 client_pos=none hidden
+probe: pointer_event=10 client_pos=none hidden
+probe: pointer_event=11 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=12 client_pos=none hidden
+probe: pointer_event=13 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=14 client_pos=none bitmap 41x39 hotspot 19,19 bytes 6396
+probe: pointer_event=15 client_pos=none hidden
+probe: pointer_event=16 client_pos=none hidden
+probe: pointer_event=17 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396
+probe: pointer_event=18 client_pos=none hidden
+probe: pointer_event=19 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396
+probe: pointer_event=20 client_pos=none hidden
+probe: pointer_event=21 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=22 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=23 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=24 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=25 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=26 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=27 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=28 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=29 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=30 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=31 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=32 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=33 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=34 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=35 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=36 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=37 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=38 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=39 client_pos=none hidden
+probe: command_ack=settled
+server topology:
+{"session": 4, "virtual": [0, 0, 2560, 800], "monitor_count": 2, "monitors": [{"device": "\\\\.\\DISPLAY1", "rect": [0, 0, 1280, 800], "primary": true, "dpi": 96}, {"device": "\\\\.\\DISPLAY2", "rect": [1280, 0, 2560, 800], "primary": false, "dpi": 96}], "cursor": [640, 400], "physical": [640, 400], "unaware": [640, 400]}
+
+probe: pointer_event=40 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=41 client_pos=none hidden
+probe: pointer_event=42 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=43 client_pos=none hidden
+probe: pointer_event=44 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=45 client_pos=0,0 hidden
+probe: command_ack=t0
+{"kind": "pointer", "label": "mon0-origin", "wire": [0, 0], "server_before": [640, 400], "server_after": [0, 0], "match": true, "settle_ms": 36}
+probe: pointer_event=46 client_pos=0,0 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=47 client_pos=0,0 hidden
+probe: pointer_event=48 client_pos=0,0 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=49 client_pos=100,400 hidden
+probe: command_ack=t1
+{"kind": "pointer", "label": "mon0-near", "wire": [100, 400], "server_before": [0, 0], "server_after": [100, 400], "match": true, "settle_ms": 48}
+probe: pointer_event=50 client_pos=100,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=51 client_pos=100,400 hidden
+probe: pointer_event=52 client_pos=100,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=53 client_pos=100,400 hidden
+probe: pointer_event=54 client_pos=1100,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: command_ack=t2
+{"kind": "pointer", "label": "mon0-far", "wire": [1100, 400], "server_before": [100, 400], "server_after": [1100, 400], "match": true, "settle_ms": 36}
+probe: pointer_event=55 client_pos=1100,400 hidden
+probe: pointer_event=56 client_pos=1100,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: command_ack=t3
+{"kind": "pointer", "label": "seam-left", "wire": [1279, 400], "server_before": [1100, 400], "server_after": [1279, 400], "match": true, "settle_ms": 38}
+probe: pointer_event=57 client_pos=1279,400 hidden
+probe: pointer_event=58 client_pos=1279,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=59 client_pos=1280,400 hidden
+probe: command_ack=t4
+{"kind": "pointer", "label": "seam", "wire": [1280, 400], "server_before": [1279, 400], "server_after": [1280, 400], "match": true, "settle_ms": 35}
+probe: pointer_event=60 client_pos=1280,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=61 client_pos=1280,400 hidden
+probe: pointer_event=62 client_pos=1280,400 hidden
+probe: pointer_event=63 client_pos=1280,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=64 client_pos=1280,400 hidden
+probe: pointer_event=65 client_pos=1280,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=66 client_pos=1281,400 hidden
+probe: command_ack=t5
+{"kind": "pointer", "label": "seam-right", "wire": [1281, 400], "server_before": [1280, 400], "server_after": [1281, 400], "match": true, "settle_ms": 36}
+probe: pointer_event=67 client_pos=1281,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=68 client_pos=1281,400 hidden
+probe: pointer_event=69 client_pos=1281,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=70 client_pos=1300,400 hidden
+probe: command_ack=t6
+{"kind": "pointer", "label": "mon1-near", "wire": [1300, 400], "server_before": [1281, 400], "server_after": [1300, 400], "match": true, "settle_ms": 40}
+probe: pointer_event=71 client_pos=1300,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=72 client_pos=1300,400 hidden
+probe: pointer_event=73 client_pos=1300,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=74 client_pos=2300,400 hidden
+probe: command_ack=t7
+{"kind": "pointer", "label": "mon1-far", "wire": [2300, 400], "server_before": [1300, 400], "server_after": [2300, 400], "match": true, "settle_ms": 36}
+probe: pointer_event=75 client_pos=2300,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=76 client_pos=2300,400 hidden
+probe: pointer_event=77 client_pos=2300,400 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=78 client_pos=2000,0 hidden
+probe: command_ack=t8
+{"kind": "pointer", "label": "mon1-top", "wire": [2000, 0], "server_before": [2300, 400], "server_after": [2000, 0], "match": true, "settle_ms": 39}
+probe: pointer_event=79 client_pos=2000,0 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=80 client_pos=2000,0 hidden
+probe: pointer_event=81 client_pos=2000,0 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=82 client_pos=0,799 hidden
+probe: command_ack=t9
+{"kind": "pointer", "label": "mon0-bottom-left", "wire": [0, 799], "server_before": [2000, 0], "server_after": [0, 799], "match": true, "settle_ms": 43}
+probe: pointer_event=83 client_pos=0,799 hidden
+probe: pointer_event=84 client_pos=0,799 bitmap 41x39 hotspot 19,19 bytes 6396
+probe: pointer_event=85 client_pos=0,799 hidden
+probe: pointer_event=86 client_pos=0,799 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=87 client_pos=0,799 hidden
+probe: pointer_event=88 client_pos=0,799 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=89 client_pos=0,799 hidden
+probe: pointer_event=90 client_pos=0,799 bitmap 41x39 hotspot 3,11 bytes 6396
+probe: pointer_event=91 client_pos=2559,799 hidden
+probe: command_ack=t10
+{"kind": "pointer", "label": "far-corner", "wire": [2559, 799], "server_before": [0, 799], "server_after": [2559, 799], "match": true, "settle_ms": 39}
+helper_exit=exit code: 0
+RESULT 11/11 matched
