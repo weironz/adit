@@ -588,22 +588,34 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // this asks the server to *change* to one, which is the
                     // only path that can show whether the server honours a
                     // layout it did not start with.
+                    //
+                    // An entry may carry a desktop scale factor as `@PERCENT`
+                    // (`LAYOUT 1280x800@150,1280x800@150`). The helper sends no
+                    // connect-time scale factor, and a Windows RDP session
+                    // ignores the user's own LogPixels, so a post-connect
+                    // layout is how the probe puts a session at a DPI other
+                    // than 96.
                     let mut entries: Vec<adit_rdp_proto::Monitor> = Vec::new();
+                    let mut next_left = 0i32;
                     for (index, entry) in layout.split(',').enumerate() {
-                        let (w, h) = entry
-                            .trim()
+                        let (size, scale) = match entry.trim().split_once('@') {
+                            Some((size, scale)) => (size, scale.parse::<u32>()?),
+                            None => (entry.trim(), 100),
+                        };
+                        let (w, h) = size
                             .split_once('x')
                             .ok_or("LAYOUT requires WIDTHxHEIGHT entries")?;
                         let width: u16 = w.parse()?;
                         let height: u16 = h.parse()?;
                         entries.push(adit_rdp_proto::Monitor {
-                            left: (index as i32) * i32::from(width),
+                            left: next_left,
                             top: 0,
                             width,
                             height,
                             primary: index == 0,
-                            scale_percent: 100,
+                            scale_percent: scale,
                         });
+                        next_left += i32::from(width);
                     }
                     if entries.is_empty() {
                         return Err("LAYOUT requires at least one monitor".into());
