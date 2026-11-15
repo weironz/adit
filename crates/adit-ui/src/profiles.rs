@@ -323,20 +323,24 @@ pub(crate) fn finish_profile_drag(app: &mut AditApp) {
         // moved, only the pressed row was still selected.
         //
         // The collapse is skipped when the selection is already exactly this
-        // row. `select_profile` reloads the profile, and the reload reads the
+        // row and it is already the focused one — that is, when
+        // `select_profile` would only redo what the press already did.
+        // `select_profile` reloads the profile, and the reload reads the
         // credential vault — which for the legacy v1 vault re-derives its
         // Argon2 key, an expensive operation. Doing that again on the release
         // of every click made the two presses of a double-click far enough
         // apart to fall outside the double-click window, so the double-click
         // was read as two single clicks.
-        if app.selected_profiles.len() != 1 || !app.selected_profiles.contains(&source_id) {
-            select_profile(app, source_id);
-        } else {
-            // The selection already holds this row and this row is already
-            // the focused one, so only the cheap parts of `select_profile`
-            // are still due: the shift-click anchor and the cleared error.
+        let already_exactly_this_row = app.selected_profiles.len() == 1
+            && app.selected_profiles.contains(&source_id)
+            && app.selected_profile == Some(source_id);
+        if already_exactly_this_row {
+            // Only the cheap parts of `select_profile` are still due: the
+            // shift-click anchor and the cleared error.
             app.profile_select_anchor = Some(source_id);
             app.last_error = None;
+        } else {
+            select_profile(app, source_id);
         }
         if settle {
             retarget_card_slots(app);
