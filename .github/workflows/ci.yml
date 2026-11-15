@@ -410,7 +410,8 @@ jobs:
         run: |
           cargo test -p adit-ssh --features integration --locked -- --include-ignored --test-threads=4 --skip proxy_command::tests
           cargo build -p adit-ssh --example proxy_stdio_fixture --locked
-          ADIT_PROXY_FIXTURE="$PWD/target/debug/examples/proxy_stdio_fixture"             cargo test -p adit-ssh --features integration --locked --lib proxy_command::tests -- --include-ignored --test-threads=1
+          export ADIT_PROXY_FIXTURE="$PWD/target/debug/examples/proxy_stdio_fixture"
+          cargo test -p adit-ssh --features integration --locked --lib proxy_command::tests -- --include-ignored --test-threads=1
 
 # === ORIGINAL NON-X64 PLATFORM CONFIGURATION (PAUSED) ===
 # Original build matrix: windows-latest, windows-11-arm, ubuntu-latest,

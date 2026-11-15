@@ -16,8 +16,14 @@ $current = Get-AditWorkspaceVersion $root
 Assert-AditReleaseVersion $current $Version
 $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
 $headers = @{Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'}
+# The self-hosted runner reaches GitHub only through its proxy, and Windows
+# PowerShell's Invoke-RestMethod ignores HTTPS_PROXY (gh, git and cargo honour
+# it), so without -Proxy the gate failed with "could not resolve api.github.com".
+$proxy = @($env:HTTPS_PROXY, $env:https_proxy, $env:HTTP_PROXY, $env:http_proxy) |
+    Where-Object { $_ } | Select-Object -First 1
+$proxyArgs = if ($proxy) { @{Proxy = $proxy} } else { @{} }
 function Read-ReleaseAPI([string]$Path, [switch]$AllowMissing) {
-    try { return Invoke-RestMethod -Uri "$api/repos/$Repository/$Path" -Headers $headers }
+    try { return Invoke-RestMethod -Uri "$api/repos/$Repository/$Path" -Headers $headers @proxyArgs }
     catch {
         if ($AllowMissing -and $_.Exception.Response -and [int]$_.Exception.Response.StatusCode -eq 404) { return $null }
         throw
