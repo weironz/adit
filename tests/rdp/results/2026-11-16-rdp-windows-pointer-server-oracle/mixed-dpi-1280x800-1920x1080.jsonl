@@ -1,0 +1,217 @@
+{"kind": "run", "monitors": "1280x800,1920x1080", "host": "127.0.0.2:3389"}
+{"kind": "probe", "line": "advertising_monitors=1280x800+0+0,1920x1080+1280+0"}
+{"kind": "probe", "line": "requested_size=1280x800"}
+{"kind": "probe", "line": "connected=3200x1080 elapsed_ms=87"}
+{"kind": "probe", "line": "observed_monitors count=2 1280x800+0+0,1920x1080+1280+0"}
+{"kind": "probe", "line": "connected=3200x1080 elapsed_ms=93"}
+{"kind": "probe", "line": "pointer_event=1 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=2 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=3 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=4 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=5 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=6 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=7 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=8 client_pos=none bitmap 32x32 hotspot 16,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=9 client_pos=none bitmap 41x39 hotspot 19,19 bytes 6396"}
+{"kind": "probe", "line": "first_tile_ms=381"}
+{"kind": "probe", "line": "pointer_event=10 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=11 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=12 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=13 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=14 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=15 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=16 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=17 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=18 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=19 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=20 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=21 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=22 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=23 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=24 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=25 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=26 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=27 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=28 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=29 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=30 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=31 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=32 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=33 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=34 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=35 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=36 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=37 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=38 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=39 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=40 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=41 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=42 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "command_ack=settled"}
+{"kind": "probe", "line": "layout_requested request=1"}
+{"kind": "probe", "line": "layout_result request=1 epoch=0 result=ok"}
+{"kind": "probe", "line": "observed_monitors count=2 1280x800+0+0,1920x1080+1280+0"}
+{"kind": "probe", "line": "connected=3200x1080 elapsed_ms=1630"}
+{"kind": "probe", "line": "pointer_event=43 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=44 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=45 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=46 client_pos=none bitmap 41x39 hotspot 3,3 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=47 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=48 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=49 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=50 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=51 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=52 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=53 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=54 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=55 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=56 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=57 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=58 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=59 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=60 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=61 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=62 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=63 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=64 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=65 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=66 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=67 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=68 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=69 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=70 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=71 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=72 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=73 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=74 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=75 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=76 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=77 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=78 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=79 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=80 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=81 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=82 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=83 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=84 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=85 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=86 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=87 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=88 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=89 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=90 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=91 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=92 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=93 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=94 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=95 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=96 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=97 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=98 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=99 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=100 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=101 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=102 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=103 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=104 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=105 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=106 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=107 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=108 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=109 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=110 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=111 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=112 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=113 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=114 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=115 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=116 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=117 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=118 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=119 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=120 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=121 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=122 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=123 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=124 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=125 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=126 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=127 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=128 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=129 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=130 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=131 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=132 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=133 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=134 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=135 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=136 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=137 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=138 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=139 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=140 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=141 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=142 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=143 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=144 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=145 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=146 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=147 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=148 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=149 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=150 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=151 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=152 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=153 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=154 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=155 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=156 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=157 client_pos=none hidden"}
+{"kind": "probe", "line": "command_ack=relaid"}
+{"kind": "probe", "line": "pointer_event=158 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=159 client_pos=none hidden"}
+{"kind": "probe", "line": "pointer_event=160 client_pos=none bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=161 client_pos=0,0 hidden"}
+{"kind": "probe", "line": "command_ack=t0"}
+{"kind": "probe", "line": "pointer_event=162 client_pos=0,0 bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=163 client_pos=0,0 hidden"}
+{"kind": "probe", "line": "pointer_event=164 client_pos=0,0 bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=165 client_pos=640,400 hidden"}
+{"kind": "probe", "line": "command_ack=t1"}
+{"kind": "probe", "line": "pointer_event=166 client_pos=640,400 bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=167 client_pos=640,400 hidden"}
+{"kind": "probe", "line": "pointer_event=168 client_pos=640,400 bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "command_ack=t2"}
+{"kind": "probe", "line": "pointer_event=169 client_pos=1279,400 hidden"}
+{"kind": "probe", "line": "pointer_event=170 client_pos=1279,400 bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=171 client_pos=1279,400 hidden"}
+{"kind": "probe", "line": "pointer_event=172 client_pos=1279,400 bitmap 41x39 hotspot 3,11 bytes 6396"}
+{"kind": "probe", "line": "pointer_event=173 client_pos=1280,400 hidden"}
+{"kind": "probe", "line": "command_ack=t3"}
+{"kind": "probe", "line": "pointer_event=174 client_pos=1280,400 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_event=175 client_pos=1280,400 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_event=176 client_pos=1280,400 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_event=177 client_pos=1281,400 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "command_ack=t4"}
+{"kind": "probe", "line": "pointer_event=178 client_pos=1281,400 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "command_ack=t5"}
+{"kind": "probe", "line": "pointer_event=179 client_pos=2240,540 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_event=180 client_pos=2240,540 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_event=181 client_pos=1280,1079 bitmap 57x55 hotspot 27,27 bytes 12540"}
+{"kind": "probe", "line": "command_ack=t6"}
+{"kind": "probe", "line": "pointer_event=182 client_pos=1280,1079 hidden"}
+{"kind": "probe", "line": "pointer_event=183 client_pos=1280,1079 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_event=184 client_pos=1280,1079 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "command_ack=t7"}
+{"kind": "probe", "line": "pointer_event=185 client_pos=3199,1079 bitmap 57x55 hotspot 3,15 bytes 12540"}
+{"kind": "probe", "line": "pointer_summary events=185 distinct_shapes=6"}
+{"kind": "relayout", "request": "1280x800@100,1920x1080@150", "result": "layout_result request=1 epoch=0 result=ok"}
+{"kind": "server_topology", "output": "{\"session\": 9, \"virtual\": [0, 0, 3200, 1080], \"monitor_count\": 2, \"monitors\": [{\"device\": \"\\\\\\\\.\\\\DISPLAY1\", \"rect\": [0, 0, 1280, 800], \"primary\": true, \"dpi\": 96}, {\"device\": \"\\\\\\\\.\\\\DISPLAY2\", \"rect\": [1280, 0, 3200, 1080], \"primary\": false, \"dpi\": 144}], \"cursor\": [640, 400], \"physical\": [640, 400], \"unaware\": [640, 400]}"}
+{"kind": "pointer", "label": "mon0-origin", "wire": [0, 0], "server_before": [640, 400], "server_after": [0, 0], "match": true, "settle_ms": 37}
+{"kind": "pointer", "label": "mon0-mid", "wire": [640, 400], "server_before": [0, 0], "server_after": [640, 400], "match": true, "settle_ms": 37}
+{"kind": "pointer", "label": "seam-left", "wire": [1279, 400], "server_before": [640, 400], "server_after": [1279, 400], "match": true, "settle_ms": 36}
+{"kind": "pointer", "label": "seam", "wire": [1280, 400], "server_before": [1279, 400], "server_after": [1280, 400], "match": true, "settle_ms": 35}
+{"kind": "pointer", "label": "seam-right", "wire": [1281, 400], "server_before": [1280, 400], "server_after": [1281, 400], "match": true, "settle_ms": 32}
+{"kind": "pointer", "label": "mon1-center", "wire": [2240, 540], "server_before": [1281, 400], "server_after": [2240, 540], "match": true, "settle_ms": 33}
+{"kind": "pointer", "label": "mon1-bottom-left", "wire": [1280, 1079], "server_before": [2240, 540], "server_after": [1280, 1079], "match": true, "settle_ms": 34}
+{"kind": "pointer", "label": "far-corner", "wire": [3199, 1079], "server_before": [1280, 1079], "server_after": [3199, 1079], "match": true, "settle_ms": 34}
