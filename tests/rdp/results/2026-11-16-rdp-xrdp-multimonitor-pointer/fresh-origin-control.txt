@@ -1,0 +1,21 @@
+probe: advertising_monitors=1280x800+0+0,1280x800+1280+0
+probe: requested_size=1280x800
+probe: connected=2560x800 elapsed_ms=201
+probe: pointer_event=1 client_pos=none bitmap 32x32 hotspot 15,16 bytes 4096
+probe: pointer_event=2 client_pos=none bitmap 32x32 hotspot 0,0 bytes 4096
+probe: command_ack=settled
+server topology:
+display=:10
+Monitors: 2
+ 0: +*rdp0 1280/339x800/212+0+0  rdp0
+ 1: +rdp1 1280/339x800/212+1280+0  rdp1
+  dimensions:    2560x800 pixels (677x212 millimeters)
+
+probe: command_ack=t0
+{"kind": "pointer", "label": "fresh-origin", "wire": [0, 0], "server_before": [400, 300], "server_after": [400, 300], "match": false, "settle_ms": 1509}
+probe: command_ack=t1
+{"kind": "pointer", "label": "nudge", "wire": [1, 1], "server_before": [400, 300], "server_after": [1, 1], "match": true, "settle_ms": 25}
+probe: command_ack=t2
+{"kind": "pointer", "label": "origin", "wire": [0, 0], "server_before": [1, 1], "server_after": [0, 0], "match": true, "settle_ms": 23}
+helper_exit=exit status: 0
+RESULT 2/3 matched

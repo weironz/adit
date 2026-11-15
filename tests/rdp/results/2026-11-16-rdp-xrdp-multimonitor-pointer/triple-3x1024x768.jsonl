@@ -1,0 +1,25 @@
+{"kind": "run", "monitors": "1024x768,1024x768,1024x768", "host": "127.0.0.1:3389"}
+{"kind": "probe", "line": "advertising_monitors=1024x768+0+0,1024x768+1024+0,1024x768+2048+0"}
+{"kind": "probe", "line": "requested_size=1280x800"}
+{"kind": "probe", "line": "connected=3072x768 elapsed_ms=213"}
+{"kind": "probe", "line": "pointer_event=1 client_pos=none bitmap 32x32 hotspot 15,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=2 client_pos=none bitmap 32x32 hotspot 0,0 bytes 4096"}
+{"kind": "probe", "line": "command_ack=settled"}
+{"kind": "probe", "line": "command_ack=t0"}
+{"kind": "probe", "line": "command_ack=t1"}
+{"kind": "probe", "line": "command_ack=t2"}
+{"kind": "probe", "line": "command_ack=t3"}
+{"kind": "probe", "line": "command_ack=t4"}
+{"kind": "probe", "line": "command_ack=t5"}
+{"kind": "probe", "line": "command_ack=t6"}
+{"kind": "probe", "line": "command_ack=t7"}
+{"kind": "probe", "line": "pointer_summary events=2 distinct_shapes=2"}
+{"kind": "server_topology", "output": "display=:10\nMonitors: 3\n 0: +*rdp0 1024/271x768/203+0+0  rdp0\n 1: +rdp1 1024/271x768/203+1024+0  rdp1\n 2: +rdp2 1024/271x768/203+2048+0  rdp2\n  dimensions:    3072x768 pixels (813x203 millimeters)"}
+{"kind": "pointer", "label": "mon0", "wire": [500, 400], "server_before": [400, 300], "server_after": [500, 400], "match": true, "settle_ms": 18}
+{"kind": "pointer", "label": "seam1-left", "wire": [1023, 400], "server_before": [500, 400], "server_after": [1023, 400], "match": true, "settle_ms": 19}
+{"kind": "pointer", "label": "seam1", "wire": [1024, 400], "server_before": [1023, 400], "server_after": [1024, 400], "match": true, "settle_ms": 26}
+{"kind": "pointer", "label": "mon1", "wire": [1500, 400], "server_before": [1024, 400], "server_after": [1500, 400], "match": true, "settle_ms": 35}
+{"kind": "pointer", "label": "seam2-left", "wire": [2047, 400], "server_before": [1500, 400], "server_after": [2047, 400], "match": true, "settle_ms": 25}
+{"kind": "pointer", "label": "seam2", "wire": [2048, 400], "server_before": [2047, 400], "server_after": [2048, 400], "match": true, "settle_ms": 25}
+{"kind": "pointer", "label": "mon2", "wire": [2500, 400], "server_before": [2048, 400], "server_after": [2500, 400], "match": true, "settle_ms": 19}
+{"kind": "pointer", "label": "mon2-inner-corner", "wire": [3070, 766], "server_before": [2500, 400], "server_after": [3070, 766], "match": true, "settle_ms": 30}

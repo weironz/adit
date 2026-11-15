@@ -82,11 +82,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect()
         })
         .unwrap_or_default();
+    let mut next_left = 0i32;
     let mut monitors: Vec<adit_rdp_proto::Monitor> = monitor_sizes
         .iter()
         .enumerate()
         .map(|(index, (width, height))| adit_rdp_proto::Monitor {
-            left: (index as i32) * i32::from(*width),
+            // Each monitor starts where the previous one ended; `index * width`
+            // only holds when every monitor has the same width.
+            left: {
+                let left = next_left;
+                next_left += i32::from(*width);
+                left
+            },
             top: 0,
             width: *width,
             height: *height,
