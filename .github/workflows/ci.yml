@@ -402,9 +402,14 @@ jobs:
             rpmbuild/RPMS/*/adit-*.rpm
           if-no-files-found: warn
 
+      # --include-ignored also runs the ProxyCommand tests, which panic without
+      # the synthetic stdio peer they spawn.
       - name: Real SSH integration
         if: runner.os == 'Linux'
-        run: cargo test -p adit-ssh --features integration --locked -- --include-ignored --test-threads=4
+        run: |
+          cargo build -p adit-ssh --example proxy_stdio_fixture --locked
+          export ADIT_PROXY_FIXTURE="$PWD/target/debug/examples/proxy_stdio_fixture"
+          cargo test -p adit-ssh --features integration --locked -- --include-ignored --test-threads=4
 
 # === ORIGINAL NON-X64 PLATFORM CONFIGURATION (PAUSED) ===
 # Original build matrix: windows-latest, windows-11-arm, ubuntu-latest,
