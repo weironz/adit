@@ -426,6 +426,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             #[cfg(all(windows, not(test)))]
             observe_windows_clipboard(app, clipboard_files::clipboard_sequence());
 
+            // Settle a click on a host card once the double-click window has
+            // passed. Opening the details panel reflows the grid, and a reflow
+            // between the two presses of a double-click is what made the first
+            // double-click of a session do nothing at all — so the panel waits
+            // until it is clear no second click is coming.
+            settle_host_click(app);
+
             // Auto-sync, when it is on and something is due. Two clocks, because
             // they answer different questions: the debounce pushes what was just
             // edited here, and the interval is the only thing that ever notices
@@ -1288,6 +1295,14 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.hosts_cursor = Some(point);
         }
         Message::GridProfilePressed(profile_id, in_pinned) => {
+            // Stamped here, before the selection work below, and not inside
+            // `record_host_click`: selecting a card reads the credential vault,
+            // and that read is not free (the legacy v1 vault re-derives its
+            // Argon2 key on every read). Stamping after it would measure the
+            // gap between the two presses as "the user's click interval plus
+            // however long the vault took", and a slow vault would break the
+            // double-click on a machine that is not slow at all.
+            let pressed_at = Instant::now();
             // Same arming as ProfilePressed — selection, drag state, origin
             // point — with the origin remembered as the grid, and the same
             // rule about not collapsing a selection the pressed card is in.
@@ -1303,9 +1318,27 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.profile_drag_active = false;
             app.profile_drag_origin = Some(app.cursor_pos);
             app.group_drop_target = None;
+            // The second press of a double-click connects. The count is kept
+            // here, in the app, rather than left to the card's own click
+            // history: that history lives inside the widget, and the grid's
+            // widget tree is rebuilt whenever the details panel opens — which
+            // reflows the grid, moves the card out from under the pointer and
+            // leaves the second press with no history to match against.
+            //
+            // The card's own `on_double_click` is deliberately NOT wired up:
+            // iced publishes `on_press` for every press and `on_double_click`
+            // for the second one, so keeping both would connect twice.
+            if record_host_click(app, profile_id, pressed_at) {
+                connect_host(app, profile_id);
+            }
         }
         Message::ProfilePressed(profile_id) => {
             let modifiers = app.modifiers;
+            // A click in the sidebar is not a click on a host card. The sidebar
+            // keeps iced's own double-click detection, so it must not also be
+            // able to complete a grid double-click that happens to name the
+            // same host.
+            cancel_host_click(app);
             // Every click path commits a rename in progress, modifier or not:
             // the row being renamed has no confirm button, so clicking away is
             // the only way to finish it.
@@ -1413,23 +1446,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             close_profile_editor_if_other(app, profile_id);
         }
         Message::ProfileDoubleClicked(profile_id) => {
-            select_profile(app, profile_id);
-            app.dragged_profile = None;
-            app.profile_drag_active = false;
-            app.profile_drag_origin = None;
-            app.profile_drop = None;
-            app.group_drop_target = None;
-            app.profile_context_menu = None;
-            app.group_context_menu = None;
-            app.profile_editor = None;
             // Double-click connects immediately, like SecureCRT/Xshell — only
             // fall back to the dialog when a password is genuinely required.
-            //
-            // And it leaves the host grid, which shares the tab bar with the
-            // sessions: connecting from there and staying put would leave the
-            // new session running behind a list of hosts.
-            change_main_view(app, MainView::Terminal);
-            connect_profile(app);
+            connect_host(app, profile_id);
         }
         Message::ProfileHovered(profile_id) => {
             app.hovered_profile = Some(profile_id);
@@ -1478,6 +1497,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 if let Some(dragged) = app.dragged_profile {
                     if dragged != profile_id {
                         app.profile_drag_active = true;
+                        // Reaching another card means the pointer moved, so this
+                        // is a drag and not a click: the pending click has to go
+                        // before a later press can be read as the second half
+                        // of a double-click on the card that started the drag.
+                        cancel_host_click(app);
                         let drop = ProfileDrop::Beside {
                             profile_id,
                             position: ProfileDropPosition::Before,
@@ -1500,6 +1524,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 if let Some(dragged) = app.dragged_profile {
                     if dragged != profile_id {
                         app.profile_drag_active = true;
+                        cancel_host_click(app);
                         let drop = ProfileDrop::Beside {
                             profile_id,
                             position,
@@ -1526,9 +1551,15 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::ProfileDropped(_profile_id) => {
-            if app.drag_from_grid && !app.profile_drag_active {
-                app.host_details_open = true;
-            }
+            // NOT `host_details_open = true` here. Opening the panel reflows
+            // the grid — it takes 280px from the content width, which can
+            // change the column count and move every card — and a reflow
+            // rebuilds the widget tree, so the card loses the click history
+            // that tells a double-click from a single one.
+            //
+            // The panel is opened by `settle_host_click` instead, on the next
+            // tick, once the double-click window has closed and the click is
+            // known to be a single one.
             finish_profile_drag(app);
         }
         Message::ProfileDragOverGroup(group) => {
@@ -1697,6 +1728,13 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                     .is_some_and(|origin| point.distance(origin) > 5.0)
             {
                 app.profile_drag_active = true;
+                // A drag starts with the same press as a click, so the pending
+                // click has to go when the pointer leaves the dead zone: a drag
+                // that happened to finish within the double-click window of the
+                // press that started it would otherwise be read as the second
+                // click of a double-click, and would connect a host the user
+                // was only rearranging.
+                cancel_host_click(app);
             }
             if app.dragged_group.is_some()
                 && app
@@ -3896,6 +3934,10 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 load_selected_profile(app);
             }
         }
+        Message::CredentialVaultWarmed => {
+            // Nothing to do: the key is cached inside the credential store.
+            // This arm exists so the message has somewhere to land.
+        }
         Message::ToggleAutoCheckUpdates(enabled) => {
             app.auto_check_updates = enabled;
         }
@@ -4115,6 +4157,120 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
     }
 
     Task::none()
+}
+
+/// How long two clicks on the same card may be apart and still be a
+/// double-click.
+///
+/// iced's own threshold is 300ms, but a click here is not free: selecting a
+/// card reads the credential vault, and on the legacy v1 vault that re-derives
+/// an Argon2 key on every read — 385ms in a debug build, 20ms in a release one.
+/// A window that tight would time out on a slow machine between the two
+/// presses, and the user would get a first click that opens the details panel
+/// and a second click that connects. 600ms covers both, and is still well
+/// inside what a person means by "double-click".
+const HOST_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(600);
+
+/// Record a click on a host card, so a second one in quick succession can be
+/// recognised as a double-click.
+///
+/// This exists because the card's own `MouseArea` cannot do it. iced keeps the
+/// previous click inside the widget's state, but opening the details panel
+/// reflows the grid, and a reflow rebuilds the widget tree — so by the time
+/// the second press arrives, the card is a new widget with no history, and
+/// the press is taken as a first click. The count therefore lives in the app,
+/// where a relayout cannot touch it.
+///
+/// `pressed_at` is the moment of the press, stamped by the caller before it
+/// does anything slow. See the call site for why that matters.
+///
+/// Returns whether this press completed a double-click. A double-click connects
+/// and never opens the details panel, so the pending click is cleared rather
+/// than left for the tick to settle.
+pub(crate) fn record_host_click(
+    app: &mut AditApp,
+    profile_id: ProfileId,
+    pressed_at: Instant,
+) -> bool {
+    let is_double = app.host_click.is_some_and(|click| {
+        click.profile_id == profile_id
+            && pressed_at.duration_since(click.at) < HOST_DOUBLE_CLICK_WINDOW
+    });
+    app.host_click = if is_double {
+        // The pair is spent: nothing is left to settle, and a third press must
+        // start a fresh pair rather than extending this one.
+        None
+    } else {
+        Some(HostClick {
+            profile_id,
+            at: pressed_at,
+        })
+    };
+    is_double
+}
+
+/// Forget a pending click on a host card, because it turned out not to be a
+/// click at all.
+///
+/// A drag begins with the same press as a click, so the pending click has to
+/// be cleared once the pointer has moved far enough to make this a drag.
+/// Otherwise a drag that happens to end within the double-click window of the
+/// press that started it would be read as the second click of a double-click,
+/// and would connect a host the user was only trying to rearrange.
+pub(crate) fn cancel_host_click(app: &mut AditApp) {
+    app.host_click = None;
+}
+
+/// Open the details panel for the selected host, unless it is already open.
+///
+/// Deferred from the click itself: opening the panel reflows the grid, and a
+/// reflow between the two presses of a double-click is what made the first
+/// double-click of a session do nothing at all.
+fn arm_host_details(app: &mut AditApp) {
+    if app.selected_profile.is_some() {
+        app.host_details_open = true;
+    }
+}
+
+/// Settle a pending click on a host card.
+///
+/// Called from the periodic tick once the double-click window has passed, so a
+/// single click opens the details panel only after it is clear no second click
+/// is coming. A double-click connects and never opens the panel at all.
+pub(crate) fn settle_host_click(app: &mut AditApp) {
+    let Some(click) = app.host_click.take() else {
+        return;
+    };
+    let now = Instant::now();
+    if now.duration_since(click.at) < HOST_DOUBLE_CLICK_WINDOW {
+        // Still inside the window: the second press has not arrived yet. Put
+        // the click back so the next tick can settle it.
+        app.host_click = Some(click);
+        return;
+    }
+    // The window closed with only one click in it, so this was a plain click
+    // and the details panel is what the user asked for.
+    arm_host_details(app);
+}
+
+/// Connect to a host, the way a double-click on its card does.
+///
+/// Shared by the card's double-click and the grid's own click counter, so the
+/// two can never drift apart. It leaves the host grid as well: the grid shares
+/// the tab bar with the sessions, and connecting from there while staying put
+/// would leave the new session running behind a list of hosts.
+pub(crate) fn connect_host(app: &mut AditApp, profile_id: ProfileId) {
+    select_profile(app, profile_id);
+    app.dragged_profile = None;
+    app.profile_drag_active = false;
+    app.profile_drag_origin = None;
+    app.profile_drop = None;
+    app.group_drop_target = None;
+    app.profile_context_menu = None;
+    app.group_context_menu = None;
+    app.profile_editor = None;
+    change_main_view(app, MainView::Terminal);
+    connect_profile(app);
 }
 
 pub(crate) fn take_single_button_lease(
