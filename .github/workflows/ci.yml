@@ -364,10 +364,14 @@ jobs:
       # Fedora rather than Ubuntu, so this also exercises whether a binary built
       # on the Ubuntu runner is usable elsewhere at all — it carries that image's
       # glibc floor, which is the thing most likely to bite on older RPM distros.
+      # Pinned: the rpm is built on Ubuntu 24.04 and links libfuse3.so.3, but
+      # fuse3 3.17+ (Fedora 44 / rawhide) ships libfuse3.so.4, so fedora:latest
+      # cannot satisfy it. The rpm is not a release asset; building it on
+      # Fedora is what a real rpm release would need.
       - name: Install and run the rpm in a clean container
         if: runner.os == 'Linux'
         run: |
-          docker run --rm -v "$PWD:/w" -w /w fedora:latest bash -eu -c '
+          docker run --rm -v "$PWD:/w" -w /w fedora:43 bash -eu -c '
             dnf -y -q install ./rpmbuild/RPMS/x86_64/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
             xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/rpm-smoke.log 2>&1 &
             pid=$!
