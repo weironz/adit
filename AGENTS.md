@@ -157,9 +157,10 @@ reproduce.
   gh workflow run release.yml -f version=0.1.60
   ```
 
-  That publishes the **Windows x64 installer only**, on the designated self-hosted
-  Windows x64 runner. ARM64/macOS and extra Linux release jobs are commented out,
-  with their original configuration preserved. `all_platforms` is paused; do not
+  That publishes the **Windows x64 installer** on the designated self-hosted
+  Windows x64 runner, then an **Ubuntu x64 deb** built on GitHub-hosted
+  `ubuntu-24.04` and attached to the same release. ARM64/macOS/rpm release jobs
+  are commented out, with their original configuration preserved. `all_platforms` is paused; do not
   dispatch it. Use `runner-bootstrap.yml` for environment initialization and read-only
   gate checks, never `release.yml` just to test dependencies. See `docs/release.md`.
 

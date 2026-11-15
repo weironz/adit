@@ -103,6 +103,62 @@ jobs:
           gh release create "v$env:RELEASE_VERSION" "target/release/adit-installer-v$env:RELEASE_VERSION.exe" --verify-tag --title "Adit v$env:RELEASE_VERSION" --generate-notes
           if ($LASTEXITCODE -ne 0) { throw 'Release publishing failed; inspect the pushed tag before retrying' }
 
+  # Ubuntu x64 deb, attached to the release the Windows job just published. On
+  # the GitHub-hosted ubuntu-24.04 image (public repo, no cost) because no
+  # self-hosted Linux runner is registered; ci.yml's Linux leg runs on the same
+  # image, and the release gate requires that leg green on this commit. Built
+  # from the pushed tag, so the package carries the bumped version.
+  linux-deb:
+    name: Ubuntu x64 deb
+    needs: release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ inputs.version }}
+          persist-credentials: false
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install build and packaging dependencies
+        run: |
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             build-essential pkg-config rpm             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev             libxi-dev libgtk-3-dev libdbus-1-dev libfuse3-dev
+      - name: Build app (release)
+        run: cargo build --release -p adit-app --locked
+      - name: Package
+        run: installer/build-linux-packages.sh "$RELEASE_VERSION"
+      # A bare image has none of the -dev packages above, so apt must satisfy
+      # Depends on its own; a missing entry fails here, not on a user's machine.
+      - name: Install and run the deb in a clean container
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -eu -c '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update -qq
+            apt-get install -y -qq ./adit_*_amd64.deb xvfb >/dev/null
+            xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/pkg-smoke.log 2>&1 &
+            pid=$!
+            sleep 25
+            if kill -0 "$pid" 2>/dev/null; then
+              kill "$pid" 2>/dev/null || true
+              echo "installed adit stayed up; the dependency list is complete"
+            else
+              cat /w/pkg-smoke.log
+              echo "::error::the installed adit exited on its own; Depends is incomplete or wrong"
+              exit 1
+            fi
+          '
+      - name: Attach the deb to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          deb="adit_${RELEASE_VERSION}_amd64.deb"
+          test -s "$deb"
+          gh release upload "v$RELEASE_VERSION" "$deb" --repo "$GITHUB_REPOSITORY" --clobber
+
 # === ORIGINAL HOSTED / MULTI-PLATFORM CONFIGURATION (PAUSED) ===
 # Kept in full by request. No uncommented hosted, ARM64, Linux or macOS release
 # job remains. Restore only after explicitly re-enabling the corresponding policy.

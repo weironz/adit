@@ -1,40 +1,31 @@
-# 自托管 x64 CI
+# x64 CI
 
-正式检查由 `.github/workflows/ci.yml` 执行，只调度两个仓库专用 runner：
+正式检查由 `.github/workflows/ci.yml` 执行，只能手动触发（`gh workflow run ci.yml --ref main`），矩阵两个子任务：
 
-| 平台 | Runner | 必需标签 |
+| 平台 | Runner | 标签 |
 | --- | --- | --- |
-| Windows x64 | `home-workstation-windows-adit-01` | `self-hosted, Windows, X64, home-workstation, repo-adit` |
-| Linux x64 | `home-workstation-linux-adit-01` | `self-hosted, Linux, X64, home-workstation, repo-adit` |
+| Windows x64 | 仓库专用自托管 `home-workstation-windows-adit-01` | `self-hosted, Windows, X64, home-workstation, repo-adit` |
+| Linux x64 | GitHub 托管 `ubuntu-24.04` | `ubuntu-24.04` |
 
-ARM64 与 macOS 暂停，不回退到 GitHub 托管机器。
+ARM64 与 macOS 暂停。
 
-### 当前环境的 Linux runner 缺口
+### Linux 子任务为什么用托管 runner
 
-这台宿主机上只登记了 Windows runner（`home-workstation-windows-adit-01`），
-GitHub 侧没有可调度的 `home-workstation-linux-adit-01`。因此 `ci.yml` 矩阵里的
-`linux-x64` 子任务，以及只跑 Linux 的 `ui-native.yml`，会一直停在 queued，直到
-被下一次运行取消——**它们并不是「跑失败」，而是根本没有开始执行**。
+宿主机上只登记了 Windows runner，`home-workstation-linux-adit-01` 从未在 GitHub 侧出现。
+Linux 子任务原先要求这台自托管 runner，于是永远停在 queued；固定并发组
+（`group: adit-self-hosted-ci`，`cancel-in-progress: false`）又让它占着组，下一次
+dispatch 的 Windows 腿也跟着排队，发布门禁也就永远等不到两个绿灯。仓库是公开的，
+托管 `ubuntu-24.04` 不收费，所以 Linux 子任务改到托管镜像上；发布里的 deb 也在同一镜像上打包。
 
-判断一次 CI 结果时必须区分这两种情况：看 `jobs` 里子任务的 `status` 是
-`queued`（等 runner）还是 `completed`（跑完了）。只有 Windows 子任务能作为
-当前环境的实际门禁；Linux 侧的覆盖需要在 Linux 机器上单独复验。工作流可由 main push、同仓库 PR 或手动触发；外部 fork PR 不在持久化 runner 上执行。
+只跑 Linux 的 `ui-native.yml` 仍指向自托管 Linux runner，会停在 queued，判断结果时要看
+子任务 `status` 是 `queued`（没开始）还是 `completed`。
 
-### 固定并发组会把下一次运行一起堵住
-
-`ci.yml` 的并发组是固定的（`group: adit-self-hosted-ci`，`cancel-in-progress: false`）。
-由于 `linux-x64` 永远停在 queued，**整个 run 会一直占着这个组**，下一次 dispatch
-的 run 只能停在 queued，直到前一个被取消。所以 Linux runner 缺失的后果不止于
-「Linux 腿不跑」——它还让**新 run 的 Windows 腿也排队**。
-
-新 dispatch 的 run 迟迟不动时，先取消上一个还占着组的 run：
+新 dispatch 的 run 迟迟不动时，先看是否有旧 run 还占着并发组：
 
 ```bash
 gh run list --workflow ci.yml --limit 3
 gh run cancel <上一个 run id>
 ```
-
-取消后新 run 才会开始跑 Windows 腿。
 
 ### Linux 半边可以本地复刻
 

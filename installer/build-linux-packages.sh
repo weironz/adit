@@ -71,7 +71,8 @@ Architecture: $deb_arch
 Maintainer: Adit <noreply@example.com>
 Depends: libxkbcommon0, libxkbcommon-x11-0, libwayland-client0,
  libx11-6, libxcursor1, libxrandr2, libxi6,
- libgtk-3-0t64 | libgtk-3-0, libdbus-1-3, libvulkan1
+ libgtk-3-0t64 | libgtk-3-0, libdbus-1-3, libvulkan1,
+ libfuse3-3
 Description: SSH / SFTP / RDP terminal client
  A native terminal client with session groups, tabs, split panes,
  SFTP transfer and port forwarding.
@@ -97,6 +98,8 @@ BuildArch: $rpm_arch
 Requires:  libxkbcommon, libxkbcommon-x11, libwayland-client
 Requires:  libX11, libXcursor, libXrandr, libXi
 Requires:  gtk3, dbus-libs, vulkan-loader
+# fuser's libfuse3 feature links libfuse3.so.3 (the RDP file clipboard).
+Requires:  fuse3-libs
 
 %description
 A native terminal client with session groups, tabs, split panes,

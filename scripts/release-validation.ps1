@@ -19,20 +19,24 @@ function Assert-AditReleaseVersion([string]$Current, [string]$Requested) {
 function Assert-AditReleaseCI([string]$Ref, [string]$Sha, [string]$MainSha, $Run, $Jobs) {
     if ($Ref -cne 'refs/heads/main') { throw 'Release is allowed from main only' }
     if ($Sha -cne $MainSha) { throw 'Main advanced since this workflow started' }
-    if (-not $Run -or $Run.head_sha -cne $Sha -or $Run.head_branch -cne 'main' -or $Run.event -cne 'push') { throw 'No push CI run for the exact main commit' }
+    # ci.yml is dispatch-only (7c48002), so a manual run on main counts as much as a push run.
+    if (-not $Run -or $Run.head_sha -cne $Sha -or $Run.head_branch -cne 'main' -or @('push', 'workflow_dispatch') -cnotcontains $Run.event) { throw 'No CI run on main for the exact commit' }
     if ($Run.status -cne 'completed' -or $Run.conclusion -cne 'success') { throw 'Exact-commit CI must be completed/success; pending, skipped and failed runs cannot release' }
-    $expected = @{
-        'home-workstation-windows-adit-01' = 'Windows'
-        'home-workstation-linux-adit-01' = 'Linux'
-    }
-    if (@($Jobs).Count -ne $expected.Count) { throw 'Expected both self-hosted x64 CI jobs' }
-    $seen = @{}
+    # Windows runs on the dedicated self-hosted runner; Linux on the GitHub-hosted
+    # ubuntu-24.04 image, the same one release.yml packages the deb on.
+    if (@($Jobs).Count -ne 2) { throw 'Expected the Windows self-hosted and Linux hosted CI jobs' }
+    $windows = 0; $linux = 0
     foreach ($job in $Jobs) {
-        if (-not $expected.ContainsKey([string]$job.runner_name) -or $seen.ContainsKey([string]$job.runner_name)) { throw 'CI job used an unexpected or duplicate runner' }
         if ($job.status -cne 'completed' -or $job.conclusion -cne 'success') { throw 'Every CI job must have succeeded' }
-        foreach ($label in @('self-hosted', 'X64', 'home-workstation', 'repo-adit', $expected[$job.runner_name])) {
-            if (@($job.labels) -cnotcontains $label) { throw "CI runner label missing: $label" }
-        }
-        $seen[$job.runner_name] = $true
+        $labels = @($job.labels)
+        if ([string]$job.runner_name -ceq 'home-workstation-windows-adit-01') {
+            foreach ($label in @('self-hosted', 'Windows', 'X64', 'home-workstation', 'repo-adit')) {
+                if ($labels -cnotcontains $label) { throw "CI runner label missing: $label" }
+            }
+            $windows++
+        } elseif ($labels.Count -eq 1 -and $labels[0] -ceq 'ubuntu-24.04') {
+            $linux++
+        } else { throw 'CI job used an unexpected runner' }
     }
+    if ($windows -ne 1 -or $linux -ne 1) { throw 'CI job used an unexpected or duplicate runner' }
 }

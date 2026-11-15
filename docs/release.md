@@ -1,6 +1,6 @@
 # 发布操作手册
 
-当前发布工作流只使用仓库专用 Windows x64 runner `home-workstation-windows-adit-01`，没有托管 runner 回退。ARM64、macOS 和额外 Linux 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
+当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb 并追加到同一个 Release。ARM64、macOS、rpm 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
 
 ## 初始化与只读检查
 
@@ -26,7 +26,7 @@ Linux 初始化可用 `-f platform=linux`，两平台一起检查用 `-f platfor
 
 - 只能从 main 发布，而且远端 main 仍等于启动时的 SHA。
 - 工作区、RDP helper、IPC crate 当前版本一致；请求必须是下一个 patch 版本。
-- 同一 SHA 的 push CI 必须 completed/success；两个实际任务都必须在指定的 Windows/Linux x64 自托管 runner 上成功，不能用 skipped/托管 runner/其他提交替代。
+- 同一 SHA、main 分支上的 ci.yml 运行（手动 dispatch 或 push）必须 completed/success；Windows 子任务必须在 `home-workstation-windows-adit-01` 上、Linux 子任务必须在托管 `ubuntu-24.04` 上成功，不能用 skipped、其他 runner 或其他提交替代。
 - 请求的 tag 与 Release 都不存在；API 权限或网络错误不当作“尚不存在”。
 
 `scripts/test-release-gate.ps1` 覆盖合法路径和拒绝条件，不连接网络、不推送。bootstrap 可在只读 token 下验证真实门禁；其临时 0.0.0 依赖探针安装包只在临时目录编译，不运行或发布。
@@ -43,7 +43,7 @@ gh run watch <run-id> --exit-status --interval 30
 
 示例版本仅展示格式，不能直接照抄旧版本。`all_platforms` 输入已注释停用，不能用它恢复多平台发布。发布期间不要往 main 推送，包括文档提交。
 
-工作流顺序：checkout 精确 SHA → 只读门禁 → 检查依赖 → bump 三份 manifest/两个 lockfile → 校验版本锁步 → locked release 构建 app 和独立 helper → Inno 编译并确认资产 → 再检查 main → 原子推送 bump/tag → 创建 GitHub Release。只有这些步骤全部完成才算发布成功。
+工作流顺序：checkout 精确 SHA → 只读门禁 → 检查依赖 → bump 三份 manifest/两个 lockfile → 校验版本锁步 → locked release 构建 app 和独立 helper → Inno 编译并确认资产 → 再检查 main → 原子推送 bump/tag → 创建 GitHub Release → 托管 ubuntu-24.04 从 tag 构建、打 deb、在干净 `ubuntu:24.04` 容器里安装启动、上传 deb。只有这些步骤全部完成才算发布成功；deb 任务失败时 Windows 安装包已发布，可修复后单独重跑该任务补传。
 
 安装包失败时不会先推 tag。远端 main/tag 原子推送失败不会只落一个引用；若引用已推送而后续 GitHub Release 创建失败，需要检查现有 tag/Release，不能假设完全回滚或盲目重用版本。
 
@@ -54,7 +54,7 @@ gh release view v0.1.76
 git pull --ff-only
 ```
 
-应有 `adit-installer-vX.Y.Z.exe`。不从本地上传发布物，不手工绕过绿灯门禁，不把依赖探针或 CI artifact 当正式发布。
+应有 `adit-installer-vX.Y.Z.exe` 和 `adit_X.Y.Z_amd64.deb`。不从本地上传发布物，不手工绕过绿灯门禁，不把依赖探针或 CI artifact 当正式发布。
 
 <!-- 以下是迁移前的完整操作手册，仅为历史参考，当前规则以上方为准。
 # 发版操作手册
