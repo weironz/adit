@@ -1,0 +1,15 @@
+{"kind": "run", "monitors": "1280x800,1280x800", "host": "127.0.0.1:3389"}
+{"kind": "probe", "line": "advertising_monitors=1280x800+0+0,1280x800+1280+0"}
+{"kind": "probe", "line": "requested_size=1280x800"}
+{"kind": "probe", "line": "connected=2560x800 elapsed_ms=196"}
+{"kind": "probe", "line": "pointer_event=1 client_pos=none bitmap 32x32 hotspot 15,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=2 client_pos=none bitmap 32x32 hotspot 0,0 bytes 4096"}
+{"kind": "probe", "line": "first_tile_ms=387"}
+{"kind": "probe", "line": "command_ack=settled"}
+{"kind": "probe", "line": "command_ack=t0"}
+{"kind": "probe", "line": "command_ack=t1"}
+{"kind": "probe", "line": "command_ack=t2"}
+{"kind": "probe", "line": "pointer_summary events=2 distinct_shapes=2"}
+{"kind": "pointer", "label": "origin-first", "wire": [0, 0], "server_before": [1280, 798], "server_after": [0, 0], "match": true, "settle_ms": 32}
+{"kind": "pointer", "label": "away", "wire": [500, 500], "server_before": [0, 0], "server_after": [500, 500], "match": true, "settle_ms": 18}
+{"kind": "pointer", "label": "origin-again", "wire": [0, 0], "server_before": [500, 500], "server_after": [0, 0], "match": true, "settle_ms": 23}

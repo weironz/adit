@@ -1,0 +1,3 @@
+2026-11-15T17:41:56.492705Z  INFO adit_rdp::session: pointer move reached the helper x=0 y=0
+2026-11-15T17:41:58.051732Z  INFO adit_rdp::session: pointer move reached the helper x=1 y=1
+2026-11-15T17:41:58.132012Z  INFO adit_rdp::session: pointer move reached the helper x=0 y=0

@@ -276,17 +276,17 @@ that the guard still works for the next decoder bug.
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-connector/`
 
 Pulled in via `[patch.crates-io] ironrdp-connector = { path = "vendor/ironrdp-connector" }`
-in `Cargo.toml`. Only **five** patches differ from crates.io `ironrdp-connector`
+in `Cargo.toml`. Only **six** patches differ from crates.io `ironrdp-connector`
 `0.10.0`; each is tagged `ADIT PATCH`. Find them with:
 
 ```
 grep -rn "ADIT PATCH" crates/adit-rdp/vendor/ironrdp-connector/
 ```
 
-That finds **six** markers, not five: five of them are in `src/connection.rs`,
-and the sixth is the new `Config::client_monitors` field in `src/lib.rs` — patch
-5 below is one logical change that spans both files, so it carries a marker on
-each side:
+That finds **seven** markers, not six: five of them are in `src/connection.rs`,
+one is the new `Config::client_monitors` field in `src/lib.rs` — patch 5 below
+is one logical change that spans both files, so it carries a marker on each
+side — and the seventh is patch 6 in `src/connection_finalization.rs`:
 
 1. **RDSTLS on redirect** (`ConnectionInitiationSendRequest`). When the config
    carries a routing token (i.e. we're following a GNOME handover), request
@@ -344,8 +344,21 @@ each side:
    block. Gating it would mean threading the negotiation response flags
    through four connector states for no additional safety.
 
-> Keeping the diff to five patches across two files is deliberate: re-vendoring
-> a newer `ironrdp-connector` is a 5-patch reapply, and each patch is
+6. **Monitor Layout PDU during finalization** (`WaitForResponse` in
+   `src/connection_finalization.rs`). A server that honours the client's monitor
+   block may send a Monitor Layout PDU (MS-RDPBCGR 2.2.12.1) before the Font Map.
+   Upstream only expects Synchronize / Control / ServerSetErrorInfo / Font Map
+   there and fails the whole connection with `unexpected server message`.
+   xrdp 0.9.17 sends it on **every** multi-monitor connect (Windows and GRD do
+   not, which is why it went unnoticed), so no multi-monitor session to xrdp
+   could finish connecting. The PDU is now accepted and the sequence keeps
+   waiting for the Font Map; the topology it carries is reported again once
+   the session is up. `tests/finalization_monitor_layout.rs` drives the
+   sequence through it; the live evidence is
+   `tests/rdp/results/2026-11-16-rdp-xrdp-multimonitor-pointer/`.
+
+> Keeping the diff to six patches across three files is deliberate: re-vendoring
+> a newer `ironrdp-connector` is a 6-patch reapply, and each patch is
 > independently removable as upstream closes the gap.
 
 ### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-displaycontrol/`
@@ -395,7 +408,7 @@ unpatched 0.8.0 with `left: 5, right: 16`.
 When bumping IronRDP:
 
 1. Copy the new `ironrdp-connector` source into `vendor/ironrdp-connector/`.
-2. Re-apply the five `ADIT PATCH` patches above (or drop any that upstream fixed).
+2. Re-apply the six `ADIT PATCH` patches above (or drop any that upstream fixed).
 3. `cargo build --bin adit-rdp-host` in `crates/adit-rdp/` (its own workspace).
 4. Smoke-test against a GNOME system-mode host — see the ignored harness
    `crates/adit-rdp-proto/tests/debug_connect.rs`.

@@ -245,6 +245,15 @@ impl Sequence for ConnectionFinalizationSequence {
                             }
                         }
                     }
+                    // ADIT PATCH: a server that honours the client's monitor block may
+                    // answer it with a Monitor Layout PDU (MS-RDPBCGR 2.2.12.1) here,
+                    // before the Font Map. xrdp does on every multi-monitor connect;
+                    // treating it as unexpected failed the whole connection. The
+                    // topology it carries is reported again once the session is up.
+                    ShareDataPdu::MonitorLayout(layout) => {
+                        debug!(monitors = layout.monitors.len(), "Server Monitor Layout");
+                        ConnectionFinalizationState::WaitForResponse
+                    }
                     ShareDataPdu::FontMap(_) => {
                         // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpbcgr/023f1e69-cfe8-4ee6-9ee0-7e759fb4e4ee
                         //

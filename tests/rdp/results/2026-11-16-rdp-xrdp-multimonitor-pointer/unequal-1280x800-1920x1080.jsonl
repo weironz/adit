@@ -1,0 +1,29 @@
+{"kind": "run", "monitors": "1280x800,1920x1080", "host": "127.0.0.1:3389"}
+{"kind": "probe", "line": "advertising_monitors=1280x800+0+0,1920x1080+1280+0"}
+{"kind": "probe", "line": "requested_size=1280x800"}
+{"kind": "probe", "line": "connected=3200x1080 elapsed_ms=175"}
+{"kind": "probe", "line": "pointer_event=1 client_pos=none bitmap 32x32 hotspot 15,16 bytes 4096"}
+{"kind": "probe", "line": "pointer_event=2 client_pos=none bitmap 32x32 hotspot 0,0 bytes 4096"}
+{"kind": "probe", "line": "command_ack=settled"}
+{"kind": "probe", "line": "command_ack=t0"}
+{"kind": "probe", "line": "command_ack=t1"}
+{"kind": "probe", "line": "command_ack=t2"}
+{"kind": "probe", "line": "command_ack=t3"}
+{"kind": "probe", "line": "command_ack=t4"}
+{"kind": "probe", "line": "command_ack=t5"}
+{"kind": "probe", "line": "command_ack=t6"}
+{"kind": "probe", "line": "command_ack=t7"}
+{"kind": "probe", "line": "command_ack=t8"}
+{"kind": "probe", "line": "command_ack=t9"}
+{"kind": "probe", "line": "pointer_summary events=2 distinct_shapes=2"}
+{"kind": "server_topology", "output": "display=:10\nMonitors: 2\n 0: +*rdp0 1280/339x800/212+0+0  rdp0\n 1: +rdp1 1920/508x1080/286+1280+0  rdp1\n  dimensions:    3200x1080 pixels (847x286 millimeters)"}
+{"kind": "pointer", "label": "mon0-near", "wire": [100, 400], "server_before": [400, 300], "server_after": [100, 400], "match": true, "settle_ms": 25}
+{"kind": "pointer", "label": "mon0-far", "wire": [1200, 700], "server_before": [100, 400], "server_after": [1200, 700], "match": true, "settle_ms": 33}
+{"kind": "pointer", "label": "seam-left", "wire": [1279, 400], "server_before": [1200, 700], "server_after": [1279, 400], "match": true, "settle_ms": 30}
+{"kind": "pointer", "label": "seam", "wire": [1280, 400], "server_before": [1279, 400], "server_after": [1280, 400], "match": true, "settle_ms": 37}
+{"kind": "pointer", "label": "seam-right", "wire": [1281, 400], "server_before": [1280, 400], "server_after": [1281, 400], "match": true, "settle_ms": 38}
+{"kind": "pointer", "label": "mon1-near", "wire": [1300, 400], "server_before": [1281, 400], "server_after": [1300, 400], "match": true, "settle_ms": 38}
+{"kind": "pointer", "label": "mon1-below-mon0", "wire": [1500, 900], "server_before": [1300, 400], "server_after": [1500, 900], "match": true, "settle_ms": 27}
+{"kind": "pointer", "label": "mon1-bottom", "wire": [2000, 1078], "server_before": [1500, 900], "server_after": [2000, 1078], "match": true, "settle_ms": 29}
+{"kind": "pointer", "label": "mon1-far", "wire": [3000, 500], "server_before": [2000, 1078], "server_after": [3000, 500], "match": true, "settle_ms": 28}
+{"kind": "pointer", "label": "mon1-inner-corner", "wire": [3198, 1078], "server_before": [3000, 500], "server_after": [3198, 1078], "match": true, "settle_ms": 35}
