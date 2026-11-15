@@ -13,7 +13,7 @@
 // Start it in the test user's session with an at-logon task. An interactive
 // token needs no stored password, and it puts the process in the RDP session
 // itself rather than in session 0 (PowerShell, as an administrator):
-//   $a = New-ScheduledTaskAction -Execute C:dit-oracle\CursorLogger.exe -Argument C:dit-oracle
+//   $a = New-ScheduledTaskAction -Execute C:\adit-oracle\CursorLogger.exe -Argument C:\adit-oracle
 //   $t = New-ScheduledTaskTrigger -AtLogOn -User aditptr
 //   $p = New-ScheduledTaskPrincipal -UserId aditptr -LogonType Interactive
 //   Register-ScheduledTask AditPointerOracle -Action $a -Trigger $t -Principal $p
