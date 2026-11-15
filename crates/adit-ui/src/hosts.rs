@@ -380,9 +380,13 @@ pub(crate) fn host_card(
     // serves both views. Press arms rather than acts, which is what makes a drag
     // possible at all — and why a single click selects here and a double click
     // connects, exactly as in the tree.
+    //
+    // No `on_double_click`: the double-click is decided by the app's own click
+    // counter, which survives the reflow that opening the details panel causes.
+    // iced publishes `on_press` for every press and `on_double_click` for the
+    // second one, so wiring both would connect twice.
     .on_press(Message::GridProfilePressed(profile_id, in_pinned))
     .on_release(Message::ProfileDropped(profile_id))
-    .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
     .on_enter(Message::GridProfileHovered(profile_id, in_pinned))
     // Left half or right half, not top or bottom. `profile_drop_position` splits
@@ -516,7 +520,6 @@ pub(crate) fn host_row(
     )
     .on_press(Message::GridProfilePressed(profile_id, in_pinned))
     .on_release(Message::ProfileDropped(profile_id))
-    .on_double_click(Message::ProfileDoubleClicked(profile_id))
     .on_right_press(Message::ShowProfileContextMenu(profile_id))
     .on_enter(Message::GridProfileHovered(profile_id, in_pinned))
     .on_move(move |point| {

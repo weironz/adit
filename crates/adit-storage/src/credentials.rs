@@ -161,6 +161,28 @@ impl CredentialStore {
         &self.path
     }
 
+    /// Derive and cache the file key, so the first real read is cheap.
+    ///
+    /// A legacy (v1) vault derives its key from the file's salt with Argon2,
+    /// which costs tens of milliseconds in a release build and hundreds in a
+    /// debug build. Without this warm-up that cost lands on whichever UI
+    /// action reads the vault first — a click on a host card, say — and a
+    /// derivation that slow pushes the two presses of a double-click outside
+    /// the double-click window.
+    ///
+    /// A master-password (v2) vault cannot be warmed: its key only exists
+    /// while the vault is unlocked, so this is a no-op for one.
+    pub fn warm(&self) -> Result<(), CredentialError> {
+        let mut state = self.state()?;
+        self.reload(&mut state)?;
+        match state_key(&mut state) {
+            // A locked vault is not an error here: it is simply a vault whose
+            // key the user has not supplied yet.
+            Err(CredentialError::Locked) => Ok(()),
+            other => other.map(|_| ()),
+        }
+    }
+
     #[must_use]
     pub fn default_path() -> PathBuf {
         config_dir().join(CREDENTIALS_FILE)
@@ -348,9 +370,11 @@ impl CredentialStore {
         let mut state = self.state()?;
         self.reload(&mut state)?;
         // Import must not bypass the current vault lock to destroy its entries.
-        let _current_key = state_key(&state)?;
+        let _current_key = state_key(&mut state)?;
         let backup = backup_verified(&self.path, state.bytes.as_deref())?;
         self.commit(&mut state, candidate)?;
+        // The imported file replaces the vault, so the old key is gone with it.
+        // A v1 key is re-derived from the new file's salt on the next read.
         state.key = None;
         Ok(backup)
     }
@@ -384,15 +408,22 @@ impl CredentialStore {
             candidate.entries.insert(account.clone(), sealed);
         }
         let backup = backup_verified(&self.path, state.bytes.as_deref())?;
+        let new_version = candidate.version;
         self.commit(&mut state, candidate)?;
-        state.key = next.map(|_| new_key);
+        // A v1 file's key is derived from its salt, so it is cacheable; a v2
+        // file's key comes from the master password and is only known while
+        // the vault is unlocked.
+        state.key = match new_version {
+            1 => Some(new_key),
+            _ => next.map(|_| new_key),
+        };
         Ok(backup)
     }
 
     fn get(&self, account: &str) -> Result<Option<String>, CredentialError> {
         let mut state = self.state()?;
         self.reload(&mut state)?;
-        let key = state_key(&state)?;
+        let key = state_key(&mut state)?;
         let file = state.file.as_ref().unwrap();
         file.entries
             .get(account)
@@ -403,7 +434,7 @@ impl CredentialStore {
     fn set(&self, account: &str, secret: &str) -> Result<(), CredentialError> {
         let mut state = self.state()?;
         self.reload(&mut state)?;
-        let key = state_key(&state)?;
+        let key = state_key(&mut state)?;
         let mut candidate = state.file.as_ref().unwrap().clone();
         candidate.entries.insert(
             account.to_owned(),
@@ -415,7 +446,7 @@ impl CredentialStore {
     fn remove(&self, account: &str) -> Result<(), CredentialError> {
         let mut state = self.state()?;
         self.reload(&mut state)?;
-        let _key = state_key(&state)?;
+        let _key = state_key(&mut state)?;
         let mut candidate = state.file.as_ref().unwrap().clone();
         if candidate.entries.remove(account).is_none() {
             return Ok(());
@@ -529,10 +560,23 @@ fn decode_file(bytes: &[u8]) -> Result<CredentialFile, CredentialError> {
     Ok(file)
 }
 
-fn state_key(state: &VaultState) -> Result<Zeroizing<[u8; 32]>, CredentialError> {
-    let file = state.file.as_ref().unwrap();
-    if file.version == 1 {
-        derive_key(&file.salt)
+fn state_key(state: &mut VaultState) -> Result<Zeroizing<[u8; 32]>, CredentialError> {
+    let version = state.file.as_ref().unwrap().version;
+    if version == 1 {
+        // The v1 key is derived from the file's salt alone, so it can be cached
+        // exactly like the v2 key. It used to be re-derived on every read, and
+        // that Argon2 derivation is expensive enough (tens of milliseconds in a
+        // release build, hundreds in a debug build) to be visible in the UI:
+        // a click that read the vault cost more than a double-click window.
+        if state.key.is_none() {
+            let salt = state.file.as_ref().unwrap().salt.clone();
+            state.key = Some(derive_key(&salt)?);
+        }
+        state
+            .key
+            .as_ref()
+            .map(|key| Zeroizing::new(**key))
+            .ok_or(CredentialError::Locked)
     } else {
         state
             .key
@@ -788,6 +832,59 @@ mod tests {
 
         store.delete_profile_password(id).unwrap();
         assert!(store.load_profile_password(id).unwrap().is_none());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_legacy_vault_caches_its_derived_key_instead_of_rederiving_it() {
+        let (store, path) = temp_store("legacy_key_cache");
+        let id = ProfileId::new();
+        store.save_profile_password(id, "synthetic-secret").unwrap();
+
+        // A cold store — the state another process would open the file with.
+        let cold = CredentialStore::with_path("adit-test", &path);
+        {
+            let state = cold.state().unwrap();
+            assert!(state.key.is_none(), "the key is not known yet");
+        }
+        assert_eq!(
+            cold.load_profile_password(id).unwrap().as_deref(),
+            Some("synthetic-secret")
+        );
+        {
+            let state = cold.state().unwrap();
+            assert!(
+                state.key.is_some(),
+                "the derived key must be cached after the first read"
+            );
+        }
+
+        // A second read must reuse the cached key rather than derive it again.
+        // This is what makes a UI click on a host card affordable: the legacy
+        // vault's Argon2 derivation is expensive enough (hundreds of
+        // milliseconds in a debug build) to push two clicks of a double-click
+        // outside the double-click window.
+        let salt = {
+            let state = cold.state().unwrap();
+            state.file.as_ref().unwrap().salt.clone()
+        };
+        assert_eq!(
+            cold.load_profile_password(id).unwrap().as_deref(),
+            Some("synthetic-secret")
+        );
+        let cached = {
+            let state = cold.state().unwrap();
+            assert_eq!(
+                state.file.as_ref().unwrap().salt,
+                salt,
+                "the file must not have changed"
+            );
+            assert!(state.key.is_some(), "the key must still be cached");
+            state.key.as_ref().unwrap().to_vec()
+        };
+        // The cached key must be the one the file's salt derives to, or the
+        // cache would decrypt with the wrong key.
+        assert_eq!(cached.as_slice(), derive_key(&salt).unwrap().as_slice());
         let _ = std::fs::remove_file(&path);
     }
 

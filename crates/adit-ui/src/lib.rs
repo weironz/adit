@@ -44,6 +44,23 @@ pub enum SftpSortKey {
     Modified,
 }
 
+/// A click on a host card, remembered in app state rather than in the widget.
+///
+/// The card's own `MouseArea` keeps the previous click to recognise a double
+/// one, but that history dies with the widget: opening the details panel
+/// reflows the grid, and the reflow rebuilds the tree, so the second press
+/// finds no previous click to match against and is taken as a first click.
+///
+/// Keeping the click here — next to the app, not inside the widget — is what
+/// lets the second press of a double-click still be the second press.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HostClick {
+    /// Which card was clicked. A click elsewhere starts a new one.
+    pub(crate) profile_id: ProfileId,
+    /// When the click landed.
+    pub(crate) at: Instant,
+}
+
 mod accessibility;
 /// Whether the UI is currently painting in dark mode. Set once per frame at the
 /// top of `view` so the palette token fns can resolve light/dark without every
@@ -73,11 +90,11 @@ mod keyboard_hook;
 #[cfg(any(windows, test))]
 mod native_file_drop;
 mod rdp_dragdrop;
-mod vnc_cursor;
 #[cfg(feature = "native-rdp-acceptance")]
 mod rdp_native_acceptance;
 #[cfg(feature = "native-rdp-pointer-acceptance")]
 mod rdp_pointer_acceptance;
+mod vnc_cursor;
 #[cfg(feature = "native-vnc-acceptance")]
 mod vnc_native_acceptance;
 #[cfg(feature = "native-workbench-acceptance")]
@@ -546,6 +563,14 @@ pub struct AditApp {
     missions: Missions,
     desktop_panes: desktop_panes::DesktopPanes,
     host_details_open: bool,
+    /// A grid click that has not yet been resolved into "select" or "connect".
+    ///
+    /// The card's own double-click detection cannot decide this: opening the
+    /// details panel reflows the grid, and a reflow rebuilds the widget tree,
+    /// which throws away the very click history the second press is matched
+    /// against. So the count is kept here, in app state, where a relayout
+    /// cannot touch it.
+    host_click: Option<HostClick>,
     /// How the host manager lays its entries out.
     host_layout: HostLayout,
     /// Hosts most recently connected to, newest first.
@@ -1271,6 +1296,9 @@ pub enum Message {
     /// The one-time legacy-keyring import finished; payload is how many secrets
     /// were imported. Flips `keyring_migrated` so it never runs again.
     KeyringMigrated(usize),
+    /// The credential vault's key has been derived ahead of time, so the
+    /// first UI action that reads the vault does not pay for the derivation.
+    CredentialVaultWarmed,
     ToggleAutoCheckUpdates(bool),
     ToggleAutoAcceptHostKeys(bool),
     ToggleRdpClipboard(bool),
@@ -1895,6 +1923,7 @@ impl AditApp {
             missions: Missions::default(),
             desktop_panes: desktop_panes::DesktopPanes::default(),
             host_details_open: false,
+            host_click: None,
             host_layout,
             recent_hosts,
             grid_order,
@@ -2000,6 +2029,18 @@ async fn migrate_keyring_credentials(store: CredentialStore, profile_ids: Vec<Pr
         .unwrap_or(0)
 }
 
+/// Derive the credential vault's key ahead of time, off the boot thread.
+///
+/// A legacy (v1) vault derives its key with Argon2 on the first read, which
+/// costs tens of milliseconds in a release build and hundreds in a debug
+/// build. Paying that on whichever UI action reads the vault first made the
+/// first click on a host card slow enough to push the two presses of a
+/// double-click outside the double-click window, which is what made the first
+/// double-click of a session do nothing.
+async fn warm_credential_vault(store: CredentialStore) {
+    let _ = tokio::task::spawn_blocking(move || store.warm()).await;
+}
+
 /// Minimum sane window dimension; anything smaller (e.g. a 0x0 saved while
 /// minimized) falls back to the default so the window is never invisible.
 const MIN_WINDOW_DIM: f32 = 320.0;
@@ -2046,6 +2087,12 @@ pub fn run() -> iced::Result {
                 Message::KeyringMigrated,
             ));
         }
+        // Derive the vault's key now, in the background, so that no UI action
+        // pays for it later.
+        tasks.push(Task::perform(
+            warm_credential_vault(app.credential_store.clone()),
+            |()| Message::CredentialVaultWarmed,
+        ));
         (app, Task::batch(tasks))
     };
     let result = native_windows::run(
@@ -3296,6 +3343,170 @@ mod tests {
         app.grid_order.clear();
         app.recent_hosts.clear();
         app
+    }
+
+    /// A grid of one local-shell host, with the credentials isolated from the
+    /// real vault.
+    ///
+    /// Local shell is the only protocol that opens a session without a network
+    /// or a credential, so the test can assert that a double-click *connects*
+    /// rather than merely that a flag was set.
+    fn grid_click_app() -> AditApp {
+        let scratch = std::env::temp_dir().join(format!(
+            "adit-grid-click-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or_default(),
+        ));
+        let mut profile = ConnectionProfile::with_group("g", "local", "10.0.0.1", 22, "root");
+        profile.protocol = Protocol::LocalShell;
+        let mut app = AditApp {
+            profile_store: ProfileStore::new(scratch.join("profiles.json")),
+            settings_store: SettingsStore::new(scratch.join("settings.json")),
+            credential_store: CredentialStore::with_path(
+                "adit-grid-click-test",
+                scratch.join("credentials.json"),
+            ),
+            manager: SessionManager::with_profiles(vec![profile]),
+            ..AditApp::default()
+        };
+        app.grid_order.clear();
+        app.recent_hosts.clear();
+        // Warm the vault, the way the app does on boot. A cold vault derives
+        // its Argon2 key on the first read, and that derivation is slow enough
+        // — hundreds of milliseconds in a debug build — to push the two
+        // presses of a double-click outside the double-click window, which
+        // would make this test measure the machine's speed rather than the
+        // behaviour under test.
+        app.credential_store.warm().expect("the vault warms");
+        app
+    }
+
+    /// The first double-click on a host card must connect, not merely select.
+    ///
+    /// It used to do nothing at all, because the first click's release opened the
+    /// details panel, and opening the panel reflowed the grid — which changed the
+    /// column count, moved the card out from under the pointer, and rebuilt the
+    /// widget tree, so the second press found no click history and was taken for
+    /// a first click. The second double-click then worked, because by then the
+    /// panel was open and the geometry was stable.
+    #[test]
+    fn a_double_click_on_a_host_card_connects_on_the_first_double_click() {
+        let mut app = grid_click_app();
+        let id = app.manager.profiles()[0].id;
+        let columns = host_columns(&app);
+
+        let _ = update(&mut app, Message::GridProfilePressed(id, false));
+        assert!(
+            app.manager.sessions().is_empty(),
+            "one press must not connect"
+        );
+        // The release is where the old bug lived: it opened the details panel,
+        // and opening the panel reflowed the grid. A real double-click has a
+        // release between its two presses, so the test drives one.
+        let _ = update(&mut app, Message::ProfileDropped(id));
+        assert!(
+            !app.host_details_open,
+            "the release must not open the panel: opening it reflows the grid"
+        );
+
+        let _ = update(&mut app, Message::GridProfilePressed(id, false));
+        assert_eq!(
+            app.manager.sessions().len(),
+            1,
+            "the second press of a double-click must connect"
+        );
+        assert_eq!(app.main_view, MainView::Terminal);
+        assert!(
+            !app.host_details_open,
+            "a double-click connects, so the details panel never opens"
+        );
+        assert_eq!(
+            host_columns(&app),
+            columns,
+            "connecting must not reflow the grid either"
+        );
+
+        for session in app.manager.sessions() {
+            app.manager.close(session.id);
+        }
+    }
+
+    /// A single click still opens the details panel — but only once it is clear
+    /// no second click is coming.
+    #[test]
+    fn a_single_click_on_a_host_card_opens_the_details_panel_on_the_next_tick() {
+        let mut app = grid_click_app();
+        let id = app.manager.profiles()[0].id;
+
+        let _ = update(&mut app, Message::GridProfilePressed(id, false));
+        assert!(
+            !app.host_details_open,
+            "the panel must not open on the press itself"
+        );
+
+        // A tick inside the double-click window leaves the click pending.
+        let _ = update(&mut app, Message::Tick);
+        assert!(
+            !app.host_details_open,
+            "the panel must not open while a second click could still come"
+        );
+
+        // A tick past the window settles it as the single click it was.
+        app.host_click = app.host_click.map(|click| HostClick {
+            profile_id: click.profile_id,
+            at: Instant::now() - Duration::from_secs(1),
+        });
+        let _ = update(&mut app, Message::Tick);
+        assert!(
+            app.host_details_open,
+            "a single click must still open the details panel"
+        );
+    }
+
+    /// A drag begins with the same press as a click, so it must not leave a
+    /// pending click behind: a later press would then read as the second half
+    /// of a double-click and connect a host the user was only rearranging.
+    #[test]
+    fn a_drag_leaves_no_pending_click_behind() {
+        let mut app = grid_click_app();
+        let id = app.manager.profiles()[0].id;
+
+        let _ = update(&mut app, Message::GridProfilePressed(id, false));
+        assert!(app.host_click.is_some(), "the press is a click so far");
+
+        // The pointer leaves the dead zone, which is what makes it a drag.
+        app.cursor_pos = Point::ORIGIN;
+        let _ = update(&mut app, Message::GlobalCursorMoved(Point::new(40.0, 40.0)));
+        assert!(
+            app.host_click.is_none(),
+            "a drag must cancel the pending click"
+        );
+
+        let _ = update(&mut app, Message::ProfileDropped(id));
+        let _ = update(&mut app, Message::CancelProfileDrag);
+        let _ = update(&mut app, Message::Tick);
+        assert!(
+            !app.host_details_open,
+            "a drag must not open the details panel"
+        );
+    }
+
+    /// A click in the sidebar is not a click on a host card, so it must not be
+    /// able to complete a grid double-click that names the same host.
+    #[test]
+    fn a_sidebar_click_cannot_complete_a_grid_double_click() {
+        let mut app = grid_click_app();
+        let id = app.manager.profiles()[0].id;
+
+        let _ = update(&mut app, Message::GridProfilePressed(id, false));
+        let _ = update(&mut app, Message::ProfilePressed(id));
+        assert!(
+            app.manager.sessions().is_empty(),
+            "a sidebar click must not connect"
+        );
     }
 
     #[test]
