@@ -175,8 +175,12 @@ impl CredentialStore {
     pub fn warm(&self) -> Result<(), CredentialError> {
         let mut state = self.state()?;
         self.reload(&mut state)?;
-        state_key(&mut state)?;
-        Ok(())
+        match state_key(&mut state) {
+            // A locked vault is not an error here: it is simply a vault whose
+            // key the user has not supplied yet.
+            Err(CredentialError::Locked) => Ok(()),
+            other => other.map(|_| ()),
+        }
     }
 
     #[must_use]
