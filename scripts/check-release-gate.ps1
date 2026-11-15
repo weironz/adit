@@ -24,10 +24,10 @@ function Read-ReleaseAPI([string]$Path, [switch]$AllowMissing) {
     }
 }
 $main = Read-ReleaseAPI 'git/ref/heads/main'
-$runs = Read-ReleaseAPI "actions/workflows/ci.yml/runs?head_sha=$Sha&event=push&per_page=1"
+$runs = Read-ReleaseAPI "actions/workflows/ci.yml/runs?head_sha=$Sha&branch=main&per_page=1"
 $run = @($runs.workflow_runs) | Select-Object -First 1
 $jobs = if ($run) { @((Read-ReleaseAPI "actions/runs/$($run.id)/jobs?filter=latest&per_page=100").jobs) } else { @() }
 Assert-AditReleaseCI $Ref $Sha $main.object.sha $run $jobs
 if (Read-ReleaseAPI "git/ref/tags/v$Version" -AllowMissing) { throw "Tag v$Version already exists" }
 if (Read-ReleaseAPI "releases/tags/v$Version" -AllowMissing) { throw "Release v$Version already exists" }
-Write-Output "Release gate passed for $Sha / $Version / both self-hosted x64 jobs. This check performs no publishing."
+Write-Output "Release gate passed for $Sha / $Version / Windows self-hosted and Linux hosted CI jobs. This check performs no publishing."

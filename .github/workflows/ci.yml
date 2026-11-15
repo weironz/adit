@@ -31,10 +31,14 @@ jobs:
           - platform: windows-x64
             runner: [self-hosted, Windows, X64, home-workstation, repo-adit]
             shell: pwsh
+          # No self-hosted Linux runner is registered, so a self-hosted Linux
+          # leg sat in queued forever and held the concurrency group. The repo
+          # is public, so the hosted image costs nothing; the release gate
+          # requires this leg to have run on exactly this image.
           - platform: linux-x64
-            runner: [self-hosted, Linux, X64, home-workstation, repo-adit]
+            runner: ubuntu-24.04
             shell: bash
-    # ARM64 and macOS are intentionally paused. No hosted fallback is configured.
+    # ARM64 and macOS are intentionally paused.
     defaults:
       run:
         shell: ${{ matrix.shell }}
