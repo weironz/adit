@@ -126,11 +126,11 @@ jobs:
       - name: Install build and packaging dependencies
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             build-essential pkg-config rpm             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev             libxi-dev libgtk-3-dev libdbus-1-dev libfuse3-dev
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             build-essential pkg-config             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev             libxi-dev libgtk-3-dev libdbus-1-dev libfuse3-dev
       - name: Build app (release)
         run: cargo build --release -p adit-app --locked
       - name: Package
-        run: installer/build-linux-packages.sh "$RELEASE_VERSION"
+        run: installer/build-linux-packages.sh deb "$RELEASE_VERSION"
       # A bare image has none of the -dev packages above, so apt must satisfy
       # Depends on its own; a missing entry fails here, not on a user's machine.
       - name: Install and run the deb in a clean container
@@ -158,6 +158,40 @@ jobs:
           deb="adit_${RELEASE_VERSION}_amd64.deb"
           test -s "$deb"
           gh release upload "v$RELEASE_VERSION" "$deb" --repo "$GITHUB_REPOSITORY" --clobber
+
+  # Paused: the Fedora rpm job below is verified (built, installed and started on
+  # fedora:45) but switched off for now. To re-enable, uncomment it here and in
+  # the other workflow, and restore the rpm requirement in Assert-AditReleaseCI.
+#   # One rpm for the latest stable Fedora, built and smoke-tested inside that
+#   # release's container (see installer/build-fedora-rpm.sh for why). Same version
+#   # as ci.yml's rpm job, which the release gate requires green on this commit.
+#   linux-rpm:
+#     name: Fedora ${{ matrix.fedora }} x64 rpm
+#     needs: release
+#     runs-on: ubuntu-24.04
+#     timeout-minutes: 60
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         fedora: ['45']
+#     defaults:
+#       run:
+#         shell: bash
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           ref: v${{ inputs.version }}
+#           persist-credentials: false
+#       - name: Build, install and start the rpm on Fedora ${{ matrix.fedora }}
+#         run: installer/build-fedora-rpm.sh "${{ matrix.fedora }}" "$RELEASE_VERSION"
+#       - name: Attach the rpm to the release
+#         env:
+#           GH_TOKEN: ${{ github.token }}
+#           FEDORA: ${{ matrix.fedora }}
+#         run: |
+#           rpm="rpmbuild/RPMS/x86_64/adit-${RELEASE_VERSION}-1.fc${FEDORA}.x86_64.rpm"
+#           test -s "$rpm"
+#           gh release upload "v$RELEASE_VERSION" "$rpm" --repo "$GITHUB_REPOSITORY" --clobber
 
 # === ORIGINAL HOSTED / MULTI-PLATFORM CONFIGURATION (PAUSED) ===
 # Kept in full by request. No uncommented hosted, ARM64, Linux or macOS release

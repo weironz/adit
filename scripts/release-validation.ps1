@@ -22,12 +22,15 @@ function Assert-AditReleaseCI([string]$Ref, [string]$Sha, [string]$MainSha, $Run
     # ci.yml is dispatch-only (7c48002), so a manual run on main counts as much as a push run.
     if (-not $Run -or $Run.head_sha -cne $Sha -or $Run.head_branch -cne 'main' -or @('push', 'workflow_dispatch') -cnotcontains $Run.event) { throw 'No CI run on main for the exact commit' }
     if ($Run.status -cne 'completed' -or $Run.conclusion -cne 'success') { throw 'Exact-commit CI must be completed/success; pending, skipped and failed runs cannot release' }
-    # Windows runs on the dedicated self-hosted runner; Linux on the GitHub-hosted
-    # ubuntu-24.04 image, the same one release.yml packages the deb on.
-    if (@($Jobs).Count -ne 2) { throw 'Expected the Windows self-hosted and Linux hosted CI jobs' }
-    $windows = 0; $linux = 0
+    # Windows runs on the dedicated self-hosted runner; Linux and the per-Fedora
+    # rpm jobs on the GitHub-hosted ubuntu-24.04 image, the same one release.yml
+    # packages the deb and the rpms on.
+    $windows = 0; $linux = 0; $rpm = 0; $names = @{}
     foreach ($job in $Jobs) {
         if ($job.status -cne 'completed' -or $job.conclusion -cne 'success') { throw 'Every CI job must have succeeded' }
+        $name = [string]$job.name
+        if ($names.ContainsKey($name)) { throw "Duplicate CI job: $name" }
+        $names[$name] = $true
         $labels = @($job.labels)
         if ([string]$job.runner_name -ceq 'home-workstation-windows-adit-01') {
             foreach ($label in @('self-hosted', 'Windows', 'X64', 'home-workstation', 'repo-adit')) {
@@ -35,8 +38,10 @@ function Assert-AditReleaseCI([string]$Ref, [string]$Sha, [string]$MainSha, $Run
             }
             $windows++
         } elseif ($labels.Count -eq 1 -and $labels[0] -ceq 'ubuntu-24.04') {
-            $linux++
+            if ($name -cmatch '^rpm \(fedora-\d+\)$') { $rpm++ } else { $linux++ }
         } else { throw 'CI job used an unexpected runner' }
     }
     if ($windows -ne 1 -or $linux -ne 1) { throw 'CI job used an unexpected or duplicate runner' }
+    # The Fedora rpm jobs are paused in ci.yml; when they come back, require them:
+    # if ($rpm -lt 1) { throw 'Expected the Fedora rpm CI jobs' }
 }
