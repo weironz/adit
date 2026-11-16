@@ -19,7 +19,8 @@ if [[ ${1:-} == --in-container ]]; then
   dnf -y -q install gcc gcc-c++ make pkgconf-pkg-config rpm-build rustup \
     libxkbcommon-devel wayland-devel libX11-devel libXcursor-devel \
     libXrandr-devel libXi-devel gtk3-devel dbus-devel fuse3-devel
-  rustup-init -y -q --profile minimal --default-toolchain stable
+  # rust-toolchain.toml pins the compiler; rustup installs that one on first use.
+  rustup-init -y -q --profile minimal --default-toolchain none
   # shellcheck disable=SC1091
   . "$HOME/.cargo/env"
   rustc --version
