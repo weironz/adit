@@ -36,7 +36,11 @@ shift
 [[ $fedora =~ ^[0-9]+$ ]] || { echo "Fedora release must be a number: $fedora" >&2; exit 2; }
 
 rm -rf rpmbuild
+# The OAuth client IDs are baked in at compile time (option_env! in adit-sync)
+# and release.yml sets them only on the host; -e NAME forwards each one if set.
 docker run --rm -v "$PWD:/w" -w /w -e HOST_UID="$(id -u)" -e HOST_GID="$(id -g)" \
+  -e ADIT_SYNC_GOOGLE_CLIENT_ID -e ADIT_SYNC_GOOGLE_CLIENT_SECRET \
+  -e ADIT_SYNC_ONEDRIVE_CLIENT_ID -e ADIT_SYNC_DROPBOX_CLIENT_ID -e ADIT_SYNC_GITHUB_CLIENT_ID \
   "fedora:$fedora" bash installer/build-fedora-rpm.sh --in-container "$@"
 
 shopt -s nullglob
