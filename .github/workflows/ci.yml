@@ -388,11 +388,12 @@ jobs:
           export ADIT_PROXY_FIXTURE="$PWD/target/debug/examples/proxy_stdio_fixture"
           cargo test -p adit-ssh --features integration --locked --lib proxy_command::tests -- --include-ignored --test-threads=1
 
-  # One rpm per Fedora release, each built inside that release's container: an
-  # rpm takes its sonames from the system it was linked on, and the one built on
-  # Ubuntu required libfuse3.so.3, which Fedora 44+ (libfuse3.so.4) lacks. Keep
-  # this list in step with release.yml's linux-rpm job; the release gate
-  # requires these jobs green on the commit being released.
+  # The rpm is built inside the Fedora release it targets: an rpm takes its
+  # sonames from the system it was linked on, and the one built on Ubuntu
+  # required libfuse3.so.3, which Fedora 44+ (libfuse3.so.4) lacks. Only the
+  # latest stable Fedora is built; move this to the next release when it ships,
+  # in step with release.yml's linux-rpm job. The release gate requires this job
+  # green on the commit being released.
   rpm:
     name: rpm (fedora-${{ matrix.fedora }})
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -401,7 +402,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ['43', '44', '45']
+        fedora: ['45']
     defaults:
       run:
         shell: bash

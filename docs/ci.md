@@ -55,7 +55,7 @@ gh run cancel <上一个 run id>
 
 两平台保留工作区 build、Clippy、测试和可选 VNC 验收入口的编译检查。Windows 还构建、检查独立的 RDP helper workspace。
 
-Linux 额外执行换行和已保存输入证据审计、真实 x11vnc/TigerVNC、共享桌面 resize、隔离 network namespace 恢复、SSH 网关/凭据/光标、真实 sshd 集成、默认/Vulkan 无界面启动，以及 deb 安装启动检查。另有按 Fedora 版本（43/44/45）展开的 `rpm` 任务，在对应 `fedora:NN` 容器里编译、打包 rpm，再到同版本的干净容器里安装并启动；rpm 的库依赖取自编译所在系统，所以必须在目标版本里编译。发布门禁要求这些任务全绿。历史已捕获证据的审计不代表重跑原生 Windows 键盘验收。
+Linux 额外执行换行和已保存输入证据审计、真实 x11vnc/TigerVNC、共享桌面 resize、隔离 network namespace 恢复、SSH 网关/凭据/光标、真实 sshd 集成、默认/Vulkan 无界面启动，以及 deb 安装启动检查。另有 `rpm` 任务，在最新 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包 rpm，再到同版本的干净容器里安装并启动；rpm 的库依赖取自编译所在系统，所以必须在目标版本里编译。发布门禁要求这个任务为绿。历史已捕获证据的审计不代表重跑原生 Windows 键盘验收。
 
 集成夹具沿用既有固定 X display/loopback 测试端口，启动前检查占用，拒绝替换已有资源。VNC Docker 夹具标记当前 run ID，退出时只移除本次拥有的容器。工作流级并发组串行化不同 run，防止夹具重叠。无界面启动使用独立配置目录，结束时停止其进程组。
 

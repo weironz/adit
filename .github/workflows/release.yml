@@ -159,9 +159,9 @@ jobs:
           test -s "$deb"
           gh release upload "v$RELEASE_VERSION" "$deb" --repo "$GITHUB_REPOSITORY" --clobber
 
-  # One rpm per Fedora release, built and smoke-tested inside that release's
-  # container (see installer/build-fedora-rpm.sh for why). Same list as ci.yml's
-  # rpm job, which the release gate requires green on this commit.
+  # One rpm for the latest stable Fedora, built and smoke-tested inside that
+  # release's container (see installer/build-fedora-rpm.sh for why). Same version
+  # as ci.yml's rpm job, which the release gate requires green on this commit.
   linux-rpm:
     name: Fedora ${{ matrix.fedora }} x64 rpm
     needs: release
@@ -170,7 +170,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        fedora: ['43', '44', '45']
+        fedora: ['45']
     defaults:
       run:
         shell: bash

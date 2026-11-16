@@ -6,7 +6,7 @@
 # An rpm takes its library requirements from the system it was linked on. One
 # built on Ubuntu 24.04 required libfuse3.so.3, which Fedora 44+ (fuse3 3.18,
 # libfuse3.so.4) does not provide, so it could not be installed there. Hence
-# one rpm per Fedora release, each built against that release.
+# the rpm is built inside the Fedora release it targets.
 #
 #   usage: installer/build-fedora-rpm.sh 44 [version]
 #
