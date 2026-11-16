@@ -159,8 +159,9 @@ reproduce.
 
   That publishes the **Windows x64 installer** on the designated self-hosted
   Windows x64 runner, then an **Ubuntu x64 deb** built on GitHub-hosted
-  `ubuntu-24.04` and attached to the same release, plus **one x64 rpm for the
-  latest stable Fedora** (currently 45, `adit-X.Y.Z-1.fc45.x86_64.rpm`),
+  `ubuntu-24.04` and attached to the same release. **The rpm is paused**: its CI
+  and release jobs are commented out (verified green before pausing). When
+  enabled it is one x64 rpm for the latest stable Fedora (currently 45, `adit-X.Y.Z-1.fc45.x86_64.rpm`),
   compiled and packaged inside that release's `fedora:NN` container by
   `installer/build-fedora-rpm.sh` — an rpm inherits the sonames it was linked
   against, and the old Ubuntu-built one needed `libfuse3.so.3`, which Fedora 44+

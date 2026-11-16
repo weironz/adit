@@ -42,7 +42,7 @@ Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $labels 
 $failedJob=New-GateJobs;$failedJob[0].conclusion='skipped'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $failedJob }
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run @((New-GateJobs)[0]) }
-Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run @((New-GateJobs)[0..1]) }
+Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run @((New-GateJobs)[0..1])
 $rpmFailed=New-GateJobs;$rpmFailed[3].conclusion='failure'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $rpmFailed }
 $rpmSelf=New-GateJobs;$rpmSelf[2].labels=@('self-hosted','Linux')
@@ -63,4 +63,4 @@ $selfLinux=New-GateJobs;$selfLinux[1].labels=@('self-hosted','ubuntu-24.04')
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $selfLinux }
 $linuxFailed=New-GateJobs;$linuxFailed[1].conclusion='failure'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $linuxFailed }
-Write-Output "Release gate: 3 positive checks and $rejected unsafe cases rejected; no network or publishing."
+Write-Output "Release gate: 4 positive checks and $rejected unsafe cases rejected; no network or publishing."

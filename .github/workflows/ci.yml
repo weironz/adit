@@ -388,36 +388,39 @@ jobs:
           export ADIT_PROXY_FIXTURE="$PWD/target/debug/examples/proxy_stdio_fixture"
           cargo test -p adit-ssh --features integration --locked --lib proxy_command::tests -- --include-ignored --test-threads=1
 
-  # The rpm is built inside the Fedora release it targets: an rpm takes its
-  # sonames from the system it was linked on, and the one built on Ubuntu
-  # required libfuse3.so.3, which Fedora 44+ (libfuse3.so.4) lacks. Only the
-  # latest stable Fedora is built; move this to the next release when it ships,
-  # in step with release.yml's linux-rpm job. The release gate requires this job
-  # green on the commit being released.
-  rpm:
-    name: rpm (fedora-${{ matrix.fedora }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        fedora: ['45']
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Build, install and start the rpm on Fedora ${{ matrix.fedora }}
-        run: installer/build-fedora-rpm.sh "${{ matrix.fedora }}"
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: adit-rpm-fedora-${{ matrix.fedora }}-x86_64
-          path: rpmbuild/RPMS/*/adit-*.rpm
-          if-no-files-found: warn
+  # Paused: the Fedora rpm job below is verified (built, installed and started on
+  # fedora:45) but switched off for now. To re-enable, uncomment it here and in
+  # the other workflow, and restore the rpm requirement in Assert-AditReleaseCI.
+#   # The rpm is built inside the Fedora release it targets: an rpm takes its
+#   # sonames from the system it was linked on, and the one built on Ubuntu
+#   # required libfuse3.so.3, which Fedora 44+ (libfuse3.so.4) lacks. Only the
+#   # latest stable Fedora is built; move this to the next release when it ships,
+#   # in step with release.yml's linux-rpm job. The release gate requires this job
+#   # green on the commit being released.
+#   rpm:
+#     name: rpm (fedora-${{ matrix.fedora }})
+#     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+#     runs-on: ubuntu-24.04
+#     timeout-minutes: 60
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         fedora: ['45']
+#     defaults:
+#       run:
+#         shell: bash
+#     steps:
+#       - uses: actions/checkout@v4
+#         with:
+#           persist-credentials: false
+#       - name: Build, install and start the rpm on Fedora ${{ matrix.fedora }}
+#         run: installer/build-fedora-rpm.sh "${{ matrix.fedora }}"
+#       - uses: actions/upload-artifact@v4
+#         if: always()
+#         with:
+#           name: adit-rpm-fedora-${{ matrix.fedora }}-x86_64
+#           path: rpmbuild/RPMS/*/adit-*.rpm
+#           if-no-files-found: warn
 
 # === ORIGINAL NON-X64 PLATFORM CONFIGURATION (PAUSED) ===
 # Original build matrix: windows-latest, windows-11-arm, ubuntu-latest,

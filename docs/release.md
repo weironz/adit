@@ -1,6 +1,6 @@
 # 发布操作手册
 
-当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，并在当前最新的 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包一个 x64 rpm，一并追加到同一个 Release；更早的 Fedora 版本不单独出包。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统，在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上。Fedora 版本号在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致，新 Fedora 发布后两处一起改；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
+当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，并追加到同一个 Release。**rpm 暂停**：CI 与发布里的 rpm 任务已注释（暂停前已在 `fedora:45` 上验证通过），门禁也暂不要求 rpm 任务；恢复时取消两处注释并恢复 `Assert-AditReleaseCI` 里的 rpm 要求。启用时在当前最新的 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包一个 x64 rpm；更早的 Fedora 版本不单独出包。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统，在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上。Fedora 版本号在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致，新 Fedora 发布后两处一起改；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
 
 ## 初始化与只读检查
 
@@ -109,7 +109,7 @@ git tag --sort=-creatordate | head -1
 gh workflow run release.yml -f version=0.1.75        # 把版本号换成第 2 步定的
 ```
 
-默认发 Windows x64 安装器、Ubuntu x64 deb 和最新 Fedora 稳定版的 x64 rpm。
+默认发 Windows x64 安装器和 Ubuntu x64 deb（Fedora rpm 暂停）。
 以下 `all_platforms` 开关目前暂停，保留作历史参考：arm64 安装器、macOS dmg 曾用它开启：
 
 ```bash
@@ -170,7 +170,7 @@ gh release view v0.1.75
 
 - `adit-installer-vX.Y.Z.exe`（x64 安装器）
 - `adit_X.Y.Z_amd64.deb`（Ubuntu x64）
-- `adit-X.Y.Z-1.fc45.x86_64.rpm`（最新 Fedora 稳定版）
+- （暂停）`adit-X.Y.Z-1.fc45.x86_64.rpm`（最新 Fedora 稳定版）
 - （暂停）all_platforms 时额外有：`_arm64.exe` 安装器、`adit_X.Y.Z_*_unsigned.dmg`
 
 Release 说明由 `--generate-notes` 自动生成（按合并的 PR 汇总），需要润色的话
