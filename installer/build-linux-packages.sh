@@ -6,11 +6,14 @@
 # the part of packaging most likely to be wrong, and keeping a copy in each
 # workflow guarantees that one of them eventually goes stale.
 #
-#   usage: installer/build-linux-packages.sh 0.1.60
+#   usage: installer/build-linux-packages.sh <deb|rpm> [version]
 #
 # Produces, in the working directory, for the architecture it is running on:
-#   adit_<version>_<amd64|arm64>.deb
-#   rpmbuild/RPMS/<x86_64|aarch64>/adit-<version>-1.<x86_64|aarch64>.rpm
+#   deb: adit_<version>_<amd64|arm64>.deb
+#   rpm: rpmbuild/RPMS/<x86_64|aarch64>/adit-<version>-1<dist>.<x86_64|aarch64>.rpm
+#
+# An rpm inherits the sonames of the system it is built on, so build it on the
+# Fedora release it targets (installer/build-fedora-rpm.sh), not on Ubuntu.
 
 set -euo pipefail
 
@@ -18,9 +21,12 @@ set -euo pipefail
 # independently of the account's private-file policy outside this process.
 umask 022
 
+kind=${1:-}
+[[ $kind == deb || $kind == rpm ]] || { echo "usage: build-linux-packages.sh <deb|rpm> [version]" >&2; exit 2; }
+
 # Defaults to the workspace version; release.yml passes it explicitly so the
 # package matches the tag even before the bump is committed.
-version="${1:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
+version="${2:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
 [[ -n "$version" ]] || { echo "cannot determine version" >&2; exit 1; }
 binary=target/release/adit-app
 root=pkgroot
@@ -78,8 +84,11 @@ Description: SSH / SFTP / RDP terminal client
  SFTP transfer and port forwarding.
 CONTROL
 
-dpkg-deb --build --root-owner-group "$root" "adit_${version}_${deb_arch}.deb"
-dpkg-deb --info "adit_${version}_${deb_arch}.deb"
+if [[ $kind == deb ]]; then
+  dpkg-deb --build --root-owner-group "$root" "adit_${version}_${deb_arch}.deb"
+  dpkg-deb --info "adit_${version}_${deb_arch}.deb"
+  exit 0
+fi
 
 # RPM derives Requires by scanning the ELF, which is worth very little here:
 # winit reaches the X11 stack through x11-dl, so libX11, libXcursor, libXrandr
@@ -91,7 +100,7 @@ cat > adit.spec <<SPEC
 %global debug_package %{nil}
 Name:      adit
 Version:   $version
-Release:   1
+Release:   1%{?dist}
 Summary:   SSH / SFTP / RDP terminal client
 License:   MIT
 BuildArch: $rpm_arch

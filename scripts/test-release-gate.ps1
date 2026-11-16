@@ -4,8 +4,10 @@ $sha = 'a' * 40
 $run = @{head_sha=$sha; head_branch='main'; event='push'; status='completed'; conclusion='success'}
 function New-GateJobs {
     @(
-        @{runner_name='home-workstation-windows-adit-01';status='completed';conclusion='success';labels=@('self-hosted','Windows','X64','home-workstation','repo-adit')},
-        @{runner_name='GitHub Actions 7';status='completed';conclusion='success';labels=@('ubuntu-24.04')}
+        @{name='build · clippy · test · integration (windows-x64)';runner_name='home-workstation-windows-adit-01';status='completed';conclusion='success';labels=@('self-hosted','Windows','X64','home-workstation','repo-adit')},
+        @{name='build · clippy · test · integration (linux-x64)';runner_name='GitHub Actions 7';status='completed';conclusion='success';labels=@('ubuntu-24.04')},
+        @{name='rpm (fedora-43)';runner_name='GitHub Actions 8';status='completed';conclusion='success';labels=@('ubuntu-24.04')},
+        @{name='rpm (fedora-44)';runner_name='GitHub Actions 9';status='completed';conclusion='success';labels=@('ubuntu-24.04')}
     )
 }
 Assert-AditReleaseVersion '0.1.75' '0.1.76'
@@ -40,6 +42,13 @@ Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $labels 
 $failedJob=New-GateJobs;$failedJob[0].conclusion='skipped'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $failedJob }
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run @((New-GateJobs)[0]) }
+Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run @((New-GateJobs)[0..1]) }
+$rpmFailed=New-GateJobs;$rpmFailed[3].conclusion='failure'
+Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $rpmFailed }
+$rpmSelf=New-GateJobs;$rpmSelf[2].labels=@('self-hosted','Linux')
+Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $rpmSelf }
+$rpmTwice=New-GateJobs;$rpmTwice[3].name='rpm (fedora-43)'
+Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $rpmTwice }
 $pr=$run.Clone();$pr.event='pull_request'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $pr (New-GateJobs) }
 $branch=$run.Clone();$branch.head_branch='feature'

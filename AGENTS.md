@@ -159,8 +159,14 @@ reproduce.
 
   That publishes the **Windows x64 installer** on the designated self-hosted
   Windows x64 runner, then an **Ubuntu x64 deb** built on GitHub-hosted
-  `ubuntu-24.04` and attached to the same release. ARM64/macOS/rpm release jobs
-  are commented out, with their original configuration preserved. `all_platforms` is paused; do not
+  `ubuntu-24.04` and attached to the same release, plus **one x64 rpm per
+  Fedora release** (currently 43/44/45, `adit-X.Y.Z-1.fcNN.x86_64.rpm`), each
+  compiled and packaged inside that release's `fedora:NN` container by
+  `installer/build-fedora-rpm.sh` — an rpm inherits the sonames it was linked
+  against, and the old Ubuntu-built one needed `libfuse3.so.3`, which Fedora 44+
+  does not ship. The Fedora list lives in both `ci.yml` and `release.yml`; keep
+  them equal. ARM64/macOS release jobs are commented out, with their original
+  configuration preserved. `all_platforms` is paused; do not
   dispatch it. Use `runner-bootstrap.yml` for environment initialization and read-only
   gate checks, never `release.yml` just to test dependencies. See `docs/release.md`.
 

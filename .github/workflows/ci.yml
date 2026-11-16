@@ -336,7 +336,7 @@ jobs:
       - name: Build the packages
         if: runner.os == 'Linux'
         run: |
-          installer/build-linux-packages.sh
+          installer/build-linux-packages.sh deb
 
       # The real test. Installing into a bare ubuntu image means apt has to
       # satisfy Depends on its own, with none of the -dev packages the build
@@ -361,34 +361,10 @@ jobs:
             fi
           '
 
-      # Fedora rather than Ubuntu, so this also exercises whether a binary built
-      # on the Ubuntu runner is usable elsewhere at all — it carries that image's
-      # glibc floor, which is the thing most likely to bite on older RPM distros.
-      # Pinned: the rpm is built on Ubuntu 24.04 and links libfuse3.so.3, but
-      # fuse3 3.17+ (Fedora 44 / rawhide) ships libfuse3.so.4, so fedora:latest
-      # cannot satisfy it. The rpm is not a release asset; building it on
-      # Fedora is what a real rpm release would need.
-      - name: Install and run the rpm in a clean container
-        if: runner.os == 'Linux'
-        run: |
-          docker run --rm -v "$PWD:/w" -w /w fedora:43 bash -eu -c '
-            dnf -y -q install ./rpmbuild/RPMS/x86_64/adit-*.rpm xorg-x11-server-Xvfb >/dev/null
-            xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/rpm-smoke.log 2>&1 &
-            pid=$!
-            sleep 25
-            if kill -0 "$pid" 2>/dev/null; then
-              kill "$pid" 2>/dev/null || true
-              echo "installed adit stayed up on Fedora"
-            else
-              echo "::error::the installed adit exited on its own on Fedora"
-              exit 1
-            fi
-          '
-
       - name: Package startup logs
         if: always() && runner.os == 'Linux'
         run: |
-          for log in pkg-smoke.log rpm-smoke.log; do
+          for log in pkg-smoke.log; do
             echo "===== $log ====="
             cat "$log" 2>/dev/null || echo '(not produced)'
           done
@@ -399,7 +375,6 @@ jobs:
           name: adit-linux-packages-x86_64
           path: |
             adit_*.deb
-            rpmbuild/RPMS/*/adit-*.rpm
           if-no-files-found: warn
 
       # --include-ignored also reaches the ProxyCommand tests, which panic without
@@ -412,6 +387,36 @@ jobs:
           cargo build -p adit-ssh --example proxy_stdio_fixture --locked
           export ADIT_PROXY_FIXTURE="$PWD/target/debug/examples/proxy_stdio_fixture"
           cargo test -p adit-ssh --features integration --locked --lib proxy_command::tests -- --include-ignored --test-threads=1
+
+  # One rpm per Fedora release, each built inside that release's container: an
+  # rpm takes its sonames from the system it was linked on, and the one built on
+  # Ubuntu required libfuse3.so.3, which Fedora 44+ (libfuse3.so.4) lacks. Keep
+  # this list in step with release.yml's linux-rpm job; the release gate
+  # requires these jobs green on the commit being released.
+  rpm:
+    name: rpm (fedora-${{ matrix.fedora }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ['43', '44', '45']
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build, install and start the rpm on Fedora ${{ matrix.fedora }}
+        run: installer/build-fedora-rpm.sh "${{ matrix.fedora }}"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: adit-rpm-fedora-${{ matrix.fedora }}-x86_64
+          path: rpmbuild/RPMS/*/adit-*.rpm
+          if-no-files-found: warn
 
 # === ORIGINAL NON-X64 PLATFORM CONFIGURATION (PAUSED) ===
 # Original build matrix: windows-latest, windows-11-arm, ubuntu-latest,

@@ -1,6 +1,6 @@
 # 发布操作手册
 
-当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb 并追加到同一个 Release。ARM64、macOS、rpm 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
+当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，并在 `fedora:43`/`fedora:44`/`fedora:45` 容器里各编译、打包一个 x64 rpm，一并追加到同一个 Release。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统，在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上。Fedora 版本列表在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
 
 ## 初始化与只读检查
 
@@ -109,8 +109,8 @@ git tag --sort=-creatordate | head -1
 gh workflow run release.yml -f version=0.1.75        # 把版本号换成第 2 步定的
 ```
 
-默认只发 Windows x64 安装器。如果这次还要 arm64 安装器、Linux deb/rpm、
-macOS dmg，加一个开关：
+默认发 Windows x64 安装器、Ubuntu x64 deb 和每个 Fedora 版本各一个 x64 rpm。
+以下 `all_platforms` 开关目前暂停，保留作历史参考：arm64 安装器、macOS dmg 曾用它开启：
 
 ```bash
 gh workflow run release.yml -f version=0.1.75 -f all_platforms=true
@@ -168,9 +168,11 @@ gh release view v0.1.75
 
 应看到的资产：
 
-- 默认：`adit-installer-vX.Y.Z.exe`（x64 安装器）
-- 勾了 all_platforms 时额外有：`_arm64.exe` 安装器、`adit_X.Y.Z_*.deb`、
-  `adit-X.Y.Z-1.*.rpm`、`adit_X.Y.Z_*_unsigned.dmg`
+- `adit-installer-vX.Y.Z.exe`（x64 安装器）
+- `adit_X.Y.Z_amd64.deb`（Ubuntu x64）
+- `adit-X.Y.Z-1.fc43.x86_64.rpm`、`adit-X.Y.Z-1.fc44.x86_64.rpm`、
+  `adit-X.Y.Z-1.fc45.x86_64.rpm`（每个 Fedora 版本一个）
+- （暂停）all_platforms 时额外有：`_arm64.exe` 安装器、`adit_X.Y.Z_*_unsigned.dmg`
 
 Release 说明由 `--generate-notes` 自动生成（按合并的 PR 汇总），需要润色的话
 在 GitHub 网页上直接编辑即可。
@@ -192,7 +194,7 @@ git pull --ff-only
 | 构建红 | 编译问题 | 修好后重新触发；只要没走到发布，版本号可以复用 |
 | 全绿但 Release 不存在 | 发布期间有人推了 main，bump 推送非快进被拒 | 确认 main 无新提交后重新触发；已经走到发布步骤的版本号不能复用，改发下一个 patch |
 | `gh run watch` 报 `unexpected EOF` 后退出 | 本地网络抖动，与工作流无关 | 重跑同一条 watch，或用 `gh run view <run-id>` 查状态 |
-| 某个平台资产缺失（arm64 / deb / rpm / dmg） | 默认不发 | 用同一版本号加 `-f all_platforms=true` 补发，资产会被追加到已存在的 Release |
+| deb 或某个 Fedora rpm 缺失 | 对应的 `linux-deb` / `linux-rpm` 任务失败，Windows 部分已发布 | 修好后在该运行页面只重跑失败的任务（`gh run rerun <run-id> --failed`），资产以 `--clobber` 追加到已存在的 Release |
 
 ## 不要做的事
 
