@@ -158,8 +158,7 @@ impl Drop for MountDirectory {
 
 pub(super) struct RemoteMount {
     session: Option<BackgroundSession>,
-    // Held for RAII: MountDirectory drops only after the FUSE session is joined.
-    #[cfg_attr(not(test), allow(dead_code))]
+    // MountDirectory drops only after the FUSE session is joined.
     directory: MountDirectory,
     bridge: ChunkBridge,
     pub paths: Vec<String>,
@@ -244,9 +243,22 @@ impl Drop for RemoteMount {
         self.bridge.close();
         // The worker owns this object. Unmount and join never run on the GUI.
         if let Some(session) = self.session.take() {
+            // With AutoUnmount, fuser's pure-Rust unmount only hangs up on the
+            // fusermount3 helper, which unmounts only a filesystem whose daemon
+            // is gone, so the session thread would never stop. Detach first.
+            detach(&self.directory.0);
             let _ = session.umount_and_join();
         }
     }
+}
+
+fn detach(directory: &std::path::Path) {
+    let _ = std::process::Command::new("fusermount3")
+        .args(["-u", "-q", "-z", "--"])
+        .arg(directory)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
 }
 
 #[cfg(test)]
