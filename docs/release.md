@@ -1,6 +1,6 @@
 # 发布操作手册
 
-当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，并追加到同一个 Release。**rpm 暂停**：CI 与发布里的 rpm 任务已注释（暂停前已在 `fedora:45` 上验证通过），门禁也暂不要求 rpm 任务；恢复时取消两处注释并恢复 `Assert-AditReleaseCI` 里的 rpm 要求。启用时在当前最新的 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包一个 x64 rpm；更早的 Fedora 版本不单独出包。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统，在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上。Fedora 版本号在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致，新 Fedora 发布后两处一起改；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
+当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，在干净的 `ubuntu:24.04` 和 `ubuntu:26.04` 容器里各装一次并启动，通过后追加到同一个 Release。**rpm 暂停**：CI 与发布里的 rpm 任务已注释（暂停前已在 `fedora:45` 上验证通过），门禁也暂不要求 rpm 任务；恢复时取消两处注释并恢复 `Assert-AditReleaseCI` 里的 rpm 要求。启用时在当前最新的 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包一个 x64 rpm；更早的 Fedora 版本不单独出包。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统。曾经在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上；现在程序已不链接 libfuse，其余库仍是这个道理。Fedora 版本号在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致，新 Fedora 发布后两处一起改；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
 
 ## 初始化与只读检查
 

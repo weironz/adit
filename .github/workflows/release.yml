@@ -126,7 +126,7 @@ jobs:
       - name: Install build and packaging dependencies
         run: |
           sudo apt-get update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             build-essential pkg-config             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev             libxi-dev libgtk-3-dev libdbus-1-dev libfuse3-dev
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends             build-essential pkg-config             libxkbcommon-dev libwayland-dev libx11-dev libxcursor-dev libxrandr-dev             libxi-dev libgtk-3-dev libdbus-1-dev
       - name: Build app (release)
         run: cargo build --release -p adit-app --locked
       - name: Package
@@ -135,22 +135,32 @@ jobs:
       # Depends on its own; a missing entry fails here, not on a user's machine.
       - name: Install and run the deb in a clean container
         run: |
-          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -eu -c '
-            export DEBIAN_FRONTEND=noninteractive
-            apt-get update -qq
-            apt-get install -y -qq ./adit_*_amd64.deb xvfb >/dev/null
-            xvfb-run -a --server-args="-screen 0 1280x800x24" adit > /w/pkg-smoke.log 2>&1 &
-            pid=$!
-            sleep 25
-            if kill -0 "$pid" 2>/dev/null; then
-              kill "$pid" 2>/dev/null || true
-              echo "installed adit stayed up; the dependency list is complete"
-            else
-              cat /w/pkg-smoke.log
-              echo "::error::the installed adit exited on its own; Depends is incomplete or wrong"
-              exit 1
-            fi
-          '
+          # Oldest and newest supported LTS: package names drift between them
+          # (24.04 has libfuse3-3, 26.04 only libfuse3-4), so one deb must
+          # install on both.
+          for image in ubuntu:24.04 ubuntu:26.04; do
+            docker run --rm -v "$PWD:/w" -w /w -e LOG="pkg-smoke-${image#ubuntu:}.log" "$image" bash -eu -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq
+              apt-get install -y -qq ./adit_*.deb xvfb >/dev/null
+              command -v fusermount3 >/dev/null
+              if ldd /usr/bin/adit | grep libfuse; then
+                echo "::error::adit links libfuse, whose soname differs across Ubuntu releases"
+                exit 1
+              fi
+              xvfb-run -a --server-args="-screen 0 1280x800x24" adit > "/w/$LOG" 2>&1 &
+              pid=$!
+              sleep 25
+              if kill -0 "$pid" 2>/dev/null; then
+                kill "$pid" 2>/dev/null || true
+                echo "$(. /etc/os-release; echo "$VERSION"): installed adit stayed up"
+              else
+                cat "/w/$LOG"
+                echo "::error::the installed adit exited on its own; Depends is incomplete or wrong"
+                exit 1
+              fi
+            '
+          done
       - name: Attach the deb to the release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -145,6 +145,9 @@ winit = "=0.30.13"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 clipboard-rs = { version = "=0.3.5", default-features = false }
-fuser = { version = "=0.18.0", default-features = false, features = ["libfuse3"] }
+# No libfuse feature: fuser mounts through fusermount3 itself. Linking libfuse
+# tied packages to one soname (libfuse3.so.3), which Ubuntu 25.10+ and
+# Fedora 44+ no longer ship (.so.4), so the deb and rpm could not install there.
+fuser = { version = "=0.18.0", default-features = false }
 libc = "0.2"
 url = "2"

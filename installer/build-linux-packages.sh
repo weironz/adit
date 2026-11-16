@@ -64,6 +64,9 @@ Terminal=false
 Categories=Network;RemoteAccess;
 DESKTOP
 
+# fuse3 provides fusermount3, which the RDP file clipboard mounts through; the
+# binary links no libfuse, whose package name changes with its soname
+# (libfuse3-3 on 24.04, libfuse3-4 on 25.10+).
 # libxkbcommon-x11-0 is dlopened by winit, so it appears in no ELF header and
 # no automatic tool would find it — CI caught it only by running the binary.
 # The rest back rfd (GTK), keyring (D-Bus), winit (X11/Wayland) and wgpu (the
@@ -78,7 +81,7 @@ Maintainer: Adit <noreply@example.com>
 Depends: libxkbcommon0, libxkbcommon-x11-0, libwayland-client0,
  libx11-6, libxcursor1, libxrandr2, libxi6,
  libgtk-3-0t64 | libgtk-3-0, libdbus-1-3, libvulkan1,
- libfuse3-3
+ fuse3
 Description: SSH / SFTP / RDP terminal client
  A native terminal client with session groups, tabs, split panes,
  SFTP transfer and port forwarding.
@@ -107,8 +110,8 @@ BuildArch: $rpm_arch
 Requires:  libxkbcommon, libxkbcommon-x11, libwayland-client
 Requires:  libX11, libXcursor, libXrandr, libXi
 Requires:  gtk3, dbus-libs, vulkan-loader
-# fuser's libfuse3 feature links libfuse3.so.3 (the RDP file clipboard).
-Requires:  fuse3-libs
+# fusermount3, for the RDP file clipboard's FUSE mount.
+Requires:  fuse3
 
 %description
 A native terminal client with session groups, tabs, split panes,

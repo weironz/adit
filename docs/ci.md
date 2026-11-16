@@ -35,10 +35,11 @@ gh run cancel <上一个 run id>
 
 两个真实 runner 上才会失败、容器里同样会失败的坑：
 
-- `fuser`（Linux 的 RDP 文件剪贴板，走 FUSE）用 pkg-config 探测 `fuse3`，缺了会在
-  **编译期**报 `Package fuse3 was not found in the pkg-config search path`，而不是
-  链接期报缺符号。因此 `libfuse3-dev` 必须在 `.github/scripts/setup-linux-runner.sh`
-  的依赖列表里。
+- `fuser`（Linux 的 RDP 文件剪贴板，走 FUSE）不开 `libfuse3` feature，由 fuser 自己
+  调用 `fusermount3` 挂载，所以构建不需要 `libfuse3-dev`，安装包只依赖提供
+  `fusermount3` 的 `fuse3`。不要重新打开这个 feature：链接 libfuse 会把包绑死在一个
+  soname 上，Ubuntu 25.10+ 和 Fedora 44+ 只有 `libfuse3.so.4`，v0.1.78 的 deb 就因为
+  依赖 `libfuse3-3` 在 Ubuntu 26.04 上装不上（#253）。
 - `#[cfg(windows)]` 专属的构造会让对应 enum variant 在 Linux 上变成 dead code，
   而 CI 的 `clippy -D warnings` 会把它变成错误。仓库约定是给这类 variant 加
   `#[cfg_attr(not(windows), allow(dead_code))]`。

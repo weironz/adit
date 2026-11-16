@@ -6,7 +6,8 @@
 # An rpm takes its library requirements from the system it was linked on. One
 # built on Ubuntu 24.04 required libfuse3.so.3, which Fedora 44+ (fuse3 3.18,
 # libfuse3.so.4) does not provide, so it could not be installed there. Hence
-# the rpm is built inside the Fedora release it targets.
+# the rpm is built inside the Fedora release it targets. The app no longer links
+# libfuse, but every other library requirement still follows the build system.
 #
 #   usage: installer/build-fedora-rpm.sh 44 [version]
 #
@@ -18,7 +19,7 @@ if [[ ${1:-} == --in-container ]]; then
   shift
   dnf -y -q install gcc gcc-c++ make pkgconf-pkg-config rpm-build rustup \
     libxkbcommon-devel wayland-devel libX11-devel libXcursor-devel \
-    libXrandr-devel libXi-devel gtk3-devel dbus-devel fuse3-devel
+    libXrandr-devel libXi-devel gtk3-devel dbus-devel
   # rust-toolchain.toml pins the compiler; rustup installs that one on first use.
   rustup-init -y -q --profile minimal --default-toolchain none
   # shellcheck disable=SC1091
