@@ -1505,6 +1505,40 @@ mod tests {
     }
 
     #[test]
+    fn empty_ime_preedit_does_not_swallow_terminal_keys() {
+        let (mut app, _, session, _) = focus_fixture();
+        assert!(remote_workspace_accepts_input(&app));
+        let epoch = app.vnc_input_epoch;
+        let _ = update_loop::update(
+            &mut app,
+            Message::NativeImeEvent(
+                session,
+                epoch,
+                iced::advanced::input_method::Event::Preedit(String::new(), None),
+            ),
+        );
+        assert!(app.native_preedit.is_none());
+        let before = snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200)));
+        let key = Key::Character("q".into());
+        let _ = update_loop::update(
+            &mut app,
+            Message::KeyboardInput(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: keyboard::key::Physical::Code(keyboard::key::Code::KeyQ),
+                location: keyboard::Location::Standard,
+                modifiers: keyboard::Modifiers::empty(),
+                text: Some("q".into()),
+                repeat: false,
+            }),
+        );
+        assert_ne!(
+            snapshot_to_text(&app.manager.snapshot_for(session, Viewport::visible(200))),
+            before
+        );
+    }
+
+    #[test]
     fn uia_confirmation_restores_only_same_session_and_fresh_input() {
         let (mut app, window, session, _) = focus_fixture();
         let (generation, old_epoch) = focus_link(&mut app, window);
