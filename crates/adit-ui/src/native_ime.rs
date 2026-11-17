@@ -29,8 +29,12 @@ pub(crate) fn update(app: &mut AditApp, session: SessionId, epoch: u64, event: I
                 send_terminal_bytes(app, text.into_bytes());
             }
         }
+        // An empty preedit means "cleared", and Linux sends one on its own:
+        // every Wayland text-input `done` without a new preedit, every XIM
+        // composition start/end. Keeping it as a preedit swallowed every key
+        // press below, so the terminal took no input at all.
         ImeEvent::Preedit(content, selection) => {
-            app.native_preedit = Some(Preedit {
+            app.native_preedit = (!content.is_empty()).then_some(Preedit {
                 content,
                 selection,
                 text_size: None,
