@@ -29,20 +29,8 @@ pub(crate) use iced::{
 pub(crate) use std::sync::atomic::{AtomicBool, Ordering};
 pub(crate) use std::time::Instant;
 
-/// Which SFTP pane a row belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SftpPane {
-    Local,
-    Remote,
-}
-
-/// Column to sort an SFTP pane's listing by.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SftpSortKey {
-    Name,
-    Size,
-    Modified,
-}
+use adit_workbench::sftp::{RowAction, SftpPanes};
+pub use adit_workbench::sftp::{SftpPane, SftpSortKey};
 
 /// A click on a host card, remembered in app state rather than in the widget.
 ///
@@ -178,8 +166,8 @@ pub use native_windows::run_native_file_drop_acceptance;
 mod native_ime;
 mod terminal_appearance;
 mod window_presentation;
+use adit_terminal::selection as terminal_text;
 use terminal_appearance::*;
-mod terminal_text;
 mod theme;
 use input::*;
 use terminal_text::*;
@@ -396,12 +384,8 @@ pub struct AditApp {
     sftp_remote_path_edit: String,
     sftp_local_cwd_seen: String,
     sftp_remote_cwd_seen: String,
-    sftp_local_selected: BTreeSet<String>,
-    sftp_remote_selected: BTreeSet<String>,
+    sftp_panes: SftpPanes,
     sftp_file_drop: update_loop::SftpDropState,
-    sftp_local_sort: (SftpSortKey, bool),
-    sftp_remote_sort: (SftpSortKey, bool),
-    sftp_last_click: Option<(SftpPane, String, Instant)>,
     sftp_drag: Option<(SftpPane, String)>,
     sftp_drag_over: Option<SftpPane>,
     sftp_drag_cursor: Option<Point>,
@@ -1352,24 +1336,12 @@ enum ProfileDrop {
 /// folders; a freshly-created session (small order) sits above the first folder.
 const TOP_LEVEL_STEP: i32 = 100_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TerminalPoint {
-    row: usize,
-    col: usize,
-}
-
 /// A scrollback-search hit: an absolute row plus the matched character span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SearchMatch {
     row: usize,
     col: usize,
     len: usize,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct TerminalSelection {
-    start: TerminalPoint,
-    end: TerminalPoint,
 }
 
 #[derive(Debug, Clone)]
@@ -1833,12 +1805,8 @@ impl AditApp {
             sftp_remote_path_edit: String::new(),
             sftp_local_cwd_seen: String::new(),
             sftp_remote_cwd_seen: String::new(),
-            sftp_local_selected: BTreeSet::new(),
-            sftp_remote_selected: BTreeSet::new(),
+            sftp_panes: SftpPanes::default(),
             sftp_file_drop: update_loop::SftpDropState::default(),
-            sftp_local_sort: (SftpSortKey::Name, true),
-            sftp_remote_sort: (SftpSortKey::Name, true),
-            sftp_last_click: None,
             sftp_drag: None,
             sftp_drag_over: None,
             sftp_drag_cursor: None,
@@ -4289,21 +4257,6 @@ mod tests {
     }
 
     #[test]
-    fn sftp_cmp_orders_by_column_and_direction() {
-        use std::cmp::Ordering;
-        let a = ("alpha", 10u64, Some(100u64));
-        let b = ("beta", 5u64, Some(200u64));
-        // Name ascending: alpha < beta.
-        assert_eq!(sftp_cmp(SftpSortKey::Name, true, a, b), Ordering::Less);
-        // Name descending flips it.
-        assert_eq!(sftp_cmp(SftpSortKey::Name, false, a, b), Ordering::Greater);
-        // Size ascending: 10 > 5.
-        assert_eq!(sftp_cmp(SftpSortKey::Size, true, a, b), Ordering::Greater);
-        // Modified ascending: 100 < 200.
-        assert_eq!(sftp_cmp(SftpSortKey::Modified, true, a, b), Ordering::Less);
-    }
-
-    #[test]
     fn format_epoch_utc_matches_known_timestamps() {
         assert_eq!(format_epoch_utc(0), "1970-01-01 00:00");
         assert_eq!(format_epoch_utc(1_609_459_200), "2021-01-01 00:00"); // 2021-01-01 UTC
@@ -4384,226 +4337,6 @@ mod tests {
     #[test]
     fn paste_normalizes_newlines_for_pty() {
         assert_eq!(normalize_paste("one\r\ntwo\n"), b"one\rtwo\r".to_vec());
-    }
-
-    #[test]
-    fn selection_extracts_text_across_rows() {
-        let snapshot = TerminalSnapshot {
-            title: String::from("test"),
-            size: TerminalSize::new(10, 3),
-            first_row: 0,
-            total_rows: 3,
-            lines: vec![
-                TerminalLine::plain("alpha"),
-                TerminalLine::plain("bravo"),
-                TerminalLine::plain("charlie"),
-            ],
-            cursor_row: 0,
-            cursor_col: 0,
-            cursor_visible: true,
-            alt_screen: false,
-        };
-        let selection = TerminalSelection {
-            start: TerminalPoint { row: 0, col: 2 },
-            end: TerminalPoint { row: 2, col: 4 },
-        };
-
-        assert_eq!(selection_to_text(&snapshot, selection), "pha\nbravo\nchar");
-    }
-
-    /// The bug this was written for, with the output that produced it: `docker ps`
-    /// is wider than the window, so `neostor-agent-chonburi` is broken after
-    /// `neos`. Copying it row by row put a newline in the middle of a container
-    /// name; pasting that ran `docker logs -f neos` and then `tor-agent-chonburi`.
-    #[test]
-    fn copying_a_soft_wrapped_line_does_not_invent_a_newline() {
-        let snapshot = TerminalSnapshot {
-            title: String::from("test"),
-            size: TerminalSize::new(20, 2),
-            first_row: 0,
-            total_rows: 2,
-            lines: vec![
-                TerminalLine::plain("docker logs -f neos").wrapping(),
-                TerminalLine::plain("tor-agent-chonburi"),
-            ],
-            cursor_row: 0,
-            cursor_col: 0,
-            cursor_visible: true,
-            alt_screen: false,
-        };
-        let whole = TerminalSelection {
-            start: TerminalPoint { row: 0, col: 0 },
-            end: TerminalPoint { row: 1, col: 18 },
-        };
-        assert_eq!(
-            selection_to_text(&snapshot, whole),
-            "docker logs -f neostor-agent-chonburi",
-            "a wrapped row runs straight into the next one"
-        );
-        // Copying the whole screen goes through the same rule.
-        assert_eq!(
-            snapshot_to_text(&snapshot),
-            "docker logs -f neostor-agent-chonburi"
-        );
-    }
-
-    #[test]
-    fn a_selection_that_stops_on_a_wrapped_row_does_not_drag_the_next_one_in() {
-        // The row is wrapped, but the selection ends there — what continues onto
-        // the next row was not asked for, and joining it on would copy text the
-        // cursor never crossed.
-        let snapshot = TerminalSnapshot {
-            title: String::from("test"),
-            size: TerminalSize::new(20, 2),
-            first_row: 0,
-            total_rows: 2,
-            lines: vec![
-                TerminalLine::plain("docker logs -f neos").wrapping(),
-                TerminalLine::plain("tor-agent-chonburi"),
-            ],
-            cursor_row: 0,
-            cursor_col: 0,
-            cursor_visible: true,
-            alt_screen: false,
-        };
-        let first_row_only = TerminalSelection {
-            start: TerminalPoint { row: 0, col: 0 },
-            end: TerminalPoint { row: 0, col: 19 },
-        };
-        assert_eq!(
-            selection_to_text(&snapshot, first_row_only),
-            "docker logs -f neos"
-        );
-    }
-
-    #[test]
-    fn a_real_newline_still_separates_two_lines() {
-        // The other half of the distinction: two rows that merely look like a
-        // wrapped line must keep their newline.
-        let snapshot = TerminalSnapshot {
-            title: String::from("test"),
-            size: TerminalSize::new(20, 2),
-            first_row: 0,
-            total_rows: 2,
-            lines: vec![TerminalLine::plain("first"), TerminalLine::plain("second")],
-            cursor_row: 0,
-            cursor_col: 0,
-            cursor_visible: true,
-            alt_screen: false,
-        };
-        let whole = TerminalSelection {
-            start: TerminalPoint { row: 0, col: 0 },
-            end: TerminalPoint { row: 1, col: 6 },
-        };
-        assert_eq!(selection_to_text(&snapshot, whole), "first\nsecond");
-    }
-
-    /// The selection is stored in ABSOLUTE scrollback rows, so a snapshot scrolled
-    /// back (first_row > 0) must resolve them against its own window — otherwise a
-    /// selection made after scrolling would copy the wrong lines.
-    #[test]
-    fn selection_to_text_resolves_absolute_rows_in_a_scrolled_snapshot() {
-        let snapshot = TerminalSnapshot {
-            title: String::from("test"),
-            size: TerminalSize::new(10, 3),
-            first_row: 100,
-            total_rows: 103,
-            lines: vec![
-                TerminalLine::plain("alpha"),
-                TerminalLine::plain("bravo"),
-                TerminalLine::plain("charlie"),
-            ],
-            cursor_row: 0,
-            cursor_col: 0,
-            cursor_visible: true,
-            alt_screen: false,
-        };
-        // Absolute rows 100..=102 are the three visible lines.
-        let selection = TerminalSelection {
-            start: TerminalPoint { row: 100, col: 2 },
-            end: TerminalPoint { row: 102, col: 4 },
-        };
-        assert_eq!(selection_to_text(&snapshot, selection), "pha\nbravo\nchar");
-
-        // Rows entirely above the window resolve to nothing.
-        let above = TerminalSelection {
-            start: TerminalPoint { row: 0, col: 0 },
-            end: TerminalPoint { row: 5, col: 4 },
-        };
-        assert_eq!(selection_to_text(&snapshot, above), "");
-    }
-
-    #[test]
-    fn selection_for_viewport_clips_to_the_visible_window() {
-        let first_row = 100;
-        let rows = 3; // absolute rows 100..=102 visible
-
-        // Entirely inside: shifted down by first_row, cols preserved.
-        let inside = TerminalSelection {
-            start: TerminalPoint { row: 101, col: 2 },
-            end: TerminalPoint { row: 102, col: 4 },
-        };
-        assert_eq!(
-            selection_for_viewport(inside, first_row, rows),
-            Some(TerminalSelection {
-                start: TerminalPoint { row: 1, col: 2 },
-                end: TerminalPoint { row: 2, col: 4 },
-            })
-        );
-
-        // Starts above the window: clipped to row 0 col 0 (whole first row selected).
-        let from_above = TerminalSelection {
-            start: TerminalPoint { row: 40, col: 7 },
-            end: TerminalPoint { row: 101, col: 3 },
-        };
-        assert_eq!(
-            selection_for_viewport(from_above, first_row, rows),
-            Some(TerminalSelection {
-                start: TerminalPoint { row: 0, col: 0 },
-                end: TerminalPoint { row: 1, col: 3 },
-            })
-        );
-
-        // Runs off the bottom: last visible row runs to end-of-line.
-        let past_below = TerminalSelection {
-            start: TerminalPoint { row: 101, col: 1 },
-            end: TerminalPoint { row: 500, col: 2 },
-        };
-        assert_eq!(
-            selection_for_viewport(past_below, first_row, rows),
-            Some(TerminalSelection {
-                start: TerminalPoint { row: 1, col: 1 },
-                end: TerminalPoint {
-                    row: 2,
-                    col: usize::MAX
-                },
-            })
-        );
-
-        // Wholly off-screen in either direction renders nothing.
-        let above = TerminalSelection {
-            start: TerminalPoint { row: 10, col: 0 },
-            end: TerminalPoint { row: 20, col: 0 },
-        };
-        assert_eq!(selection_for_viewport(above, first_row, rows), None);
-        let below = TerminalSelection {
-            start: TerminalPoint { row: 200, col: 0 },
-            end: TerminalPoint { row: 300, col: 0 },
-        };
-        assert_eq!(selection_for_viewport(below, first_row, rows), None);
-
-        // A reversed drag (end above start) is normalized before clipping.
-        let reversed = TerminalSelection {
-            start: TerminalPoint { row: 102, col: 4 },
-            end: TerminalPoint { row: 101, col: 2 },
-        };
-        assert_eq!(
-            selection_for_viewport(reversed, first_row, rows),
-            Some(TerminalSelection {
-                start: TerminalPoint { row: 1, col: 2 },
-                end: TerminalPoint { row: 2, col: 4 },
-            })
-        );
     }
 
     #[test]

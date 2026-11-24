@@ -9,6 +9,7 @@ members = [
     "crates/adit-sync",
     "crates/adit-terminal",
     "crates/adit-ui",
+    "crates/adit-workbench",
     "crates/adit-vnc",
 ]
 # adit-rdp links the IronRDP stack, whose `picky` crate exact-pins pre-release
@@ -33,6 +34,7 @@ adit-storage = { path = "crates/adit-storage" }
 adit-sync = { path = "crates/adit-sync" }
 adit-terminal = { path = "crates/adit-terminal" }
 adit-ui = { path = "crates/adit-ui" }
+adit-workbench = { path = "crates/adit-workbench" }
 bytes = "1"
 # `image-without-codecs` gives the `image` widget (for the RDP framebuffer)
 # without pulling PNG/JPEG decoders — Adit only ever feeds it raw RGBA.

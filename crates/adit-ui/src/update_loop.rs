@@ -1606,16 +1606,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             if let Some((src, name)) = app.sftp_drag.take() {
                 if let Some(dst) = app.sftp_drag_over.take() {
                     if dst != src {
-                        let selection = match src {
-                            SftpPane::Local => &app.sftp_local_selected,
-                            SftpPane::Remote => &app.sftp_remote_selected,
-                        };
-                        let names: Vec<String> = if selection.contains(&name) && selection.len() > 1
-                        {
-                            selection.iter().cloned().collect()
-                        } else {
-                            vec![name]
-                        };
+                        let names = app.sftp_panes.pane(src).dragged_names(name);
                         let transfers = names
                             .into_iter()
                             .map(|entry| match src {
@@ -2037,13 +2028,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sftp_drag = None;
             app.sftp_drag_over = None;
             app.sftp_drag_cursor = None;
-            app.sftp_local_selected.clear();
-            app.sftp_remote_selected.clear();
+            app.sftp_panes.close();
             app.sftp_local_path_edit.clear();
             app.sftp_remote_path_edit.clear();
             app.sftp_local_cwd_seen.clear();
             app.sftp_remote_cwd_seen.clear();
-            app.sftp_last_click = None;
         }
         Message::OpenTunnels => {
             if app.manager.active_session().is_none() {
@@ -2126,48 +2115,25 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             // released over the other pane (see PointerReleased).
             app.sftp_drag = Some((pane, name.clone()));
             app.sftp_drag_over = Some(pane);
-            let now = Instant::now();
-            let is_double = matches!(
-                &app.sftp_last_click,
-                Some((p, n, t)) if *p == pane && *n == name && now.duration_since(*t) < Duration::from_millis(450)
-            );
-            if is_double {
-                // Double-click transfers just this file (selection untouched).
-                app.sftp_last_click = None;
+            if app.sftp_panes.press(pane, &name, Instant::now()) == RowAction::TransferFile {
                 match pane {
                     SftpPane::Remote => start_transfers(app, vec![PendingTransfer::Download(name)]),
                     SftpPane::Local => {
                         start_transfers(app, vec![PendingTransfer::UploadLocal(name)])
                     }
                 }
-            } else {
-                // Single click toggles the file in the pane's selection.
-                app.sftp_last_click = Some((pane, name.clone(), now));
-                let set = match pane {
-                    SftpPane::Remote => &mut app.sftp_remote_selected,
-                    SftpPane::Local => &mut app.sftp_local_selected,
-                };
-                if !set.remove(&name) {
-                    set.insert(name);
-                }
             }
         }
-        Message::SftpTransferSelected(pane) => match pane {
-            SftpPane::Remote => {
-                let transfers = std::mem::take(&mut app.sftp_remote_selected)
-                    .into_iter()
-                    .map(PendingTransfer::Download)
-                    .collect();
-                start_transfers(app, transfers);
-            }
-            SftpPane::Local => {
-                let transfers = std::mem::take(&mut app.sftp_local_selected)
-                    .into_iter()
-                    .map(PendingTransfer::UploadLocal)
-                    .collect();
-                start_transfers(app, transfers);
-            }
-        },
+        Message::SftpTransferSelected(pane) => {
+            let transfers = std::mem::take(&mut app.sftp_panes.pane_mut(pane).selected)
+                .into_iter()
+                .map(|name| match pane {
+                    SftpPane::Remote => PendingTransfer::Download(name),
+                    SftpPane::Local => PendingTransfer::UploadLocal(name),
+                })
+                .collect();
+            start_transfers(app, transfers);
+        }
         Message::SftpFileHovered(path) => hover_sftp_file(app, path),
         Message::SftpFilesHoveredLeft => app.sftp_file_drop = SftpDropState::default(),
         Message::SftpFileDropped(path) => {
@@ -2252,18 +2218,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             }
         }
         Message::SftpCancelDelete => app.sftp_delete_target = None,
-        Message::SftpSort(pane, key) => {
-            let slot = match pane {
-                SftpPane::Local => &mut app.sftp_local_sort,
-                SftpPane::Remote => &mut app.sftp_remote_sort,
-            };
-            // Toggle direction when re-selecting the same column; else default ascending.
-            if slot.0 == key {
-                slot.1 = !slot.1;
-            } else {
-                *slot = (key, true);
-            }
-        }
+        Message::SftpSort(pane, key) => app.sftp_panes.pane_mut(pane).sort_by(key),
         Message::SftpClearTransfers => app.manager.sftp_clear_finished(),
         Message::SftpCancelTransfer(id) => app.manager.sftp_cancel_transfer(id),
         Message::SftpCancelAll => app.manager.sftp_cancel_all(),

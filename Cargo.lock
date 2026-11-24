@@ -176,6 +176,7 @@ dependencies = [
  "adit-storage",
  "adit-sync",
  "adit-terminal",
+ "adit-workbench",
  "clipboard-rs",
  "dark-light",
  "fuser",
@@ -197,6 +198,10 @@ dependencies = [
  "winit",
  "zeroize",
 ]
+
+[[package]]
+name = "adit-workbench"
+version = "0.1.78"
 
 [[package]]
 name = "adler2"

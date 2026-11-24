@@ -3042,11 +3042,11 @@ pub(crate) fn sync_sftp_state(app: &mut AditApp) {
     if remote != app.sftp_remote_cwd_seen {
         app.sftp_remote_cwd_seen = remote.clone();
         app.sftp_remote_path_edit = remote;
-        app.sftp_remote_selected.clear();
+        app.sftp_panes.pane_mut(SftpPane::Remote).selected.clear();
     }
     if local != app.sftp_local_cwd_seen {
         app.sftp_local_cwd_seen = local.clone();
         app.sftp_local_path_edit = local;
-        app.sftp_local_selected.clear();
+        app.sftp_panes.pane_mut(SftpPane::Local).selected.clear();
     }
 }

@@ -6,6 +6,7 @@
 //! public types here are intentionally renderer-agnostic so `adit-ui` (or any
 //! other front end) never has to understand escape sequences.
 
+pub mod selection;
 mod sixel;
 mod vt;
 

@@ -1,4 +1,5 @@
 use super::*;
+use adit_workbench::sftp::{ListingEntry, SortOrder};
 use iced::widget::column;
 mod transfers;
 #[cfg(windows)]
@@ -14,15 +15,8 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     // While dragging, the status line becomes a prominent drag hint.
     let (status_text, status_color) = match &app.sftp_drag {
         Some((src, name)) => {
-            let count = match src {
-                SftpPane::Local => app.sftp_local_selected.len(),
-                SftpPane::Remote => app.sftp_remote_selected.len(),
-            };
-            let selected = match src {
-                SftpPane::Local => app.sftp_local_selected.contains(name),
-                SftpPane::Remote => app.sftp_remote_selected.contains(name),
-            };
-            let subject = if selected && count > 1 {
+            let count = app.sftp_panes.pane(*src).drag_count(name);
+            let subject = if count > 1 {
                 tf("{} 项", &[&count])
             } else {
                 format!("«{name}»")
@@ -116,6 +110,15 @@ pub(crate) fn sftp_panel_overlay(app: &AditApp) -> Element<'_, Message> {
     .into()
 }
 
+fn local_listing_entry(entry: &LocalEntry) -> ListingEntry<'_> {
+    ListingEntry {
+        is_dir: entry.is_dir,
+        name: &entry.name,
+        size: entry.size,
+        mtime: entry.mtime,
+    }
+}
+
 pub(crate) fn sftp_local_pane<'a>(
     app: &'a AditApp,
     browser: &'a SftpBrowser,
@@ -138,29 +141,24 @@ pub(crate) fn sftp_local_pane<'a>(
             .width(Fill),
         sftp_batch_button(
             "上传选中",
-            app.sftp_local_selected.len(),
+            app.sftp_panes.pane(SftpPane::Local).selected.len(),
             Message::SftpTransferSelected(SftpPane::Local),
         ),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
 
-    let (key, ascending) = app.sftp_local_sort;
+    let sort = app.sftp_panes.pane(SftpPane::Local).sort;
     let mut items: Vec<&LocalEntry> = browser.local_entries.iter().collect();
-    items.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then_with(|| {
-            sftp_cmp(
-                key,
-                ascending,
-                (&a.name, a.size, a.mtime),
-                (&b.name, b.size, b.mtime),
-            )
-        })
-    });
+    items.sort_by(|a, b| sort.compare(local_listing_entry(a), local_listing_entry(b)));
 
     let mut list = column![sftp_nav_row("../", Message::SftpLocalUp)].spacing(1);
     for entry in items {
-        let selected = app.sftp_local_selected.contains(&entry.name);
+        let selected = app
+            .sftp_panes
+            .pane(SftpPane::Local)
+            .selected
+            .contains(&entry.name);
         list = list.push(sftp_local_entry_row(entry, selected));
     }
 
@@ -170,7 +168,7 @@ pub(crate) fn sftp_local_pane<'a>(
     let pane = container(
         column![
             header,
-            sftp_sort_header(SftpPane::Local, app.sftp_local_sort),
+            sftp_sort_header(SftpPane::Local, sort),
             container(scrollable(list).height(Fill))
                 .height(Fill)
                 .padding(3)
@@ -184,6 +182,15 @@ pub(crate) fn sftp_local_pane<'a>(
     .style(move |_theme| sftp_pane_style_dropzone(drop_active));
 
     sftp_drag_layer(app, SftpPane::Local, pane.into())
+}
+
+fn remote_listing_entry(entry: &SftpEntry) -> ListingEntry<'_> {
+    ListingEntry {
+        is_dir: entry.is_dir,
+        name: &entry.name,
+        size: entry.size,
+        mtime: entry.mtime.map(u64::from),
+    }
 }
 
 pub(crate) fn sftp_remote_pane<'a>(
@@ -208,35 +215,26 @@ pub(crate) fn sftp_remote_pane<'a>(
             .width(Fill),
         sftp_batch_button(
             "下载选中",
-            app.sftp_remote_selected.len(),
+            app.sftp_panes.pane(SftpPane::Remote).selected.len(),
             Message::SftpTransferSelected(SftpPane::Remote),
         ),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
 
-    let (key, ascending) = app.sftp_remote_sort;
+    let sort = app.sftp_panes.pane(SftpPane::Remote).sort;
     let mut items: Vec<&SftpEntry> = browser.entries.iter().collect();
-    items.sort_by(|a, b| {
-        b.is_dir.cmp(&a.is_dir).then_with(|| {
-            sftp_cmp(
-                key,
-                ascending,
-                (&a.name, a.size, a.mtime.map(u64::from)),
-                (&b.name, b.size, b.mtime.map(u64::from)),
-            )
-        })
-    });
+    items.sort_by(|a, b| sort.compare(remote_listing_entry(a), remote_listing_entry(b)));
 
-    let mut content = column![
-        header,
-        sftp_sort_header(SftpPane::Remote, app.sftp_remote_sort)
-    ]
-    .spacing(6);
+    let mut content = column![header, sftp_sort_header(SftpPane::Remote, sort)].spacing(6);
 
     let mut list = column![sftp_nav_row("../", Message::SftpUp)].spacing(1);
     for entry in items {
-        let selected = app.sftp_remote_selected.contains(&entry.name);
+        let selected = app
+            .sftp_panes
+            .pane(SftpPane::Remote)
+            .selected
+            .contains(&entry.name);
         list = list.push(sftp_remote_entry_row(entry, selected));
     }
     content = content.push(
@@ -898,15 +896,7 @@ pub(crate) fn sftp_drag_layer<'a>(
 pub(crate) fn drag_subject(app: &AditApp) -> (String, usize) {
     match &app.sftp_drag {
         Some((src, name)) => {
-            let selection = match src {
-                SftpPane::Local => &app.sftp_local_selected,
-                SftpPane::Remote => &app.sftp_remote_selected,
-            };
-            let count = if selection.contains(name) && selection.len() > 1 {
-                selection.len()
-            } else {
-                1
-            };
+            let count = app.sftp_panes.pane(*src).drag_count(name);
             (name.clone(), count)
         }
         None => (String::new(), 0),
@@ -973,12 +963,12 @@ pub(crate) fn sftp_sort_cell(
     label: &'static str,
     pane: SftpPane,
     column: SftpSortKey,
-    active: (SftpSortKey, bool),
+    active: SortOrder,
     width: Length,
 ) -> Element<'static, Message> {
-    let is_active = active.0 == column;
+    let is_active = active.key == column;
     let arrow = if is_active {
-        if active.1 {
+        if active.ascending {
             " ▲"
         } else {
             " ▼"
@@ -997,10 +987,7 @@ pub(crate) fn sftp_sort_cell(
 
 /// The sortable column header row shared by both panes; the trailing space keeps
 /// the columns roughly aligned with the per-row action buttons on the right.
-pub(crate) fn sftp_sort_header(
-    pane: SftpPane,
-    active: (SftpSortKey, bool),
-) -> Element<'static, Message> {
+pub(crate) fn sftp_sort_header(pane: SftpPane, active: SortOrder) -> Element<'static, Message> {
     row![
         sftp_sort_cell("名称", pane, SftpSortKey::Name, active, Length::Fill),
         sftp_sort_cell("大小", pane, SftpSortKey::Size, active, Length::Fixed(64.0)),
@@ -1016,26 +1003,6 @@ pub(crate) fn sftp_sort_header(
     .spacing(6)
     .padding([0, 6])
     .into()
-}
-
-/// Compare two entries by the active sort column/direction (dirs are grouped
-/// first by the caller, so this only orders within a group).
-pub(crate) fn sftp_cmp(
-    key: SftpSortKey,
-    ascending: bool,
-    a: (&str, u64, Option<u64>),
-    b: (&str, u64, Option<u64>),
-) -> std::cmp::Ordering {
-    let base = match key {
-        SftpSortKey::Name => a.0.to_lowercase().cmp(&b.0.to_lowercase()),
-        SftpSortKey::Size => a.1.cmp(&b.1),
-        SftpSortKey::Modified => a.2.unwrap_or(0).cmp(&b.2.unwrap_or(0)),
-    };
-    if ascending {
-        base
-    } else {
-        base.reverse()
-    }
 }
 
 pub(crate) fn sftp_list_inner_style() -> container::Style {

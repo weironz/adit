@@ -764,3 +764,24 @@ pub(crate) fn route_vnc_system_keys(
 #[cfg(all(test, windows))]
 #[path = "vnc_chord_tests.rs"]
 mod vnc_chord_tests;
+
+pub(crate) fn scroll_delta_to_rows(
+    delta: mouse::ScrollDelta,
+    metrics: TerminalMetrics,
+) -> Option<i32> {
+    let raw = match delta {
+        mouse::ScrollDelta::Lines { y, .. } => y * 3.0,
+        mouse::ScrollDelta::Pixels { y, .. } => y / metrics.cell_height,
+    };
+
+    if raw.abs() < f32::EPSILON {
+        return None;
+    }
+
+    let rounded = raw.round();
+    if rounded == 0.0 {
+        Some(raw.signum() as i32)
+    } else {
+        Some(rounded as i32)
+    }
+}

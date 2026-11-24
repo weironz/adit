@@ -8,6 +8,7 @@ How Adit is actually put together today. For *why* the shape is what it is, see
 ```
 adit-app        binary entrypoint — iced runtime, window/exe icon, /STACK link arg
  └─ adit-ui     the entire GUI: screens, terminal renderer, input, theme, dialogs
+     ├─ adit-workbench framework-independent desktop interaction state (SFTP panes)
      ├─ adit-sync      cloud sync: six provider backends, three-way merge, orchestration
      └─ adit-session   session manager: lifecycle, event pump, SFTP/tunnel/log state
          ├─ adit-ssh       russh: auth, host keys, PTY shell, SFTP, tunnels, local/serial/telnet
@@ -19,12 +20,16 @@ adit-domain     shared ids, profile/auth models, enums  (used by everything)
 adit-rdp        SEPARATE WORKSPACE → adit-rdp-host.exe   (IronRDP; talks IPC)
 ```
 
-`adit-ui` is ~17k lines across a dozen modules: `lib.rs` holds the `Message` enum and
-the app struct, with `update_loop`, `dialogs`, `session_ops`, `workspace`, `hosts`,
-`sidebar`, `profiles`, `sftp`, `style` and `i18n` beside it. The single message enum is
-deliberate — iced's model wants one — and it is why `lib.rs` and `update_loop.rs` stay
-large however the rest is divided. `adit-session` and `adit-ssh` are still single large
-modules.
+`adit-ui` owns the iced message loop, widgets, native windows, clipboard and renderer
+handles. Its SFTP view translates row presses into calls to
+`adit_workbench::sftp::SftpPanes`. That model owns selection, double-click detection,
+drag batches and sort order. The frontend handles the resulting transfer request
+through the existing session and overwrite-confirmation code.
+
+Terminal copy and selection use `adit_terminal::selection`. A frontend supplies grid
+coordinates and the snapshot, then paints the returned viewport range or sends the
+returned text to its clipboard. Another frontend can exercise both APIs with
+`cargo test -p adit-workbench -p adit-terminal` without building a window system.
 
 **`adit-rdp` is excluded from the root workspace** and has its own `Cargo.lock`, because
 IronRDP's `picky` exact-pins pre-release RustCrypto crates that conflict irreconcilably
