@@ -12,6 +12,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc as std_mpsc;
 use std::sync::{Arc, Condvar, Mutex};
+#[cfg(target_os = "macos")]
+use std::sync::Weak;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -932,6 +934,10 @@ impl Surface {
     }
 }
 
+#[cfg(target_os = "macos")]
+/// Receives file ranges on the helper IPC reader or on immediate send failure.
+pub type RdpFileReplyHandler = dyn Fn(u32, Option<Vec<u8>>) + Send + Sync;
+
 #[derive(Debug)]
 struct FileEpoch {
     generation: AtomicU64,
@@ -939,6 +945,8 @@ struct FileEpoch {
     clipboard_revision: AtomicU64,
     closed: AtomicBool,
     enabled: AtomicBool,
+    #[cfg(target_os = "macos")]
+    reply_handler: Mutex<Option<(u64, Weak<RdpFileReplyHandler>)>>,
 }
 impl Default for FileEpoch {
     fn default() -> Self {
@@ -948,6 +956,8 @@ impl Default for FileEpoch {
             clipboard_revision: AtomicU64::new(0),
             closed: AtomicBool::new(false),
             enabled: AtomicBool::new(true),
+            #[cfg(target_os = "macos")]
+            reply_handler: Mutex::new(None),
         }
     }
 }
@@ -970,6 +980,35 @@ impl FileEpoch {
             && !self.closed.load(Ordering::Acquire)
             && self.enabled.load(Ordering::Acquire)
             && self.generation.load(Ordering::Acquire) == generation
+    }
+
+    fn deliver_file_reply(
+        &self,
+        events: &std_mpsc::Sender<RdpClientEvent>,
+        generation: u64,
+        stream_id: u32,
+        data: Option<Vec<u8>>,
+    ) {
+        let data = data.filter(|_| self.accepts(generation));
+        #[cfg(target_os = "macos")]
+        {
+            let handler = self
+                .reply_handler
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .as_ref()
+                .filter(|(owner, _)| *owner == generation)
+                .and_then(|(_, handler)| handler.upgrade());
+            if let Some(handler) = handler {
+                handler(stream_id, data);
+                return;
+            }
+        }
+        let _ = events.send(RdpClientEvent::FileContents {
+            generation,
+            stream_id,
+            data,
+        });
     }
 }
 
@@ -1012,6 +1051,19 @@ impl RdpFileRequester {
         self.current.accepts(self.generation)
     }
 
+    #[cfg(target_os = "macos")]
+    /// Register the live offer's range consumer without retaining its UI bridge.
+    pub fn set_reply_handler(&self, handler: &Arc<RdpFileReplyHandler>) {
+        let mut slot = self
+            .current
+            .reply_handler
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if self.is_current() {
+            *slot = Some((self.generation, Arc::downgrade(handler)));
+        }
+    }
+
     pub fn request(&self, stream_id: u32, index: u32, offset: u64, length: u32) {
         let sent = self.is_current()
             && self.tx.lock().ok().is_some_and(|tx| {
@@ -1025,11 +1077,8 @@ impl RdpFileRequester {
                 .is_ok()
             });
         if !sent {
-            let _ = self.replies.send(RdpClientEvent::FileContents {
-                generation: self.generation,
-                stream_id,
-                data: None,
-            });
+            self.current
+                .deliver_file_reply(&self.replies, self.generation, stream_id, None);
         }
     }
 }
@@ -2233,12 +2282,7 @@ fn read_helper_messages<R: std::io::Read>(
                 stream_id,
                 data,
             })) => {
-                let data = data.filter(|_| remote_offer.accepts(generation));
-                let _ = event_tx.send(RdpClientEvent::FileContents {
-                    generation,
-                    stream_id,
-                    data,
-                });
+                remote_offer.deliver_file_reply(&event_tx, generation, stream_id, data);
             }
             Ok(Some(HostMsg::Pointer(pointer))) => {
                 if let Ok(mut s) = reader_surface.lock() {
@@ -6454,6 +6498,90 @@ mod rdp_presentation_tests {
         let decoded: adit_domain::ConnectionProfile = serde_json::from_str(&encoded).unwrap();
         assert_eq!(decoded.session_options.rdp_monitors, options.rdp_monitors);
         assert_eq!(decoded.session_options.rdp_selected_monitor, Some(1));
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn file_reply_handler_delivers_on_reader_thread_without_queuing_payloads() {
+        let (app, mut helper) = ipc_pair();
+        let peer = thread::spawn(move || {
+            assert_eq!(read_ipc_hello(&mut helper).unwrap(), IPC_PROTOCOL_VERSION);
+            write_ipc_hello(&mut helper, IPC_PROTOCOL_VERSION).unwrap();
+            assert!(matches!(
+                read_msg::<_, ClientMsg>(&mut helper).unwrap(),
+                Some(ClientMsg::Connect(_))
+            ));
+            write_msg(
+                &mut helper,
+                &HostMsg::ClipboardFiles {
+                    generation: 5,
+                    files: vec![ClipFile {
+                        name: "remote.txt".into(),
+                        size: 1,
+                        is_dir: false,
+                    }],
+                },
+            )
+            .unwrap();
+            assert!(matches!(
+                read_msg::<_, ClientMsg>(&mut helper).unwrap(),
+                Some(ClientMsg::RequestFileContents {
+                    generation: 5,
+                    stream_id: 18,
+                    ..
+                })
+            ));
+            for (generation, stream_id) in [(4, 17), (5, 18)] {
+                write_msg(
+                    &mut helper,
+                    &HostMsg::FileContents {
+                        generation,
+                        stream_id,
+                        data: Some(vec![42]),
+                    },
+                )
+                .unwrap();
+            }
+            write_msg(&mut helper, &HostMsg::Closed).unwrap();
+        });
+        let (handle, cmd_rx) = handle(Surface::new(1, 1));
+        wire_up_pipes(
+            (app.try_clone().unwrap(), app),
+            (synthetic_request(1), Duration::from_secs(2)),
+            cmd_rx,
+            Arc::clone(&handle.cmd_tx),
+            handle.event_tx.clone(),
+            (&handle.surface, Arc::clone(&handle.layout_wake)),
+            Arc::clone(&handle.remote_offer),
+        )
+        .unwrap();
+        assert!(matches!(
+            handle.event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            RdpClientEvent::ClipboardFiles { generation: 5, .. }
+        ));
+        let requester = handle.file_requester();
+        let (send, receive) = std_mpsc::channel();
+        let handler: Arc<RdpFileReplyHandler> =
+            Arc::new(move |id, data| send.send((id, data)).unwrap());
+        requester.set_reply_handler(&handler);
+        requester.request(18, 0, 0, 1);
+        assert_eq!(
+            receive.recv_timeout(Duration::from_secs(5)).unwrap(),
+            (18, Some(vec![42]))
+        );
+        assert!(matches!(
+            handle.event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            RdpClientEvent::FileContents {
+                generation: 4,
+                stream_id: 17,
+                data: None
+            }
+        ));
+        assert!(matches!(
+            handle.event_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+            RdpClientEvent::Closed
+        ));
+        peer.join().unwrap();
     }
 
     #[test]

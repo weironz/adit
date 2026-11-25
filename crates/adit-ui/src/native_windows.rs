@@ -2676,6 +2676,26 @@ mod tests {
     }
 
     #[test]
+    fn file_offer_scope_moves_with_the_detached_clipboard_bridge() {
+        let (mut desktop, ids) = fixture();
+        let session = ids[2];
+        assert_eq!(desktop.app.manager.active_session(), Some(session));
+        desktop.app.rdp_file_scope = Some((session, 5));
+        let bridge = desktop.app.rdp_chunk_bridge.clone();
+        let stream_id = bridge.begin().unwrap();
+        let _ = desktop.detach(session);
+        let child = desktop.owner(session);
+        assert!(desktop.app.rdp_file_scope.is_none());
+        let _ = desktop.in_window(child, |app| {
+            assert!(owns_selected_session(app));
+            assert_eq!(app.rdp_file_scope, Some((session, 5)));
+            app.rdp_chunk_bridge.deliver(stream_id, Some(vec![42]));
+            Task::none()
+        });
+        assert_eq!(bridge.wait(stream_id).unwrap(), [42]);
+    }
+
+    #[test]
     fn detach_and_close_return_to_the_original_mission_without_copying_or_closing_connections() {
         let (mut desktop, ids) = fixture();
         create_mission(&mut desktop.app, ids.to_vec());

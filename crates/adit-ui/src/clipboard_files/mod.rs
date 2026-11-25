@@ -82,11 +82,15 @@ pub(crate) fn offer_remote_files(
     chunk: u32,
 ) {
     let current = requester.clone();
+    let reply_bridge = bridge.clone();
+    let reply: std::sync::Arc<adit_session::RdpFileReplyHandler> =
+        std::sync::Arc::new(move |id, data| reply_bridge.deliver(id, data));
     macos::offer(
         files,
         bridge,
         std::sync::Arc::new(move || current.is_current()),
         std::sync::Arc::new(move |stream_id, index, offset, length| {
+            requester.set_reply_handler(&reply);
             requester.request(stream_id, index, offset, length);
         }),
         chunk,

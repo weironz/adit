@@ -74,6 +74,7 @@ presentation! {
     vnc_clipboard_needs_baseline: bool = false,
     rdp_offered_files: Vec<clipboard_files::OfferedFile> = Vec::new(),
     rdp_chunk_bridge: clipboard_files::ChunkBridge = clipboard_files::ChunkBridge::new(),
+    rdp_file_scope: Option<(SessionId, u64)> = None,
     rdp_resize_requested_at: Option<Instant> = None,
     rdp_resize_pending: Option<(u16, u16)> = None,
     rdp_resize_pending_since: Option<Instant> = None,
@@ -155,6 +156,7 @@ clipboard_state! {
     vnc_clipboard_needs_baseline: bool = false,
     rdp_offered_files: Vec<clipboard_files::OfferedFile> = Vec::new(),
     rdp_chunk_bridge: clipboard_files::ChunkBridge = clipboard_files::ChunkBridge::new(),
+    rdp_file_scope: Option<(SessionId, u64)> = None,
 }
 
 impl ClipboardLease {

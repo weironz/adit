@@ -59,6 +59,8 @@ pub use adit_rdp_proto::{
 pub use rdp_client::{
     RdpClientEvent, RdpClientHandle, RdpClipboardToken, RdpFileRequester, RdpFrame,
 };
+#[cfg(target_os = "macos")]
+pub use rdp_client::RdpFileReplyHandler;
 use vnc_client::VncClientHandle;
 pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
 pub use vnc_input::unicode_keysym;
