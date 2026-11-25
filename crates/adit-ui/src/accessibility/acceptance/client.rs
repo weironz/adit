@@ -3,7 +3,7 @@ use super::*;
 use windows::{
     core::BSTR,
     Win32::{
-        Foundation::{HWND, LPARAM, WPARAM},
+        Foundation::{HWND, LPARAM, POINT, WPARAM},
         System::Com::{
             CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
             COINIT_MULTITHREADED,
@@ -1175,6 +1175,25 @@ pub(super) fn run(
     {
         return Err("navigation does not expose the actual button role".into());
     }
+    // UIA uses physical screen pixels. Verify that its public bounds and OS
+    // hit-testing agree on the production navigation control at the live DPI.
+    let window_dpi =
+        unsafe { windows::Win32::UI::HiDpi::GetDpiForWindow(HWND(hwnd as *mut std::ffi::c_void)) };
+    let rect = unsafe { hosts.CurrentBoundingRectangle() }.map_err(|e| e.to_string())?;
+    if window_dpi == 0 || rect.right <= rect.left || rect.bottom <= rect.top {
+        return Err("navigation button has no usable window DPI or screen bounds".into());
+    }
+    let center = POINT {
+        x: rect.left + (rect.right - rect.left) / 2,
+        y: rect.top + (rect.bottom - rect.top) / 2,
+    };
+    let hit = unsafe { client.automation.ElementFromPoint(center) }.map_err(|e| e.to_string())?;
+    if !unsafe { client.automation.CompareElements(&hosts, &hit) }
+        .map_err(|e| e.to_string())?
+        .as_bool()
+    {
+        return Err("UIA physical hit-test missed the navigation button".into());
+    }
     let before_edit = unsafe { client.named("编辑", "resource:edit")?.CurrentAutomationId() }
         .map_err(|e| e.to_string())?
         .to_string();
@@ -1273,7 +1292,7 @@ pub(super) fn run(
     auth_acceptance(&client, &commands, hwnd)?;
     let focus_statistics = command(&commands, Command::Barrier)?;
     Ok(json!({
-        "hwnd": hwnd, "native_uia": true, "production_iced_widgets": true,
+        "hwnd": hwnd, "native_uia": true, "window_dpi": window_dpi, "navigation_center_hit_test": true, "production_iced_widgets": true,
         "auth_zero_and_multiple_fields_submit_cancel_and_protected": true,
         "navigation_invoke": true, "resource_invoke_and_value": true,
         "editor_set_value_and_save_invoke": true, "session_invoke": true,
