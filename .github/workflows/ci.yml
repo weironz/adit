@@ -43,6 +43,22 @@ jobs:
       run:
         shell: ${{ matrix.shell }}
     steps:
+      - name: Recover a broken remote-tracking ref on the persistent Windows runner
+        if: runner.os == 'Windows' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          $ref = Join-Path $env:GITHUB_WORKSPACE '.git/refs/remotes/origin/main'
+          if (!(Test-Path -LiteralPath $ref -PathType Leaf)) { exit 0 }
+          # --exists distinguishes an unreadable ref (1) from an absent one (2).
+          # Fetch can recreate a missing remote-tracking ref but cannot lock a broken one.
+          git -C $env:GITHUB_WORKSPACE show-ref --exists refs/remotes/origin/main
+          $status = $LASTEXITCODE
+          if ($status -in 0, 2) { exit 0 }
+          if ($status -ne 1) { exit $status }
+          $backup = Join-Path $env:RUNNER_TEMP ("adit-broken-origin-main-" + [guid]::NewGuid())
+          Move-Item -LiteralPath $ref -Destination $backup -ErrorAction Stop
+          Write-Host "Saved the unreadable origin/main ref at $backup"
+          exit 0
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
