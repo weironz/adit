@@ -1,0 +1,152 @@
+[
+  {
+    "target": "netkit-observe",
+    "port": 2301,
+    "mode": "observe",
+    "matches": 9,
+    "timeouts": 0,
+    "cases": [
+      {
+        "case": "raw-cr",
+        "keys": "610d62",
+        "pty_received": "610d62",
+        "expected": "610d62",
+        "pass": true
+      },
+      {
+        "case": "raw-crlf",
+        "keys": "630d0a64",
+        "pty_received": "630d64",
+        "expected": null,
+        "pass": null
+      },
+      {
+        "case": "raw-iac",
+        "keys": "78ff79",
+        "pty_received": "78ff79",
+        "expected": "78ff79",
+        "pass": true
+      },
+      {
+        "case": "cooked",
+        "keys": "68656c6c6f0d",
+        "pty_received": "68656c6c6f0a",
+        "expected": "68656c6c6f0a",
+        "pass": true
+      }
+    ],
+    "wire_has_a_CR_NUL_b": true,
+    "wire_has_hello_CR_NUL": true,
+    "wire_has_x_IAC_IAC_y": true
+  },
+  {
+    "target": "inetutils-observe",
+    "port": 2302,
+    "mode": "observe",
+    "matches": 9,
+    "timeouts": 0,
+    "cases": [
+      {
+        "case": "raw-cr",
+        "keys": "610d62",
+        "pty_received": "610d62",
+        "expected": "610d62",
+        "pass": true
+      },
+      {
+        "case": "raw-crlf",
+        "keys": "630d0a64",
+        "pty_received": "630d64",
+        "expected": null,
+        "pass": null
+      },
+      {
+        "case": "raw-iac",
+        "keys": "78ff79",
+        "pty_received": "78ff79",
+        "expected": "78ff79",
+        "pass": true
+      },
+      {
+        "case": "cooked",
+        "keys": "68656c6c6f0d",
+        "pty_received": "68656c6c6f0a",
+        "expected": "68656c6c6f0a",
+        "pass": true
+      }
+    ],
+    "wire_has_a_CR_NUL_b": true,
+    "wire_has_hello_CR_NUL": true,
+    "wire_has_x_IAC_IAC_y": true
+  },
+  {
+    "target": "busybox-observe",
+    "port": 2303,
+    "mode": "observe",
+    "matches": 9,
+    "timeouts": 0,
+    "cases": [
+      {
+        "case": "raw-cr",
+        "keys": "610d62",
+        "pty_received": "610d62",
+        "expected": "610d62",
+        "pass": true
+      },
+      {
+        "case": "raw-crlf",
+        "keys": "630d0a64",
+        "pty_received": "630d64",
+        "expected": null,
+        "pass": null
+      },
+      {
+        "case": "raw-iac",
+        "keys": "78ff79",
+        "pty_received": "78ff79",
+        "expected": "78ff79",
+        "pass": true
+      },
+      {
+        "case": "cooked",
+        "keys": "68656c6c6f0d",
+        "pty_received": "68656c6c6f0a",
+        "expected": "68656c6c6f0a",
+        "pass": true
+      }
+    ],
+    "wire_has_a_CR_NUL_b": true,
+    "wire_has_hello_CR_NUL": true,
+    "wire_has_x_IAC_IAC_y": true
+  },
+  {
+    "target": "netkit-login",
+    "port": 23,
+    "mode": "login",
+    "matches": 4,
+    "timeouts": 0,
+    "login_and_command_ok": true,
+    "wire_user_CR_NUL": true,
+    "password_redacted_in_wire": true
+  },
+  {
+    "target": "inetutils-login",
+    "port": 2312,
+    "mode": "login",
+    "matches": 4,
+    "timeouts": 0,
+    "login_and_command_ok": true,
+    "wire_user_CR_NUL": true,
+    "password_redacted_in_wire": true
+  },
+  {
+    "target": "busybox-login",
+    "port": 2313,
+    "mode": "login",
+    "matches": 4,
+    "timeouts": 0,
+    "login_and_command_ok": true,
+    "wire_user_CR_NUL": true,
+    "password_redacted_in_wire": true
+  }
+]
