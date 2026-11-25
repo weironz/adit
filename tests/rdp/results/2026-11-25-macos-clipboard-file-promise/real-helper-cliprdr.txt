@@ -1,0 +1,38 @@
+2026-11-25T13:22:58.723715Z  INFO ironrdp_connector::connection: Server confirmed connection selected_protocol=SecurityProtocol(HYBRID) flags=ResponseFlags(EXTENDED_CLIENT_DATA_SUPPORTED | DYNVC_GFX_PROTOCOL_SUPPORTED)
+2026-11-25T13:22:59.040598Z DEBUG adit_rdp::clipboard: CLIPRDR capabilities negotiated capabilities=ClipboardGeneralCapabilityFlags(USE_LONG_FORMAT_NAMES | STREAM_FILECLIP_ENABLED | CAN_LOCK_CLIPDATA) files=true
+2026-11-25T13:22:59.128649Z DEBUG ironrdp_cliprdr: Clipboard virtual channel initialized
+2026-11-25T13:22:59.128805Z DEBUG adit_rdp::clipboard: CLIPRDR channel ready
+2026-11-25T13:25:11.509812Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=1 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:11.525619Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=1 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:11.578121Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=2 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:11.586766Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=2 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:11.672646Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=3 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:11.679142Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=3 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:11.774142Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=4 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:11.780625Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=4 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:11.871080Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=5 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:11.876993Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=5 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:11.971071Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=6 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:11.977459Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=6 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.070720Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=7 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.077946Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=7 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.170808Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=8 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.177388Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=8 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.274480Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=9 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.282511Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=9 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.374219Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=10 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.381027Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=10 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.471093Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=11 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.479106Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=11 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.574076Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=12 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.580975Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=12 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.672990Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=13 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.679601Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=13 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.773784Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=14 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.780046Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=14 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.872058Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=15 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.878798Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=15 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:12.974622Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=16 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:12.981103Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=16 file_index=0 is_error=false data_len=65536
+2026-11-25T13:25:13.071716Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=17 index=0 flags=FileContentsFlags(RANGE)
+2026-11-25T13:25:13.075589Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=17 file_index=0 is_error=false data_len=37

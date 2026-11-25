@@ -1,0 +1,92 @@
+2026-11-25T13:22:51+00:00 adit-grd-fixture systemd[802]: Starting gnome-remote-desktop-headless.service - GNOME Remote Desktop (headless)...
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: _g_io_module_get_default: Found default implementation dconf (DConfSettingsBackend) for ‘gsettings-backend’
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: watch_fast: "/org/gnome/desktop/remote-desktop/rdp/" (establishing: 0, active: 0)
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: watch_fast: "/org/gnome/desktop/remote-desktop/vnc/" (establishing: 0, active: 0)
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: watch_established: "/org/gnome/desktop/remote-desktop/rdp/" (establishing: 1)
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: watch_established: "/org/gnome/desktop/remote-desktop/vnc/" (establishing: 1)
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: setenv()/putenv() are not thread-safe and should not be used after threads are created
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: _g_io_module_get_default: Found default implementation gvfs (GDaemonVfs) for ‘gio-vfs’
+2026-11-25T13:22:52+00:00 adit-grd-fixture gnome-remote-de[8392]: Init TPM credentials failed because No TPM device found, using GKeyFile as fallback
+2026-11-25T13:22:52+00:00 adit-grd-fixture systemd[802]: Started gnome-remote-desktop-headless.service - GNOME Remote Desktop (headless).
+2026-11-25T13:22:53+00:00 adit-grd-fixture gnome-remote-de[8392]: Failed to create EGL thread: Failed to get EGL display
+2026-11-25T13:22:53+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Trying to bind to TCP socket:
+2026-11-25T13:22:53+00:00 adit-grd-fixture gnome-remote-de[8392]:         Server bound to TCP port 3389
+2026-11-25T13:22:53+00:00 adit-grd-fixture gnome-remote-de[8392]: RDP server started
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: New incoming RDP connection
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: Initialize RDP session
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Remote Desktop session will use virtual monitors
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: New RDP client: [OS major type, OS minor type]: [Windows platform, Unspecified version]
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Client uses keyboard type 4
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Virtual Channels: compression flags: 0, compression level: 0, chunk size: 16256
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: Client does not support autodetecting network characteristics (RTT detection, Bandwidth measurement). High latency connections will suffer!
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: Activating client
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Cursor renderer: Cache has 32 slots
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] DVC channel id assigned to id 1
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [FUSE Clipboard] FUSE thread started
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.TELEMETRY] DVC channel id assigned to id 2
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.DISP] DVC channel id assigned to id 3
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.DRDYNVC] DVC channel id 1 creation status: 0
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.DRDYNVC] DVC channel id 2 creation status: -1073741823
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.DRDYNVC] DVC channel id 3 creation status: 0
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] Received a CapsAdvertise PDU
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] Client caps set RDPGFX_CAPVERSION_107 flags: 0x00000002
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] Client caps set RDPGFX_CAPVERSION_81 flags: 0x00000012
+2026-11-25T13:22:58+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] Client caps set RDPGFX_CAPVERSION_8 flags: 0x00000002
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [FUSE Clipboard] Starting FUSE session
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Caps lock state: unlocked
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Num lock state: unlocked
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.TELEMETRY] Failed to open channel (CreationStatus -1073741823). Terminating protocol
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Client capabilities: long format names, stream file clip, can lock clip data
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.DISP] Channel opened successfully. Ready for receiving new monitor layouts
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Client sent a Temporary Directory PDU with path "."
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.TELEMETRY] Tearing down channel
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_CONNECT
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_SEAT_ADDED
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Aborting all pending client requests
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SetSelection]: Updating servers clipboard
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[EnableClipboard]: Enabling clipboard
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[EnableClipboard]: Clipboard enabled
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SetSelection]: Update complete
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Updating state from AWAIT_CONFIG to AWAIT_INHIBITION_DONE
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] CapsAdvertise: Accepting capability set with version RDPGFX_CAPVERSION_107, Client cap flags: H264 (AVC444): true, H264 (AVC420): true
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Updating state from AWAIT_INHIBITION_DONE to PREPARE_SURFACES
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Preparing virtual monitor with geometry [x, y, w, h] = [0, 0, 1368, 956]
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Updating state from PREPARE_SURFACES to AWAIT_STREAMS
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: PipeWire stream 0 mapping ID: ded3f6b3-b383-4990-81bf-00a85cf199d8
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Creating PipeWire stream for node id 43
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: PipeWire stream state changed from unconnected to connecting
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Updating state from AWAIT_STREAMS to AWAIT_VIDEO_SIZES
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: PipeWire stream state changed from connecting to paused
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Stream parameters changed. New surface size: [1368, 956]
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Updating state from AWAIT_VIDEO_SIZES to START_RENDERING
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Updating state from START_RENDERING to AWAIT_CONFIG
+2026-11-25T13:22:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Layout manager: Finished applying new monitor config
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: PipeWire stream state changed from paused to streaming
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: New region: mapping-id: ded3f6b3-b383-4990-81bf-00a85cf199d8, 1368x956 (0, 0)
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] Resetting graphics
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.RDPGFX] Creating surface with id 0
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Remote Desktop session metrics: _post_connect: 333ms, _ready: 67ms, _started: 254ms, whole startup: 655ms
+2026-11-25T13:23:02+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP] Surface 1368x956 (0, 0) Metrics: First frame: Reception: 3432ms, Transmission: 149ms, Skipped frames: 0
+2026-11-25T13:23:11+00:00 adit-grd-fixture gnome-remote-de[8392]: [FUSE Clipboard] Requested file ".Trash" in directory "/" does not exist
+2026-11-25T13:23:11+00:00 adit-grd-fixture gnome-remote-de[8392]: [FUSE Clipboard] Requested file ".Trash-1000" in directory "/" does not exist
+2026-11-25T13:23:12+00:00 adit-grd-fixture gnome-remote-de[8392]: change_notify: /org/
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Updated clipboard serial to 1
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Sending FormatList
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionOwnerChanged]: Update complete
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 1
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Handling format list response from client
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Tracking serial 1 for ClipDataEntry
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: [RDP.CLIPRDR] Tracking lock with clipDataId 1
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+2026-11-25T13:23:59+00:00 adit-grd-fixture gnome-remote-de[8392]: Clipboard[SelectionRead]: Request successful
