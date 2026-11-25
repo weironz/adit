@@ -1,0 +1,8 @@
+ 1048613 reference.bin
+ 1048613 /Users/devin/adit-promise-destination/RDP-Promise-Fixture/pattern.bin
+       0 /Users/devin/adit-promise-destination/RDP-Promise-Fixture/empty.txt
+ 2097226 total
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  reference.bin
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  /Users/devin/adit-promise-destination/RDP-Promise-Fixture/pattern.bin
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  /Users/devin/adit-promise-destination/RDP-Promise-Fixture/empty.txt
+PASS: cmp (identical bytes), empty.txt (0 bytes)

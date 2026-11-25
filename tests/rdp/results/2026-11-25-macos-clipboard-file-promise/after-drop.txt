@@ -1,0 +1,19 @@
+HELLO: production GUI connected to synthetic helper; clipboard enabled
+OFFER: generation=1 folder=RDP-Promise-Fixture bytes=1048613
+REQUEST: generation=1 stream=1 index=0 offset=0 length=65536
+REQUEST: generation=1 stream=2 index=0 offset=65536 length=65536
+REQUEST: generation=1 stream=3 index=0 offset=131072 length=65536
+REQUEST: generation=1 stream=4 index=0 offset=196608 length=65536
+REQUEST: generation=1 stream=5 index=0 offset=262144 length=65536
+REQUEST: generation=1 stream=6 index=0 offset=327680 length=65536
+REQUEST: generation=1 stream=7 index=0 offset=393216 length=65536
+REQUEST: generation=1 stream=8 index=0 offset=458752 length=65536
+REQUEST: generation=1 stream=9 index=0 offset=524288 length=65536
+REQUEST: generation=1 stream=10 index=0 offset=589824 length=65536
+REQUEST: generation=1 stream=11 index=0 offset=655360 length=65536
+REQUEST: generation=1 stream=12 index=0 offset=720896 length=65536
+REQUEST: generation=1 stream=13 index=0 offset=786432 length=65536
+REQUEST: generation=1 stream=14 index=0 offset=851968 length=65536
+REQUEST: generation=1 stream=15 index=0 offset=917504 length=65536
+REQUEST: generation=1 stream=16 index=0 offset=983040 length=65536
+REQUEST: generation=1 stream=17 index=0 offset=1048576 length=37

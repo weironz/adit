@@ -1,0 +1,8 @@
+ProductName:		macOS
+ProductVersion:		26.6.2
+BuildVersion:		25G83
+arm64
+Xcode 26.6
+Build version 17F113
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+6adca05328cffbb722dc8219b2db13c49e228fa0

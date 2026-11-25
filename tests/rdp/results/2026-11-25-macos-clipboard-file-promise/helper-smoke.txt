@@ -1,0 +1,175 @@
+   Compiling unicode-ident v1.0.24
+   Compiling num-traits v0.2.19
+   Compiling smallvec v1.15.2
+   Compiling log v0.4.33
+   Compiling bitflags v2.13.0
+   Compiling crypto-common v0.1.7
+   Compiling simd-adler32 v0.3.9
+   Compiling rustls v0.23.43
+   Compiling hex v0.4.3
+   Compiling bytemuck v1.25.0
+   Compiling proc-macro2 v1.0.106
+   Compiling digest v0.10.7
+   Compiling miniz_oxide v0.8.9
+   Compiling parking_lot_core v0.9.12
+   Compiling nix v0.31.3
+   Compiling serialport v4.9.0
+   Compiling sha2 v0.10.9
+   Compiling hmac v0.12.1
+   Compiling sha1 v0.10.7
+   Compiling parking_lot v0.12.5
+   Compiling dashmap v6.2.1
+   Compiling quote v1.0.46
+   Compiling flate2 v1.1.9
+   Compiling syn v2.0.118
+   Compiling num-integer v0.1.46
+   Compiling chrono v0.4.45
+   Compiling moxcms v0.8.1
+   Compiling num-bigint v0.4.6
+   Compiling zeroize_derive v1.5.0
+   Compiling futures-macro v0.3.32
+   Compiling tokio-macros v2.7.0
+   Compiling serde_derive v1.0.228
+   Compiling thiserror-impl v1.0.69
+   Compiling thiserror-impl v2.0.18
+   Compiling tracing-attributes v0.1.31
+   Compiling delegate v0.13.5
+   Compiling enum_dispatch v0.3.13
+   Compiling zeroize v1.9.0
+   Compiling image v0.25.10
+   Compiling tokio v1.52.3
+   Compiling hybrid-array v0.4.12
+   Compiling der v0.8.0
+   Compiling futures-util v0.3.32
+   Compiling rustls-pki-types v1.15.1
+   Compiling thiserror v1.0.69
+   Compiling rustls-webpki v0.103.13
+   Compiling filedescriptor v0.8.3
+   Compiling thiserror v2.0.18
+   Compiling tracing v0.1.44
+   Compiling webpki-roots v1.0.9
+   Compiling rustls-pemfile v2.2.0
+   Compiling portable-pty v0.8.1
+   Compiling crypto-common v0.2.2
+   Compiling block-buffer v0.12.1
+   Compiling block-padding v0.4.2
+   Compiling inout v0.2.2
+   Compiling spki v0.8.0
+   Compiling crypto-bigint v0.7.5
+   Compiling sec1 v0.8.1
+   Compiling digest v0.11.3
+   Compiling cipher v0.5.2
+   Compiling universal-hash v0.6.1
+   Compiling aead v0.6.1
+   Compiling pkcs1 v0.8.0-rc.4
+   Compiling hmac v0.13.0
+   Compiling sha2 v0.11.0
+   Compiling signature v3.0.0
+   Compiling polyval v0.7.1
+   Compiling pbkdf2 v0.13.0
+   Compiling aes v0.9.1
+   Compiling cbc v0.2.1
+   Compiling salsa20 v0.11.0
+   Compiling hkdf v0.13.0
+   Compiling rfc6979 v0.5.0
+   Compiling serde v1.0.228
+   Compiling chacha20 v0.10.1
+   Compiling ghash v0.6.0
+   Compiling ctr v0.10.1
+   Compiling blowfish v0.10.0
+   Compiling poly1305 v0.9.0
+   Compiling blake2 v0.11.0-rc.6
+   Compiling futures-executor v0.3.32
+   Compiling aes-gcm v0.11.0-rc.4
+   Compiling curve25519-dalek v5.0.0-rc.0
+   Compiling scrypt v0.12.0
+   Compiling bcrypt-pbkdf v0.11.0
+   Compiling argon2 v0.6.0-rc.8
+   Compiling rand v0.10.1
+   Compiling futures v0.3.32
+   Compiling pkcs5 v0.8.0
+   Compiling sha3 v0.11.0
+   Compiling sha1 v0.11.0
+   Compiling kem v0.3.0
+   Compiling module-lattice v0.2.3
+   Compiling async_io_stream v0.3.3
+   Compiling adit-domain v0.1.78 (/Users/devin/repos/adit/crates/adit-domain)
+   Compiling pkcs8 v0.11.0
+   Compiling bincode v1.3.3
+   Compiling adit-terminal v0.1.78 (/Users/devin/repos/adit/crates/adit-terminal)
+   Compiling internal-russh-num-bigint v0.5.0
+   Compiling ml-kem v0.3.2
+   Compiling ed25519 v3.0.0
+   Compiling adit-rdp-proto v0.1.78 (/Users/devin/repos/adit/crates/adit-rdp-proto)
+   Compiling ed25519-dalek v3.0.0-rc.0
+   Compiling tokio-util v0.7.18
+   Compiling russh-util v0.52.0
+   Compiling tokio-stream v0.1.19
+   Compiling russh-sftp v2.3.0
+   Compiling elliptic-curve v0.14.0-rc.33
+   Compiling primefield v0.14.0
+   Compiling ssh-encoding v0.3.0-rc.9
+   Compiling crypto-primes v0.7.2
+   Compiling ssh-cipher v0.3.0-rc.9
+   Compiling russh-cryptovec v0.61.0
+   Compiling primeorder v0.14.0-rc.10
+   Compiling ecdsa v0.17.0-rc.18
+   Compiling p384 v0.14.0-rc.10
+   Compiling p256 v0.14.0-rc.10
+   Compiling p521 v0.14.0-rc.10
+   Compiling rsa v0.10.0-rc.18
+   Compiling tokio-rustls v0.26.6
+   Compiling vnc-rs v0.6.0 (/Users/devin/repos/adit/crates/adit-vnc)
+   Compiling ssh-key v0.7.0-rc.10
+   Compiling russh v0.61.2
+   Compiling adit-ssh v0.1.78 (/Users/devin/repos/adit/crates/adit-ssh)
+   Compiling adit-session v0.1.78 (/Users/devin/repos/adit/crates/adit-session)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.56s
+     Running unittests src/lib.rs (target/debug/deps/adit_session-856d5b3029c4dfe9)
+
+running 1 test
+test rdp_client::rdp_presentation_tests::real_helper_and_production_bridge_exchange_a_synthetic_local_session ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 159 filtered out; finished in 0.03s
+
+     Running tests/trigger_local.rs (target/debug/deps/trigger_local-574a57cb77555f57)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/vnc.rs (target/debug/deps/vnc-af12dacdc2fb3763)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+     Running tests/vnc_clipboard.rs (target/debug/deps/vnc_clipboard-ee79cb70172a37bf)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/vnc_cursor_real.rs (target/debug/deps/vnc_cursor_real-0f43a16669b8b9b1)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running tests/vnc_gateway.rs (target/debug/deps/vnc_gateway-fce2bcfedaf08104)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s
+
+     Running tests/vnc_resize.rs (target/debug/deps/vnc_resize-089d8765319c746b)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 0.00s
+
+     Running unittests examples/vnc_probe.rs (target/debug/examples/vnc_probe-8823bde3eda9b713)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s

@@ -117,7 +117,7 @@ impl ChunkBridge {
     ///
     /// **Never call this from the UI thread.** It is meant for the COM stream's
     /// `Read`, which runs on Explorer's thread.
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub(crate) fn wait(&self, stream_id: u32) -> Result<Vec<u8>, ChunkError> {
         self.wait_live(stream_id, || true)
     }
@@ -188,6 +188,17 @@ impl ChunkBridge {
         let mut inner = lock.lock().unwrap_or_else(|e| e.into_inner());
         inner.closed = true;
         condvar.notify_all();
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn is_open(&self) -> bool {
+        let (lock, _) = &*self.inner;
+        !lock.lock().unwrap_or_else(|e| e.into_inner()).closed
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) fn same_offer(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.inner, &other.inner)
     }
 
     /// How many reads are registered. Test-only: it is a racy number in
