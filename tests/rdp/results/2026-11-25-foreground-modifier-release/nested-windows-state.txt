@@ -1,0 +1,8 @@
+2026-11-25T13:32:01.6817069Z id=24 Remote Desktop Services: Session has been disconnected:  User: DEVINBOX\adit89b Session ID: 4 Source Network Address: 127.0.0.1
+2026-11-25T13:29:01.3510539Z id=25 Remote Desktop Services: Session reconnection succeeded:  User: DEVINBOX\adit89b Session ID: 4 Source Network Address: 127.0.0.1
+2026-11-25T13:28:46.6133772Z id=24 Remote Desktop Services: Session has been disconnected:  User: DEVINBOX\adit89b Session ID: 4 Source Network Address: 127.0.0.1
+2026-11-25T13:28:39.5941179Z id=21 Remote Desktop Services: Session logon succeeded:  User: DEVINBOX\adit89b Session ID: 4 Source Network Address: 127.0.0.1
+2026-11-25T13:28:11.8514991Z id=24 Remote Desktop Services: Session has been disconnected:  User: DEVINBOX\adit89a Session ID: 3 Source Network Address: 127.0.0.1
+2026-11-25T13:28:02.5930131Z id=25 Remote Desktop Services: Session reconnection succeeded:  User: DEVINBOX\adit89a Session ID: 3 Source Network Address: 127.0.0.1
+2026-11-25T13:28:02.4994138Z id=24 Remote Desktop Services: Session has been disconnected:  User: DEVINBOX\adit89a Session ID: 3 Source Network Address: 127.0.0.1
+2026-11-25T13:26:36.8644854Z id=21 Remote Desktop Services: Session logon succeeded:  User: DEVINBOX\adit89a Session ID: 3 Source Network Address: 127.0.0.1

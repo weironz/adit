@@ -1,0 +1,40 @@
+2026-11-25T13:26:37.4372955Z ready session=3 remote=1 user=adit89a pid=2540
+2026-11-25T13:26:38.2137951Z foreground hwnd=10084 pid=10600 process=explorer
+2026-11-25T13:26:38.2137951Z async mask=00
+2026-11-25T13:26:38.4038552Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:26:41.9556846Z foreground hwnd=70086 pid=10600 process=explorer
+2026-11-25T13:26:42.0036403Z foreground hwnd=10126 pid=10600 process=explorer
+2026-11-25T13:27:07.2139216Z foreground hwnd=2020C pid=4848 process=Docker Desktop
+2026-11-25T13:28:02.3095195Z key vk=A4 scan=B8 flags=90 edge=up injected=True
+2026-11-25T13:28:02.3095195Z key vk=A5 scan=B8 flags=91 edge=up injected=True
+2026-11-25T13:28:02.3095195Z key vk=A2 scan=9D flags=90 edge=up injected=True
+2026-11-25T13:28:02.3095195Z key vk=A3 scan=9D flags=91 edge=up injected=True
+2026-11-25T13:28:02.3095195Z key vk=A0 scan=AA flags=90 edge=up injected=True
+2026-11-25T13:28:02.3095195Z key vk=A1 scan=B6 flags=91 edge=up injected=True
+2026-11-25T13:28:02.3207438Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:28:02.6223489Z foreground hwnd=2020C pid=4848 process=Docker Desktop
+2026-11-25T13:28:02.7108634Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:28:05.1064430Z foreground hwnd=2020C pid=4848 process=Docker Desktop
+2026-11-25T13:28:09.5546500Z key vk=5B scan=5B flags=01 edge=down injected=False
+2026-11-25T13:28:09.5951596Z async mask=40
+2026-11-25T13:28:09.7876991Z key vk=5B scan=5B flags=81 edge=up injected=False
+2026-11-25T13:28:09.8044647Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:28:09.8044647Z async mask=00
+2026-11-25T13:28:09.8094574Z foreground hwnd=1019C pid=10176 process=SearchApp
+2026-11-25T13:28:10.2469715Z key vk=A4 scan=38 flags=20 edge=down injected=False
+2026-11-25T13:28:10.2469715Z async mask=10
+2026-11-25T13:28:10.2480587Z key vk=09 scan=0F flags=20 edge=down injected=False
+2026-11-25T13:28:10.2744888Z foreground hwnd=10144 pid=10600 process=explorer
+2026-11-25T13:28:10.3074101Z foreground hwnd=1024E pid=10600 process=explorer
+2026-11-25T13:28:10.4202313Z key vk=09 scan=0F flags=A0 edge=up injected=False
+2026-11-25T13:28:10.4437423Z key vk=A4 scan=38 flags=80 edge=up injected=False
+2026-11-25T13:28:10.4481238Z foreground hwnd=10174 pid=10600 process=explorer
+2026-11-25T13:28:10.4481238Z async mask=00
+2026-11-25T13:28:10.4635141Z foreground hwnd=2020C pid=4848 process=Docker Desktop
+2026-11-25T13:28:11.5563036Z key vk=A4 scan=B8 flags=90 edge=up injected=True
+2026-11-25T13:28:11.5563036Z key vk=A5 scan=B8 flags=91 edge=up injected=True
+2026-11-25T13:28:11.5563036Z key vk=A2 scan=9D flags=90 edge=up injected=True
+2026-11-25T13:28:11.5563036Z key vk=A3 scan=9D flags=91 edge=up injected=True
+2026-11-25T13:28:11.5563036Z key vk=A0 scan=AA flags=90 edge=up injected=True
+2026-11-25T13:28:11.5563036Z key vk=A1 scan=B6 flags=91 edge=up injected=True
+2026-11-25T13:28:11.5730690Z foreground hwnd=0 pid=0 process=Idle
