@@ -65,7 +65,7 @@ impl MergeOutcome {
     /// Whether the merged result differs from what this machine already had.
     #[must_use]
     pub fn changed_locally(&self, local: &ProfileCatalog) -> bool {
-        canonical_catalog(&self.catalog) != canonical_catalog(local)
+        !same_catalog(&self.catalog, local)
     }
 }
 
@@ -74,8 +74,11 @@ fn canonical(profile: &ConnectionProfile) -> String {
     serde_json::to_string(profile).unwrap_or_default()
 }
 
-fn canonical_catalog(catalog: &ProfileCatalog) -> String {
-    serde_json::to_string(catalog).unwrap_or_default()
+/// Compare all persisted fields, including catalog order and group icons.
+#[must_use]
+pub fn same_catalog(a: &ProfileCatalog, b: &ProfileCatalog) -> bool {
+    serde_json::to_string(a)
+        .is_ok_and(|left| serde_json::to_string(b).is_ok_and(|right| left == right))
 }
 
 fn index(profiles: &[ConnectionProfile]) -> HashMap<ProfileId, &ConnectionProfile> {
@@ -227,7 +230,7 @@ pub fn three_way(
             // starts them empty, and leaving it here would have quietly wiped
             // every group icon on every sync — a loss that reads as "the
             // feature never worked" rather than as a merge bug.
-            let icons = merge_group_icons(local, remote);
+            let icons = merge_group_icons(&groups, base, local, remote);
             ProfileCatalog::with_group_icons(groups, icons, profiles)
         },
         conflicts,
@@ -235,25 +238,26 @@ pub fn three_way(
     }
 }
 
-/// Groups are a flat name list, so the same ancestor rules apply per name:
-/// a name absent from a side that had it in the ancestor was deleted there.
-/// Which icon each group ends up with.
-///
-/// Local wins where both sides chose, matching the rule for a session edited on
-/// both machines: this machine's choice is the one in front of the user.
-/// `with_group_icons` prunes whatever no longer names a live group.
+/// Clearing an icon is an edit too. Prefer the local value on conflicts, and
+/// accept the remote value when the local choice still matches the ancestor.
 fn merge_group_icons(
+    groups: &[String],
+    base: &ProfileCatalog,
     local: &ProfileCatalog,
     remote: &ProfileCatalog,
 ) -> std::collections::BTreeMap<String, String> {
-    let mut icons = remote.group_icons.clone();
-    icons.extend(
-        local
-            .group_icons
-            .iter()
-            .map(|(name, icon)| (name.clone(), icon.clone())),
-    );
-    icons
+    groups
+        .iter()
+        .filter_map(|group| {
+            let local_icon = local.group_icons.get(group);
+            let selected = if local_icon == base.group_icons.get(group) {
+                remote.group_icons.get(group)
+            } else {
+                local_icon
+            };
+            selected.map(|icon| (group.clone(), icon.clone()))
+        })
+        .collect()
 }
 
 fn merge_groups(
@@ -431,5 +435,26 @@ mod tests {
         let remote = ProfileCatalog::new(vec!["keep".into(), "theirs".into()], vec![]);
         let out = three_way(&base, &local, &remote);
         assert_eq!(out.catalog.groups, ["keep", "mine", "theirs"]);
+    }
+
+    #[test]
+    fn group_icon_edits_and_removals_survive_sync_in_both_directions() {
+        let mut base = ProfileCatalog::new(vec!["lab".into()], vec![]);
+        base.group_icons.insert("lab".into(), "old".into());
+        let mut cleared = base.clone();
+        cleared.group_icons.clear();
+        let mut changed = base.clone();
+        changed.group_icons.insert("lab".into(), "new".into());
+        for (local, remote, expected) in [
+            (&base, &changed, &changed),
+            (&base, &cleared, &cleared),
+            (&cleared, &changed, &cleared),
+            (&changed, &cleared, &changed),
+        ] {
+            assert_eq!(
+                three_way(&base, local, remote).catalog.group_icons,
+                expected.group_icons
+            );
+        }
     }
 }

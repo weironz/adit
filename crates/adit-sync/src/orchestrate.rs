@@ -34,7 +34,7 @@ use std::path::{Path, PathBuf};
 use adit_storage::ProfileCatalog;
 use serde::{Deserialize, Serialize};
 
-use crate::merge::{three_way, Conflict, MergeStats};
+use crate::merge::{same_catalog, three_way, Conflict, MergeStats};
 use crate::{RemoteRevision, SyncBackend, SyncDocument, SyncError};
 
 /// How many times to re-merge when another machine keeps winning the race.
@@ -116,10 +116,6 @@ pub struct Extras {
     /// The sealed credential file, hex-encoded. Ciphertext only — the
     /// passphrase never leaves the machine.
     pub credentials: Option<String>,
-}
-
-fn same_catalog(a: &ProfileCatalog, b: &ProfileCatalog) -> bool {
-    serde_json::to_string(a).unwrap_or_default() == serde_json::to_string(b).unwrap_or_default()
 }
 
 /// Nothing in it at all — no sessions and no groups. Both halves matter: a

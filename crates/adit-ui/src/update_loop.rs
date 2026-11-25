@@ -1,5 +1,56 @@
 use super::*;
 
+fn finish_sync_report(app: &mut AditApp, report: SyncReport, confirm_deletions: bool) {
+    let live = catalog_snapshot(app);
+    let rebased = (!adit_sync::merge::same_catalog(&live, &report.local_at_start))
+        .then(|| adit_sync::merge::three_way(&report.local_at_start, &live, &report.catalog));
+    if confirm_deletions {
+        let proposed = rebased.as_ref().map_or(&report.catalog, |m| &m.catalog);
+        let surviving: std::collections::HashSet<_> =
+            proposed.profiles.iter().map(|p| p.id).collect();
+        let losing = live
+            .profiles
+            .iter()
+            .filter(|p| !surviving.contains(&p.id))
+            .count();
+        if losing > AUTO_SYNC_DELETE_LIMIT {
+            app.sync_status = tf("自动同步将删除本机 {} 个会话，已暂停等待确认", &[&losing]);
+            app.sync_held = Some(report);
+            return;
+        }
+    }
+    app.sync_conflicts = report.conflicts;
+    let needs_upload = rebased
+        .as_ref()
+        .is_some_and(|m| m.changed_locally(&report.catalog));
+    let catalog = if let Some(merged) = rebased {
+        app.sync_conflicts.extend(
+            merged
+                .conflicts
+                .iter()
+                .map(|c| tf("冲突（已保留本机）: {}", &[&c.name])),
+        );
+        merged.catalog
+    } else {
+        report.catalog
+    };
+    app.sync_status = report.summary;
+    if let Some(id) = report.assigned_id {
+        app.sync.gist_id = id;
+    }
+    app.groups = catalog.groups;
+    app.group_icons = catalog.group_icons;
+    app.manager.replace_profiles(catalog.profiles);
+    crate::profiles::prune_profile_selection(app);
+    persist_profiles(app);
+    persist_settings_if_changed(app);
+    // A plain adoption is already on the provider. Only intervening local
+    // edits need the next debounced push.
+    if !needs_upload {
+        app.sync_dirty_at = None;
+    }
+}
+
 fn read_terminal_clipboard(app: &AditApp) -> Task<Message> {
     let session = app.manager.active_session();
     clipboard::read().map(move |contents| Message::ClipboardPasted(session, contents))
@@ -2627,10 +2678,6 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 Err(error) => app.sync_status = tf("授权失败: {}", &[&runtime(&error)]),
             }
         }
-        Message::SyncAuto => {
-            app.sync_next_is_auto = true;
-            return Task::done(Message::SyncNow);
-        }
         Message::ToggleAutoSync(on) => {
             app.sync.auto_sync = on;
             // Start the clock now, so ticking the box does not fire a sync in
@@ -2641,22 +2688,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         }
         Message::SyncApplyHeld => {
             if let Some(report) = app.sync_held.take() {
-                app.groups = report.catalog.groups.clone();
-                app.group_icons = report.catalog.group_icons.clone();
-                app.manager
-                    .replace_profiles(report.catalog.profiles.clone());
-                // The same tail as the unheld path, deliberately: two ways of
-                // adopting a catalog that do slightly different things is how
-                // one of them ends up missing a step nobody notices.
-                crate::profiles::prune_profile_selection(app);
-                persist_profiles(app);
-                persist_settings_if_changed(app);
-                app.sync_dirty_at = None;
-                app.sync_status = report.summary;
-                app.sync_conflicts = report.conflicts;
-                if let Some(id) = report.assigned_id {
-                    app.sync.gist_id = id;
-                }
+                finish_sync_report(app, report, false);
             }
         }
         Message::SyncDiscardHeld => {
@@ -2667,13 +2699,12 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sync_status = String::from(t("已丢弃这次合并，自动同步已关闭"));
             persist_settings_if_changed(app);
         }
-        Message::SyncNow => {
-            if app.sync_busy {
+        Message::SyncNow | Message::SyncAuto => {
+            let automatic = matches!(message, Message::SyncAuto);
+            if app.sync_busy || app.sync_held.is_some() || (automatic && !app.sync.auto_sync) {
                 return Task::none();
             }
-            // Taken rather than read: the button never sets it, so a manual sync
-            // is never held back, however the previous one was started.
-            app.sync_auto_ran = std::mem::take(&mut app.sync_next_is_auto);
+            app.sync_auto_ran = automatic;
             app.sync_dirty_at = None;
             app.sync_last_at = Some(Instant::now());
             // A typed secret is committed here rather than on every keystroke,
@@ -2752,6 +2783,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         let assigned_id = backend.assigned_id();
                         result
                             .map(|outcome| SyncReport {
+                                local_at_start: catalog,
                                 conflicts: outcome
                                     .conflicts
                                     .iter()
@@ -2784,63 +2816,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
             app.sync_busy = false;
             match result {
                 Ok(report) => {
-                    // A merge that removes much of what is on this machine is
-                    // held for confirmation when nobody asked for this sync.
-                    //
-                    // Pressing the button is itself a decision, and that
-                    // decision is what caught the one mass-deletion bug this
-                    // project has had. Syncing on a timer takes the decision
-                    // away, so the check has to become explicit rather than
-                    // rely on a person having been present.
-                    //
-                    // Counted against the live local list rather than read from
-                    // stats.deleted: what matters is how much is about to leave
-                    // this machine, and counting it here does not depend on the
-                    // merge's own accounting being right.
-                    if app.sync_auto_ran {
-                        let surviving: std::collections::HashSet<_> =
-                            report.catalog.profiles.iter().map(|p| p.id).collect();
-                        let losing = app
-                            .manager
-                            .profiles()
-                            .iter()
-                            .filter(|p| !surviving.contains(&p.id))
-                            .count();
-                        if losing > AUTO_SYNC_DELETE_LIMIT {
-                            app.sync_status =
-                                tf("自动同步将删除本机 {} 个会话，已暂停等待确认", &[&losing]);
-                            app.sync_held = Some(report);
-                            return Task::none();
-                        }
-                    }
-                    // Only now that the merge is going to be applied: a held one
-                    // has not happened yet, and reporting its summary would say
-                    // it had.
-                    app.sync_status = report.summary;
-                    app.sync_conflicts = report.conflicts;
-                    if let Some(id) = report.assigned_id {
-                        app.sync.gist_id = id;
-                    }
-                    // Adopt what the merge produced, then persist it the same
-                    // way any other profile change is persisted.
-                    app.groups = report.catalog.groups.clone();
-                    // Adopted alongside the groups: an icon chosen on the other
-                    // machine has already survived the merge, and dropping it
-                    // here would undo that on the next save.
-                    app.group_icons = report.catalog.group_icons.clone();
-                    app.manager
-                        .replace_profiles(report.catalog.profiles.clone());
-                    // A sync can delete profiles, and the selection can still be
-                    // holding their ids. `prune_profile_selection` documents
-                    // itself as covering "a sync that replaces the whole
-                    // catalog" and was never actually called from here.
-                    crate::profiles::prune_profile_selection(app);
-                    persist_profiles(app);
-                    persist_settings_if_changed(app);
-                    // `persist_profiles` marks the machine dirty, and adopting a
-                    // merge goes through it — so without this a sync schedules
-                    // the next one, forever, each finding nothing to upload.
-                    app.sync_dirty_at = None;
+                    finish_sync_report(app, report, app.sync_auto_ran);
                 }
                 Err(error) => app.sync_status = tf("同步失败: {}", &[&runtime(&error)]),
             }
@@ -4560,6 +4536,60 @@ mod rdp_release_tests {
         assert_eq!(
             take_single_button_lease(&mut leases, id, button, Some(Some(13)), Some(13)),
             Some(Some(12))
+        );
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+
+    #[test]
+    fn held_sync_waits_for_a_decision_and_preserves_intervening_edits() {
+        let profiles: Vec<_> = (0..6)
+            .map(|n| ConnectionProfile::new(format!("Host {n}"), "fixture.invalid", 22, "test"))
+            .collect();
+        let scratch = std::env::temp_dir().join(format!("adit-held-sync-{}", profiles[0].id));
+        let mut app = AditApp {
+            profile_store: ProfileStore::new(scratch.join("profiles.json")),
+            settings_store: SettingsStore::new(scratch.join("settings.json")),
+            manager: SessionManager::with_profiles(profiles),
+            sync_auto_ran: true,
+            ..AditApp::default()
+        };
+        app.sync.auto_sync = true;
+        let local_at_start = catalog_snapshot(&app);
+        let mut catalog = local_at_start.clone();
+        catalog.profiles.truncate(1);
+        let report = SyncReport {
+            catalog,
+            local_at_start,
+            conflicts: vec![],
+            summary: "fixture sync".to_owned(),
+            assigned_id: Some("fixture-gist".to_owned()),
+        };
+        let _ = update_message(&mut app, Message::SyncFinished(Ok(report)));
+        assert!(app.sync_held.is_some());
+        let notice = app.sync_status.clone();
+        for message in [Message::SyncNow, Message::SyncAuto] {
+            let _ = update_message(&mut app, message);
+            assert_eq!(app.sync_status, notice);
+            assert!(app.sync_last_at.is_none());
+        }
+        let mut edited = app.manager.profiles().to_vec();
+        edited[1].name = "Edited while waiting".to_owned();
+        let new_host = ConnectionProfile::new("New while waiting", "fixture.invalid", 22, "test");
+        edited.push(new_host.clone());
+        app.manager.replace_profiles(edited);
+        let _ = update_message(&mut app, Message::SyncApplyHeld);
+        assert!(app.sync_held.is_none());
+        assert_eq!(app.manager.profiles().len(), 3);
+        assert_eq!(app.manager.profiles()[1].name, "Edited while waiting");
+        assert_eq!(app.manager.profiles()[2].id, new_host.id);
+        assert!(app.sync_dirty_at.is_some());
+        assert_eq!(
+            app.settings_store.load().unwrap().sync.gist_id,
+            "fixture-gist"
         );
     }
 }

@@ -2359,7 +2359,7 @@ pub(crate) fn sync_section(app: &AditApp) -> Element<'_, Message> {
     let mut sync_button = button(text(t(sync_label)).size(12))
         .padding([6, 16])
         .style(|_theme, status| primary_button_style(status));
-    if !app.sync_busy && sync.provider != SyncProvider::None {
+    if !app.sync_busy && app.sync_held.is_none() && sync.provider != SyncProvider::None {
         sync_button = sync_button.on_press(Message::SyncNow);
     }
 

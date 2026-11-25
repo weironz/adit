@@ -624,7 +624,6 @@ pub struct AditApp {
     sync_dirty_at: Option<Instant>,
     /// Whether the sync now in flight was started by the timer. Read when it
     /// finishes, to decide whether a large deletion needs confirming.
-    sync_next_is_auto: bool,
     sync_auto_ran: bool,
     /// A merge auto-sync would not apply on its own. Held rather than dropped:
     /// it may well be correct, and refetching it is a round trip.
@@ -741,6 +740,9 @@ pub struct DeviceCodePrompt {
 /// loop can save it on the UI thread, where the profile store lives.
 #[derive(Debug, Clone)]
 pub struct SyncReport {
+    /// Local input to the worker. Edits made while it ran or while a result
+    /// awaited confirmation must survive adoption of the remote catalog.
+    pub local_at_start: adit_storage::ProfileCatalog,
     pub catalog: adit_storage::ProfileCatalog,
     pub conflicts: Vec<String>,
     pub summary: String,
@@ -1922,7 +1924,6 @@ impl AditApp {
             sync_busy: false,
             sync_last_at: None,
             sync_dirty_at: None,
-            sync_next_is_auto: false,
             sync_auto_ran: false,
             sync_held: None,
             sync_status: String::new(),
