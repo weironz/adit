@@ -238,6 +238,7 @@ pub(super) fn offer(
             return;
         }
     };
+    close_drag_window();
     let queue = NSOperationQueue::new();
     queue.setMaxConcurrentOperationCount(4);
     let providers: Vec<_> = source
@@ -296,6 +297,10 @@ pub(super) fn shutdown() {
             board.clearContents();
         }
     }
+    close_drag_window();
+}
+
+fn close_drag_window() {
     if let Some(window) = WINDOW.with_borrow_mut(Option::take) {
         window.close();
     }
