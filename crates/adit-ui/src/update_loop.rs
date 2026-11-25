@@ -5,20 +5,7 @@ fn read_terminal_clipboard(app: &AditApp) -> Task<Message> {
     clipboard::read().map(move |contents| Message::ClipboardPasted(session, contents))
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-enum SftpDropDestination {
-    Panel {
-        window: Option<window::Id>,
-        browser: SessionId,
-        cwd: String,
-    },
-    Shell {
-        window: Option<window::Id>,
-        session: SessionId,
-    },
-}
-
-fn sftp_drop_destination(app: &AditApp) -> Option<SftpDropDestination> {
+fn sftp_drop_destination(app: &AditApp) -> Option<(Option<window::Id>, DropDestination)> {
     // winit discards the release position. A panel owns its whole modal window;
     // a shell is safe only while that window shows a single session surface.
     match accessibility::namespace(app).as_str() {
@@ -28,11 +15,15 @@ fn sftp_drop_destination(app: &AditApp) -> Option<SftpDropDestination> {
                 && app.sftp_overwrite.is_none() =>
         {
             let browser = app.manager.sftp_browser()?;
-            Some(SftpDropDestination::Panel {
-                window: app.native_window_id,
-                browser: browser.instance_id,
-                cwd: browser.cwd.clone(),
-            })
+            let (revision, cwd) = browser.drop_identity()?;
+            Some((
+                app.native_window_id,
+                DropDestination::Panel {
+                    instance: browser.instance_id,
+                    revision,
+                    cwd: cwd.to_owned(),
+                },
+            ))
         }
         "main"
             if app.manager.active_is_sftp_shell()
@@ -42,10 +33,16 @@ fn sftp_drop_destination(app: &AditApp) -> Option<SftpDropDestination> {
                         && !(app.main_view == MainView::Missions && mission_is_empty(app))
                         && (app.fullscreen || app.panes.len() < 2))) =>
         {
-            Some(SftpDropDestination::Shell {
-                window: app.native_window_id,
-                session: app.manager.active_session()?,
-            })
+            let session = app.manager.active_session()?;
+            let (revision, cwd) = app.manager.sftp_shell_drop_identity(session)?;
+            Some((
+                app.native_window_id,
+                DropDestination::Shell {
+                    session,
+                    revision,
+                    cwd: cwd.to_owned(),
+                },
+            ))
         }
         _ => None,
     }
@@ -59,7 +56,7 @@ pub(crate) struct SftpDropState {
 }
 
 struct SftpDropBatch {
-    target: Option<SftpDropDestination>,
+    target: Option<(Option<window::Id>, DropDestination)>,
     remaining: Vec<std::path::PathBuf>,
     dropped: Vec<std::path::PathBuf>,
     dropping: bool,
@@ -150,35 +147,8 @@ pub(super) fn handle_sftp_file_drop(
         }
         return;
     }
-    let Some(destination) = batch.target else {
-        return;
-    };
-    if matches!(destination, SftpDropDestination::Shell { .. }) && batch.dropped.len() != 1 {
-        app.last_error = Some(String::from(t(
-            "SFTP 命令行一次只能拖入一个文件；批量上传请使用 SFTP 面板",
-        )));
-        return;
-    }
-    if batch.dropped.iter().any(|path| is_directory(path)) {
-        app.last_error = Some(String::from(t("暂不支持上传文件夹，请拖入单个文件")));
-        return;
-    }
-    match destination {
-        SftpDropDestination::Shell { .. } => {
-            if let Err(error) = app.manager.sftp_shell_upload_dropped(&batch.dropped[0]) {
-                app.last_error = Some(runtime(&error));
-            }
-        }
-        SftpDropDestination::Panel { .. } => {
-            start_transfers(
-                app,
-                batch
-                    .dropped
-                    .into_iter()
-                    .map(PendingTransfer::UploadPath)
-                    .collect(),
-            );
-        }
+    if let Some((_, destination)) = batch.target {
+        consume_file_drop(app, destination, batch.dropped, is_directory);
     }
 }
 

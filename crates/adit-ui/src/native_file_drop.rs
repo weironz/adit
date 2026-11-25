@@ -25,19 +25,7 @@ fn path_units(path: &std::path::Path) -> usize {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Destination {
-    Shell {
-        session: SessionId,
-        revision: u64,
-        cwd: String,
-    },
-    Panel {
-        instance: SessionId,
-        revision: u64,
-        cwd: String,
-    },
-}
+pub(crate) use crate::sftp::DropDestination as Destination;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Region {

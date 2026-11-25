@@ -334,7 +334,6 @@ impl DesktopApplication {
         request: native_file_drop::DropRequest,
         is_directory: impl Fn(&std::path::Path) -> bool,
     ) -> Task<NativeMessage> {
-        use native_file_drop::Destination;
         if !self.known(request.window)
             || !native_file_drop::current(&request)
             || !self
@@ -346,42 +345,7 @@ impl DesktopApplication {
         self.in_window(request.window, |app| {
             // The queue carries the whole batch and its original destination.
             // Never route through whichever tab happens to be active at drain.
-            if matches!(request.destination, Destination::Shell { .. }) && request.paths.len() != 1
-            {
-                app.last_error =
-                    Some(t("SFTP 命令行一次只能拖入一个文件；批量上传请使用 SFTP 面板").into());
-            } else if request.paths.iter().any(|path| is_directory(path)) {
-                app.last_error = Some(t("暂不支持上传文件夹，请拖入单个文件").into());
-            } else {
-                match request.destination {
-                    Destination::Shell {
-                        session,
-                        revision,
-                        cwd,
-                    } => {
-                        if let Err(error) = app.manager.sftp_shell_upload_dropped_at(
-                            session,
-                            revision,
-                            &cwd,
-                            &request.paths[0],
-                        ) {
-                            app.last_error = Some(runtime(&error));
-                        }
-                    }
-                    Destination::Panel {
-                        instance,
-                        revision,
-                        cwd,
-                    } => {
-                        if app.manager.sftp_browser().is_some_and(|browser| {
-                            browser.instance_id == instance
-                                && browser.drop_identity() == Some((revision, cwd.as_str()))
-                        }) {
-                            start_dropped_transfers(app, instance, revision, &cwd, request.paths);
-                        }
-                    }
-                }
-            }
+            sftp::consume_file_drop(app, request.destination, request.paths, is_directory);
             Task::none()
         })
     }
@@ -1688,6 +1652,7 @@ mod tests {
             .manager
             .open_live_ssh_session(sftp_id, String::new(), String::new())
             .unwrap();
+        desktop.app.manager.native_file_drop_fixture_ready();
         (desktop, shell)
     }
 
@@ -1823,6 +1788,22 @@ mod tests {
             assert_eq!(shell_text(&desktop), before);
             assert!(desktop.app.last_error.is_none());
         }
+    }
+
+    #[test]
+    fn file_drop_rejects_an_older_revision_of_the_same_panel_directory() {
+        let (mut desktop, _) = sftp_drop_fixture(true);
+        let primary = desktop.primary;
+        hover_file(&mut desktop, primary, "synthetic.txt".into());
+        desktop.app.manager.native_file_drop_fixture_ready();
+        drop_event(&mut desktop, primary, "synthetic.txt".into());
+        assert!(desktop
+            .app
+            .manager
+            .sftp_browser()
+            .unwrap()
+            .transfers
+            .is_empty());
     }
 
     #[test]
@@ -2064,7 +2045,7 @@ mod tests {
         desktop.app.fullscreen = true;
         let primary = desktop.primary;
         drop_file(&mut desktop, primary, "synthetic-a.txt".into());
-        assert!(shell_text(&desktop).contains("尚未连接，无法上传"));
+        assert!(shell_text(&desktop).contains("/fixture/synthetic-a.txt"));
     }
 
     #[test]
@@ -2323,7 +2304,7 @@ mod tests {
         let (mut desktop, _) = sftp_drop_fixture(false);
         let primary = desktop.primary;
         drop_file(&mut desktop, primary, "synthetic-drop.txt".into());
-        assert!(shell_text(&desktop).contains("尚未连接，无法上传"));
+        assert!(shell_text(&desktop).contains("/fixture/synthetic-drop.txt"));
     }
 
     #[test]

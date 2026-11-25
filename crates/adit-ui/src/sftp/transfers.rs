@@ -79,8 +79,7 @@ fn prepare_at(
     })
 }
 
-#[cfg(windows)]
-pub(crate) fn start_dropped_transfers(
+fn start_dropped_transfers(
     app: &mut AditApp,
     instance: SessionId,
     revision: u64,
@@ -255,5 +254,55 @@ mod browser_identity_tests {
         assert!(!plan.belongs_to(SessionId::new(), profile, "fixture:22"));
         assert!(!plan.belongs_to(browser_instance, ProfileId::new(), "fixture:22"));
         assert!(!plan.belongs_to(browser_instance, profile, "other:22"));
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DropDestination {
+    Shell {
+        session: SessionId,
+        revision: u64,
+        cwd: String,
+    },
+    Panel {
+        instance: SessionId,
+        revision: u64,
+        cwd: String,
+    },
+}
+
+pub(crate) fn consume_file_drop(
+    app: &mut AditApp,
+    destination: DropDestination,
+    paths: Vec<PathBuf>,
+    is_directory: impl Fn(&std::path::Path) -> bool,
+) {
+    if matches!(destination, DropDestination::Shell { .. }) && paths.len() != 1 {
+        app.last_error =
+            Some(t("SFTP 命令行一次只能拖入一个文件；批量上传请使用 SFTP 面板").into());
+    } else if paths.iter().any(|path| is_directory(path)) {
+        app.last_error = Some(t("暂不支持上传文件夹，请拖入单个文件").into());
+    } else {
+        match destination {
+            DropDestination::Shell {
+                session,
+                revision,
+                cwd,
+            } => {
+                if let Err(error) = app
+                    .manager
+                    .sftp_shell_upload_dropped_at(session, revision, &cwd, &paths[0])
+                {
+                    app.last_error = Some(runtime(&error));
+                }
+            }
+            DropDestination::Panel {
+                instance,
+                revision,
+                cwd,
+            } => {
+                start_dropped_transfers(app, instance, revision, &cwd, paths);
+            }
+        }
     }
 }

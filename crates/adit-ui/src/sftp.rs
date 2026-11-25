@@ -2,8 +2,7 @@ use super::*;
 use adit_workbench::sftp::{ListingEntry, SortOrder};
 use iced::widget::column;
 mod transfers;
-#[cfg(windows)]
-pub(crate) use transfers::start_dropped_transfers;
+pub(crate) use transfers::{consume_file_drop, DropDestination};
 pub use transfers::PreparedTransfer;
 pub(crate) use transfers::{begin_save_as, resume_transfer, run_transfers, start_transfers};
 
