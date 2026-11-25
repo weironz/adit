@@ -6,21 +6,16 @@ on:
 permissions:
   contents: read
 
-# Fixed X displays and fixture names must never overlap across workflow runs.
-concurrency:
-  group: adit-self-hosted-ci
-  cancel-in-progress: false
-
 env:
   CARGO_TERM_COLOR: always
   CARGO_BUILD_JOBS: '2'
+  CARGO_INCREMENTAL: '0'
   CARGO_PROFILE_DEV_DEBUG: '0'
   CARGO_PROFILE_TEST_DEBUG: '0'
 
 jobs:
   build:
     name: build · clippy · test · integration (${{ matrix.platform }})
-    # Persistent runners execute trusted repository branches only, never fork PRs.
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
@@ -29,12 +24,8 @@ jobs:
       matrix:
         include:
           - platform: windows-x64
-            runner: [self-hosted, Windows, X64, home-workstation, repo-adit]
+            runner: windows-2025
             shell: pwsh
-          # No self-hosted Linux runner is registered, so a self-hosted Linux
-          # leg sat in queued forever and held the concurrency group. The repo
-          # is public, so the hosted image costs nothing; the release gate
-          # requires this leg to have run on exactly this image.
           - platform: linux-x64
             runner: ubuntu-24.04
             shell: bash
@@ -43,29 +34,9 @@ jobs:
       run:
         shell: ${{ matrix.shell }}
     steps:
-      - name: Recover a broken remote-tracking ref on the persistent Windows runner
-        if: runner.os == 'Windows' && github.ref == 'refs/heads/main'
-        shell: pwsh
-        run: |
-          $ref = Join-Path $env:GITHUB_WORKSPACE '.git/refs/remotes/origin/main'
-          if (!(Test-Path -LiteralPath $ref -PathType Leaf)) { exit 0 }
-          # --exists distinguishes an unreadable ref (1) from an absent one (2).
-          # Fetch can recreate a missing remote-tracking ref but cannot lock a broken one.
-          git -C $env:GITHUB_WORKSPACE show-ref --exists refs/remotes/origin/main
-          $status = $LASTEXITCODE
-          if ($status -in 0, 2) { exit 0 }
-          if ($status -ne 1) { exit $status }
-          $backup = Join-Path $env:RUNNER_TEMP ("adit-broken-origin-main-" + [guid]::NewGuid())
-          Move-Item -LiteralPath $ref -Destination $backup -ErrorAction Stop
-          Write-Host "Saved the unreadable origin/main ref at $backup"
-          exit 0
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-          # These dedicated runners keep Cargo outputs; clean everything else below.
-          clean: false
-      - name: Clean checkout while retaining compiler outputs
-        run: git clean -ffdx -e /target/ -e /crates/adit-rdp/target/
       - name: Complete Windows build dependencies
         if: runner.os == 'Windows'
         shell: powershell

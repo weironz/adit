@@ -157,8 +157,8 @@ reproduce.
   gh workflow run release.yml -f version=0.1.60
   ```
 
-  That publishes the **Windows x64 installer** on the designated self-hosted
-  Windows x64 runner, then an **Ubuntu x64 deb** built on GitHub-hosted
+  That publishes the **Windows x64 installer** on GitHub-hosted
+  `windows-2025`, then an **Ubuntu x64 deb** built on GitHub-hosted
   `ubuntu-24.04`, install-and-launch tested on clean `ubuntu:24.04` and
   `ubuntu:26.04`, and attached to the same release. **The rpm is paused**: its CI
   and release jobs are commented out (verified green before pausing). When

@@ -16,9 +16,7 @@ $current = Get-AditWorkspaceVersion $root
 Assert-AditReleaseVersion $current $Version
 $api = if ($env:GITHUB_API_URL) { $env:GITHUB_API_URL } else { 'https://api.github.com' }
 $headers = @{Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json'; 'X-GitHub-Api-Version' = '2022-11-28'}
-# The self-hosted runner reaches GitHub only through its proxy, and Windows
-# PowerShell's Invoke-RestMethod ignores HTTPS_PROXY (gh, git and cargo honour
-# it), so without -Proxy the gate failed with "could not resolve api.github.com".
+# Honour proxy settings when the read-only gate is run locally.
 $proxy = @($env:HTTPS_PROXY, $env:https_proxy, $env:HTTP_PROXY, $env:http_proxy) |
     Where-Object { $_ } | Select-Object -First 1
 $proxyArgs = if ($proxy) { @{Proxy = $proxy} } else { @{} }
@@ -36,4 +34,4 @@ $jobs = if ($run) { @((Read-ReleaseAPI "actions/runs/$($run.id)/jobs?filter=late
 Assert-AditReleaseCI $Ref $Sha $main.object.sha $run $jobs
 if (Read-ReleaseAPI "git/ref/tags/v$Version" -AllowMissing) { throw "Tag v$Version already exists" }
 if (Read-ReleaseAPI "releases/tags/v$Version" -AllowMissing) { throw "Release v$Version already exists" }
-Write-Output "Release gate passed for $Sha / $Version / Windows self-hosted and Linux hosted CI jobs. This check performs no publishing."
+Write-Output "Release gate passed for $Sha / $Version / GitHub-hosted Windows and Linux CI jobs. This check performs no publishing."

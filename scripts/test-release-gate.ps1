@@ -4,10 +4,10 @@ $sha = 'a' * 40
 $run = @{head_sha=$sha; head_branch='main'; event='push'; status='completed'; conclusion='success'}
 function New-GateJobs {
     @(
-        @{name='build · clippy · test · integration (windows-x64)';runner_name='home-workstation-windows-adit-01';status='completed';conclusion='success';labels=@('self-hosted','Windows','X64','home-workstation','repo-adit')},
-        @{name='build · clippy · test · integration (linux-x64)';runner_name='GitHub Actions 7';status='completed';conclusion='success';labels=@('ubuntu-24.04')},
-        @{name='rpm (fedora-43)';runner_name='GitHub Actions 8';status='completed';conclusion='success';labels=@('ubuntu-24.04')},
-        @{name='rpm (fedora-44)';runner_name='GitHub Actions 9';status='completed';conclusion='success';labels=@('ubuntu-24.04')}
+        @{name='build · clippy · test · integration (windows-x64)';runner_group_name='GitHub Actions';runner_name='GitHub Actions 1';status='completed';conclusion='success';labels=@('windows-2025')},
+        @{name='build · clippy · test · integration (linux-x64)';runner_group_name='GitHub Actions';runner_name='GitHub Actions 7';status='completed';conclusion='success';labels=@('ubuntu-24.04')},
+        @{name='rpm (fedora-43)';runner_group_name='GitHub Actions';runner_name='GitHub Actions 8';status='completed';conclusion='success';labels=@('ubuntu-24.04')},
+        @{name='rpm (fedora-44)';runner_group_name='GitHub Actions';runner_name='GitHub Actions 9';status='completed';conclusion='success';labels=@('ubuntu-24.04')}
     )
 }
 Assert-AditReleaseVersion '0.1.75' '0.1.76'
@@ -35,9 +35,11 @@ $pending=$run.Clone();$pending.status='in_progress'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $pending (New-GateJobs) }
 $other=$run.Clone();$other.head_sha='b'*40
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $other (New-GateJobs) }
-$hosted=New-GateJobs;$hosted[0].runner_name='GitHub Actions 1'
-Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $hosted }
-$labels=New-GateJobs;$labels[0].labels=@('Windows','X64')
+$selfWindows=New-GateJobs;$selfWindows[0].labels=@('self-hosted','Windows','X64','home-workstation','repo-adit')
+Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $selfWindows }
+$wrongGroup=New-GateJobs;$wrongGroup[0].runner_group_name='Default'
+Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $wrongGroup }
+$labels=New-GateJobs;$labels[0].labels=@('windows-latest')
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $labels }
 $failedJob=New-GateJobs;$failedJob[0].conclusion='skipped'
 Expect-Rejected { Assert-AditReleaseCI 'refs/heads/main' $sha $sha $run $failedJob }

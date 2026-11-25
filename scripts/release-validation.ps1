@@ -22,9 +22,7 @@ function Assert-AditReleaseCI([string]$Ref, [string]$Sha, [string]$MainSha, $Run
     # ci.yml is dispatch-only (7c48002), so a manual run on main counts as much as a push run.
     if (-not $Run -or $Run.head_sha -cne $Sha -or $Run.head_branch -cne 'main' -or @('push', 'workflow_dispatch') -cnotcontains $Run.event) { throw 'No CI run on main for the exact commit' }
     if ($Run.status -cne 'completed' -or $Run.conclusion -cne 'success') { throw 'Exact-commit CI must be completed/success; pending, skipped and failed runs cannot release' }
-    # Windows runs on the dedicated self-hosted runner; Linux and the per-Fedora
-    # rpm jobs on the GitHub-hosted ubuntu-24.04 image, the same one release.yml
-    # packages the deb and the rpms on.
+    # Validate both job identity and its pinned hosted image.
     $windows = 0; $linux = 0; $rpm = 0; $names = @{}
     foreach ($job in $Jobs) {
         if ($job.status -cne 'completed' -or $job.conclusion -cne 'success') { throw 'Every CI job must have succeeded' }
@@ -32,14 +30,14 @@ function Assert-AditReleaseCI([string]$Ref, [string]$Sha, [string]$MainSha, $Run
         if ($names.ContainsKey($name)) { throw "Duplicate CI job: $name" }
         $names[$name] = $true
         $labels = @($job.labels)
-        if ([string]$job.runner_name -ceq 'home-workstation-windows-adit-01') {
-            foreach ($label in @('self-hosted', 'Windows', 'X64', 'home-workstation', 'repo-adit')) {
-                if ($labels -cnotcontains $label) { throw "CI runner label missing: $label" }
-            }
+        if ($job.runner_group_name -cne 'GitHub Actions' -or $labels.Count -ne 1) { throw 'Expected a GitHub-hosted runner with one image label' }
+        if ($labels[0] -ceq 'windows-2025' -and $name.EndsWith('(windows-x64)')) {
             $windows++
-        } elseif ($labels.Count -eq 1 -and $labels[0] -ceq 'ubuntu-24.04') {
-            if ($name -cmatch '^rpm \(fedora-\d+\)$') { $rpm++ } else { $linux++ }
-        } else { throw 'CI job used an unexpected runner' }
+        } elseif ($labels[0] -ceq 'ubuntu-24.04' -and $name.EndsWith('(linux-x64)')) {
+            $linux++
+        } elseif ($labels[0] -ceq 'ubuntu-24.04' -and $name -cmatch '^rpm \(fedora-\d+\)$') {
+            $rpm++
+        } else { throw 'CI job used an unexpected platform or runner' }
     }
     if ($windows -ne 1 -or $linux -ne 1) { throw 'CI job used an unexpected or duplicate runner' }
     # The Fedora rpm jobs are paused in ci.yml; when they come back, require them:

@@ -1,6 +1,6 @@
 # 发布操作手册
 
-当前发布工作流在仓库专用 Windows x64 runner `home-workstation-windows-adit-01` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，在干净的 `ubuntu:24.04` 和 `ubuntu:26.04` 容器里各装一次并启动，通过后追加到同一个 Release。**rpm 暂停**：CI 与发布里的 rpm 任务已注释（暂停前已在 `fedora:45` 上验证通过），门禁也暂不要求 rpm 任务；恢复时取消两处注释并恢复 `Assert-AditReleaseCI` 里的 rpm 要求。启用时在当前最新的 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包一个 x64 rpm；更早的 Fedora 版本不单独出包。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统。曾经在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上；现在程序已不链接 libfuse，其余库仍是这个道理。Fedora 版本号在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致，新 Fedora 发布后两处一起改；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
+当前发布工作流在GitHub 托管 `windows-2025` 上发布 Windows x64 安装包，随后在 GitHub 托管 `ubuntu-24.04` 上打 Ubuntu x64 deb，在干净的 `ubuntu:24.04` 和 `ubuntu:26.04` 容器里各装一次并启动，通过后追加到同一个 Release。**rpm 暂停**：CI 与发布里的 rpm 任务已注释（暂停前已在 `fedora:45` 上验证通过），门禁也暂不要求 rpm 任务；恢复时取消两处注释并恢复 `Assert-AditReleaseCI` 里的 rpm 要求。启用时在当前最新的 Fedora 稳定版（现为 `fedora:45`）容器里编译、打包一个 x64 rpm；更早的 Fedora 版本不单独出包。rpm 必须在目标 Fedora 版本里编译：它的库依赖取自编译所在系统。曾经在 Ubuntu 上打的 rpm 依赖 `libfuse3.so.3`，Fedora 44 起只提供 `libfuse3.so.4`，装不上；现在程序已不链接 libfuse，其余库仍是这个道理。Fedora 版本号在 `ci.yml` 的 `rpm` 任务和 `release.yml` 的 `linux-rpm` 任务里各写一份，必须一致，新 Fedora 发布后两处一起改；门禁要求 CI 里的 rpm 任务全绿。ARM64、macOS 发布任务暂停；原始发布工作流完整保留在 `.github/workflows/release.yml` 的注释中，原 CI 的 macOS/ARM 安装器任务也已保留为注释。
 
 ## 初始化与只读检查
 
@@ -10,10 +10,10 @@
 gh workflow run runner-bootstrap.yml -f platform=windows
 ```
 
-已准备好环境后，只检查依赖，并验证精确提交门禁（需先让当前 main CI 通过）：
+要在新建的托管 runner 上准备依赖并验证发布门禁，先让当前 main 的 CI 通过。
 
 ```powershell
-gh workflow run runner-bootstrap.yml -f platform=windows -f check_only=true -f validate_release_gate=true
+gh workflow run runner-bootstrap.yml -f platform=windows -f validate_release_gate=true
 ```
 
 Windows 脚本 `scripts/runner-bootstrap-windows.ps1` 与普通 CI 共用。GitHub CLI、just 和 Inno Setup 使用校验 SHA-256 的便携工具，安装在 runner 可写缓存；不提升 NETWORK SERVICE 权限、不更改服务账号、不重启服务。裸机缺少 Git/PowerShell/MSVC/SDK 时，已提升权限的管理员可显式使用 `-InstallSystemDependencies`，默认服务模式不会尝试提权。
@@ -26,7 +26,7 @@ Linux 初始化可用 `-f platform=linux`，两平台一起检查用 `-f platfor
 
 - 只能从 main 发布，而且远端 main 仍等于启动时的 SHA。
 - 工作区、RDP helper、IPC crate 当前版本一致；请求必须是下一个 patch 版本。
-- 同一 SHA、main 分支上的 ci.yml 运行（手动 dispatch 或 push）必须 completed/success；Windows 子任务必须在 `home-workstation-windows-adit-01` 上、Linux 子任务必须在托管 `ubuntu-24.04` 上成功，不能用 skipped、其他 runner 或其他提交替代。
+- 同一 SHA、main 分支上的 ci.yml 运行（手动 dispatch 或 push）必须 completed/success；Windows 子任务必须在托管 `windows-2025` 上、Linux 子任务必须在托管 `ubuntu-24.04` 上成功，不能用 skipped、其他 runner 或其他提交替代。
 - 请求的 tag 与 Release 都不存在；API 权限或网络错误不当作“尚不存在”。
 
 `scripts/test-release-gate.ps1` 覆盖合法路径和拒绝条件，不连接网络、不推送。bootstrap 可在只读 token 下验证真实门禁；其临时 0.0.0 依赖探针安装包只在临时目录编译，不运行或发布。
@@ -88,7 +88,7 @@ gh run list --workflow ci.yml --branch main --limit 1   # 最近一次必须是 
 
 可选的双保险——本地跑一遍和 CI 同样的门禁（`just ci` 只覆盖 Windows，CI 的
 Linux 构建及真实协议集成本地看不到，所以它是补充，不是替代；当前正式 CI
-仅启用自托管 Windows/Linux x64，ARM64/macOS 已暂停，见 [CI 环境](ci.md)）：
+仅启用 GitHub 托管 Windows/Linux x64，ARM64/macOS 已暂停，见 [CI 环境](ci.md)）：
 
 ```bash
 just ci
