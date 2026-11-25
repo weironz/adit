@@ -4,7 +4,7 @@ daemons through proxy.py and records what each daemon's pty actually received.
 
 usage: drive.py PROBE PASSWORD_FILE
 """
-import json, os, re, subprocess, sys, time
+import json, os, re, shutil, subprocess, sys, tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROBE, PASSWORD_FILE = sys.argv[1], sys.argv[2]
@@ -39,9 +39,32 @@ def login_script():
             f"WAIT {b'$ '.hex()} 10000", f"SEND {command.hex()}",
             f"WAIT {b'ok-42'.hex()} 8000", f"SEND {b'exit'.hex()}0d", "SLEEP 800", "CLOSE"]
 
+def mask(events, direction, secret):
+    """Masks every byte of `secret` in one direction's reassembled stream, so a
+    password split across TCP reads is redacted too. Masked bytes become `**`."""
+    chunks = [bytes.fromhex(e["hex"]) for e in events if e["dir"] == direction]
+    stream = b"".join(chunks)
+    hidden = set()
+    start = stream.find(secret)
+    while start != -1:
+        hidden.update(range(start, start + len(secret)))
+        start = stream.find(secret, start + 1)
+    offset = 0
+    for event in events:
+        if event["dir"] != direction:
+            continue
+        data = bytes.fromhex(event["hex"])
+        event["hex"] = "".join("**" if offset + i in hidden else f"{b:02x}" for i, b in enumerate(data))
+        offset += len(data)
+    return bool(hidden)
+
+def stream(hex_chunks):
+    return b"".join(bytes.fromhex(re.sub(r"\*\*", "", h)) for h in hex_chunks)
+
 def run(name, port, mode, secret):
     proxy_port = 30000 + port
-    raw_wire = f"/tmp/adit-telnet-wire-{name}.jsonl"
+    private = tempfile.mkdtemp(prefix="adit-telnet-")  # 0700: the raw capture holds the password
+    raw_wire = os.path.join(private, "wire.jsonl")
     proxy = subprocess.Popen([sys.executable, os.path.join(HERE, "proxy.py"), str(proxy_port), str(port), raw_wire],
                              stdout=subprocess.PIPE, text=True)
     proxy.stdout.readline()
@@ -51,17 +74,21 @@ def run(name, port, mode, secret):
                            capture_output=True, text=True, timeout=120)
     proxy.wait(timeout=40)
     with open(raw_wire) as handle:
-        wire_text = handle.read()
-    os.unlink(raw_wire)
-    secret_hex = secret.encode().hex()
-    wire_text = wire_text.replace(secret_hex, "<redacted-password>")
+        events = [json.loads(line) for line in handle]
+    shutil.rmtree(private)
+    redacted = mask(events, "c2s", secret.encode())
+    mask(events, "s2c", secret.encode())
+    probe_events = [{"dir": "out", "hex": line[4:]} for line in probe.stdout.splitlines() if line.startswith("OUT ")]
+    mask(probe_events, "out", secret.encode())
+    masked_out = iter(event["hex"] for event in probe_events)
+    probe_text = "".join(f"OUT {next(masked_out)}\n" if line.startswith("OUT ") else line + "\n"
+                         for line in probe.stdout.splitlines())
     with open(os.path.join(HERE, f"wire-{name}.jsonl"), "w") as handle:
-        handle.write(wire_text)
+        handle.writelines(json.dumps(event) + "\n" for event in events)
     with open(os.path.join(HERE, f"probe-{name}.txt"), "w") as handle:
-        handle.write(probe.stdout + probe.stderr)
-    c2s = b"".join(bytes.fromhex(e["hex"]) for e in map(json.loads, wire_text.splitlines())
-                   if e["dir"] == "c2s" and "<" not in e["hex"])
-    output = b"".join(bytes.fromhex(l[4:]) for l in probe.stdout.splitlines() if l.startswith("OUT "))
+        handle.write(probe_text + probe.stderr)
+    c2s = stream(e["hex"] for e in events if e["dir"] == "c2s")
+    output = stream(e["hex"] for e in probe_events)
     result = {"target": name, "port": port, "mode": mode,
               "matches": probe.stdout.count("MATCH\n"), "timeouts": probe.stdout.count("TIMEOUT\n")}
     if mode == "observe":
@@ -79,11 +106,24 @@ def run(name, port, mode, secret):
     else:
         result["login_and_command_ok"] = b"ok-42" in output
         result["wire_user_CR_NUL"] = (USER.encode() + b"\r\x00") in c2s
-        result["password_redacted_in_wire"] = "<redacted-password>" in wire_text
+        result["password_redacted_in_wire"] = redacted
+    leak_check(secret.encode())
+    return result
+
+def leak_check(secret):
+    """No evidence file may hold the password raw, hex-encoded, or reassembled
+    from a captured byte stream."""
     for path in os.listdir(HERE):
         with open(os.path.join(HERE, path), "rb") as handle:
-            assert secret.encode() not in handle.read(), f"password leaked into {path}"
-    return result
+            body = handle.read()
+        assert secret not in body and secret.hex().encode() not in body, f"password leaked into {path}"
+        text = body.decode(errors="replace")
+        if path.endswith(".jsonl"):
+            events = [json.loads(line) for line in text.splitlines()]
+            for direction in ("c2s", "s2c"):
+                assert secret not in stream(e["hex"] for e in events if e["dir"] == direction), path
+        elif path.startswith("probe-"):
+            assert secret not in stream(l[4:] for l in text.splitlines() if l.startswith("OUT ")), path
 
 secret = open(PASSWORD_FILE).read().strip()
 results = [run(*target, secret) for target in TARGETS]
