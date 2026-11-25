@@ -1,0 +1,32 @@
+2026-11-25T13:10:28.9893416Z ready session=2 remote=1 user=aditkey89 pid=8136
+2026-11-25T13:10:29.6540165Z async mask=00
+2026-11-25T13:10:29.7063400Z foreground hwnd=20040 pid=5352 process=explorer
+2026-11-25T13:10:30.2220413Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:10:36.1794782Z foreground hwnd=80080 pid=5352 process=explorer
+2026-11-25T13:10:36.2543057Z foreground hwnd=1010A pid=5352 process=explorer
+2026-11-25T13:10:54.2208143Z key vk=A2 scan=1D flags=00 edge=down injected=False
+2026-11-25T13:10:54.2289331Z async mask=04
+2026-11-25T13:10:55.0757426Z key vk=A2 scan=1D flags=80 edge=up injected=False
+2026-11-25T13:10:55.0845639Z async mask=00
+2026-11-25T13:11:56.4209030Z key vk=A0 scan=2A flags=00 edge=down injected=False
+2026-11-25T13:12:01.5873882Z key vk=A4 scan=38 flags=20 edge=down injected=False
+2026-11-25T13:12:01.5959248Z async mask=10
+2026-11-25T13:12:02.5444111Z key vk=A4 scan=38 flags=80 edge=up injected=False
+2026-11-25T13:12:02.5540219Z async mask=00
+2026-11-25T13:14:16.1091448Z foreground hwnd=40058 pid=7992 process=Docker Desktop
+2026-11-25T13:14:16.3388110Z key vk=A2 scan=1D flags=00 edge=down injected=False
+2026-11-25T13:14:16.3388110Z key vk=A4 scan=38 flags=00 edge=down injected=False
+2026-11-25T13:14:16.3544427Z async mask=14
+2026-11-25T13:14:16.3544427Z key vk=A4 scan=38 flags=80 edge=up injected=False
+2026-11-25T13:14:16.3625740Z key vk=A2 scan=1D flags=80 edge=up injected=False
+2026-11-25T13:14:16.3701380Z async mask=00
+2026-11-25T13:15:06.0926217Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:15:06.0961582Z foreground hwnd=80080 pid=5352 process=explorer
+2026-11-25T13:16:26.9701777Z key vk=1B scan=01 flags=00 edge=down injected=False
+2026-11-25T13:16:26.9701777Z key vk=1B scan=01 flags=80 edge=up injected=False
+2026-11-25T13:16:27.2536037Z key vk=A4 scan=38 flags=20 edge=down injected=False
+2026-11-25T13:16:27.2536037Z key vk=A4 scan=38 flags=80 edge=up injected=False
+2026-11-25T13:17:18.9868641Z key vk=A0 scan=2A flags=00 edge=down injected=False
+2026-11-25T13:17:18.9904035Z async mask=01
+2026-11-25T13:17:19.7972345Z key vk=A0 scan=2A flags=80 edge=up injected=False
+2026-11-25T13:17:19.8012329Z async mask=00

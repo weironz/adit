@@ -1,0 +1,16 @@
+2026-11-25T13:10:54.1875151Z Ctrl local-down
+2026-11-25T13:10:55.0477417Z Ctrl minimize-request
+2026-11-25T13:10:56.4554084Z Ctrl local-up
+2026-11-25T13:10:56.4589634Z Ctrl restore-request
+2026-11-25T13:11:56.1556502Z Shift local-down
+2026-11-25T13:11:57.0040807Z Shift minimize-request
+2026-11-25T13:11:58.4067492Z Shift local-up
+2026-11-25T13:11:58.4067492Z Shift restore-request
+2026-11-25T13:12:01.5539568Z Alt local-down
+2026-11-25T13:12:02.4392621Z Alt minimize-request
+2026-11-25T13:12:03.9474274Z Alt local-up
+2026-11-25T13:12:03.9541216Z Alt restore-request
+2026-11-25T13:17:18.9200163Z Shift local-down
+2026-11-25T13:17:19.7542394Z Shift minimize-request
+2026-11-25T13:17:21.1590001Z Shift local-up
+2026-11-25T13:17:21.3399020Z Shift restore-request

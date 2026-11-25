@@ -1,0 +1,158 @@
+2026-11-25T13:06:33.9748860Z ready session=1 remote=0 user=Administrator pid=9772
+2026-11-25T13:10:54.1708776Z key vk=A2 scan=1D flags=10 edge=down injected=True
+2026-11-25T13:10:54.1799183Z async mask=04
+2026-11-25T13:10:55.0757426Z foreground hwnd=20242 pid=7236 process=chrome
+2026-11-25T13:10:56.4554084Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:10:56.4589634Z async mask=00
+2026-11-25T13:10:56.4736223Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:10:56.4846135Z foreground hwnd=5017E pid=9132 process=Adit
+2026-11-25T13:11:56.1467844Z key vk=A0 scan=2A flags=10 edge=down injected=True
+2026-11-25T13:11:56.1518650Z async mask=01
+2026-11-25T13:11:57.0310246Z foreground hwnd=20242 pid=7236 process=chrome
+2026-11-25T13:11:58.4067492Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:11:58.4304925Z foreground hwnd=5017E pid=9132 process=Adit
+2026-11-25T13:11:58.4314926Z async mask=00
+2026-11-25T13:12:01.5486085Z key vk=A4 scan=38 flags=30 edge=down injected=True
+2026-11-25T13:12:01.5644900Z async mask=10
+2026-11-25T13:12:02.4808845Z foreground hwnd=20242 pid=7236 process=chrome
+2026-11-25T13:12:03.9474274Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:12:03.9713194Z foreground hwnd=5017E pid=9132 process=Adit
+2026-11-25T13:12:03.9732973Z async mask=00
+2026-11-25T13:14:16.0697914Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:16.0707868Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:16.0707868Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:16.0707868Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:16.0707868Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:16.0707868Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:14:16.0717984Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:16.0717984Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:14:16.0717984Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:16.0717984Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:14:16.0717984Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:16.0717984Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:14:16.3026282Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:14:16.3032662Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:16.3043081Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:14:16.3043081Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:16.3043081Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:14:16.3043081Z key vk=A2 scan=1D flags=10 edge=down injected=True
+2026-11-25T13:14:16.3043081Z key vk=A4 scan=38 flags=10 edge=down injected=True
+2026-11-25T13:14:16.3043081Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:16.3073562Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:51.7786978Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:51.7796879Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:51.7827173Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:51.7846970Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:51.7856879Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:51.7869920Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:14:51.7880136Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:51.7885557Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:14:51.7890742Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:51.7896232Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:14:51.7906123Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:51.7916068Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:14:52.0064257Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:52.0064257Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:52.0074140Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:52.0074140Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:52.0074140Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:14:52.0074140Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:14:52.0074140Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:14:52.0084204Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:14:52.0084204Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:14:52.0124156Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:14:52.0144148Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:52.0184089Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:14:52.0194084Z key vk=5B scan=5B flags=10 edge=down injected=True
+2026-11-25T13:14:52.0194084Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:14:52.0536033Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:14:54.5796468Z foreground hwnd=20178 pid=5004 process=SearchApp
+2026-11-25T13:15:19.9508942Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A4 scan=38 flags=30 edge=down injected=True
+2026-11-25T13:15:19.9539472Z key vk=09 scan=0F flags=30 edge=down injected=True
+2026-11-25T13:15:19.9539472Z key vk=09 scan=0F flags=B0 edge=up injected=True
+2026-11-25T13:15:19.9539472Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:15:19.9669939Z foreground hwnd=A00E2 pid=4360 process=explorer
+2026-11-25T13:15:30.5538448Z foreground hwnd=402F4 pid=4360 process=explorer
+2026-11-25T13:15:31.5948647Z foreground hwnd=10122 pid=4360 process=explorer
+2026-11-25T13:15:31.6104987Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:15:32.5742668Z foreground hwnd=5017E pid=9132 process=Adit
+2026-11-25T13:16:26.8503846Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:16:26.8503846Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:16:26.8503846Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:16:26.8534286Z key vk=1B scan=01 flags=10 edge=down injected=True
+2026-11-25T13:16:26.8534286Z key vk=1B scan=01 flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A4 scan=38 flags=30 edge=down injected=True
+2026-11-25T13:16:27.0574581Z key vk=09 scan=0F flags=30 edge=down injected=True
+2026-11-25T13:16:27.0574581Z key vk=09 scan=0F flags=B0 edge=up injected=True
+2026-11-25T13:16:27.0574581Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:16:27.0699996Z foreground hwnd=A00E2 pid=4360 process=explorer
+2026-11-25T13:16:27.0921965Z foreground hwnd=60318 pid=4360 process=explorer
+2026-11-25T13:16:27.1198246Z foreground hwnd=10122 pid=4360 process=explorer
+2026-11-25T13:16:27.1512752Z foreground hwnd=20242 pid=7236 process=chrome
+2026-11-25T13:17:02.9700744Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:17:02.9700744Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:17:02.9700744Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:17:02.9700744Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:17:02.9846104Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:17:02.9846104Z key vk=A1 scan=36 flags=91 edge=up injected=True
+2026-11-25T13:17:02.9846104Z key vk=A2 scan=1D flags=90 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=A3 scan=1D flags=91 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=A5 scan=38 flags=91 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=5B scan=5B flags=90 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=5C scan=5C flags=90 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=A4 scan=38 flags=30 edge=down injected=True
+2026-11-25T13:17:02.9866458Z key vk=09 scan=0F flags=30 edge=down injected=True
+2026-11-25T13:17:02.9866458Z key vk=09 scan=0F flags=B0 edge=up injected=True
+2026-11-25T13:17:02.9866458Z key vk=A4 scan=38 flags=90 edge=up injected=True
+2026-11-25T13:17:03.0042567Z foreground hwnd=A00E2 pid=4360 process=explorer
+2026-11-25T13:17:03.0423609Z foreground hwnd=C00F4 pid=4360 process=explorer
+2026-11-25T13:17:03.0535570Z foreground hwnd=10122 pid=4360 process=explorer
+2026-11-25T13:17:03.0701304Z foreground hwnd=0 pid=0 process=Idle
+2026-11-25T13:17:03.1035280Z foreground hwnd=5017E pid=9132 process=Adit
+2026-11-25T13:17:18.9107758Z key vk=A0 scan=2A flags=10 edge=down injected=True
+2026-11-25T13:17:18.9266766Z async mask=01
+2026-11-25T13:17:19.7937334Z foreground hwnd=20242 pid=7236 process=chrome
+2026-11-25T13:17:21.1590001Z key vk=A0 scan=2A flags=90 edge=up injected=True
+2026-11-25T13:17:21.1750843Z async mask=00
+2026-11-25T13:17:21.3608957Z foreground hwnd=5017E pid=9132 process=Adit
