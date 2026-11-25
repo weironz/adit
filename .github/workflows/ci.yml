@@ -137,7 +137,9 @@ jobs:
             echo user_allow_other > "$conf"
             chmod 644 "$conf"
             mount --bind "$conf" /etc/fuse.conf
-            runuser -u "$1" -- xvfb-run -a sh -ec '
+            # The subsequent VNC fixtures own :99 through :114. xvfb-run
+            # defaults to :99 and returns before Xvfb has released its lock.
+            runuser -u "$1" -- xvfb-run -a -n 180 sh -ec '
               export ADIT_CLIPBOARD_FIXTURE_DISPLAY="$DISPLAY"
               case_name=clipboard_files::linux::tests::native_worker_publishes_without_echo_and_stops_with_its_mount
               "$1" --ignored --list | grep -Fx "$case_name: test"
