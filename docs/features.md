@@ -612,7 +612,10 @@ observed; a failed target query keeps the echo guard active.
 **Remote → local** uses a COM `IDataObject` with delay-rendered `IStream`s on
 Windows, published by `OleSetClipboard` on a dedicated `OleInitialize`d STA.
 Linux publishes a private read-only FUSE mount over X11. Remote file bytes are
-read on demand from the captured RDP session.
+read on demand from the captured RDP session. The mount requires a working
+`/dev/fuse`, `fusermount3`, and the `user_allow_other` setting in
+`/etc/fuse.conf` for the root-and-owner automount. The mount directory is mode
+0700. Without that FUSE permission, the X11 file offer fails to publish.
 
 `IStream::Read` is synchronous and the bytes are three hops away, so it blocks — on
 *Explorer's* thread, never Adit's, which would surface as "Not Responding" and nothing

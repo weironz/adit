@@ -122,6 +122,28 @@ jobs:
 
       - name: Test
         run: cargo test --workspace --locked
+      - name: Read an RDP clipboard file through a private X11 selection and FUSE mount
+        if: runner.os == 'Linux'
+        run: |
+          binary=$(cargo test --locked -p adit-ui --lib --no-run --message-format=json |
+            jq -r 'select(.reason == "compiler-artifact" and .target.name == "adit_ui" and .profile.test) | .executable' |
+            tail -1)
+          test -x "$binary"
+          # The clipboard automount needs root-and-owner access. Limit the FUSE
+          # policy to this mount namespace and run the client as the runner user.
+          sudo unshare --mount --propagation private bash -eu -s -- "$(id -un)" "$binary" <<'PRIVATE_MOUNT'
+            conf=$(mktemp)
+            trap "rm -f -- $conf" EXIT
+            echo user_allow_other > "$conf"
+            chmod 644 "$conf"
+            mount --bind "$conf" /etc/fuse.conf
+            runuser -u "$1" -- xvfb-run -a sh -ec '
+              export ADIT_CLIPBOARD_FIXTURE_DISPLAY="$DISPLAY"
+              case_name=clipboard_files::linux::tests::native_worker_publishes_without_echo_and_stops_with_its_mount
+              "$1" --ignored --list | grep -Fx "$case_name: test"
+              timeout 60 "$1" --ignored --exact "$case_name"
+            ' sh "$2"
+          PRIVATE_MOUNT
 
       - name: VNC integration against x11vnc and TigerVNC
         if: runner.os == 'Linux'

@@ -11,7 +11,7 @@ packages=(build-essential pkg-config libxkbcommon-dev libxkbcommon-x11-0 libwayl
   libx11-dev libxcursor-dev libxrandr-dev libxi-dev libgtk-3-dev libdbus-1-dev
   xvfb mesa-vulkan-drivers libgl1-mesa-dri x11vnc tigervnc-standalone-server
   tigervnc-tools x11-xserver-utils x11-utils xdotool xauth python3-tk python3-yaml
-  iproute2 curl ca-certificates)
+  iproute2 curl ca-certificates fuse3 jq)
 missing=()
 for package in "${packages[@]}"; do
   [[ $(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true) == 'install ok installed' ]] || missing+=("$package")
