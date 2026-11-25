@@ -536,7 +536,9 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
 
             // Finder takes focus before requesting a promised file's contents.
             #[cfg(target_os = "macos")]
-            deliver_clipboard_file_chunks(app);
+            if native_windows::owns_selected_session(app) {
+                deliver_clipboard_file_chunks(app);
+            }
             if native_windows::owns_selected_session(app) && app.desktop_window_focused {
                 // RDP clipboard bridge: the helper is a windowless process, so only
                 // this one has a Windows clipboard. Remote copies land here...
