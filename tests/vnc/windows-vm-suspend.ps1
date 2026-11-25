@@ -27,7 +27,9 @@ try {
  if(-not $ExternalResumeProof -or -not (Test-Path -LiteralPath $ExternalResumeProof)){throw 'An independently verified external resume path is required'}
  $proof=Get-Content -LiteralPath $ExternalResumeProof -Raw|ConvertFrom-Json
  $uuid=(Get-CimInstance Win32_ComputerSystemProduct).UUID
- $age=([datetime]::UtcNow-[datetime]$proof.verified_utc).TotalMinutes
+ # Windows PowerShell converts an ISO timestamp ending in Z to local time when cast to DateTime.
+ $verifiedUtc=([datetimeoffset]$proof.verified_utc).UtcDateTime
+ $age=([datetime]::UtcNow-$verifiedUtc).TotalMinutes
  if($proof.vm_uuid -ne $uuid -or $proof.resume_verified -ne $true -or $age -lt 0 -or $age -gt 5){throw 'External resume evidence does not identify this VM or is stale'}
  $clock=[Diagnostics.Stopwatch]::StartNew()
  $record.suspend_return=[AditSuspend]::SetSuspendState($false,$false,$false)
