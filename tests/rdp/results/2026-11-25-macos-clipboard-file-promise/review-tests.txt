@@ -1,0 +1,1139 @@
+$ cargo test --locked --workspace
+   Compiling adit-session v0.1.78 (/Users/devin/repos/adit/crates/adit-session)
+   Compiling adit-ui v0.1.78 (/Users/devin/repos/adit/crates/adit-ui)
+   Compiling adit-app v0.1.78 (/Users/devin/repos/adit/crates/adit-app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 14.17s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (target/debug/deps/adit_app-ba2f8d2e5bfdfb42)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_domain-059f6d7811e70f89)
+
+running 19 tests
+test host_range::tests::host_strings_need_to_parse ... ok
+test host_range::tests::rfc1918_is_non_public ... ok
+test host_range::tests::the_edges_of_shared_address_space_are_public ... ok
+test host_range::tests::public_addresses_are_public ... ok
+test host_range::tests::shared_address_space_is_non_public ... ok
+test session_options::tests::input_recording_is_never_enabled_by_default ... ok
+test host_range::tests::the_edges_of_rfc1918_172_are_public ... ok
+test host_range::tests::loopback_and_link_local_are_non_public ... ok
+test host_range::tests::ipv6_non_public_ranges ... ok
+test proxy_command::tests::tokens_expand_once_and_keep_argument_boundaries ... ok
+test proxy_command::tests::unsafe_routes_fail_closed_and_disabled_routes_never_run ... ok
+test session_options::tests::appearance_defaults_and_validation_preserve_legacy_inheritance ... ok
+test session_options::tests::invalid_environment_and_unbounded_retry_are_rejected ... ok
+test session_options::tests::monitor_preferences_reject_bad_selection_overlap_and_disconnected_layouts ... ok
+test tests::appearance_resolves_accent_and_badge ... ok
+test session_options::tests::retry_backoff_saturates_at_the_configured_cap ... ok
+test session_options::tests::review97_corner_touching_layout_validates_and_round_trips ... ok
+test tests::jump_hop_parses_and_renders_specs ... ok
+test tests::jump_hop_parses_ipv6_literals ... ok
+
+test result: ok. 19 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_rdp_proto-4ec132c503ebf8cb)
+
+running 17 tests
+test file_safety::tests::untrusted_relative_paths_are_rejected_without_rewriting ... ok
+test desktop_protocol_tests::invalid_layouts_are_rejected_before_allocation ... ok
+test desktop_protocol_tests::issue97_corner_touching_monitors_are_valid ... ok
+test tests::file_epoch_requests_and_replies_preserve_the_full_generation ... ok
+test tests::an_empty_clipboard_offer_round_trips ... ok
+test tests::hello_has_a_stable_envelope_and_legacy_peers_reject_it ... ok
+test desktop_protocol_tests::tile_framing_cost_is_24_bytes_before_pixels ... ok
+test desktop_protocol_tests::issue97_legacy_file_reply_can_be_silently_misdecoded_without_handshake ... ok
+test tests::a_file_list_round_trips_with_its_directory_entries ... ok
+test tests::clipboard_text_survives_the_pipe_in_both_directions ... ok
+test desktop_protocol_tests::issue97_masked_tile_and_unsent_resize_round_trip ... ok
+test desktop_protocol_tests::redirect_epoch_and_layout_result_survive_framed_ipc ... ok
+test desktop_protocol_tests::signed_monitor_layout_and_pointer_bitmap_survive_ipc ... ok
+test tests::a_failed_chunk_stays_distinguishable_from_an_empty_one ... ok
+test tests::hello_rejects_malformed_or_unversioned_first_frames ... ok
+test tests::the_monitor_layout_survives_the_pipe ... ok
+test file_safety::tests::duplicate_conflicting_and_excessive_descriptors_fail_closed ... ok
+
+test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/debug_connect.rs (target/debug/deps/debug_connect-ff3080c17f5ff7b4)
+
+running 1 test
+test debug_connect_real_host ... ignored, manual: needs a real RDP host + creds in env
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/helper_ipc.rs (target/debug/deps/helper_ipc-e9c866f754bf2c6e)
+
+running 2 tests
+test helper_rejects_legacy_and_mismatched_apps_without_opening_a_connection ... ignored, needs the helper binary; see the module docs
+test helper_reports_error_on_unreachable_host ... ignored, needs the helper binary; see the module docs
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_session-f1b3f690721efa60)
+
+running 161 tests
+test clipboard_owner_tests::legacy_session_api_cannot_send_file_metadata_or_bytes ... ok
+test clipboard_owner_tests::temporary_window_projection_preserves_pending_offers_and_focus_retirement_keeps_file_streams ... ok
+test clipboard_owner_tests::queued_text_and_image_are_rejected_after_the_helper_is_replaced ... ok
+test clipboard_owner_tests::switching_active_desktop_keeps_both_rdp_connections_open ... ok
+test clipboard_owner_tests::windows_clipboard_change_revokes_all_helpers_without_closing_sessions ... ok
+test clipboard_owner_tests::disabling_clipboard_rejects_each_sessions_queued_and_late_reads ... ok
+test clipboard_owner_tests::enabled_clipboard_refuses_old_helper_reads_on_the_originating_session ... ok
+test clipboard_owner_tests::clipboard_stream_ids_and_payloads_cannot_cross_native_window_sessions ... ok
+test rdp_client::rdp_presentation_tests::disabling_then_enabling_clipboard_does_not_revive_an_old_payload ... ok
+test rdp_client::rdp_presentation_tests::exhausted_request_ids_do_not_wrap_or_send_a_new_layout ... ok
+test rdp_client::rdp_presentation_tests::a_closed_command_channel_never_leaves_a_layout_pending ... ok
+test rdp_client::rdp_presentation_tests::file_epoch_disabling_file_sharing_cannot_be_undone_by_a_queued_offer ... ok
+test rdp_client::rdp_presentation_tests::file_epoch_equal_numbers_in_a_reconnected_helper_do_not_share_identity ... ok
+test rdp_client::rdp_presentation_tests::file_epoch_requester_never_binds_historical_metadata_to_the_latest_offer ... ok
+test rdp_client::rdp_presentation_tests::file_epoch_text_and_close_revoke_callers_before_gui_poll ... ok
+test rdp_client::rdp_presentation_tests::a_locally_unsent_request_keeps_the_previous_layout_and_preference ... ok
+test rdp_client::rdp_presentation_tests::a_delayed_old_release_cannot_steal_a_new_connection_button ... ok
+test rdp_client::rdp_presentation_tests::file_reply_handler_delivers_on_reader_thread_without_queuing_payloads ... ok
+test rdp_client::rdp_presentation_tests::framed_clipboard_payloads_are_revoked_at_redirect_even_if_already_queued ... ok
+test rdp_client::rdp_presentation_tests::ipc_cursor_stays_separate_from_frame_pixels_and_validates_malformed_bitmap ... ok
+test rdp_client::rdp_presentation_tests::framed_file_requests_keep_their_connection_and_refuse_bytes_across_redirect ... ok
+test file_drop_tests::native_drop_panel_directory_round_trip_never_reuses_a_revision ... ok
+test file_drop_tests::native_drop_panel_refuses_before_ready_and_after_connection_closed ... ok
+test file_drop_tests::native_drop_panel_waits_for_both_navigation_replies_in_either_order ... ok
+test file_drop_tests::native_drop_panel_failure_retires_only_its_own_request_and_recovers ... ok
+test file_drop_tests::native_drop_panel_duplicate_paths_and_error_prefixes_do_not_clear_other_requests ... ok
+test jump_auth::tests::persisted_jump_ids_resolve_only_their_owners_and_preserve_auth_method ... ok
+test rdp_client::rdp_presentation_tests::issue97_corner_touching_monitors_recover_without_painting_empty_quadrants ... ok
+test rdp_client::rdp_presentation_tests::issue97_masked_tile_never_authorizes_unpainted_pixels ... ok
+test rdp_client::rdp_presentation_tests::ipc_handshake_bridge_preserves_desktop_and_remote_files_but_refuses_local_files ... ok
+test rdp_client::rdp_presentation_tests::issue97_masked_tile_crosses_framed_ipc_without_granting_gap_input ... ok
+test rdp_client::rdp_presentation_tests::issue97_nonrectangular_monitors_complete_without_painting_gaps ... ok
+test rdp_client::rdp_presentation_tests::issue97_same_size_layout_cannot_authorize_a_stale_tile ... ok
+test rdp_client::rdp_presentation_tests::issue97_same_size_old_graphics_reset_cannot_confirm_new_topology ... ok
+test rdp_client::rdp_presentation_tests::ipc_handshake_old_and_future_helpers_receive_no_connect_or_credentials ... ok
+test rdp_client::rdp_presentation_tests::issue97_uncertain_multimonitor_failure_never_releases_window_resize ... ok
+test rdp_client::rdp_presentation_tests::issue97_unexpected_multimonitor_observation_blocks_window_resize ... ok
+test rdp_client::rdp_presentation_tests::issue97_unsent_resize_timeout_restores_the_known_mapping ... ok
+test rdp_client::rdp_presentation_tests::issue97_unsolicited_same_size_single_monitor_revokes_old_multimonitor_mapping ... ok
+test rdp_client::rdp_presentation_tests::forwarding_a_new_resize_discards_an_older_blocked_resize ... ok
+test rdp_client::rdp_presentation_tests::manager_does_not_present_a_frame_before_connected_or_after_error ... ok
+test rdp_client::rdp_presentation_tests::missing_paint_after_resize_preserves_a_picture_and_keyboard ... ok
+test rdp_client::rdp_presentation_tests::monitor_choices_are_sent_and_persisted_without_replacing_other_session_options ... ok
+test rdp_client::rdp_presentation_tests::monitor_selection_waits_for_size_and_survives_resize_metadata ... ok
+test rdp_client::rdp_presentation_tests::ordinary_resize_retires_the_previously_presented_pointer_lease ... ok
+test rdp_client::rdp_presentation_tests::painted_coverage_uses_absolute_coordinates_for_a_cropped_monitor ... ok
+test rdp_client::rdp_presentation_tests::painted_pixel_coverage_handles_rows_and_word_boundaries ... ok
+test rdp_client::rdp_presentation_tests::a_late_result_cannot_win_a_race_with_the_deadline_worker ... ok
+test rdp_client::rdp_presentation_tests::partial_paint_timeout_keeps_keyboard_alive_and_full_paint_restores_pointer ... ok
+test rdp_client::rdp_presentation_tests::real_helper_and_production_bridge_exchange_a_synthetic_local_session ... ignored, build the separate RDP helper and set ADIT_RDP_IPC_TEST_HELPER
+test rdp_client::rdp_presentation_tests::pointer_events_follow_the_presented_layout_epoch_and_keyboard_still_works ... ok
+test rdp_client::rdp_presentation_tests::failed_session_layout_does_not_remove_saved_monitor_preferences ... ok
+test rdp_client::rdp_presentation_tests::redirect_never_combines_old_and_new_paint_coverage ... ok
+test rdp_client::rdp_presentation_tests::issue97_rejected_intermediate_resize_keeps_video_live_without_input ... ok
+test rdp_client::rdp_presentation_tests::redirect_retires_cursor_shape_and_position_before_new_updates ... ok
+test rdp_client::rdp_presentation_tests::issue97_coalesced_resize_back_to_original_recovers ... ok
+test rdp_client::rdp_presentation_tests::redirect_without_a_monitor_preference_reissues_only_the_latest_size ... ok
+test rdp_client::rdp_presentation_tests::issue97_server_coalesced_resize_recovers_after_same_size_reset ... ok
+test rdp_client::rdp_presentation_tests::resized_frame_waits_for_new_pixels_before_accepting_pointer_input ... ok
+test rdp_client::rdp_presentation_tests::layout_timeout_keeps_the_desktop_and_keyboard_but_pauses_uncertain_pointer ... ok
+test rdp_client::rdp_presentation_tests::review97_old_connection_graphics_reset_is_ignored ... ok
+test rdp_client::rdp_presentation_tests::review97_old_resize_rejection_cannot_release_newer_request ... ok
+test rdp_client::rdp_presentation_tests::review97_rejected_resize_must_not_revive_unpainted_pixels ... ok
+test rdp_client::rdp_presentation_tests::review97_retry_after_different_observed_topology_requires_new_confirmation ... ok
+test rdp_client::rdp_presentation_tests::review97_same_size_reset_must_not_renew_old_picture_input ... ok
+test rdp_client::rdp_presentation_tests::channel_close_after_send_keeps_resize_when_layout_is_uncertain ... ok
+test rdp_client::rdp_presentation_tests::second_monitor_crop_and_input_use_identical_signed_layout_offset ... ok
+test rdp_client::rdp_presentation_tests::skipped_redirect_epoch_keeps_keyboard_and_pauses_unknown_mapping ... ok
+test rdp_client::rdp_presentation_tests::issue97_observed_single_monitor_resize_still_recovers_input ... ok
+test rdp_client::rdp_presentation_tests::stale_keyboard_notice_crosses_framed_ipc_without_closing ... ok
+test rdp_client::rdp_presentation_tests::stationary_pointer_is_synchronized_before_first_click_on_newly_painted_pixels ... ok
+test rdp_client::rdp_presentation_tests::synthetic_helper_close_clears_pending_without_touching_a_new_session ... ok
+test rdp_client::rdp_presentation_tests::redirect_replays_latest_size_after_the_saved_single_monitor ... ok
+test rdp_client::rdp_presentation_tests::redirect_frame_before_layout_result_remains_visible_and_failure_recovers_input ... ok
+test rdp_client::rdp_presentation_tests::redirect_retries_saved_layout_without_replaying_an_older_resize ... ok
+test rdp_client::rdp_presentation_tests::superseded_request_makes_the_previous_layout_uncertain ... ok
+test rdp_client::rdp_presentation_tests::synthetic_helper_deadlines_cancel_and_keep_resize_for_uncertain_layouts ... ok
+test rdp_client::rdp_presentation_tests::unmatched_multimonitor_layout_still_suppresses_window_resize ... ok
+test sftp_shell::line_editor::tests::history_restores_draft_and_control_word_edits ... ok
+test sftp_shell::line_editor::tests::middle_editing_keeps_unicode_boundaries_and_suffix ... ok
+test sftp_shell::line_editor::tests::reverse_search_cycles_filters_accepts_without_submission_and_cancels ... ok
+test sftp_shell::tests::a_path_splits_into_the_part_to_keep_and_the_part_to_complete ... ok
+test sftp_shell::tests::human_size_is_readable ... ok
+test sftp_shell::tests::native_drop_identity_is_absent_before_ready_and_after_closed ... ok
+test sftp_shell::tests::native_drop_identity_recovers_after_failed_cd_with_a_new_revision ... ok
+test rdp_client::rdp_presentation_tests::redirect_epoch_rejects_old_responses_and_tags_new_requests_and_pointer ... ok
+test sftp_shell::tests::native_drop_identity_revokes_at_cd_start_and_never_revives_on_a_b_a ... ok
+test sftp_shell::tests::native_drop_initial_listing_and_initial_error_cannot_finish_a_later_cd ... ok
+test sftp_shell::tests::native_drop_initial_listing_is_not_an_ls_or_completion_reply ... ok
+test sftp_shell::tests::only_the_shared_prefix_is_safe_to_insert ... ok
+test sftp_shell::tests::native_drop_only_the_full_requested_error_prefix_ends_cd ... ok
+test sftp_shell::tests::resolve_remote_handles_absolute_relative_home_and_dotdot ... ok
+test sftp_shell::tests::split_args_keeps_quoted_paths_together ... ok
+test sftp_shell::tests::the_word_under_the_cursor_ends_at_the_last_unquoted_space ... ok
+test rdp_client::rdp_presentation_tests::issue97_framed_wrong_same_size_topology_never_grants_input ... ok
+test terminal_encoding::tests::utf8_path_keeps_raw_bytes_for_the_vt_parser ... ok
+test tests::a_multi_monitor_layout_asks_for_its_whole_bounding_box ... ok
+test terminal_encoding::tests::split_gbk_character_is_reassembled_without_changing_escape_sequences ... ok
+test tests::a_single_monitor_keeps_the_requested_size ... ok
+test tests::an_illegal_layout_is_refused ... ok
+test terminal_encoding::tests::unrepresentable_commit_is_rejected_atomically ... ok
+test tests::ansi_stripper_removes_escapes ... ok
+test tests::closed_event_does_not_hide_error_status ... ok
+test tests::duplicate_profile_creates_a_copy_after_the_original ... ok
+test tests::editing_profile_keeps_sort_order ... ok
+test tests::disconnected_host_key_challenge_is_not_offered_or_reported_trusted ... ok
+test tests::host_key_response_without_live_pending_challenge_is_rejected ... ok
+test tests::active_session_summary_tracks_active_tab ... ok
+test tests::log_file_name_sanitizes_title ... ok
+test tests::live_input_without_channel_echoes_locally ... ok
+test tests::manually_stopping_a_log_does_not_restart_it_on_the_next_tick ... ok
+test tests::mock_session_renders_colored_banner ... ok
+test tests::move_profile_reorders_within_group ... ok
+test tests::move_profile_to_group_allows_empty_target_group ... ok
+test tests::logging_uses_and_sanitizes_requested_filename ... ok
+test tests::old_host_key_response_cannot_answer_a_new_challenge ... ok
+test tests::new_sessions_adopt_the_default_terminal_size ... ok
+test tests::keyboard_logging_requires_the_sessions_explicit_opt_in ... ok
+test tests::profiles_support_ungrouped ... ok
+test tests::rdp_auth_failures_are_told_apart_from_other_errors ... ok
+test tests::reconnect_backoff_is_exponential_and_capped ... ok
+test tests::remote_path_join_and_parent ... ok
+test tests::rename_group_updates_profiles ... ok
+test tests::reorder_profile_across_groups_moves_into_target_group ... ok
+test tests::reorder_profile_drops_source_after_target ... ok
+test tests::rename_profile_updates_name_and_auto_titled_tabs ... ok
+test tests::session_logging_lifecycle_writes_file ... ok
+test tests::repeat_sessions_get_numbered_titles ... ok
+test tests::sort_profiles_by_host_persists_order_values ... ok
+test tests::tab_order_tracks_open_reorder_and_close ... ok
+test tests::session_options_are_persisted_and_open_sessions_keep_independent_snapshots ... ok
+test triggers::tests::controls_do_not_cause_actions_and_repeated_output_is_rate_limited ... ok
+test triggers::tests::retained_output_is_bounded_and_sessions_do_not_share_match_state ... ok
+test triggers::tests::invalid_patterns_and_empty_matches_are_rejected ... ok
+test triggers::tests::split_unicode_and_ansi_match_only_once ... ok
+test tunnels::tests::shell_recovery_does_not_duplicate_or_revive_saved_tunnels ... ok
+test tunnels::tests::tunnel_policy_follows_its_owner_snapshot_and_inherits_only_when_unset ... ok
+test tunnels::tests::tunnel_state_clears_old_clients_and_errors_on_recovery ... ok
+test tunnels::tests::tunnel_owner_close_and_disconnect_cancel_its_workers ... ok
+test vnc_client::tests::a_stable_authenticated_connection_renews_even_an_exhausted_retry_budget ... ok
+test vnc_client::tests::authentication_pause_invalidates_queued_clipboard_after_resume ... ok
+test vnc_client::tests::explicit_empty_or_non_certificate_ca_never_falls_back_to_public_roots ... ok
+test vnc_client::tests::failed_handshakes_and_short_connections_cannot_renew_the_retry_budget ... ok
+test rdp_client::rdp_presentation_tests::review97_framed_retry_waits_for_current_topology_and_fresh_pixels ... ok
+test rdp_client::rdp_presentation_tests::synthetic_helper_reports_capability_timeout_and_channel_closure ... ok
+test vnc_client::tests::motion_is_coalesced_without_crossing_buttons_or_keys ... ok
+test vnc_client::tests::non_motion_input_remains_bounded_and_never_silently_dropped ... ok
+test vnc_client::tests::jpeg_decode_requires_exact_rectangle_and_rejects_invalid_payloads ... ok
+test vnc_client::tests::vnc_reconnect_uses_profile_budget_delay_and_disabled_state ... ok
+test vnc_client::tests::vnc_snapshot_keeps_resize_epoch_and_pixels_coherent_across_aba ... ok
+test rdp_client::rdp_presentation_tests::selection_made_while_request_waits_wins_over_its_old_response ... ok
+test rdp_client::rdp_presentation_tests::repeated_resize_waits_for_the_latest_write_and_new_pixels ... ok
+test vnc_client::tests::stalled_vnc_handshake_still_times_out_after_gateway ... ok
+test rdp_client::rdp_presentation_tests::synthetic_unsent_failure_preserves_multimonitor_layout_and_latest_resize ... ok
+test vnc_client::tests::gateway_wait_is_not_charged_to_vnc_handshake_timeout ... ok
+test rdp_client::rdp_presentation_tests::synthetic_helper_failures_retry_and_ignore_old_results ... ok
+test rdp_client::rdp_presentation_tests::synthetic_helper_delayed_capabilities_and_monitor_switch_keep_input_coordinates ... ok
+test rdp_client::rdp_presentation_tests::ipc_handshake_timeout_or_close_discards_a_late_ack_before_connect ... ok
+test rdp_client::rdp_presentation_tests::ipc_handshake_blocked_connect_write_obeys_timeout_and_close ... ok
+test vnc_client::gateway_deadline_tests::stalled_rfb_after_gateway_still_times_out ... ok
+test vnc_client::gateway_deadline_tests::trust_wait_outlives_rfb_timeout ... ok
+
+test result: ok. 160 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 2.98s
+
+     Running tests/trigger_local.rs (target/debug/deps/trigger_local-f4b11f63665a673b)
+
+running 1 test
+test output_trigger_reaches_the_real_pty_input_path ... ignored, requires explicitly built ADIT_TRIGGER_FIXTURE_EXE and starts a local PTY
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vnc.rs (target/debug/deps/vnc-6fd4ff1f89818c04)
+
+running 17 tests
+test closing_a_tab_cancels_a_stalled_handshake_immediately ... ok
+test real_vnc_server_authenticates_and_paints ... ignored, needs a real VNC server; CI provides x11vnc and TigerVNC
+test an_oversized_remote_framebuffer_fails_without_allocating_it ... ok
+test a_mouse_burst_during_handshake_keeps_the_latest_position_and_click_order ... ok
+test vnc_profiles_need_no_ssh_username_and_preserve_their_identity ... ok
+test an_initially_readonly_session_never_emits_input_even_during_close ... ok
+test password_rejection_prompts_and_retries_the_same_tab ... ok
+test unsupported_security_is_visible_and_does_not_reprompt_for_a_password ... ok
+test zrle_compatibility_omits_tight_and_jpeg_and_paints_lossless_pixels ... ok
+test rfb_desktop_paints_copies_and_exchanges_input_and_clipboard ... ok
+test queued_remote_clipboard_does_not_survive_sharing_off_then_on ... ok
+test a_burst_of_small_rectangles_is_not_throttled_by_ui_ticks ... ok
+test readonly_releases_held_input_then_blocks_keyboard_mouse_and_clipboard_push ... ok
+test desktop_metadata_on_every_full_request_advances_to_incremental_pixels ... ok
+test metadata_only_initial_update_recovers_full_coverage_without_refresh_storm ... ok
+test dropped_transport_reconnects_the_same_tab_and_manual_close_stops_retry ... ok
+test fence_keeps_an_idle_desktop_alive_and_detects_a_controlled_half_open_peer ... ok
+
+test result: ok. 16 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 40.24s
+
+     Running tests/vnc_clipboard.rs (target/debug/deps/vnc_clipboard-a02da7c0f1184945)
+
+running 2 tests
+test real_extended_clipboard_exchanges_unicode_empty_text_and_direction_policies ... ignored, requires isolated x11vnc/TigerVNC/TurboVNC and tests/vnc/clipboard_target.py
+test real_legacy_clipboard_uses_latin1_and_reports_unsupported_text ... ignored, requires isolated X11 VNC fixture and clipboard_target.py
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vnc_cursor_real.rs (target/debug/deps/vnc_cursor_real-3e7756b401ee06cc)
+
+running 1 test
+test real_tigervnc_cursor_shapes_masks_hotspots_and_reconnect ... ignored, requires dedicated adit-vnc-cursor TigerVNC/X11 fixture on localhost:15912
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vnc_gateway.rs (target/debug/deps/vnc_gateway-ef78e0db57648115)
+
+running 2 tests
+test real_ssh_gateway_keyboard_clipboard_cancel_disconnect_and_no_direct_fallback ... ignored, needs isolated tests/vnc Docker fixture and python3-tk; owns :109 / 15909
+test ssh_direct_tcpip_reaches_an_unpublished_vnc_port_and_checks_both_identities ... ignored, needs isolated Docker fixture tests/vnc with host ports 12222 and 15901
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/vnc_resize.rs (target/debug/deps/vnc_resize-366b99f68f76e912)
+
+running 1 test
+test real_resize_is_opt_in_and_both_shared_clients_follow_changes ... ignored, requires loopback TigerVNC fixture tests/vnc/start-resize.sh on 15908
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests examples/vnc_probe.rs (target/debug/examples/vnc_probe-07a9508bd8e15ae1)
+
+running 4 tests
+test tests::actual_partial_frame_never_starts_or_satisfies_the_steady_window ... ok
+test tests::actual_drag_releases_on_wire_during_steady_window_without_another_down ... ok
+test tests::actual_first_frame_followed_by_transport_or_protocol_failure_cannot_pass ... ok
+test tests::actual_complete_frame_and_connected_full_steady_window_pass ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.76s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_ssh-8c9687120503bb3b)
+
+running 103 tests
+test auth_ui::tests::rejected_keys_do_not_downgrade_but_accepted_partial_auth_requests_mfa ... ok
+test auth_ui::tests::legacy_hops_never_inherit_target_secrets_and_missing_owners_fail_closed ... ok
+test auth_ui::tests::explicit_owners_never_receive_target_password_key_or_passphrase ... ok
+test auth_ui::tests::cancel_malformed_answer_and_disconnected_challenge_are_explicit ... ok
+test auth_ui::tests::two_hops_get_distinct_challenges_and_old_answers_cannot_cross_rounds ... ok
+test handshake_tests::gateway_disconnect_invalidates_pending_trust ... ok
+test handshake_tests::disconnected_prompt_listener_does_not_leave_handshake_paused ... ok
+test handshake_tests::gateway_transport_eof_invalidates_pending_trust ... ok
+test handshake_tests::vnc_gateway_rejects_untrusted_key_and_wrong_synthetic_password ... ok
+test proxy_command::tests::auxiliary_and_gateway_cancellation_close_stdio ... ignored, requires ADIT_PROXY_FIXTURE
+test proxy_command::tests::cancellation_timeout_and_failed_handshake_reap_processes ... ignored, requires ADIT_PROXY_FIXTURE
+test proxy_command::tests::disabled_and_conflicting_routes_do_not_spawn ... ok
+test proxy_command::tests::process_stream_preserves_binary_data_and_windows_argv ... ignored, requires ADIT_PROXY_FIXTURE
+test proxy_command::tests::real_ssh_handshake_and_shell_use_stdio_and_keep_shared_claim_alive ... ignored, requires ADIT_PROXY_FIXTURE
+test proxy_command::tests::trust_wait_eof_and_cancellation_reap_proxy_with_pending_pipe_read ... ignored, requires ADIT_PROXY_FIXTURE
+test handshake_tests::vnc_gateway_forwards_rfb_after_scoped_or_legacy_trust ... ok
+test sftp_transfer::tests::a_file_appearing_at_an_unapproved_target_is_never_truncated ... ok
+test sftp_transfer::tests::cancellation_after_read_never_writes_the_next_chunk_and_preserves_resume_prefix ... ok
+test sftp_transfer::tests::protocol::a_remote_target_appearing_after_preflight_blocks_exclusive_publication ... ok
+test sftp_transfer::tests::protocol::a_same_size_wrong_remote_file_cannot_be_reported_as_resumed ... ok
+test sftp_transfer::tests::protocol::a_remote_target_replaced_during_upload_is_restored_and_never_overwritten ... ok
+test sftp_transfer::tests::protocol::cancellation_during_upload_readback_never_publishes_an_unverified_file ... ok
+test sftp_transfer::tests::protocol::cancellation_after_backup_preserves_it_without_starting_recovery_or_publication ... ok
+test sftp_transfer::tests::protocol::publication_readback_corruption_is_an_error_with_sources_preserved ... ok
+test sftp_transfer::tests::protocol::overwriting_rename_server_cannot_clobber_a_target_created_after_backup ... ok
+test sftp_transfer::tests::queued_cancellation_does_not_even_create_the_destination ... ok
+test sftp_transfer::tests::resume_offsets_are_bounded_and_same_length_is_not_a_proof ... ok
+test sftp_transfer::tests::protocol::upload_resume_uses_verified_offset_and_preserves_original_partial_backup ... ok
+test sftp_transfer::tests::source_shortening_and_growth_are_errors_not_successful_transfers ... ok
+test handshake_tests::transport_eof_invalidates_target_trust_directly_and_through_jump ... ok
+test sftp_transfer::tests::resumed_bytes_progress_and_complete_content_are_verified ... ok
+test sftp_transfer::tests::symlink_targets_and_parent_directories_are_rejected_without_touching_the_referent ... ok
+test tests::cancelled_or_jump_authentication_never_prompts_for_target_password_or_auto_retries ... ok
+test tests::auto_accept_records_unknown_host_without_prompting ... ok
+test sftp_transfer::tests::target_replacement_is_detected_or_denied_without_destroying_the_replacement ... ok
+test tests::certificate_authority_marker_is_not_an_ordinary_trusted_host_key ... ok
+test tests::dropping_a_host_key_prompt_is_not_a_persistent_rejection ... ok
+test tests::fill_answers_splices_user_input_into_empty_slots ... ok
+test tests::host_key_rejections_are_terminal_security_failures_not_password_prompts ... ok
+test tests::changed_host_key_is_detected_and_replaceable ... ok
+test tests::interactive_unknown_host_aborts_on_reject ... ok
+test tests::is_safe_child_name_rejects_traversal ... ok
+test tests::join_remote_path_handles_root_and_nested ... ok
+test tests::kbd_round_auto_fills_password_but_prompts_for_a_code ... ok
+test tests::kbd_round_without_interactive_channel_requires_user_response ... ok
+test tests::interactive_unknown_host_prompts_then_records_on_accept ... ok
+test tests::known_host_plain_and_port_specs_match_exactly ... ok
+test tests::known_host_wildcard_patterns_match ... ok
+test tests::explicit_rejection_is_remembered_and_auto_accept_cannot_bypass_it ... ok
+test tests::known_host_hashed_entries_match_the_right_host ... ok
+test tests::parses_marker_known_host_lines ... ok
+test tests::non_default_port_uses_bracketed_host_spec ... ok
+test tests::putty_ppk_content_is_routed_to_the_ppk_parser ... ok
+test tests::lists_and_removes_trusted_host_keys ... ok
+test tests::session_handle_is_shareable_across_tasks ... ok
+test tests::should_autofill_password_distinguishes_password_from_mfa_and_new_password ... ok
+test tests::removing_one_marked_host_keeps_other_hosts_on_the_same_line ... ok
+test tests::socks5_negotiate_parses_domain_connect ... ok
+test tests::socks5_negotiate_parses_ipv4_connect ... ok
+test tests::telnet_answers_a_full_opening_negotiation ... ok
+test tests::telnet_answers_terminal_type_split_across_reads ... ok
+test tests::telnet_does_not_re_answer_a_settled_option ... ok
+test tests::telnet_escapes_outbound_input ... ok
+test tests::telnet_naws_escapes_a_255_dimension ... ok
+test tests::telnet_reports_a_resize_only_once_naws_is_agreed ... ok
+test tests::telnet_resumes_a_command_split_across_reads ... ok
+test tests::telnet_unescapes_doubled_iac_and_drops_bare_commands ... ok
+test tests::revocation_wins_over_a_trusted_duplicate_and_survives_pin_replacement ... ok
+test tests::trust_once_connects_without_recording ... ok
+test tests::unknown_host_recorded_then_trusted ... ok
+test trust_transport::tests::cancellation_before_decision_claim_prevents_the_write ... ok
+test tests::trust_once_on_a_changed_key_keeps_the_old_record ... ok
+test trust_transport::tests::decision_recheck_drains_128_channel_control_messages_before_eof ... ok
+test trust_transport::tests::decision_recheck_observes_channel_close_after_cooperative_budget_exhaustion ... ok
+test trust_transport::tests::eof_after_buffered_bytes_and_overflow_both_fail_closed ... ok
+test trust_transport::tests::excessive_synchronous_wakes_fail_closed_without_spinning ... ok
+test trust_transport::tests::monitor_preserves_transport_errors ... ok
+test trust_transport::tests::continuously_ready_small_reads_are_bounded ... ok
+test tests::telnet_session_negotiates_and_streams_over_a_real_socket ... ok
+test trust_transport::tests::synchronous_close_wake_is_observed_before_a_ready_decision ... ok
+test handshake_tests::standalone_sftp_and_tunnel_authenticate_with_direct_and_jump_trust ... ok
+test tunnel::reconnect::tests::budget_requires_a_listener_and_never_resets_for_a_flapping_server ... ok
+test tunnel::reconnect::tests::security_authentication_and_configuration_errors_never_redial ... ok
+test tunnel::reconnect::tests::a_long_backoff_is_cancelled_by_disconnect_drop_or_policy_disable ... ok
+test trust_transport::tests::ready_eof_wins_over_a_simultaneously_ready_trust_reply ... ok
+test trust_transport::tests::monitored_bytes_are_replayed_in_order_before_later_input ... ok
+test tunnel::tests::tunnel_duplicate_remote_bind_does_not_replace_the_existing_target ... ok
+test tunnel::tests::tunnel_disconnect_interrupts_a_stalled_handshake_and_never_retries ... ok
+test handshake_tests::trusted_direct_and_jump_sessions_outlive_the_shell_while_shared ... ok
+test tunnel::tests::tunnel_initial_connection_failure_is_terminal_even_with_a_retry_plan ... ok
+test handshake_tests::cancelling_trust_invalidates_old_prompt_and_cannot_answer_new_handshake ... ok
+test handshake_tests::dropping_handshake_cancels_detached_key_exchange ... ok
+test tunnel::tests::tunnel_local_and_socks_redial_and_carry_real_bytes_after_loss ... ok
+test tunnel::tests::tunnel_remote_forward_is_requested_again_after_loss ... ok
+test tunnel::tests::tunnel_close_or_policy_disable_wakes_a_real_hour_long_backoff ... ok
+test tunnel::tests::tunnel_auth_or_changed_key_on_redial_requires_explicit_retry ... ok
+test tunnel::tests::tunnel_shared_close_does_not_disconnect_owner_and_loss_redials_independently ... ok
+test tunnel::tests::tunnel_redial_budget_is_bounded_even_if_every_login_briefly_listens ... ok
+test handshake_tests::stalled_key_exchange_after_banner_times_out_directly_and_through_jump ... ok
+test handshake_tests::real_stalled_network_handshake_times_out_directly_and_through_jump ... ok
+test handshake_tests::gateway_keeps_only_the_remaining_budget_after_trust ... ok
+test handshake_tests::rejecting_target_key_after_wait_stops_direct_and_jump_connections ... ok
+test handshake_tests::direct_and_jump_target_trust_wait_does_not_consume_network_budget ... ok
+
+test result: ok. 98 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 2.80s
+
+     Running tests/integration.rs (target/debug/deps/integration-38977d990ac82883)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_storage-02f46077e2080d9d)
+
+running 36 tests
+test credentials::tests::a_different_key_cannot_open_the_entry ... ok
+test credentials::tests::a_tampered_entry_is_rejected_rather_than_returning_garbage ... ok
+test credentials::tests::same_secret_seals_differently_each_write ... ok
+test ssh_config::tests::first_value_wins_and_wildcards_and_negation_apply_without_creating_profiles ... ok
+test ssh_config::tests::an_explicit_chain_overrides_a_later_hops_separate_route ... ok
+test ssh_config::tests::jump_alias_uses_its_own_user_port_and_hostname ... ok
+test ssh_config::tests::proxy_none_and_first_proxy_directive_follow_openssh_precedence ... ok
+test ssh_config::tests::quoting_comments_windows_paths_and_escaped_hash_are_data ... ok
+test ssh_config::tests::nested_jump_routes_are_explicit_and_cannot_loop ... ok
+test tests::a_settings_file_from_before_the_rdp_controls_still_loads ... ok
+test tests::a_newer_profiles_format_is_refused_rather_than_downgraded ... ok
+test tests::a_newer_settings_format_is_refused ... ok
+test tests::config_pointer_parses_trimmed_nonempty_path ... ok
+test tests::config_dir_honors_env_override ... ok
+test tests::config_dir_has_config_detects_either_file ... ok
+test tests::loads_legacy_profiles_without_auth_fields ... ok
+test tests::copy_config_files_copies_and_overwrites_but_keeps_source ... ok
+test tests::missing_settings_start_light_and_saved_theme_choices_are_preserved ... ok
+test tests::parses_ssh_config_hosts ... ok
+test tests::parses_securecrt_sessions_with_folders ... ok
+test tests::saves_and_loads_empty_groups ... ok
+test tests::review97_corner_monitor_profile_persists_and_revalidates ... ok
+test tests::saves_and_loads_profiles ... ok
+test tests::the_published_settings_leave_the_sync_section_behind ... ok
+test tests::saves_and_loads_settings ... ok
+test tests::saving_is_atomic_and_leaves_no_temp_file ... ok
+test tests::vnc_policies_roundtrip_and_legacy_profiles_require_explicit_none_permission ... ok
+test credentials::tests::secrets_are_not_stored_in_plaintext ... ok
+test credentials::tests::failed_migration_does_not_change_legacy_store ... ok
+test credentials::tests::password_and_passphrase_do_not_collide ... ok
+test credentials::tests::round_trips_a_secret_through_the_file ... ok
+test credentials::tests::a_legacy_vault_caches_its_derived_key_instead_of_rederiving_it ... ok
+test credentials::tests::external_replacement_locks_cache_and_deletion_does_not_downgrade ... ok
+test credentials::tests::master_migration_verifies_backup_and_rejects_builtin_key ... ok
+test credentials::tests::encrypted_transfer_validates_before_replace_and_rejects_account_swap ... ok
+test credentials::tests::changing_and_disabling_master_require_current_password ... ok
+
+test result: ok. 36 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 10.46s
+
+     Running tests/catalog_transfer.rs (target/debug/deps/catalog_transfer-37d8da66c0e7158c)
+
+running 16 tests
+test regedit_utf16_and_utf8_bom_and_regedit4_are_supported ... ok
+test registry_names_are_case_insensitive_so_proxy_settings_cannot_be_bypassed ... ok
+test legacy_catalog_folder_alias_and_missing_defaults_are_compatible ... ok
+test unsupported_or_invalid_ssh_routes_never_become_direct_connections ... ok
+test malicious_or_corrupt_registry_input_is_rejected ... ok
+test putty_export_is_data_only_and_preserves_encoded_names_ports_and_key_paths ... ok
+test export_roundtrip_preserves_catalog_metadata_but_never_commands_or_credentials ... ok
+test catalog_transfer_preserves_public_policy_and_never_exports_environment_values ... ok
+test unknown_nested_route_or_credential_fields_are_not_silently_dropped ... ok
+test imported_catalog_persists_and_reloads_in_a_unique_fixture_directory ... ok
+test appearance_import_rejects_unknown_palette_fields_and_out_of_range_size ... ok
+test ssh_proxyjump_aliases_ipv6_ports_users_and_identity_are_resolved ... ok
+test jump_credential_owners_are_remapped_only_within_the_imported_bundle ... ok
+test untrusted_catalog_commands_are_removed_and_invalid_profiles_are_rejected ... ok
+test gateway_ids_are_remapped_and_missing_or_duplicate_ids_are_rejected ... ok
+test catalog_protocol_metadata_roundtrips_and_startup_commands_are_never_restored ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/proxy_command.rs (target/debug/deps/proxy_command-4a195f8c8a70b376)
+
+running 3 tests
+test old_and_ssh_imported_profiles_never_enable_external_processes ... ok
+test explicitly_configured_route_round_trips_in_local_profile_store_and_debug_redacts_it ... ok
+test portable_catalogs_refuse_configured_process_routes_without_disclosing_arguments ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_sync-9125678fc7514e68)
+
+running 60 tests
+test backend::device::tests::slow_down_widens_the_interval_by_five_seconds ... ok
+test backend::device::tests::a_form_encoded_body_is_a_failure_not_a_pending ... ok
+test backend::device::tests::an_empty_body_is_a_failure ... ok
+test backend::device::tests::a_missing_client_id_is_refused_before_any_request ... ok
+test backend::dropbox::tests::the_authorize_request_asks_for_offline_access ... ok
+test backend::device::tests::the_device_code_never_reaches_debug_output ... ok
+test backend::gdrive::tests::the_scope_is_limited_to_files_this_app_created ... ok
+test backend::gdrive::tests::the_authorize_request_asks_for_a_refresh_token_every_time ... ok
+test backend::device::tests::expired_token_is_terminal ... ok
+test backend::device::tests::the_four_documented_answers_stay_distinct ... ok
+test backend::device::tests::slow_down_keeps_waiting_and_is_distinct_from_pending ... ok
+test backend::device::tests::authorization_pending_keeps_waiting ... ok
+test backend::oauth::tests::a_missing_client_id_is_refused_before_opening_a_browser ... ok
+test backend::device::tests::access_denied_is_terminal ... ok
+test backend::device::tests::an_unrecognised_error_stops_and_keeps_the_servers_wording ... ok
+test backend::oauth::tests::base64url_is_unpadded_and_url_safe ... ok
+test backend::onedrive::tests::the_endpoint_admits_personal_accounts ... ok
+test backend::onedrive::tests::the_scope_asks_for_offline_access_and_only_the_app_folder ... ok
+test backend::device::tests::an_access_token_ends_the_poll ... ok
+test backend::oauth::tests::the_pkce_challenge_matches_the_rfc_vector ... ok
+test backend::s3::tests::the_empty_payload_hash_is_the_known_constant ... ok
+test backend::oauth::tests::verifiers_are_random_and_long_enough ... ok
+test backend::s3::tests::the_signing_key_matches_the_aws_example ... ok
+test backend::s3::tests::uri_encoding_follows_the_sigv4_rules ... ok
+test backend::s3::tests::timestamps_format_known_instants ... ok
+test backend::webdav::tests::base64_matches_the_rfc_vectors ... ok
+test backend::webdav::tests::credentials_encode_as_user_colon_password ... ok
+test backend::oauth::tests::query_values_round_trip_through_percent_coding ... ok
+test backend::oauth::tests::a_pinned_port_changes_how_the_redirect_uri_is_spelled ... ok
+test merge::tests::a_first_sync_unions_both_machines ... ok
+test merge::tests::a_double_edit_conflicts_and_keeps_the_loser ... ok
+test merge::tests::a_delete_propagates_but_never_over_an_edit ... ok
+test merge::tests::additions_from_both_sides_are_kept ... ok
+test merge::tests::group_icon_edits_and_removals_survive_sync_in_both_directions ... ok
+test merge::tests::groups_follow_the_same_ancestor_rules ... ok
+test merge::tests::local_ordering_survives_and_remote_extras_append ... ok
+test merge::tests::a_one_sided_edit_wins_without_a_conflict ... ok
+test merge::tests::the_same_edit_on_both_sides_is_not_a_conflict ... ok
+test orchestrate::tests::a_conditional_write_refusal_is_retried ... ok
+test orchestrate::tests::a_remote_addition_is_returned_for_saving ... ok
+test orchestrate::tests::an_endless_race_gives_up_without_touching_the_ancestor ... ok
+test orchestrate::tests::a_first_sync_uploads_and_records_the_ancestor ... ok
+test orchestrate::tests::a_sync_that_would_empty_a_populated_machine_is_refused ... ok
+test orchestrate::tests::an_unchanged_sync_uploads_nothing ... ok
+test orchestrate::tests::different_encrypted_vaults_never_overwrite_even_if_catalogues_match ... ok
+test orchestrate::tests::extras_travel_with_the_document ... ok
+test orchestrate::tests::credentials_only_backup_is_uploaded_and_disabled_sync_preserves_remote_vault ... ok
+test backend::s3::tests::an_unconfigured_bucket_is_caught_locally ... ok
+test backend::dropbox::tests::an_unconnected_account_is_caught_locally ... ok
+test backend::gdrive::tests::an_unconnected_account_is_caught_locally ... ok
+test backend::s3::tests::the_signed_path_follows_the_addressing_style ... ok
+test backend::gist::tests::a_missing_token_is_caught_locally ... ok
+test backend::onedrive::tests::an_unconnected_account_is_caught_locally ... ok
+test backend::gist::tests::no_gist_yet_reads_as_empty ... ok
+test backend::webdav::tests::an_empty_url_is_caught_locally ... ok
+test backend::gist::tests::a_configured_id_is_reported_for_persisting ... ok
+test orchestrate::tests::deleting_the_remote_document_does_not_delete_the_sessions ... ok
+test tests::a_document_round_trips ... ok
+test tests::a_newer_document_is_refused_rather_than_truncated ... ok
+test orchestrate::tests::racing_writer_does_not_lose_our_work ... ok
+
+test result: ok. 60 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/gist_live.rs (target/debug/deps/gist_live-9f3dc4bb34c3e650)
+
+running 1 test
+test a_real_gist_round_trips_through_two_machines ... ignored, needs GITHUB_TOKEN and creates a gist; see the module docs
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_terminal-9fb1f76c378b2c69)
+
+running 75 tests
+test selection::tests::selection_for_viewport_clips_to_the_visible_window ... ok
+test selection::tests::word_selection_returns_grid_columns ... ok
+test sixel::tests::rgb_repeat_and_overpaint ... ok
+test sixel::tests::rejects_expansion_and_number_overflow ... ok
+test selection::tests::column_selection_keeps_combining_and_wide_glyphs_whole ... ok
+test sixel::tests::transparent_background_and_hls ... ok
+test selection::tests::a_selection_that_stops_on_a_wrapped_row_does_not_drag_the_next_one_in ... ok
+test selection::tests::selection_to_text_resolves_absolute_rows_in_a_scrolled_snapshot ... ok
+test selection::tests::a_real_newline_still_separates_two_lines ... ok
+test selection::tests::copying_a_soft_wrapped_line_does_not_invent_a_newline ... ok
+test selection::tests::selection_extracts_text_across_rows ... ok
+test vt::compatibility_tests::c1_st_terminates_sixel_and_following_text_is_parsed_normally ... ok
+test vt::compatibility_tests::alternate_screen_restores_designated_character_sets ... ok
+test sixel::tests::macro_and_raster_pixel_aspect_are_bounded_and_applied ... ok
+test vt::compatibility_tests::changes_mark_combining_suffixes_and_graphics_only_when_published ... ok
+test vt::compatibility_tests::changes_track_scrolling_screen_swap_and_fragmented_controls ... ok
+test vt::compatibility_tests::changes_track_writes_cursors_and_silent_sequences ... ok
+test vt::compatibility_tests::combining_clusters_survive_reflow_and_wide_half_replacement ... ok
+test vt::compatibility_tests::combining_marks_are_streamed_with_their_base_and_pen ... ok
+test vt::compatibility_tests::custom_tabs_forward_backward_clear_and_reset ... ok
+test vt::compatibility_tests::dcs_status_reports_real_sgr_and_scroll_region_without_injection ... ok
+test vt::compatibility_tests::dec_designation_shift_save_restore_and_unicode_are_independent ... ok
+test vt::compatibility_tests::emoji_joiners_modifiers_and_variation_selectors_share_cells ... ok
+test vt::compatibility_tests::extended_graphemes_preserve_flags_and_indic_clusters_across_packets ... ok
+test vt::compatibility_tests::graphics_on_a_wide_spacer_survive_narrow_reflow ... ok
+test vt::compatibility_tests::margin_marks_do_not_wrap_and_overwrite_drops_the_whole_cluster ... ok
+test vt::compatibility_tests::one_column_terminal_never_loses_wide_clusters_or_panics ... ok
+test vt::compatibility_tests::graphics_capability_and_geometry_reports_follow_resize ... ok
+test vt::compatibility_tests::opaque_sixel_uses_the_terminal_background_and_clears_old_tiles ... ok
+test vt::compatibility_tests::replacement_and_erase_damage_only_the_affected_row ... ok
+test vt::compatibility_tests::sixel_display_mode_clips_without_moving_text_cursor_and_preserves_transparency ... ok
+test vt::compatibility_tests::sixel_scrolls_into_history_and_clear_overwrite_and_alt_screen_work ... ok
+test vt::compatibility_tests::sixel_tiles_reflow_with_cells_and_survive_alt_resize ... ok
+test vt::compatibility_tests::tab_stops_survive_resize_and_new_columns_get_defaults ... ok
+test vt::compatibility_tests::wide_insert_delete_and_erase_keep_grid_ownership_valid ... ok
+test vt::tests::a_selection_anchor_survives_a_narrowing_reflow ... ok
+test vt::tests::a_selection_anchor_survives_a_widening_reflow ... ok
+test vt::tests::a_snapshot_marks_the_row_a_soft_wrap_continues_from ... ok
+test vt::tests::a_soft_wrapped_row_keeps_the_blanks_it_wrapped_after ... ok
+test vt::tests::alternate_screen_round_trip ... ok
+test vt::tests::an_anchor_next_to_a_wide_glyph_survives_a_reflow ... ok
+test vt::tests::autowrap_to_next_line ... ok
+test vt::tests::carriage_return_overwrites ... ok
+test vt::tests::cursor_position_and_erase ... ok
+test vt::tests::cursor_position_report ... ok
+test vt::tests::italic_and_dim_reach_cells ... ok
+test vt::tests::narrowing_inside_the_alternate_screen_reflows_the_stashed_primary ... ok
+test vt::tests::narrowing_rewraps_instead_of_truncating ... ok
+test vt::tests::newline_advances_row ... ok
+test vt::tests::osc8_hyperlink_reaches_cells_and_closes ... ok
+test vt::tests::osc8_link_closed_by_full_reset ... ok
+test vt::tests::osc8_link_does_not_bleed_across_alt_screen ... ok
+test vt::tests::osc8_link_survives_sgr_reset ... ok
+test vt::compatibility_tests::sixel_reaches_render_snapshot_on_every_packet_boundary ... ok
+test vt::tests::osc8_uri_with_semicolon_and_id_params ... ok
+test vt::tests::a_scroll_position_survives_a_reflow_in_both_directions ... ok
+test vt::tests::osc_sets_title ... ok
+test vt::tests::reflow_does_not_join_across_a_real_newline ... ok
+test vt::tests::reflow_keeps_wide_glyphs_whole ... ok
+test vt::tests::reflow_leaves_the_alternate_screen_alone ... ok
+test vt::tests::resize_preserves_recent_rows ... ok
+test vt::tests::scroll_pushes_to_scrollback ... ok
+test vt::tests::sgr_sets_foreground_color ... ok
+test vt::compatibility_tests::retained_graphics_have_a_terminal_wide_budget ... ok
+test vt::tests::shrinking_inside_the_alternate_screen_keeps_the_stashed_primary_rows ... ok
+test vt::tests::shrinking_rows_carries_the_top_into_scrollback ... ok
+test vt::tests::shrinking_the_alternate_screen_does_not_touch_scrollback ... ok
+test vt::tests::tracks_bracketed_paste_mode ... ok
+test vt::tests::tracks_mouse_reporting_modes ... ok
+test vt::tests::truecolor_foreground ... ok
+test vt::tests::wide_characters_occupy_two_columns ... ok
+test vt::tests::widening_rejoins_a_soft_wrapped_line ... ok
+test vt::tests::writes_plain_text ... ok
+test vt::compatibility_tests::leading_marks_and_cluster_limit_are_bounded ... ok
+test vt::compatibility_tests::cancelled_unknown_and_oversized_dcs_never_publish ... ok
+
+test result: ok. 75 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_ui-9e173a49a730d307)
+
+running 316 tests
+test accessibility::tests::delayed_focus_for_retired_dialog_cannot_clear_new_default ... ok
+test accessibility::tests::protected_metadata_never_contains_the_original_value_or_length ... ok
+test accessibility::tests::editor_focus_ids_are_window_and_owner_scoped ... ok
+test accessibility::tests::remote_terminal_text_cannot_create_an_action_or_edit_route ... ok
+test appearance_editor::tests::translated_choice_labels_never_replace_persisted_font_keys_or_inheritance ... ok
+test appearance_editor::tests::custom_scheme_roundtrips_and_bad_colors_or_size_do_not_silently_fall_back ... ok
+test autolink::tests::a_server_declared_link_is_never_overwritten ... ok
+test autolink::tests::finds_plain_urls ... ok
+test autolink::tests::bare_url_remains_linked_under_the_cursor ... ok
+test autolink::tests::ignores_non_urls ... ok
+test autolink::tests::keeps_balanced_brackets_inside_the_path ... ok
+test autolink::tests::only_the_url_part_of_a_run_becomes_a_link ... ok
+test autolink::tests::split_pieces_keep_the_runs_styling ... ok
+test accessibility::tests::iced_event_batch_invalidates_already_dispatched_uia_focus ... ok
+test autolink::tests::stops_at_non_ascii_punctuation ... ok
+test autolink::tests::trims_sentence_punctuation ... ok
+test clipboard_files::bridge::tests::a_refusal_is_not_an_empty_chunk ... ok
+test clipboard_files::bridge::tests::a_response_that_arrives_before_the_wait_is_still_collected ... ok
+test clipboard_files::bridge::tests::a_late_response_to_a_collected_stream_is_dropped ... ok
+test clipboard_files::bridge::tests::exhausting_the_wire_id_space_never_wraps_to_an_old_request ... ok
+test clipboard_files::bridge::tests::the_in_flight_cap_is_enforced ... ok
+test clipboard_files::bridge::tests::waiting_on_an_unknown_stream_fails_at_once ... ok
+test clipboard_files::macos::tests::failures_never_publish_partial_files_or_overwrite_existing_destinations ... ok
+test clipboard_files::macos::tests::metadata_only_until_write_then_streams_directory_members_by_original_index ... ok
+test clipboard_files::macos::tests::unsafe_metadata_and_revoked_empty_files_are_refused_without_requests ... ok
+test clipboard_files::remote_file_echo::tests::suppresses_only_our_published_x11_text_including_delayed_reads ... ok
+test clipboard_files::remote_tree::tests::bounded_reads_preserve_binary_data_and_refusal_is_not_end_of_file ... ok
+test clipboard_files::remote_tree::tests::closing_one_offer_cannot_redirect_reads_to_another_session ... ok
+test clipboard_files::remote_tree::tests::metadata_builds_directories_without_fetching_file_content_and_preserves_wire_indices ... ok
+test clipboard_files::remote_tree::tests::untrusted_paths_conflicting_nodes_and_unbounded_trees_are_rejected ... ok
+test clipboard_files::tests::a_byte_range_is_returned_verbatim_and_clamps_at_the_end ... ok
+test clipboard_files::tests::a_directory_expands_to_a_flat_relative_list_in_creation_order ... ok
+test clipboard_files::tests::a_lone_file_is_offered_under_its_bare_name ... ok
+test clipboard_files::tests::a_missing_file_fails_rather_than_reading_as_empty ... ok
+test clipboard_files::tests::disabled_sharing_does_not_read_an_offered_file ... ok
+test clipboard_files::tests::windows_file_formats_override_an_available_text_representation ... ok
+test desktop_panes::rdp_cursor_tests::server_hotspot_tracks_scaled_surface_in_both_renderers ... ok
+test desktop_panes::rdp_cursor_tests::visible_cursor_uses_the_click_position_after_a_server_warp ... ok
+test desktop_panes::tests::button_leases_survive_pruning_and_each_up_consumes_only_its_owner ... ok
+test desktop_panes::tests::contain_maps_letterboxed_body_points_at_each_display_scale ... ok
+test desktop_panes::tests::degenerate_contain_and_nonfinite_wheels_are_rejected ... ok
+test desktop_panes::tests::equal_generations_from_two_sessions_keep_distinct_pixels_and_handles ... ok
+test desktop_panes::tests::invalid_frame_retires_old_pixels_and_a_new_frame_recovers ... ok
+test clipboard_files::bridge::tests::closing_releases_a_waiter_immediately ... ok
+test desktop_panes::tests::pane_keeps_the_epoch_of_the_pixels_it_sampled ... ok
+test desktop_panes::tests::portrait_frame_uses_side_bars_and_header_is_outside_the_body ... ok
+test desktop_panes::tests::pruning_and_returning_session_reset_its_generation_and_input ... ok
+test desktop_panes::tests::resizing_a_pane_keeps_its_local_pointer_for_the_next_click ... ok
+test desktop_panes::tests::shared_tile_edges_cover_fractional_pane_extent_without_overflow ... ok
+test dialog_focus::tests::a_newer_accepted_rejection_prevents_the_old_trust_write ... ok
+test dialog_focus::tests::abandoned_request_leaves_background_selection_but_blocks_trust ... ok
+test clipboard_files::bridge::tests::a_waiting_read_receives_the_bytes_it_was_sent ... ok
+test dialog_focus::tests::batched_tabs_and_activation_use_the_synchronously_selected_action ... ok
+test dialog_focus::tests::acceptance_and_selection_write_are_ordered_and_pending_cannot_activate_trust ... ok
+test dialog_focus::tests::legacy_global_focus_operation_cannot_clear_confirmation_default ... ok
+test dialog_focus::tests::menu_escape_is_captured_and_targets_only_the_visible_menu ... ok
+test dialog_focus::tests::mission_escape_arm_is_revoked_by_a_covering_modal ... ok
+test dialog_focus::tests::modal_captures_keyboard_and_all_ime_phases_before_the_background ... ok
+test dialog_focus::tests::dequeued_ticket_cannot_observe_an_uncommitted_generation ... ok
+test accessibility::tests::uia_confirmation_restores_only_same_session_and_fresh_input ... ok
+test dialog_focus::tests::rebuilt_buttons_keep_one_shared_selection_for_same_challenge ... ok
+test dialog_focus::tests::rejected_enqueue_cannot_discard_an_accepted_rejection ... ok
+test dialog_focus::tests::replacement_confirmation_resets_to_its_safe_default ... ok
+test display_accessibility::tests::enabled_action_labels_keep_normal_text_contrast_in_every_pointer_state ... ok
+test file_drop_listener::tests::a_large_file_batch_reaches_the_correct_window_in_order ... ok
+test accessibility::tests::another_windows_modal_defers_focus_restore_for_the_same_session ... ok
+test highlight::tests::a_hyperlink_keeps_its_own_colour ... ok
+test highlight::tests::a_comment_carries_its_line_through_a_url ... ok
+test accessibility::tests::old_connection_actions_cannot_operate_on_a_replacement_dialog ... ok
+test highlight::tests::a_match_straddling_colour_keeps_only_the_uncoloured_part ... ok
+test highlight::tests::a_line_scoped_rule_colours_the_whole_line ... ok
+test highlight::tests::a_prompt_is_not_a_comment ... ok
+test highlight::tests::an_override_only_moves_the_rule_it_names ... ok
+test highlight::tests::a_quoted_keyword_stays_a_string ... ok
+test accessibility::tests::opening_connection_dialog_preserves_the_previous_focus_before_uia ... ok
+test highlight::tests::columns_account_for_wide_glyphs ... ok
+test highlight::tests::matches_uncoloured_text ... ok
+test accessibility::tests::empty_ime_preedit_does_not_swallow_terminal_keys ... ok
+test highlight::tests::never_repaints_what_the_server_coloured ... ok
+test highlight::tests::the_default_set_stays_small ... ok
+test hosts::tests::debian_uses_the_embedded_official_vector ... ok
+test highlight::tests::ordinary_output_is_untouched ... ok
+test i18n::tests::contextual_lookup_has_both_fallbacks_and_chinese_always_wins_when_selected ... ok
+test accessibility::tests::menu_defers_confirmation_focus_restore_until_it_is_dismissed ... ok
+test highlight::tests::overlapping_matches_do_not_double_paint ... ok
+test highlight::tests::the_cursor_cell_is_left_alone ... ok
+test i18n::tests::every_catalog_has_unique_sources_and_preserves_all_template_values ... ok
+test accessibility::tests::repeated_hyperlink_confirmations_have_distinct_scopes ... ok
+test i18n::tests::template_values_are_inserted_once_even_when_they_contain_holes_or_chinese ... ok
+test input::vnc_input_tests::altgr_and_right_alt_keep_distinct_symbols ... ok
+test input::vnc_input_tests::composition_is_never_truncated_to_the_first_character ... ok
+test input::vnc_tests::native_extended_shift_alias_matches_window_tracking_and_wire_symbol ... ok
+test input::vnc_tests::vnc_uses_logical_text_and_distinguishes_right_modifiers ... ok
+test highlight::tests::diff_markers_are_not_comments ... ok
+test desktop_panes::tests::loopback_frames_sample_behind_terminal_and_click_error_retires_only_its_pane ... ok
+test keyboard_hook::vnc_chord::tests::both_wins_and_focus_lease_are_independent ... ok
+test keyboard_hook::vnc_chord::tests::caps_repeats_and_unicode_results_are_explicit ... ok
+test keyboard_hook::vnc_chord::tests::ctrl_escape_cannot_overtake_its_real_control_window_edge ... ok
+test keyboard_hook::vnc_chord::tests::ctrl_escape_does_not_adopt_preheld_keys_or_retired_capture_ownership ... ok
+test keyboard_hook::vnc_chord::tests::ctrl_escape_keeps_control_local_and_owns_escape_through_repeat_and_release ... ok
+test keyboard_hook::vnc_chord::tests::ctrl_escape_respects_local_preheld_win_and_preserves_ctrl_alt_enter_escape ... ok
+test keyboard_hook::vnc_chord::tests::member_release_and_repeat_stay_owned_after_win_release ... ok
+test keyboard_hook::vnc_chord::tests::only_a_clean_space_proves_no_pending_composition ... ok
+test keyboard_hook::vnc_chord::tests::owned_enter_up_survives_later_escape_modifiers_for_both_enter_keys ... ok
+test keyboard_hook::vnc_chord::tests::preheld_win_and_preheld_letters_are_not_adopted ... ok
+test keyboard_hook::vnc_chord::tests::shift_identity_matches_window_and_preheld_seed_despite_os_prefix ... ok
+test keyboard_hook::vnc_chord::tests::shift_membership_preserves_both_modifier_orders ... ok
+test keyboard_hook::vnc_chord::tests::win_ctrl_alt_enter_keeps_escape_modifiers_in_window_path ... ok
+test keyboard_hook::vnc_order::tests::altgr_auxiliary_control_is_not_a_window_modifier_fence ... ok
+test keyboard_hook::vnc_order::tests::altgr_fences_prevent_control_acknowledgement_across_their_order_barrier ... ok
+test keyboard_hook::vnc_order::tests::control_repair_requires_the_exact_prefix_in_the_current_queue ... ok
+test keyboard_hook::vnc_order::tests::held_control_across_altgr_has_no_invented_control_release ... ok
+test keyboard_hook::vnc_order::tests::missing_window_modifier_times_out_without_sleeping ... ok
+test keyboard_hook::vnc_order::tests::queued_win_cannot_overtake_shift_or_alt_window_release ... ok
+test keyboard_hook::vnc_order::tests::real_preheld_control_release_is_authorized_but_repeat_is_not ... ok
+test keyboard_hook::vnc_order::tests::right_alt_witness_repairs_either_control_without_overtaking_captured_keys ... ok
+test i18n::tests::sftp_recovery_notices_translate_diagnostics_but_keep_paths_opaque ... ok
+test i18n::tests::session_options_validation_and_catalog_warnings_cross_the_gui_boundary ... ok
+test i18n::tests::runtime_keeps_unknown_diagnostics_paths_and_chinese_default_intact ... ok
+test i18n::tests::runtime_translates_triggers_nested_errors_and_keeps_profile_names_opaque ... ok
+test dialog_focus::tests::queued_enter_cannot_commit_after_a_newer_focus_request ... ok
+test accessibility::tests::connection_cancel_restores_terminal_after_uia_registration_fails ... ok
+test hosts::tests::resource_search_disables_connect_for_a_hidden_selection ... ok
+test jump_auth_ui::tests::independent_profile_secrets_use_the_encrypted_store_and_debug_redacts_answers ... ok
+test jump_auth_ui::tests::zero_and_multiple_field_replies_are_scoped_and_cancel_sends_no_answers ... ok
+test missions::tests::captured_escape_stays_local_through_release_then_cancels_rename ... ok
+test missions::tests::duplicate_members_and_capacity_do_not_mutate_connections ... ok
+test missions::tests::closing_session_prunes_every_task_without_closing_other_members ... ok
+test missions::tests::empty_task_never_owns_input_for_a_background_connection ... ok
+test missions::tests::escape_repeats_after_menu_dismissal_do_not_cancel_the_rename ... ok
+test native_file_drop::tests::a_b_a_context_or_modal_round_trip_is_permanently_invalid_until_enter ... ok
+test native_file_drop::tests::crossing_from_a_to_b_and_back_never_rebinds_the_drag ... ok
+test native_file_drop::tests::first_legal_hit_binds_even_when_drag_enter_is_over_chrome ... ok
+test native_file_drop::tests::frame_regions_are_clipped_and_only_the_active_policy_is_published ... ok
+test native_file_drop::tests::geometry_dpi_window_handle_and_ambiguous_regions_fail_closed ... ok
+test native_file_drop::tests::leave_and_reentrant_enter_cannot_complete_an_old_lease ... ok
+test missions::tests::filtered_shift_selection_cannot_close_a_hidden_session ... ok
+test native_file_drop::tests::physical_client_pixels_are_scaled_once_at_96_120_144_and_192_dpi ... ok
+test native_file_drop::tests::queue_capacity_and_generation_exhaustion_do_not_accept_partial_batches ... ok
+test native_file_drop::tests::queue_keeps_a_large_batch_ordered_and_rejects_stale_or_closed_destinations ... ok
+test dialog_focus::tests::pointer_release_cannot_commit_after_a_newer_focus_request ... ok
+test missions::tests::fullscreen_and_local_tools_share_the_rendered_terminal_origin ... ok
+test missions::tests::global_navigation_dismisses_menus_and_blocked_keys_cannot_copy_profiles ... ok
+test missions::tests::fullscreen_return_reprojects_the_task_after_window_resize ... ok
+test missions::tests::hidden_mission_sidebar_can_cancel_the_preserved_rename_draft ... ok
+test missions::tests::local_task_controls_block_remote_input_and_cancel_restores_focus ... ok
+test missions::tests::modal_escape_does_not_cancel_background_mission_rename ... ok
+test missions::tests::local_tool_bars_resize_the_terminal_in_both_directions ... ok
+test missions::tests::twelve_sessions_survive_views_tasks_focus_hide_and_removal ... ok
+test native_windows::tests::accessibility_detached_link_generations_stay_with_their_window ... ok
+test native_windows::tests::another_windows_modal_rejects_queued_command_edits_and_sends ... ok
+test native_windows::tests::composition_and_keyboard_events_are_bound_to_window_session_and_focus_epoch ... ok
+test native_file_drop::tests::native_path_budgets_refuse_whole_batches_and_return_queue_capacity ... ok
+test native_windows::tests::confirmed_multiline_paste_still_reaches_its_original_session ... ok
+test native_windows::tests::covered_sftp_panel_does_not_queue_a_drop ... ok
+test native_windows::tests::delayed_clipboard_read_cannot_paste_into_a_new_active_session ... ok
+test native_windows::tests::detach_and_close_return_to_the_original_mission_without_copying_or_closing_connections ... ok
+test native_windows::tests::detached_uia_scroll_step_uses_current_window_position_after_mouse_scroll ... ok
+test native_windows::tests::each_window_has_its_own_font_geometry_dpi_scroll_and_primary_state_is_restored ... ok
+test native_windows::tests::file_drop_security_live_sftp_panel_and_shell_round_trip ... ignored, requires a disposable SSH fixture and ADIT_DROP_SFTP_PORT/USER/PASSWORD
+test native_windows::tests::disabling_clipboard_clears_parked_and_detached_file_state ... ok
+test native_windows::tests::explicitly_closed_connection_cannot_project_primarys_live_host_into_a_stale_window ... ok
+test native_windows::tests::file_drop_rejects_an_older_revision_of_the_same_panel_directory ... ok
+test native_windows::tests::file_drop_security_allows_a_fullscreen_shell_when_other_panes_are_hidden ... ok
+test native_windows::tests::file_drop_security_discards_a_batch_after_the_target_changes_and_returns ... ok
+test native_windows::tests::file_drop_security_discards_pending_files_after_reopening_the_panel ... ok
+test native_windows::tests::file_drop_security_does_not_borrow_another_windows_hover ... ok
+test native_windows::tests::file_drop_security_keeps_an_existing_overwrite_confirmation ... ok
+test native_windows::tests::file_drop_security_keeps_multiple_panel_files_together ... ok
+test native_windows::tests::file_drop_security_rejects_multiple_shell_files_without_partial_upload ... ok
+test native_windows::tests::file_drop_security_rejects_split_before_inspecting_any_path ... ok
+test accessibility::tests::uia_focus_restore_does_not_steal_another_session_window_or_local_field ... ok
+test native_windows::tests::file_drop_security_rejects_unmatched_and_cancelled_batches ... ok
+test native_windows::tests::file_offer_scope_moves_with_the_detached_clipboard_bridge ... ok
+test native_windows::tests::global_modal_can_be_cancelled_after_its_original_session_was_explicitly_closed ... ok
+test native_windows::tests::inherited_style_changes_refit_the_attached_grid_before_the_next_view ... ok
+test native_windows::tests::focus_transfer_releases_all_held_input_and_late_unfocus_does_not_revoke_new_owner ... ok
+test native_windows::tests::file_drop_security_large_panel_batch_through_the_real_widget_tree ... ok
+test native_windows::tests::merging_another_window_cannot_redirect_a_pending_multiline_paste ... ok
+test native_windows::tests::file_drop_security_rejects_a_split_containing_a_desktop ... ok
+test native_windows::tests::merging_preserves_clipboard_stream_metadata_and_tab_switch_restores_its_owner ... ok
+test native_windows::tests::modal_above_sftp_shell_blocks_window_file_drop ... ok
+test profile_options::tests::invalid_drafts_are_not_silently_saved_as_defaults ... ok
+test profiles::catalog::tests::a_skipped_duplicate_gateway_retargets_the_new_desktop_to_the_existing_profile ... ok
+test profiles::catalog::tests::import_merges_without_replacing_existing_profiles_or_group_icons ... ok
+test profiles::catalog::tests::imported_jump_owner_name_collision_never_inherits_existing_vault_credentials ... ok
+test profiles::catalog::tests::menu_has_all_catalog_transfer_entries ... ok
+test native_windows::tests::primary_resize_cannot_steal_the_only_detached_sessions_geometry ... ok
+test rdp_dragdrop::tests::disabling_channel_or_losing_connection_releases_pending_reads ... ok
+test rdp_dragdrop::tests::chunks_from_another_session_never_satisfy_a_drag_stream ... ok
+test rdp_dragdrop::tests::metadata_and_background_session_events_do_not_read_or_cancel_other_session ... ok
+test rdp_dragdrop::tests::only_unambiguous_regular_leaf_files_are_exportable ... ok
+test rdp_dragdrop::tests::revocation_in_a_batch_precedes_even_an_earlier_queued_chunk ... ok
+test rdp_dragdrop::tests::stream_ids_are_not_reused_across_clipboard_offers_or_drags ... ok
+test sftp::transfers::browser_identity_tests::reopening_the_same_profile_cannot_reuse_a_prepared_transfer ... ok
+test native_windows::tests::primary_window_cannot_drop_into_a_detached_sftp_shell ... ok
+test style::hyperlink_tests::existing_link_blue_is_preserved_when_it_is_readable ... ok
+test style::hyperlink_tests::links_are_readable_on_builtin_and_custom_backgrounds ... ok
+test terminal_appearance::tests::custom_colors_and_prod_background_do_not_mutate_ansi_rgb_or_other_panes ... ok
+test terminal_appearance::tests::different_fonts_and_sizes_keep_their_own_pixels_cells_scroll_and_colors ... ok
+test native_windows::tests::prompts_follow_session_owner_and_merge_reattributes_global_services ... ok
+test terminal_appearance::tests::independent_fields_inherit_live_global_settings ... ok
+test rdp_dragdrop::tests::file_epoch_old_reply_in_the_same_session_cannot_fill_a_new_bridge ... ok
+test native_windows::tests::rejected_drop_does_not_examine_directory_metadata ... ok
+test native_windows::tests::queued_surface_input_cannot_reuse_an_old_window_view_lease ... ok
+test native_windows::tests::sftp_panel_drop_is_accepted_only_by_its_owner_window ... ok
+test terminal_appearance::tests::sixel_render_rectangles_and_selection_cells_agree_for_both_pane_sizes ... ok
+test native_windows::tests::sftp_panel_pane_to_pane_drag_still_queues_both_directions ... ok
+test native_windows::tests::sftp_shell_still_receives_a_drop_in_its_window ... ok
+test native_windows::tests::visible_sftp_panel_does_not_send_drop_to_background_shell ... ok
+test native_windows::tests::uia_focus_restores_only_the_detached_windows_original_session ... ok
+test sftp::transfers::browser_identity_tests::stale_save_dialog_does_not_restore_an_overwrite_prompt ... ok
+test terminal_appearance::tests::font_resize_preserves_selected_text_and_rebuilds_search_after_reflow ... ok
+test terminal_appearance::tests::mission_focus_return_and_resource_navigation_preserve_each_profile_style ... ok
+test terminal_appearance::tests::split_render_snapshot_and_mouse_selection_use_the_same_owner_metrics ... ok
+test tests::a_drag_previews_the_arrangement_it_will_produce ... ok
+test tests::a_grid_drag_does_not_renumber_the_pinned_band ... ok
+test tests::a_grid_drag_moves_the_grid_and_not_the_tree ... ok
+test tests::a_pending_debounced_resize_keeps_the_picture_filling_the_pane ... ok
+test tests::a_modifier_click_does_not_arm_a_drag ... ok
+test native_windows::tests::file_drop_security_real_widget_tree_rejects_a_desktop_split_at_each_scale ... ok
+test tests::a_surface_with_one_fractional_axis_resamples ... ok
+test tests::a_pinned_drag_cannot_land_on_the_same_host_in_its_group_band ... ok
+test tests::a_pinned_drag_reorders_the_pinned_band_and_leaves_every_other_order_alone ... ok
+test tests::a_plain_click_selects_exactly_one_row ... ok
+test tests::a_press_that_never_drags_is_still_a_plain_click ... ok
+test tests::avatar_initials_takes_up_to_two_tokens ... ok
+test tests::a_drag_leaves_no_pending_click_behind ... ok
+test tests::a_double_click_on_a_host_card_connects_on_the_first_double_click ... ok
+test tests::a_refused_resize_settles_into_a_letterbox ... ok
+test tests::a_resize_in_flight_scales_the_stale_surface ... ok
+test tests::a_single_selection_still_offers_the_single_row_actions ... ok
+test tests::command_input_delta_tracks_typing_and_erasing ... ok
+test tests::a_tree_drag_does_not_disturb_the_grid_layout ... ok
+test tests::ctrl_alt_del_releases_its_modifiers_last ... ok
+test tests::a_tree_drag_moves_the_tree_and_not_the_grid ... ok
+test tests::an_honoured_or_unrequested_surface_renders_one_to_one ... ok
+test tests::ctrl_shift_c_is_terminal_copy_shortcut ... ok
+test tests::a_vnc_reconnect_clears_same_tab_pixels_cursor_and_held_key_cache ... ok
+test tests::encodes_alt_text_with_escape_prefix ... ok
+test tests::encodes_arrow_keys ... ok
+test tests::encodes_ctrl_c ... ok
+test tests::encodes_regular_text ... ok
+test tests::clearing_a_selection_leaves_the_focused_row ... ok
+test tests::folder_reorder_is_direction_aware ... ok
+test tests::format_epoch_utc_matches_known_timestamps ... ok
+test tests::closing_the_last_tab_falls_back_to_the_host_grid ... ok
+test tests::closing_sftp_discards_pending_overwrite_confirmation ... ok
+test tests::closing_the_last_tab_from_the_menu_falls_back_too ... ok
+test tests::hyperlink_parse_hex_color_is_panic_free ... ok
+test tests::installer_asset_is_picked_by_architecture ... ok
+test tests::installer_asset_ordering_favours_x64 ... ok
+test tests::a_sidebar_click_cannot_complete_a_grid_double_click ... ok
+test tests::mouse_events_encode_sgr_and_x10 ... ok
+test tests::collapsing_the_toolbar_closes_the_quality_menu ... ok
+test tests::only_safe_http_urls_are_openable ... ok
+test tests::pane_body_origin_places_each_cell_of_the_grid ... ok
+test tests::pane_grid_dims_tiles_by_count ... ok
+test tests::paste_normalizes_newlines_for_pty ... ok
+test tests::a_single_click_on_a_host_card_opens_the_details_panel_on_the_next_tick ... ok
+test tests::context_delete_removes_the_whole_selection ... ok
+test tests::ctrl_click_folds_in_the_already_focused_row ... ok
+test tests::ctrl_click_toggles_off_and_moves_the_focus_inside ... ok
+test tests::rdp_scancodes_match_pc_at_set1 ... ok
+test tests::render_log_name_substitutes_name_and_host ... ok
+test tests::filtering_drops_rows_it_hides_from_the_selection ... ok
+test tests::scroll_delta_converts_to_terminal_rows ... ok
+test tests::selection_range_handles_reversed_drag ... ok
+test tests::sftp_history_search_ctrl_r_reaches_the_terminal_byte_path ... ok
+test tests::fullscreen_over_a_desktop_subtracts_no_chrome ... ok
+test tests::shift_page_keys_are_local_terminal_scroll_shortcuts ... ok
+test tests::hidden_sidebar_still_offsets_the_terminal ... ok
+test tests::hovering_reveals_the_tab_without_resizing_what_senses_it ... ok
+test tests::pressing_inside_a_selection_keeps_it_for_the_drag ... ok
+test tests::monitor_rescale_is_handled_without_resizing_or_remote_keyboard_focus ... ok
+test tests::terminal_size_for_area_clamps_to_sane_bounds ... ok
+test tests::pressing_outside_the_selection_replaces_it_at_once ... ok
+test tests::proxy_form_rejects_bad_json_tokens_and_unsupported_protocols_without_exposing_arguments ... ok
+test tests::right_click_keeps_a_selection_it_lands_inside ... ok
+test tests::shift_click_replaces_the_range_so_it_can_shrink ... ok
+test tests::the_surface_sampler_follows_the_texture_magnification ... ok
+test tests::default_test_apps_never_use_the_users_stores ... ok
+test tests::sidebar_drop_zones_do_not_commit_a_grid_drag ... ok
+test tests::small_high_dpi_resize_updates_live_geometry_but_minimized_size_does_not ... ok
+test tests::stale_desktop_clipboard_reads_do_not_cross_tab_or_sharing_boundaries ... ok
+test tests::switching_tabs_clears_the_previous_vnc_resize_coverage_owner ... ok
+test tests::new_vnc_profile_saves_without_an_ssh_username_and_reopens_the_password_dialog ... ok
+test tests::version_compare_detects_newer_releases ... ok
+test tests::the_exact_one_to_one_desktop_keeps_the_nearest_sampler ... ok
+test tests::the_menu_delete_removes_every_selected_profile ... ok
+test tests::word_bounds_selects_whole_tokens ... ok
+test update_loop::rdp_release_tests::release_uses_the_press_lease_and_cannot_consume_a_newer_press ... ok
+test tests::the_rdp_clipboard_defaults_to_on ... ok
+test tests::proxy_form_saves_explicit_argv_and_rejects_conflicting_routes ... ok
+test update_loop::vnc_resize_tests::captured_partial_resize_keeps_the_last_complete_shield ... ok
+test update_loop::vnc_resize_tests::hidden_resize_epoch_rescans_and_initial_partial_is_not_a_shield ... ok
+test update_loop::vnc_resize_tests::incomplete_or_invalid_rgba_never_counts_as_full_coverage ... ok
+test tests::the_selection_is_reported_in_visible_order ... ok
+test update_loop::vnc_resize_tests::repeated_incomplete_sizes_do_not_replace_the_complete_shield ... ok
+test vault_ui::tests::diagnostic_debug_redacts_secret_messages ... ok
+test vnc_cursor::tests::nonzero_hotspot_stays_at_pointer_across_dpi_and_fit ... ok
+test update_loop::vnc_resize_tests::legal_maximum_surface_is_scanned_only_during_transition ... ok
+test tests::the_toolbar_draws_in_windowed_mode_too ... ok
+test tests::the_toolbar_opens_and_closes_only_on_request ... ok
+test workspace::error_tests::connected_rdp_error_replaces_cached_interactive_surface ... ignored, build -p adit-rdp-proto --example rdp_failure_ipc_peer and set ADIT_RDP_FAILURE_HELPER
+test tests::the_transition_fills_both_axes_independently ... ok
+test tests::toggling_fullscreen_leaves_the_toolbar_collapsed ... ok
+test tests::turning_the_rdp_clipboard_off_drops_what_was_already_captured ... ok
+test tests::vnc_auth_dialog_quarantines_clipboard_reads_until_a_fresh_baseline ... ok
+test tests::vnc_without_live_transport_does_not_adopt_keyboard_ownership ... ok
+test update_loop::sftp_drop_tests::rejected_rdp_profile_drop_never_queries_the_path ... ok
+test update_loop::sync_tests::held_sync_waits_for_a_decision_and_preserves_intervening_edits ... ok
+test vnc_input_wire_tests::ime_and_local_focus_changes_preserve_remote_input_ownership ... ok
+test vnc_input_wire_tests::unicode_compatibility_rejects_whole_commits_without_truncation_or_owned_keys ... ok
+test tests::the_vnc_tab_reconnect_menu_reopens_its_own_password_dialog ... ok
+test vnc_input_wire_tests::auth_dialog_does_not_send_its_clipboard_to_the_vnc_peer ... ok
+
+test result: ok. 314 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 4.42s
+
+     Running tests/vault_connections.rs (target/debug/deps/vault_connections-11b0b072b6d14a6a)
+
+running 1 test
+test protected_cold_start_credentials_authenticate_real_ssh_and_vnc ... ignored, needs isolated tests/vnc fixture SSH 12222 and TigerVNC 15903
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/adit_workbench-52a5b23780e4bcf0)
+
+running 2 tests
+test sftp::tests::sorting_keeps_directories_first_in_both_directions ... ok
+test sftp::tests::clicks_and_drag_batches_are_scoped_to_their_pane ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/vnc-fd9b20a89207d186)
+
+running 53 tests
+test client::auth::negotiation_tests::security_values_are_not_narrowed_and_unknown_offers_are_skipped ... ok
+test client::connection::output::tests::error_waits_for_capacity_and_preserves_event_order ... ok
+test client::connection::output::tests::io_errors_are_delivered_but_normal_eof_is_not ... ok
+test client::connection::output::tests::shutdown_cancels_error_delivery_even_when_capacity_returns ... ok
+test client::connection::output::tests::dropped_consumer_releases_pending_error_delivery ... ok
+test client::auth::tests::authentication_result_is_checked ... ok
+test client::auth::negotiation_tests::failure_reason_uses_its_length_and_rejects_oversized_payloads ... ok
+test client::connection::queue_tests::decoder_error_releases_network_before_output_drains ... ok
+test client::connection::resize_tests::cancellation_stalled_reply_and_concurrency_are_bounded ... ok
+test client::connection::resize_tests::multi_screen_layout_is_preserved_and_refused_without_dispatch ... ok
+test client::connection::resize_tests::last_rect_sentinel_bounds_actual_layouts_not_declared_count ... ok
+test client::connection::tests::decoder_exit_releases_an_idle_socket ... ok
+test client::connection::resize_tests::negotiation_identity_confirmation_and_refresh_bounds ... ok
+test client::connection::tests::full_bridge_resumes_without_unrelated_input_and_cancels_promptly ... ok
+test client::connection::resize_tests::unsupported_server_never_receives_resize_bytes ... ok
+test client::connection::resize_tests::mixed_framebuffer_updates_cannot_confirm_a_resize ... ok
+test client::connection::tests::oversized_initialization_is_rejected_before_payload_reads ... ok
+test client::connection::tests::full_input_queue_does_not_hold_the_client_lock_during_close ... ok
+test client::connection::tests::raw_is_implicit_and_resize_changes_decoder_bounds ... ok
+test client::connection::tests::shutdown_interrupts_a_blocked_socket_write ... ok
+test client::connection::tests::shutdown_interrupts_a_full_event_queue ... ok
+test client::connection::resize_tests::cursor_metadata_can_precede_or_follow_resize_confirmation ... ok
+test client::connection::tests::invalid_rectangles_and_lengths_are_rejected_before_payload_reads ... ok
+test clipboard::tests::legacy_uses_latin1_and_refuses_unrepresentable_or_unbounded_text ... ok
+test client::connection::resize_tests::malformed_layouts_fail_but_unknown_reason_is_not_a_client_ack ... ok
+test client::connection::resize_tests::rejected_and_forwarded_replies_do_not_apply_undefined_geometry ... ok
+test clipboard::tests::readonly_clears_ownership_and_never_answers_text_requests ... ok
+test clipboard::tight_vendor_tests::stale_vendor_offer_is_revoked_at_wire_write_and_receive_permission_is_independent ... ok
+test codec::tests::cursor_preserves_alpha_mask_and_accepts_empty_shapes ... ok
+test clipboard::tests::disabling_sharing_invalidates_previously_queued_clipboard_packets ... ok
+test codec::tests::cursor_rejects_size_and_hotspot_before_polling_the_payload ... ok
+test client::security::des::tests::test_encrypt_decrypt ... ok
+test clipboard::tests::receive_receipts_and_requests_keep_independent_permission_generations ... ok
+test clipboard::tests::extended_roundtrips_unicode_multiline_empty_and_has_no_cross_session_cache ... ok
+test codec::trle::tests::run_and_palette_indexes_are_bounded ... ok
+test codec::tests::tight_rejects_component_widths_its_filters_cannot_decode ... ok
+test codec::zrle::tests::malformed_palette_index_and_runs_return_errors ... ok
+test config::tests::x11vnc_nonzero_wire_flags_are_normalized ... ok
+test codec::zrle::tests::valid_modes_and_persistent_compression_preserve_pixels ... ok
+test config::validation_tests::true_color_masks_fit_without_overlap ... ok
+test tight::tests::none_requires_explicit_policy_and_tunnel_name_must_match ... ok
+test codec::tests::tight_gradient_filter_reconstructs_channels_and_rejects_png_control ... ok
+test tight::tests::nonzero_tunnel_list_chooses_only_exact_no_tunnel_then_authenticates ... ok
+test codec::tests::tight_rejects_invalid_palette_indexes_and_unsupported_formats ... ok
+test tight::tests::every_interaction_list_is_bounded_before_waiting_for_records ... ok
+test codec::tests::tight_fill_copy_and_palette_modes_preserve_pixels ... ok
+test codec::tests::cursor_accepts_the_budget_boundary_and_hidden_shapes ... ok
+test clipboard::tests::malformed_caps_actions_utf8_and_inflate_bombs_are_rejected ... ok
+test client::connection::resize_tests::queued_layouts_confirm_only_after_the_complete_batch_then_decode_pixels ... ok
+test clipboard::tight_vendor_tests::vendor_crlf_expansion_is_bounded_before_it_enters_the_queue ... ok
+test client::connection::resize_tests::invalid_or_excessive_queued_layouts_never_publish_or_confirm ... ok
+test client::resize::tests::full_queue_timeout_does_not_dispatch_or_poison_a_retry ... ok
+test client::connection::resize_tests::timeout_and_disconnect_never_report_dispatch_as_success ... ok
+
+test result: ok. 53 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.03s
+
+     Running tests/authentication.rs (target/debug/deps/authentication-be639c150ae052cb)
+
+running 1 test
+test failures_finish_without_waiting_for_server_eof ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/policy_flow.rs (target/debug/deps/policy_flow-94556d415de28bbc)
+
+running 3 tests
+test policy_prefers_password_and_does_not_silently_allow_none ... ok
+test vencrypt_validates_target_identity_and_expiry_before_credentials ... ok
+test complete_update_releases_exactly_one_outstanding_request ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+     Running tests/tight.rs (target/debug/deps/tight-f20695616d0610c8)
+
+running 6 tests
+test tight_authentication_rejects_none_spoofed_caps_and_oversized_lists_before_password ... ok
+test standard_vnc_and_tls_policy_never_enter_unoffered_tight ... ok
+test explicit_none_envelope_can_initialize_without_obtaining_a_password ... ok
+test tight_password_capabilities_and_bidirectional_utf8_preserve_permissions ... ok
+test tight_vendor_payloads_are_bounded_and_strict_utf8_without_nul ... ok
+test vendor_capability_identity_direction_and_legacy_switch_are_required ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+   Doc-tests adit_domain
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_rdp_proto
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_session
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_ssh
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_storage
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_sync
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_terminal
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_ui
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests adit_workbench
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests vnc
+
+running 1 test
+test crates/adit-vnc/src/client/connector.rs - client::connector::VncConnector<S,F>::new (line 193) - compile ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s

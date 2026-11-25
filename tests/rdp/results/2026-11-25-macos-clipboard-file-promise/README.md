@@ -39,6 +39,15 @@
 3. Mac 上用 `cargo build --release --manifest-path crates/adit-rdp/Cargo.toml` 生成 helper，用 `ADIT_RDP_HOST` 指定路径。在 Adit 建立到 `127.0.0.1:13389` 的 RDP 会话，不保存密码。在远端 Nautilus 选择 `remote-pattern.bin`，按 Ctrl+C，打开 Adit 工具栏的「远端文件拖出（只复制）」，用鼠标将文件拖入空的访达目录。
 4. 拖放后通过 SCP 取回 guest 原文件作为独立对照，运行 `shasum -a 256` 和 `cmp`。用 guest 的 `journalctl --user -u gnome-remote-desktop-headless` 比较拖放前后内容请求。helper 日志用 `RUST_LOG=warn,adit_rdp=debug,ironrdp_connector=info,ironrdp_cliprdr=debug` 采集。
 
+## PR #257 审查修正后复测
+
+用同一 Debian 13 / GNOME Remote Desktop 环境和未改动的生产 helper，运行修正后的 Adit（`02b34ba`）：
+
+- 第一次复制 `remote-pattern.bin` 并打开拖出窗口，再次复制时旧拖出窗口自动关闭。[再次复制前](review-before-recopy.png)、[再次复制后](review-after-recopy.png)。
+- 另选字节相同的 `replacement.bin`，在 Adit 主窗口复制并拖放到真实访达。拖放前 0 个内容请求，拖放后 17 个带剪贴板锁的内容请求；1,048,613 字节的 SHA-256 和 `cmp` 均一致。按 helper 日志中的第一个请求和最后一个响应计，17 个请求用时约 0.125 秒（上次同大小文件约 1.566 秒）；这不是大文件或广域网基准。[拖放前](review-before-drop.png)、[拖放后](review-finder-drop.png)、[helper 日志节选](review-helper-cliprdr.txt)、[服务端前置日志](review-grd-before-drop.txt)、[服务端拖放后日志](review-grd-after-drop.txt)、[字节验证](review-checksums.txt)。
+- 分离窗口的文件承诺状态迁移及 helper 回包绕过 UI 定时器由本次新增自动化测试覆盖。真实访达拖放在主窗口完成；分离窗口的标题栏并未新增拖出按钮。
+- [macOS 严格 Clippy](review-native.txt)、[Linux x64 GNU 交叉严格 Clippy](review-linux.txt)、[Windows x64 MSVC 交叉严格 Clippy](review-win.txt)、[macOS 工作区测试](review-tests.txt)（884 通过、0 失败、21 忽略）、[macOS GUI 构建](review-build.txt)。
+
 ## 复现访达验收
 
 从仓库根目录执行，`work` 应为新建的本地测试目录：
