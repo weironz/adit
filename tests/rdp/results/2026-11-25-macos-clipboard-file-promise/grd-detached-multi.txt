@@ -1,0 +1,25 @@
+PASS: both independent files from detached GNOME RDP session match SCP references
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  source/multi/alpha.bin
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  source/multi/beta.txt
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  multi/alpha.bin
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  multi/beta.txt
+Before drop: 0
+After drop:
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1
+2026-11-26T17:21:18+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 1

@@ -1,0 +1,25 @@
+Baseline worktree HEAD:
+2bf1c48bb95a4d8f4ac0ecb237a0c5b565c0d3a0
+
+Baseline builds:
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.45s
+    Finished `release` profile [optimized] target(s) in 6.04s
+
+Real GNOME RDP; copied beta.txt and opened the drag window while attached.
+Detached the sole RDP session, then dragged the existing promise into Finder.
+
+Helper log:
+2026-11-26T17:33:48.613363Z DEBUG ironrdp_cliprdr: Received FileGroupDescriptorW from remote file_count=1
+2026-11-26T17:34:38.040211Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=1 index=0 flags=FileContentsFlags(RANGE)
+2026-11-26T17:34:38.043914Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=1 file_index=0 is_error=false data_len=34
+
+Baseline bridge.rs:
+const CHUNK_TIMEOUT: Duration = Duration::from_secs(30);
+
+After drop: UTC timestamp and count of all destination entries, including hidden entries:
+2026-11-26T17:35:23Z
+       0
+
+No Finder error message or internal wait return value was captured.
+The fixed detached session delivered the same beta.txt in the two-file test
+(grd-detached-multi.txt).

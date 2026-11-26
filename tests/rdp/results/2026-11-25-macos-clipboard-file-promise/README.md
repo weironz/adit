@@ -24,7 +24,7 @@
 | Linux x64 (GNU) 交叉检查 | 通过：用 messense 的 GCC 15.2.0 完成 `adit-ui --all-targets` 检查及工作区全目标 Clippy（`-D warnings`）。检查未被 GUI 库阻塞；未在 Linux 上链接或运行。 | [检查](cross-linux-all-targets.txt)、[Clippy](cross-linux-clippy.txt)、[初次缺少交叉编译器的日志](cross-linux.txt) |
 | 真实 RDP：远端复制 → 访达拖放 | 已验证 GNOME Remote Desktop 48.1。正常 NLA 登录后，CLIPRDR 协商得到文件流和剪贴板锁。远端 Nautilus 复制文件后，服务端先发送文件描述，拖放前收到 0 个内容请求；拖放后收到 17 个带 `clipDataId=1` 的请求。访达中的 1,048,613 字节与远端源文件逐字节一致。 | [环境](real-environment.txt)、[远端文件](real-remote-copy.png)、[拖放前](real-before-drop.png)、[拖放后](real-finder-drop.png)、[服务端前置日志](real-grd-before-drop.txt)、[服务端拖放后日志](real-grd-after-drop.txt)、[helper CLIPRDR 日志节选](real-helper-cliprdr.txt)、[SHA-256 与 cmp](real-checksums.txt) |
 
-此项只包含远端到本地。共享 IPC 仍沿用已有的文件大小字段（缺省长度与显式零字节在该字段中不可区分），不修改协议或 #94 的跟踪范围。真实服务端只测试了 GNOME Remote Desktop 的单一普通文件，未测试真实 Windows/XRDP、远端目录或反向发送；目录和零字节文件由 IPC 夹具覆盖。真实服务端验收只测拖放，未重新测试访达 ⌘V。
+此项只包含远端到本地。共享 IPC 仍沿用已有的文件大小字段（缺省长度与显式零字节在该字段中不可区分），不修改协议或 #94 的跟踪范围。上表的首轮真实服务端验收只测了单个普通文件；分离会话、多文件、目录、零字节文件和 xrdp 的后续结果见下文。未测试真实服务端反向发送，也未重新测试访达 ⌘V。
 
 ## 复现真实 RDP 验收
 
@@ -48,7 +48,7 @@
 - 此轮真实 RDP → 访达拖放在主窗口完成。分离窗口的文件承诺状态迁移、helper 回包绕过 UI 定时器另有自动化测试；分离后的真实访达操作见下节。
 - [macOS 严格 Clippy](review-native.txt)、[Linux x64 GNU 交叉严格 Clippy](review-linux.txt)、[Windows x64 MSVC 交叉严格 Clippy](review-win.txt)、[macOS 工作区测试](review-tests.txt)（884 通过、0 失败、21 忽略）、[macOS GUI 构建](review-build.txt)。
 
-## PR #257：分离唯一会话后拖放及失败清理
+## PR #257：合成 IPC 下的分离会话与失败清理
 
 使用生产 macOS GUI、原生文件承诺和真实访达；远端内容由 [合成 helper IPC 夹具](fixture.rs) 提供，不经过 RDP 网络或真实 CLIPRDR 服务端。分离唯一的 RDP 会话后，从分离窗口工具栏的「远端文件拖出（只复制）」打开拖出窗口。
 
@@ -58,7 +58,7 @@
 | 未接受的拖放 | 先将同一批文件拖出并在不接收拖放的 Adit 主窗口区域松开鼠标（不是按 Esc）。访达目录仍为空，无范围请求；随后同一批文件成功拖入访达。[日志](detached-synthetic.txt)。 |
 | 读取失败后清理 | 第二个范围返回失败（第一个 65,536 字节范围已成功返回）；在真实访达中没有生成部分文件或目录。检查目标目录，包括隐藏条目，确认没有暂存残留。[截图](detached-read-failure.png)、[日志](detached-read-failure.txt)。 |
 
-复用下节的编译与配置步骤，启动 GUI 时加上 `ADIT_PROMISE_FIXTURE_SCENARIO=multi-file`（多文件及未接受的拖放）或 `ADIT_PROMISE_FIXTURE_SCENARIO=read-failure`（第二个范围失败）；每个场景使用空的访达目标目录。先点击「拆出窗口」，再使用分离窗口工具栏中的拖出操作。此次没有用未修复版本重现超时；真实服务端复测未重新建立可用的 GNOME 桌面，未验证真实 RDP 的分离窗口、多文件、目录或空文件。此 macOS 主机没有可用的 Windows Server；未在 Debian guest 上建立可用的 XRDP 服务端，故没有这两种服务端的结果。
+复用「复现访达验收」的编译与配置步骤，启动 GUI 时加上 `ADIT_PROMISE_FIXTURE_SCENARIO=multi-file`（多文件及未接受的拖放）或 `ADIT_PROMISE_FIXTURE_SCENARIO=read-failure`（第二个范围失败）；每个场景使用空的访达目标目录。先点击「拆出窗口」，再使用分离窗口工具栏中的拖出操作。
 
 ### 本机及交叉检查
 
@@ -68,6 +68,21 @@
 | macOS 主工作区测试 | [884 通过、0 失败、21 忽略](final-tests.txt) |
 | 独立 RDP helper 工作区 | 通过：[release 构建](final-helper-build.txt)、[全目标严格 Clippy](final-helper-clippy.txt)、[179 通过、0 失败、3 忽略](final-helper-tests.txt) |
 | Linux x64 GNU、Windows x64 MSVC 全目标严格 Clippy | 通过：[Linux](final-linux.txt)、[Windows（cargo-xwin）](final-win.txt)；未在目标系统上链接或运行 |
+
+## PR #257：真实服务端追加复测
+
+2026-11-26，在同一 Debian 13 arm64 虚拟机中复测。会话重启后 QEMU 进程不在；第一次重启时 virtio 网卡未绑定到用户网络后端，QEMU 报 `netdev net has no peer`，SSH 转发连接失败。给网卡加上 `netdev=net` 后 SSH 恢复，再启动测试用户的 GNOME Remote Desktop 48.1-4 / Mutter 48.7 headless 会话和 Nautilus 48.3；不依赖显示管理器本地登录。GNOME 复测使用 `41d0a54` 的 GUI 和未修改的生产 helper。每项使用独立的空访达目标目录，成功的文件与 Debian 原文件（或通过 SCP 另取的对照文件）比对。
+
+| 顺序及环境 | 结果与证据 |
+| --- | --- |
+| 1a. 真实 GNOME RDP，唯一会话分离后拖多文件 | 在分离会话的 Nautilus 中选择并复制 `alpha.bin` 和 `beta.txt`，一次拖入访达。两个文件均与 SCP 对照文件通过 `cmp` 和 SHA-256；拖放前服务端收到 0 个范围请求，拖放后 18 个。[拖放前](grd-detached-multi-before.png)、[拖放后](grd-detached-multi-after.png)、[校验及服务端请求](grd-detached-multi.txt)。 |
+| 1b. 真实 GNOME RDP，分离会话拖目录与空文件 | 访达生成 `dir-sample/inner/{nested.txt,empty.txt}`，两个文件的 SHA-256 均与 Debian 对照一致；空文件散列为 `e3b0c442…b855`，只有非空文件触发了范围请求。[截图](grd-detached-directory.png)、[目录树、两侧散列和范围日志](grd-detached-directory.txt)。 |
+| 1c. 真实 GNOME RDP，服务端读取失败 | 在远端复制 `vanish.bin` 后、拖放前把源权限改为 000。首个范围请求收到 `CB_RESPONSE_FAIL`，服务端记录 `failed to open file … 0x00000005`。访达目标无输出，包含隐藏暂存条目。日志记录源文件 SHA-256；失败后无目标文件可比对。[截图](grd-detached-failure.png)、[服务端与 helper 错误、目录清单](grd-detached-failure.txt)。 |
+| 2. 真实 GNOME RDP 和访达，Esc 取消后重试 | 把同一批两份文件拖到访达上方、保持鼠标按住，按 Esc，之后再松开。取消后目标（含隐藏条目）为空、范围请求为 0；不重新复制，重新拖入成功，18 个范围请求，两份文件均通过 `cmp` 和 SHA-256。[按住](grd-esc-held.png)、[取消后](grd-esc-cancelled.png)、[重试后](grd-esc-retry.png)、[清单和校验](grd-esc.txt)。 |
+| 3. 真实 xrdp → CLIPRDR，不支持拖入访达 | Debian 实际安装的是 xrdp `0.10.1-3.1+deb13u2` 和 xorgxrdp `1:0.10.2-1`。在 VM 临时设 `security_layer=tls` 并使用自签证书；本地单独编译仅将连接方式从 CredSSP 改为 TLS 的 helper。TLS 1.3 已连接，chansrv 已连接，复制后收到一个文件描述，但协商结果有 `STREAM_FILECLIP_ENABLED`，没有稳定的剪贴板锁。helper 记录 `remote file clipboard has no stable lock; refusing file offer`；出于现有安全策略没有发布承诺，因此无可拖项目、无字节可比对。为绕过黑屏，VM 中临时关闭 `drdynvc` 以禁用 GFX；画面失真但可以在 Nautilus 复制。证书、TLS 配置和本地 helper 改动均未提交。[远端复制](xrdp-remote-copy.png)、[访达空目标](xrdp-offer-refused.png)、[TLS、chansrv 与拒绝日志](xrdp-tls.txt)。 |
+| 4. 真实 GNOME RDP，修复前失败对照 | 用独立 worktree 的 `2bf1c48`（`e787778^`）构建、运行。该版本分离窗口没有拖出按钮，因此先在主窗口复制 `beta.txt` 并打开拖出窗口，再分离唯一会话，从已打开的拖出窗口拖入访达。helper 收到 34 字节成功范围回复，但超过源码中的 30 秒等待上限后目标仍为空。复现的是超时窗口内未生成文件；未捕获 Finder 的超时提示或内部等待返回值。修复后的同一源文件通过第 1a 项的字节校验。[截图](grd-prefix-detached.png)、[基线构建、回包和超时后目录检查](grd-prefix-detached.txt)。 |
+
+未测试 Windows Server：这台 macOS arm64 主机没有可用的 Windows Server 实例，也不提供硬件虚拟化；本轮没有另行搭建仿真客体。上述真实服务端复测未改产品源码，未重跑上一节的构建、Clippy 或测试。
 
 ## 复现访达验收
 
