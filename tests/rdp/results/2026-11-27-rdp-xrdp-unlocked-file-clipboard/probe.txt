@@ -1,8 +1,8 @@
 requested_size=1280x800
-connected=1280x800 elapsed_ms=174
+connected=1280x800 elapsed_ms=176
 pointer_event=1 client_pos=none bitmap 32x32 hotspot 15,16 bytes 4096
 pointer_event=2 client_pos=none bitmap 32x32 hotspot 0,0 bytes 4096
-first_tile_ms=366
+first_tile_ms=358
 files_offered generation=3 count=3 bytes=265537
 file_pulled index=0 bytes=200001
 file_pulled index=1 bytes=65536

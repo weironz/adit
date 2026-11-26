@@ -490,7 +490,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let file = &files[*index];
                     if bytes.len() as u64 >= file.size {
                         let flat = file.name.replace(['\\', '/'], "_");
-                        std::fs::write(dir.join(&flat), &bytes)?;
+                        write_new(&dir.join(&flat), bytes)?;
                         println!("file_pulled index={index} bytes={}", bytes.len());
                         bytes.clear();
                         *index += 1;
@@ -864,10 +864,21 @@ fn next_pull(
 ) -> io::Result<Option<usize>> {
     while let Some(file) = files.get(*index).filter(|f| f.is_dir || f.size == 0) {
         if !file.is_dir {
-            std::fs::write(dir.join(file.name.replace(['\\', '/'], "_")), [])?;
+            write_new(&dir.join(file.name.replace(['\\', '/'], "_")), &[])?;
             println!("file_pulled index={index} bytes=0");
         }
         *index += 1;
     }
     Ok((*index < files.len()).then_some(*index))
+}
+
+/// Remote names land in a local directory: refuse anything already there,
+/// symlinks included, rather than writing through it.
+fn write_new(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(bytes)
 }
