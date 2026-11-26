@@ -314,16 +314,138 @@ fn old_text_response_is_drained_before_new_file() {
     );
 }
 
-#[test]
-fn unlocked_file_offer_is_refused() {
+fn take_read(state: &SharedClipboard) -> BoundRead {
+    actions(state)
+        .into_iter()
+        .find_map(|action| match action {
+            ClipboardAction::RequestFileContents(read) => Some(read),
+            _ => None,
+        })
+        .expect("file read")
+}
+
+fn send_read(clip: &mut CliprdrClient, state: &SharedClipboard, read: &BoundRead) -> u32 {
+    let request = prepare_remote_read(state, read).unwrap();
+    assert_eq!(request.data_id, None);
+    let messages: Vec<SvcMessage> = clip.request_file_contents(request).unwrap().into();
+    match decode::<ClipboardPdu<'_>>(&messages[0].encode_unframed_pdu().unwrap()).unwrap() {
+        ClipboardPdu::FileContentsRequest(request) => {
+            assert!(request.data_id.is_none());
+            assert_eq!(request.flags, FileContentsFlags::RANGE);
+            request.requested_size
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+}
+
+fn respond(clip: &mut CliprdrClient, wire_id: u32, data: Vec<u8>) {
+    process(
+        clip,
+        &ClipboardPdu::FileContentsResponse(FileContentsResponse::new_data_response(wire_id, data)),
+    );
+}
+
+/// Reads the whole 8-byte unlocked offer in one final range answered with
+/// `answer`, optionally replacing the remote clipboard before it arrives.
+fn read_unlocked(answer: usize, replace: bool) -> (u64, Vec<ClipboardAction>) {
     let state = new_shared();
     let mut clip = channel_with_lock(Arc::clone(&state), false);
     assert_eq!(format_list(&mut clip, &[file_format()]), None);
     issue(&mut clip, &state);
     process(&mut clip, &file_response("unlocked.bin"));
-    assert!(!state.lock().unwrap().remote_files.active());
-    assert!(actions(&state).iter().any(|action| matches!(action,
-        ClipboardAction::InboundFiles { files, .. } if files.is_empty())));
+    let generation = offered(&state, "unlocked.bin");
+    request_file_contents(&state, generation, 42, 0, 0, 64);
+    let read = take_read(&state);
+    // The vendored cliprdr lets exactly this one-byte overrun through.
+    assert_eq!(send_read(&mut clip, &state, &read), 9);
+    if replace {
+        format_list(&mut clip, &[text_format()]);
+    }
+    respond(&mut clip, read.wire_id, vec![7; answer]);
+    (generation, actions(&state))
+}
+
+#[test]
+fn unlocked_file_offer_reads_without_a_lock_and_probes_its_end() {
+    let (generation, queued) = read_unlocked(8, false);
+    assert!(matches!(queued.as_slice(),
+        [ClipboardAction::InboundFileContents(Reply { generation: got, stream_id: 42, data: Some(data) })]
+            if *got == generation && data == &[7; 8]));
+}
+
+#[test]
+fn unlocked_file_whose_size_changed_fails_its_final_range() {
+    for answer in [7, 9] {
+        let (_, queued) = read_unlocked(answer, false);
+        assert!(matches!(
+            queued.as_slice(),
+            [ClipboardAction::InboundFileContents(Reply {
+                stream_id: 42,
+                data: None,
+                ..
+            })]
+        ));
+    }
+}
+
+#[test]
+fn unlocked_file_replaced_before_its_range_arrives_fails() {
+    let (_, queued) = read_unlocked(8, true);
+    assert!(queued.iter().any(|action| matches!(
+        action,
+        ClipboardAction::InboundFileContents(Reply {
+            stream_id: 42,
+            data: None,
+            ..
+        })
+    )));
+    assert!(!queued.iter().any(|action| matches!(
+        action,
+        ClipboardAction::InboundFileContents(Reply { data: Some(_), .. })
+    )));
+}
+
+#[test]
+fn vendored_cliprdr_allows_only_the_one_byte_unlocked_probe() {
+    let state = new_shared();
+    let mut clip = channel_with_lock(Arc::clone(&state), false);
+    format_list(&mut clip, &[file_format()]);
+    issue(&mut clip, &state);
+    process(&mut clip, &file_response("bounds.bin"));
+    offered(&state, "bounds.bin");
+    let request = |position, requested_size, data_id| FileContentsRequest {
+        stream_id: 1,
+        index: 0,
+        flags: FileContentsFlags::RANGE,
+        position,
+        requested_size,
+        data_id,
+    };
+    assert!(clip.request_file_contents(request(4, 5, None)).is_ok());
+    assert!(clip.request_file_contents(request(4, 6, None)).is_err());
+    assert!(clip.request_file_contents(request(4, 5, Some(1))).is_err());
+}
+
+#[test]
+fn unlocked_short_range_fails() {
+    let state = new_shared();
+    let mut clip = channel_with_lock(Arc::clone(&state), false);
+    format_list(&mut clip, &[file_format()]);
+    issue(&mut clip, &state);
+    process(&mut clip, &file_response("short.bin"));
+    let generation = offered(&state, "short.bin");
+    request_file_contents(&state, generation, 43, 0, 0, 5);
+    let read = take_read(&state);
+    assert_eq!(send_read(&mut clip, &state, &read), 5);
+    respond(&mut clip, read.wire_id, vec![7; 4]);
+    assert!(matches!(
+        actions(&state).as_slice(),
+        [ClipboardAction::InboundFileContents(Reply {
+            stream_id: 43,
+            data: None,
+            ..
+        })]
+    ));
 }
 
 #[test]

@@ -17,19 +17,25 @@ pub(crate) struct BoundRead {
     pub index: u32,
     pub offset: u64,
     pub length: u32,
-    pub data_id: u32,
+    /// Bytes asked of the peer: one more than `length` for an unlocked final
+    /// range, so a file that grew since the offer answers with too many.
+    pub wire_length: u32,
+    pub data_id: Option<u32>,
 }
 
 #[derive(Debug)]
 struct Snapshot {
     files: Vec<ClipFile>,
-    data_id: u32,
+    data_id: Option<u32>,
 }
 #[derive(Debug)]
 struct Pending {
     generation: u64,
     client_id: u32,
     length: u32,
+    /// Unlocked offers cannot pin the peer's file, so every range must come
+    /// back exactly as long as the advertised size implies.
+    exact: bool,
 }
 #[derive(Debug, Default)]
 pub(super) struct RemoteFiles {
@@ -74,8 +80,9 @@ impl RemoteFiles {
     }
 
     pub fn install(&mut self, files: Vec<ClipFile>, data_id: Option<u32>) -> bool {
-        // Without the peer's lock, a range request could read a replacement
-        // clipboard before its FormatList reached us. Refuse unpinned offers.
+        // Without the peer's lock (xrdp never sends one), a range could read a
+        // replacement clipboard before its FormatList reaches us. Such offers
+        // are accepted, but `respond` holds every range to the advertised size.
         if !self.expects_files
             || self.exhausted
             || files.is_empty()
@@ -85,9 +92,6 @@ impl RemoteFiles {
         {
             return false;
         }
-        let Some(data_id) = data_id else {
-            return false;
-        };
         self.snapshot = Some(Snapshot { files, data_id });
         true
     }
@@ -123,6 +127,13 @@ impl RemoteFiles {
         }
         let length =
             u64::from(length.min(adit_rdp_proto::FILE_CHUNK_BYTES)).min(file.size - offset) as u32;
+        let exact = snapshot.data_id.is_none();
+        let wire_length = if exact && offset + u64::from(length) == file.size {
+            length + 1
+        } else {
+            length
+        };
+        let data_id = snapshot.data_id;
         if self.pending.len() >= 256
             || self
                 .pending
@@ -131,21 +142,16 @@ impl RemoteFiles {
         {
             return Err(refuse(None));
         }
-        let Some(next) = self
-            .next_wire_id
-            .checked_add(1)
-            .filter(|n| *n <= u64::from(u32::MAX))
-        else {
+        let Some(wire_id) = self.next_wire_id() else {
             return Err(refuse(None));
         };
-        self.next_wire_id = next;
-        let wire_id = next as u32;
         self.pending.insert(
             wire_id,
             Pending {
                 generation,
                 client_id,
                 length,
+                exact,
             },
         );
         Ok(BoundRead {
@@ -154,8 +160,18 @@ impl RemoteFiles {
             index,
             offset,
             length,
-            data_id: snapshot.data_id,
+            wire_length,
+            data_id,
         })
+    }
+
+    fn next_wire_id(&mut self) -> Option<u32> {
+        let next = self
+            .next_wire_id
+            .checked_add(1)
+            .filter(|n| *n <= u64::from(u32::MAX))?;
+        self.next_wire_id = next;
+        Some(next as u32)
     }
 
     pub fn current(&self, read: &BoundRead) -> bool {
@@ -178,7 +194,11 @@ impl RemoteFiles {
             self.active()
                 && pending.generation == self.generation
                 && !bytes.is_empty()
-                && bytes.len() <= pending.length as usize
+                && if pending.exact {
+                    bytes.len() == pending.length as usize
+                } else {
+                    bytes.len() <= pending.length as usize
+                }
         });
         Some(Reply {
             generation: pending.generation,
@@ -212,7 +232,7 @@ mod tests {
         assert!(!state.current(&old));
         assert_eq!(state.request(a, 2, 0, 0, 3).unwrap_err().data, None);
         let new = state.request(b, 1, 0, 0, 3).unwrap();
-        assert_eq!(new.data_id, 20);
+        assert_eq!(new.data_id, Some(20));
         assert_ne!(old.wire_id, new.wire_id);
         assert!(state.respond(old.wire_id, Some(vec![99])).is_none());
         let reply = state.respond(new.wire_id, Some(vec![1, 2, 3])).unwrap();
@@ -222,7 +242,7 @@ mod tests {
         );
     }
     #[test]
-    fn text_channel_reset_and_unlocked_offers_revoke_all_reads() {
+    fn text_channel_reset_revokes_all_reads() {
         let mut state = RemoteFiles::default();
         let generation = offer(&mut state, 7);
         let read = state.request(generation, 5, 0, 0, 3).unwrap();
@@ -240,15 +260,42 @@ mod tests {
             }],
             Some(8)
         ));
+    }
+    #[test]
+    fn unlocked_offers_hold_ranges_to_the_advertised_size() {
+        let mut state = RemoteFiles::default();
         state.revoke(true);
-        assert!(!state.install(
+        assert!(state.install(
             vec![ClipFile {
-                name: "synthetic".into(),
+                name: "unlocked".into(),
                 size: 8,
                 is_dir: false
             }],
             None
         ));
+        let generation = state.generation();
+        let middle = state.request(generation, 1, 0, 0, 3).unwrap();
+        assert_eq!((middle.data_id, middle.wire_length), (None, 3));
+        let reply = state.respond(middle.wire_id, Some(vec![1, 2, 3])).unwrap();
+        assert_eq!(reply.data, Some(vec![1, 2, 3]));
+        let shrunk = state.request(generation, 2, 0, 3, 3).unwrap();
+        assert_eq!(
+            state
+                .respond(shrunk.wire_id, Some(vec![4, 5]))
+                .unwrap()
+                .data,
+            None
+        );
+        for (client, answer, expected) in [
+            (3, vec![4, 5, 6, 7, 8], Some(vec![4, 5, 6, 7, 8])),
+            (4, vec![4, 5, 6, 7, 8, 9], None),
+            (5, vec![4, 5, 6, 7], None),
+        ] {
+            let last = state.request(generation, client, 0, 3, 64).unwrap();
+            assert_eq!((last.length, last.wire_length), (5, 6));
+            let reply = state.respond(last.wire_id, Some(answer)).unwrap();
+            assert_eq!((reply.stream_id, reply.data), (client, expected));
+        }
     }
     #[test]
     fn forged_lengths_and_premature_eof_are_refusals() {

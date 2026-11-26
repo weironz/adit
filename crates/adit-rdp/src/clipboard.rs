@@ -588,8 +588,8 @@ fn prepare_remote_read(state: &SharedClipboard, read: &BoundRead) -> Option<File
         index: i32::try_from(read.index).ok()?,
         flags: FileContentsFlags::RANGE,
         position: read.offset,
-        requested_size: read.length,
-        data_id: Some(read.data_id),
+        requested_size: read.wire_length,
+        data_id: read.data_id,
     })
 }
 
@@ -810,8 +810,9 @@ impl CliprdrBackend for AditCliprdrBackend {
     /// Bytes (or a size) arriving for a local paste we started.
     fn on_file_contents_response(&mut self, response: FileContentsResponse<'_>) {
         let wire_id = response.stream_id();
+        // One over a chunk: an unlocked final range asks for an extra byte.
         let data = (!response.is_error()
-            && response.data().len() <= adit_rdp_proto::FILE_CHUNK_BYTES as usize)
+            && response.data().len() <= adit_rdp_proto::FILE_CHUNK_BYTES as usize + 1)
             .then(|| response.data().to_vec());
         self.with_state(|state| {
             if let Some(reply) = state.remote_files.respond(wire_id, data) {
@@ -844,7 +845,9 @@ impl CliprdrBackend for AditCliprdrBackend {
             return;
         }
         if !files.is_empty() && clip_data_id.is_none() {
-            tracing::warn!("remote file clipboard has no stable lock; refusing file offer");
+            tracing::info!(
+                "remote file clipboard has no lock; ranges are checked against advertised sizes"
+            );
         }
         let listed = validated_remote_files(files).unwrap_or_else(|reason| {
             tracing::warn!(reason, "remote file descriptors refused");

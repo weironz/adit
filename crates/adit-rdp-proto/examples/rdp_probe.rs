@@ -1,7 +1,9 @@
 //! Manual RDP fixture driver. Password and optional input commands arrive on stdin.
 //! argv: helper-path host username [timeout-seconds]. Never pass a password in argv/env.
 //! Commands: WAIT milliseconds, KEY hex-scancode extended(0|1) pressed(0|1), TEXT text, ASCII US-layout-text,
-//! CLICK x y, MOVE x y, CLIP text, SNAP absolute-png-path, ACK token, CLOSE.
+//! CLICK x y, MOVE x y, CLIP text, SNAP absolute-png-path, PULL absolute-dir, ACK token, CLOSE.
+//! PULL reads every file of the latest remote file offer through the helper's
+//! range requests, exactly as a paste would, and writes them flat into the dir.
 //! Optional --fixture-report enables clipboard
 //! transport and prints only reports starting with ADIT_VNC_TEST:, never arbitrary text.
 //! ACK confirms driver command processing, not remote execution. Verify the
@@ -283,6 +285,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // caused each one is only recoverable from the move that preceded it.
     let mut last_move: Option<(u16, u16)> = None;
     let mut dumped_shapes: Vec<(u16, u16, u16, u16)> = Vec::new();
+    let mut offer: Option<(u64, Vec<adit_rdp_proto::ClipFile>)> = None;
+    // (dir, file index, bytes so far) of the PULL in progress.
+    let mut pull: Option<(std::path::PathBuf, usize, Vec<u8>)> = None;
     let mut pause_until = Instant::now();
     let mut typed = std::collections::VecDeque::new();
     let mut next_character = Instant::now();
@@ -455,6 +460,58 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
+                Ok(HostMsg::ClipboardFiles { generation, files }) => {
+                    println!(
+                        "files_offered generation={generation} count={} bytes={}",
+                        files.len(),
+                        files.iter().map(|f| f.size).sum::<u64>()
+                    );
+                    offer = Some((generation, files));
+                }
+                Ok(HostMsg::FileContents {
+                    generation,
+                    stream_id,
+                    data,
+                }) => {
+                    let (Some((dir, index, bytes)), Some((offered, files))) =
+                        (pull.as_mut(), offer.as_ref())
+                    else {
+                        continue;
+                    };
+                    if generation != *offered || stream_id != *index as u32 {
+                        continue;
+                    }
+                    let Some(data) = data else {
+                        println!("file_read_failed index={index} offset={}", bytes.len());
+                        pull = None;
+                        continue;
+                    };
+                    bytes.extend_from_slice(&data);
+                    let file = &files[*index];
+                    if bytes.len() as u64 >= file.size {
+                        let flat = file.name.replace(['\\', '/'], "_");
+                        std::fs::write(dir.join(&flat), &bytes)?;
+                        println!("file_pulled index={index} bytes={}", bytes.len());
+                        bytes.clear();
+                        *index += 1;
+                    }
+                    match next_pull(dir, files, index)? {
+                        Some(i) => write_msg(
+                            &mut wire,
+                            &ClientMsg::RequestFileContents {
+                                generation,
+                                stream_id: i as u32,
+                                index: i as u32,
+                                offset: bytes.len() as u64,
+                                length: adit_rdp_proto::FILE_CHUNK_BYTES,
+                            },
+                        )?,
+                        None => {
+                            println!("pull_done");
+                            pull = None;
+                        }
+                    }
+                }
                 Ok(HostMsg::Error(error)) => return Err(error.into()),
                 Ok(HostMsg::Closed) => return Err("helper closed".into()),
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
@@ -566,6 +623,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             },
                         ),
                     )?;
+                } else if let Some(dir) = command.strip_prefix("PULL ") {
+                    let Some((generation, files)) = offer.as_ref() else {
+                        return Err("PULL before any remote file offer".into());
+                    };
+                    let mut index = 0;
+                    match next_pull(std::path::Path::new(dir), files, &mut index)? {
+                        Some(i) => {
+                            write_msg(
+                                &mut wire,
+                                &ClientMsg::RequestFileContents {
+                                    generation: *generation,
+                                    stream_id: i as u32,
+                                    index: i as u32,
+                                    offset: 0,
+                                    length: adit_rdp_proto::FILE_CHUNK_BYTES,
+                                },
+                            )?;
+                            pull = Some((dir.into(), i, Vec::new()));
+                        }
+                        None => println!("pull_done"),
+                    }
                 } else if let Some(token) = command.strip_prefix("ACK ") {
                     if token.is_empty()
                         || token.len() > 64
@@ -775,4 +853,21 @@ mod tests {
             );
         }
     }
+}
+
+/// The next file a PULL must read. Directories are skipped and empty files
+/// are written directly: neither has a byte range to ask for.
+fn next_pull(
+    dir: &std::path::Path,
+    files: &[adit_rdp_proto::ClipFile],
+    index: &mut usize,
+) -> io::Result<Option<usize>> {
+    while let Some(file) = files.get(*index).filter(|f| f.is_dir || f.size == 0) {
+        if !file.is_dir {
+            std::fs::write(dir.join(file.name.replace(['\\', '/'], "_")), [])?;
+            println!("file_pulled index={index} bytes=0");
+        }
+        *index += 1;
+    }
+    Ok((*index < files.len()).then_some(*index))
 }

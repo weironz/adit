@@ -1,0 +1,3 @@
+unchanged	PASS	pull_done
+grew	PASS	file_read_failed index=0 offset=131072
+shrank	PASS	file_read_failed index=0 offset=65536

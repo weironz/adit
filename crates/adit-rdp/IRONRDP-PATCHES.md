@@ -403,6 +403,32 @@ unpatched 0.8.0 with `left: 5, right: 16`.
 > wall as `ironrdp-connector`. Re-vendor when the root workspace's IronRDP
 > pins move up as a set.
 
+### Vendored + patched — `crates/adit-rdp/vendor/ironrdp-cliprdr/`
+
+Pulled in via `[patch.crates-io] ironrdp-cliprdr = { path = "vendor/ironrdp-cliprdr" }`.
+Crates.io `ironrdp-cliprdr` 0.7.0 has **one** marked patch in `src/lib.rs`
+(`grep -rn "ADIT PATCH" crates/adit-rdp/vendor/ironrdp-cliprdr/`).
+
+**One-byte probe past an unlocked file's end.** xrdp offers files without a
+clipboard lock (`clipDataId`), so every range is read from the live file, and
+it answers FILECONTENTS_SIZE from the list it built at copy time
+(`clipboard_send_file_size` returns the cached `cfi->size`). A file that grew
+after the copy therefore returned full-length ranges and a matching size, and
+arrived silently truncated to its old length. The only signal is to ask the
+final range for one byte more than the advertised size and fail if it comes
+back. 0.7.0 rejects any RANGE whose end passes the advertised size
+([MS-RDPECLIP 3.1.5.4.5](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-rdpeclip/)),
+so the patch admits exactly `position + requested_size == file_size + 1`, and
+only when the request carries no `clipDataId`. Locked offers and larger
+overruns are rejected as before.
+
+The helper side lives in `src/clipboard/remote_files.rs` (`BoundRead::wire_length`,
+`Pending::exact`). `vendored_cliprdr_allows_only_the_one_byte_unlocked_probe`
+in `src/clipboard/protocol_tests.rs` pins the patch's scope; against unpatched
+0.7.0 its first assertion fails with "RANGE request exceeds file bounds". The
+real-xrdp evidence is in
+`tests/rdp/results/2026-11-27-rdp-xrdp-unlocked-file-clipboard/`.
+
 ## Re-vendoring checklist
 
 When bumping IronRDP:

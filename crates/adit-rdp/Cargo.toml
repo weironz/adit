@@ -119,3 +119,7 @@ ironrdp-pdu = { path = "vendor/ironrdp-pdu" }
 # square pixels instead of 1 073 741 824 and rejecting every layout the server
 # would have accepted. The patch parses the full PDU.
 ironrdp-displaycontrol = { path = "vendor/ironrdp-displaycontrol" }
+# Vendored + patched ironrdp-cliprdr (crates.io 0.7.0 + one marked hunk): an
+# unlocked final file range may ask for one byte past the advertised size, so a
+# file that grew on a lockless server (xrdp) fails instead of truncating.
+ironrdp-cliprdr = { path = "vendor/ironrdp-cliprdr" }
