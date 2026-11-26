@@ -1243,6 +1243,16 @@ impl DesktopApplication {
         {
             bar = bar.push(native_action("Ctrl+Alt+Del", Message::RdpSendCtrlAltDel));
         }
+        #[cfg(target_os = "macos")]
+        if self.app.rdp_clipboard
+            && window.scene.as_ref().is_some_and(|s| s.desktop && !s.vnc)
+            && self.app.manager.rdp_file_drag_live(window.session)
+        {
+            bar = bar.push(native_action(
+                t("远端文件拖出（只复制）"),
+                Message::OpenRdpFileDrag,
+            ));
+        }
         if self
             .app
             .manager
