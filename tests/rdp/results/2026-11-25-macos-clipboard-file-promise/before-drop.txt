@@ -1,0 +1,2 @@
+HELLO: production GUI connected to synthetic helper; clipboard enabled
+OFFER: generation=1 folder=RDP-Promise-Fixture bytes=1048613

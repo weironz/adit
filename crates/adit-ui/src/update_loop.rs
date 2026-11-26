@@ -534,6 +534,11 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 app.rdp_surface_size_prev = None;
             }
 
+            // Finder takes focus before requesting a promised file's contents.
+            #[cfg(target_os = "macos")]
+            if native_windows::owns_selected_session(app) {
+                deliver_clipboard_file_chunks(app);
+            }
             if native_windows::owns_selected_session(app) && app.desktop_window_focused {
                 // RDP clipboard bridge: the helper is a windowless process, so only
                 // this one has a Windows clipboard. Remote copies land here...
@@ -562,8 +567,7 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                 // RDP tab is in front, and only every RDP_CLIPBOARD_POLL_TICKS: a read
                 // opens the system clipboard, and doing that ten times a second would
                 // fight every other app on the machine for it.
-                // Files the remote copied: publish them on the Windows clipboard.
-                // Delay-rendered, so this costs one data object and no wire traffic.
+                // Publish file metadata; the local receiver requests contents on demand.
                 if let Some(offer) = app.manager.take_rdp_clipboard_files() {
                     // A later local copy may have the same text as one sent
                     // before this remote file selection.
@@ -596,22 +600,8 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
                         app.notice = notice;
                     }
                 }
-                // Chunks answering a local paste. Handed straight to the COM stream
-                // blocked on them over on Explorer's thread.
-                for chunk in app.manager.take_rdp_file_chunks() {
-                    if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
-                        app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
-                    }
-                }
-                // With no live RDP session there is nothing that can answer a paste,
-                // so release any Explorer thread waiting on one instead of leaving it
-                // to time out — file by file, thirty seconds each.
-                if app
-                    .rdp_file_scope
-                    .is_some_and(|(session, _)| !app.manager.rdp_file_drag_live(session))
-                {
-                    app.rdp_chunk_bridge.close();
-                }
+                #[cfg(not(target_os = "macos"))]
+                deliver_clipboard_file_chunks(app);
 
                 // Defend against requests already queued by an older helper.
                 for read in app.manager.take_rdp_file_reads() {
@@ -3134,6 +3124,26 @@ fn update_message(app: &mut AditApp, message: Message) -> Task<Message> {
         Message::OpenRdpFileDrag => {
             if app.rdp_clipboard && app.manager.active_rdp_live() && !app.manager.active_is_vnc() {
                 if let Some(session) = app.manager.active_session() {
+                    #[cfg(target_os = "macos")]
+                    {
+                        if app.rdp_file_scope.is_some_and(|(owner, _)| session == owner) {
+                            let title = app
+                                .manager
+                                .active_session_summary()
+                                .map(|summary| summary.title.clone())
+                                .unwrap_or_default();
+                            if let Err(error) = clipboard_files::macos::open_drag_window(
+                                &app.rdp_chunk_bridge,
+                                &title,
+                            ) {
+                                app.notice = error.into();
+                            }
+                        } else {
+                            app.notice = t("请先在该远端会话中选择并复制文件，再打开文件拖出窗口").into();
+                        }
+                        return Task::none();
+                    }
+                    #[cfg(not(target_os = "macos"))]
                     return window::latest()
                         .and_then(move |id| rdp_dragdrop::owner_task(id, session));
                 }
@@ -4085,6 +4095,20 @@ const HOST_DOUBLE_CLICK_WINDOW: Duration = Duration::from_millis(600);
 /// `pressed_at` is the moment of the press, stamped by the caller before it
 /// does anything slow. See the call site for why that matters.
 ///
+fn deliver_clipboard_file_chunks(app: &mut AditApp) {
+    for chunk in app.manager.take_rdp_file_chunks() {
+        if app.rdp_file_scope == Some((chunk.session, chunk.generation)) {
+            app.rdp_chunk_bridge.deliver(chunk.stream_id, chunk.data);
+        }
+    }
+    if app.rdp_file_scope.is_some_and(|(session, _)| {
+        !app.manager.rdp_file_drag_live(session)
+            || (cfg!(target_os = "macos") && app.manager.active_session() != Some(session))
+    }) {
+        app.rdp_chunk_bridge.close();
+    }
+}
+
 /// Returns whether this press completed a double-click. A double-click connects
 /// and never opens the details panel, so the pending click is cleared rather
 /// than left for the tick to settle.

@@ -1243,6 +1243,16 @@ impl DesktopApplication {
         {
             bar = bar.push(native_action("Ctrl+Alt+Del", Message::RdpSendCtrlAltDel));
         }
+        #[cfg(target_os = "macos")]
+        if self.app.rdp_clipboard
+            && window.scene.as_ref().is_some_and(|s| s.desktop && !s.vnc)
+            && self.app.manager.rdp_file_drag_live(window.session)
+        {
+            bar = bar.push(native_action(
+                t("远端文件拖出（只复制）"),
+                Message::OpenRdpFileDrag,
+            ));
+        }
         if self
             .app
             .manager
@@ -2673,6 +2683,26 @@ mod tests {
         );
         assert!(!text(&desktop, ids[0]).contains("stale_marker"));
         assert!(!desktop.app.paste_confirm_open);
+    }
+
+    #[test]
+    fn file_offer_scope_moves_with_the_detached_clipboard_bridge() {
+        let (mut desktop, ids) = fixture();
+        let session = ids[2];
+        assert_eq!(desktop.app.manager.active_session(), Some(session));
+        desktop.app.rdp_file_scope = Some((session, 5));
+        let bridge = desktop.app.rdp_chunk_bridge.clone();
+        let stream_id = bridge.begin().unwrap();
+        let _ = desktop.detach(session);
+        let child = desktop.owner(session);
+        assert!(desktop.app.rdp_file_scope.is_none());
+        let _ = desktop.in_window(child, |app| {
+            assert!(owns_selected_session(app));
+            assert_eq!(app.rdp_file_scope, Some((session, 5)));
+            app.rdp_chunk_bridge.deliver(stream_id, Some(vec![42]));
+            Task::none()
+        });
+        assert_eq!(bridge.wait(stream_id).unwrap(), [42]);
     }
 
     #[test]

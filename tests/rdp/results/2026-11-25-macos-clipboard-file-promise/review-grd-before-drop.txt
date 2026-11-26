@@ -1,0 +1,252 @@
+Nov 25 13:32:25 adit-grd-fixture systemd[585]: Starting gnome-remote-desktop-headless.service - GNOME Remote Desktop (headless)...
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: _g_io_module_get_default: Found default implementation dconf (DConfSettingsBackend) for ‘gsettings-backend’
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: watch_fast: "/org/gnome/desktop/remote-desktop/rdp/" (establishing: 0, active: 0)
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: watch_fast: "/org/gnome/desktop/remote-desktop/vnc/" (establishing: 0, active: 0)
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: watch_established: "/org/gnome/desktop/remote-desktop/rdp/" (establishing: 1)
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: watch_established: "/org/gnome/desktop/remote-desktop/vnc/" (establishing: 1)
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: setenv()/putenv() are not thread-safe and should not be used after threads are created
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: _g_io_module_get_default: Found default implementation gvfs (GDaemonVfs) for ‘gio-vfs’
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: Init TPM credentials failed because No TPM device found, using GKeyFile as fallback
+Nov 25 13:32:26 adit-grd-fixture systemd[585]: Started gnome-remote-desktop-headless.service - GNOME Remote Desktop (headless).
+Nov 25 13:32:26 adit-grd-fixture gnome-remote-de[732]: Failed to create EGL thread: Failed to get EGL display
+Nov 25 13:32:27 adit-grd-fixture gnome-remote-de[732]: [RDP] Trying to bind to TCP socket:
+Nov 25 13:32:27 adit-grd-fixture gnome-remote-de[732]:         Server bound to TCP port 3389
+Nov 25 13:32:27 adit-grd-fixture gnome-remote-de[732]: RDP server started
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: New incoming RDP connection
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Initialize RDP session
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Remote Desktop session will use virtual monitors
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: New RDP client: [OS major type, OS minor type]: [Windows platform, Unspecified version]
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Client uses keyboard type 4
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Virtual Channels: compression flags: 0, compression level: 0, chunk size: 16256
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Client does not support autodetecting network characteristics (RTT detection, Bandwidth measurement). High latency connections will suffer!
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Activating client
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Cursor renderer: Cache has 32 slots
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] DVC channel id assigned to id 1
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.TELEMETRY] DVC channel id assigned to id 2
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] FUSE thread started
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.DISP] DVC channel id assigned to id 3
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.DRDYNVC] DVC channel id 1 creation status: 0
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Received a CapsAdvertise PDU
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Client caps set RDPGFX_CAPVERSION_107 flags: 0x00000002
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Client caps set RDPGFX_CAPVERSION_81 flags: 0x00000012
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Client caps set RDPGFX_CAPVERSION_8 flags: 0x00000002
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.DRDYNVC] DVC channel id 2 creation status: -1073741823
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.DRDYNVC] DVC channel id 3 creation status: 0
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Starting FUSE session
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Caps lock state: unlocked
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Num lock state: unlocked
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.TELEMETRY] Failed to open channel (CreationStatus -1073741823). Terminating protocol
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.DISP] Channel opened successfully. Ready for receiving new monitor layouts
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Requested file ".Trash" in directory "/" does not exist
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Requested file ".Trash-1000" in directory "/" does not exist
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.DISP] Received new monitor layout. PDU contains 1 monitor
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_CONNECT
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client capabilities: long format names, stream file clip, can lock clip data
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_SEAT_ADDED
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.TELEMETRY] Tearing down channel
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client sent a Temporary Directory PDU with path "."
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Aborting all pending client requests
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SetSelection]: Updating servers clipboard
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[EnableClipboard]: Enabling clipboard
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[EnableClipboard]: Clipboard enabled
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SetSelection]: Update complete
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Force using CF_UNICODETEXT over CF_TEXT as external format for text/plain;charset=utf-8 and UTF8_STRING
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_CONFIG to AWAIT_INHIBITION_DONE
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] CapsAdvertise: Accepting capability set with version RDPGFX_CAPVERSION_107, Client cap flags: H264 (AVC444): true, H264 (AVC420): true
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_INHIBITION_DONE to PREPARE_SURFACES
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Preparing virtual monitor with geometry [x, y, w, h] = [0, 0, 1368, 952]
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from PREPARE_SURFACES to AWAIT_STREAMS
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Aborting all pending client requests
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SetSelection]: Updating servers clipboard
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SetSelection]: Update contains mime type text/plain;charset=utf-8
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SetSelection]: Update contains mime type UTF8_STRING
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SetSelection]: Update complete
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionTransfer]: Requesting data from clients clipboard (mime type: text/plain;charset=utf-8, serial: 1)
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sent FormatDataRequest for mime type text/plain;charset=utf-8
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionTransfer]: Request for serial 1 was successful
+Nov 25 13:36:01 adit-grd-fixture gnome-remote-de[732]: PipeWire stream 0 mapping ID: e8030d7a-334e-4264-ba7c-345f9d024d8f
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Creating PipeWire stream for node id 43
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from unconnected to connecting
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_STREAMS to AWAIT_VIDEO_SIZES
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from connecting to paused
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: [RDP] Stream parameters changed. New surface size: [1368, 952]
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_VIDEO_SIZES to START_RENDERING
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from START_RENDERING to AWAIT_CONFIG
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Finished applying new monitor config
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from paused to streaming
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: ei: New region: mapping-id: e8030d7a-334e-4264-ba7c-345f9d024d8f, 1368x952 (0, 0)
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+Nov 25 13:36:02 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+Nov 25 13:36:03 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Resetting graphics
+Nov 25 13:36:03 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Creating surface with id 0
+Nov 25 13:36:03 adit-grd-fixture gnome-remote-de[732]: [RDP] Remote Desktop session metrics: _post_connect: 259ms, _ready: 38ms, _started: 173ms, whole startup: 471ms
+Nov 25 13:36:03 adit-grd-fixture gnome-remote-de[732]: [RDP] Surface 1368x952 (0, 0) Metrics: First frame: Reception: 1271ms, Transmission: 167ms, Skipped frames: 0
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP.DISP] Received new monitor layout. PDU contains 1 monitor
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_CONFIG to AWAIT_INHIBITION_DONE
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_INHIBITION_DONE to PREPARE_SURFACES
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Preparing virtual monitor with geometry [x, y, w, h] = [0, 0, 960, 576]
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from PREPARE_SURFACES to AWAIT_VIDEO_SIZES
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from streaming to paused
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Stream parameters changed. New surface size: [960, 576]
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_VIDEO_SIZES to START_RENDERING
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from START_RENDERING to AWAIT_CONFIG
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Finished applying new monitor config
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from paused to streaming
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_REMOVED
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: ei: New region: mapping-id: e8030d7a-334e-4264-ba7c-345f9d024d8f, 960x576 (0, 0)
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Deleting surface with id 0
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Resetting graphics
+Nov 25 13:36:38 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Creating surface with id 1
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 1
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 1
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking serial 1 for ClipDataEntry
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking lock with clipDataId 1
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+Nov 25 13:36:45 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Request successful
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] ClipDataEntry with id 1 and serial 1 is now independent
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Creating new WinPR clipboard
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 2
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Queueing new FormatList
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 3
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 2
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking serial 3 for ClipDataEntry
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking lock with clipDataId 2
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+Nov 25 13:37:06 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Request successful
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] ClipDataEntry with id 2 and serial 3 is now independent
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Creating new WinPR clipboard
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 4
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Queueing new FormatList
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 5
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 3
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking serial 5 for ClipDataEntry
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking lock with clipDataId 3
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+Nov 25 13:37:11 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Request successful
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] ClipDataEntry with id 3 and serial 5 is now independent
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Creating new WinPR clipboard
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 6
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Queueing new FormatList
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 7
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 4
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking serial 7 for ClipDataEntry
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking lock with clipDataId 4
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+Nov 25 13:37:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Request successful
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP.DISP] Received new monitor layout. PDU contains 1 monitor
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_CONFIG to AWAIT_INHIBITION_DONE
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_INHIBITION_DONE to PREPARE_SURFACES
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Preparing virtual monitor with geometry [x, y, w, h] = [0, 0, 960, 576]
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from PREPARE_SURFACES to AWAIT_VIDEO_SIZES
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from streaming to paused
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Stream parameters changed. New surface size: [960, 576]
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from AWAIT_VIDEO_SIZES to START_RENDERING
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Updating state from START_RENDERING to AWAIT_CONFIG
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP] Layout manager: Finished applying new monitor config
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: PipeWire stream state changed from paused to streaming
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_REMOVED
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: ei: New region: mapping-id: e8030d7a-334e-4264-ba7c-345f9d024d8f, 960x576 (0, 0)
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_ADDED
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: ei: Handled event type EI_EVENT_DEVICE_RESUMED
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Deleting surface with id 1
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Resetting graphics
+Nov 25 13:37:45 adit-grd-fixture gnome-remote-de[732]: [RDP.RDPGFX] Creating surface with id 2
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] ClipDataEntry with id 4 and serial 7 is now independent
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Creating new WinPR clipboard
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 8
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Queueing new FormatList
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 9
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 5
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking serial 9 for ClipDataEntry
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking lock with clipDataId 5
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+Nov 25 13:38:04 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Request successful
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] ClipDataEntry with id 5 and serial 9 is now independent
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Creating new WinPR clipboard
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 10
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/plain;charset=utf-8
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type text/uri-list
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Server advertises mime type x-special/gnome-copied-files
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Updating clients clipboard
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Queueing new FormatList
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionOwnerChanged]: Update complete
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Updated clipboard serial to 11
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [FUSE Clipboard] Lazily clearing all selections with clipDataId
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Sending FormatList
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Client requested a lock with clipDataId: 6
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Handling format list response from client
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking serial 11 for ClipDataEntry
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: [RDP.CLIPRDR] Tracking lock with clipDataId 6
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Requesting data from servers clipboard (mime type: text/uri-list)
+Nov 25 13:38:19 adit-grd-fixture gnome-remote-de[732]: Clipboard[SelectionRead]: Request successful

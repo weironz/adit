@@ -1,0 +1,33 @@
+$ cargo xwin clippy --xwin-arch x86_64 --locked --workspace --all-targets --target x86_64-pc-windows-msvc -- -D warnings
+ Downloading crates ...
+  Downloaded serde_spanned v1.1.1
+  Downloaded toml v1.1.2+spec-1.1.0
+  Downloaded toml_writer v1.1.1+spec-1.1.0
+  Downloaded winresource v0.1.31
+    Blocking waiting for file lock on build directory
+    Checking png v0.18.1
+    Checking adit-rdp-proto v0.1.78 (/Users/devin/repos/adit/crates/adit-rdp-proto)
+    Checking adit-domain v0.1.78 (/Users/devin/repos/adit/crates/adit-domain)
+    Checking vnc-rs v0.6.0 (/Users/devin/repos/adit/crates/adit-vnc)
+    Checking image v0.25.10
+    Checking adit-ssh v0.1.78 (/Users/devin/repos/adit/crates/adit-ssh)
+    Checking adit-terminal v0.1.78 (/Users/devin/repos/adit/crates/adit-terminal)
+    Checking adit-storage v0.1.78 (/Users/devin/repos/adit/crates/adit-storage)
+    Checking adit-workbench v0.1.78 (/Users/devin/repos/adit/crates/adit-workbench)
+    Checking base64 v0.23.1
+    Checking pem v4.0.0
+    Checking yasna v0.6.0
+    Checking adit-sync v0.1.78 (/Users/devin/repos/adit/crates/adit-sync)
+    Checking iced_graphics v0.14.0
+    Checking rcgen v0.14.10
+    Checking adit-session v0.1.78 (/Users/devin/repos/adit/crates/adit-session)
+   Compiling adit-app v0.1.78 (/Users/devin/repos/adit/crates/adit-app)
+    Checking iced_tiny_skia v0.14.0
+    Checking iced_wgpu v0.14.0
+    Checking iced_program v0.14.0
+    Checking iced_winit v0.14.0
+    Checking iced_renderer v0.14.0
+    Checking iced_widget v0.14.2
+    Checking iced v0.14.0
+    Checking adit-ui v0.1.78 (/Users/devin/repos/adit/crates/adit-ui)
+    Finished `dev` profile [unoptimized] target(s) in 25.90s

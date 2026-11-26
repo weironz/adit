@@ -1,0 +1,55 @@
+Debian source files before mutation:
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  01-single/one.txt
+c4aa0778e207c77664b204e65317ad17d6f39756649d0ea7f072f2cd96ed48cc  02-multi/large.bin
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  02-multi/small.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  03-directory/Folder/inner/empty.txt
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  03-directory/Folder/inner/nested.txt
+c4aa0778e207c77664b204e65317ad17d6f39756649d0ea7f072f2cd96ed48cc  04-append/grow.bin
+c4aa0778e207c77664b204e65317ad17d6f39756649d0ea7f072f2cd96ed48cc  05-truncate/shrink.bin
+131083 04-append/grow.bin
+131083 05-truncate/shrink.bin
+
+Finder files, SHA-256:
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  destinations/01-single/one.txt
+c4aa0778e207c77664b204e65317ad17d6f39756649d0ea7f072f2cd96ed48cc  destinations/02-multi/large.bin
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  destinations/02-multi/small.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  destinations/03-inner-files/empty.txt
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  destinations/03-inner-files/nested.txt
+
+Top-level directory offer destination, all entries including hidden:        0
+
+Append (guest size / UTC / size / SHA-256; Finder results):
+131083 04-append/grow.bin
+2026-11-26T18:07:55.092252953Z
+131101 04-append/grow.bin
+d731b7cbd727ec01d1da7c2d0646e9a6ab6752a328b34fd21afa57bc1a2340a8  04-append/grow.bin
+2026-11-26T18:08:07Z
+total 0
+drwxr-xr-x  2 devin  staff   64 Nov 26 10:08 .
+drwx------  9 devin  staff  288 Nov 26 10:06 ..
+All destination entries (including hidden):        0
+
+Truncate (guest size / UTC / size / SHA-256; Finder results):
+131083 05-truncate/shrink.bin
+2026-11-26T18:08:37.066334843Z
+131079 05-truncate/shrink.bin
+35f4c349f611f5f09c429b4a6dcc54986addeba972937610632dad6528f7ae0d  05-truncate/shrink.bin
+2026-11-26T18:08:40Z
+total 0
+drwxr-xr-x  2 devin  staff   64 Nov 26 10:08 .
+drwx------  9 devin  staff  288 Nov 26 10:06 ..
+All destination entries (including hidden):        0
+
+Append to an initially empty file (guest size / UTC / size / SHA-256; Finder results):
+0 06-empty-append/empty-grow.txt
+2026-11-26T18:09:19.454656646Z
+14 06-empty-append/empty-grow.txt
+caf7041afbf473cfd3b79806fca011f955ac2632150be6faf0b74b147737669a  06-empty-append/empty-grow.txt
+2026-11-26T18:09:22Z
+total 0
+drwxr-xr-x   3 devin  staff   96 Nov 26 10:09 .
+drwx------  10 devin  staff  320 Nov 26 10:08 ..
+-rw-r--r--@  1 devin  staff    0 Nov 26 10:09 empty-grow.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  destinations/06-empty-append/empty-grow.txt
+RANGE requests after 18:09:08 offer: 0
+PASS: five SHA-256 matches; directory/append/truncate targets empty; zero-byte growth retained an empty target (observed limitation)

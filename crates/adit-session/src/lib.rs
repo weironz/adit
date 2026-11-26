@@ -59,6 +59,8 @@ pub use adit_rdp_proto::{
 pub use rdp_client::{
     RdpClientEvent, RdpClientHandle, RdpClipboardToken, RdpFileRequester, RdpFrame,
 };
+#[cfg(target_os = "macos")]
+pub use rdp_client::RdpFileReplyHandler;
 use vnc_client::VncClientHandle;
 pub use vnc_client::{VncCursor, VncDiagnostics, VncFrameSnapshot};
 pub use vnc_input::unicode_keysym;
@@ -4030,15 +4032,18 @@ impl SessionManager {
                             .as_ref()
                             .expect("RDP event owner")
                             .file_requester_for_generation(generation);
-                        self.pending_rdp_drag_events.retain(|event| !matches!(event,
-                            RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
-                        self.pending_rdp_drag_events
-                            .push(RdpFileDragEvent::Offered {
-                                session: record.summary.id,
-                                generation,
-                                files: files.clone(),
-                                requester: requester.clone(),
-                            });
+                        #[cfg(not(target_os = "macos"))]
+                        {
+                            self.pending_rdp_drag_events.retain(|event| !matches!(event,
+                                RdpFileDragEvent::Offered { session, .. } if *session == record.summary.id));
+                            self.pending_rdp_drag_events
+                                .push(RdpFileDragEvent::Offered {
+                                    session: record.summary.id,
+                                    generation,
+                                    files: files.clone(),
+                                    requester: requester.clone(),
+                                });
+                        }
                         if self.active_session == Some(record.summary.id) {
                             self.pending_rdp_clipboard_files = Some(RdpClipboardFileOffer {
                                 session: record.summary.id,
@@ -4053,6 +4058,7 @@ impl SessionManager {
                         stream_id,
                         data,
                     } => {
+                        #[cfg(not(target_os = "macos"))]
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Chunk {
                             session: record.summary.id,
                             generation,
@@ -4098,6 +4104,7 @@ impl SessionManager {
                     }
                     RdpClientEvent::Closed => {
                         record.pending_host_key = None;
+                        #[cfg(not(target_os = "macos"))]
                         self.pending_rdp_drag_events.push(RdpFileDragEvent::Closed {
                             session: record.summary.id,
                         });

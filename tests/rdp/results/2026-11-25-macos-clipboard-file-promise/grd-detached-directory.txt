@@ -1,0 +1,13 @@
+Finder destination:
+./dir-sample
+./dir-sample/inner
+./dir-sample/inner/empty.txt
+./dir-sample/inner/nested.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  dir-sample/inner/empty.txt
+cf85098a69ed0315103704f94da2e234a789885baf9ae54319e6483ae1085f5b  dir-sample/inner/nested.txt
+Debian source:
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  dir-sample/inner/empty.txt
+cf85098a69ed0315103704f94da2e234a789885baf9ae54319e6483ae1085f5b  dir-sample/inner/nested.txt
+2026-11-26T17:22:20.148708Z DEBUG ironrdp_cliprdr: Received FileGroupDescriptorW from remote file_count=4
+2026-11-26T17:23:11.209056Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=19 index=3 flags=FileContentsFlags(RANGE)
+2026-11-26T17:23:11.214807Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=19 file_index=3 is_error=false data_len=25

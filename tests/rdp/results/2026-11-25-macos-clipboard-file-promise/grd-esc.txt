@@ -1,0 +1,11 @@
+After Escape with the mouse button still held, then mouse-up:
+total 0
+drwxr-xr-x   2 devin  staff   64 Nov 26 09:23 .
+drwxr-xr-x  23 devin  staff  736 Nov 26 09:22 ..
+RANGE requests since copy: 0
+PASS: same offer, both files match SCP references (cmp)
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  source/multi/alpha.bin
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  source/multi/beta.txt
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  failed/alpha.bin
+f7aa07dd9936f41f04a2669605c4eb3fa74a0a9100e79e0d266ceb3b4ab45b31  failed/beta.txt
+RANGE requests after retry: 18

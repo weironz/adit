@@ -1,0 +1,2 @@
+$ cargo build --locked --release --manifest-path crates/adit-rdp/Cargo.toml
+    Finished `release` profile [optimized] target(s) in 0.60s

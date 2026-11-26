@@ -199,6 +199,7 @@ impl State {
     }
 }
 
+#[cfg(not(target_os = "macos"))]
 pub(crate) fn owner_task(
     window: iced::window::Id,
     session: SessionId,

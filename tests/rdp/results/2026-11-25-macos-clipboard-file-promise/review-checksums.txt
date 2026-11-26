@@ -1,0 +1,9 @@
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  /home/fixture/rdp-file-fixture/replacement.bin
+ 1048613 /Users/devin/adit-grd-mac/review-reference.bin
+ 1048613 /Users/devin/adit-grd-mac/review-destination/replacement.bin
+ 2097226 total
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  /Users/devin/adit-grd-mac/review-reference.bin
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  /Users/devin/adit-grd-mac/review-destination/replacement.bin
+PASS: cmp byte-for-byte against the Debian guest source
+PASS: no server FileContentsRequest before Finder drop
+PASS: 17 locked server FileContentsRequest records after Finder drop

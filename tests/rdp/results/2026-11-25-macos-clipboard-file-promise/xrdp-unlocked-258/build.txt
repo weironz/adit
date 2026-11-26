@@ -1,0 +1,38 @@
+Build worktree (HEAD and both parents)
+2eb0c9f12819be65a6737b0ec15dbdef40ee1329 a435f550861e031d12bc9c3fcb30b79a75f6a7c2 3a859aee6ce67699ae432540fe82909f98c55a2f
+
+Worktree-only connector change
+diff --git a/crates/adit-rdp/src/lib.rs b/crates/adit-rdp/src/lib.rs
+index dd0345b..d6e34ca 100644
+--- a/crates/adit-rdp/src/lib.rs
++++ b/crates/adit-rdp/src/lib.rs
+@@ -151,8 +151,8 @@ pub(crate) fn build_connector_config(
+         },
+         domain,
+         // NLA (CredSSP) is the modern, secure default; plain TLS-only is legacy.
+-        enable_tls: false,
+-        enable_credssp: true,
++        enable_tls: true,
++        enable_credssp: false,
+         keyboard_type: KeyboardType::IbmEnhanced,
+         keyboard_subtype: 0,
+         keyboard_layout: 0,
+
+Host and toolchain
+ProductName:		macOS
+ProductVersion:		26.6.2
+BuildVersion:		25G83
+arm64
+rustc 1.98.0 (88d9e12ae 2026-08-18)
+
+App (cargo build --locked -p adit-app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 17.25s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+
+Helper (cargo build --release --locked --manifest-path crates/adit-rdp/Cargo.toml)
+   Compiling ironrdp-cliprdr v0.7.0 (/Users/devin/repos/adit-acceptance-258/crates/adit-rdp/vendor/ironrdp-cliprdr)
+    Finished `release` profile [optimized] target(s) in 13.21s
+
+Tested executable SHA-256
+6411b08b95e5c46f53679daa04f2a9038186b1f680dd9ec317e9f84f1b96d62c  /Users/devin/repos/adit/target/debug/adit-app
+8efc4bb5e6f50635ac8827621a9b0e465bf984e3eefe34d8dbfc088b24920e41  /Users/devin/repos/adit/crates/adit-rdp/target/release/adit-rdp-host

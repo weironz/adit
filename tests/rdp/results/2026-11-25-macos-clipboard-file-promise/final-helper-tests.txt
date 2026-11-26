@@ -1,0 +1,237 @@
+$ cargo test --locked --manifest-path crates/adit-rdp/Cargo.toml --workspace
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.66s
+     Running unittests src/lib.rs (crates/adit-rdp/target/debug/deps/adit_rdp-989fcd5f30c5ef24)
+
+running 152 tests
+test clipboard::protocol_tests::local_file_contents_remain_refused_while_text_works ... ok
+test clipboard::protocol_tests::old_file_response_is_drained_before_new_text ... ok
+test clipboard::protocol_tests::overlapping_file_offers_drain_a_before_requesting_b ... ok
+test clipboard::protocol_tests::old_text_response_is_drained_before_new_file ... ok
+test clipboard::protocol_tests::missing_old_response_waits_for_channel_reset_without_disconnecting ... ok
+test clipboard::protocol_tests::queued_request_replaced_before_send_does_not_poison_the_new_offer ... ok
+test clipboard::protocol_tests::only_latest_deferred_offer_is_requested_after_old_error ... ok
+test clipboard::protocol_tests::local_copy_invalidates_an_issued_file_request_without_breaking_later_offers ... ok
+test clipboard::protocol_tests::unlocked_file_offer_is_refused ... ok
+test clipboard::protocol_tests::first_remote_file_offer_uses_the_negotiated_lock ... ok
+test clipboard::protocol_tests::same_wire_descriptors_do_not_prove_which_lock_generated_them ... ok
+test clipboard::protocol_tests::unsolicited_response_does_not_consume_a_queued_request ... ok
+test clipboard::remote_files::tests::forged_lengths_and_premature_eof_are_refusals ... ok
+test clipboard::remote_files::tests::old_request_cannot_use_new_offer_even_before_gui_poll ... ok
+test clipboard::remote_files::tests::text_channel_reset_and_unlocked_offers_revoke_all_reads ... ok
+test clipboard::tests::a_remote_copy_falls_back_to_legacy_text_formats ... ok
+test clipboard::tests::a_redirection_resets_channel_state_but_keeps_the_users_clipboard ... ok
+test clipboard::tests::a_remote_copy_of_a_format_we_do_not_handle_is_ignored ... ok
+test clipboard::tests::a_remote_copy_requests_the_best_text_format_available ... ok
+test clipboard::tests::a_remote_paste_is_answered_with_our_local_text ... ok
+test clipboard::tests::a_remote_paste_of_a_format_we_never_offered_gets_an_error_response ... ok
+test clipboard::tests::a_remote_paste_with_nothing_copied_locally_gets_an_error_response ... ok
+test clipboard::tests::an_error_response_produces_nothing_and_clears_the_pending_format ... ok
+test clipboard::tests::an_image_alone_is_requested ... ok
+test clipboard::tests::an_image_replaces_the_offered_text ... ok
+test clipboard::tests::an_offered_image_advertises_cf_dib ... ok
+test clipboard::tests::an_unsolicited_response_is_ignored ... ok
+test clipboard::tests::clearing_before_ready_sanitizes_the_required_handshake_list ... ok
+test clipboard::tests::clearing_local_offer_does_not_revoke_a_remote_file_snapshot ... ok
+test clipboard::tests::clearing_local_offer_refuses_stale_text_image_and_queued_responses ... ok
+test clipboard::tests::file_epoch_text_format_list_and_redirection_revoke_active_files ... ok
+test clipboard::tests::file_epoch_backend_rejects_old_gui_requests_and_late_wire_replies ... ok
+test clipboard::tests::handshake_advertises_even_with_an_empty_local_clipboard ... ok
+test clipboard::tests::local_text_is_not_advertised_before_the_channel_is_ready ... ok
+test clipboard::tests::ready_does_not_re_advertise_what_the_handshake_already_sent ... ok
+test clipboard::tests::real_cliprdr_refuses_unsolicited_file_metadata_and_content_requests ... ok
+test clipboard::tests::remote_file_copy_discards_queued_local_revocation_advertisement ... ok
+test clipboard::tests::remote_ansi_text_is_decoded_with_the_requested_charset ... ok
+test clipboard::tests::remote_unicode_text_round_trips_to_the_app ... ok
+test clipboard::tests::repeat_offers_of_the_same_text_do_not_re_advertise ... ok
+test clipboard::tests::repro_action_debug_must_not_expose_clipboard_payloads ... ok
+test clipboard::tests::text_copied_during_the_handshake_is_advertised_once_ready ... ok
+test clipboard::tests::text_is_preferred_over_an_image_when_both_are_offered ... ok
+test clipboard::tests::unsafe_remote_file_descriptors_revoke_the_previous_offer ... ok
+test display::tests::caps_publish_real_server_limits ... ok
+test display::tests::closing_before_capabilities_and_stale_cancellation_are_distinct ... ok
+test display::tests::parked_layout_times_out_or_sends_when_capabilities_arrive ... ok
+test clipboard::tests::submitted_text_is_encoded_for_the_format_the_remote_asked_for ... ok
+test display::tests::server_capabilities_are_read_past_the_display_control_header ... ok
+test display::tests::complete_layout_encodes_positions_primary_and_scale ... ok
+test egfx::cost_merge_tests::heavily_overlapping_plan_uses_full_frame_when_it_is_cheaper ... ok
+test egfx::cost_merge_tests::small_gap_stays_unpainted_even_when_merging_would_be_cheaper ... ok
+test egfx::cost_merge_tests::contained_rect_saves_duplicate_pixels_instead_of_charging_them_again ... ok
+test clipboard::tests::clipboard_failure_logs_never_include_text_or_image_bytes ... ok
+test display::tests::a_missing_channel_never_encodes_resize_and_reports_layout_failure ... ok
+test egfx::decoder_panic_tests::an_unrecognised_panic_payload_still_produces_a_reason ... ok
+test egfx::dirty_rect_tests::a_merge_that_bridges_two_rects_joins_all_three ... ok
+test clipboard::barrier_tests::revoked_detached_format_list_preserves_initial_handshake_without_stealing_ownership ... ok
+test clipboard::barrier_tests::framed_barrier_sanitizes_text_and_image_already_taken_by_the_pump ... ok
+test egfx::dirty_rect_tests::adjacent_tiles_collapse_into_one_rect ... ok
+test egfx::dirty_rect_tests::distant_changes_stay_apart ... ok
+test egfx::dirty_rect_tests::emitted_frame_updates_never_mark_the_gap_between_fresh_paints ... ok
+test egfx::dirty_rect_tests::merge_cost_counts_duplicate_pixels_and_message_overhead ... ok
+test egfx::dirty_rect_tests::nearby_dirty_rectangles_do_not_claim_the_unpainted_gap ... ok
+test egfx::dirty_rect_tests::scattered_dirty_rectangles_do_not_claim_unpainted_pixels_after_the_cap ... ok
+test error_chain_tests::a_chainless_error_stands_alone ... ok
+test error_chain_tests::keeps_every_cause_in_the_chain ... ok
+test host::barrier_tests::app_close_is_announced_before_the_input_channel_drops ... ok
+test egfx::cost_merge_tests::emitted_tiles_reconstruct_every_changed_pixel_and_preserve_gap_pixels ... ok
+test host::barrier_tests::framed_empty_file_offer_revokes_text_before_a_cliprdr_paste ... ok
+test host::barrier_tests::framed_barrier_clears_queued_text_and_image_and_allows_a_fresh_offer ... ok
+test host::barrier_tests::framed_image_arriving_during_handshake_is_advertised_after_ready ... ok
+test host::barrier_tests::framed_file_barrier_preserves_remote_file_snapshot_and_never_offers_local_files ... ok
+test host::barrier_tests::framed_legacy_and_nonempty_file_offers_only_revoke_local_data ... ok
+test host::barrier_tests::framed_queued_offers_and_old_epoch_barriers_never_restore_stale_clipboard ... ok
+test egfx::dirty_rect_tests::issue97_damage_mask_preserves_checkerboard_across_row_and_word_boundaries ... ok
+test host::output::tests::a_closed_output_pipe_does_not_fail_a_session_that_the_app_closed ... ok
+test host::output::tests::a_closed_output_pipe_still_fails_a_session_the_app_did_not_close ... ok
+test host::output::tests::a_real_output_failure_still_fails_the_session ... ok
+test host::output::tests::byte_budget_counts_capacity_masks_and_nested_clipboard_allocations ... ok
+test egfx::dirty_rect_tests::issue97_scattered_damage_has_bounded_tracking ... ok
+test egfx::clear_dump_tests::capture_keeps_pending_pdu_after_decoder_unwinds_and_never_overwrites_it ... ok
+test host::output::tests::hello_compatibility_never_encodes_host_enums_for_an_incompatible_peer ... ok
+test egfx::dirty_rect_tests::issue97_same_size_reset_discards_retired_connection_dirt ... ok
+test host::output::tests::maximum_desktop_and_paint_mask_fit_the_default_budget ... ok
+test host::output::tests::message_budget_and_reserved_terminal_suffix_are_bounded_and_ordered ... ok
+test egfx::decoder_panic_tests::an_injected_clear_codec_panic_becomes_a_reported_decode_error ... ok
+test host::output::tests::watchdog_counts_only_active_writes_and_resets_on_progress ... ok
+test egfx::dirty_rect_tests::issue97_real_egfx_reset_pdu_preserves_reported_monitor_geometry ... ok
+test host::redirect_epoch_tests::old_framed_inputs_arriving_after_redirect_never_reach_session_queues ... ok
+test host::output::tests::write_or_flush_failure_cancels_idle_session_without_appending_closed ... ok
+test input::tests::a_button_after_a_move_elsewhere_carries_that_position ... ok
+test input::tests::a_button_follows_the_position_of_the_move_before_it ... ok
+test input::tests::a_move_to_the_origin_is_delivered ... ok
+test input::tests::a_move_to_the_origin_is_delivered_after_a_move_elsewhere ... ok
+test input::tests::a_repeated_move_to_the_same_place_emits_nothing ... ok
+test egfx::decode_error_tests::invalid_glyph_pdu_closes_before_outputs_and_blocks_later_batch_paints ... ok
+test session::desktop_output_tests::actual_stage_pointer_outputs_keep_pixels_hotspot_visibility_and_position ... ok
+test session::desktop_output_tests::legacy_dirty_rects_copy_only_the_inclusive_changed_region ... ok
+test session::app_closed_delivery_tests::the_announced_close_survives_the_channel_dropping_behind_it ... ok
+test session::display_deadline_tests::changing_layout_releases_held_buttons_without_releasing_keys ... ok
+test egfx::dirty_rect_tests::scattered_paints_lose_no_coverage ... ok
+test session::display_deadline_tests::buffered_flush_can_progress_longer_than_the_idle_deadline ... ok
+test session::display_deadline_tests::every_redirect_announces_its_negotiated_desktop_size ... ok
+test session::display_deadline_tests::deactivate_all_pdu_stalled_reactivation_observes_close_and_cancel ... ok
+test session::display_deadline_tests::file_reply_routed_before_redirect_is_discarded_at_consumption ... ok
+test session::display_deadline_tests::idle_active_session_reports_missing_capabilities_without_a_server_pdu ... ok
+test session::display_deadline_tests::issue97_buffered_display_write_survives_idle_socket_timeout ... ok
+test session::desktop_output_tests::review97_legacy_scattered_dirty_regions_are_bounded_and_exact ... ok
+test session::display_deadline_tests::issue97_legacy_monitor_layout_pdu_preserves_actual_geometry ... ok
+test session::display_deadline_tests::issue97_explicit_close_interrupts_an_idle_required_write ... ok
+test session::display_deadline_tests::issue97_switch_cancels_an_unstarted_display_write_without_closing_stream ... ok
+test session::display_deadline_tests::issue97_partial_display_write_timeout_is_fatal ... ok
+test session::display_deadline_tests::issue97_switch_waits_for_a_partially_written_pdu ... ok
+test session::display_deadline_tests::issue97_pointer_release_waits_for_an_idle_socket_without_disconnect ... ok
+test session::display_deadline_tests::issue97_unstarted_and_partial_write_timeouts_are_distinguishable ... ok
+test session::display_deadline_tests::new_layout_clears_parked_resize_and_redirect_discards_old_commands ... ok
+test session::display_deadline_tests::issue97_unstarted_display_timeout_preserves_the_stream ... ok
+test session::display_deadline_tests::keys_buffered_during_redirect_are_encoded_by_the_real_active_stage ... ok
+test session::display_deadline_tests::old_routed_commands_arriving_after_new_commands_are_also_discarded ... ok
+test session::display_deadline_tests::queued_old_key_is_reported_instead_of_crossing_connections_silently ... ok
+test session::display_deadline_tests::redirect_discards_commands_routed_before_but_queued_after_the_epoch_change ... ok
+test session::display_deadline_tests::reconnect_keyboard_overflow_discards_the_batch_without_a_stuck_press ... ok
+test session::display_deadline_tests::redirect_epoch_never_wraps_back_to_an_old_connection ... ok
+test session::display_deadline_tests::review97_new_resize_owns_its_own_deadline ... ok
+test session::display_deadline_tests::review97_resize_expiry_survives_a_stalled_reactivation ... ok
+test session::display_deadline_tests::progressing_framed_write_can_exceed_the_idle_deadline ... ok
+test session::display_deadline_tests::stalled_reactivation_read_processes_cancel_close_and_clipboard_commands ... ok
+test session::display_deadline_tests::stale_pointer_never_writes_to_the_new_synthetic_rdp_channel ... ok
+test session::display_deadline_tests::review97_unavailable_display_control_rejects_parked_resize ... ok
+test session::display_deadline_tests::display_control_is_not_starved_by_ordinary_input_backlog ... ok
+test session::panic_guard_tests::a_panicking_active_stage_becomes_a_reported_session_error ... ok
+test session::panic_guard_tests::an_ordinary_success_passes_through_the_guard ... ok
+test session::panic_guard_tests::an_ordinary_error_passes_through_the_guard ... ok
+test session::display_deadline_tests::stalled_real_framed_write_times_out_after_a_partial_pdu ... ok
+test session::process_error_tests::unrelated_stage_error_still_skips_one_pdu_and_next_output_survives ... ok
+test tests::a_single_monitor_sends_no_monitor_block ... ok
+test tests::balanced_is_exactly_the_pre_existing_default ... ok
+test tests::high_disables_nothing ... ok
+test tests::only_the_primary_carries_the_primary_flag ... ok
+test tests::speed_asks_for_nothing_that_costs_bandwidth ... ok
+test tests::the_encoded_block_matches_the_wire_layout ... ok
+test tests::the_gcc_block_header_matches_the_wire_format ... ok
+test tests::the_wire_rectangle_is_inclusive ... ok
+test host::output::tests::in_flight_write_and_flush_retain_the_entire_payload_budget ... ok
+test egfx::dirty_rect_tests::issue97_maximum_framebuffer_damage_storage_is_bounded ... ok
+test host::output::tests::framed_key_release_and_close_are_read_while_stdout_is_blocked ... ok
+test host::output::tests::continuous_progress_cannot_extend_shutdown_forever ... ok
+test host::output::tests::blocked_output_cancels_pending_session_and_has_bounded_finish ... ok
+test host::output::tests::slow_progress_is_not_a_total_frame_deadline ... ok
+test clipboard::tests::oversized_remote_text_is_dropped ... ok
+test host::output::tests::framed_pipe_preserves_large_frame_clipboard_and_terminal_order ... ok
+
+test result: ok. 152 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.02s
+
+     Running unittests src/main.rs (crates/adit-rdp/target/debug/deps/adit_rdp_host-03ec369788f981ad)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/clearcodec_dump.rs (crates/adit-rdp/target/debug/deps/clearcodec_dump-73c1d4cb4d5809c1)
+
+running 5 tests
+test captured_streams_replay ... ignored, needs captured streams; see the module docs
+test manifest_tests::glyph_metadata_tracks_original_store_shape_across_hits_and_vbar_reset ... ok
+test manifest_tests::a_completed_outcome_replaces_pending_on_the_same_index ... ok
+test manifest_tests::pending_requires_explicit_forensic_override_and_does_not_become_live_success ... ok
+test manifest_tests::missing_cache_prefix_truncated_bytes_and_mixed_connections_are_rejected ... ok
+
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/finalization_monitor_layout.rs (crates/adit-rdp/target/debug/deps/finalization_monitor_layout-edd38240b4a1d896)
+
+running 1 test
+test a_monitor_layout_before_the_font_map_does_not_fail_the_connection ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/helper_backpressure.rs (crates/adit-rdp/target/debug/deps/helper_backpressure-1764e88da83c4cd4)
+
+running 1 test
+test unread_stdout_cannot_keep_the_real_helper_process_alive ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.86s
+
+     Running tests/merged_dump.rs (crates/adit-rdp/target/debug/deps/merged_dump-282b77f59478133b)
+
+running 1 test
+test a_captured_session_replays ... ignored, needs captured streams; see the module docs
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/progressive_dump.rs (crates/adit-rdp/target/debug/deps/progressive_dump-bf41568d2b3ab883)
+
+running 1 test
+test a_captured_stream_decodes ... ignored, needs a captured stream; see the module docs
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running vendor/ironrdp-svc/tests/dechunkify.rs (crates/adit-rdp/target/debug/deps/svc_dechunkify-1fbb4ef8898ec8de)
+
+running 21 tests
+test accepts_empty_first_last_pdus_and_empty_fragment_sequences ... ok
+test control_bits_on_data_bearing_chunks_do_not_discard_the_payload ... ok
+test a_maximum_claim_can_begin_with_only_one_received_byte ... ok
+test accepts_empty_start_middle_and_last_chunks_for_nonempty_data ... ok
+test a_new_first_resynchronizes_instead_of_concatenating_old_bytes ... ok
+test an_error_on_one_channel_does_not_corrupt_another_channels_sequence ... ok
+test accepts_complete_unflagged_and_last_only_messages_when_idle ... ok
+test every_truncated_header_discards_partial_data ... ok
+test idle_suspend_resume_controls_do_not_dispatch_or_start_a_message ... ok
+test reassembles_the_microsoft_2062_byte_three_chunk_example ... ok
+test microsoft_clipboard_wire_samples_roundtrip_in_complete_and_fragmented_forms ... ok
+test rejects_changed_total_lengths_on_middle_and_last_chunks ... ok
+test rejects_incomplete_or_oversized_complete_messages_and_recovers ... ok
+test rejects_short_last_and_append_past_declared_length ... ok
+test rejects_oversized_claims_with_or_without_data_and_recovers ... ok
+test accepts_chunks_produced_by_the_actual_encoder ... ok
+test uncompressed_flushed_data_and_package_metadata_still_work ... ok
+test suspend_resume_preserve_an_incomplete_message_without_dispatching_data ... ok
+test compressed_chunks_are_explicitly_rejected_before_length_validation ... ok
+test a_missing_last_cannot_cause_unbounded_append ... ok
+test accepts_a_message_exactly_at_the_limit_including_payloads_above_64_mib ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.31s
+
+   Doc-tests adit_rdp
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s

@@ -13,6 +13,7 @@ const MAX_CHUNK: u32 = 1024 * 1024;
 #[derive(Debug, Clone)]
 pub(super) struct Node {
     pub ino: u64,
+    #[cfg(any(target_os = "linux", test))]
     pub parent: u64,
     pub name: String,
     pub is_dir: bool,
@@ -34,6 +35,7 @@ impl RemoteTree {
         let mut tree = Self {
             nodes: vec![Node {
                 ino: ROOT,
+                #[cfg(any(target_os = "linux", test))]
                 parent: ROOT,
                 name: String::new(),
                 is_dir: true,
@@ -73,6 +75,7 @@ impl RemoteTree {
                 let ino = tree.nodes.len() as u64 + 1;
                 tree.nodes.push(Node {
                     ino,
+                    #[cfg(any(target_os = "linux", test))]
                     parent,
                     name: (*part).to_owned(),
                     is_dir,
@@ -91,6 +94,7 @@ impl RemoteTree {
         self.nodes.get(usize::try_from(ino.checked_sub(1)?).ok()?)
     }
 
+    #[cfg(any(target_os = "linux", test))]
     pub fn lookup(&self, parent: u64, name: &str) -> Option<&Node> {
         self.by_name
             .get(&(parent, name.to_owned()))
@@ -150,17 +154,34 @@ impl RemoteReader {
         }
     }
 
+    #[cfg(any(target_os = "linux", test))]
+    pub fn read(&self, node: &Node, offset: u64, length: u32) -> Result<Vec<u8>, ReadError> {
+        self.read_live(node, offset, length, || true)
+    }
+
     /// Called by an OS worker only. An empty response before the declared EOF
     /// is a failed transfer, never successful truncation.
-    pub fn read(&self, node: &Node, offset: u64, length: u32) -> Result<Vec<u8>, ReadError> {
+    pub fn read_live(
+        &self,
+        node: &Node,
+        offset: u64,
+        length: u32,
+        current: impl Fn() -> bool,
+    ) -> Result<Vec<u8>, ReadError> {
         let index = node.remote_index.ok_or(ReadError::NotAFile)?;
         let length = u64::from(length.min(self.chunk)).min(node.size.saturating_sub(offset)) as u32;
         if length == 0 {
             return Ok(Vec::new());
         }
+        if !current() {
+            return Err(ReadError::Transport(ChunkError::Disconnected));
+        }
         let stream = self.bridge.begin().map_err(ReadError::Transport)?;
         (self.request)(stream, index, offset, length);
-        let bytes = self.bridge.wait(stream).map_err(ReadError::Transport)?;
+        let bytes = self
+            .bridge
+            .wait_live(stream, current)
+            .map_err(ReadError::Transport)?;
         if bytes.is_empty() || bytes.len() > length as usize {
             return Err(ReadError::InvalidReply);
         }

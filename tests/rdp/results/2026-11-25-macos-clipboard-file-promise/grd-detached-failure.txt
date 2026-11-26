@@ -1,0 +1,11 @@
+262144 bytes; mode 0
+2026-11-26T17:23:48.054799Z DEBUG ironrdp_cliprdr: Sending FileContentsRequest stream_id=20 index=0 flags=FileContentsFlags(RANGE)
+2026-11-26T17:23:48.059486Z DEBUG ironrdp_cliprdr: Received FileContentsResponse stream_id=20 file_index=0 is_error=true data_len=0
+2026-11-26T17:23:48.059583Z  WARN ironrdp_cliprdr: FileContentsResponse indicates failure (CB_RESPONSE_FAIL) stream_id=20
+2026-11-26T17:23:48+00:00 adit-grd-fixture gnome-remote-de[755]: [RDP.CLIPRDR] FileContentsRequest has clipDataId 3
+2026-11-26T17:23:48+00:00 adit-grd-fixture gnome-remote-desktop-daemon[755]: [17:23:48:103] [755:0000034c] [ERROR][com.winpr.clipboard.synthetic.file] - [file_get_range]: failed to open file /: 0x00000005
+total 0
+drwxr-xr-x   2 devin  staff   64 Nov 26 09:23 .
+drwxr-xr-x  23 devin  staff  736 Nov 26 09:22 ..
+PASS: no output, including hidden staging
+31a1f9dea0169551092d05e8bf4a446228c8c3eb4c9b713c66adcb7fd53c89be  vanish.bin

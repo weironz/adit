@@ -1,0 +1,7 @@
+com.apple.NSFilePromiseItemMetaData
+com.apple.pasteboard.promised-file-name
+com.apple.pasteboard.promised-suggested-file-name
+com.apple.pasteboard.promised-file-content-type
+dyn.ah62d4rv4gu8yc6durvwwa3xmrvw1gkdusm1044pxqyuha2pxsvw0e55bsmwca7d3sbwu
+Apple files promise pasteboard type
+com.apple.pasteboard.NSFilePromiseID

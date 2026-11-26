@@ -21,13 +21,7 @@
 //! open locally selected files. Linux publishes a private read-only FUSE mount
 //! and reports DISPLAY/FUSE errors without closing the RDP session.
 
-// The bridge's *users* — `data_object` and `ole` — are Windows-only, but the
-// type itself cannot be, because it appears in `offer_remote_files`'s
-// signature and that function has a stub for the other platforms. So on
-// non-Windows every item in here is unreachable by construction, which
-// `-D warnings` reports as six dead-code errors. Saying so is honest; gating
-// the module would mean two different signatures for one function.
-#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux", target_os = "macos")), allow(dead_code))]
 mod bridge;
 #[cfg(windows)]
 pub(crate) mod data_object;
@@ -35,11 +29,13 @@ pub(crate) mod data_object;
 mod linux;
 #[cfg(target_os = "linux")]
 mod linux_fuse;
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
 #[cfg(windows)]
 mod ole;
 #[cfg(any(target_os = "linux", test))]
 mod remote_file_echo;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 mod remote_tree;
 #[allow(unused_imports)]
 pub(crate) use bridge::{ChunkBridge, ChunkError};
@@ -78,7 +74,30 @@ pub(crate) fn offer_remote_files(
     linux::offer(files, bridge, requester, chunk);
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub(crate) fn offer_remote_files(
+    files: Vec<ClipFile>,
+    bridge: ChunkBridge,
+    requester: adit_session::RdpFileRequester,
+    chunk: u32,
+) {
+    let current = requester.clone();
+    let reply_bridge = bridge.clone();
+    let reply: std::sync::Arc<adit_session::RdpFileReplyHandler> =
+        std::sync::Arc::new(move |id, data| reply_bridge.deliver(id, data));
+    macos::offer(
+        files,
+        bridge,
+        std::sync::Arc::new(move || current.is_current()),
+        std::sync::Arc::new(move |stream_id, index, offset, length| {
+            requester.set_reply_handler(&reply);
+            requester.request(stream_id, index, offset, length);
+        }),
+        chunk,
+    );
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub(crate) fn offer_remote_files(
     _files: Vec<ClipFile>,
     _bridge: ChunkBridge,
@@ -90,7 +109,9 @@ pub(crate) fn offer_remote_files(
 pub(crate) fn take_clipboard_error() -> Option<String> {
     #[cfg(target_os = "linux")]
     return linux::take_error();
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(target_os = "macos")]
+    return macos::take_error();
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     None
 }
 
@@ -107,6 +128,8 @@ pub(crate) fn is_own_remote_file_text(text: &str, token: Option<u32>) -> bool {
 pub(crate) fn shutdown_file_clipboard() {
     #[cfg(target_os = "linux")]
     linux::shutdown();
+    #[cfg(target_os = "macos")]
+    macos::shutdown();
 }
 
 #[cfg(test)]
@@ -119,7 +142,7 @@ use adit_session::ClipFile;
 /// arrives fully flattened, so copying a source checkout could otherwise turn
 /// into hundreds of thousands of descriptors — enumerated on the UI thread and
 /// then framed down the helper pipe. The helper enforces the same bound.
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "macos", test))]
 pub(crate) const MAX_CLIPBOARD_FILES: usize = 65_536;
 
 // Legacy local-file code below is retained only for isolated tests; it is not
@@ -466,7 +489,12 @@ pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
     Some(clipboard_sequence())
 }
 
-#[cfg(not(any(windows, target_os = "linux")))]
+#[cfg(target_os = "macos")]
+pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
+    macos::text_token()
+}
+
+#[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
 pub(crate) fn rdp_text_clipboard_token() -> Option<u32> {
     Some(0)
 }

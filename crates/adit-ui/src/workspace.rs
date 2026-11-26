@@ -659,7 +659,11 @@ fn rdp_toolbar_overlay(app: &AditApp) -> Element<'_, Message> {
         ),
         rdp_toolbar_button(
             "↗",
-            t("远端普通文件拖出（OLE，只复制）"),
+            if cfg!(target_os = "macos") {
+                t("远端文件拖出（只复制）")
+            } else {
+                t("远端普通文件拖出（OLE，只复制）")
+            },
             false,
             (live && !app.manager.active_is_vnc() && app.rdp_clipboard)
                 .then_some(Message::OpenRdpFileDrag),
