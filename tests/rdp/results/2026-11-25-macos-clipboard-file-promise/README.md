@@ -45,8 +45,29 @@
 
 - 第一次复制 `remote-pattern.bin` 并打开拖出窗口，再次复制时旧拖出窗口自动关闭。[再次复制前](review-before-recopy.png)、[再次复制后](review-after-recopy.png)。
 - 另选字节相同的 `replacement.bin`，在 Adit 主窗口复制并拖放到真实访达。拖放前 0 个内容请求，拖放后 17 个带剪贴板锁的内容请求；1,048,613 字节的 SHA-256 和 `cmp` 均一致。按 helper 日志中的第一个请求和最后一个响应计，17 个请求用时约 0.125 秒（上次同大小文件约 1.566 秒）；这不是大文件或广域网基准。[拖放前](review-before-drop.png)、[拖放后](review-finder-drop.png)、[helper 日志节选](review-helper-cliprdr.txt)、[服务端前置日志](review-grd-before-drop.txt)、[服务端拖放后日志](review-grd-after-drop.txt)、[字节验证](review-checksums.txt)。
-- 分离窗口的文件承诺状态迁移及 helper 回包绕过 UI 定时器由本次新增自动化测试覆盖。真实访达拖放在主窗口完成；分离窗口的标题栏并未新增拖出按钮。
+- 此轮真实 RDP → 访达拖放在主窗口完成。分离窗口的文件承诺状态迁移、helper 回包绕过 UI 定时器另有自动化测试；分离后的真实访达操作见下节。
 - [macOS 严格 Clippy](review-native.txt)、[Linux x64 GNU 交叉严格 Clippy](review-linux.txt)、[Windows x64 MSVC 交叉严格 Clippy](review-win.txt)、[macOS 工作区测试](review-tests.txt)（884 通过、0 失败、21 忽略）、[macOS GUI 构建](review-build.txt)。
+
+## PR #257：分离唯一会话后拖放及失败清理
+
+使用生产 macOS GUI、原生文件承诺和真实访达；远端内容由 [合成 helper IPC 夹具](fixture.rs) 提供，不经过 RDP 网络或真实 CLIPRDR 服务端。分离唯一的 RDP 会话后，从分离窗口工具栏的「远端文件拖出（只复制）」打开拖出窗口。
+
+| 项目 | 结果 |
+| --- | --- |
+| 分离会话 → 访达、多文件、目录及空文件 | 一次拖放生成两个顶层项目：目录 `RDP-Promise-Fixture` 和普通文件 `companion.txt`。目录由合成文件描述符中的路径生成，内含 `pattern.bin` 和零字节 `empty.txt`。拖放前没有范围请求；拖放后共 18 个请求（17 个读取 `pattern.bin`，1 个读取 `companion.txt`，空文件无需读取）。两份非空文件均通过 `cmp`。[拖放前](detached-before-drop.png)、[拖放后](detached-finder-drop.png)、[请求及 SHA-256](detached-synthetic.txt)。 |
+| 未接受的拖放 | 先将同一批文件拖出并在不接收拖放的 Adit 主窗口区域松开鼠标（不是按 Esc）。访达目录仍为空，无范围请求；随后同一批文件成功拖入访达。[日志](detached-synthetic.txt)。 |
+| 读取失败后清理 | 第二个范围返回失败（第一个 65,536 字节范围已成功返回）；在真实访达中没有生成部分文件或目录。检查目标目录，包括隐藏条目，确认没有暂存残留。[截图](detached-read-failure.png)、[日志](detached-read-failure.txt)。 |
+
+复用下节的编译与配置步骤，启动 GUI 时加上 `ADIT_PROMISE_FIXTURE_SCENARIO=multi-file`（多文件及未接受的拖放）或 `ADIT_PROMISE_FIXTURE_SCENARIO=read-failure`（第二个范围失败）；每个场景使用空的访达目标目录。先点击「拆出窗口」，再使用分离窗口工具栏中的拖出操作。此次没有用未修复版本重现超时；真实服务端复测未重新建立可用的 GNOME 桌面，未验证真实 RDP 的分离窗口、多文件、目录或空文件。此 macOS 主机没有可用的 Windows Server；未在 Debian guest 上建立可用的 XRDP 服务端，故没有这两种服务端的结果。
+
+### 本机及交叉检查
+
+| 检查 | 结果及日志 |
+| --- | --- |
+| macOS arm64 GUI 构建与全目标严格 Clippy | 通过：[构建](final-build.txt)、[Clippy](final-native.txt) |
+| macOS 主工作区测试 | [884 通过、0 失败、21 忽略](final-tests.txt) |
+| 独立 RDP helper 工作区 | 通过：[release 构建](final-helper-build.txt)、[全目标严格 Clippy](final-helper-clippy.txt)、[179 通过、0 失败、3 忽略](final-helper-tests.txt) |
+| Linux x64 GNU、Windows x64 MSVC 全目标严格 Clippy | 通过：[Linux](final-linux.txt)、[Windows（cargo-xwin）](final-win.txt)；未在目标系统上链接或运行 |
 
 ## 复现访达验收
 

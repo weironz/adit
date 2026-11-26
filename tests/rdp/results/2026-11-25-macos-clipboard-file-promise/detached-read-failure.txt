@@ -1,0 +1,6 @@
+HELLO: production GUI connected to synthetic helper; clipboard enabled
+OFFER: generation=1 folder=RDP-Promise-Fixture bytes=1048613
+REQUEST: generation=1 stream=1 index=0 offset=0 length=65536
+REQUEST: generation=1 stream=2 index=0 offset=65536 length=65536
+REFUSED: scripted read failure after the first range
+PASS: failed range after a successful 65536-byte range; destination empty, including hidden staging entries

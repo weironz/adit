@@ -1,0 +1,4 @@
+$ cargo clippy --locked --workspace --all-targets --target x86_64-unknown-linux-gnu -- -D warnings
+    Checking adit-ui v0.1.78 (/Users/devin/repos/adit/crates/adit-ui)
+    Checking adit-app v0.1.78 (/Users/devin/repos/adit/crates/adit-app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 47.15s

@@ -11,6 +11,7 @@ const ROOT: &str = "RDP-Promise-Fixture";
 const NAME: &str = "pattern.bin";
 const SIZE: usize = 1_048_613;
 const GENERATION: u64 = 1;
+const COMPANION: &[u8] = b"second top-level file\n";
 
 fn payload() -> Vec<u8> {
     (0..SIZE).map(|index| (index % 251) as u8).collect()
@@ -50,12 +51,22 @@ fn helper() -> io::Result<()> {
         height: 480,
         rgba: [42, 71, 103, 255].repeat(640 * 480),
     })?;
+    let scenario = std::env::var("ADIT_PROMISE_FIXTURE_SCENARIO").unwrap_or_default();
+    let fail_read = scenario == "read-failure";
+    let mut files = vec![
+        ClipFile { name: format!("{ROOT}\\{NAME}"), size: SIZE as u64, is_dir: false },
+        ClipFile { name: format!("{ROOT}\\empty.txt"), size: 0, is_dir: false },
+    ];
+    if scenario == "multi-file" {
+        files.push(ClipFile {
+            name: "companion.txt".into(),
+            size: COMPANION.len() as u64,
+            is_dir: false,
+        });
+    }
     send(HostMsg::ClipboardFiles {
         generation: GENERATION,
-        files: vec![
-            ClipFile { name: format!("{ROOT}\\{NAME}"), size: SIZE as u64, is_dir: false },
-            ClipFile { name: format!("{ROOT}\\empty.txt"), size: 0, is_dir: false },
-        ],
+        files,
     })?;
     eprintln!("OFFER: generation={GENERATION} folder={ROOT} bytes={SIZE}");
     let data = payload();
@@ -63,17 +74,27 @@ fn helper() -> io::Result<()> {
         match message {
             ClientMsg::RequestFileContents { generation, stream_id, index, offset, length } => {
                 assert_eq!(generation, GENERATION);
-                assert_eq!(index, 0, "empty file should not ask for bytes");
+                let bytes = match index {
+                    0 => data.as_slice(),
+                    2 if scenario == "multi-file" => COMPANION,
+                    _ => panic!("unexpected file contents request for index {index}"),
+                };
                 let start = usize::try_from(offset).unwrap();
                 let end = start.checked_add(length as usize).unwrap();
-                assert!(start < end && end <= data.len());
+                assert!(start < end && end <= bytes.len());
                 eprintln!(
                     "REQUEST: generation={generation} stream={stream_id} index={index} offset={offset} length={length}"
                 );
+                let data = if fail_read && start > 0 {
+                    eprintln!("REFUSED: scripted read failure after the first range");
+                    None
+                } else {
+                    Some(bytes[start..end].to_vec())
+                };
                 send(HostMsg::FileContents {
                     generation,
                     stream_id,
-                    data: Some(data[start..end].to_vec()),
+                    data,
                 })?;
             }
             ClientMsg::ClipboardFiles(files) | ClientMsg::EpochClipboardFiles { files, .. } => {

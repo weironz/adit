@@ -1,0 +1,26 @@
+PASS: rejected drop left Finder empty and triggered no range requests
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  reference.bin
+1873887da67560ac533b212299c64f42421d197e67f687e0ab10c53f426f4465  pattern.bin
+0e77af88663324ee9b509e824c13008036e294733d71487f119485482b4e466b  companion.txt
+e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  empty.txt
+PASS: cmp both nonempty files; empty.txt is zero bytes
+HELLO: production GUI connected to synthetic helper; clipboard enabled
+OFFER: generation=1 folder=RDP-Promise-Fixture bytes=1048613
+REQUEST: generation=1 stream=1 index=2 offset=0 length=22
+REQUEST: generation=1 stream=2 index=0 offset=0 length=65536
+REQUEST: generation=1 stream=3 index=0 offset=65536 length=65536
+REQUEST: generation=1 stream=4 index=0 offset=131072 length=65536
+REQUEST: generation=1 stream=5 index=0 offset=196608 length=65536
+REQUEST: generation=1 stream=6 index=0 offset=262144 length=65536
+REQUEST: generation=1 stream=7 index=0 offset=327680 length=65536
+REQUEST: generation=1 stream=8 index=0 offset=393216 length=65536
+REQUEST: generation=1 stream=9 index=0 offset=458752 length=65536
+REQUEST: generation=1 stream=10 index=0 offset=524288 length=65536
+REQUEST: generation=1 stream=11 index=0 offset=589824 length=65536
+REQUEST: generation=1 stream=12 index=0 offset=655360 length=65536
+REQUEST: generation=1 stream=13 index=0 offset=720896 length=65536
+REQUEST: generation=1 stream=14 index=0 offset=786432 length=65536
+REQUEST: generation=1 stream=15 index=0 offset=851968 length=65536
+REQUEST: generation=1 stream=16 index=0 offset=917504 length=65536
+REQUEST: generation=1 stream=17 index=0 offset=983040 length=65536
+REQUEST: generation=1 stream=18 index=0 offset=1048576 length=37
