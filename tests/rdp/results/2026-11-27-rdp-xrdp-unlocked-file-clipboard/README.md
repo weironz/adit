@@ -14,7 +14,7 @@ xrdp 发文件列表时不带剪贴板锁（`clipDataId`），helper 以前整�
   文件变长时会多回 1 字节，读取失败；
 - 问 FILECONTENTS_SIZE 没用：xrdp 的 `clipboard_send_file_size` 直接返回复制时缓存的
   `cfi->size`（上一版用 SIZE 查询，变长场景实测 `pull_done`，没拦住）；
-- 远端换剪贴板（新 FormatList）作废旧 offer；大小不变、内容被替换检测不到。
+- 远端换剪贴板（新 FormatList）作废旧 offer；大小不变、内容被替换检测不到；复制时为空、之后变长的文件也检测不到（空文件没有可读的块，按空文件交付）。
 
 ## 方法
 
