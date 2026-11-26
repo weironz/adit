@@ -672,7 +672,14 @@ disconnect revoke the old offer. The IPC reader marks requesters stale before th
 GUI polls events; COM reads observe that guard even while blocked, and fail with
 an error instead of zero-byte success. Metadata and its requester travel as one
 offer, rather than pairing old filenames with a newly fetched requester. File
-offers without a server clipboard lock are refused; the desktop remains usable.
+offers without a server clipboard lock (xrdp sends none) are accepted, but
+cannot pin the file: every range must return exactly the bytes the advertised
+size implies, and the final range asks for one extra byte, so a file that shrank
+or grew after the copy fails instead of arriving truncated. (Asking for the size
+does not work: xrdp answers FILECONTENTS_SIZE from the list it built at copy
+time.) A replacement FormatList still revokes the offer. Not detectable: a
+same-size change before it arrives, and a file offered empty that grew (an
+empty file has no range to read, so it arrives empty).
 An empty revocation message does not overwrite OS clipboard text or images.
 
 **Dragging into the remote desktop remains unsupported.** CLIPRDR has no remote

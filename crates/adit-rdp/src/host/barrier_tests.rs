@@ -479,8 +479,8 @@ fn framed_file_barrier_preserves_remote_file_snapshot_and_never_offers_local_fil
             index: i32::try_from(in_flight.index).unwrap(),
             flags: FileContentsFlags::RANGE,
             position: in_flight.offset,
-            requested_size: in_flight.length,
-            data_id: Some(in_flight.data_id),
+            requested_size: in_flight.wire_length,
+            data_id: in_flight.data_id,
         })
         .unwrap()
         .into();
@@ -516,7 +516,7 @@ fn framed_file_barrier_preserves_remote_file_snapshot_and_never_offers_local_fil
             _ => None,
         })
         .expect("queued remote read survives the barrier");
-    assert_eq!(read.data_id, lock);
+    assert_eq!(read.data_id, Some(lock));
     clip.process(
         &ironrdp_core::encode_vec(&ClipboardPdu::FileContentsResponse(
             FileContentsResponse::new_data_response(in_flight.wire_id, vec![1, 2, 3]),
@@ -568,8 +568,8 @@ fn framed_file_barrier_preserves_remote_file_snapshot_and_never_offers_local_fil
         index: i32::try_from(read.index).unwrap(),
         flags: FileContentsFlags::RANGE,
         position: read.offset,
-        requested_size: read.length,
-        data_id: Some(read.data_id),
+        requested_size: read.wire_length,
+        data_id: read.data_id,
     };
     let _: Vec<SvcMessage> = clip.request_file_contents(request).unwrap().into();
     clip.process(
